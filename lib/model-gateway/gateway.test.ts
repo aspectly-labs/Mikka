@@ -5,7 +5,8 @@ import { upstreamRequest } from './upstream'
 import { parseGatewayFeatures, withoutDisabledFeatures } from './features'
 import { gatewayLiteLlm, SELF_HOSTED_DEFAULT_CATALOG_ID } from './config'
 import { parseCreditsOption, creditsOptionId } from '../bot-model-menu-view'
-import { GatewayRefusal, handleModelGateway, type GatewayDependencies } from './handler'
+import { WorkerRefusal } from '../../packages/daemon/src/subscription-worker-client'
+import { forwardNativeSubscription, GatewayRefusal, handleModelGateway, type GatewayDependencies } from './handler'
 import type { GatewayGrant } from './token'
 import { PaidResourceError } from '@/lib/abuse/policy'
 
@@ -109,6 +110,39 @@ function harness(over: Partial<GatewayDependencies> & { answer?: () => Response 
 const post = (body: unknown, headers: Record<string, string> = { 'x-api-key': 'mkg_valid' }) =>
   new Request('https://mikka.test/api/model-gateway/anthropic/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) })
 
+test('native subscription reserves one correlated usage receipt and settles only observed usage', async () => {
+  const generationId = '10000000-0000-4000-8000-000000000003'
+  const selected = grant({ source: { kind: 'subscription', deviceId: 'fixture-device' } })
+  for (const outcome of ['complete', 'missing-usage', 'incomplete', 'missing-id'] as const) {
+    const ids: string[] = []
+    const completed: boolean[] = []
+    const events = [
+      ...(outcome === 'missing-usage' ? [] : [{ type: 'message_start', message: { usage: { input_tokens: 7, output_tokens: 0 } } }]),
+      ...(outcome === 'incomplete' ? [] : [{ type: 'message_stop' }]),
+    ]
+    const { calls, dependencies } = harness({
+      verify: async () => selected,
+      subscription: async () => new Response(sse(events), { headers: { 'content-type': 'text/event-stream',
+        ...(outcome !== 'missing-id' && { 'x-litellm-call-id': generationId }) } }),
+      beginSubscriptionReceipt: async (grant, observedId) => {
+        assert.deepEqual(grant, selected)
+        ids.push(observedId)
+        return async (receipt, complete) => {
+          assert.equal(receipt.generationId, generationId)
+          completed.push(complete)
+        }
+      },
+    })
+    const response = await handleModelGateway(post({ model: 'untrusted', stream: true }), 'anthropic', 'messages', dependencies)
+    assert.equal(response.status, outcome === 'missing-id' ? 502 : 200, outcome)
+    assert.deepEqual(ids, outcome === 'missing-id' ? [] : [generationId], outcome)
+    await response.text()
+    assert.deepEqual(completed, outcome === 'missing-id' ? [] : [outcome === 'complete'], outcome)
+    assert.deepEqual(calls.reserved, [])
+    assert.deepEqual(calls.fetched, [])
+  }
+})
+
 test('Mikka 额度: the gateway holds credit, streams the answer through, then settles at list price', async () => {
   const { calls, dependencies } = harness()
   const response = await handleModelGateway(post({ model: 'whatever', stream: true, messages: [] }), 'anthropic', 'messages', dependencies)
@@ -207,5 +241,27 @@ test('only a frozen Pro choice controls Responses reasoning mode; Pro omits effo
     const body = JSON.parse(String(fixture.calls.fetched[0].init.body))
     assert.deepEqual(body.reasoning, pro ? { mode: 'pro' } : { effort: 'high' })
     assert.equal(body.service_tier, undefined)
+  }
+})
+
+test('native gateway preserves safe upstream refusal status and protocol error type', async () => {
+  const scenarios = [
+    ['subscription_rate_limited', 429, 'rate_limit_error'],
+    ['provider_request_rejected', 400, 'invalid_request_error'],
+    ['subscription_payload_too_large', 413, 'request_too_large'],
+  ] as const
+  for (const [code, status, type] of scenarios) {
+    const selected = grant({ source: { kind: 'subscription', deviceId: 'fixture-device' } })
+    const { calls, dependencies } = harness({
+      verify: async () => selected,
+      subscription: (grant, protocol, operation, body, request) => forwardNativeSubscription(grant, protocol, operation, body, request, {
+        nativeRun: async () => ({ bindingId: 'fixture', ownerId: 'alice', workspaceId: 'fixture', consumerId: 'fixture', execution: 'native', runId: grant.runId }),
+        nativeRequest: async () => { throw new WorkerRefusal(code) },
+      }),
+    })
+    const response = await handleModelGateway(post({ stream: true }), 'anthropic', 'messages', dependencies)
+    assert.equal(response.status, status)
+    assert.deepEqual(await response.json(), { type: 'error', error: { type, message: code } })
+    assert.deepEqual(calls.reserved, [])
   }
 })

@@ -57,19 +57,19 @@ synthetic canonical publication and deletion tests.
    Postgres operation/epoch/version checks publish it. Lost-write or database
    publication recovery never repeats a potentially consumed grant.
 6. The app resolves persisted owner/consumer bindings, checks workspace membership,
-   quota/capability/billing policy and streams through the private worker.
+   quota/capability/billing policy and sends scripted chat through LiteLLM.
+   LiteLLM calls the private Mikka callback, which streams from the CPA worker.
    CPA converters run through a separate ordinary Mikka HTTP model adapter;
    native device identity metadata is removed, no native fingerprint executor is used.
    Claude OAuth inference retains its required opening system block before
    Mikka's host instructions; omitting it returns 429 even with quota available.
    Errors, retries, cancellation and revocation fail closed without paid fallback.
-7. Task claims pin the selected native binding and machine authority to the run.
-   Under [Alex's #1505 decision](../../docs/design/decisions/2026-11-06-1800-machine-is-the-execution-boundary.md),
-   the initial claim prepares a real short-lived subscription access lease for
-   the assigned machine. Official Claude Code and Codex use it directly with
-   their providers, with normal cloud HOME/environment/Git and no extra Docker,
-   placeholder, provider proxy or per-call remote authorization. CPA remains
-   the refresh-grant custodian; natural renewal happens in the background.
+7. Task claims pin the native binding and device to the run. Official Claude
+   Code and Codex receive a run-bound Mikka gateway credential. The gateway
+   checks the active device and run, then the private worker validates the
+   subscription binding and attaches the provider access token to the approved
+   LiteLLM route. Cloud HOME, environment and Git stay on the assigned machine.
+   CPA remains the refresh-grant custodian.
 
 The worker is permanently scoped to one owner connection. No global tenant store
 switch or account pool is used. Refresh claims serialize across processes;
@@ -132,9 +132,9 @@ configuration. They cannot invoke custody methods or fall back to full bundles.
 A trusted prepare call handles refresh and upgrades legacy projections without
 another login. Go checks the owner/workspace/consumer/binding/route/model/revision
 context of the authorized custody operation, not only the TypeScript caller.
-Native Agent requests then go directly to their provider; they do not invoke
-this worker for a permission check before every call. Quota HTTP stays in Go and
-returns a numeric/boolean projection without bearer tokens or raw diagnostics.
+Native inference uses this worker to check binding authority before it sends
+the request through LiteLLM. Quota HTTP stays in Go and returns a
+numeric/boolean projection without bearer tokens or raw diagnostics.
 
 `lib/subscription-runtime.ts` configures separate grant and access paths with
 `MIKKA_BYOS_INFISICAL_PATH` and `MIKKA_BYOS_ACCESS_INFISICAL_PATH`. Custody needs
@@ -148,16 +148,10 @@ and [Infisical setup](../../docs/infisical-cloud.md) for the supported combinati
 Source checks establish these code paths. Effective IAM and credential delivery
 require evidence from the deployment being tested.
 
-Production `nativeAuth` may return the access-only lease when the trusted
-launcher explicitly sets `exportAccessLease: true` for an owner-bound run with
-its frozen model and machine authority. The initial native task claim uses this
-path. Ordinary RPC configurations, execution-only children and requests without
-that explicit grant cannot export it. The provider refresh grant remains in
-the custody worker and has no field in the native response. Metadata and
-server-side model operations retain their ordinary authenticated interfaces;
-they are not a mandatory proxy for the assigned machine's provider traffic.
-Real official CLI/subscription execution and production timing remain distinct
-release evidence; synthetic tests do not establish either.
+A device claim receives a run-bound Mikka model gateway credential and
+non-secret account metadata. The worker supplies the access token to LiteLLM for
+forwarding to the approved provider. Device assignments carry neither the access
+token nor the refresh grant. The retired device lease endpoint returns HTTP 410.
 
 ## Credential deletion
 

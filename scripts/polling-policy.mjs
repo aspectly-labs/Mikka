@@ -274,10 +274,6 @@ export const pollingAllowlist = {
     "credential refresh at its actual expiration deadline, including the platform maximum timer boundary",
     1,
   ),
-  "packages/daemon/src/subscription-credentials.ts": external(
-    "subscription credential refresh at the active lease expiration, not a fixed status interval",
-    1,
-  ),
   "packages/daemon/src/outbox.ts": local(
     "retries persisted undelivered output after an actual delivery failure; no timer while the outbox is empty",
     1,

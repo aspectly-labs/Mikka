@@ -25,6 +25,35 @@ function connection() {
   return { baseURL, apiKey: config.masterKey }
 }
 
+export const SUBSCRIPTION_CHAT_PATH = '/v1/mikka/subscription/chat'
+export const SUBSCRIPTION_CHAT_CALL_HEADER = 'x-mikka-subscription-call-id'
+
+/** SDK serialization stays on the ordinary Chat Completions wire. The server
+ * admits the request before sending it to the dedicated LiteLLM route. */
+export function createLiteLLMSubscriptionModel(modelId: string, transport: (init?: RequestInit) => Promise<Response>) {
+  return createOpenAICompatible({ name: 'mikka-subscription', baseURL: liteLLMBaseUrl() ?? 'http://litellm.invalid/v1',
+    apiKey: 'private-transport', includeUsage: true, fetch: (_input, init) => transport(init) }).chatModel(modelId)
+}
+
+export async function sendLiteLLMSubscriptionChat(body: string, callId: string, signal?: AbortSignal) {
+  if (!decodeHostedCallId(callId)) throw new Error('hosted_call_identity_invalid')
+  const { baseURL, apiKey } = connection()
+  const response = await fetch(baseURL.slice(0, -3) + SUBSCRIPTION_CHAT_PATH, { method: 'POST', body, signal, redirect: 'error', headers: {
+    authorization: `Bearer ${apiKey}`,
+    'content-type': 'application/json',
+    'x-litellm-call-id': callId,
+    'x-litellm-num-retries': '0',
+  } })
+  if (!response.ok) return { response, generationId: null }
+  const generationId = response.headers.get('x-litellm-call-id')
+  if (response.headers.get(SUBSCRIPTION_CHAT_CALL_HEADER) !== callId
+    || !generationId || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(generationId)) {
+    await response.body?.cancel()
+    throw new Error('litellm_subscription_receipt_invalid')
+  }
+  return { response, generationId }
+}
+
 export function liteLLMResponseCost(headers: HeadersInit | undefined): number | null {
   const raw = new Headers(headers).get('x-litellm-response-cost')
   if (raw === null || raw.trim() === '') return null

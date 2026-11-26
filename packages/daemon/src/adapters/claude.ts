@@ -1,3 +1,5 @@
+import { isSubscriptionGatewayCredential } from '@mikka/protocol/device'
+import { prepareMikkaMcpBridge } from '../agents/mikka-mcp-bridge'
 import type { AnonymousClaudeCandidate, FreshCandidate } from '../anonymous-claude-spare'
 import { captureRunFailure, failureFrom, type RunFailure, type RunFailureContext } from "@mikka/protocol/run-failure"
 import { DAEMON_VERSION } from "../paths"
@@ -56,6 +58,7 @@ import {
   RunContext,
   prepareRunContextFiles,
   runMcpBackendContext,
+  runMcpProfile,
   type RunContextOptions,
   runPaths,
   type McpServerSpec,
@@ -66,13 +69,12 @@ import { nativeMcpProcess, type RunApps } from "../agents/run-apps"
 import { taskMcpSecretValues } from '@mikka/protocol'
 import type { AgentSandbox } from "../agents/sandbox"
 import { carryHistory, ownDir, wipeRunCredentials } from "../agents/harness-home"
-import { claudeCredentialEnv, credentialDomain } from "../agents/run-credential"
+import { claudeCredentialEnv, credentialDomain, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
 import { buildChildEnv } from "../env"
 import { taskExecutionEnv } from '../task-env'
 import { mailboxInputs } from '@mikka/protocol/mailbox'
 import { classifyProviderFailure, ProviderFailureError, providerFailureMessage, type ProviderFailure } from "@mikka/protocol/provider-failure"
 import { mailboxToolResult, type RunMailbox } from '../run-mailbox'
-import { NATIVE_AUTH_PLACEHOLDER } from '../subscription-native-broker'
 import { toolOutputTail, type RunChunk } from "../chunks"
 import { CLI_EXITED_EARLY, redactDiagnostic, resultDiagnostics, subscriptionFailureCategory } from "./claude-failure"
 import {
@@ -518,7 +520,8 @@ export class ClaudeAdapter implements AgentAdapter {
   /** Trusted hosted fresh-task path. The same open/account/input logic runs
    * after checkout; no separate adapter or alternate CLI is introduced. */
   startPrepared(options: StartOptions, binding: ClaudePrewarmBinding, control: ClaudePreparation, stop: () => Promise<void>): Promise<AgentSession> {
-    if (!options.machineEnvironment || !this.options.spawnHosted || !this.options.subscriptionAuth ||
+    if (!options.machineEnvironment || !this.options.spawnHosted ||
+      (!this.options.subscriptionAuth && !isSubscriptionGatewayCredential(options.credential, 'anthropic')) ||
       options.continueSession || options.requireSessionResume) throw Error('Claude preparation requires a fresh hosted subscription')
     return this.open(binding.sessionId, 'new', options.prompt, options, { binding, control, stop })
   }
@@ -720,6 +723,7 @@ export class ClaudeAdapter implements AgentAdapter {
             stderrArrived()
           })
     }
+    let preparedMikka = preparation && !externalAuth ? prepareMikkaMcpBridge(runMcpProfile(contextOptions(true))) : undefined
     const sdkOptions = (context: Pick<RunContext, "worktree" | "tmpDir" | "tempEnv" | "mcpServer">, append: string): Options => ({
         ...refreshOptions,
         includePartialMessages: daemonTracer.enabled,
@@ -745,7 +749,7 @@ export class ClaudeAdapter implements AgentAdapter {
         },
         mcpServers: {
           ...(options.mailbox ? { mikka_mailbox: claudeMailboxServer(options.mailbox) } : {}),
-          [MCP_SERVER_NAME]: { type: "stdio", ...context.mcpServer() },
+          [MCP_SERVER_NAME]: preparedMikka?.server ?? { type: "stdio", ...context.mcpServer() },
           ...(computerMcp ? { [COMPUTER_MCP_SERVER_NAME]: { type: "stdio" as const, ...computerMcp } } : {}),
           ...claudeAppServers(options.apps),
         },
@@ -814,7 +818,16 @@ export class ClaudeAdapter implements AgentAdapter {
           runMcpBackendContext(contextOptions(), ctx, sdkOptions(ctx, '').env ?? {}))
         try {
           const claimed = await prepared.consume({ binding, appendSystemPrompt: ctx.instructions(),
-            verify: async (_query, signal) => { signal.throwIfAborted(); if (!await approval.checkLive()) throw Error('Run tool approval unavailable') },
+            verify: async (_query, signal) => {
+              const assertLive = () => {
+                signal.throwIfAborted()
+                if (approval.revoked) throw Error('Run tool approval unavailable')
+              }
+              assertLive()
+              if (!await approval.checkLive()) throw Error('Run tool approval unavailable')
+              if (preparedMikka) await preparedMikka.bind(
+                runMcpBackendContext(contextOptions(), ctx, sdkOptions(ctx, '').env ?? {}), { signal, assertLive })
+            },
           })
           anonymousClaimed = anonymousAdopted
           session = claimed.query
@@ -827,9 +840,11 @@ export class ClaudeAdapter implements AgentAdapter {
           if (!(error instanceof ClaudeProjectSettingsNotClaimable)) throw error
           control.signal.throwIfAborted()
           if (!await approval.checkLive()) throw Error('Run tool approval unavailable', { cause: error })
+          await preparedMikka?.close()
+          preparedMikka = undefined
           session = query({ prompt: prompts as PromptQueue, options: sdkOptions(ctx, ctx.instructions()) })
         }
-      } catch (error) { await prepared.cancel(); throw error }
+      } catch (error) { await Promise.all([prepared.cancel(), preparedMikka?.close()]); throw error }
     } else session = query({ prompt: prompts as PromptQueue, options: sdkOptions(ctx!, ctx!.instructions()) })
 
 
@@ -846,7 +861,7 @@ export class ClaudeAdapter implements AgentAdapter {
       session.close()
       await gone
       const processExited = await nativeExit
-      await closePrepared?.()
+      await Promise.all([closePrepared?.(), preparedMikka?.close()])
       wipeRunCredentials(runDir)
       if (event) {
         const { failureDetails: supplied, ...terminal } = event

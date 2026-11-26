@@ -1759,6 +1759,16 @@
       "sourceHash": "bfd9b4563ceb37c4e35e10f74fd5bf9ff0c515b71347526b2d9b7b80e1e58cfc"
     },
     {
+      "path": "/mikka/api/internal/subscription/chat",
+      "template": "/api/internal/subscription/chat",
+      "source": "app/api/internal/subscription/chat/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 300,
+      "sourceHash": "a7c8877c0ac8459734a0549b3b38c0cdad15741f7242ad93c47c52300b435b42"
+    },
+    {
       "path": "/mikka/api/invitations/[token]",
       "template": "/api/invitations/[token]",
       "source": "app/api/invitations/[token]/route.ts",
@@ -4220,7 +4230,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "8d30a90dd9c31197ee57c20a19ad1bf7dd2d9eb2d4f5c1c6650859150f76d4a5"
+      "sourceHash": "8601cd59043ef409fb4ab4cc152bcd031cae76d06bf879e9a7a4aaf43e063379"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
@@ -4258,7 +4268,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "319bfd103da3a0341cd442c0a88fb1441ad4765dbe0fe5cb58b10a0bdc11bc5f"
+      "sourceHash": "a2c3140416feb70aa92e881b2b8379b27bc20bda55afc24ad24a3ed49c59501d"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/workspace/requests/[requestId]",

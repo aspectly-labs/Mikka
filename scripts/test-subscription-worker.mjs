@@ -141,10 +141,15 @@ try {
     "CGO_ENABLED=0 go build -mod=readonly -trimpath -o bin/mikka-subscription-worker ./cmd/mikka-subscription-worker && CGO_ENABLED=0 go build -mod=readonly -trimpath -o bin/mikka-subscription-enrollment ./cmd/mikka-subscription-enrollment && CGO_ENABLED=0 go build -mod=readonly -tags mikka_byos_fixture -o bin/mikka-subscription-fixture ./testfixture && go test -mod=readonly -race -timeout 90s -count=1 -v ./... && go vet -mod=readonly ./... && ./bin/mikka-subscription-worker --version"
   )
   await run("docker", dockerArgs)
-  await run(process.execPath, ["--import", "./scripts/server-test.mjs", "--import", "tsx", "--test", "tests/byos-application.test.mjs", "tests/byos-enrollment-binding.test.mjs", "tests/byos-enrollment.test.mjs"], {
+  const applicationSuites = ["tests/byos-application.test.mjs"]
+  if (process.env.MIKKA_BYOS_CHAT_ONLY !== "1")
+    applicationSuites.push("tests/byos-enrollment-binding.test.mjs", "tests/byos-enrollment.test.mjs")
+  await run(process.execPath, ["--import", "./scripts/server-test.mjs", "--import", "tsx", "--test", ...applicationSuites], {
     ...baseEnv, NODE_ENV: "test", MIKKA_BYOS_BACKEND_ONLY: process.env.MIKKA_BYOS_BACKEND_ONLY ?? "", MIKKA_BYOS_TEST_DATABASE_URL: url,
     MIKKA_DATABASE_URL: url, DATABASE_URL: url,
-    MIKKA_BYOS_FIXTURE_BINARY: `${worker}bin/mikka-subscription-fixture`
+    MIKKA_BYOS_FIXTURE_BINARY: `${worker}bin/mikka-subscription-fixture`,
+    MIKKA_BYOS_LITELLM_BINARY: process.env.MIKKA_BYOS_LITELLM_BINARY ?? "",
+    MIKKA_BYOS_CHAT_ONLY: process.env.MIKKA_BYOS_CHAT_ONLY ?? ""
   })
   await run(process.execPath, ["scripts/migrate.mjs"], migrationEnv)
   const { rows } = await pool.query(
