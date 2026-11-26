@@ -1898,7 +1898,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "a75f36b4bcf69807da9e3c27d3a6c733329e3dd0ba7c1c1bdd00481556b469ad"
+      "sourceHash": "fd0cbbc01745215367c832b2da17a547452af34cf1601d138b9f74ed9d1f4f6e"
     },
     {
       "path": "/mikka/api/mobile/bots/[id]",
