@@ -42,7 +42,13 @@
       "selectedSkillLabel": "当前技能",
       "sourcePlaceholder": "owner/repo",
       "backToSkills": "技能",
-      "addTitle": "添加技能"
+      "addTitle": "添加技能",
+      "policyHeading": "工作区技能",
+      "policyLabel": "发布到工作区",
+      "policyOpen": "开放",
+      "policyReview": "需管理员审核",
+      "policyOff": "关闭",
+      "pendingTag": "待接入"
     },
     "agentProfiles": {
       "reasons": {
@@ -342,7 +348,8 @@
         "title": "团队权限"
       },
       "privacy": {
-        "title": "数据与隐私"
+        "title": "数据与隐私",
+        "keywords": "数据 隐私 导出 共享链接 归档 删除"
       },
       "security": {
         "title": "安全"
@@ -358,6 +365,22 @@
       },
       "secrets": {
         "title": "密钥与凭证"
+      },
+      "integrations": {
+        "title": "集成",
+        "keywords": "集成 GitHub Linear Slack Telegram 账号 连接"
+      },
+      "agent-configs": {
+        "title": "Agent 配置",
+        "keywords": "Agent 配置 角色 模型 指令 Bot 任务"
+      },
+      "agent-permissions": {
+        "title": "Agent 权限",
+        "keywords": "权限 审批 策略 模板 网络 操作电脑"
+      },
+      "identity": {
+        "title": "身份与访问",
+        "keywords": "身份 访问 域名 单点登录 SSO SAML 两步验证"
       }
     },
     "mcpConnections": {
@@ -672,7 +695,7 @@
       "githubSwitchAccount": "切换账号",
       "callbackVerificationFailed": "Composio 无法确认此连接属于当前 Mikka 账号。请使用发起连接的账号登录后重试。",
       "connectAnotherAccount": "连接另一个账户",
-      "githubDescription": "Agent 在你授权的仓库里读代码、推送分支、开 Pull Request，并读取 Issue 和 CI 检查。",
+      "githubDescription": "Agent 在你授权的仓库里读代码、推送分支、开 PR，并读取 Issue 和 CI 检查。",
       "githubAppConfigured": "已配置",
       "githubVerification": "验证命令",
       "githubConnectionHeading": "连接",
@@ -790,7 +813,8 @@
       "subscribe": "订阅 Mikka Pro",
       "team": "Mikka Pro",
       "pointsValue": "{points} 点",
-      "notConfiguredTitle": "此服务器未设置计费"
+      "notConfiguredTitle": "此服务器未设置计费",
+      "paymentAndInvoices": "付款方式与发票"
     },
     "passkeys": {
       "loadError": "通行密钥读取失败",
@@ -982,7 +1006,7 @@
       "confirmWorkspace": "{workspace} 的所有成员都能用 {name}？",
       "value": "值",
       "confirmWorkspaceMany": "{workspace} 的所有成员都能用这 {count} 个密钥？",
-      "empty": "还没有密钥。",
+      "empty": "还没有密钥",
       "deleting": "正在删除…",
       "bulkTitle": "批量添加",
       "importDone": "已添加 {created} 个，替换 {replaced} 个，跳过 {kept} 个。",
@@ -1020,7 +1044,9 @@
       "modeDirect": "环境变量密钥（直传兼容）",
       "modeDirectHint": "写入后不可读；注入进程环境变量以兼容旧 SDK（长度 ≥ 8 字符的值自动脱敏）。",
       "modePlainEnv": "普通环境变量",
-      "modePlainEnvHint": "非敏感配置变量，Agent 可直接读取。"
+      "modePlainEnvHint": "非敏感配置变量，Agent 可直接读取。",
+      "mineGroup": "个人",
+      "scopeLabel": "范围"
     },
     "audit": {
       "actions": {
@@ -1132,7 +1158,8 @@
         "time": "时间",
         "place": "地点",
         "actor": "操作人",
-        "category": "类别"
+        "category": "类别",
+        "target": "对象"
       },
       "unknownAction": "记录了「{action}」",
       "access": {
@@ -1185,7 +1212,10 @@
       "categoryFilter": "类别",
       "exportCsv": "导出 CSV",
       "empty": "最近 90 天没有记录。",
-      "loadedFilterNotice": "筛选当前已加载记录"
+      "loadedFilterNotice": "筛选当前已加载记录",
+      "title": "审计日志",
+      "allActors": "全部操作人",
+      "eventId": "事件 ID"
     },
     "memory": {
       "correct": "更正",
@@ -1243,10 +1273,10 @@
       "personalSecretsAndLoginsHeading": "个人密钥与登录",
       "statesCount": "{count} 个状态",
       "onlyMeScope": "仅自己",
-      "workspaceSecretsHint": "环境变量以 secretIds 引用，不落明文。",
+      "workspaceSecretsHint": "环境变量通过密钥引用，不保存明文。",
       "auditSearchPlaceholder": "按人员或对象搜索",
       "envSetupApproved": "已批准",
-      "personalSecretsAndLoginsEmpty": "暂无个人密钥或保存的网站登录。",
+      "personalSecretsAndLoginsEmpty": "暂无个人密钥或保存的网站登录",
       "auditColumnTime": "时间 ↓",
       "apiKeysDescription": "用自己的身份或服务账号调用 API。",
       "tokenNameRequired": "填写密钥名称。",
@@ -1348,12 +1378,12 @@
       "hiddenNone": "不折叠",
       "background": "背景",
       "languageEn": "English",
-      "myThemesEmpty": "还没有自己的主题。",
+      "myThemesEmpty": "还没有自己的主题",
       "steer": "引导当前运行",
       "theme_oled": "OLED",
       "hiddenShow": "显示",
       "openInAppHint": "用已安装的 Mikka 桌面应用打开 Mikka 链接。",
-      "wallpaperEmpty": "还没有壁纸，可保存当前背景或从探索添加。",
+      "wallpaperEmpty": "还没有壁纸，可保存当前背景或从探索添加",
       "theme_mikka": "Mikka",
       "diffUnified": "统一",
       "microphone": "麦克风",
@@ -1408,7 +1438,20 @@
       "modEnterHint": "运行过程中按 ⌘ / Ctrl + Enter 时的行为。",
       "diffBlue": "蓝色／橙色",
       "synced": "已同步",
-      "theme_forest": "森林"
+      "theme_forest": "森林",
+      "enterRow": "Enter 键行为",
+      "modEnterRow": "⌘ / Ctrl + Enter 键行为",
+      "altEnterRow": "⌥ / Alt + Enter 键行为",
+      "sidebarPagesCount": "已显示 {count} / {total} 个页面",
+      "systemMode": "跟随系统",
+      "editSidebarPages": "编辑侧栏页面",
+      "chatFont": "线程字体",
+      "chatFontDefault": "默认",
+      "chatFontSans": "无衬线",
+      "chatFontSystem": "系统",
+      "chatFontReadable": "易读",
+      "chatSection": "线程",
+      "chatFontRow": "字体"
     },
     "activityPage": {
       "allBots": "全部 Bot",
@@ -1456,7 +1499,8 @@
         "onlineDevices": "在线设备",
         "onlineDevicesSub": "已绑定 {bound} 台 · {bots} 个活跃 Bot",
         "storage": "工作区存储",
-        "mergedPrs": "合并的拉取请求"
+        "mergedPrs": "合并的拉取请求",
+        "contributionChange": "{points} 个百分点"
       },
       "filterMemberLabel": "筛选成员",
       "filterKindLabel": "活动类型",
@@ -1561,7 +1605,9 @@
       "columnKeys": "按键",
       "scopeAll": "全部",
       "scopeGlobal": "全局",
-      "scopeWorkspace": "工作区"
+      "scopeWorkspace": "工作区",
+      "fixedHeading": "固定快捷键",
+      "resetDescription": "{count, plural, other {# 项自定义快捷键将恢复为默认按键。}}"
     },
     "threadTitles": {
       "triggers": "重新生成标题的时机",
@@ -1826,7 +1872,23 @@
       "authorEmailHint": "留空时沿用仓库本地配置或运行默认邮箱",
       "prAutoMerge": "自动合并",
       "gitTitle": "Git",
-      "saved": "已保存"
+      "saved": "已保存",
+      "pendingTag": "待接入",
+      "commitAuthorship": "提交署名",
+      "authorshipYouCoauthor": "你，Mikka 共同署名",
+      "authorshipYou": "你",
+      "authorshipMikkaCoauthor": "Mikka，你共同署名",
+      "authorshipMikka": "Mikka",
+      "commitInstructions": "提交说明指令",
+      "addInstructions": "添加",
+      "mergeMethod": "合并方式",
+      "mergeSquash": "压缩合并",
+      "mergeCommit": "合并提交",
+      "mergeRebase": "变基合并",
+      "wakeOnReview": "收到评审评论时继续",
+      "wakeOnCi": "CI 失败时继续",
+      "reviewBots": "评审 Bot",
+      "addBot": "添加"
     },
     "usagePage": {
       "historyHeading": "历史与外部账户",
@@ -1907,7 +1969,8 @@
       "chartMetricLabel": "图表指标",
       "emptyModels": "所选时间段暂无模型调用记录。",
       "sourceLabel": "计费来源",
-      "creditRate": "100 额度 = US$1.00"
+      "creditRate": "100 额度 = US$1.00",
+      "spendKpi": "费用"
     },
     "notificationsMatrix": {
       "dndRowHint": "免打扰期间不发送推送提醒",
@@ -2015,7 +2078,10 @@
       "manage": "管理",
       "manageNone": "目前没有共享中的链接",
       "linksLoading": "正在读取共享链接…",
-      "exportButton": "导出"
+      "exportButton": "导出",
+      "archivedThreads": "已归档线程",
+      "archivedManage": "查看",
+      "noTraining": "Mikka 不使用你的内容训练模型"
     },
     "tokens": {
       "noExpiry": "永不过期",
@@ -2030,7 +2096,7 @@
       "copyFailed": "复制失败。请手动选中并复制",
       "shownOnce": "只显示这一次。",
       "revokeTitle": "撤销「{name}」？",
-      "empty": "还没有令牌。",
+      "empty": "还没有令牌",
       "createdTitle": "已新建「{name}」",
       "name": "名称",
       "expiryLabel": "过期时间",
@@ -2174,13 +2240,13 @@
       "unknownBot": "未知 Bot",
       "usageError": "使用记录没有读出来。",
       "newPassword": "新密码",
-      "usageEmpty": "还没有使用记录。",
+      "usageEmpty": "还没有使用记录",
       "deleteTitle": "删除 {site} 的登录？",
       "addTitle": "添加网站登录",
       "save": "保存",
       "cancel": "取消",
       "never": "从未使用",
-      "empty": "还没有保存的网站登录。",
+      "empty": "还没有保存的网站登录",
       "actions": "{site} 的操作",
       "usage": "使用记录",
       "usageTitle": "{site} 的使用记录",
@@ -2409,7 +2475,7 @@
       "projectDefaults": "项目默认环境",
       "restoreSetup": "恢复准备设置",
       "setup": "准备命令",
-      "empty": "暂无云端环境。",
+      "empty": "暂无云端环境",
       "history": "设置历史",
       "archived": "已归档环境",
       "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
@@ -2476,7 +2542,26 @@
       "summaryScripts": "{count} 个脚本",
       "summarySecrets": "{count} 个密钥",
       "summaryMcp": "{count} 个 MCP",
-      "summaryVars": "{count} 个变量"
+      "summaryVars": "{count} 个变量",
+      "columnEnvironment": "环境",
+      "columnSetup": "安装",
+      "setupConfigured": "已配置",
+      "setupNone": "未配置",
+      "scopeDefault": "默认",
+      "scopePersonal": "仅我",
+      "scopeWorkspace": "工作区",
+      "anyRepository": "任意仓库",
+      "onDemandCount": "按需 {count} 个",
+      "actionsNamed": "{name} 的操作",
+      "computeHeading": "算力",
+      "computeRow": "云端机器",
+      "computeMikka": "Mikka 云",
+      "computeOwn": "你的 E2B 账号",
+      "computeUseOwn": "用自己的 E2B 账号",
+      "lazyRepositories": "按需克隆的仓库",
+      "lazyRepositoriesEmpty": "线程用到时才克隆",
+      "scopeLabel": "谁可以使用",
+      "pendingTag": "待接入"
     },
     "workspaceUnavailable": "无法读取工作区，请刷新后重试。",
     "teamSkills": {
@@ -2546,7 +2631,8 @@
       "block": "禁止{name}",
       "decisionDeny": "禁止",
       "decisionAsk": "询问",
-      "decisionAllow": "允许"
+      "decisionAllow": "允许",
+      "membersHeading": "成员"
     },
     "security": {
       "saving": "正在保存…",
@@ -2740,7 +2826,8 @@
       "review": "审阅",
       "agent": "Agent 与计算",
       "workspace": "工作区",
-      "personal": "个人"
+      "personal": "个人",
+      "compute": "连接与计算"
     },
     "loadingPage": "正在加载设置",
     "creditShare": {
@@ -2785,7 +2872,7 @@
     "title": "设置",
     "workspaceLoading": "正在读取工作区…",
     "sharedLinks": {
-      "revokeConfirmTitle": "撤销分享链接？",
+      "revokeConfirmTitle": "停止分享「{title}」？",
       "revokeConfirmBody": "撤销后，持有该链接的人将立即失去访问权限。",
       "revokeConfirmAction": "确认撤销",
       "cancel": "取消",
@@ -2795,6 +2882,14 @@
     },
     "preferences": {
       "languageHeading": "语言"
+    },
+    "phoneDesktopOnly": "只读 · 在电脑上编辑",
+    "identityPage": {
+      "title": "身份与访问",
+      "ssoTitle": "单点登录与域名",
+      "unboundTitle": "先把工作区绑定到组织",
+      "unboundNote": "单点登录、域名验证和 SCIM 在组织上设置。",
+      "openOrganization": "前往组织"
     }
   },
   "Organization": {
@@ -2882,7 +2977,7 @@
         "done": "已保存",
         "empty": "没有 SCIM 连接",
         "active": "同步中",
-        "revokeTitle": "撤销这个 SCIM 连接？",
+        "revokeTitle": "撤销 {date} 创建的 SCIM 连接？",
         "revoked": "SCIM 连接已撤销。",
         "token": "Bearer 凭证",
         "revoke": "撤销"
@@ -2916,7 +3011,7 @@
       "needsEnterprise": "单点登录和 SCIM 需要 Enterprise"
     },
     "audit": {
-      "recentEmpty": "还没有组织事件。",
+      "recentEmpty": "还没有组织事件",
       "actions": {
         "sso": {
           "signed_in": "SSO 登录",
@@ -3495,7 +3590,7 @@
     "acceptanceTab": "验收",
     "composer": "提出后续变更要求",
     "changesTab": "改动",
-    "pullTab": "Pull request",
+    "pullTab": "PR",
     "filesTab": "文件",
     "setupTab": "运行环境",
     "filesThisThread": "本线程",
@@ -3522,12 +3617,12 @@
     "setupNoMachine": "没有机器",
     "setupActionFailed": "操作失败",
     "crewThreads": "全部线程",
-    "crewPulls": "Pull requests",
+    "crewPulls": "PR",
     "crewSide": "旁支线程",
-    "crewPullsEmpty": "还没有 pull request",
-    "crewPullsError": "Pull requests 读不出来",
+    "crewPullsEmpty": "还没有 PR",
+    "crewPullsError": "无法加载 PR",
     "crewSideEmpty": "还没有旁支线程",
-    "crewSideError": "旁支线程读不出来",
+    "crewSideError": "无法加载旁支线程",
     "untitledThread": "未命名线程",
     "deliveryQueued": "排队中",
     "fullInstructions": "查看完整指令",
@@ -3859,10 +3954,10 @@
       "connect": "连接",
       "noPnpm": "这台机器上没有 pnpm",
       "desktopLink": "下载桌面端",
-      "daemonRunning": "daemon 已在后台运行",
+      "daemonRunning": "后台服务已在运行",
       "depsInstalled": "依赖已安装",
       "copied": "已复制",
-      "tokenHint": "点下面的按钮生成 token，它只显示一次。",
+      "tokenHint": "点下面的按钮生成令牌，它只显示一次。",
       "actAs": "以谁的身份",
       "steps": {
         "connect": "连接",
@@ -3875,36 +3970,36 @@
       "interrupted": "连接中断。",
       "configurationFailed": "安装命令暂不可用",
       "sshExitCode": "ssh 退出码 {code}",
-      "manualDescription": "生成一个 token，在那台机器上自己执行下面的命令。适合 SSH 不通、或者你想自己控制安装过程的场景。",
-      "generateToken": "生成 token",
+      "manualDescription": "生成一个令牌，在那台机器上自己执行下面的命令。适合 SSH 不通、或者你想自己控制安装过程的场景。",
+      "generateToken": "生成令牌",
       "downloadDesktop": "下载 Mikka 桌面版",
       "host": "主机",
       "connectionError": "连接过程出错",
-      "progressDescription": "在这台机器上安装并启动 daemon，然后等它连上。",
+      "progressDescription": "在这台机器上安装并启动后台服务，然后等它连上。",
       "copyCommand": "复制命令",
       "trigger": "连接设备",
       "hostPlaceholder": "ssh 主机、主机名或 IP[:端口]",
       "manual": {
-        "loginComment": "# 1. 在这台机器上登录（token 只显示这一次）",
-        "startComment": "# 2. 启动 daemon：它会上报本机装好的 Agent"
+        "loginComment": "# 1. 在这台机器上登录（令牌只显示这一次）",
+        "startComment": "# 2. 启动后台服务：它会上报本机装好的 Agent"
       },
       "back": "返回",
       "requirements": "Node.js 24+ · Git",
       "fromConfig": "来自 ~/.ssh/config",
       "done": "完成",
-      "description": "一台你能 ssh 进去的机器。Mikka 会在上面安装并启动 daemon，然后把它检测到的 Agent 带回来。",
+      "description": "一台你能 SSH 进去的机器。Mikka 会在上面安装并启动后台服务，然后把它检测到的 Agent 带回来。",
       "connectingHost": "正在连接 {host}",
-      "copyDaemon": "复制 daemon 到 ~/.mikka",
+      "copyDaemon": "复制后台服务到 ~/.mikka",
       "actAsPlaceholder": "你在那台机器上的用户名",
       "title": "添加设备",
-      "manualToken": "改用手动 token",
-      "tokenFailed": "生成 token 失败，请重试。",
+      "manualToken": "改用手动令牌",
+      "tokenFailed": "生成令牌失败，请重试。",
       "noHosts": "没有读取到主机。在上面填一个地址即可。",
       "noNode": "这台机器上没有 node",
       "manualTitle": "手动连接",
       "rsyncExitCode": "rsync 退出码 {code}",
       "reconnectTitle": "重新连接",
-      "heartbeatTimeout": "daemon 没有连上，日志在 ~/.mikka/daemon.log"
+      "heartbeatTimeout": "后台服务没有连上，日志在 ~/.mikka/daemon.log"
     },
     "add": {
       "configured": "已设置",
@@ -3955,7 +4050,7 @@
       "steps": {
         "start": "启动",
         "connect": "连接",
-        "install": "安装 daemon",
+        "install": "安装后台服务",
         "online": "已上线"
       },
       "reconnectingThis": "重新连接这台电脑",
@@ -3996,15 +4091,15 @@
       "rename": "重命名",
       "remove": "移除设备",
       "redetect": "重新检测 Agent",
-      "restart": "重启 daemon",
-      "update": "更新 daemon"
+      "restart": "重启后台服务",
+      "update": "更新后台服务"
     },
     "computers": "电脑",
     "remove": {
-      "uninstalling": "正在卸载 {name} 上的 daemon",
-      "offline": "{name} 离线，没法卸载上面的 daemon；它的凭证立即失效，不再接任务。",
+      "uninstalling": "正在卸载 {name} 上的后台服务",
+      "offline": "{name} 离线，没法卸载上面的后台服务；它的凭证立即失效，不再接任务。",
       "cancel": "取消",
-      "uninstall": "也会卸载 {name} 上的 daemon，它的凭证立即失效。",
+      "uninstall": "也会卸载 {name} 上的后台服务，它的凭证立即失效。",
       "confirm": "移除",
       "title": "移除「{name}」？"
     },
@@ -4013,8 +4108,8 @@
     "commands": {
       "sent": {
         "redetect": "已让 {name} 重新检测 Agent",
-        "update": "已让 {name} 更新 daemon",
-        "restart": "已让 {name} 重启 daemon"
+        "update": "已让 {name} 更新后台服务",
+        "restart": "已让 {name} 重启后台服务"
       },
       "queued": "{name} 离线，上线后执行"
     },
@@ -4052,7 +4147,8 @@
     "online": "在线",
     "noAgentYet": "还没装 Agent",
     "lastHeartbeat": "最后心跳 {time}",
-    "namePlaceholder": "例如：MacBook Pro"
+    "namePlaceholder": "例如：MacBook Pro",
+    "yourDevices": "你的设备"
   },
   "Coordinator": {
     "modelRequired": "任务未启动：未选择模型。",
@@ -4409,7 +4505,8 @@
     "input": "给 Coordinator 发消息",
     "sendOffline": "没有网络，未发送",
     "suggestionHandedTo": "已交给 {name}",
-    "commandNew": "新建线程"
+    "commandNew": "新建线程",
+    "emptyHint": "{name} 会开任务、派 Agent 去做，PR 准备好时叫你"
   },
   "Errors": {
     "issueScopeInLinear": "请先确认如何处理 Linear 中的任务，再转为个人任务。",
@@ -4598,7 +4695,7 @@
     "emailDeliveryFailed": "邮件没有发送成功。",
     "scheduleUserSourceRequired": "这个操作需要你本人发起。",
     "botTransferNameConflict": "接手人已有同名 Bot，为其中一个改名后再转交。",
-    "tokenCreateFailed": "生成 token 失败，请重试。",
+    "tokenCreateFailed": "生成令牌失败，请重试。",
     "issueAccessLost": "你已失去此任务的访问权限。",
     "projectDependencyCycle": "项目不能依赖自身，也不能形成循环依赖。",
     "teamPersonalWorkspace": "只有共享工作区支持创建团队。",
@@ -4741,28 +4838,37 @@
     "failed": "连接失败",
     "loading": "正在读取…",
     "access": "权限",
-    "code": "终端验证码",
+    "code": "验证码",
     "rateLimited": "查询次数过多，30 分钟后再试",
     "invalid": "验证码无效或已过期",
-    "clientVersion": "daemon {version}",
+    "clientVersion": "后台服务 {version}",
     "enterAgain": "重新输入",
     "deny": "拒绝",
-    "allow": "允许",
-    "returnToTerminal": "回到终端启动 daemon",
+    "allow": "批准",
+    "returnToTerminal": "回到终端启动后台服务",
     "deviceUnreported": "未报告名称",
     "approving": "正在批准…",
     "denied": "已拒绝",
     "done": "完成",
     "expired": "验证码已过期，请在终端重新发起设备登录。",
     "continue": "继续",
-    "codeMatches": "终端里显示的也是这个验证码",
-    "expires": "到期时间",
+    "codeMatches": "这个验证码就在我正在设置的机器上",
+    "expires": "到期",
     "device": "设备",
     "scope": "运行你的线程",
-    "title": "连接这台设备",
+    "title": "连接设备",
     "approved": "已批准",
     "retry": "重试",
-    "back": "返回设备列表"
+    "back": "返回设备列表",
+    "expiresIn": "{time}过期",
+    "entryHint": "批准一台请求连接你 Mikka 账号的机器",
+    "codeHint": "你要连接的机器上显示的 8 位字符",
+    "unverified": "以下信息由请求连接的机器上报，未经验证",
+    "warningTitle": "不要批准别人发给你的验证码",
+    "target": "连接到",
+    "targetAccount": "你的 Mikka 账号",
+    "useDifferentCode": "使用其他验证码",
+    "deniedHint": "这台机器不会再请求，之后连接需要新的验证码"
   },
   "Shell": {
     "searchEmptyFor": "没有与「{query}」匹配的结果",
@@ -4860,7 +4966,7 @@
       "preview": {
         "untitled": "未命名任务",
         "agent": "{name} 负责",
-        "pullRequest": "Pull request",
+        "pullRequest": "PR",
         "unavailable": "预览不可用"
       },
       "prs": "PR",
@@ -5072,10 +5178,12 @@
       "groupChats": "群聊",
       "threads": "线程",
       "tasks": "任务",
-      "actions": "快捷操作",
+      "actions": "操作",
       "bots": "Bot",
       "conversations": "Bot 线程",
-      "projects": "项目"
+      "projects": "项目",
+      "recent": "最近线程",
+      "goTo": "前往"
     },
     "newBot": {
       "loading": "正在加载…",
@@ -5164,7 +5272,7 @@
       "prompt": "帮我新建一个任务：{text}",
       "details": "详情",
       "sending": "正在发送…",
-      "createOnly": "仅创建",
+      "createOnly": "只创建，不派发",
       "label": "任务描述",
       "titleLabel": "标题",
       "removeFile": "移除 {name}",
@@ -5442,14 +5550,14 @@
       "verify": "验证",
       "execute": "执行"
     },
-    "verifyThread": "独立验证",
+    "verifyThread": "检查",
     "sourceExecution": "查看执行",
     "inProgress": "进行中",
     "environmentLabel": "环境",
     "publicationUnavailable": "发布暂不可用：尚未配置发布目标。",
     "rejectSubmit": "退回",
     "previewLabel": "Preview",
-    "accept": "验收并合并",
+    "accept": "合并",
     "revoke": "撤销批准",
     "envChip": {
       "production": "Production",
@@ -5473,7 +5581,7 @@
     "previous": "上一条证据",
     "cannotMerge": "无法合并",
     "review": "审阅",
-    "reviewThread": "独立审阅",
+    "reviewThread": "审阅",
     "approve": "批准并发布",
     "shaCopied": "已复制完整 sha",
     "notPassed": "未通过",
@@ -5483,7 +5591,7 @@
     "publish": "发布",
     "superseded": "{sha} · 已失效",
     "rejectFailed": "提交失败，请重试",
-    "results": "独立结果",
+    "results": "检查结果",
     "error": "操作未完成。",
     "closeEvidence": "关闭证据",
     "otherEvidence": "其他证据",
@@ -6349,7 +6457,7 @@
       "triggers": "满足任一条件就运行",
       "misfireSkip": "跳过",
       "content": "内容",
-      "deleteBody": "过去的运行和任务会保留。",
+      "deleteBody": "之后不再运行。历史运行记录和线程会保留。",
       "notify": "运行后发到 Slack",
       "batches": {
         "confirmTitle": "取消这个批次？",
@@ -6441,7 +6549,7 @@
       "environmentDefault": "默认环境",
       "devicesError": "设备加载失败",
       "description": "描述",
-      "descriptionPlaceholder": "用途（可选）",
+      "descriptionPlaceholder": "用途",
       "machineSizeQuotaGated": "待提供商配额",
       "history": "历史",
       "expression": "表达式",
@@ -6488,18 +6596,18 @@
       "runsInExisting": "已有线程",
       "resume": "恢复",
       "agentNone": "选择 Agent",
-      "runsAsCreator": "创建者（{name}）",
+      "runsAsCreator": "{name}",
       "tookOver": "已接手",
       "modelDefault": "按 Agent 默认",
       "you": "你",
       "agent": "Agent",
-      "deleteTitle": "删除这个自动化？",
+      "deleteTitle": "删除「{name}」？",
       "runsInNew": "每次新建线程",
       "loadSavedVersion": "放弃修改并载入已保存版本",
       "machineSizeDefault": "按环境默认",
       "effort": "推理强度",
       "name": "名称",
-      "taskTitlePlaceholder": "可选，不填由 Bot 起",
+      "taskTitlePlaceholder": "可选",
       "timezone": "时区",
       "runUnconfirmed": "尚未收到运行确认。可以再次点击“立即运行”重试。",
       "fold": "{time} 在夏令时结束那天会出现两次，选哪一次运行：",
@@ -6981,7 +7089,7 @@
       "two": "{a} 和 {b} 正在工作…"
     },
     "loadingOlder": "正在加载…",
-    "notFound": "找不到这个群聊，或你已不在群里。",
+    "notFound": "找不到这个群聊，或你已不在群里",
     "answering": "正在回复",
     "leaveError": "未能退出群聊，请重试。",
     "leaveDenied": "当前成员身份无法退出此群聊。",
@@ -6998,7 +7106,8 @@
     "composer": "给 {name} 发消息",
     "untitled": "未命名群聊",
     "you": "你",
-    "emptyHint": "用 @ 提到一位成员交给它，或直接发给全组。"
+    "emptyHint": "用 @ 提到一位成员交给它，或直接发给全组。",
+    "backToThreads": "返回线程"
   },
   "Members": {
     "noMatchTitle": "未找到匹配的成员",
@@ -7084,7 +7193,7 @@
     "remove": "移除",
     "defaultWorkspaceName": "{name}的工作区",
     "unmute": "接收通知",
-    "removeDialogTitle": "移除此成员？",
+    "removeDialogTitle": "把「{name}」移出这个任务？",
     "removeFailedTitle": "移除失败",
     "status": {
       "invited": "待接受邀请",
@@ -7376,7 +7485,7 @@
       "memberEmail": "成员邮箱",
       "project": "项目",
       "accessChangeBody": "这会移动 {tasks} 个任务，并改变谁能读取它们。",
-      "noLabelsYet": "还没有标签。",
+      "noLabelsYet": "还没有标签",
       "estimate": "估算",
       "taskProperties": "任务属性",
       "labelColor": "标签颜色",
@@ -7629,7 +7738,8 @@
     "untitledConversation": "未命名线程",
     "newBot": "新建 Bot",
     "workspaceAll": "{name} 全部任务",
-    "search": "搜索任务"
+    "search": "搜索任务",
+    "switchWorkspace": "切换工作区"
   },
   "Governance": {
     "plan": {
@@ -7695,7 +7805,7 @@
         "ask": "需要时询问",
         "unset": "不设置"
       },
-      "empty": "还没有审批模板。",
+      "empty": "还没有审批模板",
       "permissions": "权限",
       "namePlaceholder": "例如：外包仓库只读",
       "cancel": "取消",
@@ -7714,10 +7824,10 @@
     "usage": {
       "show": "查看",
       "day": "日期",
-      "inputTokens": "输入 tokens",
+      "inputTokens": "输入 Token",
       "loading": "正在读取用量…",
       "noAdmin": "只有工作区管理员可以查看按日期的托管用量报告。上方本月按 Bot、按成员的用量不受影响。",
-      "outputTokens": "输出 tokens",
+      "outputTokens": "输出 Token",
       "from": "开始日期",
       "noHosted": "所选日期内没有已结算的托管模型用量。自有模型、设备和自带服务不在这里计费。",
       "model": "模型",
@@ -8053,10 +8163,10 @@
     "cancel": "取消",
     "refresh": "刷新",
     "updated": "更新于",
-    "noMatches": "没有符合筛选条件的 PR。",
+    "noMatches": "没有符合筛选条件的 PR",
     "branch": "分支",
     "openReview": "打开审阅",
-    "empty": "还没有 PR。",
+    "empty": "还没有 PR",
     "reviewers": "审阅者",
     "savedViews": "已保存的视图",
     "label": "标签",
@@ -8074,7 +8184,7 @@
       "CONFLICTING": "有冲突",
       "UNKNOWN": "未知"
     },
-    "detailFailed": "Pull request 详情不可用",
+    "detailFailed": "无法加载 PR 详情",
     "requestChanges": "请求修改",
     "requestChangesTitle": "对 {repo} #{number} 请求修改",
     "requestChangesBody": "需要改什么…",
@@ -8099,7 +8209,9 @@
     "diffPatchUnavailable": "{count} 个文件没有补丁（二进制或被截断）",
     "reviewSelf": "不能在自己的 PR 上请求修改",
     "noneSelected": "选择一个 PR，在这里查看",
-    "changesTab": "变更"
+    "changesTab": "变更",
+    "emptyHint": "Agent 开的 PR 会出现在这里",
+    "emptyAction": "新建线程"
   },
   "HostedConnections": {
     "state": {
@@ -8148,7 +8260,12 @@
       "amountColumn": "金额",
       "section": "余额",
       "type": "类型",
-      "receipt": "收据"
+      "receipt": "收据",
+      "topUpTitle": "充值 Mikka 额度",
+      "topUpHint": "选一个金额。付款方式在下一步由 Stripe 确认。",
+      "topUpAmount": "金额",
+      "topUpTotal": "今日应付",
+      "topUpBuy": "购买 {amount}"
     },
     "management": {
       "budgetExhausted": "已达上限",
@@ -8213,7 +8330,7 @@
       "budgets": "预算与阈值",
       "platformReserved": "待结算或费用未知的预留",
       "budgetThreshold": "已达预警阈值",
-      "historyEmpty": "暂无账单记录。",
+      "historyEmpty": "暂无账单记录",
       "accountNone": "尚未指定付款账户",
       "budgetPeriod": "周期",
       "billingEntry": "计费与预算",
@@ -8283,7 +8400,12 @@
       "caption": "套餐每月包含用量，随时可换",
       "subscribe": "订阅",
       "plan": "Mikka Pro",
-      "title": "选择套餐"
+      "title": "选择套餐",
+      "tag": "额度",
+      "outTitle": "Mikka 额度用完了",
+      "outHint": "换一个用你自己订阅的模型，或充值后继续",
+      "freeModel": "换模型",
+      "ownSubscription": "用我的订阅"
     }
   },
   "SettingsRegistry": {
@@ -8534,6 +8656,10 @@
     "newWorkVisibility": {
       "label": "新线程与 Bot 的默认可见性",
       "keywords": "新工作|创建|可见性|私有|共享|线程|Bot"
+    },
+    "chatFont": {
+      "label": "线程字体",
+      "keywords": "线程|字体|阅读|易读"
     }
   },
   "MobilePush": {
@@ -8631,7 +8757,7 @@
     "issuePicker": {
       "searchAria": "搜索可关联任务",
       "save": "保存关联",
-      "empty": "暂无可关联任务，请先创建任务。",
+      "empty": "暂无可关联任务，请先创建任务",
       "title": "关联项目任务",
       "belongsToOther": "已属于其他项目",
       "searchPlaceholder": "搜索任务…"
@@ -8694,7 +8820,7 @@
       "priority": "优先级"
     },
     "picker": {
-      "noMatchesCreate": "暂无匹配标签，可在下方新建。",
+      "noMatchesCreate": "暂无匹配标签，可在下方新建",
       "createTag": "创建标签「{name}」",
       "tagNamePlaceholder": "输入新标签名称…",
       "noOptions": "没有可选项",
@@ -8726,7 +8852,7 @@
     "dependencies": {
       "unavailable": "当前权限无法编辑完整的依赖仓库列表。",
       "title": "依赖仓库",
-      "empty": "暂无可显示的仓库。"
+      "empty": "暂无可显示的仓库"
     },
     "milestones": {
       "name": "里程碑 {index} 名称",
@@ -8960,7 +9086,8 @@
       "todoLead": "更新了计划",
       "delegate": "派出了子 Agent",
       "delegateLead": "派出了子 Agent"
-    }
+    },
+    "retryingIn": "{n} 秒后重连"
   },
   "Board": {
     "scrollRight": "向右滚动看板",
@@ -9026,7 +9153,7 @@
       "saveFailed": "保存失败",
       "editorCrashedDescription": "页面的其他部分仍可使用。重新载入后可以继续。",
       "membersTitle": "协作成员",
-      "activityFailed": "活动读取失败，点击重试",
+      "activityFailed": "无法加载活动",
       "manageMembers": "管理协作成员",
       "advancedTools": "高级文档工具",
       "emptyDocument": "空白文档",
@@ -9063,7 +9190,7 @@
       "aTask": "某个任务",
       "estimateChanged": "将预估设为 {estimate}",
       "resolve": "解决讨论",
-      "timelinePullFailed": "无法加载关联的 Pull Request 动态。重试",
+      "timelinePullFailed": "无法加载关联 PR 的动态",
       "markedBlockedBy": "把 {code} 标记为被 {other} 阻塞",
       "moved": "把 {code} 移到了{status}",
       "replyPlaceholder": "留下回复…",
@@ -9235,7 +9362,9 @@
       "title": "连接 {name}",
       "submit": "连接",
       "connected": "已连接 {name}",
-      "fieldPlaceholder": "输入{label}"
+      "fieldPlaceholder": "输入{label}",
+      "formsFailed": "无法读取 {name} 的连接方式",
+      "noKeyForm": "{name} 不支持用密钥连接"
     },
     "appsTab": "应用",
     "state": {
@@ -9313,7 +9442,7 @@
       "restoring": "正在恢复…",
       "description": "左侧预览描述与变更，右侧选择历史版本。恢复仅替换描述，不修改当前标题、属性与评论。",
       "confirmTitle": "恢复此描述？",
-      "empty": "暂无描述历史。",
+      "empty": "暂无描述历史",
       "reload": "重新加载",
       "confirmAction": "确认恢复描述",
       "restoreFailed": "恢复失败。",
@@ -9683,7 +9812,7 @@
       "askLabel": "提问或更新记忆",
       "askPlaceholder": "提问或更新",
       "sending": "正在发送",
-      "empty": "还没有记住什么。"
+      "empty": "还没有记住什么"
     },
     "profile": {
       "nameRequired": "请输入名字",
@@ -9718,7 +9847,7 @@
     "messageActions": "消息操作",
     "newBot": {
       "nameTaken": "已有同名 Bot",
-      "failed": "没能创建",
+      "failed": "创建失败",
       "creating": "创建中"
     },
     "openFile": "打开 {name}",
@@ -9733,7 +9862,7 @@
       "switching": "正在切换模型…"
     },
     "retrying": "正在重试",
-    "notSentRetry": "没发出去，再试一次。",
+    "notSentRetry": "发送失败，请重试。",
     "openUI": {
       "submitted": "已提交",
       "answerPrompt": "任务背景：{context}\n我的回答：\n{response}\n请根据以上信息继续提供建议，不要执行工作区操作。",
@@ -9797,7 +9926,7 @@
     },
     "listSeparator": "、",
     "review": {
-      "githubPermission": "GitHub 权限不足，没能合并",
+      "githubPermission": "GitHub 权限不足，无法合并",
       "files": "{count} 个文件",
       "filesOne": "{count} 个文件",
       "failedShort": "{count} 项失败",
@@ -9815,9 +9944,9 @@
         "checkpoint": "最后一次检查点"
       },
       "commentOne": "{count} 条评论",
-      "sendFailed": "没能发给 Agent",
+      "sendFailed": "发送给 Agent 失败",
       "mergeConfirmGeneric": "检查未通过，确定合并？",
-      "mergeFailed": "没能合并",
+      "mergeFailed": "合并失败",
       "pendingLabel": "待发送：{line}",
       "noteValue": "修改意见：{note}",
       "writeNote": "写修改意见",
@@ -9963,7 +10092,7 @@
     "fileActions": "{name} 的操作",
     "tooLarge": "文件过大。",
     "deleteFileTitle": "删除 {name}？",
-    "overviewEmpty": "还没有文件。",
+    "overviewEmpty": "还没有文件",
     "overviewSub": "个人保存的文件和任务交付的成果。",
     "unarchiveFolder": "恢复文件夹",
     "accessUnavailable": "当前账号已无法访问这些文件。",
@@ -10042,7 +10171,7 @@
       "tooMany": "尝试次数过多，请稍后再试。",
       "notFound": "没有找到这个邮箱或域名的企业登录方式。请确认组织已完成域名验证，或改用其他方式登录。",
       "cancel": "返回",
-      "open": "使用企业 SSO 登录",
+      "open": "使用单点登录",
       "invalid": "请输入工作邮箱或域名，例如 acme.com。",
       "continue": "继续",
       "returnedFailed": "企业 SSO 登录没有完成。请重试，或联系你们组织的管理员。",
@@ -10052,7 +10181,7 @@
     "namePlaceholder": "怎么称呼你",
     "appleRevocationBody": "删除账户后，请在 Apple 账户的「登录与安全」→「使用 Apple 登录」中选择 Mikka 并停止使用。",
     "requestProcessed": "请求已处理。如账号符合条件，请检查邮箱；此提示不代表邮件已送达。",
-    "submitReset": "保存新密码",
+    "submitReset": "更新密码",
     "forgotTitle": "重置密码",
     "browserOpened": "已在浏览器中打开登录页；完成后会自动返回 Mikka。",
     "passwordLength": "密码需为 8 到 128 位字符。",
@@ -10100,7 +10229,7 @@
     "returnToCurrentAccount": "取消，返回当前账户",
     "continueNotice": "请点击下方对应的登录按钮，在此标签页完成授权。",
     "confirmPassword": "确认新密码",
-    "createTitle": "创建你的工作账号",
+    "createTitle": "创建 Mikka 账号",
     "continueAs": "以 {name} 继续",
     "orEmail": "或",
     "passwordRequired": "密码不能为空",
@@ -10130,14 +10259,14 @@
     "webOpenUnconfirmed": "网页打开未确认",
     "mobileSignInFailed": "登录失败。",
     "email": "邮箱",
-    "submitCreate": "创建账号并进入",
-    "welcome": "登录 Mikka",
+    "submitCreate": "创建账号",
+    "welcome": "登录或注册 Mikka",
     "testWorkspaceCta": "跳过登录，进入测试工作台",
     "tabBlocked": "浏览器阻止了新标签页，请允许弹出窗口后重试。",
     "signUpLabel": "注册账号",
     "googleStartFailed": "暂时无法开始 Google 登录。",
     "verifyLinkInvalid": "验证链接无效、已过期或已使用。如邮箱尚未验证，请重新发送。",
-    "submitSignIn": "登录工作台",
+    "submitSignIn": "继续",
     "testIssueSwitchTitle": "【测试】任务切换与线程复用",
     "googleAccountNotLinked": "此 Google 账号尚未关联 Mikka。请先用已有方式登录，再到「设置 → 账户」关联 Google。",
     "passwordTooShort": "密码至少 8 位字符",
@@ -10149,7 +10278,38 @@
     "continuePasskey": "使用通行密钥继续",
     "passkeyFailed": "通行密钥登录未完成，请重试。",
     "showPassword": "显示密码",
-    "hidePassword": "隐藏密码"
+    "hidePassword": "隐藏密码",
+    "passwordTitle": "输入密码",
+    "noAccountOrWrongPassword": "密码不正确，或者这个邮箱还没有 Mikka 账号",
+    "createWithEmail": "用这个邮箱创建账号",
+    "lastUsed": "上次使用",
+    "legal": "继续即表示你同意<terms>服务条款</terms>和<privacy>隐私政策</privacy>",
+    "accountLine": "当前账号 {email}",
+    "notYou": "不是你？",
+    "switchAccountLink": "切换账号",
+    "switchAccountFailed": "退出登录未完成，请重试。",
+    "submitPassword": "登录",
+    "welcomeBack": "欢迎回来",
+    "ssoTitle": "使用单点登录",
+    "ssoBody": "{email} 通过你的组织登录",
+    "ssoContinue": "使用单点登录继续",
+    "usePasswordInstead": "改用密码登录",
+    "useAnotherEmail": "换一个邮箱",
+    "passwordCreatePlaceholder": "设置密码",
+    "passwordEnterPlaceholder": "输入密码",
+    "newPasswordPlaceholder": "输入新密码",
+    "confirmPasswordPlaceholder": "再次输入新密码",
+    "passwordRule": "8 到 128 位字符",
+    "resetSignsOut": "会退出你在其他设备上的登录",
+    "checkEmailTitle": "查看邮箱",
+    "verifyDescription": "输入注册时使用的邮箱，我们会重新发送验证链接",
+    "verifySent": "如果 {email} 已注册且尚未验证，我们已发送验证链接。请在开始注册的同一设备和浏览器中打开",
+    "verifyExpiredTitle": "链接已过期",
+    "verifyExpiredBody": "验证链接已过期，请重新获取",
+    "verifyFailedTitle": "验证失败",
+    "verifyFailedBody": "链接无效或已被使用，请重新获取",
+    "forgotDescription": "我们会把重置链接发到你的邮箱",
+    "resetSent": "如果 {email} 已注册，重置链接已发送，15 分钟内有效"
   },
   "DesktopServer": {
     "cancel": "取消",
@@ -10177,7 +10337,8 @@
     "selfHosted": "自托管服务器",
     "disconnect": "断开",
     "connecting": "正在连接…",
-    "change": "更改"
+    "change": "更改",
+    "connectionTitle": "Mikka 服务器"
   },
   "TeamSettings": {
     "createHeading": "创建新团队",
@@ -10277,13 +10438,26 @@
     "createAccount": "创建账号",
     "backToWorkspace": "进入工作区",
     "invalidToken": "邀请链接格式无效，请向管理员索取完整链接。",
-    "signInToAccept": "登录并接受邀请",
+    "signInToAccept": "登录后加入",
     "joined": "已加入工作区。",
     "joinTitle": "加入工作区",
     "linksCreated": "已创建 {count} 个邀请链接",
     "invitedToWorkspace": "加入 {workspace}",
     "invitedBy": "由 {inviter} 邀请",
-    "invitedRole": "角色：{role}"
+    "invitedRole": "角色：{role}",
+    "loading": "正在读取邀请…",
+    "joinNamed": "加入 {name}",
+    "joinOrganizationTitle": "加入组织",
+    "kindWorkspace": "工作区",
+    "kindOrganization": "组织",
+    "invitedLine": "{inviter} 邀请你以{role}身份加入这个{kind}",
+    "invitedLineAnonymous": "你受邀以{role}身份加入这个{kind}",
+    "sentTo": "邀请发送至 {email}",
+    "notNow": "暂不",
+    "join": "加入",
+    "backHome": "返回 Mikka",
+    "unavailableTitle": "邀请已失效",
+    "unavailableBody": "这个邀请可能已过期、已被使用或已撤销，请让邀请人重新发送"
   },
   "Common": {
     "undo": "撤销",
@@ -10319,7 +10493,8 @@
     "selected": "已选中",
     "refresh": "刷新",
     "retry": "重试",
-    "later": "稍后"
+    "later": "稍后",
+    "newVersion": "有新版本"
   },
   "Overview": {
     "viewsTitle": "工作区视图",
@@ -10384,13 +10559,23 @@
     "deny": "拒绝",
     "unknownClient": "一个未命名的应用",
     "label": "授权应用",
-    "title": "允许 {name} 使用 Mikka？",
+    "title": "{name} 请求访问你的 Mikka 账号",
     "scopeRead": "查看你的任务和线程记录",
     "scopeCoordinator": "给你的 Coordinator 发消息并读取它的回复",
     "failed": "授权未完成，请回到应用重新连接。",
     "scopesHeading": "请求的权限",
-    "scopeOfflineAccess": "在你离线时保持访问权限",
-    "scopeFallback": "访问权限：{scope}"
+    "scopeOfflineAccess": "关闭浏览器后仍可访问",
+    "scopeFallback": "访问权限：{scope}",
+    "publisherFrom": "来自 {host}",
+    "publisherUnknown": "未提供网站的应用",
+    "unverifiedPublisher": "应用的名称由它自己注册，Mikka 未验证其发布者",
+    "redirectsTo": "授权后将跳转到 {host}",
+    "allowNamed": "授权 {name}",
+    "writeMark": "可写",
+    "detailRead": "只读",
+    "detailWrite": "以你的身份发送消息",
+    "detailOffline": "不用每次重新授权",
+    "detailIdentity": "只读"
   },
   "Artifact": {
     "roles": {
@@ -10563,8 +10748,13 @@
     "nextTaskText": "写下要做的事，Mikka 派给 Agent。",
     "skip": "先跳过",
     "roleAdmin": "管理员",
-    "sub": "大约两分钟。",
-    "computer": "云电脑"
+    "sub": "两步，之后就能开始第一个线程",
+    "computer": "云电脑",
+    "code": {
+      "title": "代码",
+      "heading": "连接代码",
+      "text": "Mikka 在你选的仓库里工作，改动以 PR 提交。之后随时可以在设置里改"
+    }
   },
   "GroupTask": {
     "notStarted": "尚未开始执行。{remedy}",
@@ -10740,7 +10930,13 @@
   "HostedSettings": {
     "account": {
       "pictureHint": "PNG、JPEG 或 WebP",
-      "note": "账户信息对你所在的所有团队都生效。"
+      "note": "账户信息对你所在的所有团队都生效。",
+      "nameHint": "团队成员可见",
+      "userId": "用户 ID",
+      "userIdHint": "用于支持请求和 API",
+      "copyId": "复制",
+      "copiedId": "已复制",
+      "emailHint": "团队成员可见，也用于登录"
     },
     "models": {
       "readOnly": "暂时不能逐个停用模型",
@@ -10770,10 +10966,10 @@
       "noApiKeys": "还没有添加 API Key",
       "defaultAgent": "默认 Agent",
       "defaultAgentHint": "新任务和线程的预选",
-      "defaultHarness": "默认 Harness",
+      "defaultHarness": "默认 Agent",
       "defaultHarnessHint": "新任务和线程默认使用的执行引擎",
       "defaultModel": "默认模型",
-      "defaultModelHint": "当前 Harness 的默认模型与推理",
+      "defaultModelHint": "当前 Agent 的默认模型与推理",
       "allProviders": "常用",
       "otherProvider": "其他",
       "speedFast": "Fast 模式",
@@ -11000,7 +11196,7 @@
     "networkUnavailable": "没有网络",
     "openBrowser": "在浏览器中打开",
     "serverUnavailable": "无法连接 Mikka",
-    "renderHint": "请重试打开页面。",
+    "renderHint": "这部分页面出错了。重试会重新打开它，其他内容不受影响。",
     "updateHint": "当前版本已无法连接 Mikka，请检查应用更新。",
     "reconnecting": "正在重新连接…",
     "browserOpened": "页面已在浏览器打开。完成后可以返回 Mikka。",
@@ -11031,7 +11227,17 @@
     "tabMemory": "记忆",
     "tabDevices": "设备",
     "tabTeams": "团队",
-    "tabMembers": "成员"
+    "tabMembers": "成员",
+    "tabMenuLabel": "{title} 的标签页菜单",
+    "closeTabItem": "关闭标签页",
+    "closeOtherTabs": "关闭其他标签页",
+    "closeTabsToLeft": "关闭左侧标签页",
+    "closeTabsToRight": "关闭右侧标签页",
+    "duplicateTab": "复制标签页",
+    "copyUrl": "复制链接",
+    "moveToNewWindow": "移至新窗口",
+    "currentVersion": "当前版本 v{version}",
+    "offlineKept": "未发送的内容会保留，联网后继续"
   },
   "ConversationDirectory": {
     "loading": "正在加载线程…",
@@ -11061,7 +11267,7 @@
     "archived": "已归档",
     "clearFilters": "清除筛选",
     "automationUnknown": "这个自动化",
-    "emptyTitle": "还没有线程。",
+    "emptyTitle": "还没有线程",
     "archiveOff": "关闭",
     "activeGroup": "进行中与等待回复",
     "recentGroup": "最近线程"
@@ -11132,7 +11338,7 @@
     "unavailableProject": "先前已授权的项目",
     "failed": "操作失败。请刷新查看当前设置。",
     "disable": "停用",
-    "empty": "暂无服务身份。",
+    "empty": "暂无服务身份",
     "credential": "服务密钥",
     "expires": "密钥于{date}到期",
     "organizationScope": "组织 · {name}",
@@ -11145,7 +11351,7 @@
     "name": "身份名称",
     "keyScope": "密钥范围",
     "back": "返回服务身份列表",
-    "confirmRevoke": "撤销此服务密钥？",
+    "confirmRevoke": "撤销「{scope}」的服务密钥？",
     "confirm": "确认",
     "copyNow": "请立即复制，此密钥仅显示一次。",
     "unconfigured": "尚未签发密钥",
@@ -11153,7 +11359,7 @@
     "manage": "管理{name}",
     "confirmProjects": "授予此身份读取所选项目的权限？",
     "rename": "重命名",
-    "noProjects": "暂无可选项目。",
+    "noProjects": "暂无可选项目",
     "revoke": "撤销密钥",
     "confirmRotate": "签发新密钥并使现有密钥失效？",
     "active": "已启用",
@@ -11183,7 +11389,7 @@
     "relatedThreads": "相关线程",
     "closeOtherTabs": "关闭其他标签页",
     "sidebarNavigation": "侧栏导航",
-    "searchTabs": "搜索标签",
+    "searchTabs": "搜索面板",
     "noTabsFound": "没有找到标签。",
     "nothingHere": "这里还没有内容",
     "search": "搜索",
@@ -11195,7 +11401,9 @@
     "mainMenu": "主菜单",
     "dismiss": "关闭",
     "resizeSidebar": "调整侧栏宽度",
-    "resizeWorkArea": "调整右栏宽度"
+    "resizeWorkArea": "调整右栏宽度",
+    "phoneBack": "返回",
+    "phoneColumnMenu": "工作区内容"
   },
   "DeviceSetup": {
     "path": "本地仓库路径",
@@ -11232,7 +11440,7 @@
     },
     "left": "还剩 {count} 项",
     "hide": "隐藏设置清单",
-    "title": "设置清单",
+    "title": "开始使用 Mikka",
     "show": "显示清单",
     "items": {
       "task": "交第一件事",
@@ -11332,8 +11540,12 @@
     "workspaceUnconfirmed": "无法确认工作区"
   },
   "NotFound": {
-    "title": "页面不存在",
-    "backHome": "返回工作台"
+    "title": "404 找不到页面",
+    "backHome": "返回 Mikka",
+    "body": "这个页面不存在，或者需要登录后才能查看",
+    "bodySignedIn": "这个页面不存在，或者 {email} 没有访问权限。如果链接是别人发给你的，请让对方共享给你",
+    "signIn": "登录",
+    "switchAccount": "切换账号"
   },
   "PullRequestsBadge": {
     "label": "{count} 个 PR"
@@ -11578,11 +11790,11 @@
     "draftStatus": "草稿 PR，暂不可合并",
     "mergedStatus": "此 PR 已合并",
     "closedStatus": "此 PR 已关闭",
-    "noIssues": "暂无未解决的评审问题。",
+    "noIssues": "暂无未解决的评审问题",
     "resolved": "已解决",
     "unresolved": "待处理",
     "addReviewComment": "提交审阅意见",
-    "noCommits": "暂无提交记录。",
+    "noCommits": "暂无提交记录",
     "summaryHeading": "PR 摘要",
     "openBrowser": "在浏览器打开",
     "quoteRef": "复制 PR 引用"
@@ -11761,6 +11973,39 @@
     "notFoundTitle": "无法访问此分享线程",
     "notFoundBody": "该分享链接已撤销，或该线程已不可用。",
     "backHome": "前往 Mikka",
-    "emptyMessages": "该线程暂无消息。"
+    "emptyMessages": "该线程暂无消息。",
+    "snapshotAt": "快照于 {time}",
+    "messagesLabel": "线程消息",
+    "snapshotNotice": "这是 {time} 的快照，之后的消息不会显示",
+    "snapshotNoticeUndated": "这是一份快照，之后的消息不会显示"
+  },
+  "DesktopNotificationAccess": {
+    "title": "Mikka 的系统通知已关闭",
+    "description": "打开后，线程等你、失败、有人 @ 你或拉取请求合并时会提醒你",
+    "open": "打开系统设置",
+    "notNow": "以后再说"
+  },
+  "DesktopLocalRuns": {
+    "title": "允许在这台电脑上运行线程？",
+    "description": "你的线程可以在这台电脑上运行，直到你在「设置 › 设备」里移除它。",
+    "allow": "允许运行",
+    "cancel": "取消"
+  },
+  "PublicPage": {
+    "copyLink": "复制链接",
+    "copied": "已复制",
+    "openInMikka": "在 Mikka 中打开",
+    "signIn": "登录",
+    "signUp": "注册"
+  },
+  "CreateWorkspace": {
+    "title": "创建共享工作区",
+    "subtitle": "邀请成员一起使用线程、任务和 Bot",
+    "submit": "创建工作区",
+    "joinableTitle": "你可以加入",
+    "joinableHint": "你的邮箱域名已在这些组织验证",
+    "joinableMeta": "通过邮箱域名",
+    "join": "加入",
+    "joined": "已加入"
   }
 }

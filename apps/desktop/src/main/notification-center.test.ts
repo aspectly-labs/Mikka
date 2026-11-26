@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { NotificationCenter, type NotificationSink } from './notification-center'
+import { NotificationCenter, deniedByOs, type NotificationSink } from './notification-center'
 
 function recordingSink(supported = true) {
   const shown: { title: string; body: string; onClick: () => void }[] = []
@@ -83,4 +83,32 @@ test('a finished thread (线程完成) is a desktop notification kind', () => {
   assert.equal(recorder.shown[0].title, 'Ship the desktop app')
   recorder.shown[0].onClick()
   assert.deepEqual(delivered, ['/issue/mik-1'])
+})
+
+test('tracks whether the OS shows notifications from what it did with the last one', () => {
+  const outcomes: { shown(): void; failed(error: string): void }[] = []
+  const changes: string[] = []
+  const sink: NotificationSink = {
+    isSupported: () => true,
+    show: (_title, _body, _onClick, outcome) => { if (outcome) outcomes.push(outcome) },
+    setBadge: () => {},
+  }
+  const center = new NotificationCenter(sink, () => {}, () => 0, access => changes.push(access))
+  assert.equal(center.access(), 'unknown')
+  center.show(notification('a'))
+  outcomes[0].failed('Notifications are not allowed for this application')
+  assert.equal(center.access(), 'denied')
+  center.show(notification('b'))
+  outcomes[1].failed('timed out')
+  assert.equal(center.access(), 'denied', 'a one-off failure does not flip the access')
+  outcomes[1].shown()
+  assert.equal(center.access(), 'granted')
+  assert.deepEqual(changes, ['denied', 'granted'])
+})
+
+test('deniedByOs reads macOS and Windows refusals, not other failures', () => {
+  assert.equal(deniedByOs('UNErrorCodeNotificationsNotAllowed'), true)
+  assert.equal(deniedByOs('Notifications are not authorized'), true)
+  assert.equal(deniedByOs('The notification platform is disabled'), true)
+  assert.equal(deniedByOs('Failed to create toast XML'), false)
 })

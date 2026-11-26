@@ -6,7 +6,8 @@
   that evidence, not handed to Alex ([2026-11-25-2330](2026-11-25-2330-owner-decisions-chat-memory-views-projects.md)
   rule 9). The sign-in / standalone-page and secondary-state benchmarks were checked against Capy, ChatGPT/Codex, Claude
   (with Claude Code), Cursor, Devin and Perplexity; GitHub, Linear or Vercel were consulted only where none of the six
-  has the surface. Only the rows the evidence settles are recorded here.
+  has the surface. Rows the evidence settles are recorded here; Alex then answered AO-02 (relayed by the coordinator),
+  recorded in rule 1a.
 - Rule: [2026-11-25-1630](2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md) 「benchmark first, not precedent」.
 - Count: 「n/m」 is n of the m products that have the surface. Research IDs (AO…, DO…) refer to the resolved
   auth-overlays benchmark table.
@@ -19,6 +20,9 @@
    继续. The server picks the second step: password, code or SSO. Enterprise SSO is found by email domain, with one small
    text link; passkeys appear only where the browser supports them. Evidence 6/6 email-first with at most one input on
    the first screen (ChatGPT, Claude, Perplexity, Cursor, Devin, Capy's `start → sso / password / email-code` flow).
+1a. **Sign-in and sign-up are one page, 「登录或注册 Mikka」 (AO-02, Alex).** `/sign-up` is an alias that only changes the
+   title to 「创建账号」 for marketing links; after the email step the server tells a new email from an existing one.
+   Evidence 3 : 3 (one page: ChatGPT, Claude, Perplexity; two pages: Capy, Cursor, Devin).
 2. **Email is verified with a code (AO-03):** a 6-digit code in the flow (six boxes, paste, auto-submit when full), resend
    with a countdown, 「换一个邮箱」. The mail also carries a link as fallback; `/verify-email` is only the link's landing page
    (verifying, expired, already used, opened on another device). The backend moves from links to codes. Evidence 5/6
@@ -103,10 +107,6 @@
     sheet that lists free ways out before top-up and plans. Pages outside chat use a top banner. Send no longer opens a
     「选择套餐」 dialog first. Evidence: in-place notices in Claude, Cursor and Capy (`UsedUpCard`, `SponsoredRefusalCard`,
     `WaitMenu`; its funding sheet lists free options first).
-
-## Not decided here (still with Alex)
-
-- AO-02 whether sign-in and sign-up are one page or two (3 : 3). Both options keep rule 1.
 
 The right column's Overview question raised in this benchmark (DO-10) is settled by
 [2026-11-26-0110](2026-11-26-0110-pages-environments-from-benchmark.md) rule 10.

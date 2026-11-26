@@ -57,12 +57,25 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
       },
       installUpdate: () => ipcRenderer.invoke(IPC.appInstallUpdate),
       requireUpdate: () => ipcRenderer.invoke(IPC.appRequireUpdate),
+      // Native menu commands (⌘W, ⌘T, ⌘1–9 …), sent by main to this window; the page validates each one.
+      onMenuCommand: (listener: (command: unknown) => void) => {
+        const handler = (_event: IpcRendererEvent, command: unknown) => listener(command)
+        ipcRenderer.on(IPC.appMenuCommand, handler)
+        return () => { ipcRenderer.removeListener(IPC.appMenuCommand, handler) }
+      },
     },
     notifications: {
       show: (notification: unknown) => ipcRenderer.invoke(IPC.notificationsShow, notification),
       setBadge: (count: unknown) => ipcRenderer.invoke(IPC.notificationsSetBadge, count),
       onClick: onNotificationClick,
       consumePendingClick: () => ipcRenderer.invoke(IPC.notificationsConsumePendingClick),
+      access: () => ipcRenderer.invoke(IPC.notificationsAccess),
+      onAccessChange: (listener: (access: unknown) => void) => {
+        const handler = (_event: IpcRendererEvent, access: unknown) => listener(access)
+        ipcRenderer.on(IPC.notificationsAccessChanged, handler)
+        return () => { ipcRenderer.removeListener(IPC.notificationsAccessChanged, handler) }
+      },
+      openSystemSettings: () => ipcRenderer.invoke(IPC.notificationsOpenSettings),
     },
     ssh: {
       onChange: (listener: (state: SshInstallState) => void) => {
@@ -86,6 +99,9 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
     },
     quota: {
       get: () => ipcRenderer.invoke(IPC.quotaGet),
+    },
+    tray: {
+      update: (state: unknown) => ipcRenderer.invoke(IPC.trayUpdate, state),
     },
   }
   const bundledBridge: BundledBridge = {
