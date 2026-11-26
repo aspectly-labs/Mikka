@@ -158,6 +158,81 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     raceInfo.mock.restore()
   }
 
+  // Crash after funding but before checking out the lifecycle connection.
+  // The durable scheduler releases the unused receipt without a provider call.
+  let observedDeadline = Date.now() + 30_000
+  const recoveryInfo = t.mock.method(Sandbox, 'getInfo', async () => ({
+    sandboxId, state: 'running', endAt: new Date(observedDeadline), cpuCount: 2, memoryMB: 8192,
+  }) as Awaited<ReturnType<typeof Sandbox.getInfo>>)
+  const renewAtProvider = t.mock.method(Sandbox, 'setTimeout', async (_id: string, duration: number) => {
+    observedDeadline = Date.now() + duration
+  })
+  const resetRenewal = async () => {
+    await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=NULL WHERE id=$1', [successorId])
+    await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()+interval '30 seconds' WHERE "operationId"=$1`, [operationId])
+    await fixture.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,2,'purchased','test',$3)`,
+      [randomUUID(), workspaceId, randomUUID()])
+    observedDeadline = Date.now() + 30_000
+    return threadLifecycleProvider.prepareKeepAlive(sandboxId, ownerId, 900_000)
+  }
+  const makeRenewalDue = () => fixture.query(`UPDATE e2b_compute_leases SET "renewalReviewAt"=now()-interval '1 second',
+    "renewalDispatchUntil"=now()-interval '1 second' WHERE "operationId"=$1`, [operationId])
+  const { reconcileCloudMachines } = await import('../computer/reconcile')
+  const { runRecoveryDueSweeps } = await import('../run-recovery-due')
+  const remainingReceipt = async (index: number) => (await receipts()).find(row => row.id === expected(index, successorId).id)
+  try {
+    await resetRenewal()
+    await makeRenewalDue()
+    assert.ok((await runRecoveryDueSweeps(pool, { factoryLifecycle: false })).due.has('machines'))
+    await reconcileCloudMachines(pool)
+    assert.deepEqual(await remainingReceipt(5), { ...expected(5, successorId), state: 'failed', cost: 0 })
+    assert.equal(renewAtProvider.mock.callCount(), 0)
+
+    // The provider extended the VM. Roll back every write made by the lifecycle
+    // APP transaction and prove the earlier durable dispatch still protects it.
+    const prepared = await resetRenewal()
+    await prepared.begin()
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      assert.ok(await prepared.apply(client))
+      await client.query('ROLLBACK')
+    } finally {
+      client.release()
+    }
+    await makeRenewalDue()
+    assert.ok((await runRecoveryDueSweeps(pool, { factoryLifecycle: false })).due.has('machines'))
+    await reconcileCloudMachines(pool)
+    assert.equal(renewAtProvider.mock.callCount(), 1)
+    assert.deepEqual(await remainingReceipt(6), expected(6, successorId))
+    assert.deepEqual((await fixture.query(`SELECT "renewalDispatchId","usedChunkIndex" FROM e2b_compute_leases
+      WHERE "operationId"=$1`, [operationId])).rows[0], { renewalDispatchId: null, usedChunkIndex: 6 })
+
+    // The durable dispatch flag also covers exit immediately before the HTTP
+    // send. Two exact unchanged provider reads are required before release.
+    const abandoned = await resetRenewal()
+    await abandoned.begin()
+    await makeRenewalDue()
+    await reconcileCloudMachines(pool)
+    assert.deepEqual(await remainingReceipt(7), expected(7, successorId))
+    await fixture.query(`UPDATE e2b_compute_leases SET "renewalUnchangedAt"=now()-interval '31 seconds' WHERE "operationId"=$1`,
+      [operationId])
+    await makeRenewalDue()
+    await reconcileCloudMachines(pool)
+    assert.deepEqual(await remainingReceipt(7), { ...expected(7, successorId), state: 'failed', cost: 0 })
+    await resetRenewal()
+    await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"="previousPaidUntil","chunkIndex"=7,"activeChunkIndex"="previousActiveChunkIndex",
+      "pendingAt"=now()-interval '6 minutes',"pendingRunId"=$2,"renewalReviewAt"=NULL WHERE "operationId"=$1`,
+    [operationId, successorId])
+    assert.ok((await runRecoveryDueSweeps(pool, { factoryLifecycle: false })).due.has('machines'))
+    await reconcileCloudMachines(pool)
+    assert.deepEqual(await remainingReceipt(8), { ...expected(8, successorId), state: 'failed', cost: 0 })
+    assert.equal(renewAtProvider.mock.callCount(), 1)
+  } finally {
+    recoveryInfo.mock.restore()
+    renewAtProvider.mock.restore()
+  }
+
   // A provider hardware mismatch is killed before exposing the instance and
   // releases the prepaid receipt. There is no up/down-tier price adjustment.
   await fixture.query("INSERT INTO workspace_credit_grants (id,\"workspaceId\",points,bucket,reason,\"externalId\") VALUES ($1,$2,2,'purchased','test',$3)",
@@ -237,8 +312,6 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     VALUES ($1,$2,$3,'error',now()-interval '31 seconds')`, [workspaceId, ownerId, missingOperation])
   await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture')`, [missingOperation, ownerId])
   process.env.E2B_API_URL = `http://127.0.0.1:${address.port}`
-  const { reconcileCloudMachines } = await import('../computer/reconcile')
-  const { runRecoveryDueSweeps } = await import('../run-recovery-due')
   assert.equal(await e2bInitialAllocationNeedsRecovery(ownerId, missingOperation), true)
   assert.ok((await runRecoveryDueSweeps(pool, { factoryLifecycle: false })).due.has('machines'))
   assert.equal(await reconcileCloudMachines(pool), 0)

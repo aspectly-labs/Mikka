@@ -46,6 +46,12 @@ export const RUN_RECOVERY_DUE_SQL = `
       FROM cloud_machines m JOIN e2b_compute_leases l ON l."operationId"=m."operationId" AND l."ownerId"=m."ownerId"
       WHERE m."sandboxId" IS NULL AND m.state IN ('error','waking') AND (l."paidUntil" IS NOT NULL OR (l."chunkIndex"=-1 AND l."pendingAt" IS NOT NULL
         AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':0' AND u.state='settled')))
+    -- A crashed or ambiguous renewal retains its own durable review deadline.
+    UNION ALL SELECT min("renewalReviewAt"), 'machines' FROM e2b_compute_leases
+    UNION ALL SELECT min(l."pendingAt"+interval '5 minutes'), 'machines' FROM e2b_compute_leases l
+      WHERE l."sandboxId" IS NOT NULL AND l."pendingAt" IS NOT NULL
+        AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':'||(l."chunkIndex"+1)
+          AND u."executionOwnerId"=l."ownerId" AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')
     -- judgePendingOutcomes: an ended run is judged at once, and again OUTCOME_RETRY_AT_SQL after an unanswered try.
     UNION ALL SELECT min(coalesce(${OUTCOME_RETRY_AT_SQL} + interval '1 millisecond', now())), 'outcomes' FROM agent_runs
       WHERE outcome IS NULL AND status = ANY($2::text[]) AND coalesce("finishedAt", "updatedAt") > now() - make_interval(days => ${OUTCOME_WINDOW_DAYS})

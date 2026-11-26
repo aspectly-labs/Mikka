@@ -4,6 +4,8 @@ import { AuthenticationError, NotFoundError, Sandbox, SandboxNotFoundError, type
 import type { Pool } from 'pg'
 import { pool } from '@/lib/db'
 import { isCloudEdition } from '@/lib/edition'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
+import { armDueTimerSoon } from '@/lib/due-timer'
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { e2bPricingForHardware, e2bTemplatePricing, type E2BComputeSpec } from './e2b-template-pricing'
 import { fundE2BChunk } from './machine-billing'
@@ -16,17 +18,18 @@ const unavailable = () => new E2BKeyError('e2b_unavailable', 'E2B compute billin
 type Lease = { operationId: string; ownerId: string; workspaceId: string; providerScope: string;
   templateId: string; size: string; hourlyMicroUsd: number; chunkIndex: number }
 type Target = { workspaceId: string; runId: string | null }
-export type KeepAlivePayment = { operationId?: string; index?: number; activated?: number }
+export type KeepAlivePayment = { operationId?: string; index?: number; activated?: number; dispatchId?: string; baselineDeadline?: Date }
 
 async function paidTimeout(lease: Lease, target: Target, requestedMs: number, renew = true, creation = false, beforeRenew?: () => Promise<unknown>, payment?: KeepAlivePayment): Promise<number> {
   const claim = renew ? (await pool.query<{ chunkIndex: number; pendingRunId: string | null }>(
     `UPDATE e2b_compute_leases SET "pendingAt"=coalesce("pendingAt",greatest(now(),"paidUntil")),
         "pendingRunId"=CASE WHEN "pendingAt" IS NULL THEN $2 ELSE "pendingRunId" END
       WHERE "operationId"=$1 AND ("paidUntil" IS NULL OR "paidUntil"<=now()+$3::int*interval '1 millisecond')
-        AND (NOT $4::boolean OR "chunkIndex"=-1)
+        AND (NOT $4::boolean OR "chunkIndex"=-1) AND "renewalReviewAt" IS NULL
         AND NOT EXISTS (SELECT 1 FROM agent_runs WHERE id=$2 AND "stopRequestedAt" IS NOT NULL)
       RETURNING "chunkIndex","pendingRunId"`, [lease.operationId, target.runId, E2B_RENEW_LEAD_MS, creation])).rows[0] : undefined
   if (claim) {
+    armDueTimerSoon('run-recovery')
     await beforeRenew?.()
     const index = claim.chunkIndex + 1
     const funded = await fundE2BChunk({ ownerId: lease.ownerId, workspaceId: target.workspaceId, runId: claim.pendingRunId,
@@ -38,9 +41,14 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
       const activation = await pool.query(`UPDATE e2b_compute_leases SET "chunkIndex"=$2,"previousPaidUntil"="paidUntil",
         "previousActiveChunkIndex"="activeChunkIndex","activeChunkIndex"=$2,
         "paidUntil"=greatest(now(),"paidUntil")+$3::int*interval '1 millisecond',
+        "renewalReviewAt"=CASE WHEN "sandboxId" IS NOT NULL THEN clock_timestamp()+interval '30 seconds' ELSE NULL END,
+        "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL,
         "pendingAt"=NULL,"pendingRunId"=NULL WHERE "operationId"=$1 AND "chunkIndex"=$2-1
         AND "pendingAt" IS NOT NULL`, [lease.operationId, index, MACHINE_CHUNK_MS])
-      if (payment && activation.rowCount) payment.activated = index
+      if (activation.rowCount && !creation) {
+        if (payment) payment.activated = index
+        armDueTimerSoon('run-recovery')
+      }
     }
     else await pool.query(`UPDATE e2b_compute_leases SET "pendingAt"=NULL,"pendingRunId"=NULL
       WHERE "operationId"=$1 AND "chunkIndex"=$2-1 AND "pendingRunId" IS NOT DISTINCT FROM $3::uuid`,
@@ -61,25 +69,115 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
   return seconds * 1_000
 }
 
-export async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment) {
+export async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment, observed = false) {
   if (!payment.operationId) return true
-  const result = await query.query(`UPDATE e2b_compute_leases l SET "usedChunkIndex"=greatest("usedChunkIndex",$3)
-    WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND "paidUntil">now()
+  const result = await query.query(`UPDATE e2b_compute_leases l SET "usedChunkIndex"=greatest("usedChunkIndex",$3),"renewalReviewAt"=NULL,
+      "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL
+    WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND ($4::boolean OR "paidUntil">clock_timestamp())
       AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':'||$3::int
         AND u."executionOwnerId"=$2 AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')`,
-  [payment.operationId, ownerId, payment.index])
+  [payment.operationId, ownerId, payment.index, observed])
+  return result.rowCount === 1
+}
+
+/** Record possible external I/O before taking the APP lifecycle locks.
+ * A rollback or a crashed process therefore cannot turn a sent request into
+ * an apparently untouched prepayment. An expired ticket cannot send. */
+export async function prepareE2BKeepAliveDispatch(ownerId: string, payment: KeepAlivePayment) {
+  if (!payment.operationId || !payment.baselineDeadline) return
+  const id = randomUUID()
+  payment.dispatchId = id
+  const marked = await pool.query(`UPDATE e2b_compute_leases SET "renewalDispatchId"=$4,
+    "renewalDispatchUntil"=clock_timestamp()+interval '15 seconds',
+    "renewalReviewAt"=clock_timestamp()+interval '30 seconds',"renewalBaselineDeadline"=$5
+    WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3
+      AND "renewalReviewAt">clock_timestamp() AND "renewalDispatchId" IS NULL AND "usedChunkIndex"<$3`,
+  [payment.operationId, ownerId, payment.index, id, payment.baselineDeadline ?? null])
+  if (!marked.rowCount) payment.dispatchId = undefined
+}
+
+export async function e2bKeepAliveDispatchAllowed(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment) {
+  if (!payment.operationId) return true
+  const result = await query.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3
+    AND "paidUntil">clock_timestamp() AND ($3=0 OR "usedChunkIndex">=$3
+      OR ("renewalDispatchId"=$4 AND "renewalDispatchUntil">clock_timestamp())) FOR UPDATE`,
+  [payment.operationId, ownerId, payment.index, payment.dispatchId ?? null])
   return result.rowCount === 1
 }
 
 export async function releaseE2BKeepAlivePayment(ownerId: string, payment: KeepAlivePayment) {
-  if (!payment.operationId || payment.activated === undefined) return
+  if (!payment.operationId) return
+  if (payment.dispatchId) await pool.query(`UPDATE e2b_compute_leases SET "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL
+    WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND "renewalDispatchId"=$4`,
+  [payment.operationId, ownerId, payment.index, payment.dispatchId])
+  if (payment.activated !== undefined)
+    await refundUnusedRenewal(ownerId, payment.operationId, payment.activated)
+}
+
+async function refundUnusedRenewal(ownerId: string, operationId: string, index: number, dispatchId?: string) {
   await pool.query(`WITH unused AS (
-    UPDATE e2b_compute_leases SET "paidUntil"="previousPaidUntil","previousPaidUntil"=NULL,"activeChunkIndex"="previousActiveChunkIndex"
+    UPDATE e2b_compute_leases SET "paidUntil"="previousPaidUntil","previousPaidUntil"=NULL,
+      "activeChunkIndex"="previousActiveChunkIndex","renewalReviewAt"=NULL,
+      "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL
       WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND "chunkIndex"=$3 AND "usedChunkIndex"<$3
+        AND "renewalDispatchId" IS NOT DISTINCT FROM $5::uuid
+        AND ($5::uuid IS NULL OR "renewalUnchangedAt"<clock_timestamp()-interval '29 seconds')
       RETURNING "workspaceId"
     ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
     FROM unused WHERE u.id=$4 AND u."usageWorkspaceId"=unused."workspaceId" AND u."executionOwnerId"=$2 AND u.state='settled'`,
-  [payment.operationId, ownerId, payment.activated, `machine:e2b:${payment.operationId}:${payment.activated}`])
+  [operationId, ownerId, index, `machine:e2b:${operationId}:${index}`, dispatchId ?? null])
+}
+
+export async function reconcileE2BKeepAlivePayments() {
+  if (!isCloudEdition()) return
+  // A settled but unactivated interval never authorized an external request.
+  await pool.query(`WITH due AS (
+    SELECT l."operationId" FROM e2b_compute_leases l WHERE l."sandboxId" IS NOT NULL
+      AND l."pendingAt"<=clock_timestamp()-interval '5 minutes'
+      AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':'||(l."chunkIndex"+1)
+        AND u."executionOwnerId"=l."ownerId" AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')
+    ORDER BY l."pendingAt" LIMIT 20 FOR UPDATE SKIP LOCKED
+  ), cancelled AS (
+    UPDATE e2b_compute_leases l SET "chunkIndex"="chunkIndex"+1,"pendingAt"=NULL,"pendingRunId"=NULL
+    FROM due WHERE l."operationId"=due."operationId" RETURNING l."operationId",l."ownerId",l."workspaceId",l."chunkIndex"
+  ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
+    FROM cancelled l WHERE u.id='machine:e2b:'||l."operationId"||':'||l."chunkIndex"
+      AND u."executionOwnerId"=l."ownerId" AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled'`)
+  const { rows } = await pool.query<{ operationId: string; ownerId: string; activeChunkIndex: number;
+    sandboxId: string; providerScope: string; renewalDispatchId: string | null;
+    renewalBaselineDeadline: Date | null; renewalUnchangedAt: Date | null }>(`WITH due AS (
+      SELECT "operationId" FROM e2b_compute_leases WHERE "renewalReviewAt"<=clock_timestamp()
+      ORDER BY "renewalReviewAt" LIMIT 20 FOR UPDATE SKIP LOCKED
+    ) UPDATE e2b_compute_leases l SET "renewalReviewAt"=clock_timestamp()+interval '30 seconds'
+      FROM due WHERE l."operationId"=due."operationId"
+      RETURNING l."operationId",l."ownerId",l."activeChunkIndex",l."sandboxId",l."providerScope",
+        l."renewalDispatchId",l."renewalBaselineDeadline",l."renewalUnchangedAt"`)
+  for (const row of rows) {
+    const { ownerId, operationId, activeChunkIndex: index, renewalDispatchId } = row
+    if (!renewalDispatchId) {
+      await refundUnusedRenewal(ownerId, operationId, index)
+      continue
+    }
+    try {
+      const account = await e2bResourceAccount(ownerId, 'sandbox', row.sandboxId)
+      if (account.scope !== row.providerScope) continue
+      const observed = await Sandbox.getInfo(row.sandboxId, { apiKey: account.apiKey, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+        proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy })
+      if (observed.sandboxId !== row.sandboxId || !Number.isFinite(observed.endAt.getTime())) continue
+      if (!row.renewalBaselineDeadline) continue
+      if (observed.endAt.getTime() !== row.renewalBaselineDeadline.getTime()) {
+        await useE2BKeepAlivePayment(pool, ownerId, { operationId, index }, true)
+      } else if (observed.state !== 'running') {
+        continue
+      } else if (row.renewalUnchangedAt) {
+        await refundUnusedRenewal(ownerId, operationId, index, renewalDispatchId)
+      } else {
+        await pool.query(`UPDATE e2b_compute_leases SET "renewalUnchangedAt"=clock_timestamp()
+          WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND "renewalDispatchId"=$4`,
+        [operationId, ownerId, index, renewalDispatchId])
+      }
+    } catch { /* A missing or unavailable read does not prove that a renewal did not run. */ }
+  }
 }
 
 export async function e2bCreationTimeout(ownerId: string, providerScope: string, operationId: string, templateId: string,

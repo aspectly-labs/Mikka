@@ -37,7 +37,11 @@ export async function reconcileCloudMachines(pool: Pick<Pool, 'query'>, probe?: 
     changed += updated.rowCount ?? 0
     if (updated.rowCount) await machineCommitted(pool, row.ownerId, row.workspaceId)
   }
-  if (!probe && isCloudEdition()) changed += await recoverInitialCloudMachines(pool, limit)
+  if (!probe && isCloudEdition()) {
+    const { reconcileE2BKeepAlivePayments } = await import('../cloud-computer/e2b-compute-billing')
+    await reconcileE2BKeepAlivePayments()
+    changed += await recoverInitialCloudMachines(pool, limit)
+  }
   return changed
 }
 

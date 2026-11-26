@@ -267,7 +267,14 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     // A static provider timeout cannot resume a paused VM. Hold the same
     // run→machine lock order as resume/adopt while extending this exact epoch.
     let preservePayment = false
-    const client = await pool.connect()
+    let client: PoolClient
+    try {
+      await prepared?.begin()
+      client = await pool.connect()
+    } catch (error) {
+      await prepared?.cancel()
+      throw error
+    }
     try {
       await client.query('BEGIN')
       const run = (await client.query('SELECT status,"stopRequestedAt","stopReason" FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE', [runId, actor.userId])).rows[0]
@@ -294,13 +301,12 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
       if (!(stopping && canFund)) {
         try {
           renewedDeadline = prepared ? await prepared.apply(client)
-            : await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping)
+            : (await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping)) ?? undefined
           preservePayment = renewedDeadline !== null
         } catch (error) {
-          // A sent request may have succeeded. Keep its use marker across a
-          // transport failure so no competing cancellation can void the debit.
+          // Provider receipt may have been lost. The durable dispatch marker
+          // survives the APP rollback and recovery will inspect the deadline.
           preservePayment = true
-          await client.query('COMMIT')
           throw error
         }
       }
@@ -312,7 +318,11 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
       committedTransition?.()
       committedTransition = undefined
       return next
-    } catch (error) { committedTransition = undefined; await client.query('ROLLBACK'); throw error } finally {
+    } catch (error) {
+      committedTransition = undefined
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
       client.release()
       if (!preservePayment) await prepared?.cancel()
     }
