@@ -50,6 +50,7 @@ import * as actions33 from '@/app/actions/workspace'
 import * as actions34 from '@/app/actions/workspace-secrets'
 import * as actions35 from '@/app/actions/workspace-settings'
 import * as actions36 from '@/app/actions/thread-title-settings'
+import * as taskCommentActions from '@/app/actions/task-comments'
 import * as issueStateActions from '@/app/actions/issue-states'
 import * as taskListActions from '@/app/actions/task-list'
 import * as automations from '@/app/actions/automations'
@@ -264,6 +265,10 @@ const functions = {
   'issue-prefix.getIssuePrefixState': actions13.getIssuePrefixState,
   'issue-prefix.saveIssuePrefix': actions13.saveIssuePrefix,
   'issue-states.getIssueStates': issueStateActions.getIssueStates,
+  'task-comments.getTaskCommentState': taskCommentActions.getTaskCommentState,
+  'task-comments.editTaskComment': taskCommentActions.editTaskComment,
+  'task-comments.deleteTaskComment': taskCommentActions.deleteTaskComment,
+  'task-comments.setTaskCommentReaction': taskCommentActions.setTaskCommentReaction,
   'task-list.countTaskListViews': taskListActions.countTaskListViews,
   'task-list.listUnreadTaskIds': taskListActions.listUnreadTaskIds,
   'task-list.setTaskUnread': taskListActions.setTaskUnread,

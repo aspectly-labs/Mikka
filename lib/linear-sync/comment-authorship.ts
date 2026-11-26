@@ -1,6 +1,18 @@
 import * as Y from 'yjs'
+import { taskCommentAttachmentsSchema } from '@/lib/task-comments/contract'
 
-type CommentMessage = { id: string; author: string; authorUserId?: string; body: string }
+type CommentMessage = { id: string; author: string; authorUserId?: string; body: string; editedAt?: string; deletedAt?: string; deletedBy?: string; attachments?: unknown }
+/** Fields only the server writes: when a message was edited and who deleted it. */
+const SERVER_OWNED = ['editedAt', 'deletedAt', 'deletedBy'] as const
+/** Sets or clears one field in place, so an unchanged message keeps its key order (and is not rewritten). */
+function own(message: Record<string, unknown>, key: string, value: unknown) {
+  if (value === undefined) { if (key in message) delete message[key] }
+  else if (message[key] !== value) message[key] = value
+}
+const filesKey = (value: unknown) => JSON.stringify(value ?? [])
+function checkAttachments(value: unknown) {
+  if (value !== undefined && !taskCommentAttachmentsSchema.safeParse(value).success) throw new Error('Invalid comment attachments')
+}
 type CommentThread = { author: string; authorUserId?: string; messages: Map<string, CommentMessage> }
 export type CommentAuthorshipSnapshot = Map<string, CommentThread>
 
@@ -29,7 +41,13 @@ export function snapshotCommentAuthorship(doc: Y.Doc): CommentAuthorshipSnapshot
   return snapshot
 }
 
-export function bindCommentAuthorship(doc: Y.Doc, before: CommentAuthorshipSnapshot, author: { id: string; name: string }) {
+/**
+ * Binds every message to who wrote it, after a client's document update. Only
+ * a message's author changes its body or files (stamped `editedAt`) or deletes
+ * it (a tombstone: empty body, `deletedAt`, `deletedBy`); a tombstone never
+ * changes again. `editedAt`, `deletedAt` and `deletedBy` are the server's.
+ */
+export function bindCommentAuthorship(doc: Y.Doc, before: CommentAuthorshipSnapshot, author: { id: string; name: string }, at = new Date().toISOString()) {
   const threads = doc.getMap<Y.Map<unknown>>('threads')
   doc.transact(() => {
     for (const [threadId, previous] of before) {
@@ -55,13 +73,28 @@ export function bindCommentAuthorship(doc: Y.Doc, before: CommentAuthorshipSnaps
         if (!message || typeof message.id !== 'string' || typeof message.author !== 'string' || typeof message.body !== 'string') throw new Error('Invalid comment message')
         const saved = previous?.messages.get(message.id)
         if (saved) {
-          if (saved.body !== message.body && saved.authorUserId !== author.id) throw new Error('You cannot edit another user\'s comment')
-          const attributed = { ...message, author: saved.author }
+          // A tombstone stays exactly as the server wrote it.
+          if (typeof saved.deletedAt === 'string') return saved
+          const mine = saved.authorUserId === author.id
+          if (typeof message.deletedAt === 'string') {
+            if (!mine) throw new Error('You cannot remove another user\'s comment')
+            const { attachments: _files, editedAt: _edited, ...kept } = saved
+            return { ...kept, body: '', deletedAt: at, deletedBy: author.id }
+          }
+          const changed = saved.body !== message.body || filesKey(saved.attachments) !== filesKey(message.attachments)
+          if (changed && !mine) throw new Error('You cannot edit another user\'s comment')
+          if (changed) checkAttachments(message.attachments)
+          const attributed: CommentMessage = { ...message, author: saved.author }
           if (saved.authorUserId) attributed.authorUserId = saved.authorUserId
           else delete attributed.authorUserId
+          for (const key of SERVER_OWNED) own(attributed as Record<string, unknown>, key, saved[key])
+          if (changed) own(attributed as Record<string, unknown>, 'editedAt', at)
           return attributed
         }
-        return { ...message, author: author.name, authorUserId: author.id }
+        checkAttachments(message.attachments)
+        const created: CommentMessage = { ...message, author: author.name, authorUserId: author.id }
+        for (const key of SERVER_OWNED) own(created as Record<string, unknown>, key, undefined)
+        return created
       })
       if (JSON.stringify(current) !== JSON.stringify(next)) {
         messages.delete(0, messages.length)

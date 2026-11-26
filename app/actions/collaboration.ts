@@ -6,7 +6,7 @@ import { z } from 'zod'
 import * as Y from 'yjs'
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
 import type { JSONContent } from '@tiptap/core'
-import { runAction } from '@/lib/action-error'
+import { ActionFailureError, runAction } from '@/lib/action-error'
 import type { ActionResult } from '@/lib/action-result'
 import { db, pool } from '@/lib/db'
 import { workspacePool } from '@/lib/workspace-db'
@@ -23,10 +23,12 @@ import { issueListChanged } from '@/lib/live/lists'
 import { readDocumentThreads } from '@/lib/task-activity-wake'
 import { recordTaskActivityWakes } from '@/lib/task-activity-wake-store'
 import { issueMembersChanged } from '@/lib/live/issue-detail'
+import { discussionSaveEffects } from '@/lib/task-comments/save-effects'
+import { taskFileNodeIds } from '@/lib/task-comments/document'
 import { mayGrantOwnerRole, mayManageMembers, mayMuteMember, maySetSubscription, type MembershipCaller } from '@/lib/issue-member-role'
 
 const encodedState = z.string().max(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/)
-const syncSchema = z.object({ id: z.uuid(), vector: encodedState.optional(), update: encodedState.optional(), seed: encodedState.optional(), known: z.string().regex(/^[0-9a-f]{32}$/).optional() })
+const syncSchema = z.object({ id: z.uuid(), vector: encodedState.optional(), update: encodedState.optional(), seed: encodedState.optional(), known: z.string().regex(/^[0-9a-f]{32}$/).optional(), inlineFiles: z.literal(1).optional() })
 /** The stored document's version: md5 of its state, as Postgres md5(state) computes it. */
 const documentVersion = (state: string) => createHash('md5').update(state).digest('hex')
 /**
@@ -72,13 +74,23 @@ export async function exchangeDocument(input: z.infer<typeof syncSchema>): Promi
       if (JSON.stringify(content).length > 250000) throw new Error('content exceeds size limit')
       const changed = writing && (!stored || state !== stored.state)
       if (changed) {
+        // Legacy editors omit atoms they cannot parse. Accept their other writes,
+        // but require support for taskFile before saving a document that drops one.
+        if (!parsed.inlineFiles) {
+          const before = taskFileNodeIds(locked.content as JSONContent)
+          const after = taskFileNodeIds(content)
+          if ([...before].some(id => !after.has(id))) throw new ActionFailureError('taskInlineFilesEditorRequired')
+        }
         await tx.insert(issueDocuments).values({ issueId: issue.id, userId: issue.userId, state }).onConflictDoUpdate({ target: issueDocuments.issueId, set: { state, updatedAt: new Date() } })
         await tx.update(issues).set({ content, updatedAt: new Date() }).where(and(eq(issues.id, issue.id), eq(issues.userId, issue.userId)))
         await documentChanged(tx, issue.id)
         await issueListChanged(tx, issue.id)
+        const threadsAfter = readDocumentThreads(doc)
+        // A comment its author removed or deleted takes its reactions; inline files follow what still names them.
+        await discussionSaveEffects(tx, issue.id, { content: locked.content as JSONContent, threads: threadsBefore }, { content, threads: threadsAfter })
         // A new comment or a Bot chip wakes the Bot it concerns (Capy's issue_activity), with this save.
         await recordTaskActivityWakes(tx, { task: { id: locked.id, workspaceId: locked.workspaceId, title: locked.title, identifier: locked.issuedIdentifier },
-          writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: readDocumentThreads(doc), content },
+          writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: threadsAfter, content },
           version: documentVersion(state) })
       }
       const [link] = locked.linearSyncPolicy === 'explicit' && !locked.linearSyncBlocked ? await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks).where(and(eq(linearIssueLinks.issueId, locked.id), eq(linearIssueLinks.ownerId, issue.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1) : []

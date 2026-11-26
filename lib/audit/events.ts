@@ -21,6 +21,8 @@ export const AUDIT_ACTIONS = {
   'member.role_changed': 'member',
   'bot.taken_over': 'member',
   'bot.transferred': 'member',
+  // An admin deleting another member's task comment (app/actions/task-comments.ts).
+  'task.comment_deleted': 'member',
   // 权限
   'team.access_changed': 'permission',
   'bot.permissions_changed': 'permission',
@@ -95,6 +97,7 @@ export const AUDIT_METADATA = {
   'member.role_changed': z.object({ oldRole: role, newRole: role }).strict(),
   'bot.taken_over': none,
   'bot.transferred': none,
+  'task.comment_deleted': none,
   'team.access_changed': z.object({ team: label, from: access, to: access }).partial().strict(),
   'bot.permissions_changed': z.object({ capability: label, from: access, to: access }).partial().strict(),
   'integration.permission_changed': z.object({ integration: label, capability: label, from: access, to: access }).strict(),

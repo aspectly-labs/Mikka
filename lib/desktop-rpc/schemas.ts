@@ -40,6 +40,7 @@ import { DEVICE_DESCRIPTION_MAX, DEVICE_NAME_MAX } from '@/lib/device-name'
 import { savedViewScopes, saveViewInput } from '@/lib/saved-views'
 import { THREAD_COST_GROUPINGS } from '@/lib/thread-cost-grouping'
 import { updateWorkspaceInput } from '@/lib/workspace-admin/general-input'
+import { editTaskCommentInput, setTaskCommentReactionInput, taskCommentRefSchema } from '@/lib/task-comments/contract'
 
 const uuid = z.uuid()
 const id = z.string().min(1).max(200)
@@ -298,7 +299,7 @@ export const desktopActionSchemas = {
   'automations.cancelAutomationRun': tuple(object({ scheduleId: uuid, version: positive, runId: uuid }), workspace),
   'automations.runAutomationNow': tuple(object({ scheduleId: uuid, version: positive, requestId: uuid }), workspace),
   'bots.listBotsForWorkspace': oneId,
-  'collaboration.exchangeDocument': tuple(object({ id: uuid, vector: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), update: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), seed: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), known: version.optional() })),
+  'collaboration.exchangeDocument': tuple(object({ id: uuid, vector: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), update: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), seed: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), known: version.optional(), inlineFiles: z.literal(1).optional() })),
   'collaboration.listMembers': oneId,
   'collaboration.inviteMember': tuple(uuid, z.email().max(254)),
   'collaboration.removeMember': tuple(uuid, id),
@@ -338,6 +339,11 @@ export const desktopActionSchemas = {
   'issue-prefix.getIssuePrefixState': none,
   'issue-prefix.saveIssuePrefix': tuple(object({ prefix: text(20).min(1) })),
   'issue-states.getIssueStates': oneId,
+  // The actions parse each input again (lib/task-comments/contract.ts); the wire only bounds its shape.
+  'task-comments.getTaskCommentState': oneId,
+  'task-comments.editTaskComment': tuple(editTaskCommentInput),
+  'task-comments.deleteTaskComment': tuple(taskCommentRefSchema),
+  'task-comments.setTaskCommentReaction': tuple(setTaskCommentReactionInput),
   'task-list.countTaskListViews': oneId,
   'task-list.listUnreadTaskIds': oneId,
   'task-list.setTaskUnread': tuple(object({ id: uuid, unread: bool })),
