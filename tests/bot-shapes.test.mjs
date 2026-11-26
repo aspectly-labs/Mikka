@@ -31,3 +31,28 @@ test('the API accepts every body and every old id, and nothing else', () => {
   const id = '00000000-0000-4000-8000-000000000003'
   assert.equal(botShapeOf({ id, shape: 'heart' }), botShapeOf({ id, shape: 'cercle' }), 'an unknown value with an id gets the id\'s body')
 })
+
+import { BOT_GLASSES, BOT_HATS, BOT_LOOK_COLORS, formatBotLook, isStoredBotColor, parseBotLook } from '../lib/bot-shapes.ts'
+
+test('a look round-trips through bots.color and fits the API\'s 50 characters', () => {
+  const full = { color: 'blue', face: 'mouth', hat: 'beanie', glasses: 'shades', headphones: true, bowTie: true }
+  const stored = formatBotLook(full)
+  assert.equal(stored, 'look:c=blue;f=m;h=beanie;g=shades;p;b')
+  assert.deepEqual(parseBotLook(stored), full)
+  for (const color of Object.keys(BOT_LOOK_COLORS)) for (const hat of BOT_HATS) for (const glasses of BOT_GLASSES) {
+    const value = formatBotLook({ color, face: 'mouth', hat, glasses, headphones: true, bowTie: true })
+    assert.ok(value.length <= 50, value)
+    assert.ok(isStoredBotColor(value), value)
+  }
+})
+
+test('the plain body stores the old default colour, and old colours read as the plain body', () => {
+  assert.equal(formatBotLook({}), 'encre')
+  assert.deepEqual(parseBotLook('rouge'), {})
+  assert.deepEqual(parseBotLook(null), {})
+  assert.ok(isStoredBotColor('rouge'))
+})
+
+test('the API refuses colours no client writes', () => {
+  for (const value of ['look:c=chartreuse', 'look:h=fez', 'look:b;p', '#ff0000', '', 'look:']) assert.equal(isStoredBotColor(value), false, value)
+})

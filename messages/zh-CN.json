@@ -5113,8 +5113,44 @@
       "accessShared": "工作区",
       "effort": "推理强度",
       "noRepository": "不用仓库",
-      "namePlaceholder": "名字",
-      "color": "颜色"
+      "namePlaceholder": "给 Bot 起个名字",
+      "color": "颜色",
+      "looks": {
+        "colors": {
+          "none": "原色",
+          "ink": "墨色",
+          "brown": "棕色",
+          "red": "红色",
+          "orange": "橙色",
+          "amber": "琥珀色",
+          "green": "绿色",
+          "teal": "青色",
+          "blue": "蓝色",
+          "violet": "紫色",
+          "pink": "粉色",
+          "grey": "灰色"
+        },
+        "hat": "帽子",
+        "hats": {
+          "none": "无",
+          "beret": "贝雷帽",
+          "beanie": "毛线帽",
+          "party": "派对帽",
+          "crown": "皇冠"
+        },
+        "glasses": "眼镜",
+        "glassesKinds": {
+          "none": "无",
+          "round": "圆框",
+          "square": "方框",
+          "shades": "墨镜"
+        },
+        "details": "细节",
+        "mouth": "嘴巴",
+        "headphones": "耳机",
+        "bowTie": "领结",
+        "reset": "恢复默认"
+      }
     },
     "newGroup": {
       "reviewGroups": "查看群聊",

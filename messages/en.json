@@ -5113,8 +5113,44 @@
       "accessShared": "Workspace",
       "effort": "Effort",
       "noRepository": "No repository",
-      "namePlaceholder": "Name",
-      "color": "Colour"
+      "namePlaceholder": "Name your bot",
+      "color": "Colour",
+      "looks": {
+        "colors": {
+          "none": "Own colour",
+          "ink": "Ink",
+          "brown": "Brown",
+          "red": "Red",
+          "orange": "Orange",
+          "amber": "Amber",
+          "green": "Green",
+          "teal": "Teal",
+          "blue": "Blue",
+          "violet": "Violet",
+          "pink": "Pink",
+          "grey": "Grey"
+        },
+        "hat": "Hat",
+        "hats": {
+          "none": "None",
+          "beret": "Beret",
+          "beanie": "Beanie",
+          "party": "Party hat",
+          "crown": "Crown"
+        },
+        "glasses": "Glasses",
+        "glassesKinds": {
+          "none": "None",
+          "round": "Round",
+          "square": "Square",
+          "shades": "Shades"
+        },
+        "details": "Details",
+        "mouth": "Mouth",
+        "headphones": "Headphones",
+        "bowTie": "Bow tie",
+        "reset": "Reset to default"
+      }
     },
     "newGroup": {
       "reviewGroups": "View group chats",
