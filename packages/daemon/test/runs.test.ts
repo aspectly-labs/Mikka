@@ -300,11 +300,13 @@ describe("mock runs", () => {
     const cases = [
       // Only the server's allow (an admitted GitHub App grant) fetches and pushes the issue branch; a local approval no longer stands in.
       { decision: "allow", approved: false, expected: true },
+      { decision: "allow", approved: false, expected: false, fresh: true },
       { decision: "ask", approved: true, expected: false },
       { decision: "ask", approved: false, expected: false },
       { decision: "deny", approved: true, expected: false },
     ] as const
-    for (const { decision, approved, expected } of cases) {
+    for (const item of cases) {
+      const { decision, approved, expected } = item
       const server = new MemoryServer(DEVICE)
       server.addRepo(DEVICE, { repoId: "repo-1", name: "fixture", path: origin, push: { approved, remote: "origin" } })
       const daemon = await boot(server, tempDir())
@@ -312,7 +314,7 @@ describe("mock runs", () => {
       const runId = server.queueRun(DEVICE, {
         issueId: `issue-${decision}-${approved}`, repoId: "repo-1",
         remoteUrl: pathToFileURL(origin).href, harness: "mock", prompt: "inspect",
-        pushBranch: "mikka/issue-1", fixture: "turn-ended",
+        pushBranch: "mikka/issue-1", fixture: "turn-ended", ...("fresh" in item ? { freshEnvironmentCheckout: true as const } : {}),
         // ask is what an older server could still send over the wire; it carries no push authority.
         policy: { ...defaults, permissions: { ...defaults.permissions, git_push: decision as "allow" | "deny" } },
       })

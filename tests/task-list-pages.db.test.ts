@@ -99,4 +99,3 @@ test('authorized Task collection traverses every threadless issue, including mic
     }
   }
 })
-

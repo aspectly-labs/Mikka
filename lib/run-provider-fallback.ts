@@ -403,7 +403,7 @@ async function recoverAuthorizedProviderFailure(pool: Pool, source: Run, initial
       // A compatible source does not authorize another runtime or harness.
       // Check each target before creating a repo, Bot or cloud preparation;
       // the outer resource lease keeps this decision valid through admission.
-      await withRunProjectExecution({ userId, workspaceId: source.workspaceId!, issueId: source.issueId!,
+      await withRunProjectExecution({ userId, botId: source.botId, workspaceId: source.workspaceId!, issueId: source.issueId!,
         repositoryKey: origin.remoteUrl ? origin.repoPath : null, baseBranch: source.baseBranch,
         runtime: selected.kind === 'device' ? 'local' : 'cloud', harness: selected.entry.harness }, source.agentDefinition.projectExecution, async () => undefined)
     } catch (error) {

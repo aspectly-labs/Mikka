@@ -93,8 +93,8 @@
   "app/actions/project-resources.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Signed-in members read and administrators update Project repository references with current user access. Signed-in members can read setup history for an accessible Project. Restoring a recipe also requires project steering and active workspace administration.",
-    "test": "tests/project-dependency-repositories.db.test.ts",
+    "behavior": "Signed-in members read setup history of environments they can see; restoring a recipe requires managing that environment. Members share their personal environments; owners or administrators take shared ones back. The retired Project binding writers answer projectBindingsRetired.",
+    "test": "tests/project-resources.db.test.ts",
     "suite": "test:project-resources-db"
   },
   "app/actions/task-runs.ts": {
@@ -705,8 +705,8 @@
   "app/api/workspaces/[workspaceId]/projects/[projectId]/repos/route.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "An authorized Workspace administrator adds normalized repository keys to an accessible Project using the installation PostgreSQL database.",
-    "test": "tests/project-resources.db.test.ts",
+    "behavior": "Retired: an authorized Workspace caller receives 410 projectBindingsRetired; repositories belong to an environment.",
+    "test": "tests/environment-scope.db.test.ts",
     "suite": "test:project-resources-db"
   },
   "app/api/workspaces/[workspaceId]/service-identities/[identityId]/credential/route.ts": {
@@ -1672,7 +1672,7 @@
   "lib/project-resources/contracts.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Dependency repository reads and replacements validate Project scope, revision and stable GitHub IDs. Project setup history and restore validate the current workspace, project, environment and acknowledged binding snapshot.",
+    "behavior": "Dependency repository reads and replacements validate Project scope, revision and stable GitHub IDs. Project setup history and restore validate the current workspace, project, environment and acknowledged binding snapshot. Environment inputs validate scope, repository rows (start or on demand, base branch, one 主仓库), share targets and task 环境 changes against the task revision.",
     "test": "tests/project-dependency-repositories.db.test.ts",
     "suite": "test:project-resources-db"
   },
@@ -1693,8 +1693,8 @@
   "lib/project-resources/store.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Project resource transactions use the installation PostgreSQL database and workspace locks. The installation PostgreSQL database stores versioned recipes. A restore checks the shared binding snapshot, clears approval and preserves current settings. Project-specific bindings require content access for reads and steering plus an active Workspace admin for writes.",
-    "test": "tests/environment-settings.db.test.ts",
+    "behavior": "Environment transactions use the installation PostgreSQL database and workspace locks. A personal environment is visible to, edited by and admits runs of its owner only; any active member creates one, its owner shares it with the workspace, and its owner or an administrator takes it back. Shared environments are created by administrators and edited by administrators or their owner. Run admission takes the request's environment, else the task's 环境; the workspace repository policy admits repositories outside the environment, recorded as cloned on demand. Setup history and restore are environment-scoped and check the current reach snapshot. Retired Project bindings stay readable for one release.",
+    "test": "tests/environment-scope.db.test.ts",
     "suite": "test:project-resources-db"
   },
   "lib/thread-artifacts.ts": {
@@ -4575,5 +4575,33 @@
     "behavior": "Authenticated native clients read workspace or organization billing status and invoke billing actions with a fresh session under the mobile origin policy.",
     "test": "tests/mobile-api-gaps.test.ts",
     "suite": "test:mobile"
+  },
+  "lib/project-resources/task-environment.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A task's 环境 is stored in the installation PostgreSQL database. Steering the task and being able to use the environment are required to change it; each change is a task revision and an audit event, and reads hide the names of other people's personal environments.",
+    "test": "tests/environment-settings.db.test.ts",
+    "suite": "test:project-resources-db"
+  },
+  "app/actions/environments.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Signed-in members list the environments they can see with their scope and permissions, set a task's 环境 and read the 环境 of tasks they can see, all through the installation PostgreSQL database.",
+    "test": "tests/environment-single-workflow.db.test.ts",
+    "suite": "test:project-resources-db"
+  },
+  "lib/db/workspace-schema.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Describes workspace tables in the installation PostgreSQL database, including environment scope, repository rows and each task's 环境.",
+    "test": "tests/environment-scope-migration.db.test.ts",
+    "suite": "test:project-resources-db"
+  },
+  "drizzle/20261125223723_environment_scope_and_task_environments.sql": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Adds environment scope, owner and repository rows and the task 环境 table to the installation database, and copies each task's unambiguous Project environment and each Project repository's branch and 主仓库 onto them.",
+    "test": "tests/environment-scope-migration.db.test.ts",
+    "suite": "test:project-resources-db"
   }
 }

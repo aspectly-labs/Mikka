@@ -4005,7 +4005,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "3f5adb9610da3b43998f66a769d1cd0f9df50b93b139d8f9ac9465e1a866922b"
+      "sourceHash": "72c460bcd402c1bad0033f7d658b91086f2158024d3289ce3a950b3d86da0792"
     },
     {
       "path": "/mikka/api/workspaces/[workspaceId]/projects/[projectId]/setup",
@@ -4175,7 +4175,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "cc2a37740c4a1cb3fc6fa3dfbc5e1a8e26b08ff27bd90b33bf4eed32a3723f2b"
+      "sourceHash": "90f757f6ca4e4b4a7ea1acca41943c51d7d80160bc382bf4aee7bab0fe06a76a"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/report",
@@ -4220,7 +4220,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "9322808c62f3fdaf33aa233c74041c23eefafd90ddb01bec9dd7c060904a7641"
+      "sourceHash": "d586183e277e7ede2939ed88f83badcf73a88a169eff82041a4c0f7e846a244c"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

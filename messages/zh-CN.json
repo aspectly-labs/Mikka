@@ -4600,6 +4600,7 @@
     "e2bKeyRateLimited": "E2B 当前对该密钥限流，请几分钟后再试。",
     "agentDuplicateName": "名称重复，请换一个名称。",
     "projectResourceConflict": "资源配置已被更新，请刷新后重试。",
+    "projectBindingsRetired": "项目不再选择仓库和环境，请改为设置任务的环境。",
     "teamLifecycleConflict": "团队已发生变化，请刷新并重新查看影响范围。",
     "teamIdentifierInvalid": "标识须为 2–12 位大写字母或数字，并以字母开头。",
     "executionModelUnknown": "此模型不可用。",

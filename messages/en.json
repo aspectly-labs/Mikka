@@ -4600,6 +4600,7 @@
     "e2bKeyRateLimited": "E2B is rate limiting this key right now. Wait a few minutes and try again.",
     "agentDuplicateName": "This name is already in use. Choose another name.",
     "projectResourceConflict": "These resource settings changed. Refresh and try again.",
+    "projectBindingsRetired": "Projects no longer choose repositories or environments. Set the task’s environment instead.",
     "teamLifecycleConflict": "The team changed. Refresh and review its current impact.",
     "teamIdentifierInvalid": "Use 2–12 uppercase letters or digits, starting with a letter.",
     "executionModelUnknown": "This model is unavailable.",

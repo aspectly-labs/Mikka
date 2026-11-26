@@ -14,7 +14,7 @@ const helper = GITHUB_CREDENTIAL_SCRIPT
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
 /** Use the claim's token directly for this daemon-owned HTTPS clone/fetch. */
-function preparedTokenEnvironment(token: string): Record<string, string> {
+export function preparedTokenEnvironment(token: string): Record<string, string> {
   const entries = [
     ['credential.helper', ''],
     // Standard Git credential protocol, with the same github.com scope as
