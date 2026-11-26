@@ -32,6 +32,14 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
   if (document.documentElement) markPlatform()
   else window.addEventListener('DOMContentLoaded', markPlatform, { once: true })
 
+  // The first command can arrive between navigation and React mounting its listener.
+  const menuListeners = new Set<(command: unknown) => void>()
+  let pendingMenuCommand: unknown
+  ipcRenderer.on(IPC.appMenuCommand, (_event: IpcRendererEvent, command: unknown) => {
+    if (!menuListeners.size) pendingMenuCommand = command
+    else for (const listener of menuListeners) listener(command)
+  })
+
   const bridge = {
     app: {
       version: __MIKKA_APP_VERSION__,
@@ -59,9 +67,13 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
       requireUpdate: () => ipcRenderer.invoke(IPC.appRequireUpdate),
       // Native menu commands (⌘W, ⌘T, ⌘1–9 …), sent by main to this window; the page validates each one.
       onMenuCommand: (listener: (command: unknown) => void) => {
-        const handler = (_event: IpcRendererEvent, command: unknown) => listener(command)
-        ipcRenderer.on(IPC.appMenuCommand, handler)
-        return () => { ipcRenderer.removeListener(IPC.appMenuCommand, handler) }
+        menuListeners.add(listener)
+        if (pendingMenuCommand !== undefined) {
+          const command = pendingMenuCommand
+          pendingMenuCommand = undefined
+          listener(command)
+        }
+        return () => { menuListeners.delete(listener) }
       },
     },
     notifications: {
