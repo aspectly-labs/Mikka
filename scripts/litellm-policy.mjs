@@ -32,7 +32,20 @@ function isAllowedMetadata(file, node) {
     && declaration.initializer === node && subscriptionEndpoints.get(declaration.name.text) === node.text
 }
 
+const nativeSubscriptionBroker = 'packages/subscription-worker/native_broker.go'
+const nativeProviderHost = /(?:api\.anthropic\.com|api\.openai\.com|chatgpt\.com)/i
+
+function auditNativeSubscriptionBroker(file, source) {
+  return source.split('\n').flatMap((line, index) => {
+    const match = nativeProviderHost.exec(line)
+    return match ? [{ file, line: index + 1, column: match.index + 1,
+      reason: 'native subscription inference must use the configured LiteLLM route' }] : []
+  })
+}
+
 export function auditLiteLlmSource(file, source) {
+  if (file === nativeSubscriptionBroker) return auditNativeSubscriptionBroker(file, source)
+  if (file.endsWith('.go')) return []
   if (file === client) return []
   const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
   const found = []
@@ -86,7 +99,7 @@ export function auditLiteLlmSource(file, source) {
 
 export function auditLiteLlmRepository() {
   return execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
-    .split('\0').filter(file => roots.some(root => file.startsWith(root)) && /\.[cm]?[jt]sx?$/.test(file)
+    .split('\0').filter(file => roots.some(root => file.startsWith(root)) && (file === nativeSubscriptionBroker || /\.[cm]?[jt]sx?$/.test(file))
       && !/(?:^|\/)(?:node_modules|dist|build|out|__tests__|tests?|e2e|fakes|fixtures)\//.test(file)
       && !/\.(?:test|spec|fixture|stories|node-test)\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.d.ts') && existsSync(file))
     .flatMap(file => auditLiteLlmSource(file, readFileSync(file, 'utf8')))
