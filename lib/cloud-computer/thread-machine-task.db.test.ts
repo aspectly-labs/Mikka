@@ -129,7 +129,7 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
           } }))
           assert.equal(restore.mock.callCount(), 1)
           assert.deepEqual(restore.mock.calls[0].arguments, ['snapshot-fixture', operation,
-            { application: 'mikka-thread', workspaceId, runId, operationId: operation }, owner, true])
+            { application: 'mikka-thread', workspaceId, runId, operationId: operation }, owner, 'codex'])
           const row = (await pool.query('SELECT * FROM thread_machines WHERE "runId"=$1', [runId])).rows[0]
           assert.deepEqual(sources, outcome === 'missing' ? ['codex'] : [])
           assert.equal(row.environmentSnapshotId, outcome === 'missing' ? null : snapshotId)

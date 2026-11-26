@@ -58,6 +58,12 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   const initial = await Promise.all(Array.from({ length: 4 }, create))
   assert.ok(initial.every(ms => ms > 270_000 && ms <= 300_000 && ms % 1_000 === 0))
   await verifyE2BAllocation(ownerId, operationId, sandboxId, {}, { cpuCount: 2, memoryMB: 8192 })
+  await fixture.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","sandboxId","snapshotId","operationId",state)
+    VALUES ($1,$2,$3,$4,$5,$6,'running')`, [runId, workspaceId, ownerId, sandboxId, templates.codex.templateId, operationId])
+  const { readThreadMachinePlacement } = await import('../thread-machine-view')
+  const machine = await readThreadMachinePlacement(fixture, ownerId, [runId])
+  assert.deepEqual(machine?.machine.cloud?.compute, { size: 'medium', cpuCount: 2, memoryMB: 8192, hourlyMicroUsd: 240000 })
+  assert.equal(await readThreadMachinePlacement(fixture, 'another-owner', [runId]), null)
   const expected = (index: number, chargedRunId: string | null) => (
     { id: `machine:e2b:${operationId}:${index}`, model: 'machine/e2b-medium', state: 'settled', cost: 20_000, runId: chargedRunId, unpaid: 0 })
   assert.deepEqual(await receipts(), [expected(0, runId)])
@@ -67,11 +73,11 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.deepEqual(await receipts(), [expected(0, runId)])
   const renewed = await Promise.all(Array.from({ length: 4 }, () => e2bSandboxTimeout(ownerId, sandboxId, 900_000)))
   assert.ok(renewed.every(ms => ms > 300_000 && ms <= 330_000))
-  assert.deepEqual(await receipts(), [expected(0, runId), expected(1, null)])
+  assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId)])
 
   await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()-interval '1 second' WHERE "operationId"=$1`, [operationId])
   await assert.rejects(e2bSandboxTimeout(ownerId, sandboxId, 900_000), { code: 'e2b_limit_reached' })
-  assert.deepEqual(await receipts(), [expected(0, runId), expected(1, null)])
+  assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId)])
 
   // A provider hardware mismatch is killed before exposing the instance and
   // releases the prepaid receipt. There is no up/down-tier price adjustment.
