@@ -1348,10 +1348,11 @@ export class RunSupervisor {
       credential: assignment.modelCredential,
     }
     const prewarm = !startupDirectory && this.deps.prepareSubscription && ['claude_code', 'codex'].includes(assignment.harness)
-      && assignment.subscriptionBinding && assignment.subscriptionLease && !assignment.modelCredential
+      && assignment.subscriptionBinding && assignment.subscriptionContext && assignment.modelCredential
       && !entry.sessionId && !entry.worktree && !assignment.continuesRunId && !assignment.resumeSessionId
       && !assignment.requireSessionResume && !assignment.resumeFrom
       && (!assignment.github || Boolean(assignment.github.token))
+      && (!assignment.mcp || assignment.mcp.decisionCatalogue !== undefined)
       && (assignment.mcp?.mailbox !== true || assignment.mcp.mailboxCatalogue !== undefined)
     if (prewarm) {
       const abort = run.prewarmAbort = new AbortController()
@@ -1583,12 +1584,12 @@ export class RunSupervisor {
     const previousExecution = entry.execution
     const previousRuntime = entry.runtime
     let session: AgentSession
-    if (assignment.subscriptionBinding && assignment.modelCredential) throw new Error("A run has one model credential")
+    if (assignment.subscriptionBinding && (!assignment.subscriptionContext || !assignment.modelCredential)) {
+      throw new CodedError('subscription_hosted_runtime_unavailable', { detail: 'assignment_invalid' })
+    }
     try {
       session = await this.stage(runId, "agent_start", async () => preparedSession
       ? await preparedSession.start({ ...options, prompt })
-      : assignment.modelCredential && this.deps.startCredential
-      ? await this.deps.startCredential(assignment,{...options,prompt})
       : assignment.subscriptionBinding
       ? this.deps.startSubscription
         ? await (async () => {
@@ -1598,6 +1599,8 @@ export class RunSupervisor {
               ...(assignment.requireSessionResume && continueSession ? { continueSession } : {}) })
           })()
         : (()=>{throw new CodedError('subscription_hosted_runtime_unavailable', { detail: 'runner_missing' })})()
+      : assignment.modelCredential && this.deps.startCredential
+      ? await this.deps.startCredential(assignment, { ...options, prompt })
       : resuming
       ? await adapter.resume(entry.sessionId as string, options)
       : await (async () => {

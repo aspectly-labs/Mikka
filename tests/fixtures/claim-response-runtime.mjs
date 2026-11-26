@@ -8,7 +8,8 @@ import { PgDialect, QueryBuilder } from 'drizzle-orm/pg-core'
 // This existing loader captures response scheduling below; no live delivery is claimed.
 const gatewayEnvironment = { MIKKA_EDITION: 'community', BETTER_AUTH_URL: 'http://127.0.0.1:3000',
   BETTER_AUTH_SECRET: 'synthetic-claim-commit-fixture', DEVICE_GATEWAY_URL: undefined,
-  DEVICE_GATEWAY_PUSH_SECRET: undefined, VERCEL: undefined }
+  DEVICE_GATEWAY_PUSH_SECRET: undefined, VERCEL: undefined,
+  MIKKA_LITELLM_URL: 'https://litellm.fixture.invalid', MIKKA_LITELLM_MASTER_KEY: 'synthetic-claim-only' }
 const previousGatewayEnvironment = Object.fromEntries(Object.keys(gatewayEnvironment).map(key => [key, process.env[key]]))
 for (const [key, value] of Object.entries(gatewayEnvironment)) {
   if (value === undefined) delete process.env[key]; else process.env[key] = value
@@ -287,21 +288,26 @@ const sources = new Map([
       assert.equal(personalWorkerMailboxScopeMatches(p.run.agentDefinition?.harness??p.agent.harness,p.run.agentDefinition,{botId:p.run.botId??null,workspaceId:p.run.workspaceId}),false)
       p.mailboxLookups.push([owner,runId]);return []
     }`],
+  ['/lib/cloud-computer/e2b-task-workspace-archive.ts', 'export function portableTaskArchiveEnabled(){return Boolean(globalThis.claimResponseProbe.portableMachine)}'],
   ['/lib/computer/claim.ts', `
+    import assert from 'node:assert/strict'
     function claimTransaction(){
       const p=globalThis.claimResponseProbe
       return {query(sql,args){
-        if (sql.startsWith('SELECT id FROM agent_runs WHERE')) {
-          if (args[0]!==p.run.id||args[1]!==p.run.userId) throw new Error('unexpected portable run scope')
+        if(sql==='SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE'){
+          assert.deepEqual(args,[p.run.id,p.run.userId]);if(p.portableMachine)p.portableOperations.push('lock-run')
           return Promise.resolve({rows:[{id:p.run.id}],rowCount:1})
         }
-        if (sql.includes("lifecycle->'portableWorkspaceRestore' AS receipt")) {
-          if (args[0]!==p.run.id||args[1]!==p.device.id||args[2]!==p.run.userId||args[3]!==p.run.workspaceId)
-            throw new Error('unexpected portable machine scope')
-          const machine=p.portableMachine
-          const rows=machine && !(sql.includes("<>'cloudflare-task-v1'") && machine.snapshotId==='cloudflare-task-v1')
-            ? [{receipt:machine.receipt,restorePending:false,capture:null,captureUntil:null}] : []
-          return Promise.resolve({rows,rowCount:rows.length})
+        if(sql.startsWith("SELECT lifecycle->'portableWorkspaceRestore' AS receipt")){
+          assert.match(sql,/FROM thread_machines/);assert.match(sql,/FOR UPDATE$/)
+          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId]);if(p.portableMachine)p.portableOperations.push('lock-machine')
+          return Promise.resolve(p.portableMachine ? {rows:[p.portableMachine],rowCount:1} : {rows:[],rowCount:0})
+        }
+        if(sql.startsWith('UPDATE thread_machines SET lifecycle=')){
+          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId])
+          const writing = p.portableMachine && p.portableMachine.snapshotId !== 'cloudflare-task-v1'
+          if(writing)p.portableOperations.push('writer-ready')
+          return Promise.resolve({rows:[],rowCount:writing ? 1 : 0})
         }
         if(!sql.startsWith('UPDATE agent_runs SET "deviceTokenId"=$2')||args[0]!==p.run.id||args[1]!=="synthetic-device-token"||args[2]!=="member")throw new Error("unexpected SQL in claim fixture")
         p.run.deviceTokenId=args[1]
@@ -369,11 +375,19 @@ const sources = new Map([
     export async function cloudGitHubCredential(owner,remoteKey){const p=scope(owner);assert.equal(remoteKey,p.repo.repoPath);p.cloudGitHubCredentials.push([owner,remoteKey]);return null}
   `],
   ['/lib/github/user-access.ts', 'export async function githubTokenForUser(owner){const p=globalThis.claimResponseProbe;p.credentialOwners.push(owner);await p.beforeCredential?.();if(p.credentialFailure)throw p.credentialFailure;return {token:"fixture-claim-github-token",githubAccountId:"123",expiresAt:new Date("2030-01-01T00:00:00.000Z")}}'],
+  ['/lib/model-gateway/token.ts', `import assert from 'node:assert/strict'
+    export async function mintGatewayToken(_query,grant,options){
+      const p=globalThis.claimResponseProbe
+      assert.equal(grant.source.kind,'subscription')
+      assert.equal(options?.subscriptionLeaseExpiresAt, p.run.leaseExpiresAt.toISOString())
+      p.subscriptionGatewayGrants.push(structuredClone(grant))
+      return {token:'mkg_'+'a'.repeat(43),expiresAt:new Date('2030-01-01T00:00:00.000Z')}
+    }`],
   ['/lib/subscription-runtime.ts', `import assert from 'node:assert/strict'
     export function subscriptionRuntime(...args){
       const p=globalThis.claimResponseProbe
       assert.equal(p.projectAdmission.active,true)
-      if(args.length)assert.deepEqual(args,[true,false,{exportAccessLease:true}])
+      if(args.length)assert.deepEqual(args,[true])
       return {
         repository:{async nativeBinding(owner,agent,harness){
           assert.deepEqual([owner,agent,harness],[p.run.userId,p.agent.id,p.agent.harness])
@@ -382,14 +396,16 @@ const sources = new Map([
           p.localBindingLookups.push([owner,agent,harness]);return null
         }},
         async nativeRun(owner,device,run){
-          assert.ok(p.nativeLease,'native custody must be explicitly configured')
+          assert.ok(p.nativeContext || p.cloud?.subscription,'native custody must be explicitly configured')
           assert.deepEqual([owner,device,run],[p.run.userId,p.device.id,p.run.id])
           ;(p.nativeRunCalls??=[]).push([owner,device,run]);return {ownerId:owner,runId:run}
         },
-        async nativeLease(use,signal,includeCatalogue){
-          assert.ok(p.nativeLease);assert.deepEqual(use,{ownerId:p.run.userId,runId:p.run.id})
-          assert.equal(signal.aborted,false);assert.equal(typeof includeCatalogue,'boolean')
-          ;(p.nativeLeaseCalls??=[]).push(use);p.nativeLeaseCapabilities.push(includeCatalogue);return p.nativeLease
+        async nativeContext(use,signal){
+          assert.deepEqual(use,{ownerId:p.run.userId,runId:p.run.id})
+          assert.equal(signal.aborted,false)
+          p.nativeContextCalls.push(use)
+          return p.nativeContext ?? { route:p.cloud.subscription.route, modelId:p.cloud.subscription.modelId, revision:1,
+            accountId:'fixture-account', expiresAt:'2030-01-01T00:00:00.000Z' }
         }
       }
     }`],

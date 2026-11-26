@@ -563,7 +563,7 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
         runId: queued.runId, deviceId: target.deviceId, model: frozen.model, subscription: frozen.subscription,
         binding: { bindingId: frozen.subscription.bindingId, ownerId: p.id, workspaceId: p.workspaceId, consumerId: target.agentId, route: 'claude_code_cli' },
       })], { encoding: 'utf8', timeout: 15_000 })
-      assert.deepEqual(JSON.parse(output), { model: providerModel, leaseReads: 1, outcome: 'succeeded' }, 'the actual native CLI configuration must match the provider model in its lease')
+      assert.deepEqual(JSON.parse(output), { model: providerModel, baseUrl: 'https://mikka.test/api/model-gateway/anthropic', outcome: 'succeeded' }, 'the native CLI uses the frozen provider model through the run gateway')
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 

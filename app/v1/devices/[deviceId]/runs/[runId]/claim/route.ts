@@ -16,7 +16,7 @@ import { daemonTestMode, repositoryBindingMatches } from '@mikka/protocol/reposi
 import { localExecutionHarnesses } from '@/lib/device-agents'
 import { runTestFixture } from '@/lib/run-test-fixture'
 import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_SNAPSHOT_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, portableTaskWorkspaceReceiptSchema, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
-import { SUBSCRIPTION_MODEL_CATALOGUE_HEADER, type NativeLease } from '@mikka/protocol/subscription'
+import { SUBSCRIPTION_GATEWAY_HEADER, type NativeBrokerContext } from '@mikka/protocol/subscription'
 import { POLICY_SNAPSHOT_HEADER, POLICY_SNAPSHOT_VERSION } from '@mikka/protocol/policy-snapshot'
 import { issuePolicySnapshot, policyDistributionContext } from '@/lib/agent-tool-approval/policy-distribution'
 import { requestDevicePolicyIssuer } from '@/lib/agent-tool-approval/local-cloud-issuer'
@@ -79,7 +79,8 @@ import { daemonTooOld, daemonVersions } from '@/lib/daemon-release'
 /**
  * `POST /v1/devices/:deviceId/runs/:runId/claim`: hands the daemon everything
  * it needs to run. 409 means the run is not queued for this device — the
- * daemon's `RunNotPinnedHereError`, and it stops asking.
+ * daemon's `RunNotPinnedHereError`, and it stops asking. A subscription
+ * precondition failure closes its queued run with durable upgrade guidance.
  */
 async function handlePOST(request: Request, { params }: { params: Promise<{ deviceId: string; runId: string }> }) {
   const { runId } = await params
@@ -233,6 +234,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       return RouteResponse.json({ error: messages.RunErrors.subscription_local_runtime_unavailable[detail ?? 'default'], code: 'subscription_local_runtime_unavailable', ...(detail ? { detail } : {}) }, { status: 409 })
     }
     return RouteResponse.json({ error: 'Subscription requires a broker-enabled hosted runner.' }, { status: 409 })
+  }
+  if (subscription && (!receivesRunCredentials || request.headers.get(SUBSCRIPTION_GATEWAY_HEADER) !== '1')) {
+    // Released daemons decode upgrade metadata through the 409 claim contract.
+    await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
+    return RouteResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
   }
   if (device.kind === 'local' && (!repo.remoteUrl || !localExecutionHarnesses(device.harnesses).includes(harness))) return RouteResponse.json({ error: 'Repository or execution harness unavailable.' }, { status: 409 })
   if ((harness === 'codex' || harness === 'claude_code') && !device.harnesses.some(info => info.harness === harness && info.installed && info.toolApproval === true)) return RouteResponse.json({ error: 'Run approval capability unavailable.' }, { status: 409 })
@@ -491,13 +497,25 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const preparedCredentials = receivesRunCredentials ? Promise.allSettled([
     // Each phase fails with its own code, so a refused claim names which
     // credential failed and keeps the provider's own code as its cause.
-    cloudStartupSpan('cloud.worker.claim.native_credentials', startupAttributes, async (): Promise<NativeLease | undefined> => {
+    cloudStartupSpan('cloud.worker.claim.native_credentials', startupAttributes, async (): Promise<{
+      context: NativeBrokerContext; credential: RunModelCredential
+    } | undefined> => {
       if (!subscription) return undefined
-      if (!leaseDevice(device, deviceId, caller.scopeDeviceId)) throw new CodedError('run_credentials_unavailable', { detail: 'device_unavailable' })
+      if (!leaseDevice(device, deviceId, caller.scopeDeviceId) || (harness !== 'claude_code' && harness !== 'codex'))
+        throw new CodedError('run_credentials_unavailable', { detail: 'device_unavailable' })
       try {
-        const runtime = subscriptionRuntime(true, false, { exportAccessLease: true })
-        return await runtime.nativeLease(await runtime.nativeRun(caller.userId, deviceId, runId), request.signal,
-          request.headers.get(SUBSCRIPTION_MODEL_CATALOGUE_HEADER) === '1')
+        const { gatewayLiteLlm, GATEWAY_PATHS } = await import('@/lib/model-gateway/config')
+        if (!gatewayLiteLlm()) throw new Error('model gateway unavailable')
+        const protocol = harness === 'claude_code' ? 'anthropic' : 'openai'
+        const gatewayUrl = new URL(withBasePath(GATEWAY_PATHS[protocol]), request.url)
+        if (gatewayUrl.protocol !== 'https:' && !loopbackGateway) throw new Error('model gateway unavailable')
+        const runtime = subscriptionRuntime(true)
+        const context = await runtime.nativeContext(await runtime.nativeRun(caller.userId, deviceId, runId), request.signal)
+        const { mintGatewayToken } = await import('@/lib/model-gateway/token')
+        const { token } = await mintGatewayToken(pool, { runId, ownerId: caller.userId, workspaceId: run.workspaceId ?? subscription.workspaceId, harness,
+          model: context.modelId, source: { kind: 'subscription', deviceId } }, { subscriptionLeaseExpiresAt: leaseExpiresAt })
+        const credential = runModelCredentialSchema.parse({ kind: 'provider', protocol, baseUrl: gatewayUrl.toString(), key: token })
+        return { context, credential }
       } catch (error) { throw new CodedError('run_credentials_unavailable', { detail: nativeCredentialDetail(error), cause: error }) }
     }),
     cloudStartupSpan('cloud.worker.claim.github_credentials', startupAttributes, async () => {
@@ -591,7 +609,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (failed.length) { await runListChanged(db, runId); await runChanged(db, runId); await afterRunEnded(caller.userId, runId) }
     return RouteResponse.json({ error: message, code: failure.code, ...(failure.detail ? { detail: failure.detail } : {}) }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
   }
-  let subscriptionLease: NativeLease | undefined
+  let subscriptionContext: NativeBrokerContext | undefined
   let githubCredential: { token: string; expiresAt: string | null } | undefined
   timings.next('credentials_wait')
   if (preparedCredentials) {
@@ -607,7 +625,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         failures: failures.map(result => causeFields((result as PromiseRejectedResult).reason)) }))
       return failPreparingClaim(failure, 'Run credentials unavailable.')
     }
-    if (native.status === 'fulfilled') subscriptionLease = native.value
+    if (native.status === 'fulfilled' && native.value) {
+      subscriptionContext = native.value.context
+      modelCredential = native.value.credential
+    }
     if (github.status === 'fulfilled') githubCredential = github.value
   }
   const githubConnected = receivesRunCredentials ? Boolean(githubCredential)
@@ -663,7 +684,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...(run.agentDefinition?.modelDispatch?.serviceTier ? { serviceTier: run.agentDefinition.modelDispatch.serviceTier } : {}),
     ...(modelCredential ? { modelCredential } : {}),
     ...(subscription ? { ...(run.agentDefinition?.cliModelSelection ? {} : {model:subscription.modelId}), subscriptionBinding: { bindingId: subscription.id, ownerId: subscription.ownerId, workspaceId: subscription.workspaceId, consumerId: subscription.consumerId, route: subscription.route } } : {}),
-    ...(subscriptionLease ? { subscriptionLease } : {}),
+    ...(subscriptionContext ? { subscriptionContext, model: subscriptionContext.modelId } : {}),
     ...(computer && assignmentPolicy.permissions.computer_use !== 'deny' ? { computer: { botId: computer.botId, ownerId: computer.ownerId, display: computer.display, policyVersion: computer.policyVersion } } : {}),
     ...(localComputer ? { localComputer } : {}),
     ...(portableTaskWorkspace ? { portableTaskWorkspace } : {}),
