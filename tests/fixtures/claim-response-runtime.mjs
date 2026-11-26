@@ -32,14 +32,14 @@ function workspaceQuery(columns) {
   let table, condition, organizationJoin = false, statement = new QueryBuilder().select(columns)
   const organizations = () => {
     const p = globalThis.claimResponseProbe
-    assert.equal(table, 'mikka_organization_workspaces')
+    assert.equal(table, 'mikka_workspaces')
     assert.deepEqual(condition.params, [p.workspace.id])
-    assert.ok(condition.sql === '"mikka_organization_workspaces"."workspaceId" = $1'
-      || condition.sql === '"mikka_organization_workspaces"."workspaceId" in ($1)')
-    if (columns !== undefined) assert.deepEqual(Object.keys(columns), ['organizationId'])
+    assert.ok(condition.sql === '"mikka_workspaces"."id" = $1'
+      || condition.sql === '"mikka_workspaces"."id" in ($1)')
+    assert.deepEqual(Object.keys(columns), condition.sql.includes(' in ') ? ['workspaceId', 'organizationId', 'factorAt'] : ['organizationId', 'factorAt'])
     // This claim-composition fixture has no Organization-link row. The real
     // Enterprise gate consumes that exact projection; unknown queries fail.
-    return []
+    return [{ workspaceId: p.workspace.id, organizationId: null, factorAt: null }]
   }
   const query = {
     from(value) { table = value[Object.getOwnPropertySymbols(value).find(s => s.description === 'drizzle:Name')]; statement = statement.from(value); return query },
@@ -51,6 +51,9 @@ function workspaceQuery(columns) {
         assert.equal(value[Object.getOwnPropertySymbols(value).find(s => s.description === 'drizzle:Name')], 'mikka_organization_workspaces')
         assert.equal(join.sql, '"mikka_organization_workspaces"."workspaceId" = "mikka_workspace_members"."workspaceId"')
         assert.deepEqual(Object.keys(columns), ['id', 'organizationId'])
+      } else if (!columns.kind) {
+        assert.equal(table, 'mikka_workspaces')
+        assert.equal(join.sql, '"mikka_organization_workspaces"."workspaceId" = "mikka_workspaces"."id"')
       } else {
         // The unlocked membership path is checked as a complete real query
         // at orderBy, including its original base tables and all predicates.

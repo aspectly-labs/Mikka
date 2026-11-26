@@ -67,11 +67,14 @@ function workspaceQuery(columns) {
       return p.activeMembers.has(userId)?[{...p.workspace,organizationId:null}]:[]
     },
     async limit(count){
-      // This scope-store fixture has no Organization link; its real gate still runs.
-      assert.equal(table,'mikka_organization_workspaces')
-      assert.deepEqual(condition.params,[globalThis.scopeStoreProbe.workspace.id])
+      // The fixture workspace has no Organization link or MFA requirement.
+      assert.equal(table,'mikka_workspaces')
+      assert.deepEqual(Object.keys(columns), ['organizationId', 'factorAt'])
+      const compiled = statement.limit(count).toSQL()
+      assert.equal(compiled.sql, 'select "mikka_organization_workspaces"."organizationId", "mikka_workspaces"."twoFactorRequiredAt" from "mikka_workspaces" left join "mikka_organization_workspaces" on "mikka_organization_workspaces"."workspaceId" = "mikka_workspaces"."id" where "mikka_workspaces"."id" = $1 limit $2')
+      assert.deepEqual(compiled.params,[globalThis.scopeStoreProbe.workspace.id, 1])
       assert.equal(count,1)
-      return []
+      return [{organizationId:null,factorAt:null}]
     },
     async for(mode){
       const p=globalThis.scopeStoreProbe

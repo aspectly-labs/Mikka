@@ -8466,10 +8466,6 @@
       "keywords": "快捷键|主题|外观|深色|浅色",
       "label": "切换外观"
     },
-    "chatFont": {
-      "label": "聊天字体",
-      "keywords": "聊天|字体|外观"
-    },
     "appearanceColorScheme": {
       "label": "显示模式",
       "keywords": "主题|浅色|深色|跟随系统|模式"

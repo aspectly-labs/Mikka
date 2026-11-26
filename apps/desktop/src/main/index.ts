@@ -810,6 +810,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', closeReturnListener)
   app.on('before-quit', () => { bundledAuth?.dispose(); bundledLive?.closeAll(); bundledViewer?.closeAll() })
   app.on('window-all-closed', () => {
+    // No renderer remains to report that the last run ended.
+    appSettings?.setActive(false)
     if (process.platform !== 'darwin') app.quit()
   })
   void app.whenReady().then(start)
