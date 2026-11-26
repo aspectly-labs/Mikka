@@ -8,8 +8,8 @@ import test from 'node:test'
 import { subscriptionChatPath, subscriptionChatRequest, subscriptionChatUrl } from './subscription-chat.mjs'
 
 const fixtureBody = JSON.stringify({ model: 'fixture-model', ticket: 'fixture-ticket', payload: '{}' })
-const request = (url = subscriptionChatUrl, method = 'POST') => new Request(url, {
-  method, body: method === 'POST' ? fixtureBody : undefined, headers: {
+const request = (url = subscriptionChatUrl) => new Request(url, {
+  method: 'POST', body: fixtureBody, headers: {
     cookie: 'fixture-cookie', authorization: 'Bearer fixture-secret', 'x-mikka-subscription-fake': 'forged',
   },
 })
@@ -17,7 +17,7 @@ const request = (url = subscriptionChatUrl, method = 'POST') => new Request(url,
 test('a callback client can only reach the fixed internal path and cannot redirect', async () => {
   const binding = { subscriptionChat() { return Response.redirect('https://example.invalid', 307) } }
   assert.equal((await subscriptionChatRequest(request(subscriptionChatUrl + '?other=1'), binding)).status, 404)
-  assert.equal((await subscriptionChatRequest(request(subscriptionChatUrl, 'GET'), binding)).status, 404)
+  assert.equal((await subscriptionChatRequest(new Request(subscriptionChatUrl), binding)).status, 404)
   assert.equal((await subscriptionChatRequest(request(), undefined)).status, 503)
   const refused = await subscriptionChatRequest(request(), binding)
   assert.equal(refused.status, 502)
