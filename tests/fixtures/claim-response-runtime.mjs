@@ -8,7 +8,8 @@ import { PgDialect, QueryBuilder } from 'drizzle-orm/pg-core'
 // This existing loader captures response scheduling below; no live delivery is claimed.
 const gatewayEnvironment = { MIKKA_EDITION: 'community', BETTER_AUTH_URL: 'http://127.0.0.1:3000',
   BETTER_AUTH_SECRET: 'synthetic-claim-commit-fixture', DEVICE_GATEWAY_URL: undefined,
-  DEVICE_GATEWAY_PUSH_SECRET: undefined, VERCEL: undefined }
+  DEVICE_GATEWAY_PUSH_SECRET: undefined, VERCEL: undefined,
+  MIKKA_LITELLM_URL: 'https://litellm.fixture.invalid', MIKKA_LITELLM_MASTER_KEY: 'synthetic-claim-only' }
 const previousGatewayEnvironment = Object.fromEntries(Object.keys(gatewayEnvironment).map(key => [key, process.env[key]]))
 for (const [key, value] of Object.entries(gatewayEnvironment)) {
   if (value === undefined) delete process.env[key]; else process.env[key] = value
@@ -357,11 +358,18 @@ const sources = new Map([
     export async function cloudGitHubCredential(owner,remoteKey){const p=scope(owner);assert.equal(remoteKey,p.repo.repoPath);p.cloudGitHubCredentials.push([owner,remoteKey]);return null}
   `],
   ['/lib/github/user-access.ts', 'export async function githubTokenForUser(owner){const p=globalThis.claimResponseProbe;p.credentialOwners.push(owner);await p.beforeCredential?.();if(p.credentialFailure)throw p.credentialFailure;return {token:"fixture-claim-github-token",githubAccountId:"123",expiresAt:new Date("2030-01-01T00:00:00.000Z")}}'],
+  ['/lib/model-gateway/token.ts', `import assert from 'node:assert/strict'
+    export async function mintGatewayToken(_query,grant){
+      const p=globalThis.claimResponseProbe
+      assert.equal(grant.source.kind,'subscription')
+      p.subscriptionGatewayGrants.push(structuredClone(grant))
+      return {token:'mkg_'+'a'.repeat(43),expiresAt:new Date('2030-01-01T00:00:00.000Z')}
+    }`],
   ['/lib/subscription-runtime.ts', `import assert from 'node:assert/strict'
     export function subscriptionRuntime(...args){
       const p=globalThis.claimResponseProbe
       assert.equal(p.projectAdmission.active,true)
-      if(args.length)assert.deepEqual(args,[true,false,{exportAccessLease:true}])
+      if(args.length)assert.deepEqual(args,[true])
       return {
         repository:{async nativeBinding(owner,agent,harness){
           assert.deepEqual([owner,agent,harness],[p.run.userId,p.agent.id,p.agent.harness])
@@ -370,14 +378,16 @@ const sources = new Map([
           p.localBindingLookups.push([owner,agent,harness]);return null
         }},
         async nativeRun(owner,device,run){
-          assert.ok(p.nativeLease,'native custody must be explicitly configured')
+          assert.ok(p.nativeContext || p.cloud?.subscription,'native custody must be explicitly configured')
           assert.deepEqual([owner,device,run],[p.run.userId,p.device.id,p.run.id])
           ;(p.nativeRunCalls??=[]).push([owner,device,run]);return {ownerId:owner,runId:run}
         },
-        async nativeLease(use,signal,includeCatalogue){
-          assert.ok(p.nativeLease);assert.deepEqual(use,{ownerId:p.run.userId,runId:p.run.id})
-          assert.equal(signal.aborted,false);assert.equal(typeof includeCatalogue,'boolean')
-          ;(p.nativeLeaseCalls??=[]).push(use);p.nativeLeaseCapabilities.push(includeCatalogue);return p.nativeLease
+        async nativeContext(use,signal){
+          assert.deepEqual(use,{ownerId:p.run.userId,runId:p.run.id})
+          assert.equal(signal.aborted,false)
+          p.nativeContextCalls.push(use)
+          return p.nativeContext ?? { route:p.cloud.subscription.route, modelId:p.cloud.subscription.modelId, revision:1,
+            accountId:'fixture-account', expiresAt:'2030-01-01T00:00:00.000Z' }
         }
       }
     }`],
