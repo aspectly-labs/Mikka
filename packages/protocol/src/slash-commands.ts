@@ -370,11 +370,6 @@ export const EVE_AVAILABLE_COMMANDS: readonly AvailableCommand[] = [
     _meta: { source: 'eve' },
   },
   {
-    name: 'memory',
-    description: 'Inspect or update memory',
-    _meta: { source: 'eve' },
-  },
-  {
     name: 'subagents',
     description: 'List or inspect subagents',
     _meta: { source: 'eve' },

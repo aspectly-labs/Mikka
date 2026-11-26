@@ -145,10 +145,10 @@ before(async () => {
       return { rows: [{ workspaceId, status: live.status, stopRequestedAt: live.stopRequestedAt,
         harness: live.harness, canSteer: false, continuable: Boolean(live.deviceRepoId), interrupt: false }] }
     }
-    if (sql.startsWith('SELECT id,text,status,"failureCode","requestId" FROM (')) {
+    if (sql.startsWith('SELECT id,text,status,"failureCode","requestId","canSendNow" FROM (')) {
       assert.equal(viewer, current.run.userId)
       assert.deepEqual(params, [current.run.userId, workspaceId, current.run.id])
-      assert.match(sql, /"userId"=\$1 AND "workspaceId"=\$2 AND "rootRunId"=\$3/)
+      assert.match(sql, /q\."userId"=\$1 AND q\."workspaceId"=\$2 AND q\."rootRunId"=\$3/)
       return { rows: [] }
     }
     // These ordinary threads have no machine binding; still verify the scoped stop probe.

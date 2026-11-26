@@ -12117,7 +12117,7 @@
     "sectionMikka": "Mikka",
     "sectionClaudeCode": "Claude Code",
     "sectionCodex": "Codex",
-    "sectionEve": "Eve",
+    "sectionEve": "Bot",
     "sectionSkills": "Skills",
     "sectionMcp": "MCP",
     "sectionRecents": "Recent",
@@ -12154,6 +12154,12 @@
     "voiceStart": "Dictate",
     "voiceStop": "Stop dictation",
     "voiceTranscribing": "Transcribing…",
+    "cmdHint": {
+      "question": "<question>",
+      "instructions": "[instructions]",
+      "query": "<query>",
+      "task": "<task>"
+    },
     "cmdDesc": {
       "new": "Start a new thread",
       "fork": "Fork full history",
@@ -12176,7 +12182,6 @@
       "review": "Review code changes",
       "init": "Update AGENTS.md",
       "schedules": "Manage automations",
-      "memory": "View memory",
       "subagents": "View subagents",
       "web-search": "Search the web",
       "dispatch": "Dispatch task"
