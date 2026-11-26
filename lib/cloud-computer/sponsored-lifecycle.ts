@@ -154,7 +154,7 @@ async function reserve(tx: PoolClient, actor: TaskMachineActor, runId: string): 
   const scope = { ownerId: actor.userId, workspaceId: actor.workspaceId, issueId: run.issueId, repositoryKey: run.repoPath }
   const source = compute.sku && !run.retryOf && !run.questionContinuation
     ? await previousTaskComputeSource(tx, { ...scope, runId }) : null
-  const needsSource = source && (allocatedTaskProvider(source) !== 'cloudflare' || source.size !== size || source.capture === 'ready')
+  const needsSource = source && (allocatedTaskProvider(source) !== 'cloudflare' || (source.size !== null && source.size !== size) || source.capture === 'ready')
   if (needsSource && (source.capture !== 'ready' || !portableTaskArchiveEnabled()))
     throw new ComputerError(503, 'Cloudflare task machine is waiting for the portable workspace archive')
   const portableSource = needsSource ? { scope, runId: source.runId } : undefined
@@ -392,7 +392,7 @@ export async function reconcileSponsoredTaskMachine(
     const leaseUntil = new Date(row.workerLeaseUntil).getTime()
     if (leaseUntil > now) return leaseUntil
   }
-  if (terminal && row.state === 'running' && row.sandboxId && row.lifecycle.portableCompute === true) {
+  if (terminal && row.state === 'running' && row.sandboxId && (metered || portableTaskArchiveEnabled())) {
     const { parkThreadMachine } = await import('./thread-machines')
     const parked = await parkThreadMachine(pool, actor, runId, undefined, undefined, undefined, fence)
     if (!parked?.reviewHeldUntil) await settleStopped()

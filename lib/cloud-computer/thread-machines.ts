@@ -664,7 +664,7 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
     // Forced suspension freezes the whole VM, including an unacknowledged
     // native process. A host-only terminal transition must never unfreeze it.
     const hostEndedNative = run?.stopReason === 'device_lost' && (run.startedAt != null || run.sessionId != null || run.deviceTokenId != null)
-    return { ...machine, portableCloudflare: admittedTaskCompute(run?.agentDefinition)?.sku?.provider === 'cloudflare', workspaceReady: run?.report?.safePoint?.session === 'exited' && run?.startedAt != null && !run?.agentDefinition?.readOnly,
+    return { ...machine, workspaceReady: run?.report?.safePoint?.session === 'exited' && run?.startedAt != null && !run?.agentDefinition?.readOnly,
       requiresNativeExit: Boolean(stopExpired || run?.stopRequestedAt || hostEndedNative) || machine.lifecycle?.requiresNativeExit === true }
   }
   try {
@@ -684,7 +684,7 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
       armDueTimerAfterCommit(client, 'run-recovery')
       if (!existing) {
         let archiveScope: TaskWorkspaceArchiveScope | undefined
-        if ((machine.snapshotId !== hostedSnapshot || machine.portableCloudflare) && machine.workspaceReady && !machine.lifecycle?.portableWorkspaceRestorePending
+        if (machine.workspaceReady && !machine.lifecycle?.portableWorkspaceRestorePending
           && machine.issueId && machine.repoId && machine.lifecycle?.portableWorkspaceCapture !== 'ready' && portableTaskArchiveEnabled()) {
           if (Number(machine.lifecycle?.portableWorkspaceCaptureUntil) > Date.now()) {
             intent = undefined
@@ -1079,7 +1079,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     const priorSource = compute.sku && !exactQuestionMachine && !refreshRuntime && !run.retryOf && !run.questionContinuation && repositoryTask && run.issueId
       ? await previousTaskComputeSource(client, { ownerId: actor.userId, workspaceId: actor.workspaceId, issueId: run.issueId, runId, repositoryKey: run.repoPath })
       : null
-    const requiresPortableSource = priorSource && (allocatedTaskProvider(priorSource) !== 'e2b' || priorSource.size !== machineSize)
+    const requiresPortableSource = priorSource && (allocatedTaskProvider(priorSource) !== 'e2b' || (priorSource.size !== null && priorSource.size !== machineSize))
     if (requiresPortableSource && (priorSource.capture !== 'ready' || !portableTaskArchiveEnabled()))
       throw new ComputerError(503, 'E2B task machine is waiting for the portable workspace archive')
     const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize) : computerTemplate()

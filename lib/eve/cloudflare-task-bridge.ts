@@ -147,7 +147,7 @@ export async function readCloudflareComputeMeter(grant: TaskMachineGrant, index:
  * and verify its receipt before the caller uploads any bytes to Mikka R2. */
 export async function captureOwnedCloudflareTaskWorkspace(pool: Pool, actor: TaskMachineActor,
   runId: string, operationId: string, mask: Masker, signal: AbortSignal) {
-  const grant = await releaseGrant(pool, actor, runId, operationId)
+  const grant = { ...await releaseGrant(pool, actor, runId, operationId), archiveOnly: true }
   const id = randomUUID()
   const call = (operation: 'capture'|'read'|'delete', abort: AbortSignal) =>
     post('portable-archive', { grant, operation, id }, abort)

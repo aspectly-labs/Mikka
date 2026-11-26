@@ -40,7 +40,7 @@ test('parking a native writer prunes archives once, after persisting its stop an
       },
     },
   })
-  const cleanupGrant = { ...grant, expiresAt: 0 }
+  const cleanupGrant = { ...grant, expiresAt: 0, archiveOnly: true }
   await assert.rejects(machine.withMachine(cleanupGrant, () => {}), /lease expired/)
   assert.equal(await machine.withMachine(cleanupGrant, () => 'archive', true), 'archive')
   const result = await machine.park(grant)

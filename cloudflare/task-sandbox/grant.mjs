@@ -39,12 +39,15 @@ export function machineGrant(input) {
   if (!input || typeof input.ownerId !== 'string' || !input.ownerId || input.ownerId.length > 256 ||
       ![input.workspaceId, input.taskId, input.runId, input.operationId].every(v => typeof v === 'string' && uuid.test(v)) ||
       typeof input.repositoryKey !== 'string' || input.repositoryKey.length > 320 || !repository.test(input.repositoryKey) ||
-      !Number.isSafeInteger(input.expiresAt) || (input.metered !== undefined && input.metered !== true) || (input.portableWorkspace !== undefined && input.requiredCheckpoint !== undefined) ||
+      !Number.isSafeInteger(input.expiresAt) || (input.metered !== undefined && input.metered !== true) ||
+      (input.archiveOnly !== undefined && (input.archiveOnly !== true || input.expiresAt !== 0)) ||
+      (input.portableWorkspace !== undefined && input.requiredCheckpoint !== undefined) ||
       (input.size !== undefined && (typeof input.size !== 'string' || !MACHINE_SIZES.has(input.size)))) throw new Error('Invalid task machine grant')
   const { ownerId, workspaceId, taskId, runId, operationId, expiresAt } = input
   return { ownerId, workspaceId, taskId, repositoryKey: input.repositoryKey.toLowerCase(), runId, operationId, expiresAt,
     ...(input.size === undefined ? {} : {size: input.size}),
     ...(input.metered === true ? {metered: true} : {}),
+    ...(input.archiveOnly === true ? {archiveOnly: true} : {}),
     ...(input.portableWorkspace === undefined ? {} : {portableWorkspace:portableReceipt(input.portableWorkspace)}),
     ...(input.requiredCheckpoint === undefined ? {} : {requiredCheckpoint:requiredCheckpoint(input.requiredCheckpoint)}) }
 }

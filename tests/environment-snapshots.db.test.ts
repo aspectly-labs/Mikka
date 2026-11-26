@@ -169,7 +169,7 @@ test(
       await fixture.query(`UPDATE agent_runs SET "deviceId"=$2,"deviceTokenId"=$3,"agentDefinition"=$4::jsonb WHERE id=$1`,
         [e2bRun, deviceId, token, { taskCompute: { provider: 'e2b', size: 'medium' }, projectExecution: { environment } }])
       await fixture.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","issueId","deviceId","snapshotId","sandboxId","operationId","workerLeaseId",state)
-        VALUES($1,$2,$3,$4,$5,'codex','fixture-e2b',$6,$7,'starting')`, [e2bRun, ws.id, owner, issueId, deviceId, randomUUID(), leaseId])
+        VALUES($1,$2,$3,$4,$5,'codex','fixture-e2b-' || $6::uuid::text,$6::uuid,$7,'starting')`, [e2bRun, ws.id, owner, issueId, deviceId, randomUUID(), leaseId])
       const e2bInput = { ...readInput, provider: 'e2b' } as const
       process.env.MIKKA_FLAG_OVERRIDES = '{"mikka-environment-snapshots":false}'
       try {

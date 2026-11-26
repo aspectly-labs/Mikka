@@ -196,9 +196,9 @@ export class TaskMachine extends DurableObject {
     return this.exclusive(async () => {
       const run = await this.current(grant)
       if (run.review) throw Error('Task workspace has an exclusive human reviewer')
-      // Terminal capture is authorized for this exact metered operation. It
+      // Terminal capture is authorized for this exact released operation. It
       // fences and quiesces the daemon before reading its final workspace.
-      const finalArchive = allowPortableCapture && grant.metered && grant.expiresAt === 0 && run.grant.metered
+      const finalArchive = allowPortableCapture && grant.archiveOnly === true
       liveUntil({ expiresAt: finalArchive ? run.expiresAt : Math.min(grant.expiresAt, run.expiresAt) }, Date.now())
       if (run.state !== 'running' || !this.ctx.container?.running) throw new Error('Task machine is not running')
       if (!finalArchive && await this.ctx.storage.get('nativeWriter')) throw new Error('Task workspace has an active native writer')
