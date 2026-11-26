@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { test } from 'node:test'
 import { Sandbox } from 'e2b'
-import { Pool } from 'pg'
+import { Pool, type PoolClient } from 'pg'
 import { dbUrl, seedAgent, seedRun, seedUser, seedWorkspace } from '../../tests/support/workspace-admin-db'
 
 test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUrl }, async t => {
@@ -231,6 +231,40 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     assert.ok((await runRecoveryDueSweeps(pool, { factoryLifecycle: false })).due.has('machines'))
     await reconcileCloudMachines(pool)
     assert.deepEqual(await remainingReceipt(8), { ...expected(8, successorId), state: 'failed', cost: 0 })
+    // Stall after the durable dispatch gate has read its deadline. A
+    // concurrent sweep cannot acquire the leased row and a stale caller
+    // must fail its final clock check before sending any provider request.
+    const stalled = await resetRenewal()
+    await stalled.begin()
+    const gatedClient = await pool.connect()
+    const entered = Promise.withResolvers<void>()
+    const continueDispatch = Promise.withResolvers<void>()
+    const clock = Date.now
+    try {
+      await gatedClient.query('BEGIN')
+      const query = (async (sql: string, args: unknown[]) => {
+        const result = await gatedClient.query(sql, args)
+        if (sql.includes('AS "dispatchBefore"')) {
+          entered.resolve()
+          await continueDispatch.promise
+        }
+        return result
+      }) as PoolClient['query']
+      const dispatch = stalled.apply({ query }, async () => assert.fail('An expired dispatch must not send'))
+      try {
+        await Promise.race([entered.promise, dispatch.then(() => assert.fail('The gated checkout completed early'))])
+        assert.equal((await fixture.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 FOR UPDATE SKIP LOCKED`, [operationId])).rowCount, 0)
+        Date.now = () => clock() + 20_000
+      } finally {
+        continueDispatch.resolve()
+        try { assert.equal(await dispatch, null) } finally { Date.now = clock }
+      }
+      await gatedClient.query('ROLLBACK')
+    } finally {
+      gatedClient.release()
+    }
+    await stalled.cancel()
+    assert.deepEqual(await remainingReceipt(9), { ...expected(9, successorId), state: 'failed', cost: 0 })
     assert.equal(renewAtProvider.mock.callCount(), 1)
   } finally {
     recoveryInfo.mock.restore()
@@ -310,7 +344,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     const beforePolicy = requests.length
     await assert.rejects(connectComputer(workspaceId, sandboxId, undefined, undefined, true), PolicySandboxUnavailable)
     assert.equal(requests.length, beforePolicy)
-    for (const [index, status] of [[9, 403], [10, 503]] as const) {
+    for (const [index, status] of [[10, 403], [11, 503]] as const) {
       responseStatus = status
       await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()+interval '30 seconds' WHERE "operationId"=$1`, [operationId])
       await fixture.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,2,'purchased','test',$3)`,

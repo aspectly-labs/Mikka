@@ -101,13 +101,15 @@ async function prepareE2BKeepAliveDispatch(ownerId: string, payment: KeepAlivePa
   if (!marked.rowCount) payment.dispatchId = undefined
 }
 
-async function e2bKeepAliveDispatchAllowed(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment) {
-  if (!payment.operationId) return true
-  const result = await query.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3
-    AND "paidUntil">clock_timestamp() AND ($3=0 OR "usedChunkIndex">=$3
-      OR ("renewalDispatchId"=$4 AND "renewalDispatchUntil">clock_timestamp())) FOR UPDATE`,
+async function lockE2BKeepAliveDispatch(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment) {
+  if (!payment.operationId) return { dispatchBefore: Number.POSITIVE_INFINITY }
+  const { rows: [row] } = await query.query<{ dispatchBefore: Date }>(`SELECT least("paidUntil",
+    CASE WHEN $3=0 OR "usedChunkIndex">=$3 THEN "paidUntil" ELSE "renewalDispatchUntil" END) AS "dispatchBefore"
+    FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3
+      AND "paidUntil">clock_timestamp() AND ($3=0 OR "usedChunkIndex">=$3
+        OR ("renewalDispatchId"=$4 AND "renewalDispatchUntil">clock_timestamp())) FOR UPDATE`,
   [payment.operationId, ownerId, payment.index, payment.dispatchId ?? null])
-  return result.rowCount === 1
+  return row && { dispatchBefore: row.dispatchBefore.getTime() }
 }
 
 async function releaseE2BKeepAlivePayment(ownerId: string, payment: KeepAlivePayment) {
@@ -392,8 +394,10 @@ export async function prepareE2BProviderTime(ownerId: string, sandboxId: string,
   return {
     begin: () => prepareE2BKeepAliveDispatch(ownerId, payment, inspect),
     async apply<T>(query: Pick<PoolClient, 'query'>, send: (timeoutMs: number) => Promise<T>): Promise<{ result: T; deadline: number } | null> {
-      if (!await e2bKeepAliveDispatchAllowed(query, ownerId, payment)) return null
-      const remaining = Math.floor((deadline - Date.now()) / 1_000) * 1_000
+      const gate = await lockE2BKeepAliveDispatch(query, ownerId, payment)
+      const now = Date.now()
+      if (!gate || gate.dispatchBefore <= now) return null
+      const remaining = Math.floor((deadline - now) / 1_000) * 1_000
       if (remaining < 1) return null
       const result = await send(remaining)
       await useE2BKeepAlivePayment(query, ownerId, payment, true)
@@ -410,12 +414,24 @@ export async function withE2BProviderTime<T>(ownerId: string, sandboxId: string,
   let sent = false
   try {
     await intent.begin()
-    const applied = await intent.apply(pool, timeoutMs => {
-      sent = true
-      return send(timeoutMs)
-    })
-    if (!applied) throw new E2BKeyError('e2b_limit_reached', 'The paid compute interval is awaiting reconciliation')
-    return applied.result
+    // The sweeper can skip this row while the SDK request is in flight. The
+    // previously committed dispatch marker remains if this transaction fails.
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const applied = await intent.apply(client, timeoutMs => {
+        sent = true
+        return send(timeoutMs)
+      })
+      if (!applied) throw new E2BKeyError('e2b_limit_reached', 'The paid compute interval is awaiting reconciliation')
+      await client.query('COMMIT')
+      return applied.result
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+    }
   } catch (error) {
     if (!sent || definitiveE2BRefusal(error)) await intent.cancel()
     throw error
