@@ -62,17 +62,26 @@ export async function closedWaiterProblems(options = {}, issues = waitedIssues()
   return problems
 }
 
-export async function reopenClosedWaiterIfNeeded(issue, options = {}, issues = waitedIssues()) {
-  if (!issues.includes(issue)) return { waited: false, reopened: false }
-  if (await hasOpenFollowup(issue, options)) return { waited: true, reopened: false }
+async function reopenWaiterWithoutFollowup(issue, options) {
   const base = `/repos/${REPO}/issues/${issue}`
+  const row = await githubJson(base, options)
+  if (row?.state !== 'closed' || await hasOpenFollowup(issue, options)) return false
   await githubJson(`${base}/comments`, {
     ...options,
     method: 'POST',
     body: { body: 'This issue closed while a feature flag still waits on it and no open follow-up was found. Reopening so the follow-up is explicit.' },
   })
   await githubJson(base, { ...options, method: 'PATCH', body: { state: 'open' } })
-  return { waited: true, reopened: true }
+  return true
+}
+
+export async function reopenClosedWaiterIfNeeded(issue, options = {}, issues = waitedIssues()) {
+  const targets = issues.includes(issue) ? [issue] : issues
+  const reopenedIssues = []
+  for (const target of targets) {
+    if (await reopenWaiterWithoutFollowup(target, options)) reopenedIssues.push(target)
+  }
+  return { waited: issues.includes(issue), reopened: reopenedIssues.length > 0, reopenedIssues }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -73,7 +73,7 @@ test('closed issue action reopens only a registered waiter with no follow-up', a
     [`${base}/sub_issues?per_page=100`]: [],
     [`${base}/dependencies/blocking?per_page=100`]: [],
     [`${base}/comments`]: { id: 1 },
-    [base]: { state: 'open' },
+    [base]: { state: 'closed' },
   })
   const result = await reopenClosedWaiterIfNeeded(issue, { fetchImpl: mock.fetchImpl, token: 'x' }, [issue])
   assert.equal(result.reopened, true)
