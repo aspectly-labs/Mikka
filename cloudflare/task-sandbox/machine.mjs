@@ -150,6 +150,7 @@ export class TaskMachine extends DurableObject {
       }
       try {
         await this.startImage(run)
+        if (grant.metered) await store.put('compute-meter:' + grant.operationId, { index: 0, sample: await readComputeMeter(this.ctx.container) })
         // The native product image must protect the kernel before importing
         // task files, registering the daemon or granting its first process.
         const reviewBoot = this.env.NATIVE_TASK_EGRESS === 'direct'
@@ -161,7 +162,6 @@ export class TaskMachine extends DurableObject {
           await restoreReviewExit(this.ctx.container, witness)
         } else if (restored && this.env.NATIVE_TASK_EGRESS === 'direct') await this.transferNativeHistory('restore')
         if (!restored) await new Files(this.ctx.container).mkdir('/workspace', { recursive: true })
-        if (grant.metered) await store.put('compute-meter:' + grant.operationId, { index: 0, sample: await readComputeMeter(this.ctx.container) })
         await store.put('run', { ...run, restored, ...(reviewBoot ? { reviewBoot } : {}), state: 'running' })
         return { state: 'running', restored, instanceId: this.ctx.id.toString() }
       } catch (error) {
@@ -346,14 +346,19 @@ export class TaskMachine extends DurableObject {
       await store.put('run', run)
     }
     await store.setAlarm(Date.now() + 15_000)
-    if (save && !run.checkpoint && container?.running) {
-      const witness = run.reviewBoot && run.outcome === 'settled'
-        ? await captureReviewExit(container, run.grant.runId).catch(() => null) : null
-      const checkpoint = await store.get('nativeWriter') ? await this.saveNativeWorkspace(container) : await this.workspace.checkpoint()
-      run = { ...run, checkpoint }
-      await store.put({run, reviewCheckpoint:witness ? {...checkpoint, witness} : null})
+    const saveUntil = run.grant.metered ? run.settledAt + CHECKPOINT_TIME_MS : Infinity
+    if (save && !run.checkpoint && container?.running && Date.now() < saveUntil) {
+      try {
+        const witness = run.reviewBoot && run.outcome === 'settled'
+          ? await captureReviewExit(container, run.grant.runId).catch(() => null) : null
+        const checkpoint = await store.get('nativeWriter') ? await this.saveNativeWorkspace(container) : await this.workspace.checkpoint()
+        run = { ...run, checkpoint }
+        await store.put({run, reviewCheckpoint:witness ? {...checkpoint, witness} : null})
+      } catch (error) {
+        if (Date.now() < saveUntil) throw error
+      }
     }
-    if (save && !run.checkpoint && !container?.running) {
+    if (save && !run.checkpoint) {
       const saved = await store.get('checkpoint')
       run = { ...run, outcome: 'interrupted', checkpoint: saved ? { id: saved.id, bytes: saved.size, sha256: saved.sha256 } : null }
     }

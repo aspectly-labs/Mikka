@@ -163,6 +163,17 @@ test('a live lease only re-arms its alarm; a settled lease still stops through t
   assert.equal(settled.data.get('run').outcome, 'settled', 'the recorded outcome survives the backstop alarm')
   assert.ok(settled.events.includes('destroy') && settled.events.includes('release'),
     'a lease already settling still releases its compute')
+
+  const stuck = fixture({ grant: { ...grant, metered: true }, state: 'stopping', expiresAt: grant.expiresAt,
+    settledAt: Date.now() - 61_000, outcome: 'settled' })
+  const saved = { id: randomUUID(), size: 3, sha256: 'a'.repeat(64) }
+  stuck.data.set('checkpoint', saved)
+  await stuck.machine.alarm()
+  const stopped = stuck.data.get('run')
+  assert.equal(stopped.state, 'stopped')
+  assert.equal(stopped.outcome, 'interrupted')
+  assert.deepEqual(stopped.checkpoint, { id: saved.id, bytes: saved.size, sha256: saved.sha256 })
+  assert.deepEqual(stuck.events, ['destroy', 'release', 'prune', 'dealarm'])
 })
 
 test('an uncommitted first checkpoint is reclaimed without removing a committed checkpoint or other files', async () => {
