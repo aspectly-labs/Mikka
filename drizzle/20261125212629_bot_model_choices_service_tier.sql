@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3324 add a nullable service tier and constrain future writes without changing existing choices
 -- target: MIKKA_DATABASE_URL
 
 -- A chat's serving speed beside its model and reasoning effort (lib/model-capabilities.ts):

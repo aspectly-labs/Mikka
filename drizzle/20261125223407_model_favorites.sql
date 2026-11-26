@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3324 create favorites storage and install its account-deletion guard without rewriting rows
 -- target: MIKKA_DATABASE_URL
 -- The model picker's favorites, as Capy's (lib/model-favorites.ts). One row per
 -- person, not per workspace: Capy keeps them per user, and a favorite names a
