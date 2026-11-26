@@ -1069,9 +1069,6 @@
           "replaced": "updated a credential",
           "created": "saved a credential"
         },
-        "thread": {
-          "bulk_deleted": "Deleted own threads"
-        },
         "audit": {
           "exported": "exported audit log",
           "retention_applied": "applied audit retention",
@@ -1138,6 +1135,9 @@
         },
         "integration": {
           "permission_changed": "set {integration} to {to}"
+        },
+        "thread": {
+          "bulk_deleted": "Deleted own threads"
         }
       },
       "actorTypes": {
@@ -2558,7 +2558,7 @@
       "actionsNamed": "{name} actions",
       "computeHeading": "Compute",
       "computeRow": "Cloud machines",
-      "computeMikka": "Mikka Cloud",
+      "computeMikka": "Mikka cloud",
       "computeOwn": "Your E2B account",
       "computeUseOwn": "Use your E2B account",
       "lazyRepositories": "Cloned on demand",
@@ -4511,14 +4511,7 @@
     "commandNew": "Start a new thread",
     "emptyHint": "{name} opens tasks, sends Agents to do them and calls you when a pull request is ready"
   },
-  "PullRequestWake": {
-    "prWakeOnReview": "A reviewer commented on this pull request.",
-    "prWakeOnCiFailure": "A CI check failed on this pull request.",
-    "prWakeOnConflict": "This pull request has a merge conflict."
-  },
   "Errors": {
-    "skillReviewRequired": "Submit this skill for review.",
-    "skillPublishingDisabled": "Skill publishing is turned off in this workspace.",
     "issueScopeInLinear": "Confirm how to handle the Linear issue before moving this task to personal.",
     "sharedWorkNotAllowed": "Threads and Bots in a personal workspace stay private.",
     "inviteInvalidEmails": "The email addresses are invalid, empty, or too many. Check them and try again.",
@@ -4841,7 +4834,9 @@
     "chatRevisionUnavailable": "This message can no longer be edited or regenerated.",
     "chatRevisionBusy": "Wait for the reply to finish, then try again.",
     "threadWorking": "The thread is still working. Stop it first.",
-    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again."
+    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again.",
+    "skillReviewRequired": "Submit this skill for review.",
+    "skillPublishingDisabled": "Skill publishing is turned off in this workspace."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",
@@ -8646,30 +8641,6 @@
       "label": "Allow private threads and Bots",
       "keywords": "new work|creation|private|permission|workspace|thread|bot"
     },
-    "requireTwoFactor": {
-      "label": "Require two-factor authentication",
-      "keywords": "Require two-factor authentication"
-    },
-    "skillPublishingPolicy": {
-      "label": "Skill publishing policy",
-      "keywords": "Skill publishing policy"
-    },
-    "prAutoOpen": {
-      "label": "Automatically open pull requests",
-      "keywords": "Automatically open pull requests"
-    },
-    "prWakeOnReview": {
-      "label": "Wake Agent on review comments",
-      "keywords": "Wake Agent on review comments"
-    },
-    "prWakeOnCiFailure": {
-      "label": "Wake Agent when CI fails",
-      "keywords": "Wake Agent when CI fails"
-    },
-    "prWakeOnConflict": {
-      "label": "Wake Agent on merge conflicts",
-      "keywords": "Wake Agent on merge conflicts"
-    },
     "prTitlePrefix": {
       "keywords": "git|PR|title|prefix",
       "label": "Pull request title prefix"
@@ -8693,6 +8664,30 @@
     "chatFont": {
       "label": "Chat font",
       "keywords": "chat|font|reading|dyslexia"
+    },
+    "requireTwoFactor": {
+      "label": "Require two-factor authentication",
+      "keywords": "Require two-factor authentication"
+    },
+    "skillPublishingPolicy": {
+      "label": "Skill publishing policy",
+      "keywords": "Skill publishing policy"
+    },
+    "prAutoOpen": {
+      "label": "Automatically open pull requests",
+      "keywords": "Automatically open pull requests"
+    },
+    "prWakeOnReview": {
+      "label": "Wake Agent on review comments",
+      "keywords": "Wake Agent on review comments"
+    },
+    "prWakeOnCiFailure": {
+      "label": "Wake Agent when CI fails",
+      "keywords": "Wake Agent when CI fails"
+    },
+    "prWakeOnConflict": {
+      "label": "Wake Agent on merge conflicts",
+      "keywords": "Wake Agent on merge conflicts"
     }
   },
   "MobilePush": {
@@ -12040,5 +12035,10 @@
     "joinableMeta": "Through your email domain",
     "join": "Join",
     "joined": "Joined"
+  },
+  "PullRequestWake": {
+    "prWakeOnReview": "A reviewer commented on this pull request.",
+    "prWakeOnCiFailure": "A CI check failed on this pull request.",
+    "prWakeOnConflict": "This pull request has a merge conflict."
   }
 }

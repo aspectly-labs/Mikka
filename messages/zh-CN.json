@@ -1069,9 +1069,6 @@
           "replaced": "更新凭据",
           "created": "保存凭据"
         },
-        "thread": {
-          "bulk_deleted": "删除了自己的线程"
-        },
         "audit": {
           "exported": "导出审计日志",
           "retention_applied": "执行审计留存清理",
@@ -1138,6 +1135,9 @@
         },
         "integration": {
           "permission_changed": "把 {integration} 改为{to}"
+        },
+        "thread": {
+          "bulk_deleted": "删除了自己的线程"
         }
       },
       "actorTypes": {
@@ -2558,7 +2558,7 @@
       "actionsNamed": "{name} 的操作",
       "computeHeading": "算力",
       "computeRow": "云端机器",
-      "computeMikka": "Mikka Cloud",
+      "computeMikka": "Mikka 云",
       "computeOwn": "你的 E2B 账号",
       "computeUseOwn": "用自己的 E2B 账号",
       "lazyRepositories": "按需克隆的仓库",
@@ -4511,14 +4511,7 @@
     "commandNew": "新建线程",
     "emptyHint": "{name} 会开任务、派 Agent 去做，PR 准备好时叫你"
   },
-  "PullRequestWake": {
-    "prWakeOnReview": "这条 PR 收到了审查评论。",
-    "prWakeOnCiFailure": "这条 PR 的 CI 检查失败。",
-    "prWakeOnConflict": "这条 PR 有合并冲突。"
-  },
   "Errors": {
-    "skillReviewRequired": "请提交技能审核。",
-    "skillPublishingDisabled": "工作区已关闭技能发布。",
     "issueScopeInLinear": "请先确认如何处理 Linear 中的任务，再转为个人任务。",
     "sharedWorkNotAllowed": "个人工作区的线程和 Bot 只能设为私有。",
     "inviteInvalidEmails": "邮箱地址无效、为空或数量过多，请检查后重试。",
@@ -4841,7 +4834,9 @@
     "chatRevisionUnavailable": "这条消息已不能编辑或重新生成。",
     "chatRevisionBusy": "等回复结束后再试。",
     "threadWorking": "线程还在工作，先停下它",
-    "referenceBroken": "消息里的引用已删除或无权查看，删掉后再发送。"
+    "referenceBroken": "消息里的引用已删除或无权查看，删掉后再发送。",
+    "skillReviewRequired": "请提交技能审核。",
+    "skillPublishingDisabled": "工作区已关闭技能发布。"
   },
   "DeviceAuthorization": {
     "failed": "连接失败",
@@ -8646,30 +8641,6 @@
       "label": "允许私有线程与 Bot",
       "keywords": "新工作|创建|私有|权限|工作区|线程|Bot"
     },
-    "requireTwoFactor": {
-      "label": "要求两步验证",
-      "keywords": "要求两步验证"
-    },
-    "skillPublishingPolicy": {
-      "label": "技能发布策略",
-      "keywords": "技能发布策略"
-    },
-    "prAutoOpen": {
-      "label": "自动创建 PR",
-      "keywords": "自动创建 PR"
-    },
-    "prWakeOnReview": {
-      "label": "收到审查评论时唤醒 Agent",
-      "keywords": "收到审查评论时唤醒 Agent"
-    },
-    "prWakeOnCiFailure": {
-      "label": "CI 失败时唤醒 Agent",
-      "keywords": "CI 失败时唤醒 Agent"
-    },
-    "prWakeOnConflict": {
-      "label": "出现合并冲突时唤醒 Agent",
-      "keywords": "出现合并冲突时唤醒 Agent"
-    },
     "prTitlePrefix": {
       "keywords": "标题|前缀",
       "label": "PR 标题前缀"
@@ -8693,6 +8664,30 @@
     "chatFont": {
       "label": "线程字体",
       "keywords": "线程|字体|阅读|易读"
+    },
+    "requireTwoFactor": {
+      "label": "要求两步验证",
+      "keywords": "要求两步验证"
+    },
+    "skillPublishingPolicy": {
+      "label": "技能发布策略",
+      "keywords": "技能发布策略"
+    },
+    "prAutoOpen": {
+      "label": "自动创建 PR",
+      "keywords": "自动创建 PR"
+    },
+    "prWakeOnReview": {
+      "label": "收到审查评论时唤醒 Agent",
+      "keywords": "收到审查评论时唤醒 Agent"
+    },
+    "prWakeOnCiFailure": {
+      "label": "CI 失败时唤醒 Agent",
+      "keywords": "CI 失败时唤醒 Agent"
+    },
+    "prWakeOnConflict": {
+      "label": "出现合并冲突时唤醒 Agent",
+      "keywords": "出现合并冲突时唤醒 Agent"
     }
   },
   "MobilePush": {
@@ -9880,7 +9875,7 @@
     "messageActions": "消息操作",
     "newBot": {
       "nameTaken": "已有同名 Bot",
-      "failed": "创建失败",
+      "failed": "没能创建",
       "creating": "创建中"
     },
     "openFile": "打开 {name}",
@@ -9895,7 +9890,7 @@
       "switching": "正在切换模型…"
     },
     "retrying": "正在重试",
-    "notSentRetry": "发送失败，请重试。",
+    "notSentRetry": "没发出去，再试一次。",
     "openUI": {
       "submitted": "已提交",
       "answerPrompt": "任务背景：{context}\n我的回答：\n{response}\n请根据以上信息继续提供建议，不要执行工作区操作。",
@@ -9959,7 +9954,7 @@
     },
     "listSeparator": "、",
     "review": {
-      "githubPermission": "GitHub 权限不足，无法合并",
+      "githubPermission": "GitHub 权限不足，没能合并",
       "files": "{count} 个文件",
       "filesOne": "{count} 个文件",
       "failedShort": "{count} 项失败",
@@ -9977,9 +9972,9 @@
         "checkpoint": "最后一次检查点"
       },
       "commentOne": "{count} 条评论",
-      "sendFailed": "发送给 Agent 失败",
+      "sendFailed": "没能发给 Agent",
       "mergeConfirmGeneric": "检查未通过，确定合并？",
-      "mergeFailed": "合并失败",
+      "mergeFailed": "没能合并",
       "pendingLabel": "待发送：{line}",
       "noteValue": "修改意见：{note}",
       "writeNote": "写修改意见",
@@ -12040,5 +12035,10 @@
     "joinableMeta": "通过邮箱域名",
     "join": "加入",
     "joined": "已加入"
+  },
+  "PullRequestWake": {
+    "prWakeOnReview": "这条 PR 收到了审查评论。",
+    "prWakeOnCiFailure": "这条 PR 的 CI 检查失败。",
+    "prWakeOnConflict": "这条 PR 有合并冲突。"
   }
 }

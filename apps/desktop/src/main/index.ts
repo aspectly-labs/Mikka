@@ -395,12 +395,7 @@ function openFromTray(href: string): void {
 /** A menu command for a window that is only now opening: sent once its page has loaded and subscribed. */
 function commandWhenOpen(command: DesktopMenuCommand): void {
   createMainWindow()
-  const contents = mainWindow?.webContents
-  contents?.once('did-finish-load', () => {
-    if (!gate && !contents.isDestroyed() && isTrustedFrame(contents.getURL(), PAGE_URL)) {
-      contents.send(IPC.appMenuCommand, command)
-    }
-  })
+  mainWindow?.webContents.once('did-finish-load', () => { setTimeout(() => sendMenuCommand(command), 1_500) })
 }
 
 function renderTray(): void {
