@@ -59,7 +59,7 @@ function fixture() {
     subscriptionGatewayCapability: true,
     withoutSubscriptionCredentialCapability: false,
     portableWorkspaceCapability: false,
-    portableMachine: undefined as { receipt: { size: number; sha256: string; headSha: string }; restorePending: boolean } | undefined,
+    portableMachine: undefined as { receipt: { size: number; sha256: string; headSha: string }; restorePending: boolean; snapshotId?: string } | undefined,
     portableOperations: [] as string[],
     secretCapability: undefined as string | undefined,
     nativeMcpServers: undefined as TaskMcpServer[] | undefined,
@@ -238,6 +238,8 @@ test('allowed local and cloud claims send the frozen Environment recipe and sele
         Object.assign(probe, { caller: { userId: 'member', scopeDeviceId: 'device', scopeWorkspaceId: workspaceId },
           cloud: { subscription: { id: definition.subscription.bindingId, workspaceId, modelId: definition.subscription.modelId, route: definition.subscription.route, consumerId: 'agent' } } })
         Object.assign(probe.device, { kind: 'cloud', harnesses: [{ harness: 'claude_code', installed: true, toolApproval: true, subscriptionBroker: true }] })
+        probe.portableMachine = { snapshotId: 'cloudflare-task-v1', restorePending: false, receipt: { sha256: 'a'.repeat(64), headSha: 'b'.repeat(40), size: 180 } }
+        probe.portableWorkspaceCapability = true
       }
       const response = await claim(probe, runtime === 'cloud'
         ? ['skill-preflight', 'policy', 'model-admission', 'environment-secrets', 'claim', 'skill-claim', 'benchmark-claim', 'token', 'settings', 'environment-snapshot']
@@ -245,6 +247,7 @@ test('allowed local and cloud claims send the frozen Environment recipe and sele
       assert.equal(response.status, 200, runtime)
       const body = await response.json()
       assert.equal(body.baseBranch, 'release/frozen-environment')
+      assert.deepEqual(body.portableTaskWorkspace, probe.portableMachine?.receipt)
       assert.equal(body.harness, 'claude_code', 'the frozen harness takes precedence over the current Agent')
       assert.deepEqual(body.projectEnvironment, { id: snapshot.environment!.id, revision: 7, setup: snapshot.environment!.setup })
       assert.deepEqual(body.taskEnv, probe.environmentInjection!.env)

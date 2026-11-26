@@ -280,7 +280,8 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   let factoryClaim: Record<string, unknown> = {}
   let factoryToken: Awaited<ReturnType<typeof issueRunToken>> | undefined
   let portableTaskWorkspace: ReturnType<typeof portableTaskWorkspaceReceiptSchema.parse> | undefined
-  const portableTask = device.kind === 'cloud' && Boolean(repo.remoteUrl) && !run.agentDefinition?.readOnly &&
+  const portableTask = device.kind === 'cloud' && Boolean(repo.remoteUrl)
+  const canCapturePortableTask = portableTask && !run.agentDefinition?.readOnly &&
     (await import('@/lib/cloud-computer/e2b-task-workspace-archive')).portableTaskArchiveEnabled()
   const beforeClaim = async (tx: import('pg').PoolClient) => {
     // Same lock order as a `disconnected` report (device, then run): either it
@@ -303,7 +304,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
            lifecycle->>'portableWorkspaceCapture' AS capture,
            lifecycle->>'portableWorkspaceCaptureUntil' AS "captureUntil" FROM thread_machines
          WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
-           AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended' FOR UPDATE`, [runId, deviceId, caller.userId, run.workspaceId])
+           AND state<>'ended' FOR UPDATE`, [runId, deviceId, caller.userId, run.workspaceId])
       if (machine?.restorePending || (machine?.capture === 'pending' && Number(machine.captureUntil) > Date.now())) return false
       if (machine?.receipt != null) {
         if (request.headers.get(PORTABLE_TASK_WORKSPACE_HEADER) !== '1') return false
@@ -315,7 +316,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   let fromEnvironmentSnapshot = false
   const afterClaim = async (tx: import('pg').PoolClient) => {
     await tx.query('UPDATE agent_runs SET "deviceTokenId"=$2,"machineAuthority"=$4 WHERE id=$1 AND "userId"=$3', [runId, caller.tokenId, caller.userId, receivesRunCredentials])
-    if (portableTask) {
+    if (canCapturePortableTask) {
       await tx.query(`UPDATE thread_machines SET lifecycle=(lifecycle-'portableWorkspaceCaptureId'-'portableWorkspaceCaptureUntil')
           ||'{"portableWorkspaceCapture":"writing"}'::jsonb
         WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
@@ -334,6 +335,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   // The gateway token is minted at claim for this run only. Key validation records the run so
   // withdrawing the key stops it. The provider key stays on the server.
   let modelCredential: RunModelCredential | undefined
+  let creditsTokenHash: string | undefined
   const openRunKey = async (): Promise<RouteResponse | null> => {
     if (!frozenKey && !frozenCredits) return null
     const [{ validateRunApiKey }, { WorkspaceError }] = await Promise.all([import('@/lib/model-api-keys'), import('@/lib/workspace-error')])
@@ -361,12 +363,13 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         return RouteResponse.json({ error: 'API key unavailable.' }, { status: 409 })
       }
     }
-    const { mintGatewayToken } = await import('@/lib/model-gateway/token')
+    const { hashGatewayToken, mintGatewayToken } = await import('@/lib/model-gateway/token')
     const { token } = await mintGatewayToken(pool, { runId, ownerId: caller.userId, workspaceId: run.workspaceId ?? null, harness,
       model: frozenKey?.model ?? frozenCredits!.model, source: frozenKey ? { kind: 'api_key', keyId: frozenKey.keyId } : { kind: 'credits' } })
     const parsed = runModelCredentialSchema.safeParse({ kind: 'provider', protocol: harness === 'claude_code' ? 'anthropic' : 'openai', baseUrl: gatewayUrl.toString(), key: token })
     if (!parsed.success) return refuse()
     modelCredential = parsed.data
+    if (!frozenKey) creditsTokenHash = hashGatewayToken(token)
     return null
   }
   let computer: Awaited<ReturnType<typeof claimCloudRun>> = null
@@ -443,7 +446,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     // interactive desktop. Its policy must not gate their file-only claim.
     const useComputer = desktop && run.agentDefinition?.readOnly !== true
     let claimed: Awaited<ReturnType<typeof claimCloudRun>>
-    try { claimed = await claimCloudRun(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId! }, runId, deviceId, new Date(leaseExpiresAt), subscription?.id ?? null, beforeClaim, afterClaim, useComputer) }
+    try { claimed = await claimCloudRun(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId! }, runId, deviceId, new Date(leaseExpiresAt), subscription?.id ?? null, beforeClaim, afterClaim, useComputer, creditsTokenHash) }
     catch (error) { if (error instanceof AgentProfileAdmissionError) return rejectProfile(error); throw error }
     if (!claimed) return RouteResponse.json({ error: 'Cloud computer run unavailable.' }, { status: 409 })
     // Without a desktop the run gets none (the daemon refuses a `computer` it cannot serve).

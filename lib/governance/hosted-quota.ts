@@ -2,13 +2,13 @@ import 'server-only'
 import type { Pool, PoolClient } from 'pg'
 import type { HostedQuotaLease } from '@/lib/abuse/store'
 import { deploymentMode } from './edition'
-import { resolveEntitlements, type DeploymentMode, type PlanGrant } from './policy'
+import { resolveEntitlements, type DeploymentMode, type Plan, type PlanGrant } from './policy'
 import { GovernanceError } from './errors'
 import { hostedBillingScope } from '@/lib/abuse/context'
 import { PaidResourceError } from '@/lib/abuse/policy'
 
 /** Product quota only. This function cannot authenticate a caller or authorize a model call. */
-export async function acquireHostedQuota(workspaceId: string, database?: Pick<Pool, 'connect'>, mode: DeploymentMode = deploymentMode()): Promise<HostedQuotaLease> {
+export async function acquireHostedQuota(workspaceId: string, database?: Pick<Pool, 'connect'>, mode: DeploymentMode = deploymentMode()): Promise<HostedQuotaLease & { plan: Plan }> {
   const workspace = database ? undefined : await import('@/lib/workspace-db')
   const target = database ?? workspace!.workspacePool
   // Cloud task admission pins Workspace policy across provider startup. Borrow
@@ -39,7 +39,8 @@ export async function acquireHostedQuota(workspaceId: string, database?: Pick<Po
     }
     const { rows: grants } = await query.query<PlanGrant>(`select plan,source,"seatLimit","expiresAt","billingPlan","billingExpiresAt" from mikka_workspace_entitlements where "workspaceId"=$1
       union all select plan,source,"seatLimit","expiresAt","billingPlan","billingExpiresAt" from mikka_organization_entitlements where "organizationId"=$2`, [workspaceId, link?.organizationId ?? null])
-    return { limit: resolveEntitlements({ mode, kind: workspace.kind, grants }).hostedMaxInFlight, close,
+    const entitlements = resolveEntitlements({ mode, kind: workspace.kind, grants })
+    return { limit: entitlements.hostedMaxInFlight, plan: entitlements.plan, close,
       billingAccount: { workspaceId: account?.workspaceId ?? workspaceId, organizationId: account ? link!.organizationId : null } }
   } catch (error) { await close(); throw error }
 }

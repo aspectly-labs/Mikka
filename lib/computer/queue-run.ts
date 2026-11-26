@@ -14,11 +14,13 @@ import { freezeWorkerDefinition, type WorkerModelDispatch } from '@/lib/agent-ki
 import { captureTraceContext } from '@/lib/tracing/context'
 import type { AgentExecution } from '@/lib/agent-kit/store'
 import { ComputerError } from './store'
+import { hasE2BRuntimeCredential } from '../secrets/e2b-owner-sql'
 import { RunModelMissingError } from './run-model'
 import { runCredentialSource, type RunApiKey } from '@/lib/run-credential-source'
 import { cloudTaskTarget } from './cloud-task-target'
 import { provisionableMachineSize } from '../cloud-computer/machine-pricing'
-import { verifiedMachineQuota } from '../cloud-computer/sponsored-task'
+import { hostedTaskEnabled, verifiedMachineQuota } from '../cloud-computer/sponsored-task'
+import { selectTaskProvider, taskComputeSku, taskMachinePlanLimit, TaskProviderAdmissionUnavailable } from '../cloud-computer/task-provider-admission'
 import { runListChanged } from '@/lib/live/lists'
 import { runChanged } from '@/lib/live/panels'
 import { resolveRunOrigin, type RunOrigin, type RunOriginRef } from '@/lib/run-origin'
@@ -36,6 +38,8 @@ import { initializeWorkVisibility } from '@/lib/settings/work-creation'
  * recovery admission independently of the parent computer's current state. */
 export async function queueCloudRun(pool: Pool, actor: { userId: string; workspaceId: string }, input: {
   botId: string; issueId: string; agentId: string; deviceRepoId: string; title: string; body: string; note?: string
+  /** A fork already contains a bounded, authorized transcript. */
+  forkPrompt?: string
   /** Host recovery guidance belongs to execution instructions, never the person's run note. */
   executionNote?: string
   /** The run keeps no bot of its own, like the run it continues (an MCP client's): it still runs on `botId`'s computer. */
@@ -127,7 +131,9 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     if (!repository) throw new ComputerError(409, 'Bot computer task is unavailable')
     assertProjectExecutionTarget(projectExecution, { userId: actor.userId, workspaceId: actor.workspaceId, repositoryKey: repository.remoteUrl ? repository.repoPath : null, runtime: 'cloud', harness: target.harness })
     const instructions = [target.instructions, input.agentProfile?.instructions, input.executionNote].filter(Boolean).join('\n\n')
-    const { prompt, taskLength: promptTaskLength } = runPromptParts(input.title, input.body, instructions, input.note)
+    const { prompt, taskLength: promptTaskLength } = input.forkPrompt === undefined
+      ? runPromptParts(input.title, input.body, instructions, input.note)
+      : { prompt: input.forkPrompt, taskLength: input.forkPrompt.length }
     if (digest) {
       const priorRun = (await client.query(`SELECT r."userId",r."issueId",r."agentId",r."deviceId",r."deviceRepoId",r.prompt,r."agentDefinition",r."dispatchFingerprint",r."botId" AS "runBotId",b."botId",b."workspaceId"
         FROM agent_runs r LEFT JOIN computer_run_bindings b ON b."runId"=r.id WHERE r.id=$1`, [runId])).rows[0]
@@ -170,18 +176,43 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     }
     const effectiveBaseBranch = effectiveExecution ? effectiveExecution.baseBranch : retainSource ? prior.baseBranch : projectExecution.baseBranch
     const earlierPlacement = prior?.agentDefinition?.taskMachine
-    if (earlierPlacement || sponsored) {
-      if (input.withoutBot || !repository.remoteUrl || !effectiveExecution?.repositoryKey || !subscription || !['codex','claude_code'].includes(target.harness) ||
-          (prior && !earlierPlacement) || (earlierPlacement && (earlierPlacement.ownerId!==actor.userId || earlierPlacement.workspaceId!==actor.workspaceId ||
-             earlierPlacement.taskId!==input.issueId || earlierPlacement.botId!==input.botId || earlierPlacement.repositoryKey!==effectiveExecution.repositoryKey)))
-        throw new ComputerError(409,'Cloudflare coding task unavailable')
-      // The quota gate (#3080): the frozen placement records what actually starts
-      // and is billed, with an over-limit request and its reason alongside.
-      const requestedSize = settings.machineSize ?? effectiveExecution.environment?.defaultMachineSize
-      const provision = requestedSize ? provisionableMachineSize(requestedSize, verifiedMachineQuota()) : null
-      frozen.taskMachine=earlierPlacement ?? {provider:'cloudflare',payer:'mikka',ownerId:actor.userId,workspaceId:actor.workspaceId,
-        taskId:input.issueId,botId:input.botId,repositoryKey:effectiveExecution.repositoryKey,requestEventId:input.sourceEventId!,
-        ...(provision ? { size: provision.size, ...(provision.adjusted ? { requestedSize: provision.requested, sizeReason: provision.adjusted } : {}) } : {})}
+    if (repository.remoteUrl) {
+      const { provider, source } = await selectTaskProvider(actor, sponsored, earlierPlacement ? 'cloudflare' : undefined)
+      if (source === 'remote') delete frozen.allowLocalRecovery
+      const requestedSize = settings.machineSize ?? effectiveExecution?.environment?.defaultMachineSize
+      const planLimit = await taskMachinePlanLimit(actor.workspaceId)
+      const compute = taskComputeSku(provider, {
+        cloudflare: requestedSize, e2b: effectiveExecution?.environment?.e2bMachineSize ?? undefined,
+      }, verifiedMachineQuota(), planLimit)
+      if (!compute) throw new ComputerError(409, 'Task machine size is unavailable on this workspace plan.')
+      frozen.taskCompute = compute
+      if (frozen.taskCompute.provider === 'cloudflare') {
+        if (!hostedTaskEnabled(actor.workspaceId) || !effectiveExecution?.repositoryKey ||
+            !['codex','claude_code'].includes(target.harness)) {
+          throw new TaskProviderAdmissionUnavailable('cloudflare')
+        }
+        const provision = requestedSize ? provisionableMachineSize(requestedSize, verifiedMachineQuota()) : null
+        frozen.taskMachine = { provider: 'cloudflare', payer: 'mikka', ownerId: actor.userId, workspaceId: actor.workspaceId,
+          taskId: input.issueId, botId: input.botId, repositoryKey: effectiveExecution.repositoryKey,
+          requestEventId: sponsored ? input.sourceEventId! : source === 'previous' ? earlierPlacement?.requestEventId ?? null : null,
+          size: frozen.taskCompute.size,
+          ...(provision && provision.requested !== compute.size
+            ? { requestedSize: provision.requested, sizeReason: compute.size !== provision.size ? 'plan_limit' : provision.adjusted ?? undefined } : {}) }
+      } else {
+        if (planLimit && compute.provider === 'e2b') {
+          const { sizedTaskTemplate } = await import('../secrets/e2b-runtime')
+          const { E2BKeyError } = await import('../secrets/flag')
+          try { sizedTaskTemplate(target.harness, compute.size, process.env, true) }
+          catch (error) {
+            if (!(error instanceof E2BKeyError)) throw error
+            throw new TaskProviderAdmissionUnavailable('e2b', frozen.allowLocalRecovery === true, { cause: error })
+          }
+          frozen.taskCompute = { ...compute, requireVerifiedHardware: true }
+        }
+        if (!await hasE2BRuntimeCredential(client, actor.userId)) throw new TaskProviderAdmissionUnavailable('e2b', frozen.allowLocalRecovery === true)
+      }
+    } else if (sponsored) {
+      throw new ComputerError(409, 'Cloudflare coding task requires a repository.')
     }
     frozen.definitionDigest = workerDefinitionDigest(frozen)
     frozen.executionIdentity = await freezeExecutionIdentity(client, { userId: actor.userId, botId: runBotId, deviceId: target.deviceId, agentDefinition: frozen }, undefined, actor.workspaceId)

@@ -294,18 +294,20 @@ const sources = new Map([
     function claimTransaction(){
       const p=globalThis.claimResponseProbe
       return {query(sql,args){
-        if(p.portableMachine && sql==='SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE'){
-          assert.deepEqual(args,[p.run.id,p.run.userId]);p.portableOperations.push('lock-run')
+        if(sql==='SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE'){
+          assert.deepEqual(args,[p.run.id,p.run.userId]);if(p.portableMachine)p.portableOperations.push('lock-run')
           return Promise.resolve({rows:[{id:p.run.id}],rowCount:1})
         }
-        if(p.portableMachine && sql.startsWith("SELECT lifecycle->'portableWorkspaceRestore' AS receipt")){
+        if(sql.startsWith("SELECT lifecycle->'portableWorkspaceRestore' AS receipt")){
           assert.match(sql,/FROM thread_machines/);assert.match(sql,/FOR UPDATE$/)
-          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId]);p.portableOperations.push('lock-machine')
-          return Promise.resolve({rows:[p.portableMachine],rowCount:1})
+          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId]);if(p.portableMachine)p.portableOperations.push('lock-machine')
+          return Promise.resolve(p.portableMachine ? {rows:[p.portableMachine],rowCount:1} : {rows:[],rowCount:0})
         }
-        if(p.portableMachine && sql.startsWith('UPDATE thread_machines SET lifecycle=')){
-          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId]);p.portableOperations.push('writer-ready')
-          return Promise.resolve({rows:[],rowCount:1})
+        if(sql.startsWith('UPDATE thread_machines SET lifecycle=')){
+          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId])
+          const writing = p.portableMachine && p.portableMachine.snapshotId !== 'cloudflare-task-v1'
+          if(writing)p.portableOperations.push('writer-ready')
+          return Promise.resolve({rows:[],rowCount:writing ? 1 : 0})
         }
         if(!sql.startsWith('UPDATE agent_runs SET "deviceTokenId"=$2')||args[0]!==p.run.id||args[1]!=="synthetic-device-token"||args[2]!=="member")throw new Error("unexpected SQL in claim fixture")
         p.run.deviceTokenId=args[1]

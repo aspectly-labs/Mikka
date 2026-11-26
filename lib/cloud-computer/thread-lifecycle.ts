@@ -1,4 +1,5 @@
 import 'server-only'
+import { allocatedTaskProvider } from './task-compute-provider'
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ThreadMachineFence } from './thread-machines'
@@ -218,10 +219,6 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     LEFT JOIN issues i ON i.id=m."issueId" LEFT JOIN run_checkpoints c ON c."runId"=r.id AND c."userId"=r."userId"
     WHERE m."runId"=$1 AND m."ownerId"=$2 AND m."workspaceId"=$3`, [runId, actor.userId, actor.workspaceId])).rows[0]
   if (!row) return false
-  if (row.snapshotId === 'cloudflare-task-v1') {
-    const { reconcileSponsoredTaskMachine } = await import('./sponsored-lifecycle')
-    return reconcileSponsoredTaskMachine(pool, actor, runId, row, now)
-  }
   // A replay of the legacy monitor is not new task demand. Share the stored
   // deadline with recovery so two sequential callbacks cannot both renew a
   // VM, and provider failures respect their persisted backoff.
@@ -252,7 +249,7 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
       WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND epoch=$4 AND "sandboxId" IS NOT DISTINCT FROM $5::text
         AND lifecycle->>'reconcileId'=$6 AND (state<>'ended' OR $9::boolean) RETURNING "runId"`,
     [runId, actor.userId, actor.workspaceId, row.epoch, row.sandboxId, token, JSON.stringify({ ...observed, ...metadata }), due, row.state === 'ended'])
-    if (result.rowCount && (metadata.phase !== row.lifecycle.phase || metadata.reason !== row.lifecycle.reason)) {
+    if (result.rowCount && metadata.phase !== undefined && (metadata.phase !== row.lifecycle.phase || metadata.reason !== row.lifecycle.reason)) {
       const emit = () => logThreadLifecycle(row, { phase: metadata.phase, reason: metadata.reason, deadline: due, provider: providerOutcome,
         computeSeconds: Number(row.computeSeconds) + (row.runningSince ? Math.max(0, deps.now() - at(row.runningSince)) / 1_000 : 0),
         computeSource: row.lifecycle.computeSource })
@@ -334,6 +331,12 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
   }
 
   try {
+    if (allocatedTaskProvider(row) === 'cloudflare') {
+      phase = 'sponsored_reconcile_failed'
+      const { reconcileSponsoredTaskMachine } = await import('./sponsored-lifecycle')
+      const due = await reconcileSponsoredTaskMachine(pool, actor, runId, row, now)
+      return await finish({ failures: 0 }, due || null)
+    }
     // A concurrent SDK resume owns this short intent. Do not observe/pause the
     // VM or replace its phase before its lease-fenced completion CAS returns.
     // Stop/closure/revocation clears the lease and takes the normal path.

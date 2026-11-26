@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError } from 'e2b'
+import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError, ServiceBusyError } from 'e2b'
 import { classifyE2BError, computerTemplate, sizedTaskTemplate, taskTemplate } from './e2b-runtime'
 
 test('new computers retain the official desktop fallback and refuse unverified replacements', () => {
@@ -55,7 +55,10 @@ test('hosted E2B only selects a configured tier attested in the release', () => 
   assert.equal(sizedTaskTemplate('codex', undefined, hosted), 'derived-codex')
   assert.equal(sizedTaskTemplate('codex', 'medium', hosted), 'derived-codex')
   assert.throws(() => sizedTaskTemplate('codex', 'medium', { MIKKA_EDITION: 'cloud' }), /e2b_template_unavailable/)
-  assert.equal(sizedTaskTemplate('codex', 'small', { ...hosted, MIKKA_EDITION: 'community' }), 'derived-codex')
+  const selfHosted = { ...hosted, MIKKA_EDITION: 'community' }
+  assert.equal(sizedTaskTemplate('codex', 'small', selfHosted), 'derived-codex')
+  assert.equal(sizedTaskTemplate('codex', 'small', selfHosted, true), 'codex-small')
+  assert.throws(() => sizedTaskTemplate('codex', 'small', { MIKKA_EDITION: 'community' }, true), /e2b_template_unavailable/)
   assert.throws(() => sizedTaskTemplate('codex', 'large', hosted), /e2b_template_unavailable/)
   catalogue.machineVariants.at(-1)!.memoryMB = 8192
   assert.throws(() => sizedTaskTemplate('codex', 'small', {
@@ -66,6 +69,8 @@ test('E2B SDK errors map to stable codes', () => {
   assert.equal(classifyE2BError(new AuthenticationError('x'), false), 'e2b_key_invalid')
   assert.equal(classifyE2BError(Object.assign(new Error('x'), { status: 403 }), false), 'e2b_key_invalid')
   assert.equal(classifyE2BError(new RateLimitError('x'), true), 'e2b_limit_reached')
+  assert.equal(classifyE2BError(new ServiceBusyError('x'), true), 'e2b_unavailable')
+  assert.equal(classifyE2BError(Object.assign(new Error('x'), { statusCode: 502 }), false), 'e2b_unavailable')
   assert.equal(classifyE2BError(new NotFoundError('template'), true), 'e2b_template_unavailable')
   assert.equal(classifyE2BError(new NotFoundError('sandbox'), false), null, 'a missing sandbox on connect is not a template problem')
   assert.equal(classifyE2BError(new SandboxNotFoundError('x'), true), null)

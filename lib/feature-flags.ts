@@ -32,9 +32,15 @@ export const gatedFeatures = {
 
 export type GatedFeature = keyof typeof gatedFeatures
 
+export const taskProviderFlag = 'mikka-task-provider'
+export type TaskProviderFlagVariant = 'cloudflare' | 'e2b'
+export const isTaskProviderFlagVariant = (value: unknown): value is TaskProviderFlagVariant =>
+  value === 'cloudflare' || value === 'e2b'
+
 /** Production capabilities when an installation has no PostHog project.
  * Billing and unshipped experiments remain off. See docs/self-hosting-byok.md. */
-export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
+export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean | TaskProviderFlagVariant>> = {
+  [taskProviderFlag]: 'e2b',
   'mikka-cloud-computer': true,
   'mikka-computer-billing': false,
   'mikka-memory': false,
@@ -54,7 +60,7 @@ export const productionFlagDefault = (key: string) => PRODUCTION_FLAG_DEFAULTS[k
 
 /** Local server acceptance can exercise both flag states without a PostHog key.
  * Production ignores this setting before reading or parsing it. */
-export function localFlagOverride(key: string): boolean | undefined {
+export function localFlagOverride(key: string): boolean | TaskProviderFlagVariant | undefined {
   if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') return undefined
   const configured = process.env.MIKKA_FLAG_OVERRIDES
   if (!configured) return undefined
@@ -65,10 +71,11 @@ export function localFlagOverride(key: string): boolean | undefined {
     throw new Error('MIKKA_FLAG_OVERRIDES_INVALID_JSON', { cause: error })
   }
   if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)
-    || Object.values(overrides).some(value => typeof value !== 'boolean')) {
+    || Object.entries(overrides).some(([name, value]) => name === taskProviderFlag
+      ? !isTaskProviderFlagVariant(value) : typeof value !== 'boolean')) {
     throw new Error('MIKKA_FLAG_OVERRIDES_REQUIRE_BOOLEANS')
   }
-  return Object.hasOwn(overrides, key) ? (overrides as Record<string, boolean>)[key] : undefined
+  return Object.hasOwn(overrides, key) ? (overrides as Record<string, boolean | TaskProviderFlagVariant>)[key] : undefined
 }
 
 /**

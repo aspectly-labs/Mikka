@@ -151,6 +151,16 @@ async function routeFixture(unavailable=false,stopped=false,modelDenied=false,is
       assert.equal(projectLease.active,true)
       assertNoProfile(run.agentDefinition)
       const tx={query:async(statement:string,args:unknown[])=>{
+        if(statement==='SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE'){
+          assert.equal(options.cloud,true)
+          assert.deepEqual(Array.from(args),['run','owner'])
+          return {rows:[{id:'run'}],rowCount:1}
+        }
+        if(statement.startsWith("SELECT lifecycle->'portableWorkspaceRestore'")){
+          assert.equal(options.cloud,true)
+          assert.deepEqual(Array.from(args),['run','device','owner','task-workspace'])
+          return {rows:[],rowCount:0}
+        }
         assert.ok(statement.startsWith('UPDATE agent_runs SET "deviceTokenId"=$2'))
         assert.deepEqual(Array.from(args),['run','synthetic-device-token','owner',options.cloud===true])
         run.deviceTokenId=String(args[1]);return {rows:[],rowCount:1}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { before, beforeEach, mock, test } from 'node:test'
+import { after, before, beforeEach, mock, test } from 'node:test'
 import type { Pool } from 'pg'
 import type { UsableApiKey } from './model-api-keys'
 import { ActionFailureError } from './action-error'
@@ -83,9 +83,15 @@ mock.module(new URL('./workspace-db.ts', import.meta.url).href, { namedExports: 
 let runCredentialSource: typeof import('./run-credential-source')['runCredentialSource']
 let quotaFallbackApiKey: typeof import('./run-credential-source')['quotaFallbackApiKey']
 let queueCloudRun: typeof import('./computer/queue-run')['queueCloudRun']
+const originalE2BKey = process.env.E2B_API_KEY
 before(async () => {
-  ({ runCredentialSource, quotaFallbackApiKey } = await import('./run-credential-source'))
+  process.env.E2B_API_KEY = 'synthetic-credential-source-e2b-key'
+  ;({ runCredentialSource, quotaFallbackApiKey } = await import('./run-credential-source'))
   ;({ queueCloudRun } = await import('./computer/queue-run'))
+})
+after(() => {
+  if (originalE2BKey === undefined) delete process.env.E2B_API_KEY
+  else process.env.E2B_API_KEY = originalE2BKey
 })
 const scope = { ownerId: 'alice', botId: id(1), harness: 'claude_code', botWorkspaceId: id(2), choiceWorkspaceId: id(2) }
 beforeEach(() => {

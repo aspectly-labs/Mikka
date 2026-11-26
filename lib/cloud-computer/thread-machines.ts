@@ -9,6 +9,8 @@ import { cloudStartupSpan, cloudStartupPhases, cloudStartupRunAttributes } from 
 import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
+import { E2BKeyError } from '@/lib/secrets/flag'
+import { admittedTaskCompute, allocatedTaskProvider, previousTaskComputeSource } from './task-compute-provider'
 import { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, verifyE2BAllocation, e2bSnapshotFallbackSafe } from './e2b-compute-billing'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
@@ -21,7 +23,7 @@ import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { z } from 'zod'
 import { repositoryBindingMatches } from '@mikka/protocol/repository'
 import { matchesRepositoryAdmission } from '@/lib/repository-admission'
-import { ComputerError } from '@/lib/computer/store'
+import { ComputerError, TaskWorkspaceArchiveUnavailable } from '@/lib/computer/store'
 import { computerPermission } from '@/lib/computer/permission'
 import { connectComputer, connectRunningComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
 import { CLOUD_WORKER_COMMAND, CLOUD_PRELOADER_WAKE_COMMAND, CLOUD_PRELOADER_WAKE_RECEIPT } from '@/lib/computer/worker-command'
@@ -87,6 +89,13 @@ export function sandboxGone(error: unknown) {
   return error instanceof NotFoundError || status === 404
 }
 
+export class TaskComputeUnavailable extends ComputerError {
+  readonly retryable = true
+  constructor(readonly provider: 'cloudflare' | 'e2b', cause: unknown) {
+    super(503, provider === 'cloudflare' ? 'Cloudflare task machine unavailable. Retry this run.' : 'E2B task machine unavailable. Retry this run.')
+    this.cause = cause
+  }
+}
 /** A failed wake must not destroy a task's retained filesystem and sessions. */
 export class RetainedTaskMachineUnavailable extends ComputerError {
   constructor() { super(503, 'Retained task machine unavailable') }
@@ -547,7 +556,7 @@ async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string,
  * The daemon must have closed the native session first; a status string alone
  * never authorizes moving a still executing VM. */
 async function retainThreadMachineForHandoffLocked(client: PoolClient, actor: Actor, runId: string, nextRunId: string): Promise<boolean> {
-    const { rows: [run] } = await client.query(`SELECT r.id FROM agent_runs r JOIN issues i ON i.id=r."issueId"
+    const { rows: [run] } = await client.query(`SELECT r.id,r."agentDefinition" FROM agent_runs r JOIN issues i ON i.id=r."issueId"
       WHERE r.id=$1 AND r."userId"=$2 AND r.status IN ('succeeded','failed','stopped','cancelled')
         AND r."stopRequestedAt" IS NULL AND r.report->'safePoint'->>'session'='exited'
         AND (r."leaseExpiresAt" IS NULL OR r."leaseExpiresAt"<=now())
@@ -571,13 +580,19 @@ async function retainThreadMachineForHandoffLocked(client: PoolClient, actor: Ac
       return false
     }
     const { rows: [placement] } = await client.query(`SELECT source."repoPath" AS "sourcePath",source."remoteUrl" AS "sourceRemote",
-      target."repoPath" AS "targetPath",target."remoteUrl" AS "targetRemote",COALESCE(n."agentDefinition"->>'harness',a.harness) AS harness
+      target."repoPath" AS "targetPath",target."remoteUrl" AS "targetRemote",COALESCE(n."agentDefinition"->>'harness',a.harness) AS harness,
+      n."agentDefinition" AS "agentDefinition",n."threadRelation"
       FROM agent_runs n JOIN agents a ON a.id=n."agentId" AND a."userId"=n."userId"
       JOIN device_repos target ON target.id=n."deviceRepoId" AND target."userId"=n."userId"
       JOIN device_repos source ON source.id=$3 AND source."userId"=n."userId"
       WHERE n.id=$1 AND n."userId"=$2`, [nextRunId, actor.userId, machine.repoId])
     const nextKind = placement?.targetRemote ? placement.harness === 'claude_code' ? 'claude' : placement.harness === 'codex' ? 'codex' : null : 'desktop'
-    if (!placement || placement.sourcePath !== placement.targetPath || placement.sourceRemote !== placement.targetRemote || threadMachineTemplateKind(machine) !== nextKind) {
+    const targetCompute = admittedTaskCompute(placement?.agentDefinition)
+    const sourceCompute = admittedTaskCompute(run.agentDefinition)
+    if (!placement || placement.threadRelation === 'fork' || placement.threadRelation === 'side' ||
+      targetCompute?.provider !== 'e2b' || placement.sourcePath !== placement.targetPath || placement.sourceRemote !== placement.targetRemote || threadMachineTemplateKind(machine) !== nextKind ||
+      (targetCompute.sku && sourceCompute?.sku && targetCompute.sku.size !== sourceCompute.sku.size) ||
+      (placement.agentDefinition?.taskCompute?.requireVerifiedHardware === true && run.agentDefinition?.taskCompute?.requireVerifiedHardware !== true)) {
       return false
     }
     await client.query(`UPDATE thread_machines SET epoch=epoch+CASE WHEN lifecycle->>'handoffRunId'=$2 THEN 0 ELSE 1 END,
@@ -673,7 +688,7 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
       armDueTimerAfterCommit(client, 'run-recovery')
       if (!existing) {
         let archiveScope: TaskWorkspaceArchiveScope | undefined
-        if (machine.snapshotId !== hostedSnapshot && machine.workspaceReady && !machine.lifecycle?.portableWorkspaceRestorePending
+        if (machine.workspaceReady && !machine.lifecycle?.portableWorkspaceRestorePending
           && machine.issueId && machine.repoId && machine.lifecycle?.portableWorkspaceCapture !== 'ready' && portableTaskArchiveEnabled()) {
           if (Number(machine.lifecycle?.portableWorkspaceCaptureUntil) > Date.now()) {
             intent = undefined
@@ -707,8 +722,9 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
           released = true
           try {
             const signal = AbortSignal.timeout(120_000)
-            const sandbox = await threadMachineArchiveProvider.connectRunning(actor.userId, fence.sandboxId)
-            const { manifest, stream, dispose } = await captureE2BTaskWorkspace(sandbox, runId, mask, signal)
+            const { manifest, stream, dispose } = machine.snapshotId === hostedSnapshot
+              ? await (await import('../eve/cloudflare-task-bridge')).captureOwnedCloudflareTaskWorkspace(pool, actor, runId, fence.operationId, mask, signal)
+              : await captureE2BTaskWorkspace(await threadMachineArchiveProvider.connectRunning(actor.userId, fence.sandboxId), runId, mask, signal)
             try { archive = await prepareTaskWorkspaceArchive(pool, archiveScope, manifest, stream, signal) }
             finally {
               void stream.cancel().catch(() => undefined)
@@ -959,9 +975,11 @@ export async function ensureThreadMachine(...args: Parameters<typeof ensureThrea
   // not acquire provisioning custody, rewrite its timer, or disturb an old VM.
   return withRunProjectResources(pool, run, async () => {
     let resourceRefused = false
+    const compute = admittedTaskCompute(run.agentDefinition)
     try {
       return await cloudStartupSpan('cloud.thread.ensure', cloudStartupRunAttributes(args[2]), async () => {
-        if (run.agentDefinition?.taskMachine) {
+        if (!compute) throw new ComputerError(409, 'Task machine placement is unavailable')
+        if (compute.provider === 'cloudflare') {
           if (args[5]) throw new ComputerError(409,'Cloudflare task images are release-bound')
           return (await import('./sponsored-lifecycle')).ensureSponsoredTaskMachine(pool,actor,runId)
         }
@@ -969,6 +987,18 @@ export async function ensureThreadMachine(...args: Parameters<typeof ensureThrea
       })
     } catch (error) {
       resourceRefused = isProjectExecutionRefusal(error)
+      if (compute?.sku && !resourceRefused) {
+        const { CloudflareTaskProviderError } = await import('../eve/cloudflare-task-bridge')
+        const unavailable = compute.provider === 'cloudflare'
+          ? error instanceof CloudflareTaskProviderError && (error.status === 429 || error.status >= 500)
+          : error instanceof E2BKeyError && ['e2b_unavailable', 'e2b_template_unavailable', 'e2b_limit_reached'].includes(error.code)
+        if (unavailable) {
+          const retryable = new TaskComputeUnavailable(compute.provider, error)
+          const failed = threadMachineStartFailure(error)
+          if (failed) failedThreadStarts.set(retryable, failed)
+          throw retryable
+        }
+      }
       throw error
     } finally {
       // Every admitted wake, including resume/replay/retained-stage adoption,
@@ -1007,6 +1037,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
   let unclaimedRuntimeSwitchStarted = false
   let selectEnvironmentSnapshot = false
   let reservedStartLease = false
+  let preparingEnvironment = false
   let runtimeRollback: (() => Promise<void>) | undefined
   let verifyRefreshedRuntime: (() => Promise<unknown>) | undefined
   let workerBroker: WorkerBootstrapBroker | undefined
@@ -1044,8 +1075,18 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
 
     exactQuestionMachine = run.questionContinuation?.requireSessionResume === true
     const repositoryTask = Boolean(run.remoteUrl)
-    const machineSize = run.agentDefinition?.projectExecution?.environment?.e2bMachineSize ?? undefined
-    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize) : computerTemplate()
+    const compute = admittedTaskCompute(run.agentDefinition)
+    if (!compute || compute.provider !== 'e2b') throw new ComputerError(409, 'Task machine provider changed')
+    const machineSize = compute.sku?.provider === 'e2b' ? compute.sku.size : run.agentDefinition?.projectExecution?.environment?.e2bMachineSize ?? undefined
+    const requireVerifiedHardware = run.agentDefinition?.taskCompute?.requireVerifiedHardware === true
+    const priorSource = compute.sku && !exactQuestionMachine && !refreshRuntime && !run.retryOf && !run.questionContinuation && repositoryTask && run.issueId
+      ? await previousTaskComputeSource(client, { ownerId: actor.userId, workspaceId: actor.workspaceId, issueId: run.issueId, runId, repositoryKey: run.repoPath })
+      : null
+    const requiresPortableSource = priorSource && (allocatedTaskProvider(priorSource) !== 'e2b' ||
+      (priorSource.size !== null && priorSource.size !== machineSize) || (requireVerifiedHardware && !priorSource.hardwareVerified))
+    if (requiresPortableSource && (priorSource.capture !== 'ready' || !portableTaskArchiveEnabled()))
+      throw new TaskWorkspaceArchiveUnavailable()
+    const freshTemplate = () => repositoryTask ? sizedTaskTemplate(run.runHarness, machineSize, process.env, requireVerifiedHardware) : computerTemplate()
     let machine = (await client.query('SELECT * FROM thread_machines WHERE "runId"=$1 FOR UPDATE', [runId])).rows[0]
     if (machine?.snapshotId === hostedSnapshot || run.agentDefinition?.taskMachine) throw new ComputerError(409,'Task machine provider changed')
     // Stop check 1 shares the explicit Stop path's native-history and lease
@@ -1151,7 +1192,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       // remote and creates the task worktree from the configured base branch.
       // Non-repository work starts from the official desktop template too.
       const kind = !repositoryTask ? 'desktop' : run.runHarness === 'claude_code' ? 'claude' : run.runHarness === 'codex' ? 'codex' : null
-      const adopted = run.issueId && kind ? await adoptTaskMachine(client, actor, runId, run, kind) : null
+      const newThread = run.threadRelation === 'fork' || run.threadRelation === 'side'
+      const adopted = !newThread && !requiresPortableSource && run.issueId && kind ? await adoptTaskMachine(client, actor, runId, run, kind) : null
       if (adopted) { machine = adopted; retainedSandboxId = adopted.sandboxId }
       else {
         if (run.issueId) {
@@ -1222,7 +1264,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     // workspace, repository and template kind before any provider I/O.
     const pendingPortableRestore = machine.lifecycle?.portableWorkspaceRestorePending === true
     if ((!connected || pendingPortableRestore) && !refreshRuntime && !exactQuestionMachine && !run.retryOf && !run.questionContinuation && repositoryTask && run.issueId
-      && !run.agentDefinition?.readOnly && portableTaskArchiveEnabled()) {
+      && (!run.agentDefinition?.readOnly || requiresPortableSource || pendingPortableRestore) && portableTaskArchiveEnabled()) {
       const { rows: [last] } = await client.query<{ state: string; runId: string; epoch: string | null; operationId: string | null }>(`
         SELECT m.lifecycle->>'portableWorkspaceCapture' AS state, m."runId",
           m.lifecycle->>'portableWorkspaceSourceEpoch' AS epoch, m.lifecycle->>'portableWorkspaceSourceOperationId' AS "operationId"
@@ -1241,6 +1283,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
         throw new ComputerError(409, 'Latest task workspace archive is unavailable')
     }
     const portableWorkspace = portableTransfer.archive
+    if (requiresPortableSource && !connected && portableWorkspace?.source.runId !== priorSource.runId)
+      throw new TaskWorkspaceArchiveUnavailable()
     if (pendingPortableRestore && !portableWorkspace)
       throw new ComputerError(409, 'Pending task workspace restore is unavailable')
     const restoreCandidate = !portableWorkspace && machine.snapshotId !== hostedSnapshot && !refreshRuntime && !exactQuestionMachine && threadSnapshotsEnabled() &&
@@ -1307,6 +1351,10 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
           // error-cause: the 409 reports a lost provisioning lease during the template fallback.
           if (!machine) throw new ComputerError(409, 'Thread provisioning cancelled')
         }
+      }
+      if (!started && execution?.environment) {
+        const { beginTaskEnvironmentPreparation } = await import('../project-resources/cloudflare-environment-snapshot')
+        preparingEnvironment = await beginTaskEnvironmentPreparation(pool, actor, runId, 'e2b')
       }
       started ??= await provider.create(machine.snapshotId, machine.operationId, metadata(), actor.userId)
     }
@@ -1672,6 +1720,10 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     logRuntimeRefreshFailure(runId, parallelFailurePhase ?? refreshPhase, error, undefined,
       refreshRuntime || upgradeRetainedRuntime ? 'refresh' : 'start')
     await client.query('ROLLBACK')
+    if (preparingEnvironment) {
+      const { failE2BEnvironmentPreparation } = await import('../project-resources/cloudflare-environment-snapshot')
+      await failE2BEnvironmentPreparation(client, actor, runId, leaseId).catch(() => undefined)
+    }
     // Abort this lease's unpublished broker before start-failure recovery.
     // Preserve the primary admission/upload/registration failure if transport cleanup also fails.
     await workerBroker?.close().catch(() => undefined)
