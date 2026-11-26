@@ -1,6 +1,6 @@
 # 派出去的子 Agent 用 Agent Crew 的卡片
 
-- **Status:** Superseded in part by [2026-11-26-0110](2026-11-26-0110-pages-environments-from-benchmark.md)
+- **Status:** Accepted
 
 #2932、#2939，Figma「Chat+右栏」页 1318:2 第 21、22 节（1345:5028、1356:5024）。
 

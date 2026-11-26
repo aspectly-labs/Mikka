@@ -1,6 +1,6 @@
 /**
  * Settings sections and item-level backend availability. Groups (resolved-settings R-S06, 2026-11-25):
- * 个人 · an untitled connections & compute group · Agent · 工作区 (Capy's catalog `sJ`).
+ * 个人 · an untitled connections & compute group · Agent · 工作区 (as Capy's).
  * The sidebar, URL parsing and the page bodies all read this single source of truth.
  */
 export type SettingsGroup = 'personal' | 'compute' | 'agent' | 'review' | 'workspace'
