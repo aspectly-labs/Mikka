@@ -201,6 +201,15 @@
       "sourceHash": "6a3a7fb6ccd19045de9f36802cc0467243490d1d145b5c777072506e943ad562"
     },
     {
+      "path": "/mikka/api/billing/catalog",
+      "template": "/api/billing/catalog",
+      "source": "app/api/billing/catalog/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "73363edf84acfdab57251bae6aa27f009a034769af5f5a566f029eb699b33a1c"
+    },
+    {
       "path": "/mikka/api/billing/stripe",
       "template": "/api/billing/stripe",
       "source": "app/api/billing/stripe/route.ts",
