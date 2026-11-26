@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -105,20 +105,27 @@ test('promotion workflow parses cleanly as YAML with four isolated jobs and stri
   assert.match(syncScript, /test "\$base_ref" != "main"/)
   assert.match(syncScript, /live_base_sha.*EXPECTED_BASE_SHA/)
   assert.match(syncScript, /replace_sync_pr/)
+  assert.match(syncScript, /clean_live_tree=\$\(git rev-parse "\$\{clean_live_merge_sha\}\^\{tree\}"\)/)
+  assert.match(syncScript, /forward_tree=\$\(git rev-parse 'HEAD\^\{tree\}'\)/)
+  assert.match(syncScript, /tree_mismatch/)
   assert.match(syncScript, /--merge --delete-branch --match-head-commit/)
   assert.doesNotMatch(syncScript, /--force|-f\s+origin/, 'auto-sync must never force-push')
 
   const probeSteps = parsed.jobs['verify-overlay-pairing'].steps
   const pullIdx = probeSteps.findIndex(step => /Pull digest-pinned sandbox image/i.test(step.name ?? ''))
   const scrubIdx = probeSteps.findIndex(step => /Scrub App credentials/i.test(step.name ?? ''))
+  const mirrorIdx = probeSteps.findIndex(step => /Fetch candidate overlay commits into local bare mirror/i.test(step.name ?? ''))
   const installIdx = probeSteps.findIndex(step => /Install public workspace/i.test(step.name ?? ''))
   const probeIdx = probeSteps.findIndex(step => step.id === 'probe')
   const cleanupStep = probeSteps.find(step => step.if === 'always()')
-  assert.ok(pullIdx > 0 && scrubIdx > pullIdx && installIdx > scrubIdx && probeIdx > installIdx)
+  assert.ok(pullIdx > 0 && scrubIdx > pullIdx && mirrorIdx > scrubIdx && installIdx > mirrorIdx && probeIdx > installIdx)
   assert.ok(cleanupStep && /rm -rf integration\/\.hosted-ui/.test(cleanupStep.run ?? ''))
+  assert.match(probeSteps[mirrorIdx].run, /--depth=1 --update-shallow .*\$\{sha\}:refs\/candidates\/\$\{sha\}/)
   assert.match(probeSteps[installIdx].run, /pnpm --dir integration install --frozen-lockfile --ignore-scripts/)
   assert.match(probeSteps[installIdx].run, /pnpm --dir main install --frozen-lockfile --ignore-scripts/)
   assert.match(probeSteps[probeIdx].run, /git init --quiet "\$overlay_dir"/)
+  assert.match(probeSteps[probeIdx].run, /fetch --quiet --no-tags --depth=1 --update-shallow "\$RUNNER_TEMP\/overlay-mirror\.git" "refs\/candidates\/\$\{sha\}"/)
+  assert.match(probeSteps[probeIdx].run, /test "\$\(git -C "\$overlay_dir" rev-parse HEAD\)" = "\$sha"/)
   assert.match(probeSteps[probeIdx].run, /--prod --ignore-scripts/)
   assert.match(probeSteps[probeIdx].run, /--integration-dir "\$GITHUB_WORKSPACE\/integration"/)
   assert.match(probeSteps[probeIdx].run, /--main-dir "\$GITHUB_WORKSPACE\/main"/)
@@ -521,14 +528,143 @@ test('real Git stale sync-tree scenario merges live tips cleanly when both branc
     // Live tips merge cleanly to 30.
     git('checkout', '--detach', intSha)
     git('merge', '--no-edit', '--no-ff', mainSha)
+    const cleanLiveTree = git('rev-parse', 'HEAD^{tree}')
     assert.equal(readFileSync(join(dir, 'timeout.txt'), 'utf8'), '30\n')
 
-    // Forward-merging main FIRST, then integration base onto the old sync branch ALSO succeeds cleanly to 30!
+    // Forward-merging main FIRST, then integration base onto the old sync branch ALSO succeeds cleanly to 30
+    // AND produces the exact same tree as the clean live merge.
     git('checkout', 'chore/auto-sync-main-into-integration')
     git('merge', '--no-edit', '--no-ff', mainSha)
     git('merge', '--no-edit', '--no-ff', intSha)
+    assert.equal(readFileSync(join(dir, 'timeout.txt'), 'utf8'), '30\n')
+    assert.equal(git('rev-parse', 'HEAD^{tree}'), cleanLiveTree)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('real Git sync refresh tree check catches silent divergence from stale sync history and selects clean live merge', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mikka-tree-mismatch-'))
+  const git = (...args) => execFileSync('git', args, {
+    cwd: dir,
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_AUTHOR_NAME: 'CI',
+      GIT_AUTHOR_EMAIL: 'ci@example.invalid',
+      GIT_COMMITTER_NAME: 'CI',
+      GIT_COMMITTER_EMAIL: 'ci@example.invalid',
+    },
+  }).trim()
+  try {
+    git('init', '-b', 'main')
+    writeFileSync(join(dir, 'flag.txt'), 'off\n')
+    writeFileSync(join(dir, 'timeout.txt'), '10\n')
+    git('add', 'flag.txt', 'timeout.txt')
+    git('commit', '-m', 'base flag=off timeout=10')
+
+    git('checkout', '-b', 'integration')
+    writeFileSync(join(dir, 'flag.txt'), 'on\n')
+    git('add', 'flag.txt')
+    git('commit', '-m', 'integration flag=on')
+
+    git('checkout', 'main')
+    writeFileSync(join(dir, 'flag.txt'), 'on\n')
+    writeFileSync(join(dir, 'timeout.txt'), '20\n')
+    git('add', 'flag.txt', 'timeout.txt')
+    git('commit', '-m', 'main flag=on timeout=20')
+
+    // Stale sync PR merged older main (flag=on, timeout=20) into older integration (flag=on).
+    git('checkout', '-b', 'chore/auto-sync-main-into-integration', 'integration')
+    git('merge', '--no-edit', '--no-ff', 'main')
+
+    // Main restores timeout=10 (keeping flag=on); integration reverts its flag to off and sets timeout=30.
+    git('checkout', 'main')
+    writeFileSync(join(dir, 'timeout.txt'), '10\n')
+    git('add', 'timeout.txt')
+    git('commit', '-m', 'main timeout=10')
+    const mainSha = git('rev-parse', 'HEAD')
+
+    git('checkout', 'integration')
+    writeFileSync(join(dir, 'flag.txt'), 'off\n')
+    writeFileSync(join(dir, 'timeout.txt'), '30\n')
+    git('add', 'flag.txt', 'timeout.txt')
+    git('commit', '-m', 'integration flag=off timeout=30')
+    const intSha = git('rev-parse', 'HEAD')
+
+    // Direct merge of live tips preserves main's flag=on and integration's timeout=30.
+    git('checkout', '--detach', intSha)
+    git('merge', '--no-edit', '--no-ff', mainSha)
+    const cleanLiveMergeSha = git('rev-parse', 'HEAD')
+    const cleanLiveTree = git('rev-parse', `${cleanLiveMergeSha}^{tree}`)
+    assert.equal(readFileSync(join(dir, 'flag.txt'), 'utf8'), 'on\n')
+    assert.equal(readFileSync(join(dir, 'timeout.txt'), 'utf8'), '30\n')
+
+    // Forward-merging onto the stale sync branch completes WITHOUT conflict yet drops main's flag=on!
+    git('checkout', 'chore/auto-sync-main-into-integration')
+    git('merge', '--no-edit', '--no-ff', mainSha)
+    git('merge', '--no-edit', '--no-ff', intSha)
+    assert.equal(readFileSync(join(dir, 'flag.txt'), 'utf8'), 'off\n')
+    assert.equal(readFileSync(join(dir, 'timeout.txt'), 'utf8'), '30\n')
+    const forwardTree = git('rev-parse', 'HEAD^{tree}')
+    assert.notEqual(forwardTree, cleanLiveTree, 'stale forward merge silently diverged from direct live merge')
+
+    // Replacing with a branch at cleanLiveMergeSha restores exact live-merge parity.
+    git('checkout', '-b', 'chore/auto-sync-main-replacement', cleanLiveMergeSha)
+    assert.equal(git('rev-parse', 'HEAD^{tree}'), cleanLiveTree)
+    assert.equal(readFileSync(join(dir, 'flag.txt'), 'utf8'), 'on\n')
     assert.equal(readFileSync(join(dir, 'timeout.txt'), 'utf8'), '30\n')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('real Git shallow bare mirror stages multiple candidate overlay checkouts cleanly for recordOverlay', () => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-shallow-overlay-'))
+  const gitEnv = {
+    PATH: process.env.PATH,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_AUTHOR_NAME: 'CI',
+    GIT_AUTHOR_EMAIL: 'ci@example.invalid',
+    GIT_COMMITTER_NAME: 'CI',
+    GIT_COMMITTER_EMAIL: 'ci@example.invalid',
+  }
+  const gitAt = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: gitEnv }).trim()
+  try {
+    const src = join(root, 'upstream')
+    mkdirSync(src, { recursive: true })
+    gitAt(src, 'init', '-b', 'main')
+    const commitFile = (name, value) => {
+      writeFileSync(join(src, name), value)
+      gitAt(src, 'add', name)
+      gitAt(src, 'commit', '-m', `${name}=${value}`)
+      return gitAt(src, 'rev-parse', 'HEAD')
+    }
+    const baseSha = commitFile('v.txt', '1\n')
+    const pinnedSha = commitFile('v.txt', '2\n')
+    gitAt(src, 'checkout', '-b', 'ui-pr', baseSha)
+    const prSha = commitFile('v.txt', '3\n')
+
+    const mirror = join(root, 'overlay-mirror.git')
+    gitAt(root, 'init', '--bare', mirror)
+    for (const sha of [pinnedSha, prSha]) {
+      gitAt(mirror, 'fetch', '--quiet', '--no-tags', '--depth=1', '--update-shallow', `file://${src}`, `${sha}:refs/candidates/${sha}`)
+    }
+
+    for (const [sha, expectedContent] of [[pinnedSha, '2\n'], [prSha, '3\n']]) {
+      const overlayDir = join(root, `overlay-${sha.slice(0, 8)}`)
+      gitAt(root, 'init', '--quiet', overlayDir)
+      gitAt(overlayDir, '-c', 'core.hooksPath=/dev/null', 'fetch', '--quiet', '--no-tags', '--depth=1', '--update-shallow', mirror, `refs/candidates/${sha}`)
+      gitAt(overlayDir, '-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', 'FETCH_HEAD')
+      assert.equal(gitAt(overlayDir, 'rev-parse', 'HEAD'), sha)
+      assert.equal(realpathSync(gitAt(overlayDir, 'rev-parse', '--show-toplevel')), realpathSync(overlayDir))
+      assert.equal(readFileSync(join(overlayDir, 'v.txt'), 'utf8'), expectedContent)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+

@@ -650,6 +650,7 @@ jobs:
               abort_on_conflict "main@${MAIN_SHA:0:8}"
             fi
             clean_live_merge_sha=$(git rev-parse HEAD)
+            clean_live_tree=$(git rev-parse "${clean_live_merge_sha}^{tree}")
 
             # Now attempt a clean forward merge onto the existing sync PR branch (main first, then base).
             sync_branch="$SYNC_PR_HEAD_REF"
@@ -657,22 +658,33 @@ jobs:
             git fetch origin "$sync_branch"
             git checkout -B "$sync_branch" "origin/$sync_branch"
             forward_ok="true"
+            replace_reason=""
             if ! git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
               if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$MAIN_SHA" -m "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}"; then
                 git merge --abort || true
                 forward_ok="false"
+                replace_reason="conflict"
               fi
             fi
             if [ "$forward_ok" = "true" ] && ! git merge-base --is-ancestor "$EXPECTED_BASE_SHA" HEAD; then
               if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$EXPECTED_BASE_SHA" -m "chore: refresh ${BRANCH} (${EXPECTED_BASE_SHA:0:8}) in auto-sync PR"; then
                 git merge --abort || true
                 forward_ok="false"
+                replace_reason="conflict"
+              fi
+            fi
+            if [ "$forward_ok" = "true" ]; then
+              forward_tree=$(git rev-parse 'HEAD^{tree}')
+              if [ "$forward_tree" != "$clean_live_tree" ]; then
+                forward_ok="false"
+                replace_reason="tree_mismatch"
               fi
             fi
 
             if [ "$forward_ok" != "true" ]; then
-              # Live tips merged cleanly, so the conflict came strictly from stale intermediate sync history.
-              # Replace with a fresh branch/PR from clean_live_merge_sha — never force-push the old branch.
+              # Live tips merged cleanly, so the conflict or tree divergence came strictly from stale
+              # intermediate sync history. Replace with a fresh branch/PR from clean_live_merge_sha —
+              # never force-push the old branch.
               sync_branch=$(pick_fresh_sync_branch)
               git checkout -b "$sync_branch" "$clean_live_merge_sha"
               effective_mode="replace_sync_pr"
@@ -711,9 +723,14 @@ jobs:
               --body "$body")
             echo "Opened auto-sync PR: $pr_url (head $merge_sha)"
             if [ "$effective_mode" = "replace_sync_pr" ]; then
+              if [ "$replace_reason" = "tree_mismatch" ]; then
+                close_comment="Superseded by clean live back-merge PR ${pr_url} (forward-merging onto stale intermediate sync history produced a different tree than merging the live tips directly)."
+              else
+                close_comment="Superseded by clean live back-merge PR ${pr_url} (stale intermediate sync history conflicted while live tips merged cleanly)."
+              fi
               gh pr close "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --delete-branch \
-                --comment "Superseded by clean live back-merge PR ${pr_url} (stale intermediate sync history conflicted while live tips merged cleanly)."
-              echo "Closed superseded sync PR #$SYNC_PR_NUMBER"
+                --comment "$close_comment"
+              echo "Closed superseded sync PR #$SYNC_PR_NUMBER ($replace_reason)"
             fi
           else
             gh pr edit "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
@@ -954,7 +971,7 @@ jobs:
           while IFS= read -r sha; do
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
             git -C "$RUNNER_TEMP/overlay-mirror.git" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
-              fetch --quiet --no-tags --depth=1 "https://github.com/${UI_REPO}.git" "$sha"
+              fetch --quiet --no-tags --depth=1 --update-shallow "https://github.com/${UI_REPO}.git" "${sha}:refs/candidates/${sha}"
           done < <(jq -r '.[].sha' <<< "$CANDIDATES_JSON")
 
       - name: Install public workspace dependencies for integration and main without lifecycle scripts
@@ -981,11 +998,13 @@ jobs:
             short_sha="${sha:0:8}"
             overlay_dir="$GITHUB_WORKSPACE/integration/.hosted-ui"
             rm -rf "$overlay_dir" "$GITHUB_WORKSPACE/integration/apps/frontend/dist"
-            # Stage as an independent local Git checkout from the credential-free local mirror
-            # so recordOverlay's git rev-parse checks succeed inside the network-isolated sandbox.
+            # Stage as an independent local Git checkout from the credential-free shallow mirror
+            # (--depth=1 --update-shallow from refs/candidates/<sha>) so recordOverlay's git rev-parse
+            # checks succeed inside the network-isolated sandbox.
             git init --quiet "$overlay_dir"
-            git -C "$overlay_dir" -c core.hooksPath=/dev/null fetch --quiet --no-tags "$RUNNER_TEMP/overlay-mirror.git" "$sha"
+            git -C "$overlay_dir" -c core.hooksPath=/dev/null fetch --quiet --no-tags --depth=1 --update-shallow "$RUNNER_TEMP/overlay-mirror.git" "refs/candidates/${sha}"
             git -C "$overlay_dir" -c core.hooksPath=/dev/null checkout --quiet --detach FETCH_HEAD
+            test "$(git -C "$overlay_dir" rev-parse HEAD)" = "$sha"
             # Match official service-build-ci.mjs (--prod --ignore-scripts --frozen-lockfile).
             if ! env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
               pnpm --dir "$overlay_dir" install --frozen-lockfile --ignore-workspace --prod --ignore-scripts >/dev/null 2>&1; then
