@@ -344,6 +344,7 @@ jobs:
           repositories: mikka-hosted-ui
           permission-contents: read
           permission-actions: read
+          permission-checks: read
       - name: Remove App credentials before loading private operations code
         run: |
           echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
@@ -591,6 +592,7 @@ jobs:
           repositories: mikka-hosted-ui
           permission-contents: read
           permission-actions: read
+          permission-checks: read
       - name: Remove App credentials before loading private operations code
         run: |
           echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
