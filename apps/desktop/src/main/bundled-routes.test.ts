@@ -69,6 +69,7 @@ function matchingRoutes(path: string): Route[] {
 
 /** A parameter's name says what the route expects there, so the sample is a value it would accept. */
 function sampleFor(parameter: string): string[] {
+  if (/token/i.test(parameter)) return ['a'.repeat(64), `mkt_${'a'.repeat(32)}`]
   if (/volume/i.test(parameter)) return [`vol_${ULID}`, ULID]
   if (/version/i.test(parameter)) return [`vver_${ULID}`, ULID]
   if (/hash|sha256|digest/i.test(parameter)) return ['a'.repeat(64), ULID]

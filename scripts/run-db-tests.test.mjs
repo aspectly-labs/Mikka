@@ -32,13 +32,16 @@ function runnerFixture(t, names = ['a', 'b', 'c']) {
   return { root, scripts: Object.keys(commands) }
 }
 
-test('the enterprise PostgreSQL command flushes every test record before exiting', async t => {
-  const command = JSON.parse(readFileSync('package.json', 'utf8')).scripts['test:enterprise-db']
+test('verbose PostgreSQL commands flush every test record before exiting', async t => {
+  const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+  for (const script of ['test:enterprise-db', 'test:pat-api-db']) {
+    assert.ok(!scripts[script].split(/\s+/).includes('--test-force-exit'), `${script}: forced exit can discard piped reports`)
+  }
+  const command = scripts['test:enterprise-db']
   const tokens = command.split(/\s+/)
   assert.equal(tokens.shift(), 'node')
   const flags = tokens.slice(0, tokens.indexOf('--test') + 1)
   assert.equal(flags.at(-1), '--test')
-  assert.ok(!flags.includes('--test-force-exit'), 'forced exit can discard piped reports, including entire test files')
   const directory = mkdtempSync(join(tmpdir(), 'enterprise-db-report-'))
   t.after(() => rmSync(directory, { recursive:true, force:true }))
   const fixtures = Array.from({ length:5 }, (_, index) => {
