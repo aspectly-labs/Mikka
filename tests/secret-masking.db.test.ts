@@ -81,6 +81,21 @@ test('#438 masking write-then-read-back', { skip: !dbUrl }, async t => {
       costMicroUsd: null, free: 0, purchased: 0, held: 0 }
     assert.deepEqual(rows, [{ ...row, usageMessageId: messageId, model: 'gpt-6-luna', input: 23, output: 7 },
       { ...row, usageMessageId: nextMessageId, model: 'unknown', input: 9, output: 2 }])
+
+    // A gateway run owns its receipt even if the daemon's outbox arrives after
+    // the run-bound token expires. Existing direct-run receipts stay readable.
+    await pool.query(`INSERT INTO byos_native_runs ("runId","bindingId") VALUES ($1,$2)`, [otherRunId, binding])
+    await pool.query(`INSERT INTO model_gateway_tokens ("tokenHash","runId","ownerId","workspaceId",harness,model,"sourceKind","expiresAt","deviceId")
+      VALUES ($1,$2,$3,$4,'codex','gpt-5','subscription',now()-interval '1 minute',$5)`,
+      [randomBytes(32).toString('hex'), otherRunId, admin, ws.id, device])
+    const { db } = await import('../lib/db')
+    const { recordExternalModelUsage } = await import('../lib/model-gateway/ledger')
+    const gatewayReceipt = randomUUID()
+    await recordExternalModelUsage(db, { id: gatewayReceipt, workspaceId: ws.id, ownerId: admin, runId: otherRunId,
+      threadId: otherRunId, model: 'gpt-5', messageId, source: 'subscription', cost: null,
+      usage: { inputTokens: 23, outputTokens: 7, cacheReadTokens: null, cacheWriteTokens: null } })
+    await send(otherRunId, 5, [usage(23, 7, 'gpt-5')])
+    assert.deepEqual((await pool.query('SELECT id FROM hosted_usage WHERE "usageRunId"=$1', [otherRunId])).rows, [{ id: gatewayReceipt }])
   })
   await t.test('Claude subscription input includes both prompt-cache buckets', async () => {
     const { POST } = await import('../app/v1/runs/[runId]/events/route')
