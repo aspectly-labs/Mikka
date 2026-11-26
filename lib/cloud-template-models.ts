@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import sizes from '../scripts/e2b/machine-sizes.json'
 import { harnessInfoSchema } from '@mikka/protocol/harness'
 import type { OrderEntry } from './model-order-plan'
 export const cloudTemplateKindSchema = z.enum(['desktop', 'claude', 'codex'])
@@ -6,11 +7,21 @@ export type CloudTemplateKind = z.infer<typeof cloudTemplateKindSchema>
 const template = z.object({ templateId: z.string().regex(/^[A-Za-z0-9_-]+$/), models: z.array(harnessInfoSchema).max(4),
   baseTemplate: cloudTemplateKindSchema.optional(), preinstalled: z.boolean().optional(),
 }).strict().refine(row => (row.baseTemplate === undefined) === (row.preinstalled === undefined))
+const variant = z.object({
+  kind:cloudTemplateKindSchema, size:z.enum(['small','medium','large','ultra']), templateId:z.string().regex(/^[A-Za-z0-9_-]+$/),
+  cpuCount:z.number().int(), memoryMB:z.number().int(),
+}).strict().refine(row => (row.kind !== 'desktop' || row.size === 'medium') && sizes[row.size].cpuCount === row.cpuCount && sizes[row.size].memoryMB === row.memoryMB)
 export const cloudTemplateModelsSchema = z.object({
   version: z.literal(1), workerSha: z.string().regex(/^[a-f0-9]{40}$/),
   sourceCommit: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   templates: z.object({ desktop: template, claude: template, codex: template }).strict(),
-}).strict()
+  machineVariants:z.array(variant).max(9).optional(),
+}).strict().refine(catalog => {
+  const rows = catalog.machineVariants
+  if (!rows) return true
+  if (new Set(rows.map(r=>r.templateId)).size !== rows.length || new Set(rows.map(r=>r.kind+'/'+r.size)).size !== rows.length) return false
+  return cloudTemplateKindSchema.options.every(kind => rows.some(r=>r.kind === kind && r.size === 'medium' && r.templateId === catalog.templates[kind].templateId))
+})
 export type CloudModelState = 'ready' | 'cloudModelsUnknown' | 'cloudModelNotReported'
 export function cloudTemplateModels(env: Record<string, string | undefined> = process.env) {
   try {
@@ -40,6 +51,8 @@ export function cloudTemplateOrigin(templateId: string, env: Record<string, stri
   } catch { /* No previous release is configured. */ }
   for (const catalogue of catalogues) {
     if (!catalogue) continue
+    const variant = catalogue.machineVariants?.find(row => row.templateId === templateId)
+    if (variant) return { kind:variant.kind, preinstalled:true }
     for (const kind of cloudTemplateKindSchema.options) {
       const row = catalogue.templates[kind]
       if (row.templateId === templateId && row.baseTemplate === kind && row.preinstalled === true) return { kind, preinstalled: true }
