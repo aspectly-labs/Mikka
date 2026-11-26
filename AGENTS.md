@@ -11,6 +11,15 @@ These apply to every session and every agent, in this repository and in `mikka-h
 3. **UI copy: no padding.** Labels are only labels and values only values: no parenthetical notes, no restating what is already on screen, no sentences or full stops in labels; what a person needs to act stays visible in one short line, other explanation goes in a tooltip or nowhere; write it as Capy/Codex ship it ([C-11](docs/design/copy.md), ratcheted by `node scripts/check-copy.mjs`). Review UI copy with the skills listed in copy.md.
 4. **Benchmark agent products first:** Capy, ChatGPT/Codex, Claude, Cursor, Devin, Perplexity. Category leaders (Linear, Jira, GitHub, Vercel …) are a reference only for a surface no agent product has. A feature no agent product has is not built unless Alex asks for it.
 5. **No sprints or cycles (迭代).** No agent product has them, so Mikka does not build them.
+6. **Settled product facts — never ask Alex again:**
+   - **iPhone app: 「即将推出」 / "Coming soon"** everywhere (site, docs, FAQ, UI). It is in development; never mention
+     TestFlight or say an iOS app is available (Alex, 2026-11-26).
+   - **Memory (记忆)** is hidden on purpose (flag `mikka-memory` off; reason on the flag in `lib/feature-flags.ts`).
+   - **Execution runs on E2B**; Mikka Cloud uses Mikka's own E2B account, users can't bring their own E2B key on Mikka
+     Cloud (self-host only) (Alex, 2026-11-25/26).
+   - **Paid component source may be modified** (BoardUI Pro, affectUI, beUI Pro licences allow it; Alex, 2026-11-26).
+   - **Claude Max (and similar) subscriptions may be connected** to run models; already connected (Alex, 2026-11-26).
+   Before asking Alex anything, check this list, the flag comments and the decision records.
 
 ## Authority and boundaries
 
