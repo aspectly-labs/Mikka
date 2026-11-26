@@ -2,7 +2,7 @@ import 'server-only'
 import { SubscriptionRefusal } from '@mikka/protocol/subscription'
 import { WorkerRefusal } from '../packages/daemon/src/subscription-worker-client'
 import { db, pool } from './db'
-import { claimSubscriptionChatUsage, finishSubscriptionChatUsage, type ModelReceipt } from './model-gateway/ledger'
+import { claimSubscriptionUsage, finishSubscriptionUsage, type ModelReceipt } from './model-gateway/ledger'
 import { SUBSCRIPTION_CHAT_CALL_HEADER } from './model-gateway/litellm-client'
 import { readRunChain } from './run-chain'
 import { BACKEND_FAILURES, GENERATION_FAILURES, PRIVATE_FAILURES } from './subscription-generation-diagnostics'
@@ -95,14 +95,14 @@ export async function handleSubscriptionChat(request: Request, service = subscri
     }
     const threadId = use.runId ? (await readRunChain(pool, use.ownerId, use.runId))?.rootRunId : null
     if (use.runId && !threadId) return deny(403)
-    if (!await claimSubscriptionChatUsage(db, { ...use, id: callId, model, threadId: threadId ?? null })) return deny(409)
+    if (!await claimSubscriptionUsage(db, { ...use, id: callId, model, threadId: threadId ?? null })) return deny(409)
     const reader = admitted.start().getReader()
     const observed = observeChatReceipt()
     let finished = false
     const finish = async () => {
       if (finished) return
       finished = true
-      await finishSubscriptionChatUsage(db, callId, observed.receipt, observed.complete && observed.receipt.usage !== null)
+      await finishSubscriptionUsage(db, callId, observed.receipt, observed.complete && observed.receipt.usage !== null)
     }
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {

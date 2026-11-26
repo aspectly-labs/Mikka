@@ -109,6 +109,39 @@ function harness(over: Partial<GatewayDependencies> & { answer?: () => Response 
 const post = (body: unknown, headers: Record<string, string> = { 'x-api-key': 'mkg_valid' }) =>
   new Request('https://mikka.test/api/model-gateway/anthropic/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) })
 
+test('native subscription reserves one correlated usage receipt and settles only observed usage', async () => {
+  const generationId = '10000000-0000-4000-8000-000000000003'
+  const selected = grant({ source: { kind: 'subscription', deviceId: 'fixture-device' } })
+  for (const outcome of ['complete', 'missing-usage', 'incomplete', 'missing-id'] as const) {
+    const ids: string[] = []
+    const completed: boolean[] = []
+    const events = [
+      ...(outcome === 'missing-usage' ? [] : [{ type: 'message_start', message: { usage: { input_tokens: 7, output_tokens: 0 } } }]),
+      ...(outcome === 'incomplete' ? [] : [{ type: 'message_stop' }]),
+    ]
+    const { calls, dependencies } = harness({
+      verify: async () => selected,
+      subscription: async () => new Response(sse(events), { headers: { 'content-type': 'text/event-stream',
+        ...(outcome !== 'missing-id' && { 'x-litellm-call-id': generationId }) } }),
+      beginSubscriptionReceipt: async (grant, observedId) => {
+        assert.deepEqual(grant, selected)
+        ids.push(observedId)
+        return async (receipt, complete) => {
+          assert.equal(receipt.generationId, generationId)
+          completed.push(complete)
+        }
+      },
+    })
+    const response = await handleModelGateway(post({ model: 'untrusted', stream: true }), 'anthropic', 'messages', dependencies)
+    assert.equal(response.status, outcome === 'missing-id' ? 502 : 200, outcome)
+    assert.deepEqual(ids, outcome === 'missing-id' ? [] : [generationId], outcome)
+    await response.text()
+    assert.deepEqual(completed, outcome === 'missing-id' ? [] : [outcome === 'complete'], outcome)
+    assert.deepEqual(calls.reserved, [])
+    assert.deepEqual(calls.fetched, [])
+  }
+})
+
 test('Mikka 额度: the gateway holds credit, streams the answer through, then settles at list price', async () => {
   const { calls, dependencies } = harness()
   const response = await handleModelGateway(post({ model: 'whatever', stream: true, messages: [] }), 'anthropic', 'messages', dependencies)

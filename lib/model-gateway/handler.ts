@@ -1,5 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
+import { trace } from '@opentelemetry/api'
 import { db, pool } from '@/lib/db'
 import { catalogModel } from '@/lib/model-catalog'
 import { PaidResourceError } from '@/lib/abuse/policy'
@@ -10,7 +11,7 @@ import { withoutDisabledFeatures } from './features'
 import { isCloudEdition } from '@/lib/edition'
 import { gatewayLiteLlm, SELF_HOSTED_DEFAULT_CATALOG_ID } from './config'
 import { readRunChain } from '@/lib/run-chain'
-import { recordExternalModelUsage, type ModelReceipt } from './ledger'
+import { claimSubscriptionUsage, finishSubscriptionUsage, recordExternalModelUsage, type ModelReceipt } from './ledger'
 import { modelGatewayProtocolBody } from './protocol-fields.mjs'
 import { liteLLMResponseCost } from './litellm-client'
 
@@ -28,6 +29,7 @@ export interface GatewayDependencies {
   reserve(grant: GatewayGrant, id: string): Promise<void>
   settle(id: string, cost: number | null, usage: GatewayUsage | null, generationId?: string, messageId?: string | null): Promise<void>
   recordExternal?(grant: GatewayGrant, id: string, receipt: ModelReceipt): Promise<void>
+  beginSubscriptionReceipt?(grant: GatewayGrant, generationId: string): Promise<(receipt: ModelReceipt, complete: boolean) => Promise<void>>
   /** The catalogue the cost is priced from. */
   catalogue(): Promise<readonly import('@/lib/model-catalog').CatalogModel[]>
   /** Nothing can pay: the run stops with the refusal as its reason, so the thread shows 「Mikka 额度已用完」. */
@@ -50,17 +52,23 @@ function errorResponse(protocol: GatewayProtocol, status: number, code: string):
  * Collects the lines that report usage as the response streams through, so the
  * whole body is never held in memory.
  */
-function usageTap(streaming: boolean, onDone: (text: string) => Promise<void>) {
+function usageTap(streaming: boolean, onDone: (text: string, complete: boolean) => Promise<void>, nativeProtocol?: GatewayProtocol) {
   const decoder = new TextDecoder()
-  let partial = '', kept = '', closed = false
+  let partial = '', kept = '', closed = false, terminal = false
   const keep = (line: string) => {
     if (kept.length < MAX_BODY_BYTES && (!streaming || line.includes('usage') || line.includes('message_start') || line.includes('response.created'))) kept += line + '\n'
+    if (nativeProtocol && line.startsWith('data:') && /"(?:message_stop|response\.completed|response\.incomplete)"/.test(line)) {
+      try {
+        const { type } = JSON.parse(line.slice(5))
+        terminal ||= nativeProtocol === 'anthropic' ? type === 'message_stop' : type === 'response.completed' || type === 'response.incomplete'
+      } catch { /* An incomplete event cannot attest completion. */ }
+    }
   }
-  const finish = async () => {
+  const finish = async (flushed = false) => {
     if (closed) return
     closed = true
     keep(partial)
-    await onDone(kept)
+    await onDone(kept, flushed && (!streaming || terminal))
   }
   return {
     finish,
@@ -71,7 +79,7 @@ function usageTap(streaming: boolean, onDone: (text: string) => Promise<void>) {
         partial = lines.pop() ?? ''
         for (const line of lines) keep(line)
       },
-      async flush() { await finish() },
+      async flush() { await finish(true) },
     }),
   }
 }
@@ -144,7 +152,18 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
   const headers = new Headers({ 'cache-control': 'no-store' })
   const type = response.headers.get('content-type')
   if (type) headers.set('content-type', type)
-  const observable = operation !== 'count_tokens' && !!dependencies.recordExternal && !!grant.workspaceId
+  let nativeReceipt: Awaited<ReturnType<NonNullable<GatewayDependencies['beginSubscriptionReceipt']>>> | undefined
+  if (response.ok && grant.source.kind === 'subscription' && operation !== 'count_tokens') {
+    if (!generationId || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(generationId)
+      || !dependencies.beginSubscriptionReceipt || !grant.workspaceId) {
+      await response.body?.cancel().catch(() => undefined)
+      return errorResponse(protocol, 502, 'model_gateway_subscription_receipt_unavailable')
+    }
+    trace.getActiveSpan()?.setAttribute('mikka.litellm.call_id', generationId)
+    try { nativeReceipt = await dependencies.beginSubscriptionReceipt(grant, generationId) }
+    catch (error) { await response.body?.cancel().catch(() => undefined); throw error }
+  }
+  const observable = Boolean(nativeReceipt) || (operation !== 'count_tokens' && !!dependencies.recordExternal && !!grant.workspaceId)
   if ((!metered && !observable) || !response.body) {
     if (metered) await dependencies.settle(holdId, response.ok ? null : 0, null, generationId)
     return new Response(response.body, { status: response.status, headers })
@@ -154,17 +173,19 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
     if (metered) await dependencies.settle(holdId, 0, null, generationId)
     return new Response(response.body, { status: response.status, headers })
   }
-  const tap = usageTap(type?.includes('text/event-stream') ?? false, async text => {
+  const tap = usageTap(type?.includes('text/event-stream') ?? false, async (text, complete) => {
     const receipt = readGatewayReceipt(protocol, text)
     const cost = receipt.cost ?? liteLLMResponseCost(response.headers)
     if (metered) {
       const settledCost = receipt.usage
         ? gatewayCostMicroUsd(catalogModel(grant.model, await dependencies.catalogue()), receipt.usage) : null
       await dependencies.settle(holdId, settledCost, receipt.usage, generationId, receipt.messageId)
+    } else if (nativeReceipt) {
+      await nativeReceipt({ ...receipt, cost, generationId }, complete && receipt.usage !== null)
     } else if (receipt.messageId || receipt.usage || cost !== null) {
       await dependencies.recordExternal?.(grant, holdId, { ...receipt, cost, generationId })
     }
-  })
+  }, nativeReceipt ? protocol : undefined)
   // A client that stops reading still owes what the provider already produced.
   request.signal.addEventListener('abort', () => { void tap.finish() }, { once: true })
   return new Response(response.body.pipeThrough(tap.stream), { status: response.status, headers })
@@ -191,10 +212,18 @@ export function modelGatewayDependencies(): GatewayDependencies {
         usage ? { read: usage.cacheReadTokens, write: usage.cacheWriteTokens } : null, messageId)
     },
     async recordExternal(grant, id, receipt) {
-      if (!grant.workspaceId || grant.source.kind === 'credits') return
+      if (!grant.workspaceId || grant.source.kind !== 'api_key') return
       const threadId = (await readRunChain(pool, grant.ownerId, grant.runId))?.rootRunId ?? null
       await recordExternalModelUsage(db, { ...receipt, id, threadId, workspaceId: grant.workspaceId, ownerId: grant.ownerId,
-        runId: grant.runId, model: grant.model, source: grant.source.kind })
+        runId: grant.runId, model: grant.model, source: 'api_key' })
+    },
+    async beginSubscriptionReceipt(grant, generationId) {
+      if (!grant.workspaceId) throw new Error('model_gateway_billing_scope_missing')
+      const threadId = (await readRunChain(pool, grant.ownerId, grant.runId))?.rootRunId ?? null
+      const id = `subscription-native:${generationId}`
+      const claimed = await claimSubscriptionUsage(db, { id, workspaceId: grant.workspaceId, ownerId: grant.ownerId,
+        runId: grant.runId, model: grant.model, generationId, threadId })
+      return async (receipt, complete) => { if (claimed) await finishSubscriptionUsage(db, id, receipt, complete) }
     },
     catalogue: async () => (await import('@/lib/model-catalog-server')).modelCatalog(),
     async refused(grant, code) {
