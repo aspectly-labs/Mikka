@@ -2,7 +2,8 @@ import 'server-only'
 import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { Sandbox } from 'e2b'
 import { armDueTimerSoon } from '@/lib/due-timer'
-import { E2B_RENEW_LEAD_MS } from '../cloud-computer/e2b-compute-billing'
+import { isCloudEdition } from '@/lib/edition'
+import { E2B_RENEW_LEAD_MS, E2B_REVIEW_TIMEOUT_MARGIN_MS } from '../cloud-computer/e2b-compute-billing'
 import type { Pool } from 'pg'
 import { TerminalError } from '@mikka/protocol/coding-terminal'
 import { withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -34,7 +35,8 @@ export async function resumeReviewMachine(scope: TaskReviewAuthority, lease: Lea
     const account = await e2bResourceAccount(target.ownerId, 'sandbox', target.sandboxId)
     const options = { apiKey: account.apiKey, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, signal: abort, retries: 0,
       proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
-    return withE2BProviderTime(target.ownerId, target.sandboxId, milliseconds, {
+    const requested = milliseconds + (isCloudEdition() ? E2B_REVIEW_TIMEOUT_MARGIN_MS : 0)
+    return withE2BProviderTime(target.ownerId, target.sandboxId, requested, {
       providerScope: account.scope,
       inspect: () => withE2BErrors(target.ownerId, false, () => Sandbox.getInfo(target.sandboxId, options)),
     }, async timeoutMs => {
@@ -80,7 +82,8 @@ export async function resumeReviewMachine(scope: TaskReviewAuthority, lease: Lea
     const remaining = Math.min(300_000, Date.parse(lease.expiresAt) - Date.now())
     if (remaining <= 0) throw new TerminalError('terminal_unavailable', { detail: 'lease' })
     const deadline = sponsored ? await attach() : await resume({ ...scope, sandboxId: scope.sandboxId }, remaining, signal)
-    const reviewDue = typeof deadline === 'number' ? Math.max(Date.now(), deadline - E2B_RENEW_LEAD_MS + 3_000) : null
+    const reviewDue = typeof deadline === 'number' && deadline < Date.parse(lease.expiresAt)
+      ? Math.max(Date.now(), deadline - E2B_RENEW_LEAD_MS + 3_000) : null
     signal?.throwIfAborted()
     const applied = await database.query(`UPDATE thread_machines m SET state='running',"runningSince"=clock_timestamp(),
       "lastActiveAt"=clock_timestamp(),"lifecycleAt"=LEAST(

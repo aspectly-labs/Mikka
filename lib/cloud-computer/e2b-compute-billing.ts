@@ -13,6 +13,8 @@ import { MACHINE_CHUNK_MS, type E2BMachineSize } from './machine-pricing'
 
 export const E2B_RENEW_LEAD_MS = 45_000
 export const E2B_TIMEOUT_REQUEST_BUDGET_MS = 5_000
+const E2B_TIMEOUT_SAFETY_MS = E2B_TIMEOUT_REQUEST_BUDGET_MS + 1_000
+export const E2B_REVIEW_TIMEOUT_MARGIN_MS = E2B_TIMEOUT_SAFETY_MS + 1_000
 const unavailable = () => new E2BKeyError('e2b_unavailable', 'E2B compute billing identity unavailable')
 
 type Lease = { operationId: string; ownerId: string; workspaceId: string; providerScope: string;
@@ -25,10 +27,10 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
     `UPDATE e2b_compute_leases SET "pendingAt"=coalesce("pendingAt",greatest(now(),"paidUntil")),
         "pendingRunId"=CASE WHEN "pendingAt" IS NULL THEN $2 ELSE "pendingRunId" END,
         "fundingOpenedAt"=coalesce("fundingOpenedAt",clock_timestamp())
-      WHERE "operationId"=$1 AND ("paidUntil" IS NULL OR "paidUntil"<=now()+$3::int*interval '1 millisecond')
+      WHERE "operationId"=$1 AND ("paidUntil" IS NULL OR "paidUntil"<=now()+least($3::int,$5::int)*interval '1 millisecond')
         AND (NOT $4::boolean OR "chunkIndex"=-1) AND "renewalReviewAt" IS NULL
         AND NOT EXISTS (SELECT 1 FROM agent_runs WHERE id=$2 AND "stopRequestedAt" IS NOT NULL)
-      RETURNING "chunkIndex","pendingRunId"`, [lease.operationId, target.runId, E2B_RENEW_LEAD_MS, creation])).rows[0] : undefined
+      RETURNING "chunkIndex","pendingRunId"`, [lease.operationId, target.runId, E2B_RENEW_LEAD_MS, creation, requestedMs])).rows[0] : undefined
   if (claim) {
     armDueTimerSoon('run-recovery')
     await beforeRenew?.()
@@ -61,7 +63,7 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
     `SELECT "activeChunkIndex" AS "chunkIndex",floor(extract(epoch FROM ("paidUntil"-clock_timestamp()))*1000)::int AS "remainingMs"
       FROM e2b_compute_leases WHERE "operationId"=$1`, [lease.operationId])
   // E2B rounds up to seconds. Use whole seconds and allow for provider request latency.
-  const seconds = Math.floor((Math.min(requestedMs, row?.remainingMs ?? 0, MACHINE_CHUNK_MS + E2B_RENEW_LEAD_MS) - E2B_TIMEOUT_REQUEST_BUDGET_MS - 1_000) / 1_000)
+  const seconds = Math.floor((Math.min(requestedMs, row?.remainingMs ?? 0, MACHINE_CHUNK_MS + E2B_RENEW_LEAD_MS) - E2B_TIMEOUT_SAFETY_MS) / 1_000)
   if (seconds < 1) throw new E2BKeyError('e2b_limit_reached', 'Mikka credits are insufficient for five minutes of compute')
   if (payment) {
     payment.operationId = lease.operationId

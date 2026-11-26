@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ThreadMachineFence } from './thread-machines'
 import { threadLifecycleProvider, type ThreadProviderInfo } from './thread-lifecycle-provider'
-import { E2B_RENEW_LEAD_MS, e2bCreationRecoveryAt, voidUnallocatedE2BCompute } from './e2b-compute-billing'
+import { E2B_RENEW_LEAD_MS, E2B_REVIEW_TIMEOUT_MARGIN_MS, e2bCreationRecoveryAt, voidUnallocatedE2BCompute } from './e2b-compute-billing'
 import { logThreadLifecycle, threadLifecycleErrorKind } from './thread-lifecycle-log'
 import { taskActivityChanged } from '../factory/activity-live'
 import { jsonbSafeBigIntSql, jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
@@ -263,7 +263,12 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
   }
   const keepAlive = async (due: number, reason: string, observedDeadline: number | null) => {
     const canFund = !row.stopRequestedAt && !['stop_pending', 'task_closed', 'execution_lease_lost', 'provider_paused'].includes(reason)
-    const prepared = await deps.provider.prepareKeepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, canFund)
+    const reviewCovered = reason === 'human_review' && observedDeadline !== null && observedDeadline >= due
+    const requestedMs = reason === 'human_review'
+      ? Math.min(THREAD_MACHINE_PROVIDER_MS, Math.max(1, due - deps.now()) + E2B_REVIEW_TIMEOUT_MARGIN_MS)
+      : THREAD_MACHINE_PROVIDER_MS
+    const prepared = reviewCovered ? undefined
+      : await deps.provider.prepareKeepAlive?.(row.sandboxId!, actor.userId, requestedMs, canFund)
     // A static provider timeout cannot resume a paused VM. Hold the same
     // run→machine lock order as resume/adopt while extending this exact epoch.
     let preservePayment = false
@@ -298,10 +303,10 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
       }
       const stopping = Boolean(run?.stopRequestedAt)
       let renewedDeadline: number | null | undefined
-      if (!(stopping && canFund)) {
+      if (!reviewCovered && !(stopping && canFund)) {
         try {
           renewedDeadline = prepared ? await prepared.apply(client)
-            : (await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping)) ?? undefined
+            : (await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, requestedMs, !stopping)) ?? undefined
           preservePayment = renewedDeadline !== null
         } catch (error) {
           // Provider receipt may have been lost. The durable dispatch marker
@@ -311,8 +316,8 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         }
       }
       const providerDeadline = renewedDeadline ?? observedDeadline ?? (prepared ? deps.now() : deps.now() + THREAD_MACHINE_PROVIDER_MS)
-      const renewalAt = stopping ? due : Math.max(deps.now() + 5_000, providerDeadline - E2B_RENEW_LEAD_MS + 3_000)
-      if (renewedDeadline != null || !prepared && !stopping) providerOutcome = 'timeout_renewed'
+      const renewalAt = stopping || reviewCovered ? due : Math.max(deps.now() + 5_000, providerDeadline - E2B_RENEW_LEAD_MS + 3_000)
+      if (!reviewCovered && (renewedDeadline != null || !prepared && !stopping)) providerOutcome = 'timeout_renewed'
       const next = await finish({ phase: reason === 'human_review' ? 'review_resumed' : reason === 'provisioning' ? 'provisioning' : 'active', reason, failures: 0, providerDeadline }, Math.min(due, renewalAt), client)
       await client.query('COMMIT')
       committedTransition?.()

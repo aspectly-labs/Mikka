@@ -114,7 +114,9 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
 
   await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()+interval '30 seconds' WHERE "operationId"=$1`, [operationId])
   assert.ok(await readPaidE2BTimeout(ownerId, sandboxId, 900_000) < 30_000)
-  assert.deepEqual(await receipts(), [expected(0, runId)])
+  const shortReviewTimeout = await withE2BProviderTime(ownerId, sandboxId, 15_000, observe, async timeoutMs => timeoutMs)
+  assert.ok(shortReviewTimeout > 0 && shortReviewTimeout <= 15_000)
+  assert.deepEqual(await receipts(), [expected(0, runId)], 'a short review covered by current prepayment buys no new interval')
   await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('sandbox',$1,$2,'team:fixture')`, [sandboxId, ownerId])
   await fixture.query(`UPDATE agent_runs SET status='running',"leaseExpiresAt"=now()+interval '10 minutes' WHERE id=$1`, [runId])
   const lifecycleInfo = t.mock.method(Sandbox, 'getInfo', async () => ({
@@ -374,6 +376,46 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     assert.ok(!policyFixture.e2b.requests.slice(pausedAt).some(request => request.path.startsWith('/e2b/envd/')))
     assert.ok(!policyFixture.e2b.requests.slice(providerStart).some(request => request.method === 'POST' && request.path.startsWith('/e2b/api/')))
     assert.equal((await fixture.query('SELECT count(*)::int AS n FROM hosted_usage WHERE "usageWorkspaceId"=$1', [policyWorkspace])).rows[0].n, 0)
+
+    const priorRuntime = process.env.MIKKA_CLOUD_RUNTIME_PREVIOUS
+    const priorDesktop = { ...templates.desktop, templateId: 'previous-verified-desktop' }
+    const priorTemplates = { ...templates, desktop: priorDesktop }
+    try {
+      process.env.MIKKA_CLOUD_RUNTIME_PREVIOUS = JSON.stringify({ version: 1, configuration: {
+        ...env, E2B_BYO_COMPUTER_TEMPLATE: priorDesktop.templateId,
+        MIKKA_CLOUD_TEMPLATE_MODELS: JSON.stringify({ version: 1, workerSha, templates: priorTemplates }),
+      } })
+      observed.template = priorDesktop.templateId
+      delete observed.metadata.workerSha
+      assert.equal(await observeComputerWorker(policyWorkspace, booted.sandboxId), 'current',
+        'a different verified template with the same worker keeps the paused desktop')
+    } finally {
+      if (priorRuntime === undefined) delete process.env.MIKKA_CLOUD_RUNTIME_PREVIOUS
+      else process.env.MIKKA_CLOUD_RUNTIME_PREVIOUS = priorRuntime
+    }
+
+    const createdOperation = randomUUID()
+    const createdWorkspace = (await seedWorkspace(fixture, policyOwner, [{ userId: policyOwner, role: 'admin' }])).id
+    await fixture.query(`INSERT INTO cloud_machines ("workspaceId","ownerId","operationId",state) VALUES ($1,$2,$3,'waking')`,
+      [createdWorkspace, policyOwner, createdOperation])
+    await fixture.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,2,'purchased','test',$3)`,
+      [randomUUID(), createdWorkspace, randomUUID()])
+    policyFixture.e2b.state.templates.add(templates.desktop.templateId)
+    const inspectReal = Sandbox.getInfo.bind(Sandbox)
+    const verifiedHardware = t.mock.method(Sandbox, 'getInfo', async (...args: Parameters<typeof Sandbox.getInfo>) => ({
+      ...await inspectReal(...args), cpuCount: 2, memoryMB: 8192,
+    }))
+    const { createComputer } = await import('../computer/e2b-provider')
+    try {
+      const created = await createComputer(createdWorkspace, createdOperation)
+      const allocation = policyFixture.e2b.sandboxes.get(created.sandboxId)!
+      assert.equal(allocation.metadata.workerSha, workerSha, 'the production create writes the verified worker to E2B')
+      await fixture.query('UPDATE cloud_machines SET "sandboxId"=$1 WHERE "operationId"=$2', [created.sandboxId, createdOperation])
+      allocation.state = 'paused'
+      assert.equal(await observeComputerWorker(createdWorkspace, created.sandboxId), 'current')
+    } finally {
+      verifiedHardware.mock.restore()
+    }
   } finally {
     for (const [key, value] of Object.entries(savedProviderEnv)) {
       if (value === undefined) delete process.env[key]
