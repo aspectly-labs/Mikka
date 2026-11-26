@@ -6,8 +6,8 @@
   that evidence, not handed to Alex ([2026-11-25-2330](2026-11-25-2330-owner-decisions-chat-memory-views-projects.md)
   rule 9). The workspace-page, chat/desktop and mobile benchmarks were checked against Capy, ChatGPT/Codex, Claude (with
   Claude Code), Cursor, Devin and Perplexity, plus GitHub Copilot coding agent and Google Jules for the environment
-  model, and GitHub / Linear only where no agent product has the surface. Only the rows the evidence settles are
-  recorded here.
+  model, and GitHub / Linear only where no agent product has the surface. Rows the evidence settles are recorded here;
+  Alex then answered E6 (relayed by the coordinator), recorded as rule 5a.
 - Rule: [2026-11-25-1630](2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md) 「benchmark first, not precedent」.
 - Count: 「n/m」 is n of the m products that have the surface. Research IDs (E…, W…, C…, M…) refer to the resolved-pages
   benchmark table.
@@ -38,6 +38,10 @@
 5. **No board-Project → repository → environment layer (E5).** The environment is the only container; a repository's
    base branch and 「主仓库」 mark move onto the environment's repository row. Evidence: Capy has one container; Claude's
    Project is repositories + one environment; Alex removed the projects page on 2026-11-25.
+5a. **Personal environments, shareable with the workspace (E6, Alex).** A member can create a 「仅我」 environment and share
+   it with the workspace (「谁可以使用：仅我 / 工作区」); personal variables override shared ones of the same name, so a member
+   can try a new setup without changing the one everyone uses. Evidence 4/4 (Capy Shared / Personal variables, Codex
+   「Only me」 / shared, Cursor personal before team, Claude personal / organization environments).
 
 ### Navigation
 
@@ -107,9 +111,9 @@
 
 ## Not decided here (still with Alex)
 
-- E6 personal environments (「仅我 / 工作区」) — a feature to build; 4/4 have it.
-- E7 environment snapshots (prebuilds) — infrastructure cost; 5/7 have it.
-- W4 the task's 「验收」 section — no comparable product; independent checks depend on it.
+- E7 environment snapshots (prebuilds) — infrastructure cost; 5/7 have it. Alex asked how they relate to the existing
+  machine templates; research is running.
+- W4 the task's 「验收」 section — no comparable product; independent checks depend on it. Research is running.
 
 ## Supersedes
 

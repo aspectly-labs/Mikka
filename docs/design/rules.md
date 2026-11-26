@@ -12,7 +12,9 @@ source wins in a conflict is in [`README.md`](README.md).
 
 ## Bots, chats and threads
 
-- **R-01** The left column is the bot list (bots and group chats). In the
+- **R-01** The left column is the bot list (bots; a group chat is a thread
+  with members and is listed with threads, not as its own section —
+  [2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md)). In the
   hosted shell each Bot can expand its dispatched tasks and Agent work beneath
   its own row, like Capy's Captains; tasks are named for the work and use their
   own state icon. Bots and groups retain their own avatars. This is not a
@@ -22,11 +24,13 @@ source wins in a conflict is in [`README.md`](README.md).
   separate from that budget. A missing short title has a bounded text fallback;
   the full task title stays in detail
   ([short titles](decisions/2026-11-10-1341-sidebar-short-title-limits.md)).
-  The right column is 概览 with its tabs, including 任务, or 全部任务 (R-50).
-- **R-02** The right panel's 概览 header shows the bot selected on the left:
-  the same bloub avatar and the same name as its left row, then the tabs
-  详情 / 任务 / PR / 电脑 (R-50). Task titles belong in their rows and
-  details; this header names the bot. In the hosted edition 概览 is a tab of the chat's work area instead (decision `2026-11-09-2330-overview-as-work-area-tab.md`).
+  The right column opens on its 概览 tab (R-50).
+- **R-02** 概览 is the first tab of the right column's one flat tab level, not a
+  bot header with inner tabs. A thread's 概览 lists 待办, 子 Agent, 分支与 PR, 产出,
+  自动化 and 端口; a Bot thread's 概览 lists 需要你, 进行中, 线程, 子 Agent and PR. A
+  Bot's profile and settings live in its 「Bot 资料」 sheet. Task titles belong
+  in their rows and details ([2026-11-23-2200](decisions/2026-11-23-2200-right-column-as-tembo.md),
+  [2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 10).
 - **R-03** Choosing another bot on the left switches the centre chat, the
   right task list and the computer together.
 - **R-04** Every bot comes with its own computer. There is no 新建云端电脑 entry
@@ -122,7 +126,7 @@ source wins in a conflict is in [`README.md`](README.md).
   about the task and a big screen. It has no approval step: the bot operates
   until the person takes control (decisions 2026-10-30). It never shows an
   operation log, a step checklist, or OS and spec lines.
-- **R-17** The 概览 header does not show 「<Bot 名> 的屏幕」. The 电脑 tab
+- **R-17** No header says 「<Bot 名> 的屏幕」. The right column's 电脑 tab
   holds the bot's screen, the existing `AgentComputer` view (R-50).
 
 ## Suggestions, tasks and devices
@@ -332,17 +336,20 @@ do what Linear does. Figma: `220:5022` (MIK-25).
 
 Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
 
-- **R-50** The right panel is the right third of the window. 概览 names the
-  selected bot (R-02), followed by 详情 / 任务 / PR / 电脑. 任务 lists the
-  tasks that bot dispatched. 电脑 shows its cloud computer (`AgentComputer`).
-  The window bar's 全部任务 entry opens all dispatched tasks in the right
-  column while keeping the centre chat. Search, widen and close act on that
-  column. A conversation opens from the workspace directory, a Bot subitem or
+- **R-50** The right column has one flat tab level: 概览 first (R-02), then
+  the kinds (Changes, Pull requests, Tasks, Computer, Files, Setup, Browser,
+  in the registry's order), each opened at most once
+  from ＋ or the launcher, plus `task:` and `thread:` tabs the chat opens. 电脑
+  shows the cloud computer (`AgentComputer`). A subagent opens here as a
+  read-only `thread:` tab and never replaces the main conversation. Below
+  768px or on touch there is no tab strip: the thread's `…` menu opens each
+  kind as a pushed page or sheet ([2026-11-23-2200](decisions/2026-11-23-2200-right-column-as-tembo.md),
+  [2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rules 10, 11, 20). A conversation opens from the workspace directory, a Bot subitem or
   its linked task’s 工作 section. All entries resolve the same identity.
 - **R-51** The right panel is read-only. No action buttons anywhere in it (no
   让它安排, 新建, 上传 or arrange). Besides navigation (the pills, the tabs, the
   header's search, widen and close, and a list group's collapse chevron), the only
-  controls are 「展开」 to expand a list and, in a bot's 概览 header, its own name
+  controls are 「展开」 to expand a list and, in a bot's 「Bot 资料」 sheet, its own name
   and avatar: clicking the name renames it in place (Enter or leaving saves, Esc
   cancels) and clicking the avatar opens the 新建 Bot shape and colour picker
   (2026-10-31). The Coordinator's header stays read-only. An ordinary bot's 详情
@@ -374,7 +381,9 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
     icon), and is the board card's line; on a task's chip, row or hover card
     it is words only. Two status-like glyphs are never side by side. It is
     never a status, a group, a column or a status filter. What needs the
-    person is in 收件箱.
+    person shows on the Bot's 概览, at the top of 与我相关, as unread dots on
+    thread rows and in the notification bell; there is no 收件箱 page
+    ([2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md) rule 7).
   - 受阻 is a board column, not a status: a task the person flagged or one a
     dependency holds back. What a run says never moves a task there.
   - The status advances with the work, forward only and never over a status
@@ -428,11 +437,12 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
   has an 「Artifact · N」 entry. Opening an Artifact shows a window with the
   acceptance content on the left (PR, checks, screenshots and recordings),
   the thread's chat on the right, and 打回 / 通过 at the top.
-  Factory acceptance uses the same window: its left side is the acceptance
-  report Artifact (HTML or Markdown, evidence inline), its right side the
-  thread that did the work, and the task page has a 验收 button that opens it
-  (decision `2026-11-04-2200-factory-flow-like-warp.md`; it replaces the 「验收」
-  tab of 2026-10-30).
+  Factory acceptance does not use this window: its criteria (标准) are a
+  checklist in the task description, its per-criterion results (检查) with
+  evidence and the 合并 / 要求修改 actions are in the right-column PR tab, and
+  the task page shows one property row (decision
+  `2026-11-26-0210-acceptance-from-benchmark.md`, replacing
+  `2026-11-04-2200-factory-flow-like-warp.md`'s acceptance page).
 - **R-57** The local 浏览器 is an icon-only globe toggle at the right of the
   top bar, with no 「浏览器」 label. Turned on, it opens a right column with
   the browser (URL bar and page). In the hosted edition 浏览器 is a work-area tab opened from the New tab's Tools or ⌘⇧B, with no globe in a window bar (decision `2026-11-09-2330-overview-as-work-area-tab.md`). Selecting an element and annotating it puts
@@ -615,19 +625,16 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
   profile and the background research sit behind deployment flags (off by
   default when self-hosted), a per-person entitlement, the person's own
   toggles and a daily budget.
-- **R-75** Workspaces are switched in one place: the account menu behind the
-  avatar at the bottom of the rail (the bot list's footer on phones).
+- **R-75** Workspaces are switched in one place: the one workspace-and-account
+  menu behind the avatar at the bottom left (the drawer's footer on phones).
   Settings shows the current workspace's settings and has no switcher; its
-  column starts with the 设置 title and search. The account menu is one flat
-  `DropdownMenu`, no submenu, as Linear's and Notion's: each signed-in
-  account's email (small, muted) with its workspaces under it (avatar, name,
-  a check on the current one; about five show, more scroll), 创建工作区;
-  then 设置 with its shortcut as one quiet text hint (⌘, not keycaps); then
-  添加账户 and 退出登录. Every action row leads with a muted glyph in
-  the same 20px box as the workspace avatars (创建工作区 `Plus`, 设置
-  `Settings`, 添加账户 `UserPlus`, 退出登录 `LogOut`), so all rows share
-  one text column. Menu text and item height are the defaults; the
-  menu is 240px wide and opens above the rail avatar, never over it.
+  column starts with the 设置 title and search. The menu reads: identity →
+  切换工作区 ▸ (with 「加入或新建工作区」) → 设置 with its shortcut as one quiet text
+  hint (⌘, not keycaps) → 外观 ▸ / 语言 ▸ → 帮助 ▸ (where 重新播放引导 lives) →
+  退出登录. 插件 is not in this menu. Every action row leads with a muted glyph
+  in the same 20px box as the workspace avatars, so all rows share one text
+  column; the menu opens above the avatar, never over it
+  ([2026-11-26-0120](decisions/2026-11-26-0120-auth-and-overlays-from-benchmark.md) rule 16).
 
 ## Look
 
@@ -873,13 +880,14 @@ design that fails any of them is sent back before it reaches Alex.
 
 - **R-84** The Web and Electron views of a run thread use `IssueThreadPanel`
   and the shared `ThreadScreen` for messages, references and the composer.
-  This applies in the task page, side pane, inbox and Artifact window at every
+  This applies in the task page, side pane and Artifact window at every
   width. In `bare` mode the enclosing window supplies the header and tabs.
   The chat header puts 改动 and 验收 in 更多. A delivered document opens from
   its message chip. The task toolbar opens the task's Artifact collection.
   A one-to-one bot chat uses `CoordinatorChat`.
 - **R-85** Deliverables (PR, diff, recording, screenshot, test output) live
-  on the acceptance page (the Artifact window, R-56). Coding-task diffs, PR
+  in the right-column PR tab beside each criterion's check (decision
+  `2026-11-26-0210-acceptance-from-benchmark.md`). Coding-task diffs, PR
   checks and review actions also live on the dedicated review page under
   [1230](decisions/2026-11-08-1230-coding-workspace.md). The task's
   activity timeline and the bot's comments carry one plain sentence about
@@ -897,10 +905,10 @@ design that fails any of them is sent back before it reaches Alex.
 - **R-88** At 1440 wide, no screen leaves an empty area larger than about a
   third of the viewport. A list with a detail pane keeps the list narrow
   (about 320px) and fills the detail with the thing to act on (for example
-  the acceptance page itself), not a summary and a button.
+  the open PR tab with its checks), not a summary and a button.
 - **R-89** The primary entry for what the person must do next is visible on
   first sight without scrolling: one prominent block or button per screen
-  (for example the task page's 验收 block under the description), not a small
+  (for example the task page's PR property row that opens the PR tab), not a small
   header button or a link inside a comment.
 - **R-90** Reuse before you draw or build. Before a screen or a part of one is
   designed (Figma) or coded, look up the component for that job, in this
