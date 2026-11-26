@@ -48,6 +48,9 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     ]);
     await pool.query(await readFile(new URL("../drizzle/20261126125352_drop_model_favorites.sql", import.meta.url), "utf8"));
     assert.equal((await pool.query("SELECT to_regclass('model_favorites') AS rel")).rows[0].rel, null);
+    const daybreakSql = await readFile(new URL("../drizzle/20261126165656_daybreak_access_and_choice.sql", import.meta.url), "utf8");
+    await pool.query(daybreakSql);
+    await pool.query(daybreakSql);
     // Resource policy still runs against real non-Org rows in this isolated schema.
     await pool.query(await readFile(new URL("../drizzle/20261109035020_organization_governance.sql", import.meta.url), "utf8"));
 
@@ -563,6 +566,70 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const bobMenu = await botModelMenu(pool, settings, bob, bobBot);
     assert.ok(!bobMenu.groups.some(group => group.kind === "subscription" && group.options.some(option => option.id === luna)), "no teammate subscription is offered");
     await assert.rejects(chooseBotModel(pool, settings, bob, bobBot, luna), { code: "executionModelUnknown" });
+
+    // #3315 Daybreak: Codex subscription & OpenAI BYOK only, never Mikka Credits; freezes cyberAccessProgram and resets when entitlement lapses.
+    await t.test("Daybreak selection, persistence, freeze, and revocation on Codex subscription and OpenAI BYOK", async () => {
+      const { setChatModelSettings } = await import("./bot-model-menu");
+      await chooseBotModel(pool, settings, alice, botA, CREDITS);
+      const creditsMenu = await botModelMenu(pool, settings, alice, botA);
+      await assert.rejects(
+        setChatModelSettings(pool, alice, botA, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }, creditsMenu.current.capabilities),
+        { code: "validationGeneric" },
+        "Mikka Credits never permits Daybreak",
+      );
+      assert.equal((await freezeBotModel({ ...alice, botId: botA }, dependencies)).cyberAccessProgram, undefined);
+
+      // Unapproved Codex subscription refuses Daybreak.
+      await chooseBotModel(pool, settings, alice, botA, luna);
+      const unapprovedCodexMenu = await botModelMenu(pool, settings, alice, botA);
+      await assert.rejects(
+        setChatModelSettings(pool, alice, botA, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }, unapprovedCodexMenu.current.capabilities),
+        { code: "validationGeneric" },
+      );
+
+      // Current-epoch Codex subscription catalogue granting blue Daybreak + fast speed unlocks both together.
+      await pool.query(
+        `UPDATE byos_connections SET epoch=1, "modelCatalog"=$2::jsonb WHERE id=$1`,
+        [codex, JSON.stringify({ revision: "1", models: ["gpt-6-luna"], priorityVersion: 1, prioritySupport: { "gpt-6-luna": true }, daybreakSupport: { "gpt-6-luna": ["blue"] } })],
+      );
+      const codexMenu = await botModelMenu(pool, settings, alice, botA);
+      const codexOption = codexMenu.groups.flatMap(g => g.options).find(o => o.route?.connectionId === codex && o.modelId === "gpt-6-luna");
+      assert.equal(codexOption?.capabilities?.daybreak, "blue");
+      assert.equal(codexMenu.current.capabilities?.daybreak, "blue");
+      await setChatModelSettings(pool, alice, botA, { modes: { fast: true, ultrafast: false, pro: false, daybreak: true } }, codexMenu.current.capabilities);
+      const activeCodexMenu = await botModelMenu(pool, settings, alice, botA);
+      assert.deepEqual(activeCodexMenu.chat?.modes, { fast: true, ultrafast: false, pro: false, daybreak: true });
+      const frozenCodex = await freezeBotModel({ ...alice, botId: botA }, dependencies);
+      assert.equal(frozenCodex.serviceTier, "fast");
+      assert.equal(frozenCodex.cyberAccessProgram, "daybreak_blue");
+
+      // Advancing connection epoch without refreshing catalogue revokes Daybreak on freeze.
+      await pool.query(`UPDATE byos_connections SET epoch=2 WHERE id=$1`, [codex]);
+      assert.equal((await freezeBotModel({ ...alice, botId: botA }, dependencies)).cyberAccessProgram, undefined);
+      await pool.query(`UPDATE byos_connections SET epoch=1 WHERE id=$1`, [codex]);
+
+      // OpenAI BYOK key with verified Daybreak red unlocks Daybreak and freezes daybreak_red.
+      await pool.query(`DELETE FROM model_api_keys WHERE id=$1`, [rejectedFallback.id]);
+      const openaiFetch = (async () => new Response(JSON.stringify({ data: [{ id: "gpt-6-cyber" }] }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+      const openaiKey = await addApiKey(pool, "alice", { provider: "openai", apiKey: `test-openai-${randomUUID()}` }, { env, fetch: openaiFetch });
+      const daybreakGrant = { checkedAt: new Date().toISOString(), granted: ["gpt-6-cyber"], tiers: ["red"], grants: [{ tier: "red", granted: ["gpt-6-cyber"] }] };
+      await pool.query(`UPDATE model_api_keys SET daybreak=$2::jsonb WHERE id=$1`, [openaiKey.id, JSON.stringify(daybreakGrant)]);
+      const byokOption = `apikey:${openaiKey.id}:gpt-6-cyber`;
+      await chooseBotModel(pool, settings, alice, botA, byokOption);
+      const preByokMenu = await botModelMenu(pool, settings, alice, botA);
+      await setChatModelSettings(pool, alice, botA, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }, preByokMenu.current.capabilities);
+      const byokMenu = await botModelMenu(pool, settings, alice, botA);
+      assert.equal(byokMenu.current.capabilities?.daybreak, "red");
+      assert.equal(byokMenu.chat?.modes?.daybreak, true);
+      const frozenByok = await freezeBotModel({ ...alice, botId: botA }, dependencies);
+      assert.equal(frozenByok.cyberAccessProgram, "daybreak_red");
+
+      // Switching back to an unapproved route clears effective Daybreak in both menu and freeze.
+      await chooseBotModel(pool, settings, alice, botA, CREDITS);
+      const afterSwitch = await botModelMenu(pool, settings, alice, botA);
+      assert.equal(afterSwitch.chat?.modes?.daybreak, false);
+      assert.equal((await freezeBotModel({ ...alice, botId: botA }, dependencies)).cyberAccessProgram, undefined);
+    });
   } finally {
     await pool.end();
     await admin.query(`DROP SCHEMA ${schema} CASCADE`);
@@ -758,15 +825,13 @@ test("production desktop RPC registry rejects retired model favorite actions and
     "execution-settings.chooseBotModel",
     "execution-settings.setPreferredModelRoute",
     "execution-settings.setChatModelOptions",
+    "model-api-keys.refreshApiKeyDaybreak",
   ]) {
     assert.equal(Object.hasOwn(desktopActions, retained), true, `${retained} must stay registered in desktopActions`);
   }
-  const daybreakRejected = await call("execution-settings.setChatModelOptions", [
-    randomUUID(),
-    { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } },
-  ]);
-  assert.equal(daybreakRejected.status, 400);
-  assert.equal((await daybreakRejected.json()).error.code, "desktop_rpc_request_invalid");
+  const daybreakInvalidArg = await call("model-api-keys.refreshApiKeyDaybreak", ["not-a-uuid"]);
+  assert.equal(daybreakInvalidArg.status, 400);
+  assert.equal((await daybreakInvalidArg.json()).error.code, "desktop_rpc_request_invalid");
 });
 
 

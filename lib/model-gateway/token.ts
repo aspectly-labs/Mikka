@@ -22,6 +22,8 @@ export interface GatewayGrant {
   /** Server-verified speed tier frozen on the run's modelDispatch, if any. */
   pro?: true
   serviceTier?: 'fast' | 'ultrafast'
+  /** Server-verified Daybreak program (`access_programs.cyber`) frozen on the run's modelDispatch, if any. */
+  cyberAccessProgram?: 'daybreak_blue' | 'daybreak_red'
 }
 
 const PREFIX = 'mkg_'
@@ -58,20 +60,24 @@ export async function mintGatewayToken(query: Query, grant: GatewayGrant,
  */
 export async function verifyGatewayToken(query: Query, token: string, now = new Date()): Promise<GatewayGrant | null> {
   if (!tokenShape.test(token)) return null
-  const { rows: [row] } = await query.query<{ runId: string; ownerId: string; workspaceId: string | null; harness: GatewayGrant['harness']; model: string; sourceKind: 'credits' | 'api_key' | 'subscription'; deviceId: string | null; keyId: string | null; pro: boolean; serviceTier: string | null }>(
+  const { rows: [row] } = await query.query<{ runId: string; ownerId: string; workspaceId: string | null; harness: GatewayGrant['harness']; model: string; sourceKind: 'credits' | 'api_key' | 'subscription'; deviceId: string | null; keyId: string | null; pro: boolean; serviceTier: string | null; cyberAccessProgram: string | null }>(
     `SELECT t."runId"::text AS "runId",t."ownerId",t."workspaceId"::text AS "workspaceId",t.harness,t.model,t."sourceKind",t."keyId"::text AS "keyId",t."deviceId"::text AS "deviceId",
        (r."agentDefinition"->'modelDispatch'->'pro') = 'true'::jsonb AS pro,
-       r."agentDefinition"->'modelDispatch'->>'serviceTier' AS "serviceTier"
+       r."agentDefinition"->'modelDispatch'->>'serviceTier' AS "serviceTier",
+       r."agentDefinition"->'modelDispatch'->>'cyberAccessProgram' AS "cyberAccessProgram"
      FROM model_gateway_tokens t JOIN agent_runs r ON r.id=t."runId" AND r."userId"=t."ownerId"
      WHERE t."tokenHash"=$1 AND t."expiresAt">$2 AND r.status=ANY($3::text[]) AND r."stopRequestedAt" IS NULL
        AND (t."sourceKind" <> 'subscription' OR (t."deviceId"=r."deviceId" AND r."leaseExpiresAt">$2))`,
     [hashGatewayToken(token), now, ACTIVE_RUN])
   if (!row || row.sourceKind === 'subscription' && !row.deviceId) return null
   const serviceTier = row.serviceTier === 'fast' || row.serviceTier === 'ultrafast' ? row.serviceTier : undefined
+  const cyberAccessProgram = row.sourceKind !== 'credits' && (row.cyberAccessProgram === 'daybreak_blue' || row.cyberAccessProgram === 'daybreak_red')
+    ? row.cyberAccessProgram : undefined
   return { runId: row.runId, ownerId: row.ownerId, workspaceId: row.workspaceId, harness: row.harness, model: row.model,
     source: row.sourceKind === 'subscription' ? { kind: 'subscription', deviceId: row.deviceId! }
       : row.sourceKind === 'api_key' && row.keyId ? { kind: 'api_key', keyId: row.keyId } : { kind: 'credits' },
-    ...(row.pro === true ? { pro: true } : serviceTier ? { serviceTier } : {}) }
+    ...(row.pro === true ? { pro: true } : serviceTier ? { serviceTier } : {}),
+    ...(cyberAccessProgram ? { cyberAccessProgram } : {}) }
 }
 
 /** The token a request carries: Claude Code sends `x-api-key`, Codex `Authorization: Bearer`. */

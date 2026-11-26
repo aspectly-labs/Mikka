@@ -296,6 +296,8 @@ export const botModelChoices = pgTable('bot_model_choices', {
   effort:text('effort').$type<import('@/lib/model-routing').ModelRoutingEffort>(),
   /** Serving speed for the chat (`standard`, `fast`, `ultrafast`); null is the workspace's default. Used only when the model's provider advertises it. */
   pro: boolean('pro').notNull().default(false),
+  /** OpenAI Trusted Access for Cyber (Daybreak) opt-in for the chat model; used only when the selected route grants Daybreak. */
+  daybreak: boolean('daybreak').notNull().default(false),
   serviceTier:text('serviceTier').$type<import('@/lib/model-routing').ModelServiceTier>(),
 }, table=>[primaryKey({columns:[table.ownerId,table.workspaceId,table.botKey]})])
 

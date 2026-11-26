@@ -28,6 +28,8 @@ export interface WorkerModelDispatch {
   /** The serving speed tier (fast / ultrafast), server-verified against real model capabilities before dispatch. */
   pro?: true
   serviceTier?: import('../model-routing').ModelSpeedMode
+  /** Server-verified Daybreak program (`access_programs.cyber`) frozen on this exact route (#3315). */
+  cyberAccessProgram?: import('../model-capabilities').CyberAccessProgram
 }
 
 /**
@@ -41,6 +43,7 @@ export function workerModelDispatchFromTarget(
     effort?: import('../model-routing').ModelRoutingEffort
     pro?: true
     serviceTier?: import('../model-routing').ModelSpeedMode
+    cyberAccessProgram?: import('../model-capabilities').CyberAccessProgram
   },
   options: {
     mode: WorkerModelDispatch['mode']
@@ -58,6 +61,7 @@ export function workerModelDispatchFromTarget(
     ...(options.followed ? { followed: options.followed } : {}),
     ...(effort ? { effort } : {}),
     ...(target.pro ? { pro: true } : target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+    ...(target.cyberAccessProgram ? { cyberAccessProgram: target.cyberAccessProgram } : {}),
   }
 }
 
@@ -185,6 +189,7 @@ function apiKeyModelDispatch(dispatch: WorkerModelDispatch | undefined, key: { k
   const entry = frozen.entry
   if (entry && (entry.source.kind !== 'api_key' || entry.source.keyId !== key.keyId || entry.model !== key.model)) {
     delete frozen.pro
+    delete frozen.cyberAccessProgram
     frozen.entry = { ...entry, id: `api_key:${entry.harness}:${key.model}:${key.keyId}`, model: key.model, source: { kind: 'api_key', keyId: key.keyId } }
     if (frozen.routing && frozen.routing.model !== key.model) {
       const { effort, ...previous } = frozen.routing

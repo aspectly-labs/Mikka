@@ -265,3 +265,65 @@ test('native gateway preserves safe upstream refusal status and protocol error t
     assert.deepEqual(calls.reserved, [])
   }
 })
+
+test('Daybreak access_programs.cyber is server-owned on OpenAI BYOK and Codex native Responses only', async () => {
+  const openAiByok = { upstream: { url: 'http://litellm:4000', masterKey: 'internal', credential: { key: 'sk-test', provider: 'openai' as const, apiBase: 'https://api.openai.com/v1' } }, daybreakAllowed: true }
+
+  // OpenAI BYOK with verified Daybreak injects access_programs.cyber and combines with Pro/fast.
+  const byokDaybreak = harness({
+    verify: async () => grant({ harness: 'codex', source: { kind: 'api_key', keyId: '10000000-0000-4000-8000-000000000003' }, model: 'gpt-6-cyber', pro: true, cyberAccessProgram: 'daybreak_blue' }),
+    upstream: async () => openAiByok,
+    answer: () => Response.json({ ok: true }),
+  })
+  await handleModelGateway(post({ input: 'audit', access_programs: { cyber: 'daybreak_red' } }), 'openai', 'responses', byokDaybreak.dependencies)
+  const byokBody = JSON.parse(String(byokDaybreak.calls.fetched[0].init.body))
+  assert.deepEqual(byokBody.access_programs, { cyber: 'daybreak_blue' })
+  assert.deepEqual(byokBody.reasoning, { mode: 'pro' })
+
+  // Live revocation (daybreakAllowed: false) strips Daybreak and any spoofed client access_programs.
+  const revoked = harness({
+    verify: async () => grant({ harness: 'codex', source: { kind: 'api_key', keyId: '10000000-0000-4000-8000-000000000003' }, model: 'gpt-6-cyber', cyberAccessProgram: 'daybreak_blue' }),
+    upstream: async () => ({ ...openAiByok, daybreakAllowed: false }),
+    answer: () => Response.json({ ok: true }),
+  })
+  await handleModelGateway(post({ input: 'audit', access_programs: { cyber: 'daybreak_blue' } }), 'openai', 'responses', revoked.dependencies)
+  assert.equal(JSON.parse(String(revoked.calls.fetched[0].init.body)).access_programs, undefined)
+
+  // Mikka Credits and Chat Completions-only custom keys never forward access_programs.
+  const creditsSpoof = harness({
+    verify: async () => grant({ harness: 'codex', source: { kind: 'credits' }, cyberAccessProgram: 'daybreak_red' }),
+    answer: () => Response.json({ ok: true }),
+  })
+  await handleModelGateway(post({ input: 'audit', access_programs: { cyber: 'daybreak_red' } }), 'openai', 'responses', creditsSpoof.dependencies)
+  assert.equal(JSON.parse(String(creditsSpoof.calls.fetched[0].init.body)).access_programs, undefined)
+
+  const chatOnly = harness({
+    verify: async () => grant({ harness: 'codex', source: { kind: 'api_key', keyId: '10000000-0000-4000-8000-000000000003' }, cyberAccessProgram: 'daybreak_blue' }),
+    upstream: async () => ({ upstream: { url: 'http://litellm:4000', masterKey: 'internal', credential: { key: 'sk-test', provider: 'openai' as const, apiBase: 'https://proxy.example/v1', chatCompletionsOnly: true } }, daybreakAllowed: true }),
+    answer: () => Response.json({ ok: true }),
+  })
+  await handleModelGateway(post({ input: 'audit', access_programs: { cyber: 'daybreak_blue' } }), 'openai', 'responses', chatOnly.dependencies)
+  assert.equal(JSON.parse(String(chatOnly.calls.fetched[0].init.body)).access_programs, undefined)
+
+  // Codex native subscription forwards frozen cyberAccessProgram on /responses and strips client spoofing.
+  const seenNative: Record<string, unknown>[] = []
+  for (const cyber of ['daybreak_red' as const, undefined]) {
+    const selected = grant({ harness: 'codex', source: { kind: 'subscription', deviceId: 'fixture-device' }, ...(cyber ? { cyberAccessProgram: cyber } : {}) })
+    const fixture = harness({
+      verify: async () => selected,
+      beginSubscriptionReceipt: async () => async () => {},
+      subscription: (g, protocol, operation, body, request) => forwardNativeSubscription(g, protocol, operation, body, request, {
+        nativeRun: async () => ({ bindingId: 'fixture', ownerId: 'alice', workspaceId: 'fixture', consumerId: 'fixture', execution: 'native', runId: g.runId }),
+        nativeRequest: async (_use, req) => {
+          seenNative.push(req.body as Record<string, unknown>)
+          return { body: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('data: {"type":"response.completed"}\n\n')); c.close() } }), contentType: 'text/event-stream', generationId: '10000000-0000-4000-8000-000000000009' }
+        },
+      }),
+    })
+    const res = await handleModelGateway(post({ input: 'audit', access_programs: { cyber: 'daybreak_blue' } }), 'openai', 'responses', fixture.dependencies)
+    assert.equal(res.status, 200)
+    await res.text()
+  }
+  assert.deepEqual(seenNative[0].access_programs, { cyber: 'daybreak_red' })
+  assert.equal(seenNative[1].access_programs, undefined)
+})

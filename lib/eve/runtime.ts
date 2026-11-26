@@ -47,13 +47,21 @@ export async function modelForSession(ctx: DynamicModelContext) {
   const [{ SubscriptionWorkflowModel }, { streamingModel }] = await Promise.all([
     import('../subscription-workflow-model'), import('./streaming-model'),
   ])
-  const requestPolicy = runtime.pro && runtime.modelSelection.type === 'api_key' ? { apiKeyPro: true as const } : ctx.session.parent || turnRequest.get().scheduledRead || runtime.serviceTier === 'standard'
+  const basePolicy = runtime.pro && runtime.modelSelection.type === 'api_key' ? { apiKeyPro: true as const } : ctx.session.parent || turnRequest.get().scheduledRead || runtime.serviceTier === 'standard'
     ? undefined
     : runtime.serviceTier === 'ultrafast'
       ? { codexServiceTier: 'ultrafast' as const, apiKeyServiceTier: 'ultrafast' as const }
       : runtime.serviceTier === 'fast'
         ? { codexServiceTier: 'priority' as const, claudeSpeed: 'fast' as const, apiKeyServiceTier: 'fast' as const }
         : { codexServiceTier: 'priority' as const }
+  const daybreakPolicy = !runtime.cyberAccessProgram
+    ? undefined
+    : runtime.modelSelection.type === 'api_key'
+      ? { apiKeyCyberAccessProgram: runtime.cyberAccessProgram }
+      : runtime.modelSelection.route === 'codex_cpa'
+        ? { codexCyberAccessProgram: runtime.cyberAccessProgram }
+        : undefined
+  const requestPolicy = basePolicy || daybreakPolicy ? { ...basePolicy, ...daybreakPolicy } : undefined
   return withModelEffort(streamingModel(new SubscriptionWorkflowModel(runtime.modelSelection, requestPolicy)), runtime.pro ? undefined : runtime.effort)
 }
 

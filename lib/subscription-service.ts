@@ -21,7 +21,8 @@ import { ownerSettingsChanged } from './live/lists'
 import { measureSubscriptionNative } from './subscription-native-timing'
 import { withRunSpan } from './tracing/context'
 import { linkSubscriptionChatGatewayCall } from './model-gateway/ledger'
-import { claudeFastSupport, codexPrioritySupport, codexUltrafastSupport, subscriptionModelRequestPolicySchema, type CodexPrioritySupport, type SubscriptionCatalogueModel, type SubscriptionModelRequestPolicy } from './subscription-service-tier'
+import { claudeFastSupport, codexDaybreakSupport, codexPrioritySupport, codexUltrafastSupport, subscriptionModelRequestPolicySchema, type CodexPrioritySupport, type SubscriptionCatalogueModel, type SubscriptionModelRequestPolicy } from './subscription-service-tier'
+import { daybreakTierFromProgram } from './model-capabilities'
 
 // Matches modelRequestMaxBytes in the Go worker. The conversation's 100k
 // compaction estimate excludes the system prompt and tool schemas.
@@ -80,7 +81,7 @@ export class SubscriptionService {
     this.modelRequestPolicy = modelRequestPolicy === undefined ? undefined : subscriptionModelRequestPolicySchema.parse(modelRequestPolicy)
   }
 
-  async access(use: SubscriptionUse, signal?: AbortSignal, modelOverride?: string | null, includePrioritySupport = false): Promise<SubscriptionAccess & { codexPrioritySupport?: CodexPrioritySupport; codexUltrafastSupport?: CodexPrioritySupport; claudeFastSupport?: CodexPrioritySupport }> {
+  async access(use: SubscriptionUse, signal?: AbortSignal, modelOverride?: string | null, includePrioritySupport = false): Promise<SubscriptionAccess & { codexPrioritySupport?: CodexPrioritySupport; codexUltrafastSupport?: CodexPrioritySupport; claudeFastSupport?: CodexPrioritySupport; codexDaybreakTiers?: ('blue' | 'red')[] }> {
     const { modelId: boundModelId, ...binding } = await this.repository.binding(use.ownerId, use.bindingId)
     if (binding.workspaceId !== use.workspaceId || binding.consumerId !== use.consumerId) throw new SubscriptionRefusal('binding_mismatch', { detail: 'scope_mismatch' })
     await this.workspace(use.ownerId, binding.workspaceId, binding.consumerId)
@@ -108,6 +109,7 @@ export class SubscriptionService {
         codexPrioritySupport: current.provider === 'codex' ? codexPrioritySupport(current.modelCatalog, Number(current.epoch), modelOverride ?? boundModelId) : 'unknown' as const,
         codexUltrafastSupport: current.provider === 'codex' ? codexUltrafastSupport(current.modelCatalog, Number(current.epoch), modelOverride ?? boundModelId) : 'unknown' as const,
         claudeFastSupport: current.provider === 'claude' ? claudeFastSupport(current.modelCatalog, Number(current.epoch), modelOverride ?? boundModelId) : 'unknown' as const,
+        codexDaybreakTiers: current.provider === 'codex' ? codexDaybreakSupport(current.modelCatalog, Number(current.epoch), modelOverride ?? boundModelId) : [],
       } : {}),
       modelId: modelOverride === null ? undefined : modelOverride ?? boundModelId,
       credentialTransition: current.state === 'refreshing' ? 'refreshing' : current.state === 'publication_pending' ? 'publication_pending' : undefined,
@@ -141,13 +143,14 @@ export class SubscriptionService {
           const payload = JSON.parse(init.body)
           if (payload.model !== binding.modelId || payload.stream !== true) throw new SubscriptionRefusal('binding_mismatch', { detail: 'stream_request_mismatch' })
           const codexTierIntent = binding.route === 'codex_cpa' ? this.modelRequestPolicy?.codexServiceTier : undefined
+          const codexCyberIntent = binding.route === 'codex_cpa' ? this.modelRequestPolicy?.codexCyberAccessProgram : undefined
           const claudeFastIntent = binding.route === 'claude_cpa' && this.modelRequestPolicy?.claudeSpeed === 'fast'
-          const checkSpeedSupport = Boolean(codexTierIntent || claudeFastIntent)
+          const checkSpeedSupport = Boolean(codexTierIntent || claudeFastIntent || codexCyberIntent)
           const authorized = await this.check(use, signal, undefined, checkSpeedSupport)
           await admit(init.signal ?? signal ?? undefined)
-          // Provider options are not an opt-in to a paid service tier. Only
-          // the internal server policy and this fresh epoch's catalogue
-          // can request it. Unknown/unsupported uses the same single call.
+          // Provider options are not an opt-in to a paid service tier or access program. Only
+          // the internal server policy and this fresh epoch's catalogue can request them.
+          delete payload.access_programs
           if (binding.route === 'codex_cpa') {
             delete payload.service_tier
             if (codexTierIntent === 'ultrafast' && authorized.codexUltrafastSupport === 'supported') payload.service_tier = 'ultrafast'
@@ -155,6 +158,10 @@ export class SubscriptionService {
             if (codexTierIntent) {
               const capability = codexTierIntent === 'ultrafast' ? (authorized.codexUltrafastSupport ?? 'unknown') : (authorized.codexPrioritySupport ?? 'unknown')
               try { console.info(JSON.stringify({ level: 'info', msg: 'subscription_service_tier_policy', intent: codexTierIntent, capability, requested: payload.service_tier === 'priority' || payload.service_tier === 'ultrafast' ? payload.service_tier : 'omitted', ...await stepIdentity() })) } catch { /* diagnostics cannot change authorization or the request */ }
+            }
+            const cyberTier = daybreakTierFromProgram(codexCyberIntent)
+            if (codexCyberIntent && cyberTier && authorized.codexDaybreakTiers?.includes(cyberTier)) {
+              payload.access_programs = { cyber: codexCyberIntent }
             }
           } else if (binding.route === 'claude_cpa') {
             delete payload.speed
@@ -232,6 +239,7 @@ export class SubscriptionService {
         codexPrioritySupport: access.codexPrioritySupport,
         codexUltrafastSupport: access.codexUltrafastSupport,
         claudeFastSupport: access.claudeFastSupport,
+        codexDaybreakTiers: access.codexDaybreakTiers,
       } : {}),
     }
   }
@@ -289,7 +297,18 @@ export class SubscriptionService {
       const authorized=await timing.measure('access', () => this.check(use,signal,model))
       await timing.measure('admit_after', () => this.admitModel(scope, model, binding.route, signal))
       const row=await timing.measure('connection', () => this.repository.connection(use.ownerId,binding.connectionId))
-      return timing.measure('provider_headers', () => this.worker(this.repository.scope(row)).forUse(use).nativeRequest(authorized.binding.connectionRevision,request,signal))
+      let forwardedRequest = request
+      if ('access_programs' in request.body) {
+        const body = { ...(request.body as Record<string, unknown>) }
+        const requestedCyber = body.access_programs && typeof body.access_programs === 'object' && !Array.isArray(body.access_programs)
+          ? (body.access_programs as { cyber?: unknown }).cyber : undefined
+        const tier = binding.route === 'codex_cli' ? daybreakTierFromProgram(requestedCyber) : undefined
+        const supported = tier ? codexDaybreakSupport(row.modelCatalog, Number(row.epoch), model).includes(tier) : false
+        delete body.access_programs
+        if (supported && typeof requestedCyber === 'string') body.access_programs = { cyber: requestedCyber }
+        forwardedRequest = { ...request, body }
+      }
+      return timing.measure('provider_headers', () => this.worker(this.repository.scope(row)).forUse(use).nativeRequest(authorized.binding.connectionRevision,forwardedRequest,signal))
     })
   }
   /** Run policy belongs to the executor; credential custody stays with its

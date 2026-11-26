@@ -25,7 +25,7 @@ export interface GatewayDependencies {
   verify(token: string): Promise<GatewayGrant | null>
   /** The upstream for a grant; throws a `GatewayRefusal` when nothing may serve it. */
   subscription?(grant: GatewayGrant, protocol: GatewayProtocol, operation: GatewayOperation, body: Record<string, unknown>, request: Request): Promise<Response>
-  upstream(grant: GatewayGrant, protocol: GatewayProtocol): Promise<{ upstream: GatewayUpstream; features?: import('./features').GatewayFeatures }>
+  upstream(grant: GatewayGrant, protocol: GatewayProtocol): Promise<{ upstream: GatewayUpstream; features?: import('./features').GatewayFeatures; daybreakAllowed?: boolean }>
   /** Mikka 额度 only: holds a call's worth of credit; resolves to the hold's id. Throws `PaidResourceError` when nothing can pay. */
   reserve(grant: GatewayGrant, id: string): Promise<void>
   settle(id: string, cost: number | null, usage: GatewayUsage | null, generationId?: string, messageId?: string | null): Promise<void>
@@ -135,6 +135,7 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
         body: withoutDisabledFeatures(body, resolved.features ?? {}),
         clientHeaders: request.headers, upstream: resolved.upstream,
         ...(grant.pro ? { pro: true } : grant.serviceTier ? { serviceTier: grant.serviceTier } : {}),
+        ...(grant.cyberAccessProgram && resolved.daybreakAllowed !== false ? { cyberAccessProgram: grant.cyberAccessProgram } : {}),
       })
       response = await dependencies.fetch(outgoing.url, { method: 'POST', headers: outgoing.headers, body: JSON.stringify(outgoing.body), redirect: 'error', signal: request.signal })
     } else if (dependencies.subscription) {
@@ -256,7 +257,13 @@ export async function forwardNativeSubscription(grant: GatewayGrant, protocol: G
       const value = request.headers.get(name)
       return value ? [[name, value]] : []
     }))
-  const payload = { ...modelGatewayProtocolBody(protocol, body), model: grant.model }
+  const payload: Record<string, unknown> = {
+    ...modelGatewayProtocolBody(protocol, body),
+    model: grant.model,
+    ...(protocol === 'openai' && operation === 'responses' && grant.cyberAccessProgram
+      ? { access_programs: { cyber: grant.cyberAccessProgram } }
+      : {}),
+  }
   if (Buffer.byteLength(JSON.stringify(payload)) > MAX_BODY_BYTES) {
     throw new GatewayRefusal(413, 'model_gateway_body_too_large')
   }
@@ -270,14 +277,14 @@ export async function forwardNativeSubscription(grant: GatewayGrant, protocol: G
 }
 
 /** The run's frozen source, opened for this one request. */
-export async function resolveGatewayUpstream(grant: GatewayGrant, protocol: GatewayProtocol, env: Record<string, string | undefined> = process.env): Promise<{ upstream: GatewayUpstream; features?: import('./features').GatewayFeatures }> {
+export async function resolveGatewayUpstream(grant: GatewayGrant, protocol: GatewayProtocol, env: Record<string, string | undefined> = process.env): Promise<{ upstream: GatewayUpstream; features?: import('./features').GatewayFeatures; daybreakAllowed?: boolean }> {
   const litellm = gatewayLiteLlm(env)
   if (!litellm) throw new GatewayRefusal(503, 'model_gateway_unconfigured')
   if (grant.source.kind === 'credits') {
-    if (!isCloudEdition(env) && grant.model === SELF_HOSTED_DEFAULT_CATALOG_ID) return { upstream: litellm }
+    if (!isCloudEdition(env) && grant.model === SELF_HOSTED_DEFAULT_CATALOG_ID) return { upstream: litellm, daybreakAllowed: false }
     const models = await (await import('@/lib/model-catalog-server')).modelCatalog()
     if (!catalogModel(grant.model, models)?.pricing) throw new GatewayRefusal(400, 'model_gateway_model_unpriced')
-    return { upstream: litellm }
+    return { upstream: litellm, daybreakAllowed: false }
   }
   if (grant.source.kind !== 'api_key') throw new GatewayRefusal(403, 'model_gateway_protocol_mismatch')
   const { openGatewayApiKey } = await import('@/lib/model-api-keys')
@@ -288,5 +295,11 @@ export async function resolveGatewayUpstream(grant: GatewayGrant, protocol: Gate
   const anthropic = opened.key.provider === 'anthropic' || (opened.key.provider === 'custom' && opened.key.protocol === 'anthropic')
   const apiBase = anthropic ? apiKeyEndpoint(opened.key, 'claude_code')?.baseUrl : apiKeyChatBaseUrl(opened.key)
   if (!apiBase) throw new GatewayRefusal(400, 'model_gateway_protocol_unsupported')
-  return { upstream: { ...litellm, credential: { key: opened.apiKey, provider: anthropic ? 'anthropic' : 'openai', apiBase, chatCompletionsOnly: !anthropic && opened.key.provider !== 'openai' } }, features: opened.features }
+  let daybreakAllowed = false
+  if (grant.cyberAccessProgram && opened.key.provider === 'openai') {
+    const { cyberAccessProgram, daybreakTierFor } = await import('@/lib/model-capabilities')
+    const tier = daybreakTierFor(opened.key.daybreak, grant.model)
+    daybreakAllowed = tier !== undefined && cyberAccessProgram(tier) === grant.cyberAccessProgram
+  }
+  return { upstream: { ...litellm, credential: { key: opened.apiKey, provider: anthropic ? 'anthropic' : 'openai', apiBase, chatCompletionsOnly: !anthropic && opened.key.provider !== 'openai' } }, features: opened.features, daybreakAllowed }
 }

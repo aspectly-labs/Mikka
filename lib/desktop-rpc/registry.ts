@@ -330,6 +330,7 @@ const functions = {
   'memory.undoRemoveFact': actions17.undoRemoveFact,
   'model-api-keys.getApiKeys': actions18.getApiKeys,
   'model-api-keys.refetchApiKeyModels': actions18.refetchApiKeyModels,
+  'model-api-keys.refreshApiKeyDaybreak': actions18.refreshApiKeyDaybreakAction,
   'model-api-keys.updateApiKeyAfterQuota': actions18.updateApiKeyAfterQuota,
   'model-api-keys.createApiKey': actions18.createApiKey,
   'model-api-keys.updateApiKey': actions18.updateApiKey,

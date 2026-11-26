@@ -40,14 +40,15 @@ export function apiKeyServesBotModel(key: UsableApiKey, model: string) {
 
 /** Reads the saved preference without creating a default or cloning a binding. */
 export async function botModelPreference(pool: Pick<Pool, 'query'>, scope: ExecutionSettingsScope, botId: string | null) {
-  const { rows: [row] } = await pool.query<{ bindingId: string | null; apiKeyId: string | null; apiKeyModel: string | null; creditsModel: string | null; effort: string | null; serviceTier: string | null; pro: boolean }>(
+  const { rows: [row] } = await pool.query<{ bindingId: string | null; apiKeyId: string | null; apiKeyModel: string | null; creditsModel: string | null; effort: string | null; serviceTier: string | null; pro: boolean; daybreak: boolean }>(
     `SELECT "bindingId","apiKeyId","apiKeyModel","creditsModel",
-      to_jsonb(c)->>'effort' AS effort, to_jsonb(c)->>'serviceTier' AS "serviceTier", (to_jsonb(c)->'pro' = 'true'::jsonb) AS pro
+      to_jsonb(c)->>'effort' AS effort, to_jsonb(c)->>'serviceTier' AS "serviceTier",
+      (to_jsonb(c)->'pro' = 'true'::jsonb) AS pro, (to_jsonb(c)->'daybreak' = 'true'::jsonb) AS daybreak
       FROM bot_model_choices c WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3`,
     [scope.ownerId, scope.workspaceId, botId ?? 'coordinator'],
   )
   const chat = {
-    modes: { ...modesFromTier(row?.serviceTier), pro: row?.pro === true },
+    modes: { ...modesFromTier(row?.serviceTier), pro: row?.pro === true, daybreak: row?.daybreak === true },
     effort: MODEL_ROUTING_EFFORTS.find(level => level === row?.effort) ?? null,
     serviceTier: MODEL_SERVICE_TIERS.find(tier => tier === row?.serviceTier) ?? null,
   }

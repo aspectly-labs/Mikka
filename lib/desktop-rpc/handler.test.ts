@@ -383,6 +383,11 @@ test('retired model favorite RPCs are removed while model menu, route and option
   assert.equal(desktopActionSchemas['execution-settings.chooseBotModel'].safeParse([owner, 'credits:anthropic/claude-sonnet-5.5']).success, true)
   assert.equal(desktopActionSchemas['execution-settings.setPreferredModelRoute'].safeParse([owner, 'anthropic/claude-sonnet-5-5', 'credits:anthropic/claude-sonnet-5.5']).success, true)
   assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: false, ultrafast: false, pro: true, daybreak: false } }]).success, true)
-  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }]).success, false)
+  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: true, ultrafast: false, pro: false, daybreak: true } }]).success, true)
+  assert.equal(Object.hasOwn(desktopActionSchemas, 'model-api-keys.refreshApiKeyDaybreak'), true)
+  assert.equal(registry.includes(`'model-api-keys.refreshApiKeyDaybreak':`), true)
+  assert.equal(desktopActionSchemas['model-api-keys.refreshApiKeyDaybreak'].safeParse([owner]).success, true)
+  assert.equal(desktopActionSchemas['model-api-keys.refreshApiKeyDaybreak'].safeParse(['not-a-uuid']).success, false)
 })
 
