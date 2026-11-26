@@ -322,7 +322,7 @@ test('Task presentation batches keep current tenant authority and one Factory pr
     })
 
     await t.test('Task Activity identifies only present authorized Bot stage comments and preserves cross-thread matches as ordinary discussion', async () => {
-      const { loadIssueDocument, encodedIssueDocument, upsertLinearComment } = await import('../lib/linear-sync/document')
+      const { loadIssueDocument, encodedIssueDocument, upsertThreadMessage } = await import('../lib/task-comments/issue-document')
       const { readTaskWork } = await import('../lib/task-work-read')
       const { requireUser } = await import('../lib/issue-access')
       const { mobileTask } = await import('../lib/mobile-tasks')
@@ -338,9 +338,9 @@ test('Task presentation batches keep current tenant authority and one Factory pr
       const doc = loadIssueDocument(null, { type: 'doc', content: [{type: 'paragraph'}] })
       try {
         const msg = { author: 'Reporter', at: '2026-11-15T00:00:00Z', body: 'Review' }
-        upsertLinearComment(doc, { ...msg, threadId: a.id, messageId: stageId })
-        upsertLinearComment(doc, { ...msg, threadId: a.id, messageId: humanId, authorUserId: owner })
-        upsertLinearComment(doc, { ...msg, threadId: b.id, messageId: stageId })
+        upsertThreadMessage(doc, { ...msg, threadId: a.id, messageId: stageId })
+        upsertThreadMessage(doc, { ...msg, threadId: a.id, messageId: humanId, authorUserId: owner })
+        upsertThreadMessage(doc, { ...msg, threadId: b.id, messageId: stageId })
         await application.query('INSERT INTO issue_documents("issueId","userId",state) VALUES($1,$2,$3)', [task, owner, encodedIssueDocument(doc)])
       } finally { doc.destroy() }
       for (const reader of [owner, peer]) {
