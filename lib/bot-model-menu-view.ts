@@ -44,12 +44,6 @@ export interface BotModelMenuOption {
   /** Mikka 额度: the catalogue's name for the model and its USD list price per million tokens. */
   name?: string
   price?: { input: number; output: number }
-  /**
-   * @deprecated Compatibility flag kept while hosted `slots/onboarding.tsx`, `mobile-next` `wire/model.ts`,
-   * and older serving clients still read `option.featured`; every hosted option sets `true` so nothing filters
-   * Mikka credits to a featured subset.
-   */
-  featured?: boolean
   /** A community default uses cloud credits or the administrator's own provider. */
   hostedSource?: 'cloud' | 'self-hosted'
   /** What runs it (Figma 1318:71, #2925): Mikka 额度, a subscription or the person's own key, and which connection. */
