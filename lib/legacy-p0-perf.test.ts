@@ -196,6 +196,7 @@ before(async () => {
     namedExports: {
       runListChanged: async (_db: unknown, id: string) => { liveInvalidations.push(`runList:${id}`) },
       ownerListChanged: async () => {},
+      botListChanged: async () => {},
       deviceCheckoutsChanged: async () => {},
       workspaceListChanged: async () => {},
     },

@@ -185,6 +185,52 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
       providerFailure: { kind: 'balance', retryable: false, status: 402, code: 'payment_required' } },
   })
 
+  await t.test('forks and side threads admit their own machine and preserve idempotent placement after a flag change', async t => {
+    const f = await fixture('provider-thread-children')
+    await threadMachineAction(pool, f.actor, f.runId, 'end')
+    const { spawnThread, ThreadSpawnConflictError } = await import('../lib/thread-lifecycle')
+    const { tokenWorkspace } = await import('../lib/tokens/principal')
+    const user = { id: f.actor.userId, [tokenWorkspace]: f.actor.workspaceId }
+    const messageId = randomUUID()
+    await pool.query(`INSERT INTO run_messages (id,"runId","userId",text) VALUES ($1,$2,$3,'Keep this branch point')`,
+      [messageId, f.runId, f.actor.userId])
+    const opts = { relation: 'fork' as const, mode: 'full' as const, fromMessageId: messageId, idempotencyKey: randomUUID() }
+    const fork = await spawnThread(user, f.runId, opts)
+    assert.ok(fork)
+    assert.equal(fork.parentRunId, f.runId)
+    assert.equal(fork.agentDefinition.taskCompute.provider, 'e2b')
+    const { rows: [machine] } = await pool.query('SELECT state,"sandboxId" FROM thread_machines WHERE "runId"=$1', [fork.id])
+    assert.equal(machine?.state, 'running')
+    assert.ok(machine?.sandboxId)
+    const { rows: [copied] } = await pool.query('SELECT text FROM run_messages WHERE "runId"=$1', [fork.id])
+    assert.equal(copied?.text, 'Keep this branch point')
+    assert.ok(launchPlacements.has(fork.id), 'a device-backed fork must start its bound cloud machine')
+
+    const flags = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_CLOUDFLARE_TASKS_DISABLED'] as const
+    const previous = flags.map(key => process.env[key])
+    t.after(() => flags.forEach((key, index) => {
+      const value = previous[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    Object.assign(process.env, { NODE_ENV: 'test', MIKKA_FLAG_OVERRIDES: JSON.stringify({ 'mikka-task-provider': 'cloudflare' }), MIKKA_CLOUDFLARE_TASKS_DISABLED: '1' })
+    const replay = await spawnThread(user, f.runId, opts)
+    assert.equal(replay?.id, fork.id)
+    assert.equal(replay?.agentDefinition.taskCompute.provider, 'e2b')
+    await assert.rejects(spawnThread(user, f.runId, { ...opts, mode: 'summary' }), ThreadSpawnConflictError)
+    await assert.rejects(spawnThread(user, f.runId, { relation: 'side', fromMessageId: messageId }),
+      { status: 503, message: 'Cloudflare coding task unavailable. Retry the run.' })
+    assert.equal((await pool.query('SELECT 1 FROM agent_runs WHERE "parentRunId"=$1 AND "threadRelation"=$2', [f.runId, 'side'])).rowCount, 0)
+    process.env.MIKKA_FLAG_OVERRIDES = JSON.stringify({ 'mikka-task-provider': 'e2b' })
+    await threadMachineAction(pool, f.actor, fork.id, 'end')
+    const side = await spawnThread(user, f.runId, { relation: 'side', fromMessageId: messageId })
+    assert.equal(side?.sourceMessageId, messageId)
+    assert.equal(side?.agentDefinition.taskCompute.provider, 'e2b')
+    assert.ok(launchPlacements.has(side!.id))
+    const source = await row(f.runId)
+    assert.deepEqual(source.agentDefinition.taskCompute, f.admitted.agentDefinition.taskCompute)
+  })
+
   for (const change of ['environment', 'repository'] as const) await t.test(`${change} withdrawal preserves terminal completion and stops provider recovery before runtime preparation, including replay`, async () => {
     const f = await fixture(`provider-cloud-resource-${change}`, true)
     const { issueRunToken } = await import('../lib/mcp/worker')

@@ -38,6 +38,8 @@ import { initializeWorkVisibility } from '@/lib/settings/work-creation'
  * recovery admission independently of the parent computer's current state. */
 export async function queueCloudRun(pool: Pool, actor: { userId: string; workspaceId: string }, input: {
   botId: string; issueId: string; agentId: string; deviceRepoId: string; title: string; body: string; note?: string
+  /** A fork already contains a bounded, authorized transcript. */
+  forkPrompt?: string
   /** Host recovery guidance belongs to execution instructions, never the person's run note. */
   executionNote?: string
   /** The run keeps no bot of its own, like the run it continues (an MCP client's): it still runs on `botId`'s computer. */
@@ -129,7 +131,9 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     if (!repository) throw new ComputerError(409, 'Bot computer task is unavailable')
     assertProjectExecutionTarget(projectExecution, { userId: actor.userId, workspaceId: actor.workspaceId, repositoryKey: repository.remoteUrl ? repository.repoPath : null, runtime: 'cloud', harness: target.harness })
     const instructions = [target.instructions, input.agentProfile?.instructions, input.executionNote].filter(Boolean).join('\n\n')
-    const { prompt, taskLength: promptTaskLength } = runPromptParts(input.title, input.body, instructions, input.note)
+    const { prompt, taskLength: promptTaskLength } = input.forkPrompt === undefined
+      ? runPromptParts(input.title, input.body, instructions, input.note)
+      : { prompt: input.forkPrompt, taskLength: input.forkPrompt.length }
     if (digest) {
       const priorRun = (await client.query(`SELECT r."userId",r."issueId",r."agentId",r."deviceId",r."deviceRepoId",r.prompt,r."agentDefinition",r."dispatchFingerprint",r."botId" AS "runBotId",b."botId",b."workspaceId"
         FROM agent_runs r LEFT JOIN computer_run_bindings b ON b."runId"=r.id WHERE r.id=$1`, [runId])).rows[0]
