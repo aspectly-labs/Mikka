@@ -1,7 +1,7 @@
 import 'server-only'
 import { z } from 'zod'
 import { ComputerError } from '../computer/store'
-import { localFlagOverride, productionFlagDefault, taskProviderFlag } from '../feature-flags'
+import { productionFlagDefault, taskProviderFlag } from '../feature-flags'
 import { posthogConfig } from '../posthog-config'
 import { serverTaskProviderVariant } from '../posthog-server'
 import { DEFAULT_MACHINE_SIZE, machineSkuGeometry, provisionableMachineSize, type E2BMachineSize, type MachineGeometry, type MachineProvider, type MachineSize, type MachineSku } from './machine-pricing'
@@ -19,8 +19,8 @@ export class TaskProviderAdmissionUnavailable extends ComputerError {
  * is no remote or local selector to change that provider. This reads no flag
  * remotely, including when the admission key is replayed. */
 export function taskProviderSelectionConfigured(workspaceId: string) {
-  return Boolean(posthogConfig.token) || localFlagOverride(taskProviderFlag) !== undefined
-    || productionFlagDefault(taskProviderFlag) === 'cloudflare' || legacyCloudflareWorkspace(workspaceId)
+  const localConfiguration = (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') && Boolean(process.env.MIKKA_FLAG_OVERRIDES)
+  return Boolean(posthogConfig.token) || localConfiguration || productionFlagDefault(taskProviderFlag) === 'cloudflare' || legacyCloudflareWorkspace(workspaceId)
 }
 
 const legacyCloudflareWorkspace = (workspaceId: string) =>
