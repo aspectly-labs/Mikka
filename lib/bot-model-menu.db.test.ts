@@ -724,3 +724,49 @@ test("drop_model_favorites upgrades a PG17 schema with existing favorites while 
   }
 });
 
+test("production desktop RPC registry rejects retired model favorite actions and keeps model menu/route/option actions", { skip: !databaseURL }, async () => {
+  const [{ dispatchRpc }, { desktopActions }, { encode, DESKTOP_RPC_VERSION }] = await Promise.all([
+    import("./desktop-rpc/handler"),
+    import("./desktop-rpc/registry"),
+    import("./desktop-rpc/wire"),
+  ]);
+  const call = (action: string, args: unknown[]) => dispatchRpc(
+    { actions: desktopActions, scope: async (_session, work) => work() },
+    new Request("http://localhost/api/desktop/rpc", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-mikka-desktop-protocol": String(DESKTOP_RPC_VERSION) },
+      body: JSON.stringify({ version: DESKTOP_RPC_VERSION, action, args: encode(args) }),
+    }),
+    { user: { id: "alice" }, session: { id: "session" } },
+  );
+  for (const retired of [
+    "execution-settings.addModelFavorite",
+    "execution-settings.updateModelFavorite",
+    "execution-settings.removeModelFavorite",
+    "execution-settings.reorderModelFavorites",
+    "execution-settings.chooseModelFavorite",
+  ]) {
+    assert.equal(Object.hasOwn(desktopActions, retired), false, `${retired} must not exist in desktopActions`);
+    const response = await call(retired, [null, 0]);
+    assert.equal(response.status, 404, retired);
+    assert.equal(response.headers.get("x-mikka-action-not-found"), "1", retired);
+    assert.equal((await response.json()).error.code, "desktop_rpc_action_unknown", retired);
+  }
+  for (const retained of [
+    "execution-settings.getBotModelMenu",
+    "execution-settings.refreshBotModelMenuAction",
+    "execution-settings.chooseBotModel",
+    "execution-settings.setPreferredModelRoute",
+    "execution-settings.setChatModelOptions",
+  ]) {
+    assert.equal(Object.hasOwn(desktopActions, retained), true, `${retained} must stay registered in desktopActions`);
+  }
+  const daybreakRejected = await call("execution-settings.setChatModelOptions", [
+    randomUUID(),
+    { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } },
+  ]);
+  assert.equal(daybreakRejected.status, 400);
+  assert.equal((await daybreakRejected.json()).error.code, "desktop_rpc_request_invalid");
+});
+
+

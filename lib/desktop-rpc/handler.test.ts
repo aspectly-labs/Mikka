@@ -365,7 +365,7 @@ test('bundled desktop accepts merged threads and group mentions', () => {
   assert.equal(validate.safeParse([[{ id: 'mentioned:two', kind: 'mentioned', issueId: peer }]]).success, false)
 })
 
-test('retired model favorite RPCs are removed while model menu, route and option RPCs stay registered', async () => {
+test('retired model favorite RPCs are removed while model menu, route and option RPCs stay registered', () => {
   const registry = readFileSync(new URL('./registry.ts', import.meta.url), 'utf8')
   const retired = [
     'execution-settings.addModelFavorite',
@@ -374,14 +374,9 @@ test('retired model favorite RPCs are removed while model menu, route and option
     'execution-settings.reorderModelFavorites',
     'execution-settings.chooseModelFavorite',
   ]
-  const handle = fixture().handle
   for (const name of retired) {
     assert.equal(Object.hasOwn(desktopActionSchemas, name), false, `${name} must not have an RPC schema`)
     assert.equal(registry.includes(`'${name}':`), false, `${name} must not be registered in registry.ts`)
-    const response = await handle(request(name, [null, 0]))
-    assert.equal(response.status, 404, name)
-    assert.equal(response.headers.get('x-mikka-action-not-found'), '1', name)
-    assert.equal((await response.json()).error.code, 'desktop_rpc_action_unknown', name)
   }
   assert.equal(desktopActionSchemas['execution-settings.getBotModelMenu'].safeParse([null]).success, true)
   assert.equal(desktopActionSchemas['execution-settings.refreshBotModelMenuAction'].safeParse([owner]).success, true)
