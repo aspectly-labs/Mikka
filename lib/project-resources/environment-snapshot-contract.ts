@@ -10,6 +10,7 @@ import {
 export const snapshotInput = environmentInstructionsScope
   .extend({
     templateKind: z.enum(['claude', 'codex']),
+    provider: z.enum(['e2b', 'cloudflare']).optional(),
   })
   .strict()
 export type SnapshotInput = z.infer<typeof snapshotInput>

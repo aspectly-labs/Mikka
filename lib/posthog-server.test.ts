@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { clearFlagCache, FLAG_CACHE_MS, serverFlagEnabled, type ServerPostHog } from './posthog-server'
+import { clearFlagCache, FLAG_CACHE_MS, serverFlagEnabled, serverTaskProviderVariant, type ServerPostHog } from './posthog-server'
 
 function fake(answer: () => Promise<boolean | string | undefined>) {
   const captured: { distinctId: string; event: string; properties?: Record<string, unknown> }[] = []
@@ -98,5 +98,52 @@ test('production and unclassified runtimes ignore local overrides, including mal
     if (previous.flags === undefined) delete process.env.MIKKA_FLAG_OVERRIDES
     else process.env.MIKKA_FLAG_OVERRIDES = previous.flags
     clearFlagCache()
+  }
+})
+
+test('task provider targets the authenticated person and workspace, with no stale run-to-run cache', async () => {
+  const contexts: unknown[] = []
+  let variant: string | boolean = 'cloudflare'
+  const posthog: ServerPostHog = {
+    getFeatureFlag: async (key, user, options) => { contexts.push([key, user, options]); return variant },
+    capture() {},
+    async flush() {},
+  }
+  assert.equal(await serverTaskProviderVariant('u1', 'w1', { posthog }), 'cloudflare')
+  variant = 'e2b'
+  assert.equal(await serverTaskProviderVariant('u1', 'w1', { posthog }), 'e2b')
+  variant = true
+  assert.equal(await serverTaskProviderVariant('u2', 'w2', { posthog }), undefined)
+  assert.equal(await serverTaskProviderVariant('u1', 'w1', { posthog: null }), undefined)
+  assert.deepEqual(contexts, [
+    ['mikka-task-provider', 'u1', { groups: { workspace: 'w1' }, personProperties: { workspace_id: 'w1' }, sendFeatureFlagEvents: false }],
+    ['mikka-task-provider', 'u1', { groups: { workspace: 'w1' }, personProperties: { workspace_id: 'w1' }, sendFeatureFlagEvents: false }],
+    ['mikka-task-provider', 'u2', { groups: { workspace: 'w2' }, personProperties: { workspace_id: 'w2' }, sendFeatureFlagEvents: false }],
+  ])
+})
+
+test('task placement defaults preserve the legacy workspace and explicit Cloudflare choices', async () => {
+  const { selectTaskProvider, taskComputeSku } = await import('./cloud-computer/task-provider-admission')
+  const previous = { node: process.env.NODE_ENV, flags: process.env.MIKKA_FLAG_OVERRIDES, workspaces: process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES }
+  try {
+    process.env.NODE_ENV = 'test'
+    delete process.env.MIKKA_FLAG_OVERRIDES
+    process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES = 'workspace-a, workspace-b'
+    const listed = { userId: 'person', workspaceId: 'workspace-b' }
+    const outside = { userId: 'person', workspaceId: 'workspace' }
+    assert.deepEqual(await selectTaskProvider(listed, false), { provider: 'cloudflare', source: 'legacy_workspace' })
+    assert.deepEqual(await selectTaskProvider(outside, true), { provider: 'cloudflare', source: 'legacy_explicit' })
+    assert.deepEqual(await selectTaskProvider(outside, false), { provider: 'e2b', source: 'default' })
+    process.env.MIKKA_FLAG_OVERRIDES = '{"mikka-task-provider":"e2b"}'
+    assert.deepEqual(await selectTaskProvider(listed, true), { provider: 'e2b', source: 'remote' })
+    process.env.MIKKA_FLAG_OVERRIDES = '{"mikka-task-provider":"cloudflare"}'
+    assert.deepEqual(await selectTaskProvider(outside, false), { provider: 'cloudflare', source: 'remote' })
+    assert.deepEqual(taskComputeSku('e2b', { cloudflare: 'standard-3' }, false), { provider: 'e2b', size: 'medium' })
+    assert.deepEqual(taskComputeSku('cloudflare', { e2b: 'large' }, false), { provider: 'cloudflare', size: 'standard-4' })
+  } finally {
+    for (const [key, value] of [['NODE_ENV', previous.node], ['MIKKA_FLAG_OVERRIDES', previous.flags], ['MIKKA_CLOUDFLARE_TASK_WORKSPACES', previous.workspaces]] as const) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
   }
 })

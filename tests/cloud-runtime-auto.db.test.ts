@@ -447,6 +447,76 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
     assert.equal(await count('SELECT count(*)::int AS n FROM bot_cloud_runtimes WHERE "botId"=$1', [n.botId]), 0)
   })
 
+  await t.test('a repository dispatch can select Cloudflare without an E2B key and preserves the billing refusal', async t => {
+    const fixture = await person('cloudflare-without-e2b', false)
+    const keys = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN'] as const
+    const previous = keys.map(key => process.env[key])
+    t.after(() => keys.forEach((key, index) => {
+      const value = previous[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    Object.assign(process.env, { NODE_ENV: 'test', MIKKA_TASK_MACHINE_BRIDGE_TOKEN: 'synthetic-coordinator-fixture',
+      MIKKA_FLAG_OVERRIDES: JSON.stringify({ 'mikka-task-provider': 'cloudflare' }) })
+    const result = await dispatch(fixture.id, fixture.issueId, fixture.botId) as { error?: string; failedRunId?: string }
+    assert.equal(result.error, 'points_exhausted', JSON.stringify(result))
+    assert.ok(result.failedRunId)
+    const { rows: [run] } = await pool.query(`SELECT status,error,"agentDefinition"->'taskCompute'->>'provider' AS provider
+      FROM agent_runs WHERE id=$1 AND "userId"=$2`, [result.failedRunId, fixture.id])
+    assert.deepEqual(run, { status: 'failed', error: 'points_exhausted', provider: 'cloudflare' })
+  })
+
+  await t.test('legacy Cloudflare billing refusal honors an admitted local recovery grant', async t => {
+    const keys = ['MIKKA_FLAG_OVERRIDES', 'MIKKA_CLOUDFLARE_TASK_WORKSPACES', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN'] as const
+    const previous = keys.map(key => process.env[key])
+    t.after(() => keys.forEach((key, index) => {
+      const value = previous[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    delete process.env.MIKKA_FLAG_OVERRIDES
+    process.env.MIKKA_TASK_MACHINE_BRIDGE_TOKEN = 'synthetic-legacy-coordinator-fixture'
+    for (const withServer of [false, true]) {
+      const fixture = await person('legacy-cloudflare-billing', withServer, withServer ? 33295 : 33294)
+      const event = randomUUID()
+      await pool.query(`INSERT INTO coordinator_events (id,"userId","botId","issueId",kind,"dedupeKey",payload,"deliveredAt")
+        VALUES ($1,$2,$3,$4,'user_message',$1::uuid::text,'{"text":"Run this repository task."}',now())`,
+      [event, fixture.id, fixture.botId, fixture.issueId])
+      const server = randomUUID()
+      let previousRunId: string | undefined
+      if (withServer) {
+        delete process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES
+        const previous = await steps.dispatchRun(fixture.id, { model: { harness: 'codex', model: 'gpt-5' }, issueId: fixture.issueId,
+          repo: 'octo/repo', sourceEventId: event, readOnly: true }, undefined, fixture.botId) as { runId?: string }
+        assert.ok(previous.runId, JSON.stringify(previous))
+        previousRunId = previous.runId
+        await pool.query(`UPDATE agent_runs SET status='succeeded',"finishedAt"=now() WHERE id=$1`, [previousRunId])
+        await pool.query('DELETE FROM thread_machines WHERE "runId"=$1', [previousRunId])
+        await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,"deviceType",enabled,"lastSeenAt",harnesses,"sessionOpenedAt")
+          VALUES ($1,$2,'Server','local','server',true,now(),$3,now())`, [server, fixture.id, JSON.stringify([
+          { harness: 'codex', installed: true, subscriptionBroker: true, modelSlots: [{ slot: 'gpt-5', model: 'gpt-5', name: 'gpt-5' }] },
+        ])])
+        await pool.query(`INSERT INTO agents (id,"userId","deviceId",harness,name) VALUES ($1,$2,$3,'codex',$4)`,
+          [randomUUID(), fixture.id, server, `codex-${server.slice(0, 8)}`])
+      }
+      process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES = fixture.workspaceId
+      const result = await steps.dispatchRun(fixture.id, { model: { harness: 'codex' }, issueId: fixture.issueId,
+        repo: 'octo/repo', sourceEventId: event }, undefined, fixture.botId) as { error?: string; failedRunId?: string; runId?: string; fallback?: string }
+      const { rows: [failed] } = await pool.query(`SELECT id,error,"agentDefinition"->>'allowLocalRecovery' AS eligible
+        FROM agent_runs WHERE "userId"=$1 AND status='failed' AND id IS DISTINCT FROM $2::uuid`, [fixture.id, previousRunId ?? null])
+      assert.equal(failed?.eligible, 'true', JSON.stringify(result))
+      assert.equal(failed?.error, 'points_exhausted')
+      if (withServer) {
+        assert.equal(result.fallback, 'cloudUnavailable', JSON.stringify(result))
+        const { rows: [local] } = await pool.query(`SELECT "deviceId", "agentDefinition"->>'model' AS model, "agentDefinition"->>'readOnly' AS "readOnly" FROM agent_runs WHERE id=$1`, [result.runId])
+        assert.deepEqual(local, { deviceId: server, model: 'gpt-5', readOnly: 'true' })
+      } else {
+        assert.equal(result.error, 'points_exhausted', JSON.stringify(result))
+        assert.equal(result.failedRunId, failed.id)
+      }
+    }
+  })
+
   await t.test('the Coordinator: its own bot row gets the runtime, once, and never borrows a bot\'s', async () => {
     const c = await person('coordinator')
     // The person already has a bot named Coordinator: it keeps its name and stays theirs.

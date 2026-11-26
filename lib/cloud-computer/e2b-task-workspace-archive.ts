@@ -15,7 +15,7 @@ import { verifyTaskArchive } from '../../packages/daemon/src/task-workspace-arch
 const directory = '/home/user/.mikka/worker'
 export const portableTaskArchiveEnabled = () => artifactStorage('task-workspaces') === 'r2'
 
-function checkedWorkspaceStream(source: ReadableStream<Uint8Array>, receipt: z.infer<typeof receiptSchema>, mask: Masker) {
+export function checkedWorkspaceStream(source: ReadableStream<Uint8Array>, receipt: z.infer<typeof receiptSchema>, mask: Masker) {
   const reader = source.getReader()
   const validation = new PassThrough()
   const checked = verifyTaskArchive(validation, mask)

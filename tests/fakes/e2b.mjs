@@ -11,7 +11,7 @@ function connectFrame(value, end = false) {
 }
 
 /** e2b@2.61 control API + envd HTTP/Connect JSON protocol, not a Sandbox mock. */
-export function createE2BFake({ now = () => Date.now(), templates = ['base', 'desktop', 'claude', 'codex'], limit = 8, commands = {}, processes, domain = 'localhost' } = {}) {
+export function createE2BFake({ now = () => Date.now(), templates = ['base', 'desktop', 'claude', 'codex'], limit = 8, commands = {}, processes, domain = 'localhost', geometry = { cpuCount: 1, memoryMB: 512 }, initialFiles = {} } = {}) {
   const requests = [], sandboxes = new Map(), snapshots = new Map(), idempotency = new Map()
   let sequence = 0, pid = 100
   const state = { limit, templates: new Set(templates), commands, createError: null,
@@ -20,7 +20,7 @@ export function createE2BFake({ now = () => Date.now(), templates = ['base', 'de
   const view = sandbox => ({ sandboxID: sandbox.id, templateID: sandbox.template, clientID: 'local-client',
     domain, envdVersion: '0.5.6', envdAccessToken: sandbox.access,
     startedAt: new Date(sandbox.created).toISOString(), endAt: new Date(sandbox.expires).toISOString(),
-    metadata: sandbox.metadata, state: sandbox.state, cpuCount: 1, memoryMB: 512 })
+    metadata: sandbox.metadata, state: sandbox.state, ...geometry })
   const current = id => {
     const sandbox = sandboxes.get(id)
     if (!sandbox || sandbox.state === 'killed') return null
@@ -48,7 +48,7 @@ export function createE2BFake({ now = () => Date.now(), templates = ['base', 'de
           return json(response, { code: 429, message: 'Concurrent sandbox limit reached' }, 429)
         const id = `local-sandbox-${++sequence}`
         const sandbox = { id, template: body.templateID, metadata: body.metadata ?? {}, state: 'running',
-          created: now(), expires: now() + (body.timeout ?? 300) * 1000, access: `local-envd-${sequence}`, files: new Map(snapshots.get(body.templateID)?.files) }
+          created: now(), expires: now() + (body.timeout ?? 300) * 1000, access: `local-envd-${sequence}`, files: new Map(snapshots.get(body.templateID)?.files ?? Object.entries(initialFiles).map(([key, value]) => [key, Buffer.from(value)])) }
         sandboxes.set(id, sandbox)
         await processes?.create(sandbox)
         if (key) idempotency.set(key, id)

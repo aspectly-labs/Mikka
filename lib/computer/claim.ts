@@ -59,9 +59,9 @@ export async function claimLocalRun(pool: Pool, runId: string, deviceId: string,
 
 /** The scoped cloud device may claim only a run bound to its owner's Bot
  * and to that run's own thread machine. Binding and claim use the same run row lock.
- * A run frozen on an API key has no subscription binding (null): its key
- * was checked and recorded for it by `validateRunApiKey` before the claim. */
-export async function claimCloudRun(pool: Pool, actor: { userId: string; workspaceId: string }, runId: string, deviceId: string, leaseExpiresAt: Date, subscriptionBindingId: string | null, beforeClaim?: (tx: PoolClient) => Promise<boolean | void>, afterClaim?: (tx: PoolClient) => Promise<void>, desktop = true): Promise<{ botId: string; ownerId: string; display: string; policyVersion: number; permission: ComputerPermission } | null> {
+ * A run without a subscription needs its validated API key or the exact
+ * hosted credits gateway credential prepared for this claim. */
+export async function claimCloudRun(pool: Pool, actor: { userId: string; workspaceId: string }, runId: string, deviceId: string, leaseExpiresAt: Date, subscriptionBindingId: string | null, beforeClaim?: (tx: PoolClient) => Promise<boolean | void>, afterClaim?: (tx: PoolClient) => Promise<void>, desktop = true, creditsTokenHash?: string): Promise<{ botId: string; ownerId: string; display: string; policyVersion: number; permission: ComputerPermission } | null> {
   const { rows: [stored] } = await pool.query<{ workspaceId: string | null }>(
     'SELECT "workspaceId" FROM agent_runs WHERE id=$1 AND "userId"=$2 AND "deviceId"=$3',
     [runId, actor.userId, deviceId])
@@ -99,7 +99,16 @@ export async function claimCloudRun(pool: Pool, actor: { userId: string; workspa
         AND ${runMayUseCredentialSql('b."ownerId"', '$2', '$3')}`, [subscriptionBindingId, actor.userId, actor.workspaceId, run.agentId])
       if (!subscription.rowCount) { await client.query('COMMIT'); return null }
       await client.query('INSERT INTO byos_native_runs ("runId","bindingId") VALUES ($1,$2)', [runId, subscriptionBindingId])
-    } else if (!(await client.query('SELECT 1 FROM model_api_key_runs WHERE "runId"=$1', [runId])).rowCount) { await client.query('COMMIT'); return null }
+    } else {
+      const definition = run.agentDefinition
+      const credential = definition?.credits && !definition.apiKey
+        ? creditsTokenHash && (await client.query(`SELECT 1 FROM model_gateway_tokens
+            WHERE "tokenHash"=$1 AND "runId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
+              AND "sourceKind"='credits' AND model=$5 AND harness=$6 AND "expiresAt">now()`,
+          [creditsTokenHash, runId, actor.userId, actor.workspaceId, definition.credits.model, definition.harness])).rowCount
+        : (await client.query('SELECT 1 FROM model_api_key_runs WHERE "runId"=$1', [runId])).rowCount
+      if (!credential) { await client.query('COMMIT'); return null }
+    }
     await client.query('UPDATE agent_runs SET status=$2,"startedAt"=now(),"leaseExpiresAt"=$3,"updatedAt"=now() WHERE id=$1', [runId, 'preparing', leaseExpiresAt])
     advanceTaskAfterRunStart(client, runId)
     // The lease lasts as long as the device session; run recovery reclaims it once it ends (#1212).

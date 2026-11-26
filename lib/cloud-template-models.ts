@@ -86,11 +86,13 @@ export function threadMachineTemplateKind(machine: { snapshotId?: unknown; templ
   return known?.kind ?? null
 }
 /** The release proves the selected image has its Agent. Credentials admit models. */
-export type CloudModelPurpose = 'task' | 'desktop' | 'cloudflare_task'
+export type CloudModelPurpose = 'task' | 'desktop' | 'cloudflare_task' | 'repository_admission'
 export function cloudModelSupport(entry: Pick<OrderEntry, 'harness' | 'model' | 'source'>, purpose: CloudModelPurpose = 'task', env: Record<string, string | undefined> = process.env): CloudModelState {
   // The protected task image release verifies both native binaries. Its
   // subscription catalogue and current allowance are authorized by dispatch.
   // Mikka 额度 reaches any catalogue model through the model gateway, on either image.
+  // Repository admission selects and validates the machine after model selection.
+  if (purpose === 'repository_admission') return 'ready'
   if (purpose === 'cloudflare_task') return entry.source.kind === 'subscription' || entry.source.kind === 'credits' ? 'ready' : 'cloudModelNotReported'
   const catalogue = cloudTemplateModels(env)
   if (!catalogue) return 'cloudModelsUnknown'

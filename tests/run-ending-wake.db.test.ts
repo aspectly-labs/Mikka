@@ -80,4 +80,13 @@ test('run endings wake their committed owner once, including a pre-existing clou
     assert.deepEqual(committed, [userId])
     assert.deepEqual(direct, [])
   })
+  await t.test('an unavailable portable workspace archive retains its separate terminal code', async () => {
+    const { TaskWorkspaceArchiveUnavailable } = await import('../lib/computer/store')
+    const issueId = await seedIssue(pool, userId, workspaceId)
+    const runId = await seedRun(pool, { userId, workspaceId, botId, issueId, agentId, status: 'queued' })
+    await pool.query('INSERT INTO computer_run_bindings("runId","ownerId","workspaceId","botId") VALUES ($1,$2,$3,$4)', [runId, userId, workspaceId, botId])
+    assert.equal(await failUnclaimedCloudStart({ userId, workspaceId }, runId, new TaskWorkspaceArchiveUnavailable()), true)
+    const { rows: [failed] } = await pool.query('SELECT status,error FROM agent_runs WHERE id=$1', [runId])
+    assert.deepEqual(failed, { status: 'failed', error: TaskWorkspaceArchiveUnavailable.code })
+  })
 })

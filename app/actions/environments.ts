@@ -185,7 +185,12 @@ export async function listTaskEnvironments(input: z.input<typeof taskEnvironment
 
 export async function getEnvironmentSnapshot(input: import('@/lib/project-resources/environment-snapshot-contract').SnapshotInput) {
   const { readEnvironmentSnapshot } = await import('@/lib/project-resources/environment-snapshots')
-  return runAction(async () => readEnvironmentSnapshot(await requireUser(), input))
+  return runAction(async () => {
+    const user = await requireUser()
+    const { selectTaskProvider } = await import('@/lib/cloud-computer/task-provider-admission')
+    const provider = input.provider ?? (await selectTaskProvider({ userId: user.id, workspaceId: input.workspaceId }, false)).provider
+    return readEnvironmentSnapshot(user, { ...input, provider })
+  })
 }
 
 export async function buildEnvironmentSnapshot(input: import('@/lib/project-resources/environment-snapshot-contract').SnapshotInput) {
