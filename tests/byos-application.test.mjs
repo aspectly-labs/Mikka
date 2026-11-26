@@ -117,7 +117,8 @@ test(scenario, { timeout: 90_000 }, async t => {
         emit({ type: 'response.output_item.done', output_index: 0, item })
       } else emit({ type: 'response.output_text.delta', output_index: 0, content_index: 0, item_id: 'fixture-text', delta: text })
       if (raw.includes('HANG')) return
-      emit({ type: 'response.completed', response: { ...base, status: 'completed', output: asksTool ? [item] : [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } })
+      emit({ type: 'response.completed', response: { ...base, status: 'completed', output: asksTool ? [item] : [],
+        ...(raw.includes('NO_USAGE') ? {} : { usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }) } })
     }
     response.end()
   }
@@ -273,9 +274,16 @@ test(scenario, { timeout: 90_000 }, async t => {
           subscriptionModel: id => resolveAgentSubscription(ownerId, consumerId, id, service, authorizeSubscriptionUse),
         })
         await assertChat(model, use)
+        if (provider === 'codex') {
+          assert.equal(await streamText({ model, prompt: 'HELLO_NO_USAGE', maxRetries: 0 }).text, 'subscription fixture')
+          const noUsageCall = verifySubscriptionChat(chat.captured.at(-1))?.callId
+          assert.ok(noUsageCall)
+          assert.deepEqual((await pool.query('SELECT state,"costMicroUsd" FROM hosted_usage WHERE id=$1', [noUsageCall])).rows,
+            [{ state: 'unknown', costMicroUsd: null }])
+        }
         t.diagnostic(`${provider}: real LiteLLM and Go CPA preserved trace, unique usage, and tenant isolation`)
       }
-      assert.equal(providerCalls, 2)
+      assert.equal(providerCalls, 3)
       assert.equal(unexpectedExternalRequests, 0, 'scripted chat uses only the synthetic read-only access projection')
       return
     }

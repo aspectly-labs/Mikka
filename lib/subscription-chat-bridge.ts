@@ -13,7 +13,6 @@ import { withRunSpan } from './tracing/context'
 // A JSON string can take up to six encoded bytes per original byte.
 const ENVELOPE_MAX_BYTES = 6 * SUBSCRIPTION_CHAT_MAX_BYTES + 8192
 const deny = (status: number) => new Response(null, { status, headers: { 'cache-control': 'no-store' } })
-const count = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : 0
 const reported = (n: unknown) => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0 ? n : null
 
 async function readBoundedBody(request: Request) {
@@ -54,8 +53,10 @@ function observeChatReceipt() {
           if (!receipt.messageId && typeof data?.id === 'string' && /^[\w.-]{1,200}$/.test(data.id)) receipt.messageId = data.id
           const usage = data?.usage
           if (!usage || typeof usage !== 'object') continue
+          const inputTokens = reported(usage.prompt_tokens), outputTokens = reported(usage.completion_tokens)
+          if (inputTokens === null || outputTokens === null) continue
           receipt.usage = {
-            inputTokens: count(usage.prompt_tokens), outputTokens: count(usage.completion_tokens),
+            inputTokens, outputTokens,
             cacheReadTokens: reported(usage.prompt_tokens_details?.cached_tokens),
             cacheWriteTokens: reported(usage.prompt_tokens_details?.cache_write_tokens),
           }
@@ -101,7 +102,7 @@ export async function handleSubscriptionChat(request: Request, service = subscri
     const finish = async () => {
       if (finished) return
       finished = true
-      await finishSubscriptionChatUsage(db, callId, observed.receipt, observed.complete)
+      await finishSubscriptionChatUsage(db, callId, observed.receipt, observed.complete && observed.receipt.usage !== null)
     }
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
