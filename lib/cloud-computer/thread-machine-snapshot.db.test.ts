@@ -52,7 +52,7 @@ test("thread filesystem snapshots park once and restore only the same task machi
     process.env.MIKKA_CLOUD_WORKER_SHA = 'a'.repeat(40);
     const db = await import("../db");
     appPool = db.pool;
-    const { ensureThreadMachine, parkThreadMachine, restoreThreadMachineFromSnapshot, threadMachineAction, threadMachineProvider } = await import("./thread-machines");
+    const { ensureThreadMachine, parkThreadMachine, restoreThreadMachineFromSnapshot, threadMachineAction, threadMachineArchiveProvider, threadMachineProvider } = await import("./thread-machines");
     const { threadLifecycleProvider } = await import("./thread-lifecycle-provider");
 
     const owner = "owner", workspaceId = randomUUID(), botId = randomUUID(), botDevice = randomUUID(), agentId = randomUUID(), repoId = randomUUID();
@@ -150,7 +150,7 @@ test("thread filesystem snapshots park once and restore only the same task machi
       const created: string[] = [], listed: string[] = [], pauses: string[] = [];
       let lists = 0;
       t.mock.method(threadLifecycleProvider, 'info', async () => ({ state: 'running' as const, endAt: null }));
-      t.mock.method(threadMachineProvider, 'connectRunning', async (_owner: string, id: string) => ({ sandboxId: id, commands: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) } }) as never);
+      t.mock.method(threadMachineArchiveProvider, 'connectRunning', async (_owner: string, id: string) => ({ sandboxId: id, commands: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) } }) as never);
       t.mock.method(threadLifecycleProvider, 'createSnapshot', async () => { created.push('snapshot'); throw new Error('lost snapshot response'); });
       // The first listing (before creating) proves none exists; the reconcile
       // after the lost response finds exactly one.
@@ -182,7 +182,7 @@ test("thread filesystem snapshots park once and restore only the same task machi
       let mode: 'create' | 'scrub' = 'create';
       let created = 0;
       t.mock.method(threadLifecycleProvider, 'info', async () => ({ state: 'running' as const, endAt: null }));
-      t.mock.method(threadMachineProvider, 'connectRunning', async (_owner: string, id: string) => {
+      t.mock.method(threadMachineArchiveProvider, 'connectRunning', async (_owner: string, id: string) => {
         if (mode === 'scrub') throw new Error('scrub connect unavailable');
         return { sandboxId: id, commands: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) } } as never;
       });

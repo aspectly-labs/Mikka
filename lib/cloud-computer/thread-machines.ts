@@ -212,7 +212,7 @@ async function takeThreadSnapshot(client: PoolClient, actor: Actor, runId: strin
   const observed = await threadLifecycleProvider.info(machine.sandboxId, actor.userId).catch(() => null)
   if (!observed || observed.state !== 'running') return
   try {
-    const sandbox = await threadMachineProvider.connectRunning(actor.userId, machine.sandboxId, client)
+    const sandbox = await threadMachineArchiveProvider.connectRunning(actor.userId, machine.sandboxId, client)
     const scrubbed = await sandbox.commands.run(credentialScrubCommand(), { user: 'root', timeoutMs: 20_000 })
     if (scrubbed.exitCode !== 0) throw new Error('Thread credential scrub failed')
   } catch {
@@ -325,10 +325,11 @@ const threadMachineStopPreparation: { prepareKill?: (ownerId: string, id: string
     }
   },
 }
+export const threadMachineArchiveProvider = { connectRunning: connectRunningComputer }
+
 /** Provider calls of scoped thread operations; tests replace them, production uses E2B. */
 export const threadMachineProvider = {
   ...threadMachineStopPreparation,
-  connectRunning: connectRunningComputer,
   connect: (sandboxId: string, workspaceId: string, budget?: RuntimeBudget) => connectComputer(workspaceId, sandboxId, undefined, budget),
   create: async (snapshotId: string, operationId: string, metadata: Record<string, string>, ownerId: string) => {
     if (!cloudTemplateOrigin(snapshotId)) throw new ComputerError(409, 'Verified cloud template required')
@@ -702,7 +703,7 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
           released = true
           try {
             const signal = AbortSignal.timeout(120_000)
-            const sandbox = await threadMachineProvider.connectRunning(actor.userId, fence.sandboxId)
+            const sandbox = await threadMachineArchiveProvider.connectRunning(actor.userId, fence.sandboxId)
             const { manifest, stream, dispose } = await captureE2BTaskWorkspace(sandbox, runId, mask, signal)
             try { archive = await prepareTaskWorkspaceArchive(pool, archiveScope, manifest, stream, signal) }
             finally {
