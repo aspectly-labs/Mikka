@@ -55,6 +55,19 @@ const WORKSPACE_GOVERNANCE = new RegExp(`^/api/workspaces/${UUID}/governance(?:/
 const ORGANIZATION_MEMBERS = new RegExp(`^/api/organizations/${UUID}/members$`)
 const ORGANIZATION_INVITATIONS = new RegExp(`^/api/organizations/${UUID}/invitations$`)
 const INVITATION_PREVIEW = /^\/api\/(?:organization-)?invitations\/[a-f0-9]{64}$/
+/** These renderer features forward only the method used by the signed-in page. */
+const SETTINGS_AND_THREAD_ROUTES: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
+  [/^\/api\/threads\/shared\/mkt_[A-Za-z0-9_-]{32}$/, ['GET']],
+  [new RegExp(`^/api/runs/${UUID}/workspace/files$`), ['GET']],
+  [new RegExp(`^/api/settings/workspace/${UUID}$`), ['GET', 'PATCH']],
+  [new RegExp(`^/api/workspaces/${UUID}/task-labels$`), ['GET', 'POST']],
+  [new RegExp(`^/api/workspaces/${UUID}/task-labels/${UUID}$`), ['GET', 'PATCH', 'DELETE']],
+  [new RegExp(`^/api/workspaces/${UUID}/task-labels/${UUID}/merge$`), ['POST']],
+  [new RegExp(`^/api/integrations/mcp/${UUID}/(?:check|oauth/start)$`), ['POST']],
+  [new RegExp(`^/api/integrations/mcp/${UUID}/tools/[A-Za-z0-9_.:-]{1,128}$`), ['PATCH']],
+  [new RegExp(`^/api/integrations/mcp/${UUID}/environments$`), ['PATCH']],
+  [/^\/api\/auth\/unlink-account$/, ['POST']],
+]
 const SERVICE_IDENTITY_DIRECTORY = `/api/workspaces/${UUID}/service-identities`
 const SERVICE_IDENTITY_ROUTES: ReadonlyArray<readonly [RegExp, string]> = [
   [new RegExp(`^${SERVICE_IDENTITY_DIRECTORY}$`), 'POST'],
@@ -163,6 +176,7 @@ export function allowedApiPath(path: string, method: string): boolean {
   if (INVITATION_PREVIEW.test(path)) return method === 'GET'
   // Viewer grants are capabilities and must be obtained through owner-bound IPC.
   if (/^\/api\/bots\/[^/]+\/(?:computer\/(?:viewer|takeover)|subagents\/[^/]+\/viewer)$/.test(path)) return false
+  if (SETTINGS_AND_THREAD_ROUTES.some(([pattern, methods]) => pattern.test(path) && methods.includes(method))) return true
   return ROUTES.some(([pattern, methods]) => pattern.test(path) && methods.includes(method === 'HEAD' ? 'GET' : method))
 }
 
