@@ -60,6 +60,11 @@ export function auditLiteLlmSource(file, source) {
       && providerModule.test(node.arguments[0].text)) {
       report(node, 'dynamic provider imports belong in the LiteLLM client')
     }
+    if (ts.isCallExpression(node) && node.arguments[0] && ts.isIdentifier(node.arguments[0])
+      && subscriptionEndpoints.has(node.arguments[0].text)
+      && (node.expression.getText(tree) === 'fetch' || node.expression.getText(tree) === 'globalThis.fetch')) {
+      report(node, 'subscription inference requests belong in the LiteLLM client')
+    }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && constructors.has(node.expression.text)) {
       report(node, 'model SDK construction belongs in the LiteLLM client')
     }

@@ -44,6 +44,7 @@ test('subscription inference endpoints are routing metadata and cannot hide in q
     assert.deepEqual(auditLiteLlmSource(contract, `export const ${constant} = '${endpoint}'`), [])
     for (const file of [contract, `packages/daemon/src/quota/${quotaFile}.ts`]) {
       assert.equal(auditLiteLlmSource(file, `fetch('${endpoint}')`).length, 1)
+      assert.equal(auditLiteLlmSource(file, `globalThis.fetch(${constant}, { method: 'POST' })`).length, 1)
     }
   }
 })
