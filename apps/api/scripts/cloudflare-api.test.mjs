@@ -451,6 +451,11 @@ test('ApiIngress rejects retired legacy daemon traffic and removed heartbeats at
   }
   const ingress = new ApiIngress({}, env)
 
+  for (const path of ['/mikka/api/internal/subscription/chat', '/mikka/api/internal/%73ubscription/chat', '/mikka/api/internal/subscription/chat/']) {
+    assert.equal((await ingress.fetch(new Request(origin + path, { method: 'POST', body: '{}' }))).status, 404)
+  }
+  assert.equal(getByNameCalls, 0)
+
   // 1. Legacy daemon requests (missing/invalid x-mikka-device-session or outdated semver) return 426 with 0 container wakes.
   for (const [method, path, headers] of [
     ['GET', `/mikka/v1/devices/${deviceId}/commands`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.524' }],
