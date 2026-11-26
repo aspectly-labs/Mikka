@@ -1,6 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
-import { NotFoundError, Sandbox, SandboxNotFoundError, type SandboxApiOpts, type SandboxInfo } from 'e2b'
+import { AuthenticationError, NotFoundError, Sandbox, SandboxNotFoundError, type SandboxApiOpts, type SandboxInfo } from 'e2b'
 import type { Pool } from 'pg'
 import { pool } from '@/lib/db'
 import { isCloudEdition } from '@/lib/edition'
@@ -59,7 +59,10 @@ export async function e2bCreationTimeout(ownerId: string, providerScope: string,
       (EXCLUDED."workspaceId",EXCLUDED."ownerId",EXCLUDED."providerScope",EXCLUDED."templateId",EXCLUDED.size,EXCLUDED."hourlyMicroUsd",EXCLUDED."cpuCount",EXCLUDED."memoryMB")
     RETURNING l.*`, [operationId, target.workspaceId, ownerId, providerScope, templateId, price.size, price.hourlyMicroUsd, price.cpuCount, price.memoryMB])
   if (!lease) throw unavailable()
-  return paidTimeout(lease, target, requestedMs, true, true)
+  await paidTimeout(lease, target, requestedMs, true, true)
+  // E2B fingerprints the entire create body. A settled first interval funds at
+  // most five provider minutes, and retry submits exactly the same duration.
+  return MACHINE_CHUNK_MS
 }
 
 export async function recordE2BComputeSandbox(ownerId: string, operationId: string, sandboxId: string) {
@@ -126,7 +129,8 @@ export async function createPrepaidE2B<T>(ownerId: string, operationId: string, 
     const cause = error instanceof E2BKeyError && error.cause ? error.cause : error
     const status = cause && typeof cause === 'object' ? (cause as { status?: unknown; statusCode?: unknown }).status
       ?? (cause as { statusCode?: unknown }).statusCode : undefined
-    if (cause instanceof NotFoundError || cause instanceof SandboxNotFoundError || status === 400 || status === 404 || status === 422)
+    if (cause instanceof AuthenticationError || cause instanceof NotFoundError || cause instanceof SandboxNotFoundError
+      || status === 400 || status === 401 || status === 403 || status === 404)
       await voidUnallocatedE2BCompute(ownerId, operationId)
     throw error
   }

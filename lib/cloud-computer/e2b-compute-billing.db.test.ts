@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 import { test } from 'node:test'
 import { Sandbox } from 'e2b'
 import { Pool } from 'pg'
@@ -19,7 +20,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     claude: { templateId: 'verified-claude', models: [], baseTemplate: 'claude', preinstalled: true },
     codex: { templateId: 'verified-codex', models: [], baseTemplate: 'codex', preinstalled: true },
   }
-  const env = { MIKKA_EDITION: 'cloud', MIKKA_CLOUD_WORKER_SHA: workerSha,
+  const env = { MIKKA_EDITION: 'cloud', E2B_API_KEY: 'synthetic-fixture-key', E2B_TEAM_ID: 'fixture', MIKKA_CLOUD_WORKER_SHA: workerSha,
     E2B_BYO_COMPUTER_TEMPLATE: templates.desktop.templateId, E2B_CLAUDE_TEMPLATE: templates.claude.templateId,
     E2B_CODEX_TEMPLATE: templates.codex.templateId, MIKKA_CLOUD_TEMPLATE_MODELS: JSON.stringify({
       version: 1, workerSha, templates, machineVariants: Object.entries(templates).map(([kind, template]) => ({
@@ -35,11 +36,13 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     }
   })
   const { pool } = await import('@/lib/db')
+  pool.options.max = 1
+  pool.options.connectionTimeoutMillis = 5_000
   const { workspaceDb, workspacePool } = await import('@/lib/workspace-db')
   workspacePool.options.max = 1
   workspacePool.options.connectionTimeoutMillis = 5_000
   t.after(() => Promise.allSettled([pool.end(), workspacePool.end()]))
-  const { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, observeMissingE2BAllocation, verifyE2BAllocation } = await import('./e2b-compute-billing')
+  const { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, verifyE2BAllocation } = await import('./e2b-compute-billing')
   const operationId = randomUUID()
   const sandboxId = `sandbox-${operationId}`
   const create = () => e2bCreationTimeout(ownerId, 'team:fixture', operationId, templates.codex.templateId,
@@ -74,6 +77,22 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()+interval '30 seconds' WHERE "operationId"=$1`, [operationId])
   assert.ok(await e2bSandboxTimeout(ownerId, sandboxId, 900_000, false) < 30_000)
   assert.deepEqual(await receipts(), [expected(0, runId)])
+  await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('sandbox',$1,$2,'team:fixture')`, [sandboxId, ownerId])
+  await fixture.query(`UPDATE agent_runs SET status='running',"leaseExpiresAt"=now()+interval '10 minutes' WHERE id=$1`, [runId])
+  const lifecycleInfo = t.mock.method(Sandbox, 'getInfo', async () => ({
+    sandboxId, state: 'running', endAt: new Date(Date.now()+30_000), cpuCount: 2, memoryMB: 8192,
+  }) as Awaited<ReturnType<typeof Sandbox.getInfo>>)
+  const lifecycleTimeout = t.mock.method(Sandbox, 'setTimeout', async (_id, timeoutMs) => {
+    assert.ok(timeoutMs > 300_000 && timeoutMs <= 330_000)
+  })
+  try {
+    const { reconcileThreadMachine } = await import('./thread-lifecycle')
+    assert.ok(await reconcileThreadMachine(pool, { userId: ownerId, workspaceId }, runId))
+    assert.equal(lifecycleTimeout.mock.callCount(), 1, 'real lifecycle reuses no second APP checkout')
+  } finally {
+    lifecycleInfo.mock.restore()
+    lifecycleTimeout.mock.restore()
+  }
   const renewed = await Promise.all(Array.from({ length: 4 }, () => e2bSandboxTimeout(ownerId, sandboxId, 900_000)))
   assert.ok(renewed.every(ms => ms > 300_000 && ms <= 330_000))
   assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId)])
@@ -119,19 +138,76 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   await assert.rejects(createPrepaidE2B(ownerId, refusedOperation, async () => { throw refused }), error => error === refused)
   assert.equal(await e2bCanReplaceOperation(fixture, ownerId, refusedOperation), true)
 
+  const requests: { key: string | undefined; body: string }[] = []
+  const discovered: URL[] = []
+  const originalApiUrl = process.env.E2B_API_URL
+  t.after(() => {
+    if (originalApiUrl === undefined) delete process.env.E2B_API_URL
+    else process.env.E2B_API_URL = originalApiUrl
+  })
+  let responseStatus = 422
+  const provider = createServer(async (req, res) => {
+    if (req.method === 'GET') {
+      discovered.push(new URL(req.url ?? '/', 'http://127.0.0.1'))
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('[]')
+      return
+    }
+    let body = ''
+    for await (const chunk of req) body += chunk
+    requests.push({ key: req.headers['idempotency-key'] as string | undefined, body })
+    res.writeHead(responseStatus, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ code: responseStatus,
+      error_code: responseStatus === 422 ? 'idempotency_outcome_unknown' : 'denied',
+      message: responseStatus === 422 ? 'idempotency_outcome_unknown' : 'origin denied' }))
+  })
+  await new Promise<void>(resolve => provider.listen(0, '127.0.0.1', resolve))
+  t.after(() => { provider.closeAllConnections(); provider.close() })
+  const address = provider.address()
+  assert.ok(address && typeof address === 'object')
+  const createOnWire = async (operationId: string) => {
+    const timeoutMs = await e2bCreationTimeout(ownerId, 'team:fixture', operationId, templates.desktop.templateId, { workspaceId, runId: null }, 900_000)
+    return createPrepaidE2B(ownerId, operationId, () => Sandbox.create(templates.desktop.templateId, {
+      apiUrl: `http://127.0.0.1:${address.port}`, apiKey: 'synthetic-fixture-key', idempotencyKey: operationId, timeoutMs,
+      lifecycle: { onTimeout: 'pause', autoResume: false }, retries: 0,
+    }))
+  }
+  for (const status of [401, 403]) {
+    responseStatus = status
+    const denied = randomUUID()
+    await assert.rejects(createOnWire(denied))
+    assert.equal(await e2bCanReplaceOperation(fixture, ownerId, denied), true)
+  }
   const missingOperation = randomUUID()
-  await e2bCreationTimeout(ownerId, 'team:fixture', missingOperation, templates.desktop.templateId, { workspaceId, runId: null }, 900_000)
+  responseStatus = 422
+  await assert.rejects(createOnWire(missingOperation))
+  await assert.rejects(createOnWire(missingOperation))
+  assert.deepEqual(requests.slice(-2).map(request => request.key), [missingOperation, missingOperation])
+  assert.equal(requests.at(-1)?.body, requests.at(-2)?.body)
+  assert.equal(JSON.parse(requests.at(-1)!.body).timeout, 300)
+  assert.equal(await e2bCanReplaceOperation(fixture, ownerId, missingOperation), false)
   await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()-interval '1 second' WHERE "operationId"=$1`, [missingOperation])
+  await fixture.query(`INSERT INTO cloud_machines ("workspaceId","ownerId","operationId",state,"lastActiveAt")
+    VALUES ($1,$2,$3,'error',now()-interval '31 seconds')`, [workspaceId, ownerId, missingOperation])
+  await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture')`, [missingOperation, ownerId])
+  process.env.E2B_API_URL = `http://127.0.0.1:${address.port}`
+  const { reconcileCloudMachines } = await import('../computer/reconcile')
+  const { runRecoveryDueSweeps } = await import('../run-recovery-due')
   assert.equal(await e2bInitialAllocationNeedsRecovery(ownerId, missingOperation), true)
-  assert.equal(await observeMissingE2BAllocation(ownerId, missingOperation), false)
+  assert.ok((await runRecoveryDueSweeps(pool, { factoryLifecycle: false })).due.has('machines'))
+  assert.equal(await reconcileCloudMachines(pool), 0)
   assert.equal(await e2bCanReplaceOperation(fixture, ownerId, missingOperation), false)
   await fixture.query(`UPDATE e2b_compute_leases SET "creationMissingAt"=now()-interval '31 seconds' WHERE "operationId"=$1`, [missingOperation])
-  assert.equal(await observeMissingE2BAllocation(ownerId, missingOperation), true)
+  await fixture.query(`UPDATE cloud_machines SET "lastActiveAt"=now()-interval '31 seconds' WHERE "operationId"=$1`, [missingOperation])
+  assert.equal(await reconcileCloudMachines(pool), 0)
   assert.equal(await e2bCanReplaceOperation(fixture, ownerId, missingOperation), true)
+  assert.equal(discovered.length, 2)
+  assert.ok(discovered.every(url => url.pathname === '/v2/sandboxes'
+    && url.searchParams.get('metadata')?.includes(`operationId=${missingOperation}`)))
 
   const existingSandboxId = `existing-${randomUUID()}`
-  await fixture.query(`INSERT INTO cloud_machines ("workspaceId","ownerId","operationId","sandboxId",state)
-    VALUES ($1,$2,$3,$4,'running')`, [workspaceId, ownerId, randomUUID(), existingSandboxId])
+  await fixture.query(`UPDATE cloud_machines SET "sandboxId"=$3,"operationId"=$4,state='running' WHERE "workspaceId"=$1 AND "ownerId"=$2`,
+    [workspaceId, ownerId, existingSandboxId, randomUUID()])
   await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('sandbox',$1,$2,'team:fixture')`, [existingSandboxId, ownerId])
   const existing = await e2bSandboxTimeout(ownerId, existingSandboxId, 900_000, true, {
     providerScope: 'team:fixture',

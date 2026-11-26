@@ -5,6 +5,7 @@ import * as provider from './e2b-provider'
 import { connectForCommitEffects } from '../db/commit-effects'
 import { machineChanged, machineCommitted } from '@/lib/live/computer-state'
 import { armDueTimerSoon } from '@/lib/due-timer'
+import { isCloudEdition } from '@/lib/edition'
 import { ownE2BKeySql } from '@/lib/secrets/e2b-owner-sql'
 import { e2bCanReplaceOperation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { E2BKeyError } from '@/lib/secrets/flag'
@@ -67,7 +68,10 @@ export async function ensureCloudMachine(pool:Pool,actor:Actor,runtime:Runtime=p
   } catch(error) {
     const missing = error instanceof E2BKeyError && error.code === 'e2b_key_missing'
     const failed = await pool.query(`UPDATE cloud_machines SET state=$4,"errorCode"=$5,"provisionLeaseId"=NULL,"provisionLeaseUntil"=NULL WHERE "workspaceId"=$1 AND "ownerId"=$2 AND "provisionLeaseId"=$3`,[actor.workspaceId,actor.userId,leaseId,missing ? machine.state : 'error',missing ? null : provisionErrorCode(error)])
-    if (failed.rowCount) await machineCommitted(pool, actor.userId, actor.workspaceId)
+    if (failed.rowCount) {
+      await machineCommitted(pool, actor.userId, actor.workspaceId)
+      if (isCloudEdition() && !machine.sandboxId) armDueTimerSoon('run-recovery')
+    }
     throw error
   }
 }

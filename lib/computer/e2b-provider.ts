@@ -79,18 +79,8 @@ export async function createComputer(workspaceId: string, operationId: string) {
   const base = options(account.apiKey)
   const metadata = { application: 'mikka', workspaceId, operationId }
   if (await e2bInitialAllocationNeedsRecovery(owner, operationId)) {
-    const candidates = Sandbox.list({ ...base, limit: 2, query: { metadata, state: ['running', 'paused'] } })
-    const matches = await withE2BErrors(owner, false, () => candidates.nextItems())
-    if (matches.length > 1 || candidates.hasNext
-      || matches.some(item => Object.entries(metadata).some(([key, value]) => item.metadata[key] !== value)))
-      throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation identity unavailable')
-    const recovered = matches[0]
-    if (!recovered) {
-      await observeMissingE2BAllocation(owner, operationId)
-      throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation recovery pending')
-    }
-    await verifyE2BAllocation(owner, operationId, recovered.sandboxId, base, recovered)
-    await bindE2BResource(owner, 'sandbox', recovered.sandboxId, account.scope)
+    const recovered = await reconcileInitialComputerAllocation(workspaceId, owner, operationId)
+    if (!recovered) throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation recovery pending')
     base.timeoutMs = await e2bSandboxTimeout(owner, recovered.sandboxId, lifetime)
     return withE2BErrors(owner, false, () => Sandbox.connect(recovered.sandboxId, base))
   }
@@ -103,6 +93,27 @@ export async function createComputer(workspaceId: string, operationId: string) {
   await bindE2BResource(owner, 'sandbox', sandbox.sandboxId, account.scope)
   if (template === 'desktop') await bootstrapOfficialInstance(sandbox, 'desktop')
   return sandbox
+}
+
+/** Observe an expired desktop allocation by its exact durable create identity.
+ * Recovery does not connect, allocate or renew a sandbox. */
+export async function reconcileInitialComputerAllocation(workspaceId: string, ownerId: string, operationId: string) {
+  const account = await e2bResourceAccount(ownerId, 'operation', operationId)
+  const prepared = { ...options(account.apiKey), requestTimeoutMs: 8_000, retries: 0 }
+  const metadata = { application: 'mikka', workspaceId, operationId }
+  const candidates = Sandbox.list({ ...prepared, limit: 2, query: { metadata, state: ['running', 'paused'] } })
+  const matches = await withE2BErrors(ownerId, false, () => candidates.nextItems(prepared))
+  if (matches.length > 1 || candidates.hasNext
+    || matches.some(item => Object.entries(metadata).some(([key, value]) => item.metadata[key] !== value)))
+    throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation identity unavailable')
+  const recovered = matches[0]
+  if (!recovered) {
+    await observeMissingE2BAllocation(ownerId, operationId)
+    return null
+  }
+  await verifyE2BAllocation(ownerId, operationId, recovered.sandboxId, prepared, recovered)
+  await bindE2BResource(ownerId, 'sandbox', recovered.sandboxId, account.scope)
+  return recovered
 }
 
 /** Refresh authorization guards without replacing the desktop script baked

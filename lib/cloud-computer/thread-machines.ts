@@ -122,7 +122,7 @@ type ThreadSnapshotRow = {
 function snapshotUnusable(error: unknown) {
   if (sandboxGone(error)) return true
   const status = error && typeof error === 'object' ? (error as { status?: unknown; statusCode?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode : undefined
-  return status === 400 || status === 422
+  return status === 400
 }
 
 /** Delete snapshots this run superseded. A failure keeps the old reference so

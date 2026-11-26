@@ -1,6 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
+import { isCloudEdition } from '@/lib/edition'
 import { machineCommitted } from '@/lib/live/computer-state'
 
 type Probe = (workspaceId: string, sandboxId: string) => Promise<'running' | 'sleeping'>
@@ -36,5 +37,37 @@ export async function reconcileCloudMachines(pool: Pick<Pool, 'query'>, probe?: 
     changed += updated.rowCount ?? 0
     if (updated.rowCount) await machineCommitted(pool, row.ownerId, row.workspaceId)
   }
+  if (!probe && isCloudEdition()) changed += await recoverInitialCloudMachines(pool, limit)
   return changed
+}
+
+async function recoverInitialCloudMachines(pool: Pick<Pool, 'query'>, limit: number) {
+  const { reconcileInitialComputerAllocation } = await import('./e2b-provider')
+  const { rows } = await pool.query<{ workspaceId: string; ownerId: string; operationId: string }>(`WITH due AS (
+    SELECT m."workspaceId",m."ownerId",m."operationId" FROM cloud_machines m
+    JOIN e2b_compute_leases l ON l."operationId"=m."operationId" AND l."ownerId"=m."ownerId"
+    WHERE m."sandboxId" IS NULL AND m.state IN ('error','waking') AND l."paidUntil"<=now()
+      AND m."lastActiveAt"+interval '30 seconds'<=now()
+      AND (m."provisionLeaseUntil" IS NULL OR m."provisionLeaseUntil"<=now())
+    ORDER BY l."paidUntil" LIMIT $1 FOR UPDATE OF m SKIP LOCKED
+  ) UPDATE cloud_machines m SET "lastActiveAt"=now() FROM due
+    WHERE m."workspaceId"=due."workspaceId" AND m."ownerId"=due."ownerId" AND m."operationId"=due."operationId"
+    RETURNING m."workspaceId",m."ownerId",m."operationId"`, [limit])
+  let recovered = 0
+  for (const row of rows) {
+    try {
+      const allocation = await reconcileInitialComputerAllocation(row.workspaceId, row.ownerId, row.operationId)
+      if (!allocation) continue
+      const committed = await pool.query(`UPDATE cloud_machines SET "sandboxId"=$4,state='sleeping',
+          "errorCode"=NULL,"runtimeReady"=false,"provisionLeaseId"=NULL,"provisionLeaseUntil"=NULL
+        WHERE "workspaceId"=$1 AND "ownerId"=$2 AND "operationId"=$3 AND "sandboxId" IS NULL
+          AND ("provisionLeaseUntil" IS NULL OR "provisionLeaseUntil"<=now())`,
+      [row.workspaceId, row.ownerId, row.operationId, allocation.sandboxId])
+      if (committed.rowCount) {
+        recovered += committed.rowCount
+        await machineCommitted(pool, row.ownerId, row.workspaceId)
+      }
+    } catch { /* A bounded next timer retries an uncertain provider observation. */ }
+  }
+  return recovered
 }

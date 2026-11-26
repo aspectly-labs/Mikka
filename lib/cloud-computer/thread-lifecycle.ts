@@ -55,8 +55,8 @@ export type ThreadLifecycleRow = {
 }
 type Dependencies = {
   provider: Pick<typeof threadLifecycleProvider, 'info'> & {
-    keepAlive(sandboxId: string, ownerId: string, timeoutMs: number, renew?: boolean): Promise<number | void>
-  } & Partial<Pick<typeof threadLifecycleProvider, 'findCreated'>>
+    keepAlive?(sandboxId: string, ownerId: string, timeoutMs: number, renew?: boolean): Promise<number | void>
+  } & Partial<Pick<typeof threadLifecycleProvider, 'findCreated' | 'prepareKeepAlive'>>
   park: (pool: Pool, actor: Actor, runId: string, fence: ThreadMachineFence) => Promise<unknown>
   end: (pool: Pool, actor: Actor, runId: string, fence: ThreadMachineFence) => Promise<unknown>
   acknowledgeStop: (pool: Pool, actor: Actor, runId: string) => Promise<boolean>
@@ -262,6 +262,8 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     return result.rowCount ? due ?? false : now + 1
   }
   const keepAlive = async (due: number, reason: string) => {
+    const canFund = !row.stopRequestedAt && !['stop_pending', 'task_closed', 'execution_lease_lost', 'provider_paused'].includes(reason)
+    const prepared = await deps.provider.prepareKeepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, canFund)
     // A static provider timeout cannot resume a paused VM. Hold the same
     // run→machine lock order as resume/adopt while extending this exact epoch.
     const client = await pool.connect()
@@ -287,8 +289,10 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         }
       }
       const stopping = Boolean(run?.stopRequestedAt)
-      const providerDeadline = await deps.provider.keepAlive(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping)
-        ?? deps.now() + THREAD_MACHINE_PROVIDER_MS
+      const providerDeadline = stopping && canFund
+        ? (provider?.endAt ?? deps.now())
+        : (prepared ? await prepared() : await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping))
+          ?? deps.now() + THREAD_MACHINE_PROVIDER_MS
       const renewalAt = stopping ? due : Math.max(deps.now() + 5_000, providerDeadline - E2B_RENEW_LEAD_MS + 3_000)
       providerOutcome = 'timeout_renewed'
       const next = await finish({ phase: reason === 'human_review' ? 'review_resumed' : reason === 'provisioning' ? 'provisioning' : 'active', reason, failures: 0, providerDeadline }, Math.min(due, renewalAt), client)

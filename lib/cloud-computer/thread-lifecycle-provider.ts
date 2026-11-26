@@ -1,5 +1,5 @@
 import 'server-only'
-import { e2bCreationTimeout, verifyE2BAllocation, e2bSandboxTimeout, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
+import { createPrepaidE2B, e2bCreationTimeout, verifyE2BAllocation, e2bSandboxTimeout, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
 import { bindE2BResource, e2bCreateAccount, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { environmentSnapshotScope, withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -66,7 +66,7 @@ export const threadLifecycleProvider = {
       throw error
     }
   },
-  async keepAlive(sandboxId: string, ownerId: string, timeoutMs: number, renew = true): Promise<number> {
+  async prepareKeepAlive(sandboxId: string, ownerId: string, timeoutMs: number, renew = true) {
     const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
     const prepared = options(account.apiKey)
     const paidMs = await e2bSandboxTimeout(ownerId, sandboxId, timeoutMs, renew, { providerScope: account.scope,
@@ -74,9 +74,14 @@ export const threadLifecycleProvider = {
       if (!renew && error instanceof E2BKeyError && error.code === 'e2b_limit_reached') return 0
       throw error
     })
-    const dispatchedAt = Date.now()
-    if (paidMs) await withE2BErrors(ownerId, false, () => Sandbox.setTimeout(sandboxId, paidMs, prepared))
-    return dispatchedAt + paidMs
+    const deadline = Date.now() + paidMs
+    // The lifecycle holds the run and machine locks while invoking this
+    // provider-only closure. Account lookup and settled billing are complete.
+    return async () => {
+      const remaining = Math.floor((deadline - Date.now()) / 1_000) * 1_000
+      if (remaining > 0) await Sandbox.setTimeout(sandboxId, remaining, { ...prepared, requestTimeoutMs: 5_000, retries: 0 })
+      return deadline
+    }
   },
   /** Snapshot the task's filesystem. The sandbox may be left paused by E2B;
    * the caller's pause is idempotent. */
@@ -123,10 +128,10 @@ export const threadLifecycleProvider = {
     if (template === null) throw new E2BKeyError('e2b_template_unavailable', 'E2B snapshot has no verified compute record')
     const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, template, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
     const prepared = options(account.apiKey)
-    const sandbox = await withE2BErrors(ownerId, false, () => Sandbox.create(snapshotId, {
+    const sandbox = await createPrepaidE2B(ownerId, operationId, () => withE2BErrors(ownerId, false, () => Sandbox.create(snapshotId, {
       ...prepared, idempotencyKey: operationId, timeoutMs, metadata,
       lifecycle: { onTimeout: 'pause', autoResume: false },
-    }))
+    })))
     await verifyE2BAllocation(ownerId, operationId, sandbox.sandboxId, prepared)
     await bindE2BResource(ownerId, 'sandbox', sandbox.sandboxId, account.scope)
     return sandbox
