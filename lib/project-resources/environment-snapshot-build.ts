@@ -141,6 +141,17 @@ export async function expireEnvironmentSnapshot(id: string) {
   })
 }
 
+/** A timed-out queue releases the reservation and keeps any cleanup receipt. */
+export async function abandonEnvironmentSnapshotBuild(id: string) {
+  return withBuild(id, async (client, row) => {
+    if (!row) return null
+    await client.query(`UPDATE environment_snapshots SET state='failed',
+      "logTail"=CASE WHEN "logTail"='' THEN 'queue' ELSE "logTail" END
+      WHERE id=$1 AND state='building'`, [id])
+    return row.expiresAt.toISOString()
+  })
+}
+
 async function allowed(row: Build) {
   if (
     !row.requestedBy ||

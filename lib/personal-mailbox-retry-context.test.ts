@@ -47,6 +47,13 @@ const tx = {
   insert(table: unknown) { assert.equal(table, agentRuns); return { values: async (value: Record<string, unknown>) => { inserted = value } } },
 }
 const database = {
+  async execute(statement: SQL) {
+    const query = queryOf(statement)
+    assert.ok(resourceLocked)
+    assert.equal(query.sql, 'select "environmentId" from bots where id=$1 and "workspaceId"=$2 and "ownerId"=$3 and "archivedAt" is null')
+    assert.deepEqual(query.params, [botId, workspaceId, lost.userId])
+    return { rows: [{ environmentId: null }] }
+  },
   execute: async (statement: SQL) => {
     const query = queryOf(statement)
     assert.deepEqual(query.params, [lost.id, lost.userId])
@@ -152,6 +159,10 @@ const workspaceTx = {
     assert.ok(resourceLocked)
     if (query.sql === 'select mode,"repositoryKeys",revision from workspace_repository_policies where "workspaceId"=$1') {
       assert.deepEqual(query.params, [workspaceId]); return { rows: [] }
+    }
+    if (query.sql === 'select (select "environmentId" from workspace_task_environments where "issueId"=$1 and "workspaceId"=$2) as "environmentId", (select "baseBranch" from workspace_task_legacy_repository_branches where "workspaceId"=$3 and "issueId"=$4 and "repositoryKey"=$5) as "legacyBranch"') {
+      assert.deepEqual(query.params, [lost.issueId, workspaceId, workspaceId, lost.issueId, repository.repoPath])
+      return { rows: [{ environmentId: null, legacyBranch: null }] }
     }
     assert.equal(query.sql, 'select p.id,p.revision,p."archivedAt" from workspace_project_tasks t join workspace_projects p on p.id=t."projectId" and p."workspaceId"=t."workspaceId" where t."issueId"=$1 and t."workspaceId"=$2')
     assert.deepEqual(query.params, [lost.issueId, workspaceId]); return { rows: [] }

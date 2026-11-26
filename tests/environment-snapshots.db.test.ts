@@ -51,7 +51,7 @@ test(
     })
     const { environmentSnapshotScope } = await import('../lib/secrets/e2b-runtime')
     const { saveEnvironment } = await import('../lib/project-resources/store')
-    const { buildEnvironmentSnapshot, expireEnvironmentSnapshot } =
+    const { abandonEnvironmentSnapshotBuild, buildEnvironmentSnapshot, expireEnvironmentSnapshot } =
       await import('../lib/project-resources/environment-snapshot-build')
     const { readyEnvironmentSnapshot, readEnvironmentSnapshot } =
       await import('../lib/project-resources/environment-snapshots')
@@ -209,6 +209,21 @@ test(
     assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.state, 'ready')
     assert.deepEqual(await readyEnvironmentSnapshot(sizedInput), { id: sized, providerId: 'fixture-small-image' })
     assert.equal(await readyEnvironmentSnapshot({ ...sizedInput, templateId: 'fixture-codex' }), null)
+    const waiting = await addSizedReceipt('fixture-codex-small', 'building', null)
+    const held = await fixture.connect()
+    try {
+      await held.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [
+        JSON.stringify(['environment-build-slot', environmentSnapshotScope(), ws.id]),
+      ])
+      const deferred = await buildEnvironmentSnapshot(waiting)
+      assert.equal(typeof deferred, 'object')
+      assert.ok(deferred && 'retryAt' in deferred)
+    } finally {
+      held.release(true)
+    }
+    assert.match((await abandonEnvironmentSnapshotBuild(waiting)) ?? '', /^\d{4}-/)
+    assert.deepEqual((await fixture.query('SELECT state,"logTail" FROM environment_snapshots WHERE id=$1', [waiting])).rows[0],
+      { state: 'failed', logTail: 'queue' })
     const cleared = await changeTier(preserved.revision, null)
     assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.state, 'outdated')
     assert.equal(await readyEnvironmentSnapshot({ ...sizedInput, revision: cleared.revision }), null)
