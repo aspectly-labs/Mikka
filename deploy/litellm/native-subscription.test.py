@@ -41,7 +41,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
             else:
                 assert 'oauth-2025-04-20' in self.headers['anthropic-beta'], 'missing OAuth beta'
                 assert self.headers['anthropic-version'] == '2023-06-01', 'missing Anthropic version'
-                if self.path == MESSAGES:
+                if self.path in (MESSAGES, COUNT):
                     assert request['system'][0]['text'] == "You are Claude Code, Anthropic's official CLI for Claude.", 'missing Claude system prefix'
                     assert request['system'][1]['text'] == 'run safety instructions', 'CLI instructions were lost'
             self.calls.append(self.path)

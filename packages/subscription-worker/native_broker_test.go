@@ -133,6 +133,15 @@ func TestNativeBrokerMissingMIMEIsOnlyForCodexStreaming(t *testing.T) {
 	}
 }
 
+func TestNativeBrokerRefusesOversizedBodyBeforeCredentialOrProviderAccess(t *testing.T) {
+	w := Worker{Use: &RuntimeUse{RunID: "fixture"}}
+	body := make(json.RawMessage, nativeRequestMaxBytes+1)
+	err := w.NativeStream(context.Background(), 1, NativeRequest{Body: body}, func(string, string) error { return nil }, func([]byte) error { return nil })
+	if err != ErrPayloadTooLarge {
+		t.Fatal("oversized native payload did not return its typed refusal", err)
+	}
+}
+
 func TestNativeBrokerRefusalsPreserveCauseWithoutEmittingProviderBody(t *testing.T) {
 	w, _, _ := fixtureWorker(t, "claude")
 	initial := mustAcquire(t, w)
@@ -141,7 +150,7 @@ func TestNativeBrokerRefusalsPreserveCauseWithoutEmittingProviderBody(t *testing
 		status int
 		want   string
 	}{
-		{401, "reconnect_required"}, {403, "provider_access_denied"}, {429, "subscription_rate_limited"}, {503, "provider_temporarily_unavailable"},
+		{400, "provider_request_rejected"}, {401, "reconnect_required"}, {403, "provider_access_denied"}, {429, "subscription_rate_limited"}, {503, "provider_temporarily_unavailable"},
 	} {
 		t.Run(fmt.Sprint(test.status), func(t *testing.T) {
 			w.NativeClient = &http.Client{Transport: fixedTransport{status: test.status, contentType: "application/json", body: `{"error":{"message":"fixture-private-provider-text"}}`}}
@@ -285,7 +294,9 @@ func TestNativeBrokerThroughRealLiteLLM(t *testing.T) {
 			w.NativeLiteLLMURL, w.NativeLiteLLMKey = proxy, os.Getenv("LITELLM_MASTER_KEY")
 			run := func(path string, stream bool, expectedType, expectedBody string) {
 				t.Helper()
-				payload, _ := json.Marshal(map[string]any{"model": "fixture-model", "stream": stream, "system": "run safety instructions"})
+				payload, _ := json.Marshal(map[string]any{"model": "fixture-model", "stream": stream, "system": "run safety instructions",
+					"messages": []map[string]string{{"role": "user", "content": strings.Repeat("a", 300<<10)}},
+					"input":    strings.Repeat("a", 300<<10)})
 				request := NativeRequest{Path: path, Headers: map[string]string{"authorization": "Bearer caller-placeholder", "cookie": "foreign", "x-api-key": "foreign"}, Body: payload}
 				var output bytes.Buffer
 				if err := w.NativeStream(context.Background(), initial.Revision, request, func(kind string, generationID string) error {

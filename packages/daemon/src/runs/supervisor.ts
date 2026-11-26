@@ -1348,7 +1348,7 @@ export class RunSupervisor {
       credential: assignment.modelCredential,
     }
     const prewarm = !startupDirectory && this.deps.prepareSubscription && ['claude_code', 'codex'].includes(assignment.harness)
-      && assignment.subscriptionBinding && assignment.subscriptionLease && !assignment.modelCredential
+      && assignment.subscriptionBinding && assignment.subscriptionContext && assignment.modelCredential
       && !entry.sessionId && !entry.worktree && !assignment.continuesRunId && !assignment.resumeSessionId
       && !assignment.requireSessionResume && !assignment.resumeFrom
       && (!assignment.github || Boolean(assignment.github.token))
@@ -1583,7 +1583,9 @@ export class RunSupervisor {
     const previousExecution = entry.execution
     const previousRuntime = entry.runtime
     let session: AgentSession
-    if (assignment.subscriptionBinding && !assignment.subscriptionContext) throw new Error("Subscription gateway credential required")
+    if (assignment.subscriptionBinding && (!assignment.subscriptionContext || !assignment.modelCredential)) {
+      throw new CodedError('subscription_hosted_runtime_unavailable', { detail: 'assignment_invalid' })
+    }
     try {
       session = await this.stage(runId, "agent_start", async () => preparedSession
       ? await preparedSession.start({ ...options, prompt })

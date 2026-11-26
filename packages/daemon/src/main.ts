@@ -532,6 +532,7 @@ export class Daemon {
       adapters,
       startSubscription: hosted?.start ?? this.localSubscriptions()?.start,
       startCredential: hosted?.start,
+      prepareSubscription: hosted?.prepare,
       prepareRunMailbox: this.options.link.prepareRunMailbox?.bind(this.options.link),
       prepareRunDrive: this.options.link.prepareRunDrive?.bind(this.options.link),
       prepareRunToolApproval: this.options.link.prepareRunToolApproval?.bind(this.options.link),

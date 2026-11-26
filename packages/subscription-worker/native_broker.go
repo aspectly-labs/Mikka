@@ -63,7 +63,10 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
 	}
-	if len(request.Body) > 262144 || json.Unmarshal(request.Body, &body) != nil || !modelPattern.MatchString(body.Model) || len(request.Headers) > 32 {
+	if len(request.Body) > nativeRequestMaxBytes {
+		return ErrPayloadTooLarge
+	}
+	if json.Unmarshal(request.Body, &body) != nil || !modelPattern.MatchString(body.Model) || len(request.Headers) > 32 {
 		return ErrUnsupported
 	}
 	ctx, stopAuthority, eventDriven := w.watchActiveAuthority(ctx)
@@ -77,27 +80,23 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	if canonicalDecoder.Decode(&canonical) != nil {
 		return ErrUnsupported
 	}
-	request.Body, _ = json.Marshal(canonical)
 	route := ""
 	switch {
 	case w.Scope.Provider == "claude" && (request.Path == "/v1/messages" || request.Path == "/v1/messages?beta=true"):
 		route = "/v1/mikka/subscription/claude/messages"
-		var body map[string]any
-		decoder := json.NewDecoder(bytes.NewReader(request.Body))
-		decoder.UseNumber()
-		if decoder.Decode(&body) != nil {
-			return ErrUnsupported
-		}
-		body["system"] = claudeSubscriptionSystem(body["system"])
-		request.Body, _ = json.Marshal(body)
+		canonical["system"] = claudeSubscriptionSystem(canonical["system"])
 	case w.Scope.Provider == "claude" && request.Path == "/v1/messages/count_tokens":
 		route = "/v1/mikka/subscription/claude/count_tokens"
+		canonical["system"] = claudeSubscriptionSystem(canonical["system"])
 	case w.Scope.Provider == "codex" && request.Path == "/responses":
 		route = "/v1/mikka/subscription/codex/responses"
 		canonical["store"] = false
-		request.Body, _ = json.Marshal(canonical)
 	default:
 		return ErrUnsupported
+	}
+	request.Body, _ = json.Marshal(canonical)
+	if len(request.Body) > nativeRequestMaxBytes {
+		return ErrPayloadTooLarge
 	}
 	base, err := url.Parse(w.NativeLiteLLMURL)
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" ||

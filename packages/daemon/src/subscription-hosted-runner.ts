@@ -3,9 +3,11 @@ import type { AnonymousClaudeCandidate, FreshCandidate } from './anonymous-claud
 // Each hosted task owns its E2B machine. The owner-bound claim supplies
 // the run-bound gateway credential. Official CLIs use the machine's normal
 // HOME, environment and working directory Git metadata.
+import { randomUUID } from 'node:crypto'
+import { prepareAgentStart, type ClaudePreparation } from './adapters/claude-prewarm'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, realpathSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { SpawnOptions, SpawnedProcess } from '@anthropic-ai/claude-agent-sdk'
 import type { HarnessInfo, RunAssignment } from '@mikka/protocol'
@@ -121,7 +123,7 @@ export async function createHostedBotRunner(host: {
       !options.apps?.apps.length && !assignment.computer && !options.factoryCheck ? offered : undefined
     return { anonymous, offered, fresh }
   }
-  const start = async (assignment: RunAssignment, options: StartOptions): Promise<AgentSession> => {
+  const start = async (assignment: RunAssignment, options: StartOptions, preparation?: ClaudePreparation): Promise<AgentSession> => {
       const gate = requireRunToolApproval(options.runId, options.toolApproval)
       const selected = assignment.subscriptionBinding
       const apiKey = assignment.modelCredential
@@ -193,7 +195,7 @@ export async function createHostedBotRunner(host: {
         assertOpen()
         const paths = runPaths(host.stateDir, assignment.runId)
         mkdirSync(paths.runDir, { recursive: true, mode: 0o700 })
-        const cwd = realpathSync(options.cwd)
+        const cwd = preparation ? resolve(options.cwd) : realpathSync(options.cwd)
         const env = Object.fromEntries(Object.entries({ ...process.env, ...options.env, ...assignment.taskEnv })
           .filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
         // Anonymous initialization uses this same trusted diagnostic switch.
@@ -224,6 +226,7 @@ export async function createHostedBotRunner(host: {
         if (continuation && existsSync(ledger)) throw unavailable('ledger_mismatch')
         const previousLedger = continuation ? join(host.stateDir, 'native-ledgers', continuation.runId + '.json') : ledger
         const previous = scope ? readJson(previousLedger) as { scope: typeof scope; sessionId: string } | undefined : undefined
+        if (preparation && previous) throw unavailable('ledger_mismatch')
         const expectedScope = scope && continuation ? { ...scope, runId: continuation.runId } : scope
         if (scope && ((existsSync(previousLedger) && (!previous || JSON.stringify(previous.scope) !== JSON.stringify(expectedScope) || typeof previous.sessionId !== 'string')) ||
           (assignment.requireSessionResume && (!previous || previous.sessionId !== assignment.resumeSessionId)))) throw unavailable('ledger_mismatch')
@@ -250,7 +253,7 @@ export async function createHostedBotRunner(host: {
           const childEnv = { ...env, ...config.env, ...hostedTiming?.env }
           for (const key of cliTiming?.unsetEnv ?? []) delete childEnv[key]
           const child = spawn(binaries[kind]!, [...config.args, ...(hostedTiming?.args ?? [])], {
-            cwd, env: childEnv, detached: true,
+            cwd: preparation ? config.cwd : cwd, env: childEnv, detached: true,
             stdio: ['pipe', 'pipe', 'pipe'],
           })
           children.add(child)
@@ -283,7 +286,22 @@ export async function createHostedBotRunner(host: {
         const runtimeOptions = { ...options, env, cwd, machineEnvironment: true as const,
           mcpHttpObservationUrl: cliTiming?.mcpHttpObservationUrl,
           credential: apiKey, ...(assignment.requireSessionResume ? { requireSessionResume: true } : {}) }
-        const session = previous && !continuation
+        let session: AgentSession
+        if (preparation) {
+          if (!(adapter instanceof ClaudeAdapter) || !scope || !subscription || continuation || assignment.requireSessionResume)
+            throw unavailable('assignment_invalid')
+          const finalOptions = preparation.finalOptions.then(final => {
+            if (JSON.stringify(final.env) !== JSON.stringify(options.env) || final.toolApproval !== gate)
+              throw unavailable('assignment_invalid')
+            return { ...final, env, cwd: realpathSync(final.cwd), machineEnvironment: true as const,
+              mcpHttpObservationUrl: cliTiming?.mcpHttpObservationUrl, credential: apiKey }
+          })
+          void finalOptions.catch(() => undefined)
+          session = await adapter.startPrepared(runtimeOptions, { ...scope,
+            sessionId: anonymous && anonymous.state !== 'closed' ? (anonymous as AnonymousClaudeCandidate).sessionId : randomUUID(), cwd, deviceId: assignment.deviceId, model: subscription.modelId,
+            policyHash: options.policyHash ?? null,
+          }, { ...preparation, finalOptions }, async () => { await Promise.all([...children].map(child => stopGroup(child))); await anonymous?.close() })
+        } else session = previous && !continuation
           ? await adapter.resume(previous.sessionId, runtimeOptions) : await adapter.start(runtimeOptions)
         if (assignment.requireSessionResume && session.sessionId !== assignment.resumeSessionId) {
           await session.cancel(); throw unavailable('session_mismatch')
@@ -315,5 +333,39 @@ export async function createHostedBotRunner(host: {
   return {
     harnesses: Object.keys(binaries).filter(kind => binaries[kind as keyof typeof binaries]) as ('codex' | 'claude_code')[],
     binaries: { ...binaries }, command: runHostedCommand, start,
+    prepare(assignment: RunAssignment, options: StartOptions, signal: AbortSignal) {
+      if (!['claude_code', 'codex'].includes(assignment.harness) || !assignment.subscriptionBinding || !assignment.subscriptionContext ||
+        !assignment.modelCredential || assignment.requireSessionResume || assignment.continuesRunId || assignment.resumeFrom ||
+        assignment.resumeSessionId || options.continueSession || (assignment.github && !assignment.github.token))
+        throw unavailable('assignment_invalid')
+      const { anonymous } = anonymousFor(assignment, options)
+      if (assignment.harness === 'codex') {
+        const candidate = anonymous as AnonymousCodexCandidate | undefined
+        const startCodex = (final: StartOptions) => start(assignment, final)
+        let boundStart: typeof startCodex | undefined
+        const prepared = prepareAgentStart(signal, async control => {
+          const stop = () => { void candidate?.close().catch(() => undefined) }
+          control.signal.addEventListener('abort', stop, { once: true })
+          try {
+            control.parked()
+            const final = await control.finalOptions
+            control.signal.throwIfAborted()
+            return await (boundStart ?? startCodex)(final)
+          } finally { control.signal.removeEventListener('abort', stop) }
+        })
+        return { ready: prepared.ready, start: (final: StartOptions) => {
+          boundStart ??= daemonTracer.bindStartupTiming(startCodex)
+          return prepared.start(final)
+        }, cancel: async () => {
+          await candidate?.close(); await prepared.cancel()
+        }, get preparationTiming() { return candidate?.preparationTiming } }
+      }
+      const prepared = prepareAgentStart(signal, control => {
+        const work = () => start(assignment, options, control)
+        return anonymous ? (anonymous as AnonymousClaudeCandidate).measurePreparation(work) : work()
+      }, runDiagnosticsEnabled(assignment.taskEnv, host.collectCliTiming) && !anonymous ? { runId: assignment.runId, harness: 'claude_code' } : undefined)
+      return { ready: prepared.ready, start: prepared.start, cancel: prepared.cancel,
+        get preparationTiming() { return anonymous?.preparationTiming ?? prepared.preparationTiming } }
+    },
   }
 }

@@ -79,7 +79,8 @@ import { daemonTooOld, daemonVersions } from '@/lib/daemon-release'
 /**
  * `POST /v1/devices/:deviceId/runs/:runId/claim`: hands the daemon everything
  * it needs to run. 409 means the run is not queued for this device — the
- * daemon's `RunNotPinnedHereError`, and it stops asking.
+ * daemon's `RunNotPinnedHereError`, and it stops asking. A subscription
+ * precondition failure closes its queued run with durable upgrade guidance.
  */
 async function handlePOST(request: Request, { params }: { params: Promise<{ deviceId: string; runId: string }> }) {
   const { runId } = await params
@@ -234,8 +235,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     }
     return RouteResponse.json({ error: 'Subscription requires a broker-enabled hosted runner.' }, { status: 409 })
   }
-  if (subscription && (!receivesRunCredentials || request.headers.get(SUBSCRIPTION_GATEWAY_HEADER) !== '1'))
-    return RouteResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
+  if (subscription && (!receivesRunCredentials || request.headers.get(SUBSCRIPTION_GATEWAY_HEADER) !== '1')) {
+    await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
+    return RouteResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 428 })
+  }
   if (device.kind === 'local' && (!repo.remoteUrl || !localExecutionHarnesses(device.harnesses).includes(harness))) return RouteResponse.json({ error: 'Repository or execution harness unavailable.' }, { status: 409 })
   if ((harness === 'codex' || harness === 'claude_code') && !device.harnesses.some(info => info.harness === harness && info.installed && info.toolApproval === true)) return RouteResponse.json({ error: 'Run approval capability unavailable.' }, { status: 409 })
   // A run frozen on the person's API key goes only to a daemon that injects it; nothing is opened yet.
@@ -508,7 +511,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         const context = await runtime.nativeContext(await runtime.nativeRun(caller.userId, deviceId, runId), request.signal)
         const { mintGatewayToken } = await import('@/lib/model-gateway/token')
         const { token } = await mintGatewayToken(pool, { runId, ownerId: caller.userId, workspaceId: run.workspaceId ?? subscription.workspaceId, harness,
-          model: context.modelId, source: { kind: 'subscription', deviceId } })
+          model: context.modelId, source: { kind: 'subscription', deviceId } }, { subscriptionLeaseExpiresAt: leaseExpiresAt })
         const credential = runModelCredentialSchema.parse({ kind: 'provider', protocol, baseUrl: gatewayUrl.toString(), key: token })
         return { context, credential }
       } catch (error) { throw new CodedError('run_credentials_unavailable', { detail: nativeCredentialDetail(error), cause: error }) }

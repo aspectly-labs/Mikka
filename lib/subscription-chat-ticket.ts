@@ -3,7 +3,6 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { z } from 'zod'
 import type { SubscriptionUse } from '@mikka/protocol/subscription'
 import { decodeHostedCallId, hostedCallId } from './model-gateway/hosted-call-id.mjs'
-import { gatewayLiteLlm } from './model-gateway/config'
 import { stepIdentity } from './model-call-timing'
 import { captureTraceContext } from './tracing/context'
 
@@ -18,12 +17,19 @@ const intentSchema = z.object({
 }).strict()
 export const chatEnvelopeSchema = z.object({ model: z.string().min(1).max(128), ticket: z.string().max(4096), payload: z.string() }).strict()
 export type ChatEnvelope = z.infer<typeof chatEnvelopeSchema>
-const signature = (key: string, bytes: string) => createHmac('sha256', key).update(boundary).update(bytes).digest()
+const signature = (key: Buffer, bytes: string) => createHmac('sha256', key).update(boundary).update(bytes).digest()
 const digest = (payload: string) => createHash('sha256').update(payload, 'utf8').digest('base64url')
 
+function chatSigningKey() {
+  const applicationSecret = process.env.BETTER_AUTH_SECRET?.trim()
+  if (!applicationSecret || applicationSecret.length < 32 ||
+    applicationSecret === process.env.MIKKA_LITELLM_MASTER_KEY?.trim()) return null
+  return createHmac('sha256', applicationSecret).update('mikka:subscription-chat-ticket-key:v1').digest()
+}
+
 export async function signSubscriptionChat(use: SubscriptionUse, model: string, payload: string) {
-  const key = gatewayLiteLlm()?.masterKey
-  if (!key) throw new Error('litellm_not_configured')
+  const key = chatSigningKey()
+  if (!key) throw new Error('subscription_chat_signing_unavailable')
   const callId = hostedCallId(randomUUID(), await stepIdentity())
   const intent = intentSchema.parse({ use: { ...use, execution: 'model' }, model, callId, expires: Date.now() + TICKET_VALIDITY_MS,
     digest: digest(payload), traceparent: captureTraceContext()?.traceparent })
@@ -32,7 +38,7 @@ export async function signSubscriptionChat(use: SubscriptionUse, model: string, 
 }
 
 export function verifySubscriptionChat(input: ChatEnvelope, now = Date.now()) {
-  const key = gatewayLiteLlm()?.masterKey
+  const key = chatSigningKey()
   if (!key) return null
   const [bytes, mac, extra] = input.ticket.split('.')
   if (!bytes || !mac || extra !== undefined || !/^[\w-]+$/.test(bytes) || !/^[\w-]{43}$/.test(mac)) return null

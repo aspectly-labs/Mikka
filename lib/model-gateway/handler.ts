@@ -14,6 +14,7 @@ import { readRunChain } from '@/lib/run-chain'
 import { claimSubscriptionUsage, finishSubscriptionUsage, recordExternalModelUsage, type ModelReceipt } from './ledger'
 import { modelGatewayProtocolBody } from './protocol-fields.mjs'
 import { liteLLMResponseCost } from './litellm-client'
+import { WorkerRefusal } from '../../packages/daemon/src/subscription-worker-client'
 
 /** The same input-size boundary the hosted model applies to one call. */
 const MAX_BODY_BYTES = 16 * 1024 * 1024
@@ -43,8 +44,8 @@ export class GatewayRefusal extends Error {
 
 function errorResponse(protocol: GatewayProtocol, status: number, code: string): Response {
   const body = protocol === 'anthropic'
-    ? { type: 'error', error: { type: status === 401 ? 'authentication_error' : status === 402 ? 'billing_error' : status === 400 ? 'invalid_request_error' : 'api_error', message: code } }
-    : { error: { message: code, type: status === 402 ? 'insufficient_quota' : status === 401 ? 'invalid_api_key' : 'invalid_request_error', code } }
+    ? { type: 'error', error: { type: status === 401 ? 'authentication_error' : status === 402 ? 'billing_error' : status === 403 ? 'permission_error' : status === 413 ? 'request_too_large' : status === 429 ? 'rate_limit_error' : status === 400 ? 'invalid_request_error' : 'api_error', message: code } }
+    : { error: { message: code, type: status === 402 ? 'insufficient_quota' : status === 401 ? 'invalid_api_key' : status === 429 ? 'rate_limit_error' : status >= 500 ? 'server_error' : 'invalid_request_error', code } }
   return Response.json(body, { status, headers: { 'cache-control': 'no-store' } })
 }
 
@@ -234,8 +235,17 @@ export function modelGatewayDependencies(): GatewayDependencies {
   }
 }
 
+const nativeSubscriptionRefusalStatus = new Map<string, number>([
+  ['reconnect_required', 401],
+  ['provider_access_denied', 403],
+  ['provider_request_rejected', 400],
+  ['subscription_payload_too_large', 413],
+  ['subscription_rate_limited', 429],
+  ['provider_temporarily_unavailable', 503],
+])
+
 export async function forwardNativeSubscription(grant: GatewayGrant, protocol: GatewayProtocol, operation: GatewayOperation,
-  body: Record<string, unknown>, request: Request, supplied?: import('@/lib/subscription-service').SubscriptionService) {
+  body: Record<string, unknown>, request: Request, supplied?: Pick<import('@/lib/subscription-service').SubscriptionService, 'nativeRun' | 'nativeRequest'>) {
   if (grant.source.kind !== 'subscription') throw new GatewayRefusal(403, 'model_gateway_protocol_mismatch')
   const service = supplied ?? (await import('@/lib/subscription-runtime')).subscriptionRuntime(true)
   const use = await service.nativeRun(grant.ownerId, grant.source.deviceId, grant.runId)
@@ -247,7 +257,15 @@ export async function forwardNativeSubscription(grant: GatewayGrant, protocol: G
       return value ? [[name, value]] : []
     }))
   const payload = { ...modelGatewayProtocolBody(protocol, body), model: grant.model }
-  const upstream = await service.nativeRequest(use, { path, headers, body: payload }, request.signal)
+  if (Buffer.byteLength(JSON.stringify(payload)) > MAX_BODY_BYTES) {
+    throw new GatewayRefusal(413, 'model_gateway_body_too_large')
+  }
+  const upstream = await service.nativeRequest(use, { path, headers, body: payload }, request.signal).catch(error => {
+    if (!(error instanceof WorkerRefusal)) throw error
+    const status = nativeSubscriptionRefusalStatus.get(error.code)
+    if (!status) throw error
+    throw new GatewayRefusal(status, error.code, { cause: error })
+  })
   return new Response(upstream.body, { headers: { 'content-type': upstream.contentType, ...(upstream.generationId ? { 'x-litellm-call-id': upstream.generationId } : {}) } })
 }
 

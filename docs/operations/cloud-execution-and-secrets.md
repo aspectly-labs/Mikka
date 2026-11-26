@@ -16,7 +16,7 @@ Cloud execution authority stays on the task's machine ([2026-11-06-1800](../desi
 
 ### Subscription chat release prerequisites
 
-On Cloudflare, the LiteLLM container sets `MIKKA_SUBSCRIPTION_CPA_CHAT_URL` to its intercepted private HTTPS origin whenever the reviewed `SUBSCRIPTION_API` service binding is configured. Its `/v1/mikka/subscription/chat` pass-through reaches the Business API's private callback RPC. Public ingress rejects that callback path. The API signs each call with the LiteLLM master key and binds its model, payload, scope and expiry. The callback rejects unsigned requests and rechecks subscription access before opening the private CPA worker stream. OAuth credentials stay with CPA.
+On Cloudflare, the LiteLLM container sets `MIKKA_SUBSCRIPTION_CPA_CHAT_URL` to its intercepted private HTTPS origin whenever the reviewed `SUBSCRIPTION_API` service binding is configured. Its `/v1/mikka/subscription/chat` pass-through reaches the Business API's private callback RPC. Public ingress rejects that callback path. The application signs each call with a key derived from the application auth secret and binds its model, payload, scope and expiry. Eve and Business API use the same application secret. LiteLLM receives only its own service key. The callback rejects unsigned requests and rechecks subscription access before opening the private CPA worker stream. OAuth credentials stay with CPA.
 
 The private release pairs LiteLLM with the stage-matched Business API Worker and verifies its active version and private route configuration. Verify successful streaming, replay rejection and one linked usage receipt on the stage-matched runtime before the authorized cutover in [#1954](https://github.com/aspectly-labs/Mikka/issues/1954).
 

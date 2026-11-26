@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
 import { test } from 'node:test'
 import { signSubscriptionChat, verifySubscriptionChat, type ChatEnvelope } from './subscription-chat-ticket'
 
@@ -6,7 +7,7 @@ const use = { ownerId: 'fixture-owner', workspaceId: 'a0000000-0000-4000-8000-00
   bindingId: 'a0000000-0000-4000-8000-000000000002', consumerId: 'coordinator', execution: 'model' as const }
 
 test('LiteLLM chat ticket binds the exact model, payload, owner and short expiry', async () => {
-  const values = { MIKKA_LITELLM_URL: 'http://127.0.0.1:4012', MIKKA_LITELLM_MASTER_KEY: 'synthetic-master-key-only' }
+  const values = { MIKKA_LITELLM_URL: 'http://127.0.0.1:4012', MIKKA_LITELLM_MASTER_KEY: 'synthetic-master-key-only', BETTER_AUTH_SECRET: 'synthetic-application-secret-used-only-by-signing' }
   const previous = Object.fromEntries(Object.keys(values).map(key => [key, process.env[key]]))
   Object.assign(process.env, values)
   try {
@@ -23,8 +24,18 @@ test('LiteLLM chat ticket binds the exact model, payload, owner and short expiry
     const edited = { ...intent, use: { ...use, ownerId: 'another-owner' } }
     assert.ok(claims && mac)
     assert.equal(verifySubscriptionChat({ ...envelope, ticket: `${Buffer.from(JSON.stringify(edited)).toString('base64url')}.${mac}` }), null)
-    process.env.MIKKA_LITELLM_MASTER_KEY = 'different-installation-key'
+    const proxyDerivedKey = createHmac('sha256', values.MIKKA_LITELLM_MASTER_KEY).update('mikka:subscription-chat-ticket-key:v1').digest()
+    const proxyMac = createHmac('sha256', proxyDerivedKey).update('mikka/subscription/chat/v1\0').update(claims).digest('base64url')
+    assert.equal(verifySubscriptionChat({ ...envelope, ticket: `${claims}.${proxyMac}` }), null)
+    process.env.MIKKA_LITELLM_MASTER_KEY = 'different-converter-key'
+    assert.deepEqual(verifySubscriptionChat(envelope), intent)
+    process.env.BETTER_AUTH_SECRET = 'a-different-installation-auth-secret'
     assert.equal(verifySubscriptionChat(envelope), null)
+    process.env.MIKKA_LITELLM_MASTER_KEY = process.env.BETTER_AUTH_SECRET
+    await assert.rejects(signSubscriptionChat(use, 'fixture-chat', envelope.payload), /subscription_chat_signing_unavailable/)
+    delete process.env.BETTER_AUTH_SECRET
+    assert.equal(verifySubscriptionChat(envelope), null)
+    await assert.rejects(signSubscriptionChat(use, 'fixture-chat', envelope.payload), /subscription_chat_signing_unavailable/)
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key]

@@ -43,15 +43,15 @@ async function fixture(options: { cloneFailure?: boolean; legacyCatalogue?: bool
     leaseExpiresAt: new Date(Date.now() + 600_000).toISOString(),
     ...(options.diagnostics === 'task' ? { taskEnv: { CLOUD_STARTUP_TIMING: '1' } } : {}),
     subscriptionBinding: { bindingId: randomUUID(), ownerId: randomUUID(), workspaceId: randomUUID(), consumerId: randomUUID(), route: 'claude_code_cli' },
-    subscriptionLease: { accountId: 'fixture-account', revision: 1, route: 'claude_code_cli', modelId: 'claude-haiku-5-5',
-      accessToken: 'synthetic-fixture-only', expiresAt: new Date(Date.now() + 600_000).toISOString() },
+    modelCredential: { kind: 'provider', protocol: 'anthropic', key: 'mkg_' + 'a'.repeat(43),
+      baseUrl: 'https://mikka.invalid/api/model-gateway/anthropic' },
+    subscriptionContext: { accountId: 'fixture-account', revision: 1, route: 'claude_code_cli', modelId: 'claude-haiku-5-5', expiresAt: new Date(Date.now() + 600_000).toISOString() },
     mcp: { url: endpoint.href, token: 'mkw_' + 'x'.repeat(43), mailbox: true,
       ...(!options.legacyCatalogue ? { mailboxCatalogue: { version: 1, transport: 'mikka-stateless-2025-06-18', tools: ['mailbox_inbox'] } } : {}) } }
   const cloneEntered = deferred(), cloneRelease = deferred(), parked = deferred(), user = deferred(), agentStarted = deferred()
   const mailboxEntered = deferred(), mailboxAborted = deferred()
   const children: ChildProcess[] = [], events: Array<Record<string, unknown>> = [], records: OutboxItem[] = []
-  const adapter = new ClaudeAdapter({ stateDir, subscriptionAuth: { accountId: 'fixture-account', automaticRefresh: true,
-    token: async () => ({ accountId: 'fixture-account', accessToken: 'synthetic-fixture-only', expiresAt: assignment.subscriptionLease!.expiresAt }) },
+  const adapter = new ClaudeAdapter({ stateDir,
     spawnHosted(config) {
       const child = spawn(process.execPath, [resolve(import.meta.dirname, 'fakes/fake-claude-prewarm.mjs'), ...config.args],
         { cwd: config.cwd, env: config.env, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] })
@@ -68,7 +68,7 @@ async function fixture(options: { cloneFailure?: boolean; legacyCatalogue?: bool
     const value = nativeOptions(input)
     const prepared = prepareAgentStart(signal, control => adapter.startPrepared(value, { ...claimed.subscriptionBinding!,
       runId: claimed.runId, sessionId: randomUUID(), cwd: value.cwd, deviceId: claimed.deviceId,
-      accountId: claimed.subscriptionLease!.accountId, revision: claimed.subscriptionLease!.revision, model: claimed.model!, policyHash: value.policyHash ?? null,
+      accountId: claimed.subscriptionContext!.accountId, revision: claimed.subscriptionContext!.revision, model: claimed.model!, policyHash: value.policyHash ?? null,
     }, { ...control, finalOptions: control.finalOptions.then(nativeOptions) }, async () => { await Promise.all(children.map(child => stopGroup(child, 1000))) }),
     runDiagnosticsEnabled(claimed.taskEnv, options.diagnostics === 'host') ? { runId: claimed.runId, harness: 'claude_code' } : undefined)
     void prepared.ready.then(() => parked.resolve(), () => undefined)

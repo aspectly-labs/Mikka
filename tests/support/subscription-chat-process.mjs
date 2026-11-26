@@ -26,6 +26,7 @@ export async function startSubscriptionChatProcess(t, service) {
   tracer.register({ propagator: new W3CTraceContextPropagator() })
   t.after(async () => { await tracer.shutdown(); trace.disable(); context.disable(); propagation.disable() })
   const masterKey = 'sk-fixture-subscription-chat'
+  const appSigningSecret = 'private-fixture-chat-signing-secret-not-shared-with-proxy'
   const callback = createServer(async (incoming, outgoing) => {
     const cancel = new AbortController()
     outgoing.on('close', () => { if (!outgoing.writableEnded) cancel.abort() })
@@ -34,6 +35,7 @@ export async function startSubscriptionChatProcess(t, service) {
       for await (const chunk of incoming) chunks.push(chunk)
       const body = Buffer.concat(chunks).toString()
       assert.doesNotMatch(body + JSON.stringify(incoming.headers), /fixture-access|fixture-refresh|fixture-workload-token|sk-fixture-subscription-chat/)
+      assert.ok(!(body + JSON.stringify(incoming.headers)).includes(appSigningSecret))
       captured.push(JSON.parse(body))
       const response = await handleSubscriptionChat(new Request('http://127.0.0.1/internal/subscription/chat', {
         method: 'POST', body, headers: incoming.headers, signal: cancel.signal,
@@ -74,9 +76,11 @@ export async function startSubscriptionChatProcess(t, service) {
     })()])
     assert.ok(health, 'Pinned LiteLLM process did not start')
   }
-  const old = { MIKKA_LITELLM_URL: process.env.MIKKA_LITELLM_URL, MIKKA_LITELLM_MASTER_KEY: process.env.MIKKA_LITELLM_MASTER_KEY }
+  const old = { MIKKA_LITELLM_URL: process.env.MIKKA_LITELLM_URL, MIKKA_LITELLM_MASTER_KEY: process.env.MIKKA_LITELLM_MASTER_KEY,
+    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET }
   process.env.MIKKA_LITELLM_URL = liteUrl ?? callbackUrl
   process.env.MIKKA_LITELLM_MASTER_KEY = masterKey
+  process.env.BETTER_AUTH_SECRET = appSigningSecret
   t.after(() => {
     for (const [name, value] of Object.entries(old)) {
       if (value === undefined) delete process.env[name]

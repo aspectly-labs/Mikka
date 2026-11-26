@@ -66,7 +66,7 @@ import { nativeMcpProcess, type RunApps } from "../agents/run-apps"
 import { taskMcpSecretValues } from '@mikka/protocol'
 import type { AgentSandbox } from "../agents/sandbox"
 import { carryHistory, ownDir, wipeRunCredentials } from "../agents/harness-home"
-import { claudeCredentialEnv, credentialDomain, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
+import { claudeCredentialEnv, credentialDomain, isSubscriptionGatewayCredential, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
 import { buildChildEnv } from "../env"
 import { taskExecutionEnv } from '../task-env'
 import { mailboxInputs } from '@mikka/protocol/mailbox'
@@ -517,7 +517,7 @@ export class ClaudeAdapter implements AgentAdapter {
   /** Trusted hosted fresh-task path. The same open/account/input logic runs
    * after checkout; no separate adapter or alternate CLI is introduced. */
   startPrepared(options: StartOptions, binding: ClaudePrewarmBinding, control: ClaudePreparation, stop: () => Promise<void>): Promise<AgentSession> {
-    if (!options.machineEnvironment || !this.options.spawnHosted || !this.options.subscriptionAuth ||
+    if (!options.machineEnvironment || !this.options.spawnHosted || !isSubscriptionGatewayCredential(options.credential, 'anthropic') ||
       options.continueSession || options.requireSessionResume) throw Error('Claude preparation requires a fresh hosted subscription')
     return this.open(binding.sessionId, 'new', options.prompt, options, { binding, control, stop })
   }

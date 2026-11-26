@@ -374,9 +374,10 @@ const sources = new Map([
   `],
   ['/lib/github/user-access.ts', 'export async function githubTokenForUser(owner){const p=globalThis.claimResponseProbe;p.credentialOwners.push(owner);await p.beforeCredential?.();if(p.credentialFailure)throw p.credentialFailure;return {token:"fixture-claim-github-token",githubAccountId:"123",expiresAt:new Date("2030-01-01T00:00:00.000Z")}}'],
   ['/lib/model-gateway/token.ts', `import assert from 'node:assert/strict'
-    export async function mintGatewayToken(_query,grant){
+    export async function mintGatewayToken(_query,grant,options){
       const p=globalThis.claimResponseProbe
       assert.equal(grant.source.kind,'subscription')
+      assert.equal(options?.subscriptionLeaseExpiresAt, p.run.leaseExpiresAt.toISOString())
       p.subscriptionGatewayGrants.push(structuredClone(grant))
       return {token:'mkg_'+'a'.repeat(43),expiresAt:new Date('2030-01-01T00:00:00.000Z')}
     }`],

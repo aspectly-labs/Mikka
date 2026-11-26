@@ -25,7 +25,7 @@ export interface GatewayGrant {
 }
 
 const PREFIX = 'mkg_'
-/** A run's machine budget is shorter; the run's own state ends the token sooner (`verifyGatewayToken`). */
+/** The default gateway lifetime for API-key and credits runs. */
 export const GATEWAY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000
 /** The run states in which its CLI may still call a model, as `validateRunApiKey` checks them. */
 const ACTIVE_RUN = ['queued', 'preparing', 'running', 'paused', 'waiting_input', 'finishing']
@@ -33,14 +33,17 @@ const ACTIVE_RUN = ['queued', 'preparing', 'running', 'paused', 'waiting_input',
 export const hashGatewayToken = (token: string) => createHash('sha256').update(token).digest('hex')
 const tokenShape = /^mkg_[A-Za-z0-9_-]{43}$/
 
-export async function mintGatewayToken(query: Query, grant: GatewayGrant, now = Date.now()): Promise<{ token: string; expiresAt: Date }> {
+export async function mintGatewayToken(query: Query, grant: GatewayGrant,
+  { now = Date.now(), subscriptionLeaseExpiresAt }: { now?: number; subscriptionLeaseExpiresAt?: string } = {}): Promise<{ token: string; expiresAt: Date }> {
   z.uuid().parse(grant.runId)
   if (grant.workspaceId) z.uuid().parse(grant.workspaceId)
   if (grant.source.kind === 'api_key') z.uuid().parse(grant.source.keyId)
   if (grant.source.kind === 'subscription') z.uuid().parse(grant.source.deviceId)
   const model = z.string().trim().min(1).max(128).parse(grant.model)
   const token = PREFIX + randomBytes(32).toString('base64url')
-  const expiresAt = new Date(now + GATEWAY_TOKEN_TTL_MS)
+  const expiresAt = new Date(grant.source.kind === 'subscription' && subscriptionLeaseExpiresAt
+    ? subscriptionLeaseExpiresAt : now + GATEWAY_TOKEN_TTL_MS)
+  if (expiresAt.getTime() <= now || !Number.isFinite(expiresAt.getTime())) throw new Error('model_gateway_lease_expired')
   await query.query(`INSERT INTO model_gateway_tokens ("tokenHash","runId","ownerId","workspaceId",harness,model,"sourceKind","keyId","expiresAt","deviceId")
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
   [hashGatewayToken(token), grant.runId, grant.ownerId, grant.workspaceId, grant.harness, model, grant.source.kind,

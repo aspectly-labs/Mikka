@@ -783,10 +783,10 @@ test('a cloud subscription requires gateway and credential support before leasin
     Object.assign(probe, { caller: { userId: 'member', scopeDeviceId: 'device', scopeWorkspaceId: workspaceId },
       cloud: { subscription: { id: 'binding', consumerId: 'agent', workspaceId, route: 'codex_cli', modelId: 'gpt-6-luna' } } })
     Object.assign(probe.device, { kind: 'cloud', harnesses: [{ harness: 'codex', installed: true, toolApproval: true, subscriptionBroker: true }] })
-    const response = await claim(probe, ['skill-preflight'])
-    assert.equal(response.status, 409)
+    const response = await claim(probe, ['skill-preflight', 'daemon-upgrade'])
+    assert.equal(response.status, 428)
     assert.equal((await response.json()).code, 'daemonUpgradeRequired')
-    assert.equal(probe.run.status, 'queued')
+    assert.equal(probe.run.status, 'failed')
     assert.equal(probe.run.leaseExpiresAt, null)
     assert.deepEqual(probe.nativeContextCalls, [])
     assert.deepEqual(probe.subscriptionGatewayGrants, [])
