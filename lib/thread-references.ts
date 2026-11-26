@@ -47,9 +47,16 @@ export function referenceQueryReady(query: string) {
   return parsed.kind === 'ready' || parsed.kind === 'empty' || /^[1-9]$/.test(query)
 }
 
+/** Strip machine-only context wrappers prepended/appended for the agent so human bubbles display only the user's text. */
+export function stripMachineContextBlocks(text: string): string {
+  return text
+    .replace(/^(?:<(?:mentions|references)>\n[\s\S]*?\n<\/(?:mentions|references)>\n\n)+/, '')
+    .replace(/\n\n\[Mikka skill request: [^\]]+\]$/, '')
+}
+
 /** A person's other words, UUIDs, and Markdown stay literal. */
 export function personReferenceParts(text: string) {
-  return splitCitations(text, true).map(part => {
+  return splitCitations(stripMachineContextBlocks(text), true).map(part => {
     if (part.type === 'chat' || part.type === 'bot') return { kind: part.type, id: part.id }
     if (part.type === 'citation' && part.kind) return { kind: part.kind === 'issue' ? 'task' as const : 'thread' as const, id: part.id }
     if (part.type === 'link' && pullRequest.test(part.url)) return { kind: 'pr' as const, id: part.url }

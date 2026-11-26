@@ -546,7 +546,7 @@ async function readThreadComposerModel(runId: string) {
   return model?.selectedModel || model?.servedModel ? { selected: model.selectedModel, served: model.servedModel } : undefined
 }
 
-async function readThreadMessages(runIds: string[], viewerId: string, ids?: string[]): Promise<IssueThreadDetail['messages']> {
+async function readThreadMessages(runIds: string[], viewerId: string, ownerUserId: string, ids?: string[]): Promise<IssueThreadDetail['messages']> {
   if (ids && !ids.length) return []
   const { systemEventDataSchema } = await import('@mikka/protocol/slash-commands')
   const messages = await db.select({ id: runMessages.id, sourceRunId:runMessages.runId, editable:sql<boolean>`${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
@@ -557,7 +557,7 @@ async function readThreadMessages(runIds: string[], viewerId: string, ids?: stri
       .leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id), eq(coordinatorEvents.userId, runMessages.userId), eq(coordinatorEvents.kind, 'user_message')))
       .where(ids ? and(inArray(runMessages.runId, runIds), inArray(runMessages.id, ids)) : inArray(runMessages.runId, runIds))
       .orderBy(asc(runMessages.createdAt), asc(runMessages.id))
-  return messages.map(message => {
+  const mapped = messages.map(message => {
     const parsedEvent = message.systemEvent ? systemEventDataSchema.safeParse(message.systemEvent) : null
     return {
       id: message.id, sourceRunId: message.sourceRunId, editable: message.editable && message.userId === viewerId,
@@ -567,14 +567,16 @@ async function readThreadMessages(runIds: string[], viewerId: string, ids?: stri
       author: message.name || message.email || '', image: message.image ?? null, mine: message.userId === viewerId,
     }
   })
+  const { enrichSideNoteEvents } = await import('@/lib/thread-commands')
+  return enrichSideNoteEvents(pool, ownerUserId, mapped)
 }
 
-async function readPagedThreadMessages(runIds: string[], viewerId: string, ids: string[], append: boolean) {
-  if (!append) return { messages: await readThreadMessages(runIds, viewerId, ids), messageUpdates: undefined }
+async function readPagedThreadMessages(runIds: string[], viewerId: string, ownerUserId: string, ids: string[], append: boolean) {
+  if (!append) return { messages: await readThreadMessages(runIds, viewerId, ownerUserId, ids), messageUpdates: undefined }
   // Delivery can turn a rendered message into an editable one without creating an event.
   const newest = await db.select({ id: runMessages.id }).from(runMessages).where(inArray(runMessages.runId, runIds))
     .orderBy(desc(runMessages.createdAt), desc(runMessages.id)).limit(32)
-  const all = await readThreadMessages(runIds, viewerId, [...new Set([...ids, ...newest.map(row => row.id)])])
+  const all = await readThreadMessages(runIds, viewerId, ownerUserId, [...new Set([...ids, ...newest.map(row => row.id)])])
   const added = new Set(ids)
   return { messages: all.filter(row => added.has(row.id)), messageUpdates: all.filter(row => !added.has(row.id)) }
 }
@@ -590,7 +592,7 @@ export async function getOlderIssueThread(issueId: string | null, runId: string,
     if (!runIds.includes(position.runId)) throw new ActionFailureError('runNotFound')
     const page = await readThreadHistory(runIds, 'before', position)
     return { chain: runIds.join(','), before: page.more ? page.earliest : null, chunks: page.chunks,
-      messages: await readThreadMessages(runIds, user.id, page.messageIds) }
+      messages: await readThreadMessages(runIds, user.id, row.userId, page.messageIds) }
   })
 }
 
@@ -610,8 +612,19 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
   // The run that resumes this one after an answered question, or runs it again after it ended (R-81), is the same thread: its chain (BE-18).
   // Named by its task, not by system text prepended to the prompt (lib/thread-prompt.ts); a cursor read's prompt is already its name lines.
   const named = resuming ? row : { ...row, prompt: threadPromptView(row.prompt, row.promptTaskStart, row.promptTaskLength).task }
-  const [projected] = projectIssueThreads([named], row.issueId, user.id, new Set([user.id]))
-  const chain = projected ? await readRunChain(pool, row.userId, row.id) : null
+  const chain = await readRunChain(pool, row.userId, row.id)
+  // Thread tags & folder live on chain.rootRunId (lib/thread-lifecycle.ts); inherit them when reading a continuation run.
+  let namedWithRootOrg = named
+  if (chain && chain.rootRunId !== row.id) {
+    const { rows: [rootOrg] } = await pool.query<{ tags: string[] | null; folder: string | null }>(
+      `SELECT tags, folder FROM agent_runs WHERE id=$1 AND "userId"=$2`,
+      [chain.rootRunId, row.userId],
+    )
+    if (rootOrg) {
+      namedWithRootOrg = { ...named, tags: rootOrg.tags ?? named.tags, folder: rootOrg.folder }
+    }
+  }
+  const [projected] = projectIssueThreads([namedWithRootOrg], row.issueId, user.id, new Set([user.id]))
   // The conversation is the thread's, across its runs from this one on, oldest first.
   const from = chain ? Math.max(0, chain.attempts.findIndex(attempt => attempt.runId === row.id)) : 0
   const runIds = chain ? chain.attempts.slice(from).map(attempt => attempt.runId) : [row.id]
@@ -622,8 +635,8 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
   const [transcript, { threads: [thread], deadline: questionDeadline }] = await Promise.all([
     history ? readLatestThreadHistory(runIds, history.after).then(async page => ({
       chunks: page.chunks, cursor: null, append: false, historyPage: page.historyPage,
-      ...await readPagedThreadMessages(runIds, user.id, page.messageIds, page.historyPage.append),
-    })) : Promise.all([readThreadChunks(runIds, cursor), readThreadMessages(runIds, user.id)])
+      ...await readPagedThreadMessages(runIds, user.id, row.userId, page.messageIds, page.historyPage.append),
+    })) : Promise.all([readThreadChunks(runIds, cursor), readThreadMessages(runIds, user.id, row.userId)])
       .then(([read, messages]) => ({ ...read, messages, messageUpdates: undefined, historyPage: undefined })),
     projected ? threadQuestions([withRunChain(projected, chain)], user.id) : { threads: [], deadline: null },
   ])
@@ -872,66 +885,19 @@ export async function sendIssueThreadMessage(input: {
   }
 
   const slashProtocol = await import('@mikka/protocol/slash-commands')
-  let control: import('@/lib/thread-continue').ThreadMessageControl | undefined
-  const leadingSlash = !input.sendAsText ? slashProtocol.parseLeadingSlashCommand(text.data) : null
-  const hasSkillSignal = Boolean(
-    !input.sendAsText &&
-    ((input.mentions?.some(m => m.kind === 'skill')) || /\$[a-z][a-z0-9-]*/.test(text.data)),
-  )
-  let runtime: Awaited<ReturnType<typeof import('@/lib/thread-commands').readThreadRuntimeCommands>> = null
-  if (leadingSlash || hasSkillSignal) {
-    const { readThreadRuntimeCommands } = await import('@/lib/thread-commands')
-    runtime = await readThreadRuntimeCommands(pool, user.id, row.id)
-  }
-
-  if (input.sendAsText) {
-    control = { kind: 'client_composed' }
-  } else if (leadingSlash && runtime) {
-    const cmdLower = leadingSlash.name.toLowerCase()
-    // Bug 1: block dangerous pass-through, terminal_slash_commands, and host-owned commands before reaching Claude CLI.
-    if (runtime.harness === 'claude_code') {
-      const blockedCheck = slashProtocol.isBlockedClaudeCommand(leadingSlash.name, runtime.terminalSlashCommands)
-      if (blockedCheck.blocked) {
-        const validCommands = runtime.commands.map(c => c.name)
-        const { appendThreadSystemEvent } = await import('@/lib/thread-commands')
-        await appendThreadSystemEvent(runtime.latestRunId, user.id, {
-          kind: 'command_blocked',
-          command: blockedCheck.canonical,
-          originalText: text.data,
-          validCommands,
-          reason: blockedCheck.reason,
-        })
-        return {
-          runId: runtime.latestRunId,
-          continued: false,
-          blocked: {
-            command: blockedCheck.canonical,
-            originalText: text.data,
-            validCommands,
-            reason: blockedCheck.reason,
-          },
-        }
-      }
-    }
-    // Bug 2: route /compact to real per-harness compaction while preserving requestId & human actor metadata.
-    if (cmdLower === 'compact') {
-      const instructions = leadingSlash.args.trim().slice(0, 4_000)
-      control = { kind: 'compact', ...(instructions ? { instructions } : {}) }
-    } else {
-      // Allowed runtime slash command (e.g. Claude custom/MCP/skill command or Codex /review, /init):
-      // deliver unwrapped via control.kind='slash'.
-      const matchedRuntime = runtime.commands.find(
-        c => c.name.toLowerCase() === cmdLower || c._meta.aliases?.some(a => a.toLowerCase() === cmdLower),
-      )
-      if (matchedRuntime) {
-        control = {
-          kind: 'slash',
-          name: matchedRuntime.name,
-          ...(leadingSlash.args ? { args: leadingSlash.args } : {}),
-        }
-      }
+  const { prepareThreadSlashMessage } = await import('@/lib/thread-commands')
+  const prepared = await prepareThreadSlashMessage(pool, user.id, row.id, text.data, {
+    sendAsText: input.sendAsText,
+    hasSkillMentions: Boolean(input.mentions?.some(m => m.kind === 'skill')),
+  })
+  if (prepared.kind === 'blocked') {
+    return {
+      runId: prepared.runId,
+      continued: false,
+      blocked: prepared.blocked,
     }
   }
+  const { control, runtime } = prepared
 
   let body = text.data
   if (!control && input.references?.length) {

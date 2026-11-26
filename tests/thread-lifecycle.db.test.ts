@@ -426,3 +426,85 @@ test('queued /compact preserves replay across jsonb key order, blocks Send Now w
   assert.equal(literalControl?.kind, 'client_composed')
 })
 
+test('enrichSideNoteEvents resolves pending, answered (lastReply & chunk fallback), and failed side runs from PG17', async () => {
+  const { enrichSideNoteEvents } = await import('@/lib/thread-commands')
+  type SystemEvent = import('@mikka/protocol/slash-commands').SystemEventData
+  const { workspace, agentId, issueId, rootId: parentId } = await fixture()
+  const pendingSideId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'running' })
+  const answeredSideId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'succeeded' })
+  const chunkSideId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'succeeded' })
+  const failedSideId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'failed' })
+  kept.push(pendingSideId, answeredSideId, chunkSideId, failedSideId)
+  await pool.query(`UPDATE agent_runs SET "parentRunId"=$1, "threadRelation"='side' WHERE id=ANY($2::uuid[])`, [parentId, [pendingSideId, answeredSideId, chunkSideId, failedSideId]])
+  await pool.query(`UPDATE agent_runs SET "lastReply"='Redis listens on 6379.' WHERE id=$1`, [answeredSideId])
+  await pool.query(`UPDATE agent_runs SET error='sandbox timed out' WHERE id=$1`, [failedSideId])
+  await pool.query(
+    `INSERT INTO run_chunks (id, "runId", seq, chunk) VALUES ($1, $2, 1, $3::jsonb), ($4, $2, 2, $5::jsonb)`,
+    [randomUUID(), chunkSideId, JSON.stringify({ type: 'text-delta', id: 't1', delta: 'Chunk ' }), randomUUID(), JSON.stringify({ type: 'text-delta', id: 't1', delta: 'answer.' })],
+  )
+
+  const rows: { systemEvent: SystemEvent }[] = [
+    { systemEvent: { kind: 'side_note', question: 'Q1', sideRunId: pendingSideId, status: 'pending' } },
+    { systemEvent: { kind: 'side_note', question: 'Q2', sideRunId: answeredSideId, status: 'pending' } },
+    { systemEvent: { kind: 'side_note', question: 'Q3', sideRunId: chunkSideId, status: 'pending' } },
+    { systemEvent: { kind: 'side_note', question: 'Q4', sideRunId: failedSideId, status: 'pending' } },
+  ]
+  const enriched = await enrichSideNoteEvents(pool, owner.id, rows)
+  const e0 = enriched[0]?.systemEvent
+  const e1 = enriched[1]?.systemEvent
+  const e2 = enriched[2]?.systemEvent
+  const e3 = enriched[3]?.systemEvent
+  assert.equal(e0?.kind === 'side_note' ? e0.status : null, 'pending')
+  assert.equal(e1?.kind === 'side_note' ? e1.status : null, 'answered')
+  assert.equal(e1?.kind === 'side_note' ? e1.answer : null, 'Redis listens on 6379.')
+  assert.equal(e2?.kind === 'side_note' ? e2.status : null, 'answered')
+  assert.equal(e2?.kind === 'side_note' ? e2.answer : null, 'Chunk answer.')
+  assert.equal(e3?.kind === 'side_note' ? e3.status : null, 'failed')
+  assert.equal(e3?.kind === 'side_note' ? e3.error : null, 'sandbox timed out')
+})
+
+test('forkNote resolves web-submitted user messages by submissionId and cuts off multi-attempt chains accurately', async () => {
+  const { forkNote } = await import('@/lib/thread-fork-context')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const { workspace, agentId, issueId, rootId: run1 } = await fixture()
+  const msg1Id = randomUUID()
+  const req1Id = randomUUID()
+  await pool.query(
+    `INSERT INTO coordinator_events (id, "userId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt")
+     VALUES ($1, $2, $3, 'user_message', $4, $5::jsonb, 'background', now())`,
+    [msg1Id, owner.id, issueId, `thread-sub-test:${msg1Id}`, JSON.stringify({ threadSubmission: { requestId: req1Id } })],
+  )
+  await pool.query(
+    `INSERT INTO run_messages (id, "runId", "userId", text, origin, "mailboxWakeDepth", "deliveredAt")
+     VALUES ($1, $2, $3, 'User follow-up in attempt 1', 'owner', 0, now())`,
+    [msg1Id, run1, owner.id],
+  )
+  await pool.query(
+    `INSERT INTO run_chunks (id, "runId", seq, chunk) VALUES ($1, $2, 1, $3::jsonb), ($4, $2, 2, $5::jsonb)`,
+    [randomUUID(), run1, JSON.stringify({ type: 'text-start', id: 'r1-a1' }), randomUUID(), JSON.stringify({ type: 'text-delta', id: 'r1-a1', delta: 'Attempt 1 reply' })],
+  )
+  const run2 = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'succeeded' })
+  kept.push(run2)
+  await pool.query(`UPDATE agent_runs SET "continuesRunId"=$1 WHERE id=$2`, [run1, run2])
+  await pool.query(
+    `INSERT INTO run_chunks (id, "runId", seq, chunk) VALUES ($1, $2, 1, $3::jsonb), ($4, $2, 2, $5::jsonb)`,
+    [randomUUID(), run2, JSON.stringify({ type: 'text-start', id: 'r2-a1' }), randomUUID(), JSON.stringify({ type: 'text-delta', id: 'r2-a1', delta: 'Attempt 2 secret later reply' })],
+  )
+
+  const chain = await readRunChain(pool, owner.id, run2)
+  assert.ok(chain)
+
+  // Branch from web-submitted user message (identified by submissionId UUID, even when caller anchors on run2).
+  const fromUserNote = await forkNote(pool, owner.id, chain, { runId: run2, itemId: req1Id }, 'full', 'Take another route')
+  assert.ok(fromUserNote, 'forkNote must resolve user message by submissionId across multi-attempt chain')
+  assert.match(fromUserNote, /User follow-up in attempt 1/)
+  assert.doesNotMatch(fromUserNote, /Attempt 2 secret later reply/)
+
+  // Branch from attempt 1 agent message (scoped with run1 UUID even when caller passes run2).
+  const fromAgentNote = await forkNote(pool, owner.id, chain, { runId: run2, itemId: `text:${run1}:r1-a1` }, 'full', 'Try alternative fix')
+  assert.ok(fromAgentNote, 'forkNote must resolve run-scoped earlier attempt agent message')
+  assert.match(fromAgentNote, /Attempt 1 reply/)
+  assert.doesNotMatch(fromAgentNote, /Attempt 2 secret later reply/)
+})
+
+

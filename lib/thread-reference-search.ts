@@ -56,12 +56,18 @@ async function searchDevices(userId: string, needle: string): Promise<ThreadRefe
 }
 
 async function searchSubagents(userId: string, workspaceId: string, needle: string, runId?: string): Promise<ThreadReference[]> {
-  const { rows } = runId
+  let chainRunIds: string[] | null = null
+  if (runId) {
+    const { readRunChain } = await import('@/lib/run-chain')
+    const chain = await readRunChain(pool, userId, runId)
+    chainRunIds = chain ? chain.attempts.map(attempt => attempt.runId) : [runId]
+  }
+  const { rows } = chainRunIds
     ? await pool.query<{ id: string; name: string | null; title: string | null; status: string }>(
         `SELECT id, name, title, status FROM agent_runs
-         WHERE "userId"=$1 AND "workspaceId"=$2 AND "parentRunId"=$3 AND "threadRelation"='subagent' AND "deletedAt" IS NULL
+         WHERE "userId"=$1 AND "workspaceId"=$2 AND "parentRunId"=ANY($3::uuid[]) AND "threadRelation"='subagent' AND "deletedAt" IS NULL
          ORDER BY "createdAt" DESC LIMIT 50`,
-        [userId, workspaceId, runId],
+        [userId, workspaceId, chainRunIds],
       )
     : await pool.query<{ id: string; name: string | null; title: string | null; status: string }>(
         `SELECT id, name, title, status FROM agent_runs

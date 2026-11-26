@@ -64,41 +64,78 @@ test('resolveStructuredMentions resolves workspace-scoped entities, deduplicates
         }
       }
       if (sql.includes('FROM personal_skills')) {
-        return { rows: [{ name: 'Linear Sync', slug: 'linear-sync', source: 'plugin' }] }
+        return {
+          rows: params?.[0] === 'user-1' && params?.[1] === 'linear-sync'
+            ? [{ name: 'Linear Sync', slug: 'linear-sync', source: 'plugin' }]
+            : [],
+        }
       }
       return { rows: [] }
     },
   }
 
-  const resolved = await resolveStructuredMentions(db as never, 'user-1', 'ws-1', [
-    { kind: 'device', id: 'dev-1', label: 'MacBook Pro', start: 0, end: 12 },
-    { kind: 'device', id: 'dev-1', label: 'MacBook Pro', start: 13, end: 25 },
-    { kind: 'device', id: 'dev-other', label: 'Foreign', start: 26, end: 34 },
-    { kind: 'subagent', id: 'sub-1', label: 'Verifier', start: 35, end: 44 },
-    { kind: 'plugin', id: 'linear-sync', label: 'Linear Sync', start: 45, end: 57 },
-    { kind: 'slack_channel', id: 'C01', label: 'alerts', start: 58, end: 65 },
-    { kind: 'file', id: 'src/index.ts', label: 'src/index.ts', start: 66, end: 78 },
-    { kind: 'file', id: '../secret', label: '../secret', start: 79, end: 88 },
-    { kind: 'folder', id: 'apps/api', label: 'apps/api', start: 89, end: 97 },
-  ])
+  const resolved = await resolveStructuredMentions(
+    db as never,
+    'user-1',
+    'ws-1',
+    [
+      { kind: 'device', id: 'dev-1', label: 'MacBook Pro', start: 0, end: 12 },
+      { kind: 'device', id: 'dev-1', label: 'MacBook Pro', start: 13, end: 25 },
+      { kind: 'device', id: 'dev-other', label: 'Foreign', start: 26, end: 34 },
+      { kind: 'subagent', id: 'sub-1', label: 'Verifier', start: 35, end: 44 },
+      { kind: 'plugin', id: 'linear-sync', label: 'Linear Sync', start: 45, end: 57 },
+      { kind: 'plugin', id: 'spoofed-plugin', label: 'Spoofed Label', start: 58, end: 70 },
+      { kind: 'slack_channel', id: 'C01', label: 'spoofed-client-name', start: 71, end: 80 },
+      { kind: 'slack_channel', id: 'C99', label: 'secret-channel', start: 81, end: 90 },
+      { kind: 'file', id: 'src/index.ts', label: 'src/index.ts', start: 91, end: 103 },
+      { kind: 'file', id: '../secret', label: '../secret', start: 104, end: 113 },
+      { kind: 'folder', id: 'apps/api', label: 'apps/api', start: 114, end: 122 },
+      { kind: 'folder', id: '../etc', label: '../etc', start: 123, end: 129 },
+    ],
+    { slackChannels: [{ id: 'C01', name: 'alerts' }] },
+  )
 
-  assert.equal(resolved.length, 8, 'duplicate device mention is deduplicated')
+  assert.equal(resolved.length, 11, 'duplicate device mention is deduplicated')
   assert.deepEqual(resolved[0], { kind: 'device', id: 'dev-1', state: 'ok', title: 'MacBook Pro', detail: 'macos' })
   assert.deepEqual(resolved[1], { kind: 'device', id: 'dev-other', state: 'broken', title: 'Foreign', detail: null })
   assert.deepEqual(resolved[2], { kind: 'subagent', id: 'sub-1', state: 'ok', title: 'Verifier', detail: 'completed' })
   assert.deepEqual(resolved[3], { kind: 'plugin', id: 'linear-sync', state: 'ok', title: 'Linear Sync', detail: 'linear-sync' })
-  assert.deepEqual(resolved[4], { kind: 'slack_channel', id: 'C01', state: 'ok', title: '#alerts', detail: 'channel C01' })
-  assert.deepEqual(resolved[5], { kind: 'file', id: 'src/index.ts', state: 'ok', title: 'src/index.ts', detail: 'file' })
-  assert.deepEqual(resolved[6], { kind: 'file', id: '../secret', state: 'broken', title: '../secret', detail: null })
-  assert.deepEqual(resolved[7], { kind: 'folder', id: 'apps/api', state: 'ok', title: 'apps/api', detail: 'folder' })
+  assert.deepEqual(resolved[4], { kind: 'plugin', id: 'spoofed-plugin', state: 'broken', title: 'Spoofed Label', detail: null })
+  assert.deepEqual(resolved[5], { kind: 'slack_channel', id: 'C01', state: 'ok', title: '#alerts', detail: 'channel C01' })
+  assert.deepEqual(resolved[6], { kind: 'slack_channel', id: 'C99', state: 'broken', title: 'secret-channel', detail: null })
+  assert.deepEqual(resolved[7], { kind: 'file', id: 'src/index.ts', state: 'ok', title: 'src/index.ts', detail: 'file' })
+  assert.deepEqual(resolved[8], { kind: 'file', id: '../secret', state: 'broken', title: '../secret', detail: null })
+  assert.deepEqual(resolved[9], { kind: 'folder', id: 'apps/api', state: 'ok', title: 'apps/api', detail: 'folder' })
+  assert.deepEqual(resolved[10], { kind: 'folder', id: '../etc', state: 'broken', title: '../etc', detail: null })
+
+  // Disconnected Slack fails closed for slack_channel mentions.
+  const disconnected = await resolveStructuredMentions(
+    db as never,
+    'user-1',
+    'ws-1',
+    [{ kind: 'slack_channel', id: 'C01', label: 'alerts', start: 0, end: 7 }],
+    { slackChannels: null },
+  )
+  assert.equal(disconnected[0]?.state, 'broken')
 
   const expanded = expandStructuredMentions(resolved)
   assert.match(expanded, /<mentions>/)
   assert.match(expanded, /- \[device\] MacBook Pro \(macos\)/)
   assert.match(expanded, /- \[device\] <unavailable>/)
+  assert.match(expanded, /- \[plugin\] <unavailable>/)
   assert.match(expanded, /- \[slack_channel\] #alerts \(channel C01\)/)
+  assert.match(expanded, /- \[slack_channel\] <unavailable>/)
   assert.match(expanded, /- \[file\] src\/index\.ts \(file\)/)
   assert.match(expanded, /- \[file\] <unavailable>/)
+  assert.match(expanded, /- \[folder\] <unavailable>/)
+})
+
+test('stripMachineContextBlocks removes machine-only <mentions> prefix and skill trailer while preserving user text', async () => {
+  const { stripMachineContextBlocks, personReferenceParts } = await import('./thread-references')
+  const raw = '<mentions>\n- [device] MacBook Pro (macos)\n</mentions>\n\nCheck deploy status\n\n[Mikka skill request: use skill "deploy-check" ($deploy-check)]'
+  assert.equal(stripMachineContextBlocks(raw), 'Check deploy status')
+  const parts = personReferenceParts(raw)
+  assert.deepEqual(parts, [{ kind: 'text', text: 'Check deploy status' }])
 })
 
 test('normalizeThreadFolder trims whitespace, collapses blank to null, and enforces length', () => {

@@ -175,3 +175,201 @@ export async function appendThreadSystemEvent(runId: string, userId: string, dat
     client.release()
   }
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const TERMINAL_FAILED_SIDE_STATUSES = new Set(['failed', 'stopped', 'cancelled', 'canceled', 'timed_out'])
+
+/**
+ * Resolve live status, answer, or error for any `side_note` system events
+ * against the real durable `agent_runs` side chain (+ latest assistant text
+ * chunk fallback when `lastReply`/`report.summary` is absent). Scoped strictly
+ * to the thread owner's runs (`"userId"=$ownerId`).
+ */
+export async function enrichSideNoteEvents<T extends { systemEvent?: SystemEventData }>(
+  database: Pick<Pool, 'query'>,
+  ownerUserId: string,
+  items: T[],
+): Promise<T[]> {
+  const sideRunIds = [...new Set(
+    items.flatMap(item => item.systemEvent?.kind === 'side_note' && typeof item.systemEvent.sideRunId === 'string' && UUID_RE.test(item.systemEvent.sideRunId)
+      ? [item.systemEvent.sideRunId]
+      : []),
+  )]
+  if (!sideRunIds.length) return items
+  const { rows } = await database.query<{
+    rootSideId: string
+    latestRunId: string
+    status: string
+    lastReply: string | null
+    summary: string | null
+    error: string | null
+    stopReason: string | null
+  }>(
+    `WITH RECURSIVE side_chain AS (
+       SELECT r.id AS "rootSideId", r.id AS "runId", r."createdAt", 0 AS depth
+       FROM agent_runs r
+       WHERE r.id = ANY($1::uuid[]) AND r."userId" = $2 AND r."deletedAt" IS NULL
+       UNION ALL
+       SELECT sc."rootSideId", child.id AS "runId", child."createdAt", sc.depth + 1
+       FROM side_chain sc
+       JOIN agent_runs child ON child."continuesRunId" = sc."runId"
+         AND child."userId" = $2 AND child."deletedAt" IS NULL
+       WHERE sc.depth < 32
+     ),
+     latest_per_side AS (
+       SELECT DISTINCT ON ("rootSideId") "rootSideId", "runId" AS "latestRunId"
+       FROM side_chain
+       ORDER BY "rootSideId", depth DESC, "createdAt" DESC, "runId" DESC
+     )
+     SELECT l."rootSideId"::text, l."latestRunId"::text, r.status, r."lastReply",
+            r.report->>'summary' AS summary, r.error, r."stopReason"
+     FROM latest_per_side l
+     JOIN agent_runs r ON r.id = l."latestRunId" AND r."userId" = $2`,
+    [sideRunIds, ownerUserId],
+  )
+  const bySideId = new Map(rows.map(row => [row.rootSideId, row]))
+  const needChunkRunIds = rows
+    .filter(row => row.status === 'succeeded' && !row.lastReply?.trim() && !row.summary?.trim())
+    .map(row => row.latestRunId)
+  const chunkAnswerByRun = new Map<string, string>()
+  if (needChunkRunIds.length) {
+    const { rows: chunkRows } = await database.query<{ runId: string; text: string }>(
+      `SELECT "runId"::text,
+              string_agg(coalesce(chunk->>'delta', chunk->>'text', ''), '' ORDER BY seq) AS text
+       FROM run_chunks
+       WHERE "runId" = ANY($1::uuid[]) AND chunk->>'type' IN ('text-delta', 'text')
+       GROUP BY "runId"`,
+      [needChunkRunIds],
+    )
+    for (const row of chunkRows) {
+      const trimmed = row.text?.trim()
+      if (trimmed) chunkAnswerByRun.set(row.runId, trimmed)
+    }
+  }
+  return items.map(item => {
+    if (item.systemEvent?.kind !== 'side_note' || !item.systemEvent.sideRunId) return item
+    const resolved = bySideId.get(item.systemEvent.sideRunId)
+    if (!resolved) return item
+    if (resolved.status === 'succeeded') {
+      const answerText = (resolved.lastReply?.trim() || resolved.summary?.trim() || chunkAnswerByRun.get(resolved.latestRunId) || '').slice(0, 4_000)
+      return {
+        ...item,
+        systemEvent: {
+          ...item.systemEvent,
+          status: 'answered' as const,
+          ...(answerText ? { answer: answerText } : {}),
+          error: undefined,
+        },
+      }
+    }
+    if (TERMINAL_FAILED_SIDE_STATUSES.has(resolved.status)) {
+      const errText = (resolved.error?.trim() || resolved.stopReason?.trim() || resolved.status).slice(0, 1_000)
+      return {
+        ...item,
+        systemEvent: {
+          ...item.systemEvent,
+          status: 'failed' as const,
+          error: errText,
+        },
+      }
+    }
+    return {
+      ...item,
+      systemEvent: {
+        ...item.systemEvent,
+        status: 'pending' as const,
+      },
+    }
+  })
+}
+
+export type PreparedThreadSlashMessage =
+  | {
+      kind: 'blocked'
+      runId: string
+      blocked: {
+        command: string
+        originalText: string
+        validCommands: string[]
+        reason: 'dangerous_passthrough' | 'terminal_only' | 'host_owned'
+      }
+    }
+  | {
+      kind: 'send'
+      control: import('@/lib/thread-continue').ThreadMessageControl | undefined
+      runtime: ThreadRuntimeCommands | null
+    }
+
+/**
+ * Shared server-side slash-command & skill preflight used by both Web RPC
+ * (`sendIssueThreadMessage`) and Mobile REST (`POST /api/mobile/threads/[id]`).
+ * Blocks dangerous/terminal/host-owned Claude commands with a durable
+ * `command_blocked` event, routes `/compact` and allowed runtime slash commands
+ * via typed `control`, and honors explicit `sendAsText` (`client_composed`).
+ */
+export async function prepareThreadSlashMessage(
+  database: Pick<Pool, 'query'>,
+  userId: string,
+  runId: string,
+  text: string,
+  options?: { sendAsText?: boolean; hasSkillMentions?: boolean },
+): Promise<PreparedThreadSlashMessage> {
+  const slashProtocol = await import('@mikka/protocol/slash-commands')
+  const sendAsText = Boolean(options?.sendAsText)
+  const leadingSlash = !sendAsText ? slashProtocol.parseLeadingSlashCommand(text) : null
+  const hasSkillSignal = Boolean(
+    !sendAsText &&
+    (options?.hasSkillMentions || /\$[a-z][a-z0-9-]*/.test(text)),
+  )
+  let runtime: ThreadRuntimeCommands | null = null
+  if (leadingSlash || hasSkillSignal) {
+    runtime = await readThreadRuntimeCommands(database, userId, runId)
+  }
+  if (sendAsText) {
+    return { kind: 'send', control: { kind: 'client_composed' }, runtime }
+  }
+  let control: import('@/lib/thread-continue').ThreadMessageControl | undefined
+  if (leadingSlash && runtime) {
+    const cmdLower = leadingSlash.name.toLowerCase()
+    if (runtime.harness === 'claude_code') {
+      const blockedCheck = slashProtocol.isBlockedClaudeCommand(leadingSlash.name, runtime.terminalSlashCommands)
+      if (blockedCheck.blocked) {
+        const validCommands = runtime.commands.map(c => c.name)
+        await appendThreadSystemEvent(runtime.latestRunId, userId, {
+          kind: 'command_blocked',
+          command: blockedCheck.canonical,
+          originalText: text,
+          validCommands,
+          reason: blockedCheck.reason,
+        })
+        return {
+          kind: 'blocked',
+          runId: runtime.latestRunId,
+          blocked: {
+            command: blockedCheck.canonical,
+            originalText: text,
+            validCommands,
+            reason: blockedCheck.reason,
+          },
+        }
+      }
+    }
+    if (cmdLower === 'compact') {
+      const instructions = leadingSlash.args.trim().slice(0, 4_000)
+      control = { kind: 'compact', ...(instructions ? { instructions } : {}) }
+    } else {
+      const matchedRuntime = runtime.commands.find(
+        c => c.name.toLowerCase() === cmdLower || c._meta.aliases?.some(a => a.toLowerCase() === cmdLower),
+      )
+      if (matchedRuntime) {
+        control = {
+          kind: 'slash',
+          name: matchedRuntime.name,
+          ...(leadingSlash.args ? { args: leadingSlash.args } : {}),
+        }
+      }
+    }
+  }
+  return { kind: 'send', control, runtime }
+}
+

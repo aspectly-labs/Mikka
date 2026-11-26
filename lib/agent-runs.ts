@@ -492,7 +492,7 @@ export async function readRunMessages(userId: string, runIds: string[], options?
     : (await base
         .orderBy(desc(runMessages.createdAt), desc(runMessages.id))
         .limit(Math.max(1, Math.min(options?.limit ?? RUN_MESSAGES_LIMIT, RUN_MESSAGES_LIMIT)))).reverse()
-  return rawRows.map(({ userId: rowUserId, submissionId, systemEvent, ...rest }) => {
+  const mapped = rawRows.map(({ userId: rowUserId, submissionId, systemEvent, ...rest }) => {
     const parsed = systemEvent ? systemEventDataSchema.safeParse(systemEvent) : null
     return {
       ...rest,
@@ -500,6 +500,8 @@ export async function readRunMessages(userId: string, runIds: string[], options?
       ...(parsed?.success ? { systemEvent: parsed.data } : {}),
     }
   })
+  const { enrichSideNoteEvents } = await import('@/lib/thread-commands')
+  return enrichSideNoteEvents(pool, userId, mapped)
 }
 
 export async function readRun(
