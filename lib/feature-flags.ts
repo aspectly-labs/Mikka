@@ -19,14 +19,20 @@ export function featureAvailability(feature: UpcomingFeature, remoteValue: boole
 }
 
 /** Built features held back by a PostHog flag until what they depend on is live. */
+export interface GatedFeatureDefinition {
+  key: string
+  /** Public issue this flag is waiting on. Closed issues need an open follow-up. */
+  waitsOn?: number
+}
+
 export const gatedFeatures = {
-  /** The bots' cloud computer UI (#174); off until the E2B backend (#172) is live. */
-  cloudComputer: 'mikka-cloud-computer',
+  /** The bots' cloud computer UI (#174); the E2B backend (#172) is live. */
+  cloudComputer: { key: 'mikka-cloud-computer' },
   /** Points that bill cloud computer time (计费 › 点数). Hidden while E2B runs on the workspace's own API key (Alex, 2026-10-30). */
-  computerBilling: 'mikka-computer-billing',
+  computerBilling: { key: 'mikka-computer-billing' },
   /** 记忆 (sidebar entry, its page and its settings section). Hidden: it does not work yet (Alex, 2026-11-20). */
-  memory: 'mikka-memory',
-} as const
+  memory: { key: 'mikka-memory' },
+} as const satisfies Record<string, GatedFeatureDefinition>
 
 export type GatedFeature = keyof typeof gatedFeatures
 

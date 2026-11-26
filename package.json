@@ -42,7 +42,7 @@
     "test:local-loop": "node --import ./tests/support/server-only.mjs --import tsx scripts/dev-local/acceptance.mjs",
     "test:preview": "node --test tests/preview-ready.test.mjs",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "lint": "pnpm lint:code && pnpm lint:ui && node scripts/litellm-policy.mjs && node --test scripts/litellm-policy.test.mjs && pnpm lint:external-clients",
+    "lint": "pnpm lint:code && pnpm lint:ui && node scripts/litellm-policy.mjs && node --test scripts/litellm-policy.test.mjs && pnpm lint:external-clients && pnpm docs:check",
     "lint:code": "oxlint --deny-warnings && pnpm check:migrations && pnpm test:migrations && pnpm check:factory",
     "lint:ui": "node scripts/lint-ui.mjs",
     "test:ui-policy": "node --test scripts/no-public-ui.test.mjs scripts/badge-size-policy.test.mjs scripts/next-free.test.mjs scripts/next-free-locale.test.mjs scripts/next-free-env.test.mjs scripts/next-free-acceptance.test.mjs lib/public-env.test.mjs scripts/coordinator-chat-readers.test.mjs scripts/ui-policy.test.mjs scripts/entity-ui-policy.test.mjs scripts/icon-button-policy.test.mjs scripts/interaction-policy.test.mjs scripts/ci-docs-only.test.mjs scripts/copy-policy.test.mjs scripts/focus-refetch-policy.test.mjs scripts/polling-policy.test.mjs scripts/error-cause-policy.test.mjs scripts/split-pane-policy.test.mjs scripts/control-size-policy.test.mjs scripts/motion-policy.test.mjs scripts/contrast.test.mjs scripts/navigation-policy.test.mjs scripts/base-path-policy.test.mjs scripts/issue-detail-layout-policy.test.mjs lib/ui-overlay.test.mjs",
@@ -272,7 +272,10 @@
     "test:ui-fixture-guards": "node --test scripts/fixtures/guard.test.mjs scripts/fixtures/proxy.test.mjs scripts/fixtures/bundle-check.test.mjs",
     "test:activity-page-cache": "node --import tsx --test lib/activity-page-cache.test.ts",
     "test:task-attachments-db": "node --test-force-exit --import ./scripts/server-test.mjs --import tsx --test tests/task-attachments-storage.db.test.ts",
-    "test:zero-residency": "pnpm --filter @mikka/zero-residency test"
+    "test:zero-residency": "pnpm --filter @mikka/zero-residency test",
+    "docs:generate": "node scripts/docs-generate.mjs",
+    "docs:check": "node scripts/docs-check.mjs",
+    "check:waiting-issues": "node scripts/check-waiting-issues.mjs"
   },
   "dependencies": {
     "@ai-sdk/gateway": "4.0.121",

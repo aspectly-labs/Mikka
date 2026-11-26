@@ -2,7 +2,7 @@
 
 - **Status:** implemented connection and packaging contracts. The Figma frames listed here retain their recorded review status.
 - **GitHub:** #357, MVP item 4.
-- **Figma:** existing accepted style guide `98:2`; [device dialog and code confirmation review](https://www.figma.com/design/zPe5LKycb2XuT1ivCLRw07?node-id=347-4758), frames `347:4761`, `347:4798`, `347:4835`, `347:4873`, `347:4890`, `347:4907`, `347:4916`, `349:4879`, `349:4894`, `349:4909`, `349:4916` are pending Alex's acceptance.
+- **Figma:** existing accepted style guide `98:2`; [device dialog and code confirmation review](https://www.figma.com/design/zPe5LKycb2XuT1ivCLRw07?node-id=347-4758), frames `347:4761`, `347:4798`, `347:4835`, `347:4873`, `347:4890`, `347:4907`, `347:4916`, `349:4879`, `349:4894`, `349:4909`, `349:4916` are registered in `docs/decisions/pending.yaml` as `daemon-connection-review-frames`.
 - **Owner thread:** `codex/mvp-device-auth`.
 
 ## What the user does
