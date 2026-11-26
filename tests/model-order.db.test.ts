@@ -328,6 +328,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
 
   await t.test('dispatch: the first model a device that takes part reported; then the next; a thread\'s own model first; nothing says why', async () => {
     const scope = await person('order-dispatch')
+    await order.changeOrder(pool, scope, { kind: 'location', location: 'local' })
     const claude = await subscribe(scope, 'claude', ['acct-opus-c', 'acct-sonnet-c'])
     const ctx = { ...scope, botId: null }
     // No computer connected yet: no device can run it, and the card says so.
@@ -466,6 +467,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
   await t.test('subscription dispatch depends on runtime readiness, not exact device model reports', async () => {
     // Claude Max connected, 本地, computers online and taking part with Claude Code installed; models reported or not (Alex, 2026-11-03).
     const scope = await person('order-unreported')
+    await order.changeOrder(pool, scope, { kind: 'location', location: 'local' })
     await subscribe(scope, 'claude', ['acct-opus-u'])
     const ctx = { ...scope, botId: null }
     const row = async () => (await order.orderView(pool, scope)).entries[0].block
