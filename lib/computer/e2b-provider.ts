@@ -48,13 +48,14 @@ export async function connectComputer(workspaceId: string, id: string, signal?: 
  * no provider I/O, so a concurrent pause cannot be undone by this path. */
 export const connectComputerForPolicy = connectRunningComputer
 
-export async function connectRunningComputer(owner: string, id: string, client?: PoolClient): Promise<Sandbox> {
+export async function connectRunningComputer(owner: string, id: string, client?: PoolClient, signal?: AbortSignal): Promise<Sandbox> {
   const read = () => e2bResourceAccount(owner, 'sandbox', id)
   const account = client ? await (await import('@/lib/db')).withDatabaseClient(client, read) : await read()
   const prepared = { ...options(account.apiKey), requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0 }
   const config = new ConnectionConfig(prepared)
+  const requestSignal = config.getSignal(E2B_TIMEOUT_REQUEST_BUDGET_MS)
   const { data, response } = await new ApiClient(config).api.GET('/sandboxes/{sandboxID}', {
-    params: { path: { sandboxID: id } }, signal: config.getSignal(E2B_TIMEOUT_REQUEST_BUDGET_MS),
+    params: { path: { sandboxID: id } }, signal: signal ? AbortSignal.any([signal, requestSignal]) : requestSignal,
   })
   if (response.status === 404 || data?.state === 'paused' || data?.lifecycle?.autoResume === true)
     throw new PolicySandboxUnavailable()

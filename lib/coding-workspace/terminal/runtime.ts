@@ -1,4 +1,5 @@
 import 'server-only'
+import { connectRunningComputer, PolicySandboxUnavailable } from '@/lib/computer/e2b-provider'
 import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -19,7 +20,7 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
 async function options(ownerId: string, sandboxId: string, signal?: AbortSignal) {
   const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
-  return { apiKey: account.apiKey, providerScope: account.scope,
+  return { apiKey: account.apiKey,
     proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy, requestTimeoutMs: 15_000, retries: 0, signal }
 }
 
@@ -42,7 +43,7 @@ async function endpoint(target: TerminalTarget, signal?: AbortSignal) {
   const sandbox = new Sandbox({ ...config, sandboxId: target.sandboxId, sandboxDomain: info.sandboxDomain, envdVersion: info.envdVersion })
   const host = sandbox.getHost(PORT)
   if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:e2b\.app|e2b\.dev)$/i.test(host)) throw new TerminalError('terminal_unavailable', { detail: 'configuration' })
-  return { origin: `https://${host}`, config }
+  return { origin: `https://${host}` }
 }
 
 async function health(origin: string, key: Buffer, signal?: AbortSignal): Promise<{ boot: string; version: string } | null> {
@@ -113,20 +114,14 @@ export async function prepareTerminal(scope: TaskReviewAuthority, signal?: Abort
   try {
     if (scope.sponsoredPlacement) return await sponsoredTerminal(scope,lease,'terminal-prepare',signal)
     const target = { runId: scope.runId, ownerId: scope.ownerId, workspaceId: scope.workspaceId, sandboxId: scope.sandboxId }
-    const { origin, config } = await endpoint(target, signal)
+    const { origin } = await endpoint(target, signal)
     const source = await readFile(join(process.cwd(), 'scripts/e2b/terminal-gateway.py'), 'utf8')
     const version = createHash('sha256').update(source).digest('hex')
     const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
     let current = await health(origin, key, signal)
     // Only opening/reconnecting performs this root check. Input/resize/close
     // keep the existing data plane and never issue a per-command SDK RPC.
-    const { withE2BProviderTime, E2B_TIMEOUT_REQUEST_BUDGET_MS } = await import('../../cloud-computer/e2b-compute-billing')
-    const sandbox = await withE2BProviderTime(scope.ownerId, scope.sandboxId, 5 * 60_000, {
-      providerScope: config.providerScope,
-      inspect: () => withE2BErrors(scope.ownerId, false, () => Sandbox.getInfo(scope.sandboxId, config)),
-    }, timeoutMs => withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, {
-      ...config, timeoutMs, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS,
-    })))
+    const sandbox = await connectRunningComputer(scope.ownerId, scope.sandboxId, undefined, signal)
     // The review egress guard is a task-review runtime; thread machines are
     // not required to carry it.
     if (!scope.threadTerminal) await verifyRuntime(sandbox, signal)
@@ -155,7 +150,7 @@ export async function prepareTerminal(scope: TaskReviewAuthority, signal?: Abort
     return { origin, boot: current.boot, key, bindingId: scope.bindingId }
   } catch (cause) {
     if (cause instanceof TerminalError) throw cause
-    if (cause instanceof SandboxNotFoundError) throw new TerminalError('terminal_binding_changed', { cause })
+    if (cause instanceof SandboxNotFoundError || cause instanceof PolicySandboxUnavailable) throw new TerminalError('terminal_binding_changed', { cause })
     throw new TerminalError('terminal_unavailable', { detail: 'installation', cause })
   }
 }
