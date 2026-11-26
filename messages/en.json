@@ -4860,7 +4860,7 @@
     "approved": "Approved",
     "retry": "Retry",
     "back": "Back to Devices",
-    "expiresIn": "Expires {time}",
+    "expiresIn": "{time}",
     "entryHint": "Approve a machine asking to join your Mikka account",
     "codeHint": "The eight characters shown on the machine you are pairing",
     "unverified": "Reported by the requesting machine, not verified",

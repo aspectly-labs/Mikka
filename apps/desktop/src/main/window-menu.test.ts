@@ -25,7 +25,7 @@ test('menuCopy localizes native menubar entries for zh and en locales', () => {
   assert.equal(zh.tab(3), '标签页 3')
   const en = menuCopy('en-US')
   assert.equal(en.settings, 'Settings…')
-  assert.equal(en.reopenClosedTab, 'Reopen Closed Tab')
+  assert.equal(en.reopenClosedTab, 'Reopen closed tab')
   assert.equal(newWindowMenuItem(() => {}, 'zh-Hans').label, '新建窗口')
 })
 

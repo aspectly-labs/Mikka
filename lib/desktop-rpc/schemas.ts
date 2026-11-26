@@ -1,3 +1,4 @@
+import { candidatesSchema } from '@/lib/platform/desktop-notification-input'
 import { settingsPatchInput, settingsResetInput } from '@/lib/settings/registry'
 import { reviewRepositoryInput, reviewRepositoryKey } from '@/lib/code-review/settings-contract'
 import { artifactShareInput } from '@/lib/artifacts/share-input'
@@ -324,7 +325,7 @@ export const desktopActionSchemas = {
   'coordinator.coordinatorTurnVersions': tuple(bot),
   'coordinator.sendSuggestion': oneId,
   'coordinator.issueCreationAvailable': none,
-  'desktop-notifications.chooseDesktopNotifications': tuple(z.array(object({ id: text(300), issueId: text(100), kind: z.enum(['awaiting', 'failed', 'finished']) })).max(20)),
+  'desktop-notifications.chooseDesktopNotifications': tuple(candidatesSchema),
   'execution-settings.getBotModelMenu': tuple(bot, workspace),
   'execution-settings.refreshBotModelMenuAction': tuple(bot),
   'execution-settings.chooseBotModel': tuple(bot, text(1000).min(1)),
