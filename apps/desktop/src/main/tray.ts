@@ -1,11 +1,11 @@
-// The tray / menu bar menu (decision C6), as Capy's tray (`main.js` Hke / Wke): recent threads with View all
+// The tray / menu bar menu (decision C6), as Capy's tray: recent threads with View all
 // threads…, New Thread, then Quit; plus how many threads wait for the person and Open Mikka (Codex's tray
 // "Open {appName}"). Kept free of Electron so the template is unit-testable; index.ts owns the Tray.
 
 import type { MenuItemConstructorOptions } from 'electron'
 import type { DesktopTrayState } from '@mikka/protocol/bridge'
 
-/** Capy lists five recent threads (`Uke = 5`) and cuts a title at 48 characters. */
+/** Capy lists five recent threads and cuts a title at 48 characters. */
 export const TRAY_THREADS = 5
 const TITLE_MAX = 48
 

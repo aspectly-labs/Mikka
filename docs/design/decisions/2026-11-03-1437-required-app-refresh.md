@@ -1,7 +1,7 @@
 # Require refresh for stale web builds
 
 - Date: 2026-11-03
-- **Status:** Superseded in part by [2026-11-26-0120](2026-11-26-0120-auth-and-overlays-from-benchmark.md)
+- **Status:** Accepted
 - Source: Alex, Neon traffic investigation: 「能不能推送强制更新，暂停旧 APP 的使用，然后弹出一个弹窗，让他们强制更新可以吗？」; then 「继续」. Alex also explicitly authorized merging and publishing necessary fixes after verification.
 - Rule: —
 - Partly replaces: [2026-11-01-0400](2026-11-01-0400-no-refetch-on-focus.md), solely for the public build-metadata probe below

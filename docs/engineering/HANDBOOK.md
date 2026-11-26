@@ -77,11 +77,11 @@ Define what the user accomplishes, which visual standard governs the surface, an
 2. **Pin a mandatory visual reference before coding UI:** Name either an accepted Figma frame (`zPe5LKycb2XuT1ivCLRw07`, or `12Yn4bNPchBdDvdIb83KER` for brand mark and app icons) or the governing reference product from [`docs/design/design-system.md`](../design/design-system.md):
    - **ChatGPT / Codex + Claude Code:** chat chrome, transcript typography, composer, inline single-CTA status/quota strips, and flat quiet errors.
    - **Capy (`0.9.2`):** right rail, flat single-level tab bar, sidebar work tree, list pages (Pull Requests, Threads, Tasks), and task detail panel.
-   - **Category leaders (Linear, GitHub, Jira, Vercel):** only for a surface no agent product has; a feature no agent product has is not built unless Alex asks ([AGENTS.md standing rule 4](../../AGENTS.md#standing-rules-alex-2026-11-25-2026-11-26-0200)).
+   - **Linear:** issue and board semantics not covered above.
    - **Apple Human Interface Guidelines (iOS 26/27 & macOS 26):** native mobile (`mikka-hosted-ui/mobile-next/`) and Desktop window chrome.
-   - **Paid blocks themed by Mikka's tokens (R-90):** BoardUI Pro, affectUI, and beUI Pro are a component source, not a visual standard; they take Mikka's tokens through their theme hooks and a recorded patch covers what a hook cannot reach ([2026-11-25-1630](../design/decisions/2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md)).
+   - **Paid blocks as shipped (R-90):** BoardUI Pro, affectUI, and beUI Pro match their shipped library demo; only data and copy change ([2026-11-09-0050](../design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
 3. **Specify all seven interaction states (`design-system.md` §4):** Loading (shape-matched skeleton), Empty (first-use vs. zero-match search with Clear), Error & Recovery (inline recovery preserving user drafts; status re-check for unknown effectful mutations), Pending & double-submit lock, Dirty & destructive guard (dirty forms, one-time secrets, R-102 confirm), Keyboard/Focus/IME/Esc isolation, and Touch/Hover (`@media (hover: hover)`, `>= 44×44px` coarse hit target, `320px` reflow).
-4. **Enforce copy density and domain terminology:** Follow R-40 (delete every string whose removal leaves the screen unchanged), [`docs/design/copy.md`](../design/copy.md) (`C-01`..`C-11`: labels only label, values only value, no parenthetical notes or restated information; review with the skills listed there), and [`docs/design/glossary.md`](../design/glossary.md). Chinese UI uses `线程` (never `对话` except `对话框`, never `会话`), `群聊`, `Bot`, `Agent`, `Mikka Cloud`, and `daemon`.
+4. **Enforce copy density and domain terminology:** Follow R-40 (delete every string whose removal leaves the screen unchanged), [`docs/design/copy.md`](../design/copy.md) (`C-01`..`C-10`), and [`docs/design/glossary.md`](../design/glossary.md). Chinese UI uses `线程` (never `对话` except `对话框`, never `会话`), `群聊`, `Bot`, `Agent`, `Mikka Cloud`, and `daemon`.
 5. **Trace action coverage both ways:** For business actions, verify `command × permission × business transition × promised UI entry` with `.claude/skills/mikka-action-coverage/SKILL.md` and [`docs/review-checklist.md`](../review-checklist.md).
 
 ### Stage 1 exit criteria
@@ -196,14 +196,6 @@ CI is the independent final merge gate, not the first debugging loop. Draft PRs 
    - On `Mikka`, `scripts/ci/frontend-screenshot-check.mjs` verifies that frontend PR descriptions include a screenshot/media link or an accepted opt-out reason. On `mikka-hosted-ui`, `mikka-hosted-ui/.github/workflows/ui-policy.yml` enforces the `## 视觉对照` / `## Visual comparison` section naming the reference target alongside uploaded `ui-visual-evidence`. No UI PR merges until visual evidence passes and side-by-side comparison is verified.
 5. **PR bundle size budget (`mikka-hosted-ui/scripts/bundle-budget.mjs`):** Runs in `pairs-with-public-main.yml` after the official Web Vite build, records raw, gzip-9, and brotli-11 totals in `bundle-report.{json,md}`, and fails CI if Total JS, Total CSS, Largest JS, or Largest CSS exceeds the tight `+8%` ceiling in `mikka-hosted-ui/scripts/bundle-budget.json`.
 6. **Native iOS 26/27 & macOS 26 App Icon gate (`.github/workflows/app-icon.yml`):** Compiles `apps/desktop/build/icon.icon` for both iOS and macOS with Xcode `actool` on `macos-26`, and exports all six Liquid Glass renditions (`Default`, `Dark`, `TintedLight`, `TintedDark`, `ClearLight`, `ClearDark`) with `ictool` into `app-icon-previews`.
-
-### Independent screenshot review
-
-Standing rule 2 ([`AGENTS.md`](../../AGENTS.md#standing-rules-alex-2026-11-25-2026-11-26-0200), Alex 2026-11-25, every session and every agent): before any UI screenshot is sent to Alex, or used as a PR's `## 视觉对照` / `## Visual comparison` evidence, a separate subagent that did not make the change reviews it.
-
-1. **Give the reviewer the inputs, not the conclusion:** the screenshots (Desktop and Mobile, Light and Dark where the change touches them), the reference (the Capy/Codex source or the top-product screenshots named in the spec), and the governing rules ([`design-system.md`](../design/design-system.md), [`rules.md`](../design/rules.md), [`copy.md`](../design/copy.md)). Do not hand it the author's own assessment.
-2. **The reviewer reports every difference from the reference and every rule it breaks** (layout, spacing, type, colour, states, copy against C-11), each with the screenshot and region.
-3. **The author fixes each finding or lists it with its reason** next to the screenshot. Only then does the screenshot go to Alex. A review by the agent that made the change does not count.
 
 ---
 

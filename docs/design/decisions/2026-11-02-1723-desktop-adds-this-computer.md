@@ -1,7 +1,7 @@
 # Installing the desktop app makes this computer a device
 
 - Date: 2026-11-02
-- **Status:** Superseded in part by [2026-11-26-0110](2026-11-26-0110-pages-environments-from-benchmark.md)
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator: 装了桌面 App 就应该自动把 daemon 装到这台电脑上，并在系统里登记成设备，不需要用户去点「添加这台电脑」
 - Rule: —
 - Replaces: the 添加这台电脑 button of usability C10 (#1025)

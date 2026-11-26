@@ -1,4 +1,4 @@
-// The native application menu, as Capy's and Codex's desktop menus (spec: research/spec-desktop.md §1–2): the app menu with Settings…, File with
+// The native application menu, as Capy's and Codex's desktop menus: the app menu with Settings…, File with
 // New Thread, New Window and the tab commands, Edit, View, History, Window with tab switching, and Help.
 // Tab and history items carry accelerators, so ⌘W, ⌘T, ⇧⌘T, ⌘1–9 and ⌘[ / ⌘] work while focus is in the
 // composer or any other text field: main sends the command to the focused window (IPC.appMenuCommand) instead
@@ -113,7 +113,7 @@ export function newWindowMenuItem(openWindow: () => void, locale = 'en'): NewWin
 }
 
 /**
- * Accelerators, as Capy's (`main.js` lNe) where Mikka has the command. New Thread is ⇧⌘O as in Capy and
+ * Accelerators, as Capy's where Mikka has the command. New Thread is ⇧⌘O as in Capy and
  * ChatGPT, because ⌘N is the Devices page's Add device and ⇧⌘N already opens a new window.
  */
 export const MENU_ACCELERATORS = {
