@@ -24,7 +24,7 @@ test('the settings sidebar separates personal, connections and compute, Agent, a
   assert.deepEqual(ids('compute'), ['models', 'environments', 'computers', 'secrets', 'integrations', 'connections', 'developer'])
   assert.deepEqual(ids('agent'), ['instructions', 'team-skills', 'threads', 'git', 'agent-configs', 'agent-permissions', 'memory'])
   assert.deepEqual(ids('review'), [])
-  assert.deepEqual(ids('workspace'), ['general', 'identity', 'issue-states', 'members', 'teams', 'billing', 'usage', 'activity', 'audit', 'cloud'])
+  assert.deepEqual(ids('workspace'), ['general', 'identity', 'issue-states', 'members', 'teams', 'billing', 'usage', 'activity', 'audit', 'organization', 'cloud'])
 })
 
 test('old links keep landing on the page that now holds their content, and deleted bot-permissions is not a legacy alias', () => {
@@ -55,7 +55,7 @@ test('hrefs keep the workspace, support extra query params, and use the routed p
 
 const PENDING_SECTIONS = []
 const SKIPPED_SECTIONS = ['review-repositories', 'review-config', 'referrals', 'experiments', 'cloud-credentials']
-const SIDEBAR_OFF = ['logins', 'mcp', 'permissions', 'organization']
+const SIDEBAR_OFF = ['logins', 'mcp', 'permissions']
 
 test('centralized 3-tier status governs section and item presentation', () => {
   for (const id of PENDING_SECTIONS) assert.equal(settingSectionStatus(id), 'pending', id)
@@ -92,12 +92,12 @@ test('cloud server settings require the explicit server administrator capability
   assert.deepEqual(visibleSettingsSections({ admin: true, cloudAdmin: true, memory: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] === 'available' && !SIDEBAR_OFF.includes(s.id)).map(s => s.id))
 })
 
-test('identity and access is limited to team admins, and organization remains reachable through its direct link', () => {
+test('identity and access is limited to team admins, and organization follows workspace availability', () => {
   for (const admin of [false, true]) {
     for (const organization of [false, true]) {
       const team = visibleSettingsSections({ admin, organization }).map(s => s.id)
       assert.equal(team.includes('identity'), admin)
-      assert.equal(team.includes('organization'), false)
+      assert.equal(team.includes('organization'), organization)
       const personal = visibleSettingsSections({ admin, organization, personal: true }).map(s => s.id)
       for (const teamOnly of ['identity', 'organization', 'members', 'teams', 'permissions', 'audit']) assert.equal(personal.includes(teamOnly), false, teamOnly)
     }
@@ -142,7 +142,7 @@ test('a personal workspace has every setting of the workspace itself; only what 
   const account = SETTINGS_SECTIONS.filter(s => ['personal', 'compute', 'agent'].includes(s.group) && SETTINGS_SECTION_STATUS[s.id] === 'available' && s.sidebar !== false).map(s => s.id)
   assert.deepEqual(personal, [...account, 'general', 'issue-states', 'billing', 'usage', 'activity'])
   const team = visibleSettingsSections({ admin: true }).map(s => s.id)
-  for (const id of ['general', 'identity', 'members', 'teams', 'environments', 'secrets', 'agent-permissions', 'audit', 'usage', 'activity', 'billing']) assert.ok(team.includes(id), id)
+  for (const id of ['general', 'identity', 'organization', 'members', 'teams', 'environments', 'secrets', 'agent-permissions', 'audit', 'usage', 'activity', 'billing']) assert.ok(team.includes(id), id)
   assert.equal(team.includes('logins'), false)
 })
 
