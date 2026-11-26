@@ -132,6 +132,36 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     assert.equal(joined.reactions.length, 20)
   })
 
+  await t.test('identical message ids in different threads have independent reactions', async () => {
+    const copies = ['copy-left', 'copy-right']
+    const at = new Date().toISOString()
+    await write(owner, doc => {
+      for (const id of copies) {
+        addThread(doc, { id, author: '', createdAt: at, messages: [{ author: '', body: 'Start', at }] }, 'test')
+        replyToThread(doc, id, { id: 'shared-id', author: '', body: 'Reply', at })
+      }
+    })
+    const ref = (threadId: string) => ({ taskId: task, threadId, messageId: 'shared-id' })
+    for (const id of copies) {
+      const saved = await as(member, () => actions.setTaskCommentReaction({ ...ref(id), emoji: '👍', reacted: true }))
+      assert.ok('reactions' in saved)
+      assert.equal(saved.reactions[0]?.count, 1)
+    }
+    const view = await as(member, () => actions.getTaskCommentState(task))
+    assert.ok('reactionsByThread' in view)
+    for (const id of copies) assert.equal(view.reactionsByThread[id]['shared-id'][0].count, 1)
+    assert.equal(view.reactions?.['shared-id'], undefined)
+    await as(member, () => actions.setTaskCommentReaction({ ...ref(copies[0]), emoji: '👍', reacted: false }))
+    assert.equal((await reactionRows()).filter(row => row.messageId === 'shared-id').length, 1)
+    await as(member, () => actions.setTaskCommentReaction({ ...ref(copies[0]), emoji: '👍', reacted: true }))
+    await as(owner, () => actions.deleteTaskComment(ref(copies[0])))
+    const survivor = await as(member, () => actions.getTaskCommentState(task))
+    assert.ok('reactionsByThread' in survivor)
+    assert.equal(survivor.reactionsByThread[copies[1]]['shared-id'][0].count, 1)
+    await write(owner, doc => { for (const id of copies) doc.getMap('threads').delete(id) })
+    assert.equal((await reactionRows()).filter(row => row.messageId === 'shared-id').length, 0)
+  })
+
   await t.test('delete: author or workspace admin; tombstone while the thread has replies; reactions go with it', async () => {
     // A second thread, written by the member, answered by the owner.
     await write(member, doc => {
