@@ -265,7 +265,7 @@ export const desktopActionSchemas = {
   'ops-metrics.getWorkspaceOpsMetrics': inWorkspace,
   'bots.listBots': none,
   'bots.pollBots': inWorkspace,
-  'bots.createBot': tuple(object({ name: text(200).trim().min(1), color: text(50).min(1), shape: text(50).min(1), model: text(1000).nullish(), repository: text(2048).nullish(), ...botSettingFields,
+  'bots.createBot': tuple(object({ name: text(200).trim().min(1), color: text(50).min(1).optional(), shape: text(50).min(1), model: text(1000).nullish(), repository: text(2048).nullish(), ...botSettingFields,
     visibility: z.enum(['shared', 'private']).optional(), subscribers: z.array(id).max(200).optional() }), workspace),
   'bots.updateBot': tuple(object({ botId: uuid, name: text(200).trim().min(1).optional(), color: text(50).min(1).optional(), shape: text(50).min(1).optional(), publicRole: text(2000).optional(), ...botSettingFields }), workspace),
   'bots.getBotSettings': tuple(uuid, workspace),
