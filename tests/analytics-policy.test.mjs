@@ -695,6 +695,11 @@ test('a control owner names a file under a UI source root and a plugin-written l
     'web/components/slots/settings-sidebar.tsx#SettingsSidebar:SidebarMenuButton[FeatureCopy.c_cb11190c]',
     'web/components/x.tsx#X:button[Settings.nav.createTeam]',
     'web/components/x.tsx#X:a[versionPullRequest].2',
+    // Brackets, `#` and `:` of the owner itself are not data, nor are a mention's `@` or a component named Data.
+    'web/a.tsx#A:button[@].1',
+    'web/a.tsx#A:button[@here]',
+    'web/a.tsx#Data:button',
+    'web/a.tsx#Tel:a[Run]',
   ]) assert.equal(kept(owner), owner, owner)
   for (const owner of [
     'web/a.tsx#A:button[x@y.com]',
@@ -739,5 +744,23 @@ test('a control owner names a file under a UI source root and a plugin-written l
     'web/a.tsx#A:button[data:text/html,x]',
     'web/a.tsx#A:button[FeatureCopy.c_30108106 4111111]',
     'web/a.tsx#A:button[FeatureCopy.c_301081061]',
+    // Only FeatureCopy's hashed keys are names.
+    'web/a.tsx#A:button[x4111111111111111.c_00000000]',
+    'web/a.tsx#A:button[x10.0.0.1.c_00000000]',
+    'web/a.tsx#A:button[evil.example.com.c_deadbeef]',
+    // URLs, domains, hosts, ids and tokens.
+    'web/a.tsx#A:button[bit.ly/abc123]',
+    'web/a.tsx#A:button[get.sh/install]',
+    'web/a.tsx#A:button[MAILTO:alex]',
+    'web/a.tsx#A:button[Tel:+1 555]',
+    'web/a.tsx#A:button[JavaScript:void]',
+    ...['acme.ly', 'notion.so', 'alex.me', 'site.fr', 'foo.info', 'discord.gg', 'alex%40acme.ly'].map(label => `web/a.tsx#A:button[${label}]`),
+    'web/a.tsx#A:button[api.acme:8080]',
+    'web/a.tsx#A:button[Open 123e4567-e89b-12d3-a456-426614174000]',
+    'web/a.tsx#A:button[sk_live_51Habcdefghijklmnop]',
+    'web/a.tsx#A:button[deadbeefdeadbeefdeadbeef1]',
+    'web/a.tsx#A:button[Call 1 2 3 4 5 6 7]',
+    'web/a.tsx#A:button[Pay 1$2$3$4$5$6$7]',
+    'web/a.tsx#A:button[onClick=sk_live_51Habcdefghijklmnop]',
   ]) assert.equal(kept(owner), undefined, owner)
 })
