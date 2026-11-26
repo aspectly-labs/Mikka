@@ -3,13 +3,14 @@ import { verifyComposioWebhook } from '@/lib/composio-webhook'
 import { composioNotification } from '@/lib/suggestions/notification'
 import { ingestNotifications } from '@/lib/suggestions/store'
 import { defineRoute } from '@/lib/primitives/define-route'
+import { readEnv } from '@/lib/env/server'
 
 const noStore = { 'Cache-Control': 'no-store' }
 type VerifiedComposio = Awaited<ReturnType<typeof verifyComposioWebhook>>
 
 async function verify(request: Request) {
-  const apiKey = process.env.COMPOSIO_API_KEY
-  const verifySecret = process.env.COMPOSIO_WEBHOOK_SECRET
+  const apiKey = readEnv('COMPOSIO_API_KEY')
+  const verifySecret = readEnv('COMPOSIO_WEBHOOK_SECRET')
   if (!apiKey || !verifySecret) return new Response('Webhook is not configured.', { status: 503, headers: noStore })
   try {
     return { ok: true as const, payload: await verifyComposioWebhook(request, apiKey, verifySecret) }

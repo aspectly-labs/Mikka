@@ -1,6 +1,7 @@
 import { workerDefinitionDigest } from './agent-kit/worker-digest'
 import { scheduleThreadTitle } from '@/lib/thread-title-schedule'
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 import { admitProfileSelection } from './factory/profile-admission'
 import { runListChanged } from './live/lists'
 import { requestedRunSettings } from './task-run-settings'
@@ -103,7 +104,7 @@ export async function acceptLocalRun(input: {
     const [device] = await tx.select().from(devices).where(and(eq(devices.id, input.deviceId), eq(devices.ownerId, input.userId), eq(devices.kind, 'local'))).for('share')
     if (!agent || agent.deviceId !== input.deviceId || agent.harness !== input.definition.harness || !device?.enabled || !localExecutionHarnesses(device.harnesses).includes(agent.harness)) throw invalid('deviceUnavailable')
     const [repo] = await tx.select().from(deviceRepos).where(and(eq(deviceRepos.id, input.deviceRepoId), eq(deviceRepos.userId, input.userId), eq(deviceRepos.deviceId, input.deviceId))).for('share')
-    if (!repo?.remoteUrl || !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(process.env) })) throw invalid('repositoryMismatch')
+    if (!repo?.remoteUrl || !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(runtimeEnv()) })) throw invalid('repositoryMismatch')
     assertProjectExecutionTarget(projectExecution, { userId: input.userId, workspaceId: task.workspaceId!, repositoryKey: repo.repoPath, runtime: 'local', harness: agent.harness })
     const [bot] = input.botId ? await tx.select().from(bots).where(and(eq(bots.id, input.botId), eq(bots.ownerId, input.userId))).for('share') : []
     if (input.botId && (!bot || bot.workspaceId !== task.workspaceId)) throw invalid('botUnavailable')

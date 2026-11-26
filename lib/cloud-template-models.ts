@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { harnessInfoSchema } from '@mikka/protocol/harness'
 import type { OrderEntry } from './model-order-plan'
+import { runtimeEnv } from '@/lib/env/server'
 export const cloudTemplateKindSchema = z.enum(['desktop', 'claude', 'codex'])
 export type CloudTemplateKind = z.infer<typeof cloudTemplateKindSchema>
 const template = z.object({ templateId: z.string().regex(/^[A-Za-z0-9_-]+$/), models: z.array(harnessInfoSchema).max(4),
@@ -12,7 +13,7 @@ export const cloudTemplateModelsSchema = z.object({
   templates: z.object({ desktop: template, claude: template, codex: template }).strict(),
 }).strict()
 export type CloudModelState = 'ready' | 'cloudModelsUnknown' | 'cloudModelNotReported'
-export function cloudTemplateModels(env: Record<string, string | undefined> = process.env) {
+export function cloudTemplateModels(env: Record<string, string | undefined> = runtimeEnv()) {
   try {
     const result = cloudTemplateModelsSchema.parse(JSON.parse(env.MIKKA_CLOUD_TEMPLATE_MODELS ?? ''))
     if (result.workerSha !== env.MIKKA_CLOUD_WORKER_SHA
@@ -28,7 +29,7 @@ export function cloudTemplateModels(env: Record<string, string | undefined> = pr
 
 /** Only release-gated catalogue IDs identify additive images. Bare official
  * names remain usable for rollback; arbitrary replacement IDs are refused. */
-export function cloudTemplateOrigin(templateId: string, env: Record<string, string | undefined> = process.env): { kind: CloudTemplateKind; preinstalled: boolean } | null {
+export function cloudTemplateOrigin(templateId: string, env: Record<string, string | undefined> = runtimeEnv()): { kind: CloudTemplateKind; preinstalled: boolean } | null {
   const official = cloudTemplateKindSchema.safeParse(templateId)
   if (official.success) return { kind: official.data, preinstalled: false }
   const catalogues = [cloudTemplateModels(env)]
@@ -51,7 +52,7 @@ export function cloudTemplateOrigin(templateId: string, env: Record<string, stri
 /** Persisted provenance lets an existing task retain its VM across more than
  * one release. Only the host writes this field when selecting a gated image. */
 export function threadMachineTemplateKind(machine: { snapshotId?: unknown; templateKind?: unknown } | null | undefined,
-  env: Record<string, string | undefined> = process.env): CloudTemplateKind | null {
+  env: Record<string, string | undefined> = runtimeEnv()): CloudTemplateKind | null {
   if (!machine || typeof machine.snapshotId !== 'string') return null
   const known = cloudTemplateOrigin(machine.snapshotId, env)
   const stored = cloudTemplateKindSchema.safeParse(machine.templateKind)
@@ -60,7 +61,7 @@ export function threadMachineTemplateKind(machine: { snapshotId?: unknown; templ
 }
 /** The release proves the selected image has its Agent. Credentials admit models. */
 export type CloudModelPurpose = 'task' | 'desktop' | 'cloudflare_task'
-export function cloudModelSupport(entry: Pick<OrderEntry, 'harness' | 'model' | 'source'>, purpose: CloudModelPurpose = 'task', env: Record<string, string | undefined> = process.env): CloudModelState {
+export function cloudModelSupport(entry: Pick<OrderEntry, 'harness' | 'model' | 'source'>, purpose: CloudModelPurpose = 'task', env: Record<string, string | undefined> = runtimeEnv()): CloudModelState {
   // The protected task image release verifies both native binaries. Its
   // subscription catalogue and current allowance are authorized by dispatch.
   // Mikka 额度 reaches any catalogue model through the model gateway, on either image.

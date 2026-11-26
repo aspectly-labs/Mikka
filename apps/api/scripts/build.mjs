@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url'
 import { build, copyPublicAssets, createNitro, prepare } from 'nitro/builder'
 import { finalizeBuild } from './finalize-build.mjs'
 import { assertApiBuildConfiguration } from '../build-contract.mjs'
+import { envValue } from '../../../lib/env/runtime.mjs'
 
 const root = fileURLToPath(new URL('../../..', import.meta.url))
 const preset = 'node-server'
-const revision = process.env.MIKKA_BUILD_REVISION || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+const revision = envValue('MIKKA_BUILD_REVISION') || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
 if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('API_BUILD_SHA_REQUIRED')
 execFileSync(process.execPath, ['apps/api/scripts/generate-routes.mjs'], { cwd: root, stdio: 'inherit' })
 const html = await readFile(join(root, 'apps/frontend/dist/web/index.html'), 'utf8')

@@ -1,9 +1,12 @@
+import { DEFAULT_LOCAL_EVE_ORIGIN } from '@/lib/env/hosts'
+import { runtimeEnv } from '@/lib/env/server'
+
 /** The eve service owns its protocol and authentication. This proxy supplies
  * the app's same-origin mount without interpreting or buffering its events. */
 export const EVE_PUBLIC_PREFIX = '/mikka/api/agents'
 
-export function eveServiceOrigin(env: Record<string, string | undefined> = process.env): URL {
-  const value = env.MIKKA_EVE_ORIGIN ?? 'http://127.0.0.1:3002'
+export function eveServiceOrigin(env: Record<string, string | undefined> = runtimeEnv()): URL {
+  const value = env.MIKKA_EVE_ORIGIN ?? DEFAULT_LOCAL_EVE_ORIGIN
   const origin = new URL(value)
   if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password
     || origin.pathname !== '/' || origin.search || origin.hash) throw new Error('EVE_SERVICE_ORIGIN_INVALID')
@@ -36,7 +39,7 @@ export async function proxyEveRequest(request: Request, upstreamPath?: string, o
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && /^\/eve\/v1\/session(?:\/|$)/.test(path)
     && request.headers.has('cookie') && !request.headers.has('authorization')) {
     let expectedOrigin: string
-    try { expectedOrigin = new URL((options.env ?? process.env).BETTER_AUTH_URL ?? request.url).origin }
+    try { expectedOrigin = new URL((options.env ?? runtimeEnv()).BETTER_AUTH_URL ?? request.url).origin }
     catch { return Response.json({ ok: false, error: 'coordinatorUnavailable' }, { status: 503 }) }
     if (request.headers.get('origin') !== expectedOrigin || request.headers.get('sec-fetch-site') === 'cross-site') {
       return Response.json({ ok: false, error: 'originRejected' }, { status: 403, headers: { 'cache-control': 'no-store' } })

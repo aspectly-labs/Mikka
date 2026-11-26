@@ -2,6 +2,7 @@ import Negotiator from 'negotiator'
 import { match } from '@formatjs/intl-localematcher'
 import { parseRequestCookies } from '../src/request-cookies.mjs'
 import { localeCookies, localeCookiesCurrent, storedLocale } from '../../../i18n/locale-cookie.mjs'
+import { envValue } from '../../../lib/env/runtime.mjs'
 
 export const baseSecurityHeaders = {
   'x-content-type-options': 'nosniff',
@@ -53,7 +54,7 @@ export function trailingSlashRedirect(request) {
   return new Response(null, { status: 308, headers: { location: url.href } })
 }
 
-export function pageRedirect(request, { production = process.env.NODE_ENV === 'production', legacyHost = process.env.MIKKA_LEGACY_APP_HOST, origin = process.env.BETTER_AUTH_URL, edition = process.env.MIKKA_EDITION } = {}) {
+export function pageRedirect(request, { production = envValue('NODE_ENV') === 'production', legacyHost = envValue('MIKKA_LEGACY_APP_HOST'), origin = envValue('BETTER_AUTH_URL'), edition = envValue('MIKKA_EDITION') } = {}) {
   const canonical = trailingSlashRedirect(request)
   if (canonical) return canonical
   const url = new URL(request.url), path = url.pathname

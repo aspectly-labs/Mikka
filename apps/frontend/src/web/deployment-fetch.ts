@@ -1,10 +1,11 @@
 import { withBasePath } from '@/lib/base-path'
+import { getPublicDeploymentId } from '@/lib/env/public'
 
 const installed = Symbol.for('mikka.web.deployment-fetch')
 
 /** Pin browser API calls to the HTML's deployment. The public version check
  * deliberately bypasses that pin so the existing VersionGuard sees updates. */
-export function installDeploymentFetch(target: Window, deploymentId = process.env.MIKKA_DEPLOYMENT_ID ?? '') {
+export function installDeploymentFetch(target: Window, deploymentId = getPublicDeploymentId()) {
   const state = target as Window & { [installed]?: true }
   if (!deploymentId || state[installed]) return
   state[installed] = true

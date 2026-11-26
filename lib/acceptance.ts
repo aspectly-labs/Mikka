@@ -1,5 +1,6 @@
 import 'server-only'
+import { isDevelopmentEnv, readEnv } from '@/lib/env'
 
 export function isAcceptanceEnabled() {
-  return process.env.NODE_ENV === 'development' && process.env.VERCEL_ENV !== 'production'
+  return isDevelopmentEnv() && readEnv('VERCEL_ENV') !== 'production'
 }

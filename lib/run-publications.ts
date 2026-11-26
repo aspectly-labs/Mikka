@@ -5,6 +5,7 @@ import { factoryPullRequestText } from './captures/publication-contract'
 import type { PoolClient } from 'pg'
 import { completionFailureDetails } from './run-failure-details'
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 import { isCurrentFactoryDeliverable } from './factory/execution-kind'
 import { issueListChanged, runListChanged } from './live/lists'
 import { and, asc, eq, isNull, lte, ne, or, sql } from 'drizzle-orm'
@@ -477,7 +478,7 @@ export async function publishRunResult(runId: string, openPullRequest: OwnerPull
     }))
     const visualEvidence = factoryBound ? await prepareFactoryPublicationEvidence(pool, {
       userId: claim.userId, issueId: claim.issueId, runId, sha: snapshot.commit,
-    }, resolveAppOrigin(process.env)) : undefined
+    }, resolveAppOrigin(runtimeEnv())) : undefined
     const pullRequest = await openPullRequest({ ...snapshot, userId: claim.userId, ...(visualEvidence ? { visualEvidence } : {}),
       withWrite: write => withPublicationAuthority(claim, async ({ publication, run, report }, client) => {
         // Same SQL transaction/connection as issue/run authority: concurrent

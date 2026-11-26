@@ -1,6 +1,7 @@
 import 'server-only'
 import { PaidResourceError } from '@/lib/abuse/policy'
 import { machineChunkMicroUsd, type MachineSize } from './machine-pricing'
+import { runtimeEnv } from '@/lib/env/server'
 
 const FUNDING_REFUSALS = new Set(['verification_required', 'free_allowance_used', 'points_exhausted', 'usage_budget_exhausted', 'billing_authorization_revoked', 'platform_paused', 'billing_scope_missing', 'billing_owner_missing'])
 
@@ -55,7 +56,7 @@ const runtime: MachineBillingDependencies = {
     ])
     const label = `machine/cloudflare-${chunk.size}`
     await hostedBillingScope.run({ workspaceId: chunk.workspaceId, ownerId: chunk.ownerId, runId: chunk.runId, actorId: chunk.ownerId },
-      () => withSharedCredits(chunk.workspaceId, payer => hostedUsage.reserve(payer, label, id, process.env, cost)))
+      () => withSharedCredits(chunk.workspaceId, payer => hostedUsage.reserve(payer, label, id, runtimeEnv(), cost)))
     // Prepaid: the chunk is charged in full when it starts, as Capy holds machine time ahead.
     await hostedUsage.settle(id, cost)
   },

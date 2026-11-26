@@ -191,8 +191,15 @@ test('G3 no-plan-name-branching: flags plan & plan-derived edition comparisons, 
         '  const LIMITS: Record<string, number> = { free: 1, pro: 5, enterprise: 50 }',
         '  const z = LIMITS[summary.plan]',
         '  const edLimit = ({ team_free: 1, team_pro: 5, enterprise: 50 } as Record<string, number>)[summary.edition]',
-        '  return { a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, edLimit }',
+        '  const frozenInline = Object.freeze({ free: 1, pro: 5 })[summary.plan]',
+        '  const lateArr = LATE_PLANS.includes(summary.plan)',
+        '  const lateSet = LATE_PLAN_SET.has(summary.plan)',
+        '  const lateObj = LATE_PLAN_LIMITS[summary.plan]',
+        '  return { a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, edLimit, frozenInline, lateArr, lateSet, lateObj }',
         '}',
+        "const LATE_PLANS = Object.freeze(['pro', 'enterprise'] as const)",
+        "const LATE_PLAN_SET = new Set(['pro', 'enterprise'])",
+        'const LATE_PLAN_LIMITS = Object.freeze({ free: 1, pro: 5, enterprise: 50 } as Record<string, number>)',
       ].join('\n'),
       'lib/good-capabilities.ts': [
         'export function canManage(summary: { edition: string; plan: string; executionPlan: string; otherKey: string; capabilities: { canUseEnterpriseGovernance: boolean } }) {',
@@ -218,8 +225,8 @@ test('G3 no-plan-name-branching: flags plan & plan-derived edition comparisons, 
       const bad = runOxlint('lib/bad-plan.ts')
       assert.equal(bad.status, 1)
       const g3 = bad.diagnostics.filter(d => d.code === 'mikka(no-plan-name-branching)')
-      // 7 original + 6 edition (h..m) + 6 broader plan identifiers (n..s) + 4 normalized chains (t..w) + 4 object lookups (x, y, z, edLimit) = 27
-      assert.equal(g3.length, 27)
+      // 7 original + 6 edition (h..m) + 6 broader plan identifiers (n..s) + 4 normalized chains (t..w) + 4 object lookups (x, y, z, edLimit) + 4 frozen/late declarations = 31
+      assert.equal(g3.length, 31)
 
       const good = runOxlint(
         'lib/good-capabilities.ts',
@@ -402,5 +409,14 @@ test('Ratchet baseline: allows exact recorded count, fails immediately on +1 or 
       assert.equal(malformed.status, 1)
       assert.ok(malformed.diagnostics.some(d => d.message.includes('Invalid baseline JSON')))
     },
+  )
+})
+
+test('Repository maintains zero anti-hardcoding ratchet baselines', () => {
+  const baselinesDir = path.join(REPO_ROOT, 'scripts', 'baselines')
+  assert.equal(
+    fs.existsSync(baselinesDir),
+    false,
+    'scripts/baselines must stay deleted; all anti-hardcoding debt has been burned down to zero',
   )
 })

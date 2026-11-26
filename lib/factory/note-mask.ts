@@ -5,6 +5,7 @@
 // workspaceSecretMasker through `extraSecrets`/replace this with lib/secrets/mask.
 import { redactFactoryCheckText } from "./checks";
 import type { Masker } from '@/lib/secrets/mask'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 export const NOTE_MASK_MIN_LENGTH = 8;
 /** Server secrets that #438's masker also always masks. */
@@ -30,7 +31,7 @@ function needlePattern(form: string): string {
   return form.split(/(%[0-9A-Fa-f]{2})/).map((part, i) => (i % 2 ? `%${anyCase(part[1])}${anyCase(part[2])}` : escapeRe(part))).join("");
 }
 
-export function serverNoteSecrets(env: NodeJS.ProcessEnv = process.env): NoteSecret[] {
+export function serverNoteSecrets(env: EnvMap = runtimeEnv()): NoteSecret[] {
   return SERVER_SECRET_ENV.flatMap((name) => (env[name] ? [{ name, value: env[name]! }] : []));
 }
 

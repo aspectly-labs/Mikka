@@ -5,6 +5,7 @@ import { CredentialError } from '@/lib/credentials/contracts'
 import { assumeVercelRole, awsKms, seal } from '@/lib/credentials/kms'
 import { checkCredentialRequest, credentialFailure, privateHeaders } from '@/lib/credentials/http'
 import { defineRoute } from '@/lib/primitives/define-route'
+import { readEnv } from '@/lib/env/server'
 
 export const maxDuration = 60
 /** Vercel deployment protection controls access to this Preview-only probe.
@@ -14,17 +15,18 @@ const POSTBody = defineRoute(
   { auth: 'public', origin: 'any', workspace: 'none' },
   async ({ request }) => {
     try {
-      if (process.env.VERCEL_ENV !== 'preview') throw new CredentialError('credential_denied', 404)
+      if (readEnv('VERCEL_ENV') !== 'preview') throw new CredentialError('credential_denied', 404)
       checkCredentialRequest(request)
       const ownRole = await assumeVercelRole('app').then(() => true, () => false)
       const crossRole = await assumeVercelRole('broker').then(() => true, () => false)
       const context = { userId: 'preview-kms-probe', credentialId: randomUUID(), origin: 'https://example.com' }
       const envelope = await seal(awsKms('app'), context, Buffer.from('mikka-preview-kms-probe'))
-      const brokerUrl = new URL(process.env.CREDENTIAL_BROKER_URL ?? '')
+      const brokerUrl = new URL(readEnv('CREDENTIAL_BROKER_URL') ?? '')
       if (brokerUrl.protocol !== 'https:' || !brokerUrl.hostname.endsWith('.vercel.app')) throw new CredentialError()
+      const previewBypass = readEnv('CREDENTIAL_BROKER_PREVIEW_BYPASS')
       const response = await fetch(new URL('/api/oidc', brokerUrl), { method: 'POST', headers: {
         Authorization: `Bearer ${await getVercelOidcToken()}`, 'Content-Type': 'application/json',
-        ...(process.env.CREDENTIAL_BROKER_PREVIEW_BYPASS ? { 'x-vercel-protection-bypass': process.env.CREDENTIAL_BROKER_PREVIEW_BYPASS } : {}),
+        ...(previewBypass ? { 'x-vercel-protection-bypass': previewBypass } : {}),
       }, body: JSON.stringify({ context, envelope }), redirect: 'error', signal: AbortSignal.timeout(30_000), cache: 'no-store' })
       if (!response.ok) throw new CredentialError()
       const broker = await response.json()

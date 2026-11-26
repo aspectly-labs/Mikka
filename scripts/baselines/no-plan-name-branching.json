@@ -1,8 +1,0 @@
-{
-  "files": {
-    "lib/billing/plan-refunds.ts": 1,
-    "lib/enterprise/management.ts": 1,
-    "lib/governance/resource-policy.ts": 1,
-    "lib/subscription-service.ts": 1
-  }
-}

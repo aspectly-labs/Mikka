@@ -1,12 +1,13 @@
 import { timingSafeEqual } from 'node:crypto'
 import { getTelegramBot, isTelegramConfigured } from '@/lib/telegram/bot'
 import { defineRoute } from '@/lib/primitives/define-route'
+import { readEnv } from '@/lib/env/server'
 // oxlint-disable-next-line no-restricted-imports -- the chat SDK hands over a task that is already running under this webhook's label
 import { after } from '@/lib/server-runtime/server'
 
 function verifyTelegramWebhook(request: Request) {
   if (!isTelegramConfigured()) return new Response('Telegram webhook is not configured', { status: 503 })
-  const secret = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN
+  const secret = readEnv('TELEGRAM_WEBHOOK_SECRET_TOKEN')
   if (!secret) return new Response('Telegram webhook is not configured', { status: 503 })
   const header = request.headers.get('x-telegram-bot-api-secret-token')
   try {

@@ -1,6 +1,7 @@
 import { readRunFailure, type RunFailure } from '@mikka/protocol/run-failure'
 import { readCompactRunFailure, runFailureBrief, type CompactRunFailure } from './run-failure-projection'
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 import { runDecisionWarnings, type ProjectDecisionWarning } from './project-decision-warnings'
 import type { ExecutionIdentity } from './execution-identity'
 import type { TeamScope } from './team-access'
@@ -219,7 +220,7 @@ export async function queueProviderFallbackRun(tx: import('pg').PoolClient, user
     const [device] = await executor.select({ kind: devices.kind }).from(devices).where(and(eq(devices.id, current.deviceId!), eq(devices.ownerId, userId))).limit(1)
     if (!device || (device.kind === 'cloud' && current.agentDefinition.allowLocalRecovery !== true)) throw invalid()
     try {
-      const options = { allowFile: daemonTestMode(process.env) }
+      const options = { allowFile: daemonTestMode(runtimeEnv()) }
       if (normalizeRepository(original.remoteUrl, options).key !== normalizeRepository(repo.remoteUrl, options).key) throw invalid()
     } catch (error) { throw Object.assign(invalid(), { cause: error }) }
     const { executionIdentitySchema } = await import('./execution-identity')
@@ -263,7 +264,7 @@ async function queueAdmittedRun(userId: string, input: Omit<LocalDispatchInput, 
   }
   const parsed = z.object({ issueId: z.uuid(), agentId: z.uuid(), repo: z.string().trim().min(1).max(4_000), note: z.string().trim().max(10_000).optional(), requestKey: dispatchRequestKey.optional(), model: z.string().trim().min(1).max(128).optional(), pinnedDeviceId: z.uuid().optional(), readOnly: z.boolean().optional(), apiKeyId: z.uuid().optional(), subscriptionBindingId: z.uuid().optional() }).refine(value => !(value.apiKeyId && value.subscriptionBindingId)).safeParse(input)
   if (!parsed.success) throw new ActionFailureError('runInvalid')
-  try { normalizeRepository(parsed.data.repo, { allowFile: daemonTestMode(process.env) }) } catch (error) { throw Object.assign(new ActionFailureError('repoPathInvalid'), { cause: error }) }
+  try { normalizeRepository(parsed.data.repo, { allowFile: daemonTestMode(runtimeEnv()) }) } catch (error) { throw Object.assign(new ActionFailureError('repoPathInvalid'), { cause: error }) }
   const issue = await issueForUser(userId, parsed.data.issueId, false, executor)
   if (!issue || issue.ownershipState !== 'bound' || !issue.workspaceId) throw new ActionFailureError('issueNotFound')
   // A task already owns its tenant. A bot-less dispatch and a continuation

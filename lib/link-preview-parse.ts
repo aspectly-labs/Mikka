@@ -1,4 +1,5 @@
 import { BlockList, isIP } from 'node:net'
+import { LOOPBACK_IPV6 } from './env/hosts-constants.mjs'
 
 // The pure half of link previews: which addresses are private, and reading
 // a page's Open Graph tags. lib/link-preview.ts does the fetching.
@@ -15,7 +16,7 @@ export interface LinkPreview {
 
 const PRIVATE = new BlockList()
 for (const [network, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]] as const) PRIVATE.addSubnet(network, prefix, 'ipv4')
-for (const [network, prefix] of [['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const) PRIVATE.addSubnet(network, prefix, 'ipv6')
+for (const [network, prefix] of [['::', 128], [LOOPBACK_IPV6, 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]] as const) PRIVATE.addSubnet(network, prefix, 'ipv6')
 
 /** Loopback, private, link-local and other non-public addresses. */
 export function isPrivateAddress(address: string): boolean {

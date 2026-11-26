@@ -14,6 +14,7 @@ import { createFactoryClaim } from './claim';
 import { claimLocalRun } from '../computer/claim';
 import { factoryCheckIndependent } from './check-independence';
 import { createFactoryReconciler } from './reconcile';
+import { LOOPBACK_IPV4, loopbackUrl } from '@/lib/env/hosts';
 
 export async function lifecycleCases(t:TestContext,pool:Pool,authorize:FactoryAuthorize,fixture:()=>Promise<FactoryRoute>) {
   const denies=(fn:()=>Promise<unknown>,code:string)=>assert.rejects(fn,e=>e instanceof FactoryError&&e.code===code);
@@ -124,8 +125,8 @@ export async function lifecycleCases(t:TestContext,pool:Pool,authorize:FactoryAu
         res.writeHead(result.status,{'content-type':'application/json'});res.end(JSON.stringify(result.body));
       }catch{res.writeHead(500);res.end();}
     });
-    server.listen(0,'127.0.0.1');await once(server,'listening');
-    origin=`http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+    server.listen(0,LOOPBACK_IPV4);await once(server,'listening');
+    origin=new URL(loopbackUrl((server.address() as import('node:net').AddressInfo).port)).origin;
     const answer={reference:questionReference(q),answerId:randomUUID(),text:'Continue within the already authorized scope'};
     const send=(body:unknown,headers:Record<string,string>={})=>fetch(origin+'/'+q.id,{method:'POST',headers:{'content-type':'application/json',cookie:'fixture=owner',origin,...headers},body:JSON.stringify(body)});
     try {

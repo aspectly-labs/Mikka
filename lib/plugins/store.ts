@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { skillMarkdown } from '@mikka/protocol/skill'
+import { runtimeEnv } from '@/lib/env/server'
 import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
 import { PluginError, type InstalledSkill, type McpServerView, type PersonalPluginSnapshot, type SkillContent, type createMcpSchema, type updateMcpSchema } from './contracts'
 import type { z } from 'zod'
@@ -22,7 +23,7 @@ const aad = (userId: string, id: string, url: string, header: string) => JSON.st
 const stdioConfiguration = (row: McpRow, value: string) => taskMcpServerSchema.options[1].parse({ name: `mcp_${row.id.replaceAll('-', '')}`, transport: 'stdio', ...JSON.parse(value) })
 
 export class PersonalPluginStore {
-  constructor(readonly pool: Pool, readonly env: Record<string, string | undefined> = process.env, readonly membership?: Pick<Pool | PoolClient, 'query'>,
+  constructor(readonly pool: Pool, readonly env: Readonly<Record<string, string | undefined>> = runtimeEnv(), readonly membership?: Pick<Pool | PoolClient, 'query'>,
     private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>) {}
   private async write<T>(userId: string, work: (client: PoolClient) => Promise<T>) {
     const client = await this.pool.connect()

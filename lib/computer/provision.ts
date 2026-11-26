@@ -7,6 +7,7 @@ import { machineChanged, machineCommitted } from '@/lib/live/computer-state'
 import { armDueTimerSoon } from '@/lib/due-timer'
 import { ownE2BKeySql } from '@/lib/secrets/e2b-owner-sql'
 import { E2BKeyError } from '@/lib/secrets/flag'
+import { readEnv } from '@/lib/env/server'
 
 type Actor={userId:string;workspaceId:string}
 type Runtime=Pick<typeof provider,'createComputer'|'connectComputer'|'installComputerRuntime'>&Partial<Pick<typeof provider,'computerGone'|'computerWorkerSha'|'killComputer'>>
@@ -74,7 +75,7 @@ function provisionErrorCode(error: unknown) {
 
 /** Built from another worker commit, and no live run is using its worker. */
 async function stale(pool:Pool,actor:Actor,sandbox:Awaited<ReturnType<Runtime['connectComputer']>>,runtime:Runtime) {
-  const expected=process.env.MIKKA_CLOUD_WORKER_SHA
+  const expected=readEnv('MIKKA_CLOUD_WORKER_SHA')
   if(!expected||!runtime.computerWorkerSha||!runtime.killComputer) return false
   if(await runtime.computerWorkerSha(sandbox)===expected) return false
   const live=await pool.query(`SELECT 1 FROM agent_runs r WHERE r."userId"=$1 AND r.status=ANY($3::text[]) AND (

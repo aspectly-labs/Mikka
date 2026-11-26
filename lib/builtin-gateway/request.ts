@@ -5,6 +5,7 @@ import { readSessionLiveTicket } from '../live/session-ticket'
 import { liveRevocation } from '../live/revocation'
 import { builtinGatewayConfig } from './config'
 import type { GatewayHub, GatewaySocket } from './hub'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Environment = Readonly<Record<string, string | undefined>>
 
@@ -24,7 +25,7 @@ function target(request: Request, env: Environment) {
   return { config, url, kind, key, operation: match[3] } as const
 }
 
-export function gatewayUpgrade(request: Request, env: Environment = process.env, now = Date.now()): { protocol: string; socket: GatewaySocket } | Response {
+export function gatewayUpgrade(request: Request, env: Environment = runtimeEnv(), now = Date.now()): { protocol: string; socket: GatewaySocket } | Response {
   const found = target(request, env)
   if (!found || found.operation !== 'socket') return new Response(null, { status: 404 })
   if (request.method !== 'GET' || request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return new Response(null, { status: 426 })
@@ -44,7 +45,7 @@ export function gatewayUpgrade(request: Request, env: Environment = process.env,
   return { protocol, socket: { kind: found.kind, key: found.key, expiresAt, revisions: found.url.searchParams.get(LIVE_REVISION_PARAM) === '1' } }
 }
 
-export async function gatewayRequest(request: Request, hub: GatewayHub, env: Environment = process.env): Promise<Response> {
+export async function gatewayRequest(request: Request, hub: GatewayHub, env: Environment = runtimeEnv()): Promise<Response> {
   const found = target(request, env)
   if (!found) return new Response(null, { status: 404 })
   if (found.operation === 'socket') return new Response(null, { status: 426 })

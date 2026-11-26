@@ -9,6 +9,7 @@ import { CodedError } from '@mikka/protocol/coded-error'
 import { TASK_SECRET_MAX_TOKEN_BYTES, type TaskSecretGrant } from '@mikka/protocol/task-secrets'
 import { SESSION_LEASE_MS } from '@mikka/protocol/device'
 import { z } from 'zod'
+import { runtimeEnv } from '@/lib/env/server'
 import { secretsKey } from './crypto'
 import { secretHttpPolicy, type SecretHttpPolicy } from './delivery'
 
@@ -17,7 +18,7 @@ export const EGRESS_CAPABILITY_TTL_MS = SESSION_LEASE_MS
 const PREFIX = 'mikka-egress-v1.'
 const AAD = Buffer.from('mikka:task-secret-egress:capability:v1')
 const KEY_DOMAIN = 'mikka:task-secret-egress:encryption-key:v1'
-type Environment = Record<string, string | undefined>
+type Environment = Readonly<Record<string, string | undefined>>
 
 export type EgressErrorDetail = 'invalid_capability' | 'expired_capability' | 'binding_mismatch'
   | 'invalid_request' | 'destination_denied' | 'upstream_unavailable' | 'response_blocked'
@@ -87,7 +88,7 @@ export function issueEgressCapability(input: EgressCapabilityBinding & {
   secret: string
   http: SecretHttpPolicy
   leaseExpiresAt: Date | string | number
-}, nowMs = Date.now(), env: Environment = process.env): TaskSecretGrant {
+}, nowMs = Date.now(), env: Environment = runtimeEnv()): TaskSecretGrant {
   const lease = input.leaseExpiresAt instanceof Date ? input.leaseExpiresAt.getTime()
     : typeof input.leaseExpiresAt === 'number' ? input.leaseExpiresAt : Date.parse(input.leaseExpiresAt)
   if (!Number.isSafeInteger(nowMs) || !Number.isSafeInteger(lease) || lease <= nowMs)
@@ -110,7 +111,7 @@ export function issueEgressCapability(input: EgressCapabilityBinding & {
  * never from fields alongside the capability in an Agent's request. The caller
  * then checks the binding against the live run (egressBindingActive). */
 export function openEgressCapability(capability: string, expected?: Partial<EgressCapabilityBinding>,
-  nowMs = Date.now(), env: Environment = process.env): EgressCapabilityClaims {
+  nowMs = Date.now(), env: Environment = runtimeEnv()): EgressCapabilityClaims {
   if (typeof capability !== 'string' || capability.length > TASK_SECRET_MAX_TOKEN_BYTES || !capability.startsWith(PREFIX))
     throw egressError('invalid_capability')
   const encoded = capability.slice(PREFIX.length)

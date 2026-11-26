@@ -270,3 +270,41 @@ test('WorkspaceCapabilities honors active planEntitlementOverrides from runtime-
   }
 })
 
+test('readGovernanceLease applies active planEntitlementOverrides from runtime-config', async () => {
+  const { readGovernanceLease } = await import('./lease')
+  const previousEdition = process.env.MIKKA_EDITION
+  const previousNodeEnv = process.env.NODE_ENV
+  process.env.MIKKA_EDITION = 'cloud'
+  process.env.NODE_ENV = 'test'
+  const startAt = new Date(Date.now() - 60_000).toISOString()
+  const endAt = new Date(Date.now() + 60_000).toISOString()
+  try {
+    overrideRuntimeConfig('planEntitlementOverrides', {
+      approvalTemplateLimit: { free: 7 },
+      hostedMaxInFlight: { free: 19 },
+      startAt,
+      endAt,
+    })
+    const client = {
+      query: async (sql: string) => {
+        if (sql.includes('from mikka_workspaces')) return { rows: [{ kind: 'team', role: 'admin' }] }
+        if (sql.includes('from mikka_organization_workspaces')) return { rows: [] }
+        if (sql.includes('from mikka_workspace_entitlements')) return { rows: [] }
+        throw new Error(`unexpected_sql:${sql}`)
+      },
+    }
+    const lease = await readGovernanceLease(client as never, 'ws-1', 'user-1')
+    assert.equal(lease.entitlements.approvalTemplateLimit, 7)
+    assert.equal(lease.entitlements.approvalTemplates, true)
+    assert.equal(lease.entitlements.hostedMaxInFlight, 19)
+    assert.equal(lease.entitlements.capabilities.hostedMaxInFlight, 19)
+  } finally {
+    clearRuntimeConfigOverrides()
+    resetRuntimeConfig()
+    if (previousEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = previousEdition
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = previousNodeEnv
+  }
+})
+

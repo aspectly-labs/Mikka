@@ -1,3 +1,5 @@
+import { envValue } from './env/runtime.mjs'
+
 /**
  * Which devices may take a run's subscription access lease
  * (`/v1/devices/:id/runs/:runId/subscription-lease`): a person's own device
@@ -31,7 +33,7 @@ export function hostedBrokerDevice(
   device: { enabled: boolean; kind: string; harnesses: { subscriptionBroker?: boolean; subscriptionPreflight?: unknown }[] } | null,
   deviceId: string,
   scopeDeviceId: string | undefined,
-  allowList = process.env.MIKKA_BYOS_HOSTED_DEVICE_IDS ?? '',
+  allowList = envValue('MIKKA_BYOS_HOSTED_DEVICE_IDS') ?? '',
 ): boolean {
   if (!device?.enabled || !device.harnesses.some(h => h.subscriptionBroker && !h.subscriptionPreflight)) return false
   return (device.kind === 'cloud' && scopeDeviceId === deviceId) || allowList.split(',').includes(deviceId)

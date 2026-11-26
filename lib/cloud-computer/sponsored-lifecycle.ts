@@ -12,6 +12,7 @@ import { finishThreadRegistration, prepareThreadRegistration } from './thread-re
 import { hostedSnapshot, verifiedMachineQuota, type TaskMachineActor } from './sponsored-task'
 import { PaidResourceError } from '../abuse/policy'
 import { DEFAULT_MACHINE_SIZE, isMachineSize, MACHINE_CHUNK_MS, MACHINE_GRACE_MS, MACHINE_RENEW_BEFORE_MS, provisionableMachineSize, type MachineSize } from './machine-pricing'
+import { readEnv } from '@/lib/env/server'
 
 const unavailable = () => new ComputerError(409, 'Cloudflare task machine unavailable')
 const fixedWorker =
@@ -90,7 +91,7 @@ async function reserve(tx: PoolClient, actor: TaskMachineActor, runId: string): 
     (machine.workerLeaseUntil && new Date(machine.workerLeaseUntil).getTime() > Date.now())
   )
     throw unavailable()
-  const origin = new URL(process.env.MIKKA_CLOUD_WORKER_URL ?? '')
+  const origin = new URL(readEnv('MIKKA_CLOUD_WORKER_URL') ?? '')
   if (origin.protocol !== 'https:' || origin.username || origin.password || origin.search || origin.hash)
     throw unavailable()
   let requiredCheckpoint = machine.lifecycle.sponsoredRestore

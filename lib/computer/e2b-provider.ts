@@ -7,6 +7,8 @@ import { computerTemplate, e2bApiKey, sandboxKeyOwner, withE2BErrors } from '@/l
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { bootstrapOfficialInstance, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from './official-runtime'
 import type { ProcessedCaptureVideo, RecordingStep } from '../../packages/daemon/src/agents/capture-video.mjs'
+import { SANDBOX_VNC_PROBE_URL } from '@/lib/env/hosts'
+import { readEnv } from '@/lib/env/server'
 
 const lifetime = 15 * 60_000
 export type DesktopLease = { botId: string; ownerId: string; display: number; epoch: number; controlledBy: string | null; controlUntil: number; computerAllowed: boolean;
@@ -14,7 +16,7 @@ export type DesktopLease = { botId: string; ownerId: string; display: number; ep
   policyVersion: number }
 // A sandbox belongs to the E2B team whose key created it: its owner's own key (orchestration § 2).
 // Every call resolves the owner from the machine's record, never from whoever is asking.
-const options = async (ownerId: string) => ({ apiKey: await e2bApiKey(ownerId, 'Cloud computer is not configured'), timeoutMs: lifetime, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy })
+const options = async (ownerId: string) => ({ apiKey: await e2bApiKey(ownerId, 'Cloud computer is not configured'), timeoutMs: lifetime, proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') })
 const ownerOf = async (workspaceId: string, id: string) => {
   const owner = await sandboxKeyOwner(workspaceId, id)
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'sandbox has no owner record')
@@ -97,7 +99,7 @@ umask 077
 head -c 32 /dev/urandom > /run/mikka-viewer/key
 chmod 0755 /opt/mikka/computer/lease-driver.py
 nohup flock -n /run/mikka-viewer/gateway.lock /usr/bin/python3 /opt/mikka/computer/viewer-gateway.py </dev/null >>/run/mikka-viewer/gateway.log 2>&1 &
-for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/vnc)" = 401 ] && exit 0; sleep .2; done
+for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w "%{http_code}" ${SANDBOX_VNC_PROBE_URL})" = 401 ] && exit 0; sleep .2; done
 exit 1`
   const result = await sandbox.commands.run(start, { user: 'root', ...runtimeCommandOptions(10_000, budget) })
   if (result.stdout.trim() !== 'mikka-runtime-install-required') return

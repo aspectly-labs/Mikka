@@ -4,6 +4,7 @@ import { releaseGrant, withSponsoredTaskGrant, type TaskMachineActor } from '../
 import { newWebSocketRpcSession, type RpcTarget } from 'capnweb'
 import { WebSocket } from 'undici'
 import { cloudflareTaskConnection, type TaskMachineGrant, type TaskWorkspaceBinding } from './cloudflare-task-connection'
+import { readEnv } from '../env/server'
 
 const origin='http://task-machine.internal'
 interface ProcessHandle extends RpcTarget {
@@ -18,7 +19,7 @@ interface Spawn extends RpcTarget {
 }
 
 function token() {
-  const capability=process.env.MIKKA_TASK_MACHINE_BRIDGE_TOKEN
+  const capability=readEnv('MIKKA_TASK_MACHINE_BRIDGE_TOKEN')
   if (!capability) throw Error('Private task machine bridge unavailable')
   return 'Bearer '+capability
 }

@@ -1,3 +1,6 @@
+import { getNodeEnv } from './env/public.ts'
+import { envValue } from './env/runtime.mjs'
+
 export const upcomingFeatures = {
   product: { key: 'mikka-upcoming-product-features', implemented: false },
   integrations: { key: 'mikka-upcoming-integrations', implemented: false },
@@ -55,8 +58,9 @@ export const productionFlagDefault = (key: string) => PRODUCTION_FLAG_DEFAULTS[k
 /** Local server acceptance can exercise both flag states without a PostHog key.
  * Production ignores this setting before reading or parsing it. */
 export function localFlagOverride(key: string): boolean | undefined {
-  if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') return undefined
-  const configured = process.env.MIKKA_FLAG_OVERRIDES
+  const nodeEnv = getNodeEnv()
+  if (nodeEnv !== 'development' && nodeEnv !== 'test') return undefined
+  const configured = envValue('MIKKA_FLAG_OVERRIDES')
   if (!configured) return undefined
   let overrides: unknown
   try {

@@ -4,6 +4,7 @@ import { auth } from '@/lib/auth'
 import { withBasePath } from '@/lib/base-path'
 import { resolveSlugRedirect } from '@/lib/workspace-admin/general'
 import { readWorkspaceSlug } from '@/lib/workspace-admin/links'
+import { envExact } from '@/lib/env/server'
 
 export async function GET(request: RouteRequest, { params }: { params: Promise<{ slug: string }> }) {
   const i18nText = await getTranslations();
@@ -24,6 +25,6 @@ export async function GET(request: RouteRequest, { params }: { params: Promise<{
   if (!workspace) return new RouteResponse(i18nText("FeatureCopy.c_5893c8c0"), { status: 404, headers: { 'Cache-Control': 'private, no-store' } })
   const response = RouteResponse.redirect(new URL(withBasePath('/'), request.url))
   response.headers.set('Cache-Control', 'private, no-store')
-  response.cookies.set('mikka-workspace', workspace.id, { httpOnly: true, sameSite: process.env.NODE_ENV === 'development' ? 'none' : 'lax', secure: true, path: '/', maxAge: 31536000 })
+  response.cookies.set('mikka-workspace', workspace.id, { httpOnly: true, sameSite: envExact('NODE_ENV', 'development') ? 'none' : 'lax', secure: true, path: '/', maxAge: 31536000 })
   return response
 }

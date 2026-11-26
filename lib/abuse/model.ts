@@ -13,6 +13,7 @@ import { observedModel, recordAiRoute, recordAiUsage, type AiMetadata } from '@/
 import { modelTokenUsage, stepIdentity } from '@/lib/model-call-timing'
 import { hostedCallId } from '@/lib/model-gateway/hosted-call-id.mjs'
 import { HOSTED_CALL_TIMEOUT_MS, PaidResourceError } from './policy'
+import { runtimeEnv } from '@/lib/env/server'
 type Model = Extract<LanguageModel, { specificationVersion: 'v4' }>
 
 /** Server-owned billing adapter. Callers cannot provide this through model options. */
@@ -61,7 +62,7 @@ export async function hostedModel(
     )
     if (promptBytes > 16 * 1024 * 1024)
       throw new PaidResourceError('usage_cost_unavailable')
-    await withSharedCredits(workspaceId, payer => hostedUsage.reserve(payer, modelId, id, process.env), billingPrincipal)
+    await withSharedCredits(workspaceId, payer => hostedUsage.reserve(payer, modelId, id, runtimeEnv()), billingPrincipal)
   }
   const bounded = (value: CallArgs) => ({
     maxOutputTokens: Math.min(value.maxOutputTokens ?? 4096, 4096),

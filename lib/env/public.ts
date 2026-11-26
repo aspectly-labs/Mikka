@@ -109,6 +109,16 @@ export function getPublicDeploymentId(env?: Environment): string {
   return process.env.MIKKA_DEPLOYMENT_ID ?? ''
 }
 
+export function getPublicUiOverlaySha(env?: Environment): string {
+  if (env !== undefined) return env.MIKKA_UI_OVERLAY_SHA ?? ''
+  return process.env.MIKKA_UI_OVERLAY_SHA ?? ''
+}
+
+export function getTestBuildSha(env?: Environment): string {
+  if (env !== undefined) return env.MIKKA_TEST_BUILD_SHA ?? ''
+  return process.env.MIKKA_TEST_BUILD_SHA ?? ''
+}
+
 export function getPublicPosthogKey(env?: Environment): string {
   return inlinedOrRuntime(process.env.MIKKA_PUBLIC_POSTHOG_KEY, 'MIKKA_PUBLIC_POSTHOG_KEY', env) ?? ''
 }

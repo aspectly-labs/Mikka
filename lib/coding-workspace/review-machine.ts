@@ -6,6 +6,7 @@ import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { cloudflareReview, reviewReply } from './cloudflare-review'
 import type { ReviewSessionLease } from './review-sessions'
 import type { TaskReviewAuthority } from './review-authority'
+import { readEnv } from '@/lib/env/server'
 
 type Lease = ReviewSessionLease
 type Dependencies = { database: Pick<Pool, 'connect' | 'query'>; resume: (scope: TaskReviewAuthority & { sandboxId: string }, milliseconds: number, signal?: AbortSignal) => Promise<void> }
@@ -30,7 +31,7 @@ export async function resumeReviewMachine(scope: TaskReviewAuthority, lease: Lea
     const apiKey = await e2bApiKey(target.ownerId, 'Task review is not configured')
     await withE2BErrors(target.ownerId, false, () => Sandbox.connect(target.sandboxId, {
       apiKey, timeoutMs: milliseconds, requestTimeoutMs: 20_000, signal: abort, retries: 0,
-      proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
+      proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy'),
     }))
   })
   const values = [scope.runId, scope.ownerId, scope.workspaceId, scope.deviceId, scope.sandboxId,

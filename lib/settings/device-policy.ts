@@ -12,6 +12,7 @@ import { ActionFailureError } from '@/lib/action-error'
 import { deviceIsOnline } from '@/lib/device-presence'
 import { notifyDeviceWork } from '@/lib/device-gateway-notify'
 import { ownerListChanged } from '@/lib/live/lists'
+import { runtimeEnv } from '@/lib/env/server'
 import { stopRunsForPolicyChange } from '@/lib/run-policy-stop'
 import {
   DEVICE_MIGRATION_CAPABILITY,
@@ -257,7 +258,7 @@ function normalizeRepositoryInput(raw: string) {
   const canonicalGithub = /^v2\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)$/.exec(trimmed)
   try {
     return normalizeRepository(canonicalGithub ? canonicalGithub[1]! : trimmed, {
-      allowFile: daemonTestMode(process.env),
+      allowFile: daemonTestMode(runtimeEnv()),
     })
   } catch (error) {
     throw new ActionFailureError('repoPathInvalid', undefined, undefined, { cause: error })

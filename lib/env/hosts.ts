@@ -8,33 +8,43 @@
  */
 import { z } from 'zod'
 import { runtimeEnv, type EnvMap } from './runtime.mjs'
-
-export const LOOPBACK_IPV4 = '127.0.0.1' as const
-export const LOCALHOST_HOSTNAME = 'localhost' as const
-export const LOOPBACK_IPV6 = '::1' as const
-export const LOOPBACK_IPV6_BRACKETED = '[::1]' as const
-
-export const LOOPBACK_HOSTS = Object.freeze([
-  LOOPBACK_IPV4,
+import {
+  CLAUDE_DESKTOP_CALLBACK_URL,
+  DEFAULT_LOCAL_APP_ORIGIN,
+  DEFAULT_LOCAL_DEV_ORIGIN,
+  DEFAULT_LOCAL_EVE_ORIGIN,
+  DEFAULT_LOCAL_SYNTHETIC_ORIGIN,
+  INTERNAL_PRODUCT_HOSTNAME,
+  INTERNAL_PRODUCT_ORIGIN,
   LOCALHOST_HOSTNAME,
-  LOOPBACK_IPV6_BRACKETED,
+  LOOPBACK_HOSTS,
+  LOOPBACK_IPV4,
   LOOPBACK_IPV6,
-] as const)
+  LOOPBACK_IPV6_BRACKETED,
+  SANDBOX_RUNTIME_VERSION_URL,
+  SANDBOX_VNC_PROBE_URL,
+  loopbackUrl,
+} from './hosts-constants.mjs'
+
+export {
+  CLAUDE_DESKTOP_CALLBACK_URL,
+  DEFAULT_LOCAL_APP_ORIGIN,
+  DEFAULT_LOCAL_DEV_ORIGIN,
+  DEFAULT_LOCAL_EVE_ORIGIN,
+  DEFAULT_LOCAL_SYNTHETIC_ORIGIN,
+  INTERNAL_PRODUCT_HOSTNAME,
+  INTERNAL_PRODUCT_ORIGIN,
+  LOCALHOST_HOSTNAME,
+  LOOPBACK_HOSTS,
+  LOOPBACK_IPV4,
+  LOOPBACK_IPV6,
+  LOOPBACK_IPV6_BRACKETED,
+  SANDBOX_RUNTIME_VERSION_URL,
+  SANDBOX_VNC_PROBE_URL,
+  loopbackUrl,
+}
 
 const LOOPBACK_HOST_SET: ReadonlySet<string> = new Set<string>(LOOPBACK_HOSTS)
-
-export const DEFAULT_LOCAL_APP_ORIGIN = `http://${LOOPBACK_IPV4}:3000`
-export const DEFAULT_LOCAL_DEV_ORIGIN = `http://${LOCALHOST_HOSTNAME}:3000`
-export const DEFAULT_LOCAL_EVE_ORIGIN = `http://${LOOPBACK_IPV4}:3002`
-export const DEFAULT_LOCAL_SYNTHETIC_ORIGIN = `http://${LOCALHOST_HOSTNAME}`
-export const INTERNAL_PRODUCT_ORIGIN = 'https://product.internal'
-
-/** Fixed loopback port/path used by Claude Code desktop OAuth return callbacks. */
-export const CLAUDE_DESKTOP_CALLBACK_URL = `http://${LOCALHOST_HOSTNAME}:54545/callback`
-
-/** Fixed in-sandbox loopback endpoints probed inside isolated cloud task machines. */
-export const SANDBOX_RUNTIME_VERSION_URL = `http://${LOOPBACK_IPV4}:6082/version`
-export const SANDBOX_VNC_PROBE_URL = `http://${LOOPBACK_IPV4}:6080/vnc`
 
 const httpOriginSchema = z.url().refine(value => {
   try {
@@ -112,10 +122,4 @@ export function resolveEveServerEndpoint(env: EnvMap = runtimeEnv()): string {
 /** Builds a synthetic loopback `Request` for internal token verification outside an HTTP server. */
 export function syntheticLocalRequest(path = '/'): Request {
   return new Request(new URL(path, DEFAULT_LOCAL_SYNTHETIC_ORIGIN))
-}
-
-/** Builds an `http://127.0.0.1:<port><path>` URL string for local loopback listeners. */
-export function loopbackUrl(port: number, path = '/'): string {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`
-  return `http://${LOOPBACK_IPV4}:${port}${normalizedPath}`
 }

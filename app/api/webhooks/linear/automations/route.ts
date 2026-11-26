@@ -1,10 +1,11 @@
 import { parseLinearWebhookRequest } from '@/lib/linear-sync/webhook'
 import { defineRoute } from '@/lib/primitives/define-route'
+import { readEnv } from '@/lib/env/server'
 
 type ParsedLinearWebhook = Extract<Awaited<ReturnType<typeof parseLinearWebhookRequest>>, { ok: true }>
 
 async function verifyLinearWebhook(request: Request) {
-  const parsed = await parseLinearWebhookRequest(request, process.env.LINEAR_WEBHOOK_SECRET)
+  const parsed = await parseLinearWebhookRequest(request, readEnv('LINEAR_WEBHOOK_SECRET'))
   if (!parsed.ok) return Response.json({ error: parsed.error }, { status: parsed.status })
   return { ok: true as const, payload: parsed }
 }

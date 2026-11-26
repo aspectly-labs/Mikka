@@ -1,5 +1,6 @@
 import { Container } from '@cloudflare/containers'
 import { hostConfiguration, hostResidency, nativeRequest, onDemandHost, singletonContainerName } from '../runtime/config.mjs'
+import { INTERNAL_PRODUCT_HOSTNAME } from '../../../lib/env/hosts-constants.mjs'
 
 const stateKey = 'mikka:eve-host:lifecycle:v1'
 const unavailable = () => Response.json({ ok: false, error: 'coordinatorUnavailable' }, {
@@ -45,7 +46,7 @@ export class EveRuntime extends Container {
 
   async bindOutboundServices() {
     if (this.env.LITELLM) await this.ctx.container.interceptOutboundHttps('litellm.internal', this.ctx.exports.LiteLlmOutbound)
-    await this.ctx.container.interceptOutboundHttps('product.internal',
+    await this.ctx.container.interceptOutboundHttps(INTERNAL_PRODUCT_HOSTNAME,
       this.ctx.exports.EveProductOutbound({ props: { capability: this.envVars.MIKKA_EVE_PRODUCT_TOKEN } }))
     if (this.env.EVE_WORLD) await this.ctx.container.interceptOutboundHttps('world.internal',
       this.ctx.exports.EveWorldOutbound({ props: { capability: this.envVars.MIKKA_EVE_WORLD_TOKEN } }))

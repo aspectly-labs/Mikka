@@ -7,7 +7,7 @@ import { billingEntitlementOutbox, workspaceBilling, workspaceCreditGrants } fro
 import { hostedBillingChanged } from '@/lib/live/billing'
 import { BILLING_LIVE_STATUSES } from '@/lib/workspace-admin/general'
 import { resourcePrice, subscriptionEntitlement, RESOURCE_BILLING_VERSION } from './resource-plan'
-import { POINTS_PER_USD } from './hosted-usage'
+import { POINTS_PER_USD, pointsToCreditCents } from './hosted-usage'
 import { stripeConfig, stripeGet } from './stripe'
 import type { PointsWebhookOptions } from './points-webhook'
 import { invoiceFullyRefunded, invoicePaymentAllocations, reconcilePlanRefunds } from './plan-refunds'
@@ -78,7 +78,7 @@ export function resolveSubscriptionGrantPoints(input: {
   const parsed = introCreditCentsSchema.safeParse(rawCap)
   if (!parsed.success || !Number.isSafeInteger(parsed.data)) throw new Error('billing_intro_credit_cap_invalid')
   const introCreditCents = parsed.data
-  const maxCentsEquivalent = Math.floor((input.monthlyPoints * 100) / POINTS_PER_USD)
+  const maxCentsEquivalent = pointsToCreditCents(input.monthlyPoints)
   if (introCreditCents > maxCentsEquivalent) throw new Error('billing_intro_credit_cap_invalid')
   return Math.min(input.monthlyPoints, Math.floor((introCreditCents * POINTS_PER_USD) / 100))
 }

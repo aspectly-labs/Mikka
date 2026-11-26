@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { INTERNAL_PRODUCT_ORIGIN } from '../../../lib/env/hosts-constants.mjs'
 
 export function equalCapability(supplied, capability) {
   const actual = Buffer.from(supplied ?? '')
@@ -11,7 +12,7 @@ const paths = new Set(['/mikka/api/internal/eve/tools', '/mikka/api/internal/eve
 /** Only Eve's configured product client may enter this immutable business service. */
 export async function productRequest(request, api, publicOrigin, capability, ctx) {
   const path = new URL(request.url).pathname
-  if (request.method !== 'POST' || !paths.has(path) || request.url !== 'https://product.internal' + path) return new Response(null, { status: 404 })
+  if (request.method !== 'POST' || !paths.has(path) || request.url !== INTERNAL_PRODUCT_ORIGIN + path) return new Response(null, { status: 404 })
   const scope = request.headers.get('x-mikka-eve-scope')
   if (!equalCapability(request.headers.get('x-mikka-product-capability'), capability)
       || !scope || scope.length > 2048) return new Response(null, { status: 403 })

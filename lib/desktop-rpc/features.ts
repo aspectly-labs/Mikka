@@ -3,6 +3,7 @@ import { computerAcceptancePreview, computerProductionEnabled, gatedFeatures, ki
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import type { DesktopFeatures } from './wire'
 import { publicEnv } from '@/lib/public-env.mjs'
+import { runtimeEnv } from '@/lib/env/server'
 
 // These are the same public flags read by use-feature-availability. Never send
 // arbitrary PostHog flags, project configuration or server environment values.
@@ -11,7 +12,7 @@ const publicKeys = [...Object.values(upcomingFeatures).map(feature => feature.ke
 /** A bootstrap snapshot, using the web's user identity and strict-true rules. */
 export async function desktopFeatures(userId?: string, {
   evaluate = serverFlagEnabled,
-  env = process.env,
+  env = runtimeEnv(),
 }: {
   evaluate?: (key: string, userId: string) => Promise<boolean>
   env?: Readonly<Record<string, string | undefined>>
