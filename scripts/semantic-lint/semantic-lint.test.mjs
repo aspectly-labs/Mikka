@@ -63,9 +63,12 @@ test('all four semantic rules export clean { name, description, allowlist, check
   assert.deepEqual(DEFAULT_SCAN_ROOTS, [
     'app',
     'apps/api',
+    'apps/desktop',
+    'apps/eve',
     'apps/frontend/src',
     'cloudflare',
     'lib',
+    'packages',
     'services',
     'tests',
     'workflows',
@@ -89,8 +92,8 @@ test('fixture suite: no-hardcoded-business-policy flags positive.ts and passes n
     mode: 'error',
   })
   assert.equal(report.filesScanned, 2)
-  assert.equal(report.totalFindings, 14)
-  assert.equal(report.byRule['no-hardcoded-business-policy'], 14)
+  assert.equal(report.totalFindings, 17)
+  assert.equal(report.byRule['no-hardcoded-business-policy'], 17)
   assert.ok(report.findings.every(f => f.file === 'positive.ts'))
   assert.equal(report.findings.some(f => f.file === 'negative.ts'), false)
 })
@@ -115,8 +118,8 @@ test('fixture suite: no-provider-or-plan-special-casing flags positive.ts and pa
     mode: 'error',
   })
   assert.equal(report.filesScanned, 2)
-  assert.equal(report.totalFindings, 14)
-  assert.equal(report.byRule['no-provider-or-plan-special-casing'], 14)
+  assert.equal(report.totalFindings, 16)
+  assert.equal(report.byRule['no-provider-or-plan-special-casing'], 16)
   assert.ok(report.findings.every(f => f.file === 'positive.ts'))
   assert.equal(report.findings.some(f => f.file === 'negative.ts'), false)
 })
@@ -128,8 +131,8 @@ test('fixture suite: no-constant-stub-tests flags positive.test.ts and passes ne
     mode: 'error',
   })
   assert.equal(report.filesScanned, 2)
-  assert.equal(report.totalFindings, 5)
-  assert.equal(report.byRule['no-constant-stub-tests'], 5)
+  assert.equal(report.totalFindings, 6)
+  assert.equal(report.byRule['no-constant-stub-tests'], 6)
   assert.ok(report.findings.every(f => f.file === 'positive.test.ts'))
   assert.equal(report.findings.some(f => f.file === 'negative.test.ts'), false)
 })
@@ -440,9 +443,216 @@ test('per-rule allowlists, excluded directories, TSX files, and mixed unit/stub 
   )
 })
 
+test('focused repo scans preserve allowlists, missing --root fails closed, and large piped JSON drains completely', () => {
+  // Focused single-file and directory scans inside REPO_ROOT preserve canonical allowlists
+  for (const relTarget of [
+    'lib/governance/policy.ts',
+    'lib/billing/catalog.ts',
+    'packages/protocol/src/subscription.ts',
+    'apps/desktop/src/main/bundled-auth.ts',
+  ]) {
+    const report = runSemanticLint({ root: path.join(REPO_ROOT, relTarget), mode: 'error' })
+    assert.equal(report.totalFindings, 0, `expected 0 findings on focused scan of ${relTarget}`)
+  }
+
+  const libDirReport = runSemanticLint({
+    root: path.join(REPO_ROOT, 'lib/governance'),
+    rules: ['no-provider-or-plan-special-casing'],
+    mode: 'error',
+  })
+  assert.equal(libDirReport.totalFindings, 0)
+
+  // Missing explicit --root must throw (and exit 2 from CLI), never silently pass with 0 findings
+  const missingTarget = path.join(REPO_ROOT, 'lib/does-not-exist-semantic-lint-target.ts')
+  assert.throws(
+    () => runSemanticLint({ root: missingTarget }),
+    /Failed to stat target/,
+  )
+  const missingCli = runCli(['--root', missingTarget])
+  assert.equal(missingCli.status, 2)
+  assert.match(missingCli.stderr, /Failed to stat target/)
+
+  // Empty --root= must also fail closed with exit 2 (never resolve to cwd)
+  const emptyRootEq = runCli(['--root='])
+  assert.equal(emptyRootEq.status, 2)
+  assert.match(emptyRootEq.stderr, /--root requires a directory path/)
+
+  // Large piped JSON output (>64KB) must drain completely and remain valid JSON in both warn and error modes
+  const manyViolations = {}
+  for (let i = 0; i < 160; i += 1) {
+    manyViolations[`lib/batch_${String(i).padStart(3, '0')}.ts`] = [
+      `export const TRIAL_DAYS = ${14 + (i % 7)}`,
+      `export const MONTHLY_PRICE = ${2000 + i}`,
+      `export const isHostedMode = ${i % 2 === 0}`,
+    ].join('\n')
+  }
+  withTempWorkspace(manyViolations, dir => {
+    for (const [mode, expectedStatus] of [['warn', 0], ['error', 1]]) {
+      const piped = spawnSync(
+        process.execPath,
+        [CLI_PATH, `--mode=${mode}`, '--json', '--root', dir],
+        { cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 },
+      )
+      assert.equal(piped.error, undefined)
+      assert.equal(piped.status, expectedStatus)
+      assert.ok(piped.stdout.length > 65_536, `expected >64KB JSON output, got ${piped.stdout.length}`)
+      const parsed = JSON.parse(piped.stdout)
+      assert.equal(parsed.totalFindings, 480)
+      assert.equal(parsed.findings.length, 480)
+    }
+  })
+})
+
+test('lexical shadowing, extracted mixed arrays, bare price names, beforeEach hooks, and mock housekeeping behave accurately', () => {
+  withTempWorkspace(
+    {
+      // Shadowing parameters, block locals, namespace/static blocks, and bare var redeclaration
+      'lib/shadowing.ts': [
+        'const cfg: Record<string, number> = { openai: 5000, anthropic: 8000 }',
+        "const targets = ['openai', 'internal']",
+        "const tiers = new Set(['pro', 'enterprise'])",
+        'export function readFromParam(cfg: Record<string, number>, provider: string) {',
+        '  return cfg[provider] ?? 1000',
+        '}',
+        'export function checkBlockLocal(provider: string, tier: string, dynamicList: string[], dynamicSet: Set<string>) {',
+        '  const targets = dynamicList',
+        '  const tiers = dynamicSet',
+        '  return targets.includes(provider) || tiers.has(tier)',
+        '}',
+        'export function unshadowed(provider: string) {',
+        '  return cfg[provider]',
+        '}',
+        'export namespace Isolated {',
+        '  var nsCfg = { openai: 1, anthropic: 2 }',
+        '  export const count = Object.keys(nsCfg).length',
+        '}',
+        'declare const nsCfg: Record<string, number>',
+        'export function readOuterNsCfg(provider: string) {',
+        '  return nsCfg[provider]',
+        '}',
+        'declare const provider: string',
+        'declare function getDynamic(): Record<string, number>',
+        'export class StaticHolder {',
+        '  static {',
+        '    var cfg = getDynamic()',
+        '    void cfg[provider]',
+        '  }',
+        '}',
+        'export function bareVarRedecl(provider: string) {',
+        "  var mixed = ['openai', 'internal']",
+        '  var mixed',
+        '  return mixed.includes(provider)',
+        '}',
+      ].join('\n'),
+
+      // Paired inline and extracted mixed arrays must both flag for providers and plans
+      'lib/mixed-arrays.ts': [
+        "const extractedProviders = ['openai', 'internal']",
+        "const extractedPlans = ['pro', 'custom']",
+        'export function check(provider: string, tier: string) {',
+        "  const a = ['openai', 'internal'].includes(provider)",
+        '  const b = extractedProviders.includes(provider)',
+        "  const c = ['pro', 'custom'].includes(tier)",
+        '  const d = extractedPlans.includes(tier)',
+        '  return a || b || c || d',
+        '}',
+      ].join('\n'),
+
+      // Bare unsuffixed pricing names (both string and numeric) must flag
+      'lib/bare-pricing.ts': [
+        "export const card = { monthlyPrice: '$20/mo', annualPrice: 200 }",
+        'export const MONTHLY_PRICE = 2000',
+        "export const ANNUAL_PRICE = '$192/yr'",
+      ].join('\n'),
+
+      // Mutable binding populated in beforeEach, callback fixture params, and nested loop/block shadowing
+      'lib/hook-populated.test.ts': [
+        "import test, { beforeEach } from 'node:test'",
+        "import assert from 'node:assert/strict'",
+        "import { getLimit, getLimits } from './real-limits'",
+        'const limit = 14',
+        'let resolved = 0',
+        'let limits: number[] = []',
+        'beforeEach(() => { resolved = getLimit(); limits = getLimits() })',
+        "test('reads hook-populated limit', () => { assert.equal(resolved, 14) })",
+        "test('fixture param shadows outer const', ({ limit }: { limit: number }) => { assert.equal(limit, 14) })",
+        "test('for-of variable shadows outer const', () => {",
+        '  for (const limit of limits) { assert.equal(limit, 14) }',
+        '})',
+        "test('nested block non-static const shadows outer const', () => {",
+        '  if (limits.length > 0) { const limit = limits[0]; assert.equal(limit, 14) }',
+        '})',
+      ].join('\n'),
+
+      // Nested block tautology inside if (true) SHOULD be flagged
+      'lib/nested-tautology.test.ts': [
+        "import test from 'node:test'",
+        "import assert from 'node:assert/strict'",
+        "test('nested block tautology', () => {",
+        '  if (true) { const limit = 14; assert.equal(limit, 14) }',
+        '})',
+      ].join('\n'),
+
+      // mock.restoreAll() and t.mock.restoreAll() must NOT mask tautological tests,
+      // while mock.method(realService, ...) DOES count as exercising real code
+      'lib/mock-housekeeping.test.ts': [
+        "import test, { mock } from 'node:test'",
+        "import assert from 'node:assert/strict'",
+        "import { realService } from './real-service'",
+        "test('top-level mock cleanup does not hide tautology', () => {",
+        '  mock.restoreAll()',
+        '  const limit = 14',
+        '  assert.equal(limit, 14)',
+        '})',
+        "test('context mock cleanup does not hide tautology', (t) => {",
+        '  t.mock.restoreAll()',
+        '  const limit = 14',
+        '  assert.equal(limit, 14)',
+        '})',
+        "test('mocking real service exercises production binding', () => {",
+        "  mock.method(realService, 'run', () => 14)",
+        '  const limit = 14',
+        '  assert.equal(limit, 14)',
+        '})',
+      ].join('\n'),
+    },
+    dir => {
+      const report = runSemanticLint({ root: dir })
+      const byFile = new Map()
+      for (const f of report.findings) {
+        byFile.set(f.file, (byFile.get(f.file) ?? []).concat(f))
+      }
+
+      // Shadowing: only unshadowed cfg[provider] (line 13) and bare-var-redecl mixed.includes(provider) (line 34)
+      const shadowFindings = byFile.get('lib/shadowing.ts') ?? []
+      assert.deepEqual(shadowFindings.map(f => f.line), [13, 34])
+
+      // Mixed arrays: all 4 (inline + extracted for providers and plans) must flag
+      const mixedFindings = byFile.get('lib/mixed-arrays.ts') ?? []
+      assert.equal(mixedFindings.length, 4)
+
+      // Bare pricing: all 4 bare pricing bindings must flag
+      const barePriceFindings = byFile.get('lib/bare-pricing.ts') ?? []
+      assert.equal(barePriceFindings.length, 4)
+
+      // Hook-populated, fixture-param shadowed, loop-shadowed, and block-shadowed tests: 0 findings
+      assert.equal(byFile.get('lib/hook-populated.test.ts'), undefined)
+
+      // Nested block tautology: 1 finding on line 4
+      const nestedTautology = byFile.get('lib/nested-tautology.test.ts') ?? []
+      assert.deepEqual(nestedTautology.map(f => f.line), [4])
+
+      // Mock housekeeping: 2 findings (mock.restoreAll and t.mock.restoreAll), NOT mock.method(realService)
+      const mockFindings = byFile.get('lib/mock-housekeeping.test.ts') ?? []
+      assert.equal(mockFindings.length, 2)
+      assert.deepEqual(mockFindings.map(f => f.line), [7, 12])
+    },
+  )
+})
+
 test('real Mikka repository passes semantic-lint with zero findings', () => {
   const report = runSemanticLint({ root: REPO_ROOT, mode: 'error' })
-  assert.ok(report.filesScanned > 2000, `expected > 2000 files scanned, got ${report.filesScanned}`)
+  assert.ok(report.filesScanned > 4000, `expected > 4000 files scanned, got ${report.filesScanned}`)
   assert.equal(
     report.totalFindings,
     0,

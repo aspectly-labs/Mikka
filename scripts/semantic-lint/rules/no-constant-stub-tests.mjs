@@ -16,9 +16,23 @@ export const ALLOWLIST = Object.freeze([])
 const TEST_FILE_RE = /\.test\.[cm]?[jt]sx?$/
 
 const NON_PRODUCTION_SPECIFIER_RE =
-  /^(?:node:|vitest(?:\/|$)|jest(?:\/|$)|@playwright\/test(?:\/|$)|assert(?:\/|$)|fs(?:\/|$)|path(?:\/|$)|os(?:\/|$)|url(?:\/|$)|util(?:\/|$)|crypto(?:\/|$)|child_process(?:\/|$)|http(?:\/|$)|https(?:\/|$)|net(?:\/|$)|stream(?:\/|$)|events(?:\/|$)|timers(?:\/|$)|buffer(?:\/|$)|module(?:\/|$)|zod(?:\/|$)|typescript(?:\/|$))/
+  /^(?:node:|vitest(?:\/|$)|jest(?:\/|$)|@jest\/globals(?:\/|$)|@playwright\/test(?:\/|$)|assert(?:\/|$)|fs(?:\/|$)|path(?:\/|$)|os(?:\/|$)|url(?:\/|$)|util(?:\/|$)|crypto(?:\/|$)|child_process(?:\/|$)|http(?:\/|$)|https(?:\/|$)|net(?:\/|$)|stream(?:\/|$)|events(?:\/|$)|timers(?:\/|$)|buffer(?:\/|$)|module(?:\/|$)|zod(?:\/|$)|typescript(?:\/|$))/
 
-const TEST_RUNNER_CALLEES = new Set(['test', 'it', 'describe', 'before', 'after', 'beforeEach', 'afterEach'])
+const TEST_FRAMEWORK_SPECIFIER_RE =
+  /^(?:node:test(?:\/|$)|node:assert(?:\/|$)|assert(?:\/|$)|vitest(?:\/|$)|jest(?:\/|$)|@jest\/globals(?:\/|$)|@playwright\/test(?:\/|$))/
+
+const TEST_RUNNER_CALLEES = new Set(['test', 'it', 'describe', 'suite', 'before', 'after', 'beforeEach', 'afterEach'])
+const TEST_FRAMEWORK_GLOBALS = new Set(['vi', 'jest'])
+const TEST_CONTEXT_HOUSEKEEPING_PROPS = new Set([
+  'mock',
+  'after',
+  'before',
+  'beforeEach',
+  'afterEach',
+  'diagnostic',
+  'skip',
+  'todo',
+])
 
 const ASSERT_EQUALITY_METHODS = new Set([
   'equal',
@@ -160,6 +174,7 @@ function getPropertyKeyName(nameNode) {
 function collectImportInfo(sf) {
   const productionBindings = new Set()
   const nonProductionBindings = new Set()
+  const testFrameworkBindings = new Set()
 
   const addClauseBindings = (clause, targetSet) => {
     if (!clause || clause.isTypeOnly) return
@@ -181,10 +196,13 @@ function collectImportInfo(sf) {
       if (!spec) continue
       const isProd = !NON_PRODUCTION_SPECIFIER_RE.test(spec)
       addClauseBindings(stmt.importClause, isProd ? productionBindings : nonProductionBindings)
+      if (TEST_FRAMEWORK_SPECIFIER_RE.test(spec)) {
+        addClauseBindings(stmt.importClause, testFrameworkBindings)
+      }
     }
   }
 
-  return { productionBindings, nonProductionBindings }
+  return { productionBindings, nonProductionBindings, testFrameworkBindings }
 }
 
 /**
@@ -421,6 +439,19 @@ function registerBindingPattern(nameNode, analyzed, staticBindings) {
   }
 }
 
+function deleteBindingPattern(nameNode, targetMap) {
+  if (!nameNode) return
+  if (ts.isIdentifier(nameNode)) {
+    targetMap.delete(nameNode.text)
+  } else if (ts.isObjectBindingPattern(nameNode) || ts.isArrayBindingPattern(nameNode)) {
+    for (const el of nameNode.elements) {
+      if (ts.isBindingElement(el)) {
+        deleteBindingPattern(el.name, targetMap)
+      }
+    }
+  }
+}
+
 function collectScopeBindings(statements, baseStaticBindings, baseTrivialHelpers) {
   const staticBindings = new Map(baseStaticBindings)
   const trivialHelpers = new Map(baseTrivialHelpers)
@@ -430,10 +461,28 @@ function collectScopeBindings(statements, baseStaticBindings, baseTrivialHelpers
     for (const stmt of statements) {
       if (ts.isFunctionDeclaration(stmt) && stmt.name) {
         const helper = analyzeTrivialHelper(stmt, stmt.name.text, staticBindings, trivialHelpers)
-        if (helper) trivialHelpers.set(stmt.name.text, helper)
+        if (helper) {
+          trivialHelpers.set(stmt.name.text, helper)
+          staticBindings.delete(stmt.name.text)
+        } else {
+          trivialHelpers.delete(stmt.name.text)
+          staticBindings.delete(stmt.name.text)
+        }
       } else if (ts.isVariableStatement(stmt)) {
+        const isConst = (stmt.declarationList.flags & ts.NodeFlags.Const) !== 0
         for (const decl of stmt.declarationList.declarations) {
-          if (!decl.initializer) continue
+          if (!isConst) {
+            // Mutable let/var declarations may be populated by beforeEach/setup hooks
+            // or reassigned before assertions; never classify them as static constants.
+            deleteBindingPattern(decl.name, staticBindings)
+            deleteBindingPattern(decl.name, trivialHelpers)
+            continue
+          }
+          if (!decl.initializer) {
+            deleteBindingPattern(decl.name, staticBindings)
+            deleteBindingPattern(decl.name, trivialHelpers)
+            continue
+          }
           const init = unwrapExpr(decl.initializer)
           if (
             ts.isIdentifier(decl.name)
@@ -441,12 +490,22 @@ function collectScopeBindings(statements, baseStaticBindings, baseTrivialHelpers
             && (ts.isArrowFunction(init) || ts.isFunctionExpression(init))
           ) {
             const helper = analyzeTrivialHelper(init, decl.name.text, staticBindings, trivialHelpers)
-            if (helper) trivialHelpers.set(decl.name.text, helper)
+            if (helper) {
+              trivialHelpers.set(decl.name.text, helper)
+              staticBindings.delete(decl.name.text)
+            } else {
+              trivialHelpers.delete(decl.name.text)
+              staticBindings.delete(decl.name.text)
+            }
             continue
           }
           const analyzed = analyzeExpression(decl.initializer, staticBindings, trivialHelpers)
           if (analyzed.isStatic) {
             registerBindingPattern(decl.name, analyzed, staticBindings)
+            deleteBindingPattern(decl.name, trivialHelpers)
+          } else {
+            deleteBindingPattern(decl.name, staticBindings)
+            deleteBindingPattern(decl.name, trivialHelpers)
           }
         }
       }
@@ -454,6 +513,16 @@ function collectScopeBindings(statements, baseStaticBindings, baseTrivialHelpers
   }
 
   return { staticBindings, trivialHelpers }
+}
+
+function getPropertyAccessChain(node) {
+  const props = []
+  let current = unwrapExpr(node)
+  while (current && ts.isPropertyAccessExpression(current)) {
+    props.unshift(current.name.text)
+    current = unwrapExpr(current.expression)
+  }
+  return { root: current, props }
 }
 
 function isAssertOrExpectCall(node) {
@@ -540,7 +609,13 @@ function extractAssertionPair(node) {
   return null
 }
 
-function blockExercisesRealCode(bodyNode, productionBindings, trivialHelpers) {
+function blockExercisesRealCode(
+  bodyNode,
+  productionBindings,
+  trivialHelpers,
+  testFrameworkBindings,
+  testContextParamName = null,
+) {
   let exercisesReal = false
 
   const visit = (node, parent) => {
@@ -566,6 +641,8 @@ function blockExercisesRealCode(bodyNode, productionBindings, trivialHelpers) {
         if (
           !isAssertOrExpectCall(node)
           && !TEST_RUNNER_CALLEES.has(name)
+          && !TEST_FRAMEWORK_GLOBALS.has(name)
+          && !testFrameworkBindings.has(name)
           && !trivialHelpers.has(name)
           && !PURE_GLOBAL_OBJECTS.has(name)
         ) {
@@ -575,10 +652,28 @@ function blockExercisesRealCode(bodyNode, productionBindings, trivialHelpers) {
         }
       } else if (callee && ts.isPropertyAccessExpression(callee)) {
         if (!isAssertOrExpectCall(node)) {
-          const root = unwrapExpr(callee.expression)
-          const isTestRunnerMethod = root && ts.isIdentifier(root) && TEST_RUNNER_CALLEES.has(root.text)
-          const isPureGlobalMethod = root && ts.isIdentifier(root) && PURE_GLOBAL_OBJECTS.has(root.text)
-          if (!isTestRunnerMethod && !isPureGlobalMethod) {
+          const { root, props } = getPropertyAccessChain(callee)
+          const isRootIdent = Boolean(root && ts.isIdentifier(root))
+          const rootName = isRootIdent ? root.text : null
+          const isProdRoot = Boolean(rootName && productionBindings.has(rootName))
+          const isTestFrameworkMethod = Boolean(
+            rootName
+            && !isProdRoot
+            && (
+              TEST_RUNNER_CALLEES.has(rootName)
+              || TEST_FRAMEWORK_GLOBALS.has(rootName)
+              || testFrameworkBindings.has(rootName)
+            ),
+          )
+          const isTestContextHousekeeping = Boolean(
+            testContextParamName
+            && rootName === testContextParamName
+            && !isProdRoot
+            && props.length > 0
+            && TEST_CONTEXT_HOUSEKEEPING_PROPS.has(props[0]),
+          )
+          const isPureGlobalMethod = Boolean(rootName && !isProdRoot && PURE_GLOBAL_OBJECTS.has(rootName))
+          if (!isTestFrameworkMethod && !isTestContextHousekeeping && !isPureGlobalMethod) {
             exercisesReal = true
             return
           }
@@ -641,12 +736,38 @@ function getNamedCallCallback(node, names) {
   return null
 }
 
-function inspectAssertionsInNode(rootNode, staticBindings, trivialHelpers, report) {
-  const visit = node => {
+function isFunctionLikeNode(node) {
+  return (
+    ts.isFunctionDeclaration(node)
+    || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node)
+    || ts.isMethodDeclaration(node)
+    || ts.isGetAccessorDeclaration(node)
+    || ts.isSetAccessorDeclaration(node)
+    || ts.isConstructorDeclaration(node)
+  )
+}
+
+function clearCallbackParameters(callback, scope) {
+  const staticBindings = new Map(scope.staticBindings)
+  const trivialHelpers = new Map(scope.trivialHelpers)
+  if (ts.isFunctionExpression(callback) && callback.name) {
+    staticBindings.delete(callback.name.text)
+    trivialHelpers.delete(callback.name.text)
+  }
+  for (const param of callback.parameters ?? []) {
+    deleteBindingPattern(param.name, staticBindings)
+    deleteBindingPattern(param.name, trivialHelpers)
+  }
+  return { staticBindings, trivialHelpers }
+}
+
+function inspectAssertionsInNode(rootNode, initialStaticBindings, initialTrivialHelpers, report) {
+  const visit = (node, currentScope) => {
     const pair = extractAssertionPair(node)
     if (pair) {
-      const left = analyzeExpression(pair.left, staticBindings, trivialHelpers)
-      const right = analyzeExpression(pair.right, staticBindings, trivialHelpers)
+      const left = analyzeExpression(pair.left, currentScope.staticBindings, currentScope.trivialHelpers)
+      const right = analyzeExpression(pair.right, currentScope.staticBindings, currentScope.trivialHelpers)
       if (
         left.isStatic
         && right.isStatic
@@ -659,9 +780,58 @@ function inspectAssertionsInNode(rootNode, staticBindings, trivialHelpers, repor
         )
       }
     }
-    ts.forEachChild(node, visit)
+
+    if (node !== rootNode && ts.isBlock(node)) {
+      const nextScope = collectScopeBindings(
+        node.statements,
+        currentScope.staticBindings,
+        currentScope.trivialHelpers,
+      )
+      ts.forEachChild(node, child => visit(child, nextScope))
+      return
+    }
+
+    if (node !== rootNode && isFunctionLikeNode(node)) {
+      const paramScope = clearCallbackParameters(node, currentScope)
+      ts.forEachChild(node, child => visit(child, paramScope))
+      return
+    }
+
+    if (
+      ts.isForStatement(node)
+      || ts.isForInStatement(node)
+      || ts.isForOfStatement(node)
+    ) {
+      const staticBindings = new Map(currentScope.staticBindings)
+      const trivialHelpers = new Map(currentScope.trivialHelpers)
+      if (node.initializer && ts.isVariableDeclarationList(node.initializer)) {
+        for (const decl of node.initializer.declarations) {
+          deleteBindingPattern(decl.name, staticBindings)
+          deleteBindingPattern(decl.name, trivialHelpers)
+        }
+      }
+      ts.forEachChild(node, child => visit(child, { staticBindings, trivialHelpers }))
+      return
+    }
+
+    if (ts.isCatchClause(node)) {
+      const staticBindings = new Map(currentScope.staticBindings)
+      const trivialHelpers = new Map(currentScope.trivialHelpers)
+      if (node.variableDeclaration) {
+        deleteBindingPattern(node.variableDeclaration.name, staticBindings)
+        deleteBindingPattern(node.variableDeclaration.name, trivialHelpers)
+      }
+      ts.forEachChild(node, child => visit(child, { staticBindings, trivialHelpers }))
+      return
+    }
+
+    ts.forEachChild(node, child => visit(child, currentScope))
   }
-  visit(rootNode)
+
+  visit(rootNode, {
+    staticBindings: initialStaticBindings,
+    trivialHelpers: initialTrivialHelpers,
+  })
 }
 
 export const noConstantStubTestsRule = Object.freeze({
@@ -681,15 +851,16 @@ export const noConstantStubTestsRule = Object.freeze({
   check(ctx) {
     if (!TEST_FILE_RE.test(ctx.relPath)) return
     const sf = ctx.getSourceFile()
-    const { productionBindings } = collectImportInfo(sf)
+    const { productionBindings, testFrameworkBindings } = collectImportInfo(sf)
     const topLevel = collectScopeBindings(sf.statements, new Map(), new Map())
 
     let foundTestBlock = false
     const visit = (node, currentScope) => {
       const suiteCallback = getNamedCallCallback(node, SUITE_BLOCK_NAMES)
       if (suiteCallback) {
+        const paramCleared = clearCallbackParameters(suiteCallback, currentScope)
         const stmts = ts.isBlock(suiteCallback.body) ? suiteCallback.body.statements : []
-        const nextScope = collectScopeBindings(stmts, currentScope.staticBindings, currentScope.trivialHelpers)
+        const nextScope = collectScopeBindings(stmts, paramCleared.staticBindings, paramCleared.trivialHelpers)
         ts.forEachChild(suiteCallback.body, child => visit(child, nextScope))
         return
       }
@@ -697,9 +868,20 @@ export const noConstantStubTestsRule = Object.freeze({
       const testCallback = getNamedCallCallback(node, TEST_BLOCK_NAMES)
       if (testCallback) {
         foundTestBlock = true
+        const paramCleared = clearCallbackParameters(testCallback, currentScope)
         const stmts = ts.isBlock(testCallback.body) ? testCallback.body.statements : []
-        const scoped = collectScopeBindings(stmts, currentScope.staticBindings, currentScope.trivialHelpers)
-        if (!blockExercisesRealCode(testCallback.body, productionBindings, scoped.trivialHelpers)) {
+        const scoped = collectScopeBindings(stmts, paramCleared.staticBindings, paramCleared.trivialHelpers)
+        const firstParam = testCallback.parameters?.[0]?.name
+        const testContextParamName = firstParam && ts.isIdentifier(firstParam) ? firstParam.text : null
+        if (
+          !blockExercisesRealCode(
+            testCallback.body,
+            productionBindings,
+            scoped.trivialHelpers,
+            testFrameworkBindings,
+            testContextParamName,
+          )
+        ) {
           inspectAssertionsInNode(testCallback.body, scoped.staticBindings, scoped.trivialHelpers, ctx.report)
         }
         return
@@ -711,7 +893,10 @@ export const noConstantStubTestsRule = Object.freeze({
     visit(sf, topLevel)
 
     // Also inspect top-level bare test scripts that do not wrap assertions in test()/it()
-    if (!foundTestBlock && !blockExercisesRealCode(sf, productionBindings, topLevel.trivialHelpers)) {
+    if (
+      !foundTestBlock
+      && !blockExercisesRealCode(sf, productionBindings, topLevel.trivialHelpers, testFrameworkBindings)
+    ) {
       inspectAssertionsInNode(sf, topLevel.staticBindings, topLevel.trivialHelpers, ctx.report)
     }
   },

@@ -1,14 +1,12 @@
 name: Integration to main promotion
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Evaluate full promotion readiness without creating, updating, or enqueueing a PR
+        description: Evaluate full promotion readiness and cross-repo overlay compatibility without mutating branches or PRs
         type: boolean
-        default: false
+        default: true
 
 permissions: {}
 
@@ -16,13 +14,19 @@ concurrency:
   group: integration-to-main-promotion
   cancel-in-progress: false
 
+env:
+  MIKKA_PRIVATE_GITHUB_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+  MIKKA_HOSTED_UI_GITHUB_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER }}
+  PROBE_DOCKER_IMAGE: node:24.22.1-trixie@sha256:f1e034976f948cf212ef1f659c12e5dd58ac7eab947831813e81a62401ca38be
+
 jobs:
-  promote:
+  plan:
     if: >-
       github.repository_id == '1427517699' &&
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    environment: cloudflare-runtime-release
+    timeout-minutes: 10
     permissions:
       actions: read
       checks: read
@@ -30,13 +34,132 @@ jobs:
       pull-requests: read
       statuses: read
       id-token: write
+    outputs:
+      branch: ${{ steps.eval.outputs.branch }}
+      head_sha: ${{ steps.eval.outputs.head_sha }}
+      main_sha: ${{ steps.eval.outputs.main_sha }}
+      ahead_by: ${{ steps.eval.outputs.ahead_by }}
+      behind_by: ${{ steps.eval.outputs.behind_by }}
+      frozen: ${{ steps.eval.outputs.frozen }}
+      dry_run: ${{ steps.eval.outputs.dry_run }}
+      skip_overlay_probe: ${{ steps.eval.outputs.skip_overlay_probe }}
+      allow_coordinated_unpinned: ${{ steps.eval.outputs.allow_coordinated_unpinned }}
+      auto_sync_action: ${{ steps.eval.outputs.auto_sync_action }}
+      auto_sync_reason: ${{ steps.eval.outputs.auto_sync_reason }}
+      sync_pr_number: ${{ steps.eval.outputs.sync_pr_number }}
+      sync_pr_head_ref: ${{ steps.eval.outputs.sync_pr_head_ref }}
+      sync_pr_head_sha: ${{ steps.eval.outputs.sync_pr_head_sha }}
+      sync_pr_ci_run_url: ${{ steps.eval.outputs.sync_pr_ci_run_url }}
+      planned_action: ${{ steps.eval.outputs.planned_action }}
+      planned_reason: ${{ steps.eval.outputs.planned_reason }}
+      pr_number: ${{ steps.eval.outputs.pr_number }}
+      pr_id: ${{ steps.eval.outputs.pr_id }}
+      ci_run_url: ${{ steps.eval.outputs.ci_run_url }}
+      req_total: ${{ steps.eval.outputs.req_total }}
+      req_names: ${{ steps.eval.outputs.req_names }}
+      run_overlay_probe: ${{ steps.eval.outputs.run_overlay_probe }}
+      candidates_json: ${{ steps.eval.outputs.candidates_json }}
+      pinned_overlay_short: ${{ steps.eval.outputs.pinned_overlay_short }}
+      hosted_ui_status: ${{ steps.eval.outputs.hosted_ui_status }}
+      summary_table_b64: ${{ steps.eval.outputs.summary_table_b64 }}
     steps:
-      # This privileged workflow uses only GitHub metadata. It never checks out or runs PR code.
-      - name: Evaluate integration branch and promotion gates
-        id: plan
+      - name: Check out trusted main scripts only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            scripts/ci/integration-promotion-probe.mjs
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+
+      - name: Select the source App before credential access
+        id: source-app
+        env:
+          SOURCE_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324' }}
+          ORG_SECRET_PATH: ${{ vars.MIKKA_ORG_GITHUB_SECRET_PATH }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs'
+          const owner = process.env.SOURCE_OWNER
+          if (!['alexj11324', 'aspectly-labs'].includes(owner)) throw Error('CI_SOURCE_APP_OWNER_REQUIRED')
+          const path = owner === 'aspectly-labs' ? process.env.ORG_SECRET_PATH?.trim() : '/github'
+          if (!path || /[\r\n]/.test(path)) throw Error('CI_SOURCE_APP_SECRET_PATH_REQUIRED')
+          appendFileSync(process.env.GITHUB_OUTPUT, `owner=${owner}\nsecret-path=${path}\napp-id=${owner === 'aspectly-labs' ? '5853576' : '4840908'}\n`)
+          JS
+
+      - name: Read the existing source App id
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+
+      - name: Read the existing source App private key
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+
+      - name: Verify the selected source App
+        env:
+          EXPECTED_SOURCE_APP_ID: ${{ steps.source-app.outputs.app-id }}
+        run: node -e 'if (!process.env.EXPECTED_SOURCE_APP_ID || process.env.GITHUB_APP_ID !== process.env.EXPECTED_SOURCE_APP_ID) throw Error("CI_SOURCE_APP_ID_MISMATCH")'
+
+      - name: Mint read-only operations input token
+        id: ops-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          repositories: mikka-cloud
+          permission-contents: read
+
+      - name: Mint read-only overlay metadata token
+        id: overlay-meta-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || (vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'alexj11324' && 'alexj11324' || (vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324')) }}
+          repositories: mikka-hosted-ui
+          permission-contents: read
+          permission-checks: read
+          permission-pull-requests: read
+
+      - name: Scrub App credentials before reading metadata
+        run: |
+          echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
+          echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+
+      - name: Evaluate branch status, auto-sync plan, and overlay candidates
+        id: eval
         env:
           GH_TOKEN: ${{ github.token }}
-          PROMOTE_ENABLED: ${{ vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN }}
+          OPS_READ_TOKEN: ${{ steps.ops-token.outputs.token }}
+          OVERLAY_META_TOKEN: ${{ steps.overlay-meta-token.outputs.token }}
+          OPS_REPO: ${{ format('{0}/mikka-cloud', vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324') }}
+          UI_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || (vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'alexj11324' && 'alexj11324' || (vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324')) }}
+          PROMOTE_FREEZE: ${{ vars.MIKKA_INTEGRATION_PROMOTE_FREEZE }}
+          SKIP_OVERLAY_PROBE: ${{ vars.MIKKA_INTEGRATION_SKIP_OVERLAY_PROBE }}
+          ALLOW_COORDINATED_UNPINNED: ${{ vars.MIKKA_INTEGRATION_ALLOW_COORDINATED_UNPINNED_PROMOTE }}
+          FROZEN_OVERLAY_SHA: ${{ vars.MIKKA_INTEGRATION_FROZEN_OVERLAY_SHA }}
           CONFIGURED_BRANCH: ${{ vars.MIKKA_INTEGRATION_BRANCH }}
           DRY_RUN: ${{ inputs.dry_run }}
           REPO_OWNER: ${{ github.repository_owner }}
@@ -47,36 +170,136 @@ jobs:
             echo "Invalid integration branch name: $branch"
             exit 1
           fi
-          printf 'branch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
-
-          emit_noop() {
-            local reason="$1"
-            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
-            {
-              echo "### Integration to \`main\` promotion status"
-              echo ""
-              echo "- **Integration branch:** \`$branch\`"
-              echo "- **Promotion enabled (\`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN\`):** \`${PROMOTE_ENABLED:-false}\`"
-              echo "- **Dry run:** \`${DRY_RUN:-false}\`"
-              echo "- **Decision:** \`noop\` — $reason"
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "noop: $reason"
-            exit 0
-          }
+          frozen="false"
+          if [ "${PROMOTE_FREEZE:-}" = "true" ]; then frozen="true"; fi
+          skip_overlay_probe="false"
+          if [ "${SKIP_OVERLAY_PROBE:-}" = "true" ]; then skip_overlay_probe="true"; fi
+          allow_coordinated_unpinned="false"
+          if [ "${ALLOW_COORDINATED_UNPINNED:-}" = "true" ]; then allow_coordinated_unpinned="true"; fi
+          dry_run="true"
+          if [ "${DRY_RUN:-true}" = "false" ]; then dry_run="false"; fi
 
           encoded_branch=$(jq -rn --arg b "$branch" '$b|@uri')
-          if ! compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$encoded_branch" 2>/dev/null); then
-            emit_noop "branch \`$branch\` not found or not comparable with \`main\`"
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')
+          [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          if ! head_sha=$(gh api "repos/$GITHUB_REPOSITORY/branches/$encoded_branch" --jq '.commit.sha' 2>/dev/null); then
+            {
+              echo "branch=$branch"
+              echo "head_sha="
+              echo "main_sha=$main_sha"
+              echo "ahead_by=0"
+              echo "behind_by=0"
+              echo "frozen=$frozen"
+              echo "dry_run=$dry_run"
+              echo "skip_overlay_probe=$skip_overlay_probe"
+              echo "allow_coordinated_unpinned=$allow_coordinated_unpinned"
+              echo "auto_sync_action=noop"
+              echo "auto_sync_reason=branch $branch not found"
+              echo "planned_action=noop"
+              echo "planned_reason=branch \`$branch\` not found."
+              echo "run_overlay_probe=false"
+              echo "candidates_json=[]"
+              echo "pinned_overlay_short=none"
+              echo "hosted_ui_status=n/a"
+              echo "summary_table_b64="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          head_sha=$(jq -er '.commits[-1].sha // .base_commit.sha' <<< "$compare")
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$encoded_branch")
           ahead_by=$(jq -er '.ahead_by' <<< "$compare")
           behind_by=$(jq -er '.behind_by' <<< "$compare")
-          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
-          printf 'head_sha=%s\nahead_by=%s\nbehind_by=%s\n' "$head_sha" "$ahead_by" "$behind_by" >> "$GITHUB_OUTPUT"
 
-          child_prs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$encoded_branch&per_page=100" | jq -c '[flatten[] | select(.draft | not) | .number]')
-          child_count=$(jq -r 'length' <<< "$child_prs")
+          # Classify open PRs targeting the integration branch: separate our own
+          # same-repo chore/auto-sync-main-* PR from feature child PRs.
+          all_child_prs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$encoded_branch&per_page=100" | jq -c 'flatten')
+          feature_child_prs=$(jq -c --arg repo "$GITHUB_REPOSITORY" '
+            [.[] | select((.draft | not) and ((.head.repo.full_name != $repo) or (.head.ref | startswith("chore/auto-sync-main-") | not))) | .number]
+          ' <<< "$all_child_prs")
+          feature_child_count=$(jq -r 'length' <<< "$feature_child_prs")
+          total_ready_child_count=$(jq -r '[.[] | select(.draft | not)] | length' <<< "$all_child_prs")
 
+          sync_pr=$(jq -c --arg repo "$GITHUB_REPOSITORY" '
+            [.[] | select(.head.repo.full_name == $repo and (.head.ref | startswith("chore/auto-sync-main-")))]
+            | sort_by(.number) | last // empty
+          ' <<< "$all_child_prs")
+
+          sync_pr_number=""
+          sync_pr_head_ref=""
+          sync_pr_head_sha=""
+          sync_pr_ci_run_url=""
+          sync_pr_includes_main="false"
+          sync_pr_includes_base="false"
+          sync_pr_ci_ok="false"
+          sync_pr_acceptance_state="missing"
+          sync_pr_mergeable="UNKNOWN"
+          sync_pr_json="null"
+          if [ -n "$sync_pr" ]; then
+            sync_pr_number=$(jq -er '.number' <<< "$sync_pr")
+            sync_pr_base_ref=$(jq -er '.base.ref' <<< "$sync_pr")
+            sync_pr_draft=$(jq -er '.draft | booleans | tostring' <<< "$sync_pr")
+            sync_pr_head_ref=$(jq -er '.head.ref' <<< "$sync_pr")
+            sync_pr_head_sha=$(jq -er '.head.sha' <<< "$sync_pr")
+            sync_pr_body=$(jq -r '.body // ""' <<< "$sync_pr")
+
+            # Verify sync PR head includes BOTH current main AND current integration base
+            # so CI checks can never be reused across an unvalidated base advance.
+            sync_cmp_main=$(gh api "repos/$GITHUB_REPOSITORY/compare/${sync_pr_head_sha}...${main_sha}" --jq '.status' 2>/dev/null || echo "diverged")
+            if [ "$sync_cmp_main" = "identical" ] || [ "$sync_cmp_main" = "behind" ]; then
+              sync_pr_includes_main="true"
+            fi
+            sync_cmp_base=$(gh api "repos/$GITHUB_REPOSITORY/compare/${sync_pr_head_sha}...${head_sha}" --jq '.status' 2>/dev/null || echo "diverged")
+            if [ "$sync_cmp_base" = "identical" ] || [ "$sync_cmp_base" = "behind" ]; then
+              sync_pr_includes_base="true"
+            fi
+
+            sync_checks=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/${sync_pr_head_sha}/check-runs?per_page=100" | jq -c '[.[].check_runs[]]')
+            if jq -e '
+              (group_by(.name) | map({key: .[0].name, value: (max_by(.id))}) | from_entries) as $latest
+              | ["UI policy (strict)", "Production build and browser interactions", "Browser tests (before merge)"]
+              | all(.[]; ($latest[.].status == "completed" and $latest[.].conclusion == "success"))
+            ' <<< "$sync_checks" >/dev/null 2>&1; then
+              sync_pr_ci_ok="true"
+            fi
+            sync_pr_ci_run_url=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ui-policy.yml/runs?head_sha=${sync_pr_head_sha}&event=pull_request&per_page=10" \
+              --jq '[.workflow_runs[] | select(.status == "completed" and .conclusion == "success")] | .[0].html_url // ""')
+            sync_pr_acceptance_state=$(gh api "repos/$GITHUB_REPOSITORY/commits/${sync_pr_head_sha}/status" \
+              --jq '[.statuses[] | select(.context == "PR acceptance")] | .[0].state // "missing"')
+            sync_pr_mergeable=$(gh pr view "$sync_pr_number" --repo "$GITHUB_REPOSITORY" --json mergeable --jq '.mergeable // "UNKNOWN"')
+            body_has_head="false"
+            if grep -Fq "Commit: $sync_pr_head_sha" <<< "$sync_pr_body"; then body_has_head="true"; fi
+            body_has_url="false"
+            if [ -n "$sync_pr_ci_run_url" ] && grep -Fq "Evidence: $sync_pr_ci_run_url" <<< "$sync_pr_body"; then body_has_url="true"; fi
+            sync_pr_json=$(jq -nc \
+              --argjson number "$sync_pr_number" \
+              --arg baseRef "$sync_pr_base_ref" \
+              --arg headSha "$sync_pr_head_sha" \
+              --argjson draft "$sync_pr_draft" \
+              --argjson bodyHasHeadSha "$body_has_head" \
+              --argjson bodyHasCiRunUrl "$body_has_url" \
+              '{number:$number,baseRef:$baseRef,headSha:$headSha,draft:$draft,bodyHasHeadSha:$bodyHasHeadSha,bodyHasCiRunUrl:$bodyHasCiRunUrl}')
+          fi
+
+          sync_plan=$(jq -nc \
+            --arg branch "$branch" \
+            --argjson aheadBy "$ahead_by" \
+            --argjson behindBy "$behind_by" \
+            --argjson featureChildCount "$feature_child_count" \
+            --argjson syncPr "$sync_pr_json" \
+            --argjson syncPrIncludesMain "$sync_pr_includes_main" \
+            --argjson syncPrIncludesBase "$sync_pr_includes_base" \
+            --argjson syncPrCiOk "$sync_pr_ci_ok" \
+            --arg syncPrCiRunUrl "$sync_pr_ci_run_url" \
+            --arg syncPrAcceptanceState "$sync_pr_acceptance_state" \
+            --arg syncPrMergeable "$sync_pr_mergeable" \
+            '{branch:$branch,aheadBy:$aheadBy,behindBy:$behindBy,featureChildCount:$featureChildCount,syncPr:$syncPr,syncPrIncludesMain:$syncPrIncludesMain,syncPrIncludesBase:$syncPrIncludesBase,syncPrCiOk:$syncPrCiOk,syncPrCiRunUrl:$syncPrCiRunUrl,syncPrAcceptanceState:$syncPrAcceptanceState,syncPrMergeable:$syncPrMergeable}' \
+            | node scripts/ci/integration-promotion-probe.mjs plan-auto-sync)
+          auto_sync_action=$(jq -er '.action' <<< "$sync_plan")
+          auto_sync_reason=$(jq -er '.reason' <<< "$sync_plan")
+
+          # Evaluate main promotion PR state.
           open_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&head=${REPO_OWNER}:${encoded_branch}&per_page=10" | jq -c '.[0] // empty')
           pr_number=""
           pr_id=""
@@ -158,9 +381,9 @@ jobs:
           if [ "$ahead_by" -eq 0 ]; then
             planned_reason="\`$branch\` has no unmerged commits ahead of \`main\`."
           elif [ "$behind_by" -gt 0 ]; then
-            planned_reason="\`$branch\` is $behind_by commit(s) behind \`main\`; back-merge \`main\` into \`$branch\` first."
-          elif [ "$child_count" -gt 0 ]; then
-            planned_reason="waiting for open Ready PR(s) targeting \`$branch\` to merge: $child_prs."
+            planned_reason="\`$branch\` is $behind_by commit(s) behind \`main\`; auto-sync step handles back-merge first."
+          elif [ "$total_ready_child_count" -gt 0 ]; then
+            planned_reason="waiting for open Ready PR(s) targeting \`$branch\` to merge ($total_ready_child_count open)."
           elif [ -z "$open_pr" ]; then
             planned_action="create_pr"
             planned_reason="open Ready promotion PR \`$branch\` -> \`main\` at \`$head_sha\` with pending acceptance until CI passes on this exact head."
@@ -191,46 +414,134 @@ jobs:
             planned_reason="enqueue PR #$pr_number into the \`main\` merge queue at exact head \`$head_sha\`."
           fi
 
-          if [ -n "$pr_number" ]; then
-            printf 'pr_number=%s\npr_id=%s\n' "$pr_number" "$pr_id" >> "$GITHUB_OUTPUT"
+          # Read current pinned overlaySource from mikka-cloud/main and check if a coordinated
+          # Ready integration PR exists on mikka-hosted-ui (metadata only; never logs private paths).
+          pinned_overlay_sha=""
+          pinned_overlay_short="unavailable"
+          if ops_b64=$(GH_TOKEN="$OPS_READ_TOKEN" gh api "repos/${OPS_REPO}/contents/docs/operations/releases/deploy-build-inputs.json?ref=main" --jq '.content' 2>/dev/null); then
+            printf '%s' "$ops_b64" | tr -d '\n' | base64 -d > "$RUNNER_TEMP/deploy-build-inputs.json"
+            if parsed_pin=$(node scripts/ci/integration-promotion-probe.mjs parse-deploy-inputs --file "$RUNNER_TEMP/deploy-build-inputs.json" 2>/dev/null); then
+              pinned_overlay_sha=$(jq -er '.overlaySource' <<< "$parsed_pin")
+              pinned_overlay_short="${pinned_overlay_sha:0:8}"
+            fi
+            rm -f "$RUNNER_TEMP/deploy-build-inputs.json"
           fi
-          printf 'ci_run_url=%s\nreq_total=%s\nreq_names=%s\n' "$ci_run_url" "$req_total" "$req_names" >> "$GITHUB_OUTPUT"
 
-          effective_action="$planned_action"
-          effective_reason="$planned_reason"
-          if [ "${PROMOTE_ENABLED:-}" != "true" ]; then
-            effective_action="noop"
-            effective_reason="waiting for repository variable \`MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\` after release freeze lifts (if enabled now, planned action would be \`$planned_action\`: $planned_reason)."
-          elif [ "${DRY_RUN:-false}" = "true" ]; then
-            effective_action="noop"
-            effective_reason="dry run requested (live run would execute \`$planned_action\`: $planned_reason)."
+          ui_repo="${UI_OWNER}/mikka-hosted-ui"
+          hosted_ui_pr_json="null"
+          hosted_ui_child_count=0
+          hosted_ui_policy_ok="false"
+          hosted_ui_status="no coordinated Ready UI PR open"
+          if ui_open_pr=$(GH_TOKEN="$OVERLAY_META_TOKEN" gh api "repos/${ui_repo}/pulls?state=open&base=main&head=${UI_OWNER}:${encoded_branch}&per_page=10" 2>/dev/null | jq -c --arg repo "$ui_repo" '[.[] | select(.head.repo.full_name == $repo)] | .[0] // empty'); then
+            if [ -n "$ui_open_pr" ]; then
+              ui_pr_num=$(jq -er '.number' <<< "$ui_open_pr")
+              ui_pr_draft=$(jq -er '.draft | booleans | tostring' <<< "$ui_open_pr")
+              ui_pr_sha=$(jq -er '.head.sha' <<< "$ui_open_pr")
+              ui_pr_base=$(jq -er '.base.ref' <<< "$ui_open_pr")
+              ui_child_a=$(GH_TOKEN="$OVERLAY_META_TOKEN" gh api --paginate --slurp "repos/${ui_repo}/pulls?state=open&base=${encoded_branch}&per_page=100" 2>/dev/null | jq -r '[flatten[] | select(.draft | not)] | length' || echo 1)
+              ui_child_b=$(GH_TOKEN="$OVERLAY_META_TOKEN" gh api --paginate --slurp "repos/${ui_repo}/pulls?state=open&base=claude%2Ffunny-cannon-llofk8&per_page=100" 2>/dev/null | jq -r '[flatten[] | select(.draft | not)] | length' || echo 1)
+              hosted_ui_child_count=$((ui_child_a + ui_child_b))
+              if ui_checks=$(GH_TOKEN="$OVERLAY_META_TOKEN" gh api --paginate --slurp "repos/${ui_repo}/commits/${ui_pr_sha}/check-runs?per_page=100" 2>/dev/null | jq -c '[.[].check_runs[]]'); then
+                if jq -e 'any(.[]; (.name == "Cloudflare UI Policy" or .name == "UI policy") and .status == "completed" and .conclusion == "success")' <<< "$ui_checks" >/dev/null 2>&1; then
+                  hosted_ui_policy_ok="true"
+                fi
+              fi
+              hosted_ui_pr_json=$(jq -nc --argjson number "$ui_pr_num" --arg baseRef "$ui_pr_base" --arg headSha "$ui_pr_sha" --argjson draft "$ui_pr_draft" '{number:$number,baseRef:$baseRef,headSha:$headSha,draft:$draft}')
+              hosted_ui_status="UI PR #${ui_pr_num} (draft=${ui_pr_draft}, policy_ok=${hosted_ui_policy_ok}, open_ui_children=${hosted_ui_child_count})"
+            fi
           fi
+
+          candidates_json=$(jq -nc \
+            --arg pinnedOverlaySha "$pinned_overlay_sha" \
+            --arg frozenOverlaySha "${FROZEN_OVERLAY_SHA:-}" \
+            --argjson hostedUiPr "$hosted_ui_pr_json" \
+            --argjson hostedUiChildCount "$hosted_ui_child_count" \
+            --argjson hostedUiPolicyOk "$hosted_ui_policy_ok" \
+            '{pinnedOverlaySha:$pinnedOverlaySha,frozenOverlaySha:$frozenOverlaySha,hostedUiPr:$hostedUiPr,hostedUiChildCount:$hostedUiChildCount,hostedUiPolicyOk:$hostedUiPolicyOk}' \
+            | node scripts/ci/integration-promotion-probe.mjs select-candidates)
+          candidate_count=$(jq -r 'length' <<< "$candidates_json")
+
+          run_overlay_probe="false"
+          if [ "$ahead_by" -gt 0 ] && [ "$candidate_count" -gt 0 ] && [ "$skip_overlay_probe" != "true" ]; then
+            if [ "$dry_run" = "true" ] || [ "$planned_action" = "create_pr" ] || [ "$planned_action" = "enqueue_pr" ]; then
+              run_overlay_probe="true"
+            fi
+          fi
+
+          summary_table=$(cat <<EOF
+          | Gate | Value |
+          | --- | --- |
+          | Integration branch | \`$branch\` (\`${head_sha:0:8}\`) |
+          | \`main\` head | \`${main_sha:0:8}\` |
+          | Ahead / behind \`main\` | \`$ahead_by\` ahead / \`$behind_by\` behind |
+          | Open Ready feature child PRs | \`$feature_child_count\` ($feature_child_prs) |
+          | Auto-sync PR | ${sync_pr_number:+#$sync_pr_number (\`$sync_pr_head_ref\`, includes_main=\`$sync_pr_includes_main\`, includes_base=\`$sync_pr_includes_base\`, ci_ok=\`$sync_pr_ci_ok\`, acceptance=\`$sync_pr_acceptance_state\`)}${sync_pr_number:-none} |
+          | Auto-sync plan | \`$auto_sync_action\` — $auto_sync_reason |
+          | Open promotion PR to \`main\` | ${pr_number:+#$pr_number (draft=$pr_draft)}${pr_number:-none} |
+          | Merge state / queue / stacked | \`$merge_state\` / queued=\`$queued\` / stacked=\`$stacked\` |
+          | Required checks | \`$req_summary\` |
+          | Passing CI run on head | ${ci_run_url:-none yet} |
+          | PR acceptance status | \`$pr_acceptance_state\` |
+          | Approved \`overlaySource\` pin | \`$pinned_overlay_short\` |
+          | Coordinated UI PR status | $hosted_ui_status |
+          | Emergency freeze (\`vars.MIKKA_INTEGRATION_PROMOTE_FREEZE\`) | \`$frozen\` |
+          | Skip overlay probe break-glass (\`vars.MIKKA_INTEGRATION_SKIP_OVERLAY_PROBE\`) | \`$skip_overlay_probe\` |
+          | Coordinated unpinned break-glass (\`vars.MIKKA_INTEGRATION_ALLOW_COORDINATED_UNPINNED_PROMOTE\`) | \`$allow_coordinated_unpinned\` |
+          | Dry run | \`$dry_run\` |
+          | Planned promotion action | \`$planned_action\` |
+          EOF
+          )
+          summary_table_b64=$(printf '%s' "$summary_table" | base64 -w 0)
 
           {
-            echo "### Integration to \`main\` promotion status"
-            echo ""
-            echo "| Gate | Value |"
-            echo "| --- | --- |"
-            echo "| Integration branch | \`$branch\` (\`${head_sha:0:8}\`) |"
-            echo "| Ahead / behind \`main\` | \`$ahead_by\` ahead / \`$behind_by\` behind |"
-            echo "| Open Ready child PRs targeting branch | \`$child_count\` ($child_prs) |"
-            echo "| Open PR to \`main\` | ${pr_number:+#$pr_number (draft=$pr_draft)}${pr_number:-none} |"
-            echo "| Merge state / queue / stacked | \`$merge_state\` / queued=\`$queued\` / stacked=\`$stacked\` |"
-            echo "| Required checks | \`$req_summary\` |"
-            echo "| Passing CI run on head | ${ci_run_url:-none yet} |"
-            echo "| PR acceptance status | \`$pr_acceptance_state\` |"
-            echo "| Freeze lift (\`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN\`) | \`${PROMOTE_ENABLED:-false}\` |"
-            echo "| Dry run | \`${DRY_RUN:-false}\` |"
-            echo "| Planned action | \`$planned_action\` |"
-            echo ""
-            echo "- **Decision:** \`$effective_action\` — $effective_reason"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "branch=$branch"
+            echo "head_sha=$head_sha"
+            echo "main_sha=$main_sha"
+            echo "ahead_by=$ahead_by"
+            echo "behind_by=$behind_by"
+            echo "frozen=$frozen"
+            echo "dry_run=$dry_run"
+            echo "skip_overlay_probe=$skip_overlay_probe"
+            echo "allow_coordinated_unpinned=$allow_coordinated_unpinned"
+            echo "auto_sync_action=$auto_sync_action"
+            echo "auto_sync_reason=$auto_sync_reason"
+            echo "sync_pr_number=$sync_pr_number"
+            echo "sync_pr_head_ref=$sync_pr_head_ref"
+            echo "sync_pr_head_sha=$sync_pr_head_sha"
+            echo "sync_pr_ci_run_url=$sync_pr_ci_run_url"
+            echo "planned_action=$planned_action"
+            echo "planned_reason=$planned_reason"
+            echo "pr_number=$pr_number"
+            echo "pr_id=$pr_id"
+            echo "ci_run_url=$ci_run_url"
+            echo "req_total=$req_total"
+            echo "req_names=$req_names"
+            echo "run_overlay_probe=$run_overlay_probe"
+            echo "candidates_json=$candidates_json"
+            echo "pinned_overlay_short=$pinned_overlay_short"
+            echo "hosted_ui_status=$hosted_ui_status"
+            echo "summary_table_b64=$summary_table_b64"
+          } >> "$GITHUB_OUTPUT"
 
-          echo "planned=$planned_action effective=$effective_action: $effective_reason"
-          printf 'action=%s\n' "$effective_action" >> "$GITHUB_OUTPUT"
+          echo "auto_sync=$auto_sync_action planned_promotion=$planned_action run_overlay_probe=$run_overlay_probe pinned_overlay=$pinned_overlay_short"
 
+  auto-sync:
+    needs: [plan]
+    if: >-
+      github.repository_id == '1427517699' &&
+      github.ref == 'refs/heads/main' &&
+      needs.plan.outputs.frozen != 'true' &&
+      needs.plan.outputs.dry_run != 'true' &&
+      needs.plan.outputs.auto_sync_action != 'noop' &&
+      needs.plan.outputs.branch != 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    steps:
       - name: Read the existing product App ID
-        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'reset_acceptance' || steps.plan.outputs.action == 'record_evidence' || steps.plan.outputs.action == 'enqueue_pr'
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
         with:
           method: oidc
@@ -244,7 +555,6 @@ jobs:
           include-imports: false
 
       - name: Read the existing product App key
-        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'reset_acceptance' || steps.plan.outputs.action == 'record_evidence' || steps.plan.outputs.action == 'enqueue_pr'
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
         with:
           method: oidc
@@ -258,11 +568,621 @@ jobs:
           include-imports: false
 
       - name: Verify the product App identity
-        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'reset_acceptance' || steps.plan.outputs.action == 'record_evidence' || steps.plan.outputs.action == 'enqueue_pr'
         run: test "${GITHUB_APP_ID:-}" = 4840908
 
       - name: Mint a repository-scoped App token
-        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'reset_acceptance' || steps.plan.outputs.action == 'record_evidence' || steps.plan.outputs.action == 'enqueue_pr'
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Scrub App credentials before git or PR operations
+        run: |
+          echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
+          echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+
+      - name: Check out repository for conflict-free back-merge (git only, no scripts)
+        if: needs.plan.outputs.auto_sync_action == 'open_sync_pr' || needs.plan.outputs.auto_sync_action == 'update_sync_pr'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.plan.outputs.branch }}
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: true
+
+      - name: Create or forward-merge clean main back-merge PR into integration branch
+        if: needs.plan.outputs.auto_sync_action == 'open_sync_pr' || needs.plan.outputs.auto_sync_action == 'update_sync_pr'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ACTION: ${{ needs.plan.outputs.auto_sync_action }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          EXPECTED_BASE_SHA: ${{ needs.plan.outputs.head_sha }}
+          MAIN_SHA: ${{ needs.plan.outputs.main_sha }}
+          BEHIND_BY: ${{ needs.plan.outputs.behind_by }}
+          SYNC_PR_NUMBER: ${{ needs.plan.outputs.sync_pr_number }}
+          SYNC_PR_HEAD_REF: ${{ needs.plan.outputs.sync_pr_head_ref }}
+        run: |
+          set -euo pipefail
+          test "$BRANCH" != "main"
+          git config user.name "mikka-github[bot]"
+          git config user.email "4840908+mikka-github[bot]@users.noreply.github.com"
+          git fetch origin main "$BRANCH"
+
+          abort_on_conflict() {
+            local target="$1"
+            local conflicts
+            conflicts=$(git diff --name-only --diff-filter=U | head -n 40 || true)
+            git merge --abort || true
+            {
+              echo "### Auto-sync \`main\` -> \`$BRANCH\` paused due to merge conflicts"
+              echo ""
+              echo "Automatic back-merge involving \`${target}\` encountered conflicts and aborted cleanly (no branch or PR mutated)."
+              echo ""
+              echo '```text'
+              printf '%s\n' "$conflicts"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=Integration auto-sync conflict::Manual conflict resolution required while syncing ${target} into ${BRANCH}"
+            exit 0
+          }
+
+          pick_fresh_sync_branch() {
+            local candidate="chore/auto-sync-main-into-integration"
+            if git ls-remote --exit-code --heads origin "$candidate" >/dev/null 2>&1; then
+              candidate="chore/auto-sync-main-${MAIN_SHA:0:8}"
+              if git ls-remote --exit-code --heads origin "$candidate" >/dev/null 2>&1; then
+                candidate="chore/auto-sync-main-${MAIN_SHA:0:8}-${GITHUB_RUN_ID}"
+              fi
+            fi
+            printf '%s' "$candidate"
+          }
+
+          effective_mode="$ACTION"
+          if [ "$ACTION" = "update_sync_pr" ]; then
+            # First test whether the LIVE tips (EXPECTED_BASE_SHA + MAIN_SHA) merge cleanly.
+            git checkout --quiet --detach "$EXPECTED_BASE_SHA"
+            if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$MAIN_SHA" -m "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}"; then
+              abort_on_conflict "main@${MAIN_SHA:0:8}"
+            fi
+            clean_live_merge_sha=$(git rev-parse HEAD)
+            clean_live_tree=$(git rev-parse "${clean_live_merge_sha}^{tree}")
+
+            # Now attempt a clean forward merge onto the existing sync PR branch (main first, then base).
+            sync_branch="$SYNC_PR_HEAD_REF"
+            [[ "$sync_branch" =~ ^chore/auto-sync-main-[A-Za-z0-9._-]+$ ]]
+            git fetch origin "$sync_branch"
+            git checkout -B "$sync_branch" "origin/$sync_branch"
+            forward_ok="true"
+            replace_reason=""
+            if ! git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
+              if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$MAIN_SHA" -m "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}"; then
+                git merge --abort || true
+                forward_ok="false"
+                replace_reason="conflict"
+              fi
+            fi
+            if [ "$forward_ok" = "true" ] && ! git merge-base --is-ancestor "$EXPECTED_BASE_SHA" HEAD; then
+              if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$EXPECTED_BASE_SHA" -m "chore: refresh ${BRANCH} (${EXPECTED_BASE_SHA:0:8}) in auto-sync PR"; then
+                git merge --abort || true
+                forward_ok="false"
+                replace_reason="conflict"
+              fi
+            fi
+            if [ "$forward_ok" = "true" ]; then
+              forward_tree=$(git rev-parse 'HEAD^{tree}')
+              if [ "$forward_tree" != "$clean_live_tree" ]; then
+                forward_ok="false"
+                replace_reason="tree_mismatch"
+              fi
+            fi
+
+            if [ "$forward_ok" != "true" ]; then
+              # Live tips merged cleanly, so the conflict or tree divergence came strictly from stale
+              # intermediate sync history. Replace with a fresh branch/PR from clean_live_merge_sha —
+              # never force-push the old branch.
+              sync_branch=$(pick_fresh_sync_branch)
+              git checkout -b "$sync_branch" "$clean_live_merge_sha"
+              effective_mode="replace_sync_pr"
+            fi
+          else
+            sync_branch=$(pick_fresh_sync_branch)
+            git checkout -b "$sync_branch" "$EXPECTED_BASE_SHA"
+            if ! git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
+              if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$MAIN_SHA" -m "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}"; then
+                abort_on_conflict "main@${MAIN_SHA:0:8}"
+              fi
+            fi
+          fi
+
+          merge_sha=$(git rev-parse HEAD)
+          git -c core.hooksPath=/dev/null push origin "HEAD:refs/heads/$sync_branch"
+
+          body=$(cat <<EOF
+          ## Summary
+          Automated conflict-free back-merge of \`main\` (\`${MAIN_SHA:0:8}\`, ${BEHIND_BY} commit(s)) into integration branch \`${BRANCH}\` (base \`${EXPECTED_BASE_SHA:0:8}\`) so \`${BRANCH}\` stays \`0 behind main\` for scheduled promotion.
+
+          ## Acceptance
+          Commit: ${merge_sha}
+          Runtime: both
+          Model: scripted (at the LiteLLM boundary)
+          Fixtures: awaiting full CI aggregator and PG17 checks on this exact sync head
+          Items: pending
+          Evidence: pending
+          Screenshots: not needed: automated backend main-to-integration sync
+          EOF
+          )
+
+          if [ "$effective_mode" = "open_sync_pr" ] || [ "$effective_mode" = "replace_sync_pr" ]; then
+            pr_url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$BRANCH" --head "$sync_branch" \
+              --title "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}" \
+              --body "$body")
+            echo "Opened auto-sync PR: $pr_url (head $merge_sha)"
+            if [ "$effective_mode" = "replace_sync_pr" ]; then
+              if [ "$replace_reason" = "tree_mismatch" ]; then
+                close_comment="Superseded by clean live back-merge PR ${pr_url} (forward-merging onto stale intermediate sync history produced a different tree than merging the live tips directly)."
+              else
+                close_comment="Superseded by clean live back-merge PR ${pr_url} (stale intermediate sync history conflicted while live tips merged cleanly)."
+              fi
+              gh pr close "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --delete-branch \
+                --comment "$close_comment"
+              echo "Closed superseded sync PR #$SYNC_PR_NUMBER ($replace_reason)"
+            fi
+          else
+            gh pr edit "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
+            echo "Updated auto-sync PR #$SYNC_PR_NUMBER forward to $merge_sha"
+          fi
+
+      - name: Close redundant auto-sync PR when integration branch is already up to date
+        if: needs.plan.outputs.auto_sync_action == 'close_redundant_sync_pr'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          SYNC_PR_NUMBER: ${{ needs.plan.outputs.sync_pr_number }}
+        run: |
+          set -euo pipefail
+          test "$BRANCH" != "main"
+          base_ref=$(gh pr view "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
+          test "$base_ref" = "$BRANCH"
+          test "$base_ref" != "main"
+          gh pr close "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --delete-branch \
+            --comment "Closing redundant auto-sync PR: \`${BRANCH}\` is already 0 commits behind \`main\`."
+          echo "Closed redundant auto-sync PR #$SYNC_PR_NUMBER"
+
+      - name: Reset sync PR acceptance to pending for updated head
+        if: needs.plan.outputs.auto_sync_action == 'reset_sync_acceptance'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          MAIN_SHA: ${{ needs.plan.outputs.main_sha }}
+          SYNC_PR_NUMBER: ${{ needs.plan.outputs.sync_pr_number }}
+          SYNC_PR_HEAD_SHA: ${{ needs.plan.outputs.sync_pr_head_sha }}
+        run: |
+          set -euo pipefail
+          body=$(cat <<EOF
+          ## Summary
+          Automated conflict-free back-merge of \`main\` (\`${MAIN_SHA:0:8}\`) into integration branch \`${BRANCH}\`.
+
+          ## Acceptance
+          Commit: ${SYNC_PR_HEAD_SHA}
+          Runtime: both
+          Model: scripted (at the LiteLLM boundary)
+          Fixtures: awaiting full CI aggregator and PG17 checks on this exact sync head
+          Items: pending
+          Evidence: pending
+          Screenshots: not needed: automated backend main-to-integration sync
+          EOF
+          )
+          gh pr edit "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
+          echo "Reset sync PR #$SYNC_PR_NUMBER acceptance to pending for $SYNC_PR_HEAD_SHA"
+
+      - name: Record verified CI evidence on auto-sync PR
+        if: needs.plan.outputs.auto_sync_action == 'record_sync_evidence'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          MAIN_SHA: ${{ needs.plan.outputs.main_sha }}
+          SYNC_PR_NUMBER: ${{ needs.plan.outputs.sync_pr_number }}
+          SYNC_PR_HEAD_SHA: ${{ needs.plan.outputs.sync_pr_head_sha }}
+          SYNC_PR_CI_RUN_URL: ${{ needs.plan.outputs.sync_pr_ci_run_url }}
+        run: |
+          set -euo pipefail
+          test -n "$SYNC_PR_CI_RUN_URL"
+          body=$(cat <<EOF
+          ## Summary
+          Automated conflict-free back-merge of \`main\` (\`${MAIN_SHA:0:8}\`) into integration branch \`${BRANCH}\`.
+
+          ## Acceptance
+          Commit: ${SYNC_PR_HEAD_SHA}
+          Runtime: both
+          Model: scripted (at the LiteLLM boundary)
+          Fixtures: CI aggregator and PG17 database checks verified on this exact sync head
+          Items: 3/3 passed (UI policy (strict), Production build and browser interactions, Browser tests (before merge))
+          Evidence: ${SYNC_PR_CI_RUN_URL}
+          Screenshots: not needed: automated backend main-to-integration sync
+          EOF
+          )
+          gh pr edit "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
+          echo "Recorded verified CI evidence on sync PR #$SYNC_PR_NUMBER: $SYNC_PR_CI_RUN_URL"
+
+      - name: Merge verified auto-sync PR into non-main integration branch
+        if: needs.plan.outputs.auto_sync_action == 'merge_sync_pr'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          EXPECTED_BASE_SHA: ${{ needs.plan.outputs.head_sha }}
+          SYNC_PR_NUMBER: ${{ needs.plan.outputs.sync_pr_number }}
+          SYNC_PR_HEAD_SHA: ${{ needs.plan.outputs.sync_pr_head_sha }}
+        run: |
+          set -euo pipefail
+          test "$BRANCH" != "main"
+          encoded_branch=$(jq -rn --arg b "$BRANCH" '$b|@uri')
+          base_ref=$(gh pr view "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq '.baseRefName')
+          test "$base_ref" = "$BRANCH"
+          test "$base_ref" != "main"
+          # Re-verify integration branch tip did not advance after CI verification.
+          live_base_sha=$(gh api "repos/$GITHUB_REPOSITORY/branches/$encoded_branch" --jq '.commit.sha')
+          if [ "$live_base_sha" != "$EXPECTED_BASE_SHA" ]; then
+            echo "Aborting auto-sync merge: $BRANCH advanced from $EXPECTED_BASE_SHA to $live_base_sha; next run will refresh and re-verify."
+            exit 0
+          fi
+          # Verify sync head still contains live base SHA before writing.
+          base_cmp=$(gh api "repos/$GITHUB_REPOSITORY/compare/${SYNC_PR_HEAD_SHA}...${live_base_sha}" --jq '.status')
+          if [ "$base_cmp" != "identical" ] && [ "$base_cmp" != "behind" ]; then
+            echo "Aborting auto-sync merge: sync head $SYNC_PR_HEAD_SHA does not contain live base $live_base_sha ($base_cmp)."
+            exit 0
+          fi
+          # Integration branches do not use main's merge queue; merge strictly with a normal merge commit.
+          gh pr merge "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --merge --delete-branch --match-head-commit "$SYNC_PR_HEAD_SHA"
+          echo "Merged verified auto-sync PR #$SYNC_PR_NUMBER into $BRANCH (head $SYNC_PR_HEAD_SHA, base $live_base_sha)"
+
+  verify-overlay-pairing:
+    needs: [plan]
+    if: >-
+      github.repository_id == '1427517699' &&
+      github.ref == 'refs/heads/main' &&
+      needs.plan.outputs.run_overlay_probe == 'true'
+    runs-on: ubuntu-latest
+    environment: cloudflare-runtime-release
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      compatible: ${{ steps.probe.outputs.compatible }}
+      mode: ${{ steps.probe.outputs.mode }}
+      overlay_sha_short: ${{ steps.probe.outputs.overlay_sha_short }}
+      summary: ${{ steps.probe.outputs.summary }}
+    steps:
+      - name: Stage trusted main probe script outside candidate workspace
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            scripts/ci/integration-promotion-probe.mjs
+          path: .trusted-probe
+          persist-credentials: false
+
+      - name: Copy trusted probe script into RUNNER_TEMP
+        run: |
+          mkdir -p "$RUNNER_TEMP/trusted-probe"
+          cp .trusted-probe/scripts/ci/integration-promotion-probe.mjs "$RUNNER_TEMP/trusted-probe/integration-promotion-probe.mjs"
+          rm -rf .trusted-probe
+
+      - name: Pull digest-pinned sandbox image (Node 24 + Git) before fetching private UI overlay
+        run: docker pull --quiet "$PROBE_DOCKER_IMAGE"
+
+      - name: Check out Mikka integration head into isolated integration/ directory
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.plan.outputs.head_sha }}
+          path: integration
+          persist-credentials: false
+
+      - name: Check out clean Mikka main baseline into separate main/ directory
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.plan.outputs.main_sha }}
+          path: main
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+        with:
+          version: 10.34.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+
+      - name: Select the source App before credential access
+        id: source-app
+        env:
+          SOURCE_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324' }}
+          ORG_SECRET_PATH: ${{ vars.MIKKA_ORG_GITHUB_SECRET_PATH }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs'
+          const owner = process.env.SOURCE_OWNER
+          if (!['alexj11324', 'aspectly-labs'].includes(owner)) throw Error('CI_SOURCE_APP_OWNER_REQUIRED')
+          const path = owner === 'aspectly-labs' ? process.env.ORG_SECRET_PATH?.trim() : '/github'
+          if (!path || /[\r\n]/.test(path)) throw Error('CI_SOURCE_APP_SECRET_PATH_REQUIRED')
+          appendFileSync(process.env.GITHUB_OUTPUT, `owner=${owner}\nsecret-path=${path}\napp-id=${owner === 'aspectly-labs' ? '5853576' : '4840908'}\n`)
+          JS
+
+      - name: Read the existing source App id
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+
+      - name: Read the existing source App private key
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+
+      - name: Verify the selected source App
+        env:
+          EXPECTED_SOURCE_APP_ID: ${{ steps.source-app.outputs.app-id }}
+        run: node -e 'if (!process.env.EXPECTED_SOURCE_APP_ID || process.env.GITHUB_APP_ID !== process.env.EXPECTED_SOURCE_APP_ID) throw Error("CI_SOURCE_APP_ID_MISMATCH")'
+
+      - name: Mint short-lived read-only overlay checkout token
+        id: overlay-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || (vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'alexj11324' && 'alexj11324' || (vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324')) }}
+          repositories: mikka-hosted-ui
+          permission-contents: read
+
+      - name: Scrub App credentials before fetching overlay or installing dependencies
+        run: |
+          echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
+          echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+
+      - name: Fetch candidate overlay commits into local bare mirror (never persisted)
+        env:
+          OVERLAY_TOKEN: ${{ steps.overlay-token.outputs.token }}
+          UI_REPO: ${{ format('{0}/mikka-hosted-ui', vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || (vars.MIKKA_HOSTED_UI_GITHUB_OWNER == 'alexj11324' && 'alexj11324' || (vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324'))) }}
+          CANDIDATES_JSON: ${{ needs.plan.outputs.candidates_json }}
+        run: |
+          set -euo pipefail
+          git init --quiet --bare "$RUNNER_TEMP/overlay-mirror.git"
+          auth_header=$(printf 'x-access-token:%s' "$OVERLAY_TOKEN" | base64 -w 0)
+          while IFS= read -r sha; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+            git -C "$RUNNER_TEMP/overlay-mirror.git" -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${auth_header}" \
+              fetch --quiet --no-tags --depth=1 --update-shallow "https://github.com/${UI_REPO}.git" "${sha}:refs/candidates/${sha}"
+          done < <(jq -r '.[].sha' <<< "$CANDIDATES_JSON")
+
+      - name: Install public workspace dependencies for integration and main without lifecycle scripts
+        run: |
+          set -euo pipefail
+          env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+            pnpm --dir integration install --frozen-lockfile --ignore-scripts
+          env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+            pnpm --dir main install --frozen-lockfile --ignore-scripts
+
+      - name: Probe candidate overlays in network-isolated sandbox (public-safe output only)
+        id: probe
+        env:
+          CANDIDATES_JSON: ${{ needs.plan.outputs.candidates_json }}
+        run: |
+          set -euo pipefail
+          compatible="false"
+          matched_mode="none"
+          matched_short="none"
+          summaries=()
+
+          while IFS=$'\t' read -r mode sha; do
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+            short_sha="${sha:0:8}"
+            overlay_dir="$GITHUB_WORKSPACE/integration/.hosted-ui"
+            rm -rf "$overlay_dir" "$GITHUB_WORKSPACE/integration/apps/frontend/dist"
+            # Stage as an independent local Git checkout from the credential-free shallow mirror
+            # (--depth=1 --update-shallow from refs/candidates/<sha>) so recordOverlay's git rev-parse
+            # checks succeed inside the network-isolated sandbox.
+            git init --quiet "$overlay_dir"
+            git -C "$overlay_dir" -c core.hooksPath=/dev/null fetch --quiet --no-tags --depth=1 --update-shallow "$RUNNER_TEMP/overlay-mirror.git" "refs/candidates/${sha}"
+            git -C "$overlay_dir" -c core.hooksPath=/dev/null checkout --quiet --detach FETCH_HEAD
+            test "$(git -C "$overlay_dir" rev-parse HEAD)" = "$sha"
+            # Match official service-build-ci.mjs (--prod --ignore-scripts --frozen-lockfile).
+            if ! env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+              pnpm --dir "$overlay_dir" install --frozen-lockfile --ignore-workspace --prod --ignore-scripts >/dev/null 2>&1; then
+              summaries+=("${mode}@${short_sha}: compatible=false (overlay_install_failed)")
+              continue
+            fi
+
+            result=$(env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+              node "$RUNNER_TEMP/trusted-probe/integration-promotion-probe.mjs" verify-pairing \
+                --integration-dir "$GITHUB_WORKSPACE/integration" \
+                --main-dir "$GITHUB_WORKSPACE/main" \
+                --overlay-sha "$sha" \
+                --mode "$mode" \
+                --docker-image "$PROBE_DOCKER_IMAGE")
+            echo "Overlay probe result: $result"
+
+            is_ok=$(jq -er '.compatible | booleans | tostring' <<< "$result")
+            web_ok=$(jq -er '.webBuildOk | booleans | tostring' <<< "$result")
+            contract_ok=$(jq -er '.actionContractOk | booleans | tostring' <<< "$result")
+            audit_ok=$(jq -er '.auditOk | booleans | tostring' <<< "$result")
+            new_ts=$(jq -er '.newTypeErrorCount' <<< "$result")
+            codes=$(jq -r '.newErrorCodes | join(",")' <<< "$result")
+            entry="${mode}@${short_sha}: compatible=${is_ok} (web_build=${web_ok}, contract=${contract_ok}, audit=${audit_ok}, new_ts_errors=${new_ts}${codes:+ [${codes}]})"
+            summaries+=("$entry")
+
+            if [ "$is_ok" = "true" ]; then
+              compatible="true"
+              matched_mode="$mode"
+              matched_short="$short_sha"
+              break
+            fi
+          done < <(jq -r '.[] | "\(.mode)\t\(.sha)"' <<< "$CANDIDATES_JSON")
+
+          joined_summary=$(IFS='; '; echo "${summaries[*]:-no candidates evaluated}")
+          {
+            echo "compatible=$compatible"
+            echo "mode=$matched_mode"
+            echo "overlay_sha_short=$matched_short"
+            echo "summary=$joined_summary"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Remove unpacked private overlay and build output
+        if: always()
+        run: rm -rf integration/.hosted-ui integration/apps/frontend/dist main/.hosted-ui "$RUNNER_TEMP/overlay-mirror.git"
+
+  promote:
+    needs: [plan, verify-overlay-pairing]
+    if: >-
+      always() &&
+      github.repository_id == '1427517699' &&
+      github.ref == 'refs/heads/main' &&
+      needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+    steps:
+      - name: Check out trusted main gate script only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            scripts/ci/integration-promotion-probe.mjs
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+
+      - name: Decide final promotion action
+        id: decide
+        env:
+          FROZEN: ${{ needs.plan.outputs.frozen }}
+          DRY_RUN: ${{ needs.plan.outputs.dry_run }}
+          SKIP_OVERLAY_PROBE: ${{ needs.plan.outputs.skip_overlay_probe }}
+          ALLOW_COORDINATED_UNPINNED: ${{ needs.plan.outputs.allow_coordinated_unpinned }}
+          PLANNED_ACTION: ${{ needs.plan.outputs.planned_action }}
+          PLANNED_REASON: ${{ needs.plan.outputs.planned_reason }}
+          PROBE_RESULT: ${{ needs.verify-overlay-pairing.result }}
+          PROBE_COMPATIBLE: ${{ needs.verify-overlay-pairing.outputs.compatible }}
+          PROBE_MODE: ${{ needs.verify-overlay-pairing.outputs.mode }}
+          PROBE_SUMMARY: ${{ needs.verify-overlay-pairing.outputs.summary }}
+          SUMMARY_TABLE_B64: ${{ needs.plan.outputs.summary_table_b64 }}
+        run: |
+          set -euo pipefail
+          probe_ran="false"
+          probe_ok="false"
+          if [ "$PROBE_RESULT" = "success" ]; then
+            probe_ran="true"
+            if [ "$PROBE_COMPATIBLE" = "true" ]; then probe_ok="true"; fi
+          fi
+          decision=$(jq -nc \
+            --argjson frozen "${FROZEN:-false}" \
+            --argjson dryRun "${DRY_RUN:-false}" \
+            --argjson skipOverlayProbe "${SKIP_OVERLAY_PROBE:-false}" \
+            --argjson allowCoordinatedUnpinned "${ALLOW_COORDINATED_UNPINNED:-false}" \
+            --arg plannedAction "${PLANNED_ACTION:-noop}" \
+            --arg plannedReason "${PLANNED_REASON:-}" \
+            --argjson overlayProbeRan "$probe_ran" \
+            --argjson overlayCompatible "$probe_ok" \
+            --arg overlayMode "${PROBE_MODE:-none}" \
+            --arg overlaySummary "${PROBE_SUMMARY:-probe skipped ($PROBE_RESULT)}" \
+            '{frozen:$frozen,dryRun:$dryRun,skipOverlayProbe:$skipOverlayProbe,allowCoordinatedUnpinned:$allowCoordinatedUnpinned,plannedAction:$plannedAction,plannedReason:$plannedReason,overlayProbeRan:$overlayProbeRan,overlayCompatible:$overlayCompatible,overlayMode:$overlayMode,overlaySummary:$overlaySummary}' \
+            | node scripts/ci/integration-promotion-probe.mjs evaluate-gate)
+          effective_action=$(jq -er '.effectiveAction' <<< "$decision")
+          effective_reason=$(jq -er '.effectiveReason' <<< "$decision")
+
+          {
+            echo "### Integration to \`main\` autonomous promotion status"
+            echo ""
+            if [ -n "$SUMMARY_TABLE_B64" ]; then
+              printf '%s' "$SUMMARY_TABLE_B64" | base64 -d
+              echo ""
+            fi
+            echo "| Overlay compatibility probe | \`${PROBE_SUMMARY:-skipped (${PROBE_RESULT})}\` |"
+            echo ""
+            echo "- **Decision:** \`$effective_action\` — $effective_reason"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "planned=$PLANNED_ACTION effective=$effective_action: $effective_reason"
+          printf 'action=%s\n' "$effective_action" >> "$GITHUB_OUTPUT"
+
+      - name: Re-verify live main and integration tips did not drift during overlay probe
+        if: steps.decide.outputs.action == 'create_pr' || steps.decide.outputs.action == 'enqueue_pr'
+        id: drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          EXPECTED_MAIN_SHA: ${{ needs.plan.outputs.main_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          encoded_branch=$(jq -rn --arg b "$BRANCH" '$b|@uri')
+          live_main=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')
+          live_head=$(gh api "repos/$GITHUB_REPOSITORY/branches/$encoded_branch" --jq '.commit.sha')
+          live_behind=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$encoded_branch" --jq '.behind_by')
+          live_children=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$encoded_branch&per_page=100" | jq -r '[flatten[] | select(.draft | not)] | length')
+          if [ "$live_main" != "$EXPECTED_MAIN_SHA" ] || [ "$live_head" != "$EXPECTED_HEAD_SHA" ] || [ "$live_behind" -gt 0 ] || [ "$live_children" -gt 0 ]; then
+            echo "Aborting promotion write due to branch drift during probe (main=${live_main:0:8} expected=${EXPECTED_MAIN_SHA:0:8}, head=${live_head:0:8} expected=${EXPECTED_HEAD_SHA:0:8}, behind=$live_behind, children=$live_children)."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Read the existing product App ID
+        if: (steps.decide.outputs.action == 'reset_acceptance' || steps.decide.outputs.action == 'record_evidence') || ((steps.decide.outputs.action == 'create_pr' || steps.decide.outputs.action == 'enqueue_pr') && steps.drift.outputs.ok == 'true')
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /github
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+
+      - name: Read the existing product App key
+        if: (steps.decide.outputs.action == 'reset_acceptance' || steps.decide.outputs.action == 'record_evidence') || ((steps.decide.outputs.action == 'create_pr' || steps.decide.outputs.action == 'enqueue_pr') && steps.drift.outputs.ok == 'true')
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /github
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+
+      - name: Verify the product App identity
+        if: (steps.decide.outputs.action == 'reset_acceptance' || steps.decide.outputs.action == 'record_evidence') || ((steps.decide.outputs.action == 'create_pr' || steps.decide.outputs.action == 'enqueue_pr') && steps.drift.outputs.ok == 'true')
+        run: test "${GITHUB_APP_ID:-}" = 4840908
+
+      - name: Mint a repository-scoped App token
+        if: (steps.decide.outputs.action == 'reset_acceptance' || steps.decide.outputs.action == 'record_evidence') || ((steps.decide.outputs.action == 'create_pr' || steps.decide.outputs.action == 'enqueue_pr') && steps.drift.outputs.ok == 'true')
         id: app-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
@@ -272,19 +1192,20 @@ jobs:
           permission-pull-requests: write
 
       - name: Open Ready promotion PR to main (acceptance pending until CI passes)
-        if: steps.plan.outputs.action == 'create_pr'
+        if: steps.decide.outputs.action == 'create_pr' && steps.drift.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_APP_ID: ''
           GITHUB_APP_PRIVATE_KEY: ''
-          BRANCH: ${{ steps.plan.outputs.branch }}
-          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
-          AHEAD_BY: ${{ steps.plan.outputs.ahead_by }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
+          AHEAD_BY: ${{ needs.plan.outputs.ahead_by }}
+          PROBE_SUMMARY: ${{ needs.verify-overlay-pairing.outputs.summary }}
         run: |
           set -euo pipefail
           body=$(cat <<EOF
           ## Summary
-          Scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`, authorized via \`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\`).
+          Autonomous scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`; cross-repo overlay compatibility: ${PROBE_SUMMARY:-break-glass}).
 
           ## Acceptance
           Commit: ${HEAD_SHA}
@@ -302,20 +1223,20 @@ jobs:
           echo "Opened promotion PR (acceptance pending CI): $pr_url"
 
       - name: Reset promotion PR acceptance to pending for new head SHA
-        if: steps.plan.outputs.action == 'reset_acceptance'
+        if: steps.decide.outputs.action == 'reset_acceptance'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_APP_ID: ''
           GITHUB_APP_PRIVATE_KEY: ''
-          BRANCH: ${{ steps.plan.outputs.branch }}
-          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
-          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
-          AHEAD_BY: ${{ steps.plan.outputs.ahead_by }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          PR_NUMBER: ${{ needs.plan.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
+          AHEAD_BY: ${{ needs.plan.outputs.ahead_by }}
         run: |
           set -euo pipefail
           body=$(cat <<EOF
           ## Summary
-          Scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`, authorized via \`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\`).
+          Autonomous scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`).
 
           ## Acceptance
           Commit: ${HEAD_SHA}
@@ -331,24 +1252,24 @@ jobs:
           echo "Reset PR #$PR_NUMBER acceptance to pending for new head $HEAD_SHA"
 
       - name: Record verified CI evidence on promotion PR for exact head SHA
-        if: steps.plan.outputs.action == 'record_evidence'
+        if: steps.decide.outputs.action == 'record_evidence'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_APP_ID: ''
           GITHUB_APP_PRIVATE_KEY: ''
-          BRANCH: ${{ steps.plan.outputs.branch }}
-          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
-          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
-          AHEAD_BY: ${{ steps.plan.outputs.ahead_by }}
-          CI_RUN_URL: ${{ steps.plan.outputs.ci_run_url }}
-          REQ_TOTAL: ${{ steps.plan.outputs.req_total }}
-          REQ_NAMES: ${{ steps.plan.outputs.req_names }}
+          BRANCH: ${{ needs.plan.outputs.branch }}
+          PR_NUMBER: ${{ needs.plan.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
+          AHEAD_BY: ${{ needs.plan.outputs.ahead_by }}
+          CI_RUN_URL: ${{ needs.plan.outputs.ci_run_url }}
+          REQ_TOTAL: ${{ needs.plan.outputs.req_total }}
+          REQ_NAMES: ${{ needs.plan.outputs.req_names }}
         run: |
           set -euo pipefail
           test -n "$CI_RUN_URL"
           body=$(cat <<EOF
           ## Summary
-          Scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`, authorized via \`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\`).
+          Autonomous scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`).
 
           ## Acceptance
           Commit: ${HEAD_SHA}
@@ -364,14 +1285,14 @@ jobs:
           echo "Recorded verified CI evidence on PR #$PR_NUMBER for $HEAD_SHA: $CI_RUN_URL"
 
       - name: Enqueue verified promotion PR into main merge queue
-        if: steps.plan.outputs.action == 'enqueue_pr'
+        if: steps.decide.outputs.action == 'enqueue_pr' && steps.drift.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_APP_ID: ''
           GITHUB_APP_PRIVATE_KEY: ''
-          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
-          PR_ID: ${{ steps.plan.outputs.pr_id }}
-          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.plan.outputs.head_sha }}
+          PR_ID: ${{ needs.plan.outputs.pr_id }}
+          PR_NUMBER: ${{ needs.plan.outputs.pr_number }}
         run: |
           set -euo pipefail
           # Enqueue strictly via the repository merge queue so merge_group PostgreSQL suites always run.

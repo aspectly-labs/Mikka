@@ -1,5 +1,5 @@
 // Positive fixture for no-constant-stub-tests: tautological stub assertions without production code under test.
-import test from 'node:test'
+import test, { mock } from 'node:test'
 import assert from 'node:assert/strict'
 
 declare function expect(value: unknown): {
@@ -39,4 +39,10 @@ test('destructured fake catalog asserted with assert.ok', () => {
 
 test('vitest-style expect on local stub constant', () => {
   expect(MOCK_PRO_LIMIT).toBe(32)
+})
+
+test('mock housekeeping call does not mask tautological constant assertion', () => {
+  mock.restoreAll()
+  const limit = 14
+  assert.equal(limit, 14)
 })
