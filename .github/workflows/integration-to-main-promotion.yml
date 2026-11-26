@@ -19,7 +19,7 @@ concurrency:
 env:
   MIKKA_PRIVATE_GITHUB_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
   MIKKA_HOSTED_UI_GITHUB_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER }}
-  PROBE_DOCKER_IMAGE: node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
+  PROBE_DOCKER_IMAGE: node:24.22.1-trixie@sha256:f1e034976f948cf212ef1f659c12e5dd58ac7eab947831813e81a62401ca38be
 
 jobs:
   plan:
@@ -631,32 +631,59 @@ jobs:
             exit 0
           }
 
+          pick_fresh_sync_branch() {
+            local candidate="chore/auto-sync-main-into-integration"
+            if git ls-remote --exit-code --heads origin "$candidate" >/dev/null 2>&1; then
+              candidate="chore/auto-sync-main-${MAIN_SHA:0:8}"
+              if git ls-remote --exit-code --heads origin "$candidate" >/dev/null 2>&1; then
+                candidate="chore/auto-sync-main-${MAIN_SHA:0:8}-${GITHUB_RUN_ID}"
+              fi
+            fi
+            printf '%s' "$candidate"
+          }
+
+          effective_mode="$ACTION"
           if [ "$ACTION" = "update_sync_pr" ]; then
+            # First test whether the LIVE tips (EXPECTED_BASE_SHA + MAIN_SHA) merge cleanly.
+            git checkout --quiet --detach "$EXPECTED_BASE_SHA"
+            if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$MAIN_SHA" -m "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}"; then
+              abort_on_conflict "main@${MAIN_SHA:0:8}"
+            fi
+            clean_live_merge_sha=$(git rev-parse HEAD)
+
+            # Now attempt a clean forward merge onto the existing sync PR branch (main first, then base).
             sync_branch="$SYNC_PR_HEAD_REF"
             [[ "$sync_branch" =~ ^chore/auto-sync-main-[A-Za-z0-9._-]+$ ]]
             git fetch origin "$sync_branch"
             git checkout -B "$sync_branch" "origin/$sync_branch"
-            # Forward-merge the current integration branch tip first if it advanced,
-            # so fresh CI validates the exact combined (integration base, main) tree.
-            if ! git merge-base --is-ancestor "$EXPECTED_BASE_SHA" HEAD; then
-              if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$EXPECTED_BASE_SHA" -m "chore: refresh ${BRANCH} (${EXPECTED_BASE_SHA:0:8}) in auto-sync PR"; then
-                abort_on_conflict "${BRANCH}@${EXPECTED_BASE_SHA:0:8}"
+            forward_ok="true"
+            if ! git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
+              if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$MAIN_SHA" -m "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}"; then
+                git merge --abort || true
+                forward_ok="false"
               fi
+            fi
+            if [ "$forward_ok" = "true" ] && ! git merge-base --is-ancestor "$EXPECTED_BASE_SHA" HEAD; then
+              if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$EXPECTED_BASE_SHA" -m "chore: refresh ${BRANCH} (${EXPECTED_BASE_SHA:0:8}) in auto-sync PR"; then
+                git merge --abort || true
+                forward_ok="false"
+              fi
+            fi
+
+            if [ "$forward_ok" != "true" ]; then
+              # Live tips merged cleanly, so the conflict came strictly from stale intermediate sync history.
+              # Replace with a fresh branch/PR from clean_live_merge_sha — never force-push the old branch.
+              sync_branch=$(pick_fresh_sync_branch)
+              git checkout -b "$sync_branch" "$clean_live_merge_sha"
+              effective_mode="replace_sync_pr"
             fi
           else
-            sync_branch="chore/auto-sync-main-into-integration"
-            if git ls-remote --exit-code --heads origin "$sync_branch" >/dev/null 2>&1; then
-              sync_branch="chore/auto-sync-main-${MAIN_SHA:0:8}"
-              if git ls-remote --exit-code --heads origin "$sync_branch" >/dev/null 2>&1; then
-                sync_branch="chore/auto-sync-main-${MAIN_SHA:0:8}-${GITHUB_RUN_ID}"
-              fi
-            fi
+            sync_branch=$(pick_fresh_sync_branch)
             git checkout -b "$sync_branch" "$EXPECTED_BASE_SHA"
-          fi
-
-          if ! git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
-            if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$MAIN_SHA" -m "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}"; then
-              abort_on_conflict "main@${MAIN_SHA:0:8}"
+            if ! git merge-base --is-ancestor "$MAIN_SHA" HEAD; then
+              if ! git -c core.hooksPath=/dev/null merge --no-edit --no-verify --no-ff "$MAIN_SHA" -m "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}"; then
+                abort_on_conflict "main@${MAIN_SHA:0:8}"
+              fi
             fi
           fi
 
@@ -678,11 +705,16 @@ jobs:
           EOF
           )
 
-          if [ "$ACTION" = "open_sync_pr" ]; then
+          if [ "$effective_mode" = "open_sync_pr" ] || [ "$effective_mode" = "replace_sync_pr" ]; then
             pr_url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$BRANCH" --head "$sync_branch" \
               --title "chore: auto-sync main (${MAIN_SHA:0:8}) into ${BRANCH}" \
               --body "$body")
             echo "Opened auto-sync PR: $pr_url (head $merge_sha)"
+            if [ "$effective_mode" = "replace_sync_pr" ]; then
+              gh pr close "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --delete-branch \
+                --comment "Superseded by clean live back-merge PR ${pr_url} (stale intermediate sync history conflicted while live tips merged cleanly)."
+              echo "Closed superseded sync PR #$SYNC_PR_NUMBER"
+            fi
           else
             gh pr edit "$SYNC_PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
             echo "Updated auto-sync PR #$SYNC_PR_NUMBER forward to $merge_sha"
@@ -824,20 +856,22 @@ jobs:
           cp .trusted-probe/scripts/ci/integration-promotion-probe.mjs "$RUNNER_TEMP/trusted-probe/integration-promotion-probe.mjs"
           rm -rf .trusted-probe
 
-      - name: Pull digest-pinned sandbox image before fetching private UI overlay
+      - name: Pull digest-pinned sandbox image (Node 24 + Git) before fetching private UI overlay
         run: docker pull --quiet "$PROBE_DOCKER_IMAGE"
 
-      - name: Check out Mikka integration head (with main history for typecheck baseline)
+      - name: Check out Mikka integration head into isolated integration/ directory
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ needs.plan.outputs.head_sha }}
-          fetch-depth: 0
+          path: integration
           persist-credentials: false
 
-      - name: Ensure main SHA is present locally for typecheck baseline
-        env:
-          MAIN_SHA: ${{ needs.plan.outputs.main_sha }}
-        run: git fetch --quiet origin "$MAIN_SHA"
+      - name: Check out clean Mikka main baseline into separate main/ directory
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.plan.outputs.main_sha }}
+          path: main
+          persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         with:
@@ -923,15 +957,18 @@ jobs:
               fetch --quiet --no-tags --depth=1 "https://github.com/${UI_REPO}.git" "$sha"
           done < <(jq -r '.[].sha' <<< "$CANDIDATES_JSON")
 
-      - name: Install public workspace dependencies without lifecycle scripts
-        run: exec env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install public workspace dependencies for integration and main without lifecycle scripts
+        run: |
+          set -euo pipefail
+          env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+            pnpm --dir integration install --frozen-lockfile --ignore-scripts
+          env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+            pnpm --dir main install --frozen-lockfile --ignore-scripts
 
       - name: Probe candidate overlays in network-isolated sandbox (public-safe output only)
         id: probe
         env:
           CANDIDATES_JSON: ${{ needs.plan.outputs.candidates_json }}
-          MAIN_SHA: ${{ needs.plan.outputs.main_sha }}
-          INTEGRATION_SHA: ${{ needs.plan.outputs.head_sha }}
         run: |
           set -euo pipefail
           compatible="false"
@@ -942,21 +979,24 @@ jobs:
           while IFS=$'\t' read -r mode sha; do
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
             short_sha="${sha:0:8}"
-            rm -rf .hosted-ui apps/frontend/dist
-            mkdir -p .hosted-ui
-            git --git-dir="$RUNNER_TEMP/overlay-mirror.git" archive "$sha" | tar -x -C "$GITHUB_WORKSPACE/.hosted-ui"
+            overlay_dir="$GITHUB_WORKSPACE/integration/.hosted-ui"
+            rm -rf "$overlay_dir" "$GITHUB_WORKSPACE/integration/apps/frontend/dist"
+            # Stage as an independent local Git checkout from the credential-free local mirror
+            # so recordOverlay's git rev-parse checks succeed inside the network-isolated sandbox.
+            git init --quiet "$overlay_dir"
+            git -C "$overlay_dir" -c core.hooksPath=/dev/null fetch --quiet --no-tags "$RUNNER_TEMP/overlay-mirror.git" "$sha"
+            git -C "$overlay_dir" -c core.hooksPath=/dev/null checkout --quiet --detach FETCH_HEAD
             # Match official service-build-ci.mjs (--prod --ignore-scripts --frozen-lockfile).
             if ! env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
-              pnpm --dir .hosted-ui install --frozen-lockfile --ignore-workspace --prod --ignore-scripts >/dev/null 2>&1; then
+              pnpm --dir "$overlay_dir" install --frozen-lockfile --ignore-workspace --prod --ignore-scripts >/dev/null 2>&1; then
               summaries+=("${mode}@${short_sha}: compatible=false (overlay_install_failed)")
               continue
             fi
 
             result=$(env -u GITHUB_APP_ID -u GITHUB_APP_PRIVATE_KEY -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
               node "$RUNNER_TEMP/trusted-probe/integration-promotion-probe.mjs" verify-pairing \
-                --repo-dir "$GITHUB_WORKSPACE" \
-                --main-sha "$MAIN_SHA" \
-                --integration-sha "$INTEGRATION_SHA" \
+                --integration-dir "$GITHUB_WORKSPACE/integration" \
+                --main-dir "$GITHUB_WORKSPACE/main" \
                 --overlay-sha "$sha" \
                 --mode "$mode" \
                 --docker-image "$PROBE_DOCKER_IMAGE")
@@ -989,7 +1029,7 @@ jobs:
 
       - name: Remove unpacked private overlay and build output
         if: always()
-        run: rm -rf .hosted-ui apps/frontend/dist "$RUNNER_TEMP/overlay-mirror.git"
+        run: rm -rf integration/.hosted-ui integration/apps/frontend/dist main/.hosted-ui "$RUNNER_TEMP/overlay-mirror.git"
 
   promote:
     needs: [plan, verify-overlay-pairing]

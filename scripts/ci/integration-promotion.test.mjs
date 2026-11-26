@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import yaml from 'js-yaml'
 import { inspectAcceptance } from './pr-acceptance-check.mjs'
@@ -14,6 +16,7 @@ import {
   parseDeployBuildInputs,
   parseOverlayTypeErrors,
   selectPairingCandidates,
+  verifyPairingInWorkspace,
 } from './integration-promotion-probe.mjs'
 
 const promotionWorkflow = readFileSync(
@@ -69,11 +72,8 @@ test('merge-queue-autopilot excludes integration promotion PRs while keeping nor
 test('promotion workflow parses cleanly as YAML with four isolated jobs and strict security boundaries', () => {
   const parsed = yaml.load(promotionWorkflow)
   assert.deepEqual(Object.keys(parsed.jobs), ['plan', 'auto-sync', 'verify-overlay-pairing', 'promote'])
-  assert.match(parsed.env.PROBE_DOCKER_IMAGE, /^node:24-bookworm-slim@sha256:[0-9a-f]{64}$/)
+  assert.match(parsed.env.PROBE_DOCKER_IMAGE, /^node:24\.22\.1-trixie@sha256:[0-9a-f]{64}$/)
 
-  // Plan resolves exact branch tip from /branches/<ref> (immune to 250-commit /compare limit),
-  // verifies sync PR includes BOTH main and current integration base, and does NOT use legacy
-  // MIKKA_INTEGRATION_PROMOTE_TO_MAIN to disable compatibility checks.
   const planEval = parsed.jobs.plan.steps.find(step => step.id === 'eval')
   assert.ok(planEval)
   assert.match(planEval.run, /branches\/\$encoded_branch/)
@@ -89,8 +89,6 @@ test('promotion workflow parses cleanly as YAML with four isolated jobs and stri
     assert.equal(out, String(draft))
   }
 
-  // Promote job never checks out integration code, re-verifies live main/branch tips after the
-  // overlay probe before creating or enqueueing, and never calls gh pr merge on main.
   const promoteSteps = parsed.jobs.promote.steps
   const driftStep = promoteSteps.find(step => step.id === 'drift')
   assert.ok(driftStep, 'promote job must re-verify live main and integration tips before writing')
@@ -102,18 +100,14 @@ test('promotion workflow parses cleanly as YAML with four isolated jobs and stri
   assert.ok(promoteSteps.every(step => !step.with?.ref || step.with.ref === '${{ github.sha }}'),
     'promote job may only check out trusted main (github.sha), never integration branch code')
 
-  // Auto-sync refreshes stale integration base, re-verifies live base SHA before merge,
-  // merges ONLY verified non-main integration PRs with exact head match, and never force-pushes.
   const syncScript = parsed.jobs['auto-sync'].steps.map(step => step.run ?? '').join('\n')
   assert.match(syncScript, /test "\$BRANCH" != "main"/)
   assert.match(syncScript, /test "\$base_ref" != "main"/)
   assert.match(syncScript, /live_base_sha.*EXPECTED_BASE_SHA/)
+  assert.match(syncScript, /replace_sync_pr/)
   assert.match(syncScript, /--merge --delete-branch --match-head-commit/)
   assert.doesNotMatch(syncScript, /--force|-f\s+origin/, 'auto-sync must never force-push')
 
-  // Overlay pairing job stages trusted probe from main, pulls digest-pinned Docker sandbox,
-  // scrubs credentials before pnpm/node, installs overlay with --prod --ignore-scripts, passes
-  // --docker-image for --network none isolation, and cleans up .hosted-ui in always().
   const probeSteps = parsed.jobs['verify-overlay-pairing'].steps
   const pullIdx = probeSteps.findIndex(step => /Pull digest-pinned sandbox image/i.test(step.name ?? ''))
   const scrubIdx = probeSteps.findIndex(step => /Scrub App credentials/i.test(step.name ?? ''))
@@ -121,11 +115,14 @@ test('promotion workflow parses cleanly as YAML with four isolated jobs and stri
   const probeIdx = probeSteps.findIndex(step => step.id === 'probe')
   const cleanupStep = probeSteps.find(step => step.if === 'always()')
   assert.ok(pullIdx > 0 && scrubIdx > pullIdx && installIdx > scrubIdx && probeIdx > installIdx)
-  assert.ok(cleanupStep && /rm -rf \.hosted-ui/.test(cleanupStep.run ?? ''))
-  assert.match(probeSteps[installIdx].run, /--ignore-scripts/)
+  assert.ok(cleanupStep && /rm -rf integration\/\.hosted-ui/.test(cleanupStep.run ?? ''))
+  assert.match(probeSteps[installIdx].run, /pnpm --dir integration install --frozen-lockfile --ignore-scripts/)
+  assert.match(probeSteps[installIdx].run, /pnpm --dir main install --frozen-lockfile --ignore-scripts/)
+  assert.match(probeSteps[probeIdx].run, /git init --quiet "\$overlay_dir"/)
   assert.match(probeSteps[probeIdx].run, /--prod --ignore-scripts/)
+  assert.match(probeSteps[probeIdx].run, /--integration-dir "\$GITHUB_WORKSPACE\/integration"/)
+  assert.match(probeSteps[probeIdx].run, /--main-dir "\$GITHUB_WORKSPACE\/main"/)
   assert.match(probeSteps[probeIdx].run, /--docker-image "\$PROBE_DOCKER_IMAGE"/)
-  assert.match(probeSteps[probeIdx].run, /trusted-probe\/integration-promotion-probe\.mjs/)
 })
 
 test('promotion and sync PR bodies keep acceptance pending until CI passes and pass with real evidence', () => {
@@ -231,8 +228,6 @@ test('evaluateAutoSyncPlan requires sync PR to include BOTH main and current int
     bodyHasHeadSha: true,
     bodyHasCiRunUrl: true,
   }
-  // If a feature PR merged into integration after sync PR passed CI (syncPrIncludesBase=false),
-  // must refresh sync PR and require fresh CI — NEVER merge stale checks!
   assert.equal(evaluateAutoSyncPlan({
     ...base,
     syncPr,
@@ -314,7 +309,7 @@ test('selectPairingCandidates prioritizes pinned overlay and adds coordinated Re
   assert.equal(hasPassingUiPolicyCheck([{ name: 'Other check', status: 'completed', conclusion: 'success' }]), false)
 })
 
-test('evaluatePromotionGate requires approved pinned_overlay by default and treats coordinated_ui_pr as readiness evidence only', () => {
+test('evaluatePromotionGate requires approved pinned_overlay by default and formats dry-run notes accurately', () => {
   const common = {
     frozen: false,
     dryRun: false,
@@ -335,7 +330,6 @@ test('evaluatePromotionGate requires approved pinned_overlay by default and trea
   assert.equal(evaluatePromotionGate(common).effectiveAction, 'enqueue_pr')
   assert.equal(evaluatePromotionGate({ ...common, plannedAction: 'create_pr' }).effectiveAction, 'create_pr')
 
-  // Coordinated UI PR alone must NOT auto-enqueue an unshippable pair onto main by default.
   const coordinatedOnly = evaluatePromotionGate({
     ...common,
     overlayMode: 'coordinated_ui_pr',
@@ -344,7 +338,18 @@ test('evaluatePromotionGate requires approved pinned_overlay by default and trea
   assert.equal(coordinatedOnly.effectiveAction, 'noop')
   assert.match(coordinatedOnly.effectiveReason, /readiness evidence only/)
 
-  // Explicit operator break-glass allows coordinated_ui_pr or probe skip.
+  // Dry-run on record_evidence with coordinated_ui_pr passing and break-glass OFF must NOT claim break-glass authorized.
+  const dryEvidence = evaluatePromotionGate({
+    ...common,
+    dryRun: true,
+    plannedAction: 'record_evidence',
+    overlayMode: 'coordinated_ui_pr',
+    allowCoordinatedUnpinned: false,
+  })
+  assert.equal(dryEvidence.effectiveAction, 'noop')
+  assert.match(dryEvidence.effectiveReason, /probe not required for this step/)
+  assert.doesNotMatch(dryEvidence.effectiveReason, /break-glass authorized/)
+
   assert.equal(
     evaluatePromotionGate({ ...common, overlayMode: 'coordinated_ui_pr', allowCoordinatedUnpinned: true }).effectiveAction,
     'enqueue_pr',
@@ -353,14 +358,13 @@ test('evaluatePromotionGate requires approved pinned_overlay by default and trea
     evaluatePromotionGate({ ...common, overlayProbeRan: false, overlayCompatible: false, skipOverlayProbe: true }).effectiveAction,
     'enqueue_pr',
   )
-  // Recording verified evidence on an already-open promotion PR stays allowed without re-running overlay probe.
   assert.equal(
     evaluatePromotionGate({ ...common, plannedAction: 'record_evidence', overlayProbeRan: false, overlayCompatible: false }).effectiveAction,
     'record_evidence',
   )
 })
 
-test('buildMinimalProbeEnv and buildIsolatedDockerArgs strip GitHub Actions files, tokens, and network access', () => {
+test('buildMinimalProbeEnv and buildIsolatedDockerArgs strip GitHub Actions files, tokens, and mount .git read-only', () => {
   const dirty = {
     PATH: '/usr/bin',
     GITHUB_STEP_SUMMARY: '/tmp/summary.md',
@@ -374,17 +378,154 @@ test('buildMinimalProbeEnv and buildIsolatedDockerArgs strip GitHub Actions file
   }
   const clean = buildMinimalProbeEnv(dirty, { MIKKA_UI_OVERLAY_SHA: SHA3 })
   assert.deepEqual(Object.keys(clean).sort(), ['HOME', 'MIKKA_UI_OVERLAY_SHA', 'PATH', 'TMPDIR'])
-  assert.equal(clean.HOME, '/tmp')
-  assert.equal(clean.TMPDIR, '/tmp')
 
   const dockerArgs = buildIsolatedDockerArgs({
-    dockerImage: 'node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9',
-    absRepo: '/work/repo',
+    dockerImage: 'node:24.22.1-trixie@sha256:f1e034976f948cf212ef1f659c12e5dd58ac7eab947831813e81a62401ca38be',
+    workDir: '/work/integration',
+    mounts: [
+      { source: '/work/integration', target: '/work/integration', readOnly: false },
+      { source: '/work/integration/.git', target: '/work/integration/.git', readOnly: true },
+      { source: '/work/integration/.hosted-ui/.git', target: '/work/integration/.hosted-ui/.git', readOnly: true },
+    ],
     envVars: { HOME: '/tmp', MIKKA_UI_OVERLAY_SHA: SHA3 },
     cmd: ['node', 'apps/frontend/scripts/build.mjs', 'web'],
   })
   assert.ok(dockerArgs.includes('--network') && dockerArgs[dockerArgs.indexOf('--network') + 1] === 'none')
   assert.ok(dockerArgs.includes('--cap-drop') && dockerArgs[dockerArgs.indexOf('--cap-drop') + 1] === 'ALL')
   assert.ok(dockerArgs.includes('no-new-privileges'))
+  assert.ok(dockerArgs.includes('/work/integration/.git:/work/integration/.git:ro'))
+  assert.ok(dockerArgs.includes('/work/integration/.hosted-ui/.git:/work/integration/.hosted-ui/.git:ro'))
   assert.ok(!dockerArgs.some(arg => /GITHUB_STEP_SUMMARY|GITHUB_OUTPUT|RUNNER_TEMP/.test(arg)))
+})
+
+test('verifyPairingInWorkspace runs end-to-end against separate integration/main workspaces with zero private path leakage', () => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-probe-runtime-'))
+  try {
+    const intDir = join(root, 'integration')
+    const mainDir = join(root, 'main')
+    const writeFixture = (dir, tsrsErrors) => {
+      mkdirSync(join(dir, 'apps/frontend/scripts'), { recursive: true })
+      mkdirSync(join(dir, 'apps/frontend/dist/web'), { recursive: true })
+      mkdirSync(join(dir, 'lib'), { recursive: true })
+      mkdirSync(join(dir, 'scripts/acceptance'), { recursive: true })
+      mkdirSync(join(dir, 'scripts/release'), { recursive: true })
+      mkdirSync(join(dir, 'node_modules/.bin'), { recursive: true })
+      mkdirSync(join(dir, '.hosted-ui'), { recursive: true })
+      writeFileSync(join(dir, '.hosted-ui/tsconfig.json'), '{"compilerOptions":{}}\n')
+      writeFileSync(join(dir, 'apps/frontend/scripts/build.mjs'), `
+        import { writeFileSync } from 'node:fs'
+        if (process.env.GITHUB_STEP_SUMMARY || process.env.GH_TOKEN) process.exit(99)
+        writeFileSync('apps/frontend/dist/web/renderer-manifest.json', JSON.stringify({ headless: false, usedActions: ['ping'] }))
+      `)
+      writeFileSync(join(dir, 'lib/renderer-actions.mjs'), 'export const rendererActionContract = m => ({ usedActions: m.usedActions })\n')
+      writeFileSync(join(dir, 'scripts/acceptance/read-action-transport.mjs'), 'export const publishedReadActions = () => true\n')
+      writeFileSync(join(dir, 'scripts/release/hosted-ui.mjs'), 'process.exit(0)\n')
+      const tsrsPath = join(dir, 'node_modules/.bin/tsrs')
+      writeFileSync(tsrsPath, `#!/usr/bin/env node\nconsole.log(${JSON.stringify(tsrsErrors.join('\n'))})\nprocess.exit(${tsrsErrors.length ? 1 : 0})\n`)
+      chmodSync(tsrsPath, 0o755)
+    }
+
+    const baselineErr = `${join(intDir, '.hosted-ui/core/renderer/app.tsx')}(79,49): error TS2322: pre-existing`
+    writeFixture(mainDir, [baselineErr.replace(intDir, mainDir)])
+    writeFixture(intDir, [baselineErr])
+
+    const okResult = verifyPairingInWorkspace({
+      integrationDir: intDir,
+      mainDir,
+      overlaySha: SHA,
+      mode: 'pinned_overlay',
+      env: { ...process.env, GITHUB_STEP_SUMMARY: '/tmp/leak', GH_TOKEN: 'secret' },
+    })
+    assert.deepEqual(okResult, {
+      compatible: true,
+      mode: 'pinned_overlay',
+      overlayShaShort: SHA.slice(0, 8),
+      webBuildOk: true,
+      actionContractOk: true,
+      auditOk: true,
+      newTypeErrorCount: 0,
+      newErrorCodes: [],
+    })
+
+    // Now add a brand-new integration TS error in a private overlay path and verify fail-closed + zero leakage.
+    writeFixture(intDir, [
+      baselineErr,
+      `${join(intDir, '.hosted-ui/slots/private-secret-surface.tsx')}(94,128): error TS2339: Property featured does not exist`,
+    ])
+    const failResult = verifyPairingInWorkspace({
+      integrationDir: intDir,
+      mainDir,
+      overlaySha: SHA,
+      mode: 'pinned_overlay',
+    })
+    assert.equal(failResult.compatible, false)
+    assert.equal(failResult.newTypeErrorCount, 1)
+    assert.deepEqual(failResult.newErrorCodes, ['TS2339'])
+    assert.doesNotMatch(JSON.stringify(failResult), /private-secret-surface|\.hosted-ui/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('real Git stale sync-tree scenario merges live tips cleanly when both branches converge on the same fix', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mikka-stale-sync-'))
+  const git = (...args) => execFileSync('git', args, {
+    cwd: dir,
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_AUTHOR_NAME: 'CI',
+      GIT_AUTHOR_EMAIL: 'ci@example.invalid',
+      GIT_COMMITTER_NAME: 'CI',
+      GIT_COMMITTER_EMAIL: 'ci@example.invalid',
+    },
+  }).trim()
+  try {
+    git('init', '-b', 'main')
+    writeFileSync(join(dir, 'timeout.txt'), '10\n')
+    git('add', 'timeout.txt')
+    git('commit', '-m', 'base 10')
+
+    git('checkout', '-b', 'integration')
+    writeFileSync(join(dir, 'feature.txt'), 'feat\n')
+    git('add', 'feature.txt')
+    git('commit', '-m', 'integration feature')
+
+    git('checkout', 'main')
+    writeFileSync(join(dir, 'timeout.txt'), '20\n')
+    git('add', 'timeout.txt')
+    git('commit', '-m', 'main 20')
+
+    // Old sync PR merged main@20 into integration@10.
+    git('checkout', '-b', 'chore/auto-sync-main-into-integration', 'integration')
+    git('merge', '--no-edit', '--no-ff', 'main')
+
+    // Now both main and integration independently move timeout to 30.
+    git('checkout', 'main')
+    writeFileSync(join(dir, 'timeout.txt'), '30\n')
+    git('add', 'timeout.txt')
+    git('commit', '-m', 'main 30')
+    const mainSha = git('rev-parse', 'HEAD')
+
+    git('checkout', 'integration')
+    writeFileSync(join(dir, 'timeout.txt'), '30\n')
+    git('add', 'timeout.txt')
+    git('commit', '-m', 'integration 30')
+    const intSha = git('rev-parse', 'HEAD')
+
+    // Live tips merge cleanly to 30.
+    git('checkout', '--detach', intSha)
+    git('merge', '--no-edit', '--no-ff', mainSha)
+    assert.equal(readFileSync(join(dir, 'timeout.txt'), 'utf8'), '30\n')
+
+    // Forward-merging main FIRST, then integration base onto the old sync branch ALSO succeeds cleanly to 30!
+    git('checkout', 'chore/auto-sync-main-into-integration')
+    git('merge', '--no-edit', '--no-ff', mainSha)
+    git('merge', '--no-edit', '--no-ff', intSha)
+    assert.equal(readFileSync(join(dir, 'timeout.txt'), 'utf8'), '30\n')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

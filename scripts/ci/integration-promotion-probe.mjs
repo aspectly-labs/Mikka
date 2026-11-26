@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -119,8 +119,8 @@ export function evaluateAutoSyncPlan({
     }
     if (!syncPrIncludesMain || !syncPrIncludesBase) {
       const staleParts = []
-      if (!syncPrIncludesBase) staleParts.push(`\`${branch}\``)
       if (!syncPrIncludesMain) staleParts.push('`main`')
+      if (!syncPrIncludesBase) staleParts.push(`\`${branch}\``)
       return {
         action: 'update_sync_pr',
         reason: `forward-merge latest ${staleParts.join(' and ')} onto open sync PR #${syncPr.number} so CI validates the exact combined revision.`,
@@ -252,13 +252,13 @@ export function evaluatePromotionGate({
     }
   }
   if (dryRun) {
-    const compatNote = skipOverlayProbe
-      ? 'explicit MIKKA_INTEGRATION_SKIP_OVERLAY_PROBE break-glass active'
-      : pinnedCompatible
-        ? 'approved pinned_overlay compatible'
-        : coordinatedCompatible
-          ? 'coordinated_ui_pr break-glass authorized'
-          : overlaySummary || 'probe not required for this step'
+    const compatNote = !requiresCompatibility
+      ? 'probe not required for this step'
+      : skipOverlayProbe
+        ? 'explicit MIKKA_INTEGRATION_SKIP_OVERLAY_PROBE break-glass active'
+        : pinnedCompatible
+          ? 'approved pinned_overlay compatible'
+          : 'coordinated_ui_pr break-glass authorized'
     return {
       effectiveAction: 'noop',
       effectiveReason: `dry run requested (live run would execute \`${plannedAction}\` [${compatNote}]: ${plannedReason}).`,
@@ -287,8 +287,18 @@ export function buildMinimalProbeEnv(baseEnv = process.env, extra = {}) {
   }
 }
 
-/** Builds docker run arguments enforcing --network none, dropped caps, and strict mount/env isolation. */
-export function buildIsolatedDockerArgs({ dockerImage, absRepo, envVars, cmd }) {
+/**
+ * Builds docker run arguments enforcing --network none, dropped capabilities,
+ * read-only .git metadata (so candidate code can never tamper with host Git),
+ * and an allowlist-only container environment.
+ */
+export function buildIsolatedDockerArgs({
+  dockerImage,
+  workDir,
+  mounts,
+  envVars,
+  cmd,
+}) {
   const uid = typeof process.getuid === 'function' ? process.getuid() : 1000
   const gid = typeof process.getgid === 'function' ? process.getgid() : 1000
   const args = [
@@ -298,9 +308,11 @@ export function buildIsolatedDockerArgs({ dockerImage, absRepo, envVars, cmd }) 
     '--security-opt', 'no-new-privileges',
     '--user', `${uid}:${gid}`,
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=512m',
-    '-v', `${absRepo}:${absRepo}`,
-    '-w', absRepo,
   ]
+  for (const mount of mounts) {
+    args.push('-v', `${mount.source}:${mount.target}${mount.readOnly ? ':ro' : ''}`)
+  }
+  args.push('-w', workDir)
   for (const [key, value] of Object.entries(envVars)) {
     args.push('-e', `${key}=${value}`)
   }
@@ -324,28 +336,31 @@ function runQuiet(bin, args, { cwd, env, timeoutMs = 300_000 }) {
 }
 
 /**
- * Verifies one exact (integrationSha, overlaySha) pair inside an already-checked-out
- * workspace with dependencies installed (`--ignore-scripts`, overlay `--prod`).
- * When `dockerImage` is supplied, every untrusted candidate command executes inside
- * a `--network none` container that cannot reach outbound networks or host GitHub
- * Actions summary/output files. Captures all build and typecheck diagnostics privately
- * and returns strictly public-safe booleans, counts, and TS error codes.
+ * Verifies one exact (integrationDir, mainDir, overlaySha) pairing using two
+ * pre-installed independent checkouts (`integrationDir` with `.hosted-ui/` and
+ * clean `mainDir` with its own pre-installed `node_modules`). Never runs host
+ * `git checkout` or `pnpm install` after candidate code executes.
+ *
+ * When `dockerImage` is supplied (a digest-pinned Node 24 + Git image), every
+ * build/audit/typecheck command executes inside `--network none` with all `.git`
+ * directories mounted read-only (and `mainDir` mounted fully read-only).
+ * Returns strictly public-safe booleans, counts, and TS error codes.
  */
 export function verifyPairingInWorkspace({
-  repoDir,
-  mainSha,
-  integrationSha,
+  integrationDir,
+  mainDir,
   overlaySha,
   mode,
   dockerImage = '',
   env = process.env,
 }) {
-  if (!SHA40.test(mainSha) || !SHA40.test(integrationSha) || !SHA40.test(overlaySha)) {
-    throw new Error('verifyPairingInWorkspace requires 40-char hex SHAs')
+  if (!SHA40.test(overlaySha)) {
+    throw new Error('verifyPairingInWorkspace requires a 40-char hex overlaySha')
   }
-  const absRepo = resolve(repoDir)
-  const overlayDir = resolve(absRepo, '.hosted-ui')
-  if (!existsSync(resolve(overlayDir, 'tsconfig.json'))) {
+  const absIntegration = resolve(integrationDir)
+  const absMain = resolve(mainDir)
+  const overlayDir = resolve(absIntegration, '.hosted-ui')
+  if (!existsSync(resolve(overlayDir, 'tsconfig.json')) || !existsSync(absMain)) {
     return {
       compatible: false,
       mode,
@@ -358,7 +373,7 @@ export function verifyPairingInWorkspace({
     }
   }
 
-  const probeVars = {
+  const integrationProbeVars = {
     HOME: '/tmp',
     TMPDIR: '/tmp',
     MIKKA_UI_OVERLAY_DIR: overlayDir,
@@ -366,23 +381,33 @@ export function verifyPairingInWorkspace({
     MIKKA_DEPLOYMENT_STAGE: 'preview',
     MIKKA_PUBLIC_POSTHOG_KEY: 'phc_synthetic_ssr_regression',
   }
-  const hostMinimalEnv = buildMinimalProbeEnv(env, probeVars)
+  const hostMinimalEnv = buildMinimalProbeEnv(env, integrationProbeVars)
   const nodeBin = dockerImage ? 'node' : process.execPath
-  const runIsolated = (bin, args, timeoutMs = 300_000) => {
+
+  const integrationMounts = [{ source: absIntegration, target: absIntegration, readOnly: false }]
+  if (existsSync(resolve(absIntegration, '.git'))) {
+    integrationMounts.push({ source: resolve(absIntegration, '.git'), target: resolve(absIntegration, '.git'), readOnly: true })
+  }
+  if (existsSync(resolve(overlayDir, '.git'))) {
+    integrationMounts.push({ source: resolve(overlayDir, '.git'), target: resolve(overlayDir, '.git'), readOnly: true })
+  }
+
+  const runOnIntegration = (bin, args, timeoutMs = 300_000) => {
     if (dockerImage) {
       const dockerArgs = buildIsolatedDockerArgs({
         dockerImage,
-        absRepo,
-        envVars: probeVars,
+        workDir: absIntegration,
+        mounts: integrationMounts,
+        envVars: integrationProbeVars,
         cmd: [bin, ...args],
       })
-      return runQuiet('docker', dockerArgs, { cwd: absRepo, env: hostMinimalEnv, timeoutMs })
+      return runQuiet('docker', dockerArgs, { cwd: absIntegration, env: hostMinimalEnv, timeoutMs })
     }
-    return runQuiet(bin, args, { cwd: absRepo, env: hostMinimalEnv, timeoutMs })
+    return runQuiet(bin, args, { cwd: absIntegration, env: hostMinimalEnv, timeoutMs })
   }
 
   // 1. Official Web build (exact FRONTEND release stage).
-  const webBuild = runIsolated(nodeBin, ['apps/frontend/scripts/build.mjs', 'web'], 300_000)
+  const webBuild = runOnIntegration(nodeBin, ['apps/frontend/scripts/build.mjs', 'web'], 300_000)
 
   let actionContractOk = false
   let auditOk = false
@@ -398,18 +423,21 @@ export function verifyPairingInWorkspace({
       assert.ok(contract.usedActions.length > 0)
       publishedReadActions(manifest)
     `
-    const contractCheck = runIsolated(nodeBin, ['--import', 'tsx', '--input-type=module', '-e', contractScript], 60_000)
+    const contractCheck = runOnIntegration(nodeBin, ['--import', 'tsx', '--input-type=module', '-e', contractScript], 60_000)
     actionContractOk = contractCheck.ok
 
-    const auditCheck = runIsolated(nodeBin, ['scripts/release/hosted-ui.mjs', 'audit', 'apps/frontend/dist/web'], 60_000)
+    const auditCheck = runOnIntegration(nodeBin, ['scripts/release/hosted-ui.mjs', 'audit', 'apps/frontend/dist/web'], 60_000)
     auditOk = auditCheck.ok
   }
 
-  // 2. Zero-regression overlay TypeScript contract check against main baseline.
-  const tsrsBin = resolve(absRepo, 'node_modules/.bin/tsrs')
-  const tscBin = existsSync(tsrsBin) ? tsrsBin : resolve(absRepo, 'node_modules/.bin/tsc')
-  const typecheckArgs = ['--noEmit', '--incremental', 'false', '-p', resolve(overlayDir, 'tsconfig.json')]
-  const integrationTypecheck = runIsolated(tscBin, typecheckArgs, 180_000)
+  // 2. Zero-regression overlay TypeScript contract check against separate read-only main checkout.
+  const intTsrs = resolve(absIntegration, 'node_modules/.bin/tsrs')
+  const intTsc = existsSync(intTsrs) ? intTsrs : resolve(absIntegration, 'node_modules/.bin/tsc')
+  const integrationTypecheck = runOnIntegration(
+    intTsc,
+    ['--noEmit', '--incremental', 'false', '-p', resolve(overlayDir, 'tsconfig.json')],
+    180_000,
+  )
 
   let newTypeErrorCount = 0
   let newErrorCodes = []
@@ -417,50 +445,49 @@ export function verifyPairingInWorkspace({
   if (!integrationTypecheck.ok && integrationErrors.size === 0) {
     newTypeErrorCount = -1
   } else if (integrationErrors.size > 0) {
-    const lockChanged = !runQuiet('git', ['diff', '--quiet', mainSha, integrationSha, '--', 'pnpm-lock.yaml'], {
-      cwd: absRepo,
-      env: hostMinimalEnv,
-      timeoutMs: 30_000,
-    }).ok
-    try {
-      const checkoutMain = runQuiet('git', ['checkout', '--quiet', '--detach', mainSha], {
-        cwd: absRepo,
-        env: hostMinimalEnv,
-        timeoutMs: 60_000,
-      })
-      const installMainOk = !checkoutMain.ok
-        ? false
-        : !lockChanged || runQuiet('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], {
-          cwd: absRepo,
-          env: hostMinimalEnv,
-          timeoutMs: 240_000,
-        }).ok
-      if (!checkoutMain.ok || !installMainOk) {
-        newTypeErrorCount = -1
-      } else {
-        const mainTypecheck = runIsolated(tscBin, typecheckArgs, 180_000)
-        const mainErrors = parseOverlayTypeErrors(mainTypecheck.output)
-        if (!mainTypecheck.ok && mainErrors.size === 0) {
-          newTypeErrorCount = -1
-        } else {
-          const delta = diffOverlayTypeErrors(mainTypecheck.output, integrationTypecheck.output)
-          newTypeErrorCount = delta.newErrorCount
-          newErrorCodes = delta.newErrorCodes
-        }
+    const mainOverlayMountTarget = resolve(absMain, '.hosted-ui')
+    const mainTsrs = resolve(absMain, 'node_modules/.bin/tsrs')
+    const mainTsc = existsSync(mainTsrs) ? mainTsrs : resolve(absMain, 'node_modules/.bin/tsc')
+
+    let mainTypecheck
+    if (dockerImage) {
+      // Ensure mountpoint exists inside absMain before mounting absMain read-only.
+      mkdirSync(mainOverlayMountTarget, { recursive: true })
+      const mainProbeVars = {
+        HOME: '/tmp',
+        TMPDIR: '/tmp',
+        MIKKA_UI_OVERLAY_DIR: mainOverlayMountTarget,
+        MIKKA_UI_OVERLAY_SHA: overlaySha,
       }
-    } finally {
-      runQuiet('git', ['checkout', '--quiet', '--detach', integrationSha], {
-        cwd: absRepo,
-        env: hostMinimalEnv,
-        timeoutMs: 60_000,
+      const dockerArgs = buildIsolatedDockerArgs({
+        dockerImage,
+        workDir: absMain,
+        mounts: [
+          { source: absMain, target: absMain, readOnly: true },
+          { source: overlayDir, target: mainOverlayMountTarget, readOnly: true },
+        ],
+        envVars: mainProbeVars,
+        cmd: [mainTsc, '--noEmit', '--incremental', 'false', '-p', resolve(mainOverlayMountTarget, 'tsconfig.json')],
       })
-      if (lockChanged) {
-        runQuiet('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], {
-          cwd: absRepo,
-          env: hostMinimalEnv,
-          timeoutMs: 240_000,
-        })
-      }
+      mainTypecheck = runQuiet('docker', dockerArgs, { cwd: absMain, env: hostMinimalEnv, timeoutMs: 180_000 })
+    } else {
+      const mainOverlayPath = existsSync(resolve(mainOverlayMountTarget, 'tsconfig.json'))
+        ? mainOverlayMountTarget
+        : overlayDir
+      mainTypecheck = runQuiet(
+        mainTsc,
+        ['--noEmit', '--incremental', 'false', '-p', resolve(mainOverlayPath, 'tsconfig.json')],
+        { cwd: absMain, env: buildMinimalProbeEnv(env, { HOME: '/tmp', TMPDIR: '/tmp' }), timeoutMs: 180_000 },
+      )
+    }
+
+    const mainErrors = parseOverlayTypeErrors(mainTypecheck.output)
+    if (!mainTypecheck.ok && mainErrors.size === 0) {
+      newTypeErrorCount = -1
+    } else {
+      const delta = diffOverlayTypeErrors(mainTypecheck.output, integrationTypecheck.output)
+      newTypeErrorCount = delta.newErrorCount
+      newErrorCodes = delta.newErrorCodes
     }
   }
 
@@ -512,9 +539,8 @@ export function main(argv = process.argv.slice(2)) {
   }
   if (command === 'verify-pairing') {
     const result = verifyPairingInWorkspace({
-      repoDir: args['repo-dir'],
-      mainSha: args['main-sha'],
-      integrationSha: args['integration-sha'],
+      integrationDir: args['integration-dir'],
+      mainDir: args['main-dir'],
       overlaySha: args['overlay-sha'],
       mode: args.mode || 'pinned_overlay',
       dockerImage: args['docker-image'] || '',
