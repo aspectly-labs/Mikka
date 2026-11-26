@@ -4,6 +4,7 @@ import type { Pool } from 'pg'
 import { workspacePool } from '@/lib/workspace-db'
 import { ComputerError } from '@/lib/computer/store'
 import { cloudflareTaskMachineSource } from '@/lib/cloud-computer/task-compute-provider'
+import { jsonbSafeIntExprSql, jsonbSafeUuidExprSql } from '@/lib/primitives/jsonb-predicates'
 import { environmentConfiguration } from './contracts'
 
 export const CLOUDFLARE_ENVIRONMENT_SCOPE = 'cloudflare:managed'
@@ -19,13 +20,15 @@ const preparation = {
 }
 
 type Build = { workspaceId: string; environmentId: string; revision: number; kind: 'claude' | 'codex'; recipe: unknown; provider: Provider }
+const environmentId = jsonbSafeUuidExprSql(`r."agentDefinition"#>>'{projectExecution,environment,id}'`)
+const revision = jsonbSafeIntExprSql(`r."agentDefinition"#>>'{projectExecution,environment,revision}'`)
 
 async function admittedEnvironmentPreparation(pool: Pick<Pool, 'query'>, actor: Actor,
   runId: string, provider?: Provider, tokenId?: string | null, requireRunning = false,
 ) {
   return (await pool.query<Build>(`
-    SELECT r."workspaceId",r."agentDefinition"#>>'{taskCompute,provider}' AS provider,r."agentDefinition"#>>'{projectExecution,environment,id}' AS "environmentId",
-      (r."agentDefinition"#>>'{projectExecution,environment,revision}')::int AS revision,
+    SELECT r."workspaceId",r."agentDefinition"#>>'{taskCompute,provider}' AS provider,${environmentId} AS "environmentId",
+      ${revision} AS revision,
       CASE COALESCE(r."agentDefinition"->>'harness', a.harness) WHEN 'claude_code' THEN 'claude' ELSE 'codex' END AS kind,
       (r."agentDefinition"#>'{projectExecution,environment}')-ARRAY['id','revision','name','chosen','defaultMachineSize','scope','repositories']::text[] AS recipe
     FROM agent_runs r JOIN agents a ON a.id=r."agentId" AND a."userId"=r."userId"
@@ -35,7 +38,7 @@ async function admittedEnvironmentPreparation(pool: Pick<Pool, 'query'>, actor: 
       AND COALESCE(r."agentDefinition"->>'harness', a.harness) IN ('claude_code','codex')
       AND r."agentDefinition"#>>'{taskCompute,provider}' IN ('cloudflare','e2b')
       AND ($7::text IS NULL OR r."agentDefinition"#>>'{taskCompute,provider}'=$7)
-      AND r."agentDefinition"#>>'{projectExecution,environment,id}' IS NOT NULL
+      AND ${environmentId} IS NOT NULL AND ${revision} IS NOT NULL
       AND ($5::uuid IS NULL OR (r."deviceTokenId"=$5 AND r."deviceId"=m."deviceId"))
       AND (NOT $6::boolean OR (r.status='running' AND r."worktreePath" IS NOT NULL AND m."sandboxId" IS NOT NULL))
   `, [runId, actor.userId, actor.workspaceId, cloudflareTaskMachineSource, tokenId ?? null, requireRunning, provider ?? null])).rows[0]
@@ -84,23 +87,22 @@ export async function finishTaskEnvironmentPreparation(pool: Pick<Pool,'query'>,
 
 /** A provisioning failure can happen before the guest authenticates. Once the
  * owning machine operation has failed, allow the next run to retry immediately. */
-export async function failCloudflareEnvironmentBuild(actor: Actor, runId: string, operationId: string) {
-  await workspacePool.query(`
-    UPDATE environment_snapshots b SET state='failed', "expiresAt"=now()+interval '7 days'
-    FROM thread_machines m
-    WHERE b."providerScope"=$1 AND b."workspaceId"=$2 AND b."buildRunId"=$3 AND b.state='building'
-      AND m."workspaceId"=b."workspaceId" AND m."ownerId"=$4 AND m."runId"=b."buildRunId"
-      AND m."operationId"=$5 AND m.state='error'
-  `, [CLOUDFLARE_ENVIRONMENT_SCOPE, actor.workspaceId, runId, actor.userId, operationId])
+export async function failCloudflareEnvironmentBuild(pool: Pick<Pool, 'query'>, actor: Actor, runId: string, operationId: string) {
+  const owned = await pool.query(`SELECT 1 FROM thread_machines WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3
+    AND "operationId"=$4 AND state='error'`, [runId, actor.userId, actor.workspaceId, operationId])
+  if (owned.rowCount) await markPreparationFailed(CLOUDFLARE_ENVIRONMENT_SCOPE, actor.workspaceId, runId)
 }
 
 /** The E2B caller still holds the failed startup lease until normal cleanup. */
-export async function failE2BEnvironmentPreparation(actor: Actor, runId: string, leaseId: string) {
+export async function failE2BEnvironmentPreparation(pool: Pick<Pool, 'query'>, actor: Actor, runId: string, leaseId: string) {
+  const owned = await pool.query(`SELECT 1 FROM thread_machines WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3
+    AND "workerLeaseId"=$4 AND state='starting'`, [runId, actor.userId, actor.workspaceId, leaseId])
+  if (owned.rowCount) await markPreparationFailed(E2B_ENVIRONMENT_RUNTIME_SCOPE, actor.workspaceId, runId)
+}
+
+async function markPreparationFailed(scope: string, workspaceId: string, runId: string) {
   await workspacePool.query(`
-    UPDATE environment_snapshots b SET state='failed', "expiresAt"=now()+interval '7 days'
-    FROM thread_machines m
-    WHERE b."providerScope"=$1 AND b."workspaceId"=$2 AND b."buildRunId"=$3 AND b.state='building'
-      AND m."workspaceId"=b."workspaceId" AND m."ownerId"=$4 AND m."runId"=b."buildRunId"
-      AND m."workerLeaseId"=$5 AND m.state='starting'
-  `, [E2B_ENVIRONMENT_RUNTIME_SCOPE, actor.workspaceId, runId, actor.userId, leaseId])
+    UPDATE environment_snapshots SET state='failed', "expiresAt"=now()+interval '7 days'
+    WHERE "providerScope"=$1 AND "workspaceId"=$2 AND "buildRunId"=$3 AND state='building'
+  `, [scope, workspaceId, runId])
 }

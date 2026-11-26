@@ -1718,7 +1718,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     await client.query('ROLLBACK')
     if (preparingEnvironment) {
       const { failE2BEnvironmentPreparation } = await import('../project-resources/cloudflare-environment-snapshot')
-      await failE2BEnvironmentPreparation(actor, runId, leaseId).catch(() => undefined)
+      await failE2BEnvironmentPreparation(client, actor, runId, leaseId).catch(() => undefined)
     }
     // Abort this lease's unpublished broker before start-failure recovery.
     // Preserve the primary admission/upload/registration failure if transport cleanup also fails.

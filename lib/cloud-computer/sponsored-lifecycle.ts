@@ -306,7 +306,7 @@ export async function ensureSponsoredTaskMachine(pool: Pool, actor: TaskMachineA
       [runId, handoff.operationId, handoff.leaseId],
     )
     if (handoff.metered) {
-      await failCloudflareEnvironmentBuild(actor, runId, handoff.operationId).catch(() => undefined)
+      await failCloudflareEnvironmentBuild(pool, actor, runId, handoff.operationId).catch(() => undefined)
       await settleCloudflareCompute(pool, { provider: 'cloudflare', ownerId: actor.userId, workspaceId: actor.workspaceId,
         runId, operationId: handoff.operationId, index: 0, size: handoff.size }, false).catch(() => undefined)
     }
