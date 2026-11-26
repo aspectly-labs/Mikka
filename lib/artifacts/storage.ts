@@ -9,7 +9,9 @@ import { deploymentStage } from '../deployment-stage.mjs'
 
 interface ObjectStorageConfig { endpoint: string; bucket: string; client: AwsClient }
 
-function objectStorageConfig(): ObjectStorageConfig | null {
+type StorageArea = 'artifacts' | 'task-workspaces'
+
+function objectStorageConfig(area: StorageArea = 'artifacts'): ObjectStorageConfig | null {
   const endpoint = process.env.S3_ENDPOINT?.trim()
   if (endpoint || process.env.S3_BUCKET || process.env.S3_ACCESS_KEY_ID || process.env.S3_SECRET_ACCESS_KEY) {
     const bucket = process.env.S3_BUCKET?.trim(), accessKeyId = process.env.S3_ACCESS_KEY_ID, secretAccessKey = process.env.S3_SECRET_ACCESS_KEY
@@ -19,17 +21,22 @@ function objectStorageConfig(): ObjectStorageConfig | null {
     return { endpoint: url.href.replace(/\/+$/, ''), bucket, client: new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: process.env.S3_REGION?.trim() || 'us-east-1' }) }
   }
   const accountId = process.env.R2_ACCOUNT_ID ?? process.env.CLOUDFLARE_ACCOUNT_ID
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY
+  const accessKeyId = area === 'task-workspaces'
+    ? process.env.R2_TASK_WORKSPACES_ACCESS_KEY_ID ?? process.env.R2_ACCESS_KEY_ID : process.env.R2_ACCESS_KEY_ID
+  const secretAccessKey = area === 'task-workspaces'
+    ? process.env.R2_TASK_WORKSPACES_SECRET_ACCESS_KEY ?? process.env.R2_SECRET_ACCESS_KEY : process.env.R2_SECRET_ACCESS_KEY
+  const bucket = area === 'task-workspaces'
+    ? process.env.R2_TASK_WORKSPACES_BUCKET ?? 'mikka-task-workspaces' : process.env.R2_ARTIFACTS_BUCKET ?? 'mikka-artifacts'
+  if (/[\\/]/.test(bucket)) throw new Error('R2 bucket configuration is invalid')
   if (!accountId || !accessKeyId || !secretAccessKey) return null
-  return { endpoint: `https://${accountId}.r2.cloudflarestorage.com`, bucket: process.env.R2_ARTIFACTS_BUCKET ?? 'mikka-artifacts', client: new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto' }) }
+  return { endpoint: `https://${accountId}.r2.cloudflarestorage.com`, bucket, client: new AwsClient({ accessKeyId, secretAccessKey, service: 's3', region: 'auto' }) }
 }
 
 /** Where files go: R2, or the database row when no bucket is configured outside production. */
-export function artifactStorage(): 'r2' | 'inline' {
+export function artifactStorage(area: StorageArea = 'artifacts'): 'r2' | 'inline' {
   const stage = deploymentStage() ?? (process.env.NODE_ENV === 'production' ? 'production' : undefined)
   // Keep the existing persisted 'r2' discriminator for every S3 transport.
-  if (objectStorageConfig()) return 'r2'
+  if (objectStorageConfig(area)) return 'r2'
   if (isCloudEdition() && stage === 'production') throw new Error('Object storage is not configured')
   return 'inline'
 }
@@ -63,8 +70,8 @@ export async function putArtifactObject(key: string, body: string | Uint8Array<A
 
 /** A known-length immutable binary upload, without reading the stream for signing or retrying it. */
 export async function putArtifactObjectStream(key: string, body: ReadableStream<Uint8Array<ArrayBuffer>>,
-  contentType: string, contentLength: number, sha256: string, signal: AbortSignal): Promise<void> {
-  const config = objectStorageConfig()
+  contentType: string, contentLength: number, sha256: string, signal: AbortSignal, area: StorageArea = 'artifacts'): Promise<void> {
+  const config = objectStorageConfig(area)
   if (!config) throw new Error('Object storage is not configured')
   const partSize = Math.max(16 * 1024 * 1024, Math.ceil(contentLength / 10_000))
   if (contentLength > partSize) {
@@ -145,8 +152,8 @@ export async function getArtifactObject(key: string): Promise<string> {
 }
 
 /** Stream an existing immutable object without buffering a recording in the server. */
-export async function getArtifactObjectStream(key: string, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
-  const config = objectStorageConfig()
+export async function getArtifactObjectStream(key: string, signal: AbortSignal, area: StorageArea = 'artifacts'): Promise<ReadableStream<Uint8Array>> {
+  const config = objectStorageConfig(area)
   if (!config) throw new Error('Object storage is not configured')
   const response = await config.client.fetch(objectUrl(config, key), { signal, redirect: 'error' })
   if (!response.ok || !response.body) throw new Error(`Object storage get failed: ${response.status}`)
@@ -195,8 +202,8 @@ export async function getArtifactObjectBytes(key: string, maxBytes?: number): Pr
   return new Uint8Array(await response.arrayBuffer())
 }
 
-export async function deleteArtifactObject(key: string, signal?: AbortSignal): Promise<void> {
-  const config = objectStorageConfig()
+export async function deleteArtifactObject(key: string, signal?: AbortSignal, area: StorageArea = 'artifacts'): Promise<void> {
+  const config = objectStorageConfig(area)
   if (!config) throw new Error('Object storage is not configured')
   const response = await writeObject(config, key, { method: 'DELETE', redirect: 'error' }, signal)
   if (!response.ok && response.status !== 404) throw new Error(`Object storage delete failed: ${response.status}`)

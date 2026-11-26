@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { createWriteStream } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import test from 'node:test'
 import { Sandbox } from 'e2b'
 import { Pool } from 'pg'
@@ -56,17 +58,21 @@ test('production park preserves the prior portable archive on failed upload with
   }
   const firstArchive = await fixture('previous')
   const nextArchive = await fixture('candidate')
+  const secretValue = 'fixture-never-upload-' + randomUUID()
+  const taintedArchive = await fixture(secretValue)
+  let candidateArchive = nextArchive
   const captures: string[] = []
   const services = await startExternalServices({ e2b: { commands(command: string, { sandbox }: { sandbox: { files: Map<string, Buffer> } }) {
     if (command.startsWith('env -i ')) {
       const path = /\/tmp\/mikka-task-workspace-[\w-]+\.tar\.zst/.exec(command)?.[0]
       assert.ok(path)
-      const source = captures.length ? nextArchive : firstArchive
+      const source = captures.length ? candidateArchive : firstArchive
       sandbox.files.set(path, source.bytes)
       captures.push(path)
       return { stdout: JSON.stringify(source.receipt), exitCode: 0 }
     }
     if (command.startsWith('install -d -m 700 ')) {
+      if (!command.includes('test ! -L')) return { exitCode: 0 }
       const source = /\/tmp\/mikka-task-workspace-[\w-]+\.tar\.zst/.exec(command)?.[0]
       const sealed = /\/run\/mikka-task-archives\/[\w-]+\.tar\.zst/.exec(command)?.[0]
       assert.ok(source && sealed)
@@ -77,6 +83,22 @@ test('production park preserves the prior portable archive on failed upload with
     }
     if (command.startsWith('rm -f -- ')) {
       for (const path of command.slice('rm -f -- '.length).split(' ')) sandbox.files.delete(path)
+      return { exitCode: 0 }
+    }
+    if (command.startsWith('umask 077; cat -- ')) {
+      const scratch = /cat -- '([^']+)'\/\*\.part/.exec(command)?.[1]
+      const destination = /mv -- '[^']+' '([^']+)'/.exec(command)?.[1]
+      assert.ok(scratch && destination)
+      const parts = [...sandbox.files.entries()].filter(([key]) => key.startsWith(scratch + '/') && key.endsWith('.part'))
+      parts.sort(([a], [b]) => a.localeCompare(b))
+      assert.ok(parts.length > 0)
+      sandbox.files.set(destination, Buffer.concat(parts.map(([, value]) => value)))
+      return { exitCode: 0 }
+    }
+    if (command.startsWith('rm -rf -- ')) {
+      const prefix = /^rm -rf -- '([^']+)'$/.exec(command)?.[1]
+      assert.ok(prefix)
+      for (const path of sandbox.files.keys()) if (path.startsWith(prefix + '/')) sandbox.files.delete(path)
       return { exitCode: 0 }
     }
     assert.fail('Unexpected sandbox command in park fixture')
@@ -115,6 +137,7 @@ test('production park preserves the prior portable archive on failed upload with
     E2B_API_KEY: services.e2bOptions.apiKey, E2B_API_URL: services.e2bOptions.apiUrl,
     E2B_SANDBOX_URL: services.e2bOptions.sandboxUrl, E2B_HTTP_VERSION: '1.1',
     HTTPS_PROXY: '', https_proxy: '', MIKKA_THREAD_SNAPSHOTS: '0',
+    WORKSPACE_SECRETS_KEY: 'a'.repeat(64),
     S3_ENDPOINT: `http://127.0.0.1:${(bucket.address() as AddressInfo).port}`, S3_BUCKET: 'fixture',
     S3_ACCESS_KEY_ID: 'fixture-access', S3_SECRET_ACCESS_KEY: 'fixture-secret',
   }
@@ -176,4 +199,42 @@ test('production park preserves the prior portable archive on failed upload with
   assert.deepEqual([...objects.values()], [firstArchive.bytes, nextArchive.bytes])
   assert.equal(captures.length, 3)
   assert.equal(freeSlotReads, 3)
+
+  // Lose the old provider cache and restore the bytes through the real R2
+  // reader and daemon into a new Git checkout, without the previous VM.
+  await Sandbox.kill(next.sandboxId, services.e2bOptions)
+  const { loadTaskWorkspaceArchive } = await import('./task-workspace-archive-store')
+  const { WorktreeManager } = await import('../../packages/daemon/src/worktrees')
+  const saved = await loadTaskWorkspaceArchive(app, { ownerId: owner, workspaceId, issueId, repositoryKey: 'v2/github.com/acme/task' })
+  assert.ok(saved)
+  const { stageE2BTaskWorkspace } = await import('./e2b-task-workspace-archive')
+  const newSandbox = await Sandbox.create('codex', services.e2bOptions)
+  const fresh = join(scratch, 'new-machine'), cache = join(fresh, 'repository')
+  await mkdir(fresh)
+  execFileSync('git', ['clone', '--no-hardlinks', worktree, cache], { stdio: 'pipe' })
+  const manager = new WorktreeManager(join(fresh, 'worktrees'), false, true)
+  const freshRun = randomUUID(), base = await manager.portableWorktreeBase(cache, 'HEAD', saved.manifest.headSha)
+  const checkout = await manager.create(freshRun, cache, base)
+  const stagingReceipt = await stageE2BTaskWorkspace(newSandbox, freshRun, saved, AbortSignal.timeout(20_000))
+  const staged = await newSandbox.files.read('/home/user/.mikka/worker/portable-workspaces/' + freshRun + '.tar.zst', { format: 'stream' })
+  const staging = join(fresh, 'portable-workspaces')
+  await mkdir(staging)
+  await pipeline(staged, createWriteStream(join(staging, freshRun + '.tar.zst')))
+  await manager.restorePortableWorkspace(freshRun, stagingReceipt, base)
+  assert.equal(await readFile(join(checkout, 'tracked.txt'), 'utf8'), 'candidate\n')
+  // A resolved workspace credential copied into an ordinary file must be
+  // rejected on the sealed validation pass, before any R2 request writes it.
+  const { sealSecret, secretAad } = await import('../secrets/crypto')
+  const encrypted = sealSecret(secretValue, secretAad({ workspaceId, kind: 'secret', scopeType: 'workspace', scopeRef: '', name: 'ARCHIVE_FIXTURE' }))
+  await app.query(`INSERT INTO workspace_secrets (id,"workspaceId",name,kind,"scopeType",ciphertext,iv,"keyVersion","createdBy","updatedBy")
+    VALUES ($1,$2,'ARCHIVE_FIXTURE','secret','workspace',$3,$4,$5,$6,$6)`,
+  [randomUUID(), workspaceId, encrypted.ciphertext, encrypted.iv, encrypted.keyVersion, owner])
+  candidateArchive = taintedArchive
+  const tainted = await machine('2026-01-01T00:02:00Z')
+  await assert.rejects(parkThreadMachine(pool, actor, tainted.runId), /contains a secret/)
+  assert.equal(freeSlotReads, 3, 'the rejected staged archive never reached storage')
+  assert.equal(objects.size, 2)
+  assert.deepEqual(await archive(), current)
+
+
 })

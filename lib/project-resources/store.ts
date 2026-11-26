@@ -16,7 +16,7 @@ import type { WorkspaceTransaction } from '@/lib/workspace-access'
 import { ActionFailureError } from '@/lib/action-error'
 import { GovernanceError } from '@/lib/governance/errors'
 import { isMachineSize } from '@/lib/cloud-computer/machine-pricing'
-import { ENVIRONMENT_INSTRUCTIONS_MAX, environmentConfiguration, environmentInstructionsScope, environmentRepositories, environmentShareInput, projectEnvironmentVariableInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, type projectSetupScope, type EnvironmentInstructionsView, type EnvironmentRepository, type EnvironmentScope, type ProjectSetupHistory, type ProjectSetupRecipe, repositoryBindingInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, workspaceRepositoryPolicyInput, type EnvironmentConfiguration, type ProjectExecutionSnapshot } from './contracts'
+import { ENVIRONMENT_INSTRUCTIONS_MAX, portableEnvironmentDefinition, environmentConfiguration, environmentInstructionsScope, environmentRepositories, environmentShareInput, projectEnvironmentVariableInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, type projectSetupScope, type EnvironmentInstructionsView, type EnvironmentRepository, type EnvironmentScope, type ProjectSetupHistory, type ProjectSetupRecipe, repositoryBindingInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, workspaceRepositoryPolicyInput, type EnvironmentConfiguration, type ProjectExecutionSnapshot } from './contracts'
 
 type Reader = Parameters<typeof withTaskWorkspace>[0]
 const actorId = (reader: Reader) => typeof reader === 'string' ? reader : reader.id
@@ -313,6 +313,7 @@ export async function saveEnvironment(reader: Reader, raw: z.input<typeof saveEn
       ? existingConfig?.e2bMachineSize : input.configuration.e2bMachineSize
     const configuration: EnvironmentConfiguration = {
       ...input.configuration,
+      baseImage: portableEnvironmentDefinition(input.configuration).baseImage,
       ...(selectedE2BSize !== undefined ? { e2bMachineSize: selectedE2BSize } : {}),
       networkAccess: nextNetworkAccess,
       ...(nextStartScript ? { startScript: nextStartScript } : { startScript: undefined }),

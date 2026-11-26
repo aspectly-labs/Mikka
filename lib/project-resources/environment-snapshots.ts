@@ -217,6 +217,16 @@ export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotIn
   return { id: claim.id, revision: environment.revision }
 }
 
+/** A provider cache miss never destroys or modifies the Environment definition. */
+export async function rebuildMissingEnvironmentSnapshot(userId: string, input: SnapshotInput, id: string, revision: number) {
+  const checked = snapshotInput.parse(input)
+  const { rowCount } = await workspacePool.query(`UPDATE environment_snapshots SET state='outdated'
+      WHERE id=$1 AND "workspaceId"=$2 AND "environmentId"=$3 AND "templateKind"=$4 AND revision=$5
+        AND "providerScope"=$6 AND state='ready'`,
+  [id, checked.workspaceId, checked.environmentId, checked.templateKind, revision, environmentSnapshotScope()])
+  if (rowCount) await requestEnvironmentSnapshot(userId, checked, 'save')
+}
+
 export async function buildSnapshotsOnSave(reader: Reader, workspaceId: string, environmentId: string) {
   if (!(await enabled(reader)) || !configuredProvider()) return
   const { environments } = await listProjectResources(reader, workspaceId)

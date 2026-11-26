@@ -17,14 +17,16 @@ import { orderMigrations } from '../../scripts/migration-order.mjs'
 import { disposableDatabase } from '../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-test-database'
 import { seedAgent, seedIssue, seedUser, seedWorkspace } from '../../tests/support/workspace-admin-db'
-import { loadTaskWorkspaceArchive, pruneTaskWorkspaceArchives, saveTaskWorkspaceArchive, taskWorkspaceArchiveKey } from './task-workspace-archive-store'
+import { loadTaskWorkspaceArchive, prepareTaskWorkspaceArchive, pruneTaskWorkspaceArchives, publishTaskWorkspaceArchive, taskWorkspaceArchiveKey } from './task-workspace-archive-store'
 
 const available = disposableDatabase()
 if (!available && process.env.REQUIRE_DB === '1') throw new Error('Task archive tests require disposable PostgreSQL')
 
+const headSha = 'a'.repeat(40)
+
 const snapshot = (content: string) => {
   const bytes = Uint8Array.from(Buffer.from(content))
-  return { bytes, manifest: { id: randomUUID(), size: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') } }
+  return { bytes, manifest: { id: randomUUID(), headSha, size: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') } }
 }
 
 test('real PostgreSQL fences task workspace archives and retains the last verified object', { skip: !available, timeout: 180_000 }, async t => {
@@ -34,7 +36,7 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
   const database = `task_archive_${randomUUID().replaceAll('-', '')}_e2e`
   await createTestDatabase(admin, database, 'template0')
   target.pathname = `/${database}`
-  const pool = new Pool({ connectionString: target.href, max: 8 })
+  const pool = new Pool({ connectionString: target.href, max: 1, connectionTimeoutMillis: 2_000 })
   // Explicit cleanup order: the admin pool is needed until the DB is dropped.
   try {
     const directory = new URL('../../drizzle/', import.meta.url)
@@ -47,7 +49,7 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
     t.after(() => rm(scratch, { recursive: true, force: true }))
     let largeKey: string | undefined
     const largeObject = join(scratch, 'bucket-object')
-    let refusePut = false, puts = 0
+    let refusePut = false
     let refusePart = false, aborted = 0
     let multipart: { id: string; files: string[] } | undefined
     const server = createServer(async (request, response) => {
@@ -97,7 +99,6 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
         return
       }
       if (request.method === 'PUT') {
-        puts++
         assert.equal(request.headers['if-none-match'], '*')
         const blocks = []
         for await (const block of request) blocks.push(Buffer.from(block))
@@ -148,10 +149,11 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
     const later = await machine('2026-01-01T00:00:00.000002Z')
     const oldSnapshot = snapshot('known old tree'), nextSnapshot = snapshot('next verified tree')
     const save = async (fence: typeof early, archive: ReturnType<typeof snapshot>, opts: { rollback?: boolean; scope?: typeof scope } = {}) => {
+      const prepared = await prepareTaskWorkspaceArchive(pool, opts.scope ?? scope, archive.manifest, archive.bytes)
       const client = await pool.connect()
       try {
         await client.query('BEGIN')
-        const saved = await saveTaskWorkspaceArchive(client, pool, opts.scope ?? scope, fence, archive.manifest, archive.bytes)
+        const saved = await publishTaskWorkspaceArchive(client, opts.scope ?? scope, fence, prepared)
         await client.query(opts.rollback ? 'ROLLBACK' : 'COMMIT')
         return saved
       } catch (error) { await client.query('ROLLBACK'); throw error }
@@ -171,11 +173,13 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
       assert.equal(await save({ ...early, sandboxId: 'different' }, oldSnapshot), false)
       assert.equal(await save({ ...early, epoch: 2 }, oldSnapshot), false)
       assert.equal(await save(early, oldSnapshot, { scope: { ...scope, repositoryKey: 'v2/github.com/acme/wrong' } }), false)
-      assert.equal(puts, 0)
       assert.equal(await save(early, oldSnapshot), true)
       assert.equal(await save(early, snapshot('known old tree')), true)
+      assert.equal(await save(early, { ...oldSnapshot, manifest: { ...oldSnapshot.manifest, id: randomUUID(), headSha: 'b'.repeat(40) } }), false)
+      const published = await loadTaskWorkspaceArchive(pool, scope)
+      assert.deepEqual(published?.source, { runId: early.runId, epoch: early.epoch, operationId: early.operationId })
+      await published?.stream.cancel()
       assert.equal(await save(early, snapshot('different payload')), false)
-      assert.equal(puts, 1)
       assert.deepEqual(await loadSmall(), oldSnapshot)
       for (const wrongScope of [
         { ...scope, ownerId: 'other-owner' }, { ...scope, workspaceId: randomUUID() },
@@ -193,11 +197,9 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
       assert.deepEqual(await loadSmall(), oldSnapshot)
       assert.equal(await save(later, nextSnapshot), true, 'conditional retry reuses the exact object')
       assert.deepEqual(await loadSmall(), nextSnapshot)
-      const before = puts
       assert.equal(await save(early, snapshot('stale run remains live')), false)
-      assert.equal(puts, before)
       await expire()
-      assert.equal(await pruneTaskWorkspaceArchives(pool), true)
+      while (await pruneTaskWorkspaceArchives(pool)) { /* Also reclaim unpublished stale receipts. */ }
       assert.equal(bucket.has(path(oldSnapshot)), false)
       assert.equal(await pruneTaskWorkspaceArchives(pool), false, 'current archive remains reachable past its staging expiry')
     })
@@ -210,7 +212,7 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
       await expire()
       assert.equal(await pruneTaskWorkspaceArchives(pool), true)
       assert.equal(bucket.has(path(rolledBack)), false)
-      assert.equal(await save(nextFence, rolledBack), false, 'a retired immutable ID is never recreated')
+      await assert.rejects(save(nextFence, rolledBack), /retired ID/)
       const collision = snapshot('expected immutable bytes')
       bucket.set(path(collision), Buffer.from('conflicting payload'))
       await assert.rejects(save(nextFence, collision), /mismatch/)
@@ -219,6 +221,9 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
       await assert.rejects(loadSmall(), /size mismatch/)
       bucket.set(path(nextSnapshot), nextSnapshot.bytes)
       assert.deepEqual(await loadSmall(), nextSnapshot)
+      await pool.query('UPDATE task_workspace_archives SET "headSha"=$1 WHERE "archiveId"=$2', ['b'.repeat(40), nextSnapshot.manifest.id])
+      try { await assert.rejects(loadSmall(), /metadata mismatch/) }
+      finally { await pool.query('UPDATE task_workspace_archives SET "headSha"=$1 WHERE "archiveId"=$2', [headSha, nextSnapshot.manifest.id]) }
     })
 
     await t.test('archives and restores an incompressible file larger than 32 MiB by streaming', async () => {
@@ -241,17 +246,18 @@ test('real PostgreSQL fences task workspace archives and retains the last verifi
         for await (const chunk of createReadStream(file)) digest.update(chunk)
         return digest.digest('hex')
       }
-      const manifest = { id: randomUUID(), size: (await stat(compressed)).size, sha256: await hash(compressed) }
+      const manifest = { id: randomUUID(), headSha, size: (await stat(compressed)).size, sha256: await hash(compressed) }
       assert.ok(manifest.size > 32 * 1024 * 1024)
       largeKey = `/fixture/${taskWorkspaceArchiveKey(scope, manifest.id)}`
       const fence = { ...later, epoch: 3 }
       await pool.query('UPDATE thread_machines SET epoch=$2 WHERE "runId"=$1', [fence.runId, fence.epoch])
       const upload = async () => {
+        const input = Readable.toWeb(createReadStream(compressed)) as ReadableStream<Uint8Array>
+        const prepared = await prepareTaskWorkspaceArchive(pool, scope, manifest, input)
         const client = await pool.connect()
         try {
           await client.query('BEGIN')
-          const input = Readable.toWeb(createReadStream(compressed)) as ReadableStream<Uint8Array>
-          assert.equal(await saveTaskWorkspaceArchive(client, pool, scope, fence, manifest, input), true)
+          assert.equal(await publishTaskWorkspaceArchive(client, scope, fence, prepared), true)
           await client.query('COMMIT')
         } catch (error) { await client.query('ROLLBACK'); throw error }
         finally { client.release() }

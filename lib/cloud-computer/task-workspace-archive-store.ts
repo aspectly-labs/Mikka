@@ -5,12 +5,14 @@ import { z } from 'zod'
 import { repositoryBindingMatches } from '@mikka/protocol/repository'
 import { deleteArtifactObject, getArtifactObjectStream, putArtifactObjectStream } from '@/lib/artifacts/storage'
 import { projectRepositoryKey } from '@/lib/project-resources/contracts'
+import { TASK_WORKSPACE_PREFIX, TASK_WORKSPACE_SUFFIX } from '../../packages/protocol/src/task-workspace-storage.mjs'
 
 const contentType = 'application/zstd'
 const uuid = z.uuid().refine(value => value === value.toLowerCase())
 const scopeSchema = z.object({ ownerId: z.string().min(1), workspaceId: uuid, issueId: uuid, repositoryKey: z.string() })
   .refine(value => projectRepositoryKey.safeParse(value.repositoryKey).data === value.repositoryKey)
-const manifestSchema = z.object({ id: uuid, size: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/) })
+const manifestSchema = z.object({ id: uuid, size: z.number().int().positive(), sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  headSha: z.string().regex(/^[a-f0-9]{40}$/) })
 const fenceSchema = z.object({ runId: uuid, epoch: z.number().int().positive().max(2147483647), operationId: uuid, sandboxId: z.string().min(1) })
 
 export type TaskWorkspaceArchiveScope = z.infer<typeof scopeSchema>
@@ -36,28 +38,11 @@ export function taskWorkspaceArchiveKey(scope: TaskWorkspaceArchiveScope, archiv
 }
 
 function objectKey(scope: string, id: string) {
-  return `task-workspaces/v1/${scope}/${id}.tar.zst`
+  return `${TASK_WORKSPACE_PREFIX}${scope}/${id}${TASK_WORKSPACE_SUFFIX}`
 }
 
-async function reserveObject(pool: Pool, hash: string, manifest: TaskWorkspaceArchiveManifest, signal: AbortSignal) {
-  signal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-  signal.throwIfAborted()
-  // This write must be durable independently of the caller's transaction.
-  // Bound the wait for a pool slot since the caller already owns one client.
-  let onAbort: (() => void) | undefined
-  try {
-    await Promise.race([
-      pool.query(`INSERT INTO task_workspace_archive_objects ("scopeHash", id, size, sha256)
-        VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [hash, manifest.id, manifest.size, manifest.sha256]),
-      new Promise<never>((_, reject) => {
-        onAbort = () => reject(signal.reason)
-        signal.addEventListener('abort', onAbort, { once: true })
-      }),
-    ])
-  } finally {
-    if (onAbort) signal.removeEventListener('abort', onAbort)
-  }
-}
+const preparedArchive = Symbol('preparedTaskWorkspaceArchive')
+type PreparedTaskWorkspaceArchive = Readonly<{ [preparedArchive]: string; manifest: Readonly<TaskWorkspaceArchiveManifest> }>
 
 function verifiedArchive(source: ReadableStream<Uint8Array>, manifest: TaskWorkspaceArchiveManifest) {
   const hash = createHash('sha256')
@@ -77,7 +62,7 @@ function verifiedArchive(source: ReadableStream<Uint8Array>, manifest: TaskWorks
 }
 
 async function verifyStoredArchive(key: string, manifest: TaskWorkspaceArchiveManifest, signal: AbortSignal) {
-  const reader = verifiedArchive(await getArtifactObjectStream(key, signal), manifest).getReader()
+  const reader = verifiedArchive(await getArtifactObjectStream(key, signal, 'task-workspaces'), manifest).getReader()
   try {
     while (!(await reader.read()).done) { /* Drain through the digest verifier. */ }
   } finally {
@@ -85,21 +70,48 @@ async function verifyStoredArchive(key: string, manifest: TaskWorkspaceArchiveMa
   }
 }
 
-/** The caller owns the transaction and the park locks on this exact run and machine. */
-export async function saveTaskWorkspaceArchive(
-  client: PoolClient, pool: Pool, scope: TaskWorkspaceArchiveScope, rawFence: TaskWorkspaceArchiveFence,
-  rawManifest: TaskWorkspaceArchiveManifest, input: Uint8Array | ReadableStream<Uint8Array>,
-  signal: AbortSignal = new AbortController().signal,
-): Promise<boolean> {
-  const parts = scopeParts(scope)
+/** Reserve and verify the immutable object before borrowing a park transaction. */
+export async function prepareTaskWorkspaceArchive(
+  pool: Pool, scope: TaskWorkspaceArchiveScope, rawManifest: TaskWorkspaceArchiveManifest,
+  input: Uint8Array | ReadableStream<Uint8Array>, signal: AbortSignal = new AbortController().signal,
+): Promise<PreparedTaskWorkspaceArchive> {
+  // Keep network activity inside the independently committed reservation lease.
+  signal = AbortSignal.any([signal, AbortSignal.timeout(12 * 60 * 60 * 1000)])
   const hash = scopeHash(scope)
-  const fence = fenceSchema.parse(rawFence)
-  const manifest = manifestSchema.parse(rawManifest)
+  const manifest = Object.freeze(manifestSchema.parse(rawManifest))
   if (input instanceof Uint8Array) {
     if (input.byteLength !== manifest.size) throw new Error('Task workspace archive size mismatch')
     if (digest(input) !== manifest.sha256) throw new Error('Task workspace archive integrity mismatch')
   }
   signal.throwIfAborted()
+  const { rowCount } = await pool.query(`INSERT INTO task_workspace_archive_objects AS object ("scopeHash", id, size, sha256, "headSha")
+    VALUES ($1,$2,$3,$4,$5)
+    ON CONFLICT ("scopeHash", id) DO UPDATE SET "expiresAt"=now()+interval '1 day'
+    WHERE object.size=excluded.size AND object.sha256=excluded.sha256
+      AND object."headSha"=excluded."headSha" AND object."deletedAt" IS NULL`,
+  [hash, manifest.id, manifest.size, manifest.sha256, manifest.headSha])
+  if (!rowCount) throw new Error('Task workspace archive reservation conflicts with an existing or retired ID')
+  signal.throwIfAborted()
+  const key = objectKey(hash, manifest.id)
+  const stream = input instanceof Uint8Array ? new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(input); controller.close() },
+  }) : input
+  await putArtifactObjectStream(key, verifiedArchive(stream, manifest), contentType, manifest.size, manifest.sha256, signal, 'task-workspaces')
+  // An existing immutable key is accepted only after verifying its exact bytes.
+  await verifyStoredArchive(key, manifest, signal)
+  signal.throwIfAborted()
+  return Object.freeze({ [preparedArchive]: hash, manifest })
+}
+
+/** The caller owns the transaction and the park locks on this exact run and machine. */
+export async function publishTaskWorkspaceArchive(
+  client: PoolClient, scope: TaskWorkspaceArchiveScope, rawFence: TaskWorkspaceArchiveFence, prepared: PreparedTaskWorkspaceArchive,
+): Promise<boolean> {
+  const parts = scopeParts(scope)
+  const hash = scopeHash(scope)
+  if (prepared[preparedArchive] !== hash) return false
+  const fence = fenceSchema.parse(rawFence)
+  const { manifest } = prepared
 
   const { rows: [machine] } = await client.query<{ runCreatedAt: string; remoteUrl: string | null }>(`
     SELECT run."createdAt"::text AS "runCreatedAt", repo."remoteUrl"
@@ -117,41 +129,30 @@ export async function saveTaskWorkspaceArchive(
   // writers, using a separate lock from the machine-adoption lock order.
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`task-workspace-archive:${hash}`])
   const order = [...parts, machine.runCreatedAt, fence.runId, fence.epoch, fence.operationId]
-  const { rows: [current] } = await client.query<{ id: string; newer: boolean; sameFence: boolean; size: string; sha256: string }>(`
-    SELECT "archiveId" AS id, size, sha256,
+  const { rows: [current] } = await client.query<{ id: string; newer: boolean; sameFence: boolean; size: string; sha256: string; headSha: string }>(`
+    SELECT "archiveId" AS id, size, sha256, "headSha",
       ("sourceRunCreatedAt", "sourceRunId", "sourceEpoch") >= ($5::timestamptz, $6::uuid, $7::int) AS newer,
       ("sourceRunId", "sourceEpoch", "sourceOperationId") = ($6::uuid, $7::int, $8::uuid) AS "sameFence"
     FROM task_workspace_archives
     WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "issueId"=$3 AND "repositoryKey"=$4`, order)
-  if (current?.sameFence) return Number(current.size) === manifest.size && current.sha256 === manifest.sha256
+  if (current?.sameFence) return Number(current.size) === manifest.size && current.sha256 === manifest.sha256 && current.headSha === manifest.headSha
   if (current?.newer) return false
 
-  await reserveObject(pool, hash, manifest, signal)
   const { rowCount: reserved } = await client.query(`SELECT id FROM task_workspace_archive_objects
-    WHERE "scopeHash"=$1 AND id=$2 AND size=$3 AND sha256=$4 AND "deletedAt" IS NULL FOR UPDATE`,
-  [hash, manifest.id, manifest.size, manifest.sha256])
+    WHERE "scopeHash"=$1 AND id=$2 AND size=$3 AND sha256=$4 AND "headSha"=$5 AND "deletedAt" IS NULL FOR UPDATE`,
+  [hash, manifest.id, manifest.size, manifest.sha256, manifest.headSha])
   if (!reserved) return false
-  signal.throwIfAborted()
-  const key = objectKey(hash, manifest.id)
-  const stream = input instanceof Uint8Array ? new ReadableStream<Uint8Array>({
-    start(controller) { controller.enqueue(input); controller.close() },
-  }) : input
-  await putArtifactObjectStream(key, verifiedArchive(stream, manifest), contentType, manifest.size, manifest.sha256, signal)
-  // A conditional PUT also succeeds on an existing immutable key. Read it back
-  // so a conflicting object can never become the authoritative manifest.
-  await verifyStoredArchive(key, manifest, signal)
-  signal.throwIfAborted()
   const { rowCount } = await client.query(`
     INSERT INTO task_workspace_archives ("ownerId", "workspaceId", "issueId", "repositoryKey",
-      "sourceRunCreatedAt", "sourceRunId", "sourceEpoch", "sourceOperationId", "archiveId", size, sha256, "scopeHash")
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      "sourceRunCreatedAt", "sourceRunId", "sourceEpoch", "sourceOperationId", "archiveId", size, sha256, "scopeHash", "headSha")
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     ON CONFLICT ("ownerId", "workspaceId", "issueId", "repositoryKey") DO UPDATE SET
       "sourceRunCreatedAt"=excluded."sourceRunCreatedAt", "sourceRunId"=excluded."sourceRunId",
       "sourceEpoch"=excluded."sourceEpoch", "sourceOperationId"=excluded."sourceOperationId",
-      "archiveId"=excluded."archiveId", size=excluded.size, sha256=excluded.sha256
+      "archiveId"=excluded."archiveId", size=excluded.size, sha256=excluded.sha256, "headSha"=excluded."headSha"
     WHERE (task_workspace_archives."sourceRunCreatedAt", task_workspace_archives."sourceRunId", task_workspace_archives."sourceEpoch")
         < (excluded."sourceRunCreatedAt", excluded."sourceRunId", excluded."sourceEpoch")`,
-  [...order, manifest.id, manifest.size, manifest.sha256, hash])
+  [...order, manifest.id, manifest.size, manifest.sha256, hash, manifest.headSha])
   if (rowCount && current && current.id !== manifest.id) {
     await client.query(`UPDATE task_workspace_archive_objects SET "expiresAt"=now()+interval '1 day'
       WHERE "scopeHash"=$1 AND id=$2`, [hash, current.id])
@@ -176,7 +177,7 @@ export async function pruneTaskWorkspaceArchives(pool: Pool, signal: AbortSignal
       const { rowCount: reachable } = await client.query(`SELECT 1 FROM task_workspace_archives
         WHERE "scopeHash"=$1 AND "archiveId"=$2`, parts)
       if (!reachable) {
-        await deleteArtifactObject(objectKey(object.scopeHash, object.id), signal)
+        await deleteArtifactObject(objectKey(object.scopeHash, object.id), signal, 'task-workspaces')
         await client.query(`UPDATE task_workspace_archive_objects SET "deletedAt"=now() WHERE "scopeHash"=$1 AND id=$2`, parts)
         deleted = true
       }
@@ -193,14 +194,18 @@ export async function pruneTaskWorkspaceArchives(pool: Pool, signal: AbortSignal
 
 export async function loadTaskWorkspaceArchive(reader: Reader, scope: TaskWorkspaceArchiveScope,
   signal: AbortSignal = new AbortController().signal) {
-  const { rows: [row] } = await reader.query<Omit<TaskWorkspaceArchiveManifest, 'size'> & { size: string }>(`
-    SELECT archive."archiveId" AS id, archive.size, archive.sha256
+  const { rows: [row] } = await reader.query<Omit<TaskWorkspaceArchiveManifest, 'size'> & { size: string; consistent: boolean; runId: string; epoch: number; operationId: string }>(`
+    SELECT archive."archiveId" AS id, archive.size, archive.sha256, archive."headSha",
+      archive."sourceRunId" AS "runId", archive."sourceEpoch" AS epoch, archive."sourceOperationId" AS "operationId",
+      COALESCE(archive.size=object.size AND archive.sha256=object.sha256 AND archive."headSha"=object."headSha", false) AS consistent
     FROM task_workspace_archives archive
+    LEFT JOIN task_workspace_archive_objects object ON object."scopeHash"=archive."scopeHash" AND object.id=archive."archiveId" AND object."deletedAt" IS NULL
     JOIN issues task ON task.id=archive."issueId" AND task."workspaceId"=archive."workspaceId" AND task."ownershipState"='bound'
     WHERE archive."ownerId"=$1 AND archive."workspaceId"=$2 AND archive."issueId"=$3 AND archive."repositoryKey"=$4`, [...scopeParts(scope)])
   if (!row) return null
+  if (!row.consistent) throw new Error('Task workspace archive metadata mismatch')
   const manifest = manifestSchema.parse({ ...row, size: Number(row.size) })
-  const source = await getArtifactObjectStream(taskWorkspaceArchiveKey(scope, manifest.id), signal)
+  const source = await getArtifactObjectStream(taskWorkspaceArchiveKey(scope, manifest.id), signal, 'task-workspaces')
   // The reader publishes its staged restore only after this stream finishes.
-  return { manifest, stream: verifiedArchive(source, manifest) }
+  return { manifest, source: { runId: row.runId, epoch: row.epoch, operationId: row.operationId }, stream: verifiedArchive(source, manifest) }
 }

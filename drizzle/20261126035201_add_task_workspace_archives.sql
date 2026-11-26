@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS task_workspace_archives (
   "archiveId" uuid NOT NULL,
   size bigint NOT NULL CHECK (size > 0),
   sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  "headSha" text NOT NULL CHECK ("headSha" ~ '^[0-9a-f]{40}$'),
   "sourceRunId" uuid NOT NULL,
   "sourceRunCreatedAt" timestamptz NOT NULL,
   "sourceEpoch" integer NOT NULL CHECK ("sourceEpoch" > 0),
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS task_workspace_archive_objects (
   id uuid NOT NULL,
   size bigint NOT NULL CHECK (size > 0),
   sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  "headSha" text NOT NULL CHECK ("headSha" ~ '^[0-9a-f]{40}$'),
   "expiresAt" timestamptz NOT NULL DEFAULT (now() + interval '1 day'),
   "deletedAt" timestamptz,
   PRIMARY KEY ("scopeHash", id)

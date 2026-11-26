@@ -363,6 +363,12 @@ export type SetupRecipe = z.infer<typeof setupRecipeSchema>
 
 export const REPO_ORIGIN_HEADER = "x-mikka-repo-origin-check"
 export const ENVIRONMENT_SNAPSHOT_HEADER = "x-mikka-environment-snapshot"
+export const PORTABLE_TASK_WORKSPACE_HEADER = "x-mikka-portable-task-workspace"
+export const portableTaskWorkspaceReceiptSchema = z.strictObject({
+  size: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  headSha: z.string().regex(/^[a-f0-9]{40}$/),
+})
 export const ENVIRONMENT_REPOSITORIES_HEADER = 'x-mikka-environment-repositories'
 export const PROJECT_ENVIRONMENT_HEADER = "x-mikka-project-environment"
 
@@ -474,6 +480,7 @@ export type RunKind = (typeof RUN_KINDS)[number]
 
 /** `POST /v1/devices/:deviceId/runs/:runId/claim`: what the daemon gets. */
 export const runAssignmentSchema = z.object({
+  portableTaskWorkspace: portableTaskWorkspaceReceiptSchema.optional(),
   /** The server handles native model observations without transitioning run state. */
   acceptsModelObservations: z.literal(true).optional(),
   runId: id,

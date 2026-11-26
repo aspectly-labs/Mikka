@@ -1409,11 +1409,18 @@ export class RunSupervisor {
     if (assignment.requireWorktreeContinuation && !entry.worktree && !continued)
       throw new CheckpointRecoveryError('Original worktree is unavailable and there is no usable recovery snapshot.')
     let usedEnvironmentSnapshot = false
+    let portableCheckoutBase: string | undefined
     const worktree =
       entry.worktree ??
       continued ??
       (await this.stage(runId, "worktree", async () => {
-        const start = await this.startPoint(runId, repo, assignment)
+        const requestedStart = await this.startPoint(runId, repo, assignment)
+        if (assignment.portableTaskWorkspace) {
+          portableCheckoutBase = await this.deps.worktrees.portableWorktreeBase(repo.path, requestedStart, assignment.portableTaskWorkspace.headSha)
+          if (portableCheckoutBase !== assignment.portableTaskWorkspace.headSha)
+            log.info({ runId }, 'Restoring archived task files on the current authorized checkout')
+        }
+        const start = portableCheckoutBase ?? requestedStart
         if (assignment.projectEnvironment?.fromSnapshot && !runPolicy(assignment.policy).readOnly &&
           (!startupDirectory || !assignment.projectEnvironment.setup?.command || assignment.projectEnvironment.setup.maintenance?.trim())) {
           const prepared = await this.deps.worktrees.createFromEnvironmentSnapshot(runId, repo.path, start, Boolean(assignment.projectEnvironment.setup?.maintenance?.trim()))
@@ -1424,6 +1431,12 @@ export class RunSupervisor {
         }
         return this.deps.worktrees.create(runId, repo.path, start)
       }))
+    const restoredPortable = !entry.worktree && Boolean(assignment.portableTaskWorkspace)
+    if (restoredPortable && assignment.portableTaskWorkspace) {
+      if (!portableCheckoutBase || continued || assignment.requireSessionResume || assignment.resumeFrom || fixedCandidateCheck(assignment))
+        throw new CheckpointRecoveryError('Portable task workspace conflicts with the original worktree or recovery snapshot.')
+      await this.deps.worktrees.restorePortableWorkspace(runId, assignment.portableTaskWorkspace, portableCheckoutBase)
+    }
     if (startupDirectory) {
       if (!this.deps.prepareEnvironmentRepositories) throw new Error('Environment repository checkout unavailable')
       run.removeEnvironmentRepositories = await this.deps.prepareEnvironmentRepositories(assignment, join(worktree, startupDirectory), preparationSignal)
@@ -1439,7 +1452,7 @@ export class RunSupervisor {
           : undefined) ?? (await headCommit(repo.path, worktree))
       // Taking over from a machine that went offline: its saved work goes
       // on as uncommitted changes, before setup sees the tree.
-      if (!continued && assignment.resumeFrom) {
+      if (!continued && !restoredPortable && assignment.resumeFrom) {
         const applied = await applyCheckpoint({
           repoPath: repo.path,
           worktree,
@@ -1474,6 +1487,7 @@ export class RunSupervisor {
       }
       log.info({ worktree, setup }, "worktree ready")
       this.deps.journal.update(runId, { worktree, baseCommit })
+      if (restoredPortable) await this.deps.worktrees.clearPortableWorkspace(runId)
     }
     if (this.stopping) return
 

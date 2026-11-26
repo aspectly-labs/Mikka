@@ -23,7 +23,7 @@
     "daemon": "tsx bin/mikka.ts daemon",
     "dev": "tsx watch bin/mikka.ts daemon --dev --server memory",
     "typecheck": "tsgo --noEmit -p tsconfig.json",
-    "test": "vitest run && pnpm test:mailbox-cli && pnpm test:repository-identity && pnpm test:github-credentials && pnpm test:trusted-endpoint",
+    "test": "vitest run && node --test test/task-workspace-archive.node-test.mjs && pnpm test:mailbox-cli && pnpm test:repository-identity && pnpm test:github-credentials && pnpm test:trusted-endpoint",
     "test:native-mcp-cli": "node --import tsx --test test/native-mcp-cli.node-test.ts",
     "test:mailbox-cli": "node --import tsx --test --test-timeout=60000 test/run-mailbox.node-test.ts test/codex-mailbox-resume.node-test.ts",
     "codex:types": "codex app-server generate-ts --out \"${TMPDIR:-/tmp}/mikka-codex-types\" && echo \"Generated; compare v2/ with src/adapters/codex-protocol.ts\"",
