@@ -1,4 +1,5 @@
 import 'server-only'
+import { isCloudEdition } from '@/lib/edition'
 import { randomUUID } from 'node:crypto'
 import { start } from 'workflow/api'
 import { environmentSnapshotWorkflow } from '@/workflows/environment-snapshot/workflow'
@@ -68,16 +69,16 @@ export async function snapshotConfiguration(reader: Reader, input: SnapshotInput
 async function hasRepositoryAccess(
   owner: string,
   repositories: { clone: string; key: string }[],
-  ids: Record<string, string>,
+  ids?: Record<string, string>,
 ) {
   const keys = repositories.filter((repo) => repo.clone === 'start').map((repo) => repo.key)
-  if (keys.length !== Object.keys(ids).length || keys.some((key) => !Object.hasOwn(ids, key))) return false
+  if (ids && (keys.length !== Object.keys(ids).length || keys.some((key) => !Object.hasOwn(ids, key)))) return false
   // Bound parallel GitHub requests when an environment contains many startup repos.
   for (let index = 0; index < keys.length; index += 4) {
     const allowed = await Promise.all(
       keys.slice(index, index + 4).map(async (key) => {
         const access = await githubRepositoryReadCredential(owner, key).catch(() => null)
-        return access !== null && access.repository.id === ids[key]
+        return access !== null && (!ids || access.repository.id === ids[key])
       }),
     )
     if (allowed.includes(false)) return false
@@ -124,7 +125,43 @@ export async function readEnvironmentSnapshot(
   }
 }
 
-export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotInput) {
+// Reserve only after resolving actor, current environment policy and repository grants.
+export async function reserveEnvironmentBuild(seed: SnapshotSeed, trigger: 'save' | 'manual') {
+  const { workspaceId, environmentId, revision, userId, templateKind, templateId, workerSha } = seed
+  const scope = environmentSnapshotScope()
+  const client = await workspacePool.connect()
+  type Claim = { id: string; enqueue: boolean }
+  try {
+    await client.query('BEGIN')
+    const key = JSON.stringify(['environment-build-request', workspaceId, environmentId, revision, scope, templateKind, templateId, workerSha])
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [key])
+    const params = [workspaceId, environmentId, revision, scope, templateKind, templateId, workerSha]
+    const result = await client.query<Claim>(`SELECT id, (state='building' AND "enqueuedAt" IS NULL) AS enqueue
+      FROM environment_snapshots WHERE "workspaceId"=$1 AND "environmentId"=$2 AND revision=$3
+        AND "providerScope"=$4 AND "templateKind"=$5 AND "templateId"=$6 AND "workerSha"=$7
+        AND state IN ('building','ready') AND "expiresAt">now() ORDER BY "createdAt" DESC LIMIT 1`, params)
+    let claim = result.rows[0]
+    if (!claim) {
+      claim = { id: randomUUID(), enqueue: true }
+      // Abandon an expired in-flight claim without erasing its provider cleanup receipt.
+      await client.query(`UPDATE environment_snapshots SET state='outdated' WHERE "workspaceId"=$1 AND "environmentId"=$2
+        AND revision=$3 AND "providerScope"=$4 AND "templateKind"=$5 AND "templateId"=$6
+        AND "workerSha"=$7 AND state='building' AND "expiresAt"<=now()`, params)
+      await client.query(`INSERT INTO environment_snapshots
+        ("workspaceId","environmentId",revision,"providerScope","templateKind","templateId","workerSha",id,"requestedBy",state)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'building')`, [...params,claim.id,userId])
+      await client.query(`INSERT INTO workspace_resource_events (id,"workspaceId","actorId",kind,"resourceId",detail)
+        VALUES($1,$2,$3,'environment.snapshot_build_requested',$4,$5::jsonb)`,
+        [randomUUID(),workspaceId,userId,environmentId,JSON.stringify({ buildId:claim.id,revision,templateKind,trigger,
+          funding:isCloudEdition() ? 'mikka_platform' : 'self_hosted_installation' })])
+    }
+    await client.query('COMMIT')
+    return claim
+  } catch (error) { await client.query('ROLLBACK'); throw error }
+  finally { client.release() }
+}
+
+export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotInput, trigger: 'save' | 'manual' = 'manual') {
   const input = snapshotInput.parse(raw)
   if (!(await enabled(reader)) || !configuredProvider()) throw new ActionFailureError('projectEnvironmentUnavailable')
   const { environment, eligible } = await snapshotConfiguration(reader, input)
@@ -133,28 +170,15 @@ export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotIn
   const templateId = taskTemplate(input.templateKind === 'claude' ? 'claude_code' : 'codex')
   const workerSha = process.env.MIKKA_CLOUD_WORKER_SHA
   if (!workerSha || !/^[a-f0-9]{40}$/.test(workerSha)) throw new ActionFailureError('projectEnvironmentUnavailable')
-  const id = randomUUID()
-  const claim = await workspacePool.query<{ id: string }>(
-    `INSERT INTO environment_snapshots
-    (id,"workspaceId","environmentId",revision,"requestedBy","templateKind","templateId","workerSha","providerScope",state)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'building')
-    ON CONFLICT ("workspaceId","environmentId",revision,"providerScope","templateKind","templateId","workerSha") WHERE state='building'
-    DO UPDATE SET revision=excluded.revision RETURNING id`,
-    [
-      id,
-      input.workspaceId,
-      input.environmentId,
-      environment.revision,
-      userOf(reader),
-      input.templateKind,
-      templateId,
-      workerSha,
-      environmentSnapshotScope(),
-    ],
-  )
-  // Re-enqueue on repeats: a process can stop after the insert, before the workflow starts.
-  await start(environmentSnapshotWorkflow, [claim.rows[0].id])
-  return { id: claim.rows[0].id, revision: environment.revision }
+  if (!(await hasRepositoryAccess(userOf(reader), environment.repositories))) throw new ActionFailureError('projectEnvironmentUnavailable')
+  const claim = await reserveEnvironmentBuild({ ...input, revision:environment.revision, userId:userOf(reader),templateId,workerSha },trigger)
+  if (claim.enqueue) {
+    // A crash between reservation and enqueue is recoverable. Duplicate deliveries
+    // serialize under the build lock and share the provider idempotency key.
+    await start(environmentSnapshotWorkflow, [claim.id])
+    await workspacePool.query('UPDATE environment_snapshots SET "enqueuedAt"=COALESCE("enqueuedAt",now()) WHERE id=$1',[claim.id])
+  }
+  return { id: claim.id, revision: environment.revision }
 }
 
 export async function buildSnapshotsOnSave(reader: Reader, workspaceId: string, environmentId: string) {
@@ -172,7 +196,7 @@ export async function buildSnapshotsOnSave(reader: Reader, workspaceId: string, 
           : []
   for (const templateKind of kinds) {
     const input = { workspaceId, environmentId, templateKind }
-    if ((await snapshotConfiguration(reader, input)).eligible) await requestEnvironmentSnapshot(reader, input)
+    if ((await snapshotConfiguration(reader, input)).eligible) await requestEnvironmentSnapshot(reader, input, 'save')
   }
 }
 

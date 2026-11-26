@@ -179,6 +179,11 @@ export async function buildEnvironmentSnapshot(
     }
     let providerId: string | undefined
     let sandboxId = row.sandboxId
+    // One platform-funded build VM per workspace at a time. A queued older
+    // revision rechecks current policy and revision before doing provider I/O.
+    const slot = await client.query<{ held:boolean }>('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS held',
+      [JSON.stringify(['environment-build-slot',row.providerScope,row.workspaceId])])
+    if (!slot.rows[0].held) return { retryAt: new Date(Date.now() + 60_000).toISOString() }
     try {
       const environment = await allowed(row)
       if (!row.requestedBy || !environment || row.expiresAt <= new Date()) {
@@ -194,7 +199,7 @@ export async function buildEnvironmentSnapshot(
       providerId = recovered[0]?.snapshotId
       if (!providerId) {
         stage('allocate')
-        await client.query('UPDATE environment_snapshots SET "allocationAttempted"=true,"logTail"=$2 WHERE id=$1', [
+        await client.query('UPDATE environment_snapshots SET "allocationAttempted"=true,"allocationStartedAt"=COALESCE("allocationStartedAt",now()),"logTail"=$2 WHERE id=$1', [
           id,
           progress.join('\n'),
         ])
@@ -202,7 +207,7 @@ export async function buildEnvironmentSnapshot(
           ...connection,
           idempotencyKey: id,
           timeoutMs: 15 * 60_000,
-          metadata: { application: 'mikka-environment-build', buildId: id },
+          metadata: { application: 'mikka-environment-build', buildId: id, workspaceId: row.workspaceId },
         })
         sandboxId = machine.sandboxId
         await client.query('UPDATE environment_snapshots SET "sandboxId"=$2 WHERE id=$1', [id, sandboxId])
@@ -322,11 +327,15 @@ export async function buildEnvironmentSnapshot(
         providerId ?? null,
       ])
     } finally {
-      if (sandboxId) await Sandbox.kill(sandboxId, options(row.providerScope))
+      if (sandboxId) {
+        await Sandbox.kill(sandboxId, options(row.providerScope))
+        await client.query('UPDATE environment_snapshots SET "buildFinishedAt"=COALESCE("buildFinishedAt",now()) WHERE id=$1', [id])
+      }
     }
     return row
   })
   if (!result) return null
+  if ('retryAt' in result) return result
   await finishSuperseded(result)
   return result.expiresAt.toISOString()
 }

@@ -279,13 +279,14 @@ test(
         variables: { BUILD_LABEL: 'sdk' },
       },
     })
-    const build = async () => {
-      const id = randomUUID()
-      await db.query(
-        `INSERT INTO environment_snapshots(id,"workspaceId","environmentId",revision,"requestedBy","providerScope","templateKind","templateId","workerSha",state)
-      VALUES($1,$2,$3,$4,$5,$6,'codex','codex',$7,'building')`,
-        [id, ws.id, environmentId, revision, user, environmentSnapshotScope(), sha],
-      )
+    const { reserveEnvironmentBuild } = await import('../lib/project-resources/environment-snapshots')
+    const seed = { workspaceId:ws.id,environmentId,revision,userId:user,templateId:'codex',templateKind:'codex' as const,workerSha:sha }
+    const first = await Promise.all([reserveEnvironmentBuild(seed,'manual'),reserveEnvironmentBuild(seed,'save')])
+    assert.equal(first[0].id,first[1].id)
+    const audit = await db.query("SELECT detail FROM workspace_resource_events WHERE kind='environment.snapshot_build_requested' AND \"resourceId\"=$1", [environmentId])
+    assert.equal(audit.rowCount,1)
+    assert.equal(audit.rows[0].detail.funding,'self_hosted_installation')
+    const build = async (id:string) => {
       await buildEnvironmentSnapshot(id, async (actor, repository) => {
         assert.equal(actor, user)
         assert.equal(repository, key)
@@ -295,7 +296,8 @@ test(
         await db.query('SELECT state,"providerId","sandboxId","logTail" FROM environment_snapshots WHERE id=$1', [id])
       ).rows[0]
     }
-    const ready = await build()
+    const ready = await build(first[0].id)
+    assert.deepEqual(await reserveEnvironmentBuild(seed,'manual'), {id:first[0].id,enqueue:false})
     assert.equal(ready.state, 'ready', ready.logTail)
     assert.equal(services.e2b.sandboxes.get(ready.sandboxId).state, 'killed')
     const task = await Sandbox.create(ready.providerId, services.e2bOptions)
@@ -306,7 +308,10 @@ test(
     assert.equal(await second.files.read('/fixture/dependency'), 'prepared')
     await Promise.all([task.kill(), second.kill()])
     services.e2b.state.filesystemSnapshotsEnabled = false
-    const failed = await build()
+    const retry = randomUUID()
+    await db.query(`INSERT INTO environment_snapshots(id,"workspaceId","environmentId",revision,"requestedBy","providerScope","templateKind","templateId","workerSha",state)
+       VALUES($1,$2,$3,$4,$5,$6,'codex','codex',$7,'building')`,[retry,ws.id,environmentId,revision,user,environmentSnapshotScope(),sha])
+    const failed = await build(retry)
     assert.equal(failed.state, 'failed')
     assert.match(failed.logTail, /snapshot/)
     assert.equal(services.e2b.sandboxes.get(failed.sandboxId).state, 'killed')

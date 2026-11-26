@@ -3,9 +3,13 @@ import { build, expire } from './steps'
 
 export async function environmentSnapshotWorkflow(id: string) {
   'use workflow'
-  const expiresAt = await build(id)
-  if (expiresAt) {
-    await sleep(new Date(expiresAt))
+  let result = await build(id)
+  while (result && typeof result === 'object') {
+    await sleep(new Date(result.retryAt))
+    result = await build(id)
+  }
+  if (result) {
+    await sleep(new Date(result))
     await expire(id)
   }
 }
