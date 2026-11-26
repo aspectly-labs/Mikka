@@ -216,6 +216,34 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     const id = await enqueue(await seedIssue(pool, ownerId, workspaceId))
     assert.equal((await row(id)).snapshotId, 'cloudflare-task-v1')
   })
+  await t.test('Factory handoff publishes the previous stage archive before switching providers', async () => {
+    const issueId = await seedIssue(pool, ownerId, workspaceId)
+    const { environment } = await seedRunProjectResources(pool, { ownerId, workspaceId, issueId, repositoryKey, runtime: 'cloud', harness: 'codex' })
+    assert.ok(environment)
+    await assignTaskEnvironment(pool, ownerId, workspaceId, [issueId], environment.id)
+    variant('e2b')
+    const first = await enqueue(issueId)
+    await ensureThreadMachine(pool, actor, first)
+    await daemon(await row(first), 'e2b', 'write', null)
+    await pool.query(`UPDATE agent_runs SET status='succeeded',report='{"safePoint":{"session":"exited"}}',"startedAt"=now(),"finishedAt"=now() WHERE id=$1`, [first])
+    assert.equal((await sourceAt(issueId)).rowCount, 0)
+
+    variant('cloudflare')
+    const next = await enqueue(issueId)
+    await pool.query(`WITH task AS (
+      INSERT INTO factory_tasks (id,"userId","workspaceId","botId","issueId","sourceEventId",route,stage,status,"attemptId",reason)
+      VALUES ($1,$2,$3,$4,$5,$6,'{}','execute','running',$7,'Factory handoff fixture') RETURNING id
+    ) INSERT INTO factory_attempts (id,"taskId",stage,ordinal,position,status,"runId",reason)
+      SELECT $7, id, 'execute', 1, 1, 'running', $8, 'Factory handoff fixture' FROM task`,
+    [randomUUID(), ownerId, workspaceId, botId, issueId, randomUUID(), randomUUID(), next])
+    const { handoffFactoryCloudStage } = await import('../lib/factory/cloud-stage-handoff')
+    assert.equal(await handoffFactoryCloudStage(pool, actor, first, next), true)
+    const pointer = (await sourceAt(issueId)).rows[0]
+    assert.equal(pointer.sourceRunId, first)
+    const restored = await row(next)
+    assert.equal(restored.state, 'running')
+    assert.deepEqual(restored.lifecycle.portableWorkspaceRestore, { size: Number(pointer.size), sha256: pointer.sha256, headSha: pointer.headSha })
+  })
   for (const [from, to] of [['e2b', 'cloudflare'], ['cloudflare', 'e2b']] as const) {
     await t.test(from + ' to ' + to, async () => {
       const issueId = await seedIssue(pool, ownerId, workspaceId)
