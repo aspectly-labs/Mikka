@@ -255,7 +255,7 @@ test('native gateway preserves safe upstream refusal status and protocol error t
     const { calls, dependencies } = harness({
       verify: async () => selected,
       subscription: (grant, protocol, operation, body, request) => forwardNativeSubscription(grant, protocol, operation, body, request, {
-        nativeRun: async () => ({ bindingId: 'fixture', ownerId: 'alice', workspaceId: 'fixture', consumerId: 'fixture', runId: grant.runId }),
+        nativeRun: async () => ({ bindingId: 'fixture', ownerId: 'alice', workspaceId: 'fixture', consumerId: 'fixture', execution: 'native', runId: grant.runId }),
         nativeRequest: async () => { throw new WorkerRefusal(code) },
       }),
     })

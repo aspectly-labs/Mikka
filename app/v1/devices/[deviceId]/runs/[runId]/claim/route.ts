@@ -236,8 +236,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     return RouteResponse.json({ error: 'Subscription requires a broker-enabled hosted runner.' }, { status: 409 })
   }
   if (subscription && (!receivesRunCredentials || request.headers.get(SUBSCRIPTION_GATEWAY_HEADER) !== '1')) {
+    // Released daemons decode upgrade metadata through the 409 claim contract.
     await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
-    return RouteResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 428 })
+    return RouteResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
   }
   if (device.kind === 'local' && (!repo.remoteUrl || !localExecutionHarnesses(device.harnesses).includes(harness))) return RouteResponse.json({ error: 'Repository or execution harness unavailable.' }, { status: 409 })
   if ((harness === 'codex' || harness === 'claude_code') && !device.harnesses.some(info => info.harness === harness && info.installed && info.toolApproval === true)) return RouteResponse.json({ error: 'Run approval capability unavailable.' }, { status: 409 })

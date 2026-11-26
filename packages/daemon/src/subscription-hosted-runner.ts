@@ -116,7 +116,9 @@ export async function createHostedBotRunner(host: {
       decisionCatalogue: options.mcp?.decisionCatalogue }
     const candidate = assignment.harness === 'codex' ? host.anonymousCodexCandidate : host.anonymousClaudeCandidate
     const offered = candidate?.runId === assignment.runId ? candidate : undefined
-    const anonymous = offered && offered.state !== 'closed' && offered.matchesFresh(fresh) &&
+    // The bootstrap spare fixes OAuth at initialization. A gateway run starts
+    // its own spare with the capability delivered by the authorized claim.
+    const anonymous = !assignment.modelCredential && offered && offered.state !== 'closed' && offered.matchesFresh(fresh) &&
       !options.serviceTier && !assignment.serviceTier &&
       !assignment.requireSessionResume && !assignment.continuesRunId && !assignment.resumeSessionId && !options.continueSession &&
       Object.entries(assignment.taskEnv ?? {}).every(([key, value]) => key === 'CLOUD_STARTUP_TIMING' && value === '1') &&

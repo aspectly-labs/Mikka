@@ -1441,8 +1441,8 @@ export class Daemon {
   }
 
   /**
-   * Subscription runs on this device: the server hands each run its
-   * short-lived access token, never the refresh grant (subscription-local-runner.ts).
+   * Subscription runs on this device receive the run-scoped Mikka model
+   * gateway credential (subscription-local-runner.ts).
    */
   private localSubscriptions() {
     const options = this.adapterOptions()

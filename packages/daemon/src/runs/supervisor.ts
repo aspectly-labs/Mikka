@@ -1352,6 +1352,7 @@ export class RunSupervisor {
       && !entry.sessionId && !entry.worktree && !assignment.continuesRunId && !assignment.resumeSessionId
       && !assignment.requireSessionResume && !assignment.resumeFrom
       && (!assignment.github || Boolean(assignment.github.token))
+      && (!assignment.mcp || assignment.mcp.decisionCatalogue !== undefined)
       && (assignment.mcp?.mailbox !== true || assignment.mcp.mailboxCatalogue !== undefined)
     if (prewarm) {
       const abort = run.prewarmAbort = new AbortController()
