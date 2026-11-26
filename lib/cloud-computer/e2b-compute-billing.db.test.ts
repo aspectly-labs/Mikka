@@ -42,9 +42,13 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   workspacePool.options.max = 1
   workspacePool.options.connectionTimeoutMillis = 5_000
   t.after(() => Promise.allSettled([pool.end(), workspacePool.end()]))
-  const { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, verifyE2BAllocation } = await import('./e2b-compute-billing')
+  const { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, readPaidE2BTimeout, withE2BProviderTime, verifyE2BAllocation } = await import('./e2b-compute-billing')
   const operationId = randomUUID()
   const sandboxId = `sandbox-${operationId}`
+  const observe = { providerScope: 'team:fixture', inspect: async () => ({
+    sandboxId, state: 'running', endAt: new Date(Date.now() + 30_000), cpuCount: 2, memoryMB: 8192,
+  }) as Awaited<ReturnType<typeof Sandbox.getInfo>> }
+  const resume = () => withE2BProviderTime(ownerId, sandboxId, 900_000, observe, async timeoutMs => timeoutMs)
   const create = () => e2bCreationTimeout(ownerId, 'team:fixture', operationId, templates.codex.templateId,
     { workspaceId, runId }, 900_000)
   const receipts = async () => (await fixture.query(`SELECT id,model,state,"costMicroUsd"::int AS cost,"usageRunId" AS "runId",
@@ -75,7 +79,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.deepEqual(await receipts(), [expected(0, runId)])
 
   await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()+interval '30 seconds' WHERE "operationId"=$1`, [operationId])
-  assert.ok(await e2bSandboxTimeout(ownerId, sandboxId, 900_000, false) < 30_000)
+  assert.ok(await readPaidE2BTimeout(ownerId, sandboxId, 900_000) < 30_000)
   assert.deepEqual(await receipts(), [expected(0, runId)])
   await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('sandbox',$1,$2,'team:fixture')`, [sandboxId, ownerId])
   await fixture.query(`UPDATE agent_runs SET status='running',"leaseExpiresAt"=now()+interval '10 minutes' WHERE id=$1`, [runId])
@@ -93,12 +97,12 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     lifecycleInfo.mock.restore()
     lifecycleTimeout.mock.restore()
   }
-  const renewed = await Promise.all(Array.from({ length: 4 }, () => e2bSandboxTimeout(ownerId, sandboxId, 900_000)))
+  const renewed = await Promise.all(Array.from({ length: 4 }, () => resume()))
   assert.ok(renewed.every(ms => ms > 300_000 && ms <= 330_000))
   assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId)])
 
   await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()-interval '1 second' WHERE "operationId"=$1`, [operationId])
-  await assert.rejects(e2bSandboxTimeout(ownerId, sandboxId, 900_000), { code: 'e2b_limit_reached' })
+  await assert.rejects(resume(), { code: 'e2b_limit_reached' })
   assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId)])
 
   const successorId = await seedRun(fixture, { userId: ownerId, agentId, workspaceId, status: 'queued' })
@@ -108,9 +112,9 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     "pendingAt"=now(),"pendingRunId"=$2 WHERE "operationId"=$1`, [operationId, runId])
   await fixture.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,2,'purchased','test',$3)`,
     [randomUUID(), workspaceId, randomUUID()])
-  assert.ok(await e2bSandboxTimeout(ownerId, sandboxId, 900_000) < 30_000)
+  assert.ok(await resume() < 30_000)
   assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId)])
-  assert.ok(await e2bSandboxTimeout(ownerId, sandboxId, 900_000) > 300_000)
+  assert.ok(await resume() > 300_000)
   assert.deepEqual(await receipts(), [expected(0, runId), expected(1, runId), expected(2, successorId)])
   await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=NULL WHERE id=$1', [runId])
 
@@ -142,7 +146,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
       try {
         await Promise.race([settled.promise, maintenance.then(() => assert.fail('Renewal did not reach its fence'))])
         assert.equal((await receipts()).find(row => row.id === expected(index, successorId).id)?.state, 'settled')
-        if (useConcurrently) assert.ok(await e2bSandboxTimeout(ownerId, sandboxId, 900_000) > 300_000)
+        if (useConcurrently) assert.ok(await resume() > 300_000)
         await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=now() WHERE id=$1', [successorId])
       } finally {
         proceed.resolve()
@@ -257,7 +261,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   await assert.rejects(createPrepaidE2B(ownerId, refusedOperation, async () => { throw refused }), error => error === refused)
   assert.equal(await e2bCanReplaceOperation(fixture, ownerId, refusedOperation), false)
 
-  const requests: { key: string | undefined; body: string }[] = []
+  const requests: { key: string | undefined; body: string; path: string | undefined }[] = []
   const discovered: URL[] = []
   const originalApiUrl = process.env.E2B_API_URL
   t.after(() => {
@@ -274,7 +278,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     }
     let body = ''
     for await (const chunk of req) body += chunk
-    requests.push({ key: req.headers['idempotency-key'] as string | undefined, body })
+    requests.push({ key: req.headers['idempotency-key'] as string | undefined, body, path: req.url })
     res.writeHead(responseStatus, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ code: responseStatus,
       error_code: responseStatus === 422 ? 'idempotency_outcome_unknown' : 'denied',
@@ -297,6 +301,34 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     await assert.rejects(createOnWire(denied))
     assert.equal(await e2bCanReplaceOperation(fixture, ownerId, denied), true)
   }
+  // The actual normal reconnect runs the shared durable intent around
+  // the SDK's hosted control-plane POST. Policy-only never calls it.
+  process.env.E2B_API_URL = `http://127.0.0.1:${address.port}`
+  const { connectComputer, PolicySandboxUnavailable } = await import('../computer/e2b-provider')
+  const connectInfo = t.mock.method(Sandbox, 'getInfo', observe.inspect)
+  try {
+    const beforePolicy = requests.length
+    await assert.rejects(connectComputer(workspaceId, sandboxId, undefined, undefined, true), PolicySandboxUnavailable)
+    assert.equal(requests.length, beforePolicy)
+    for (const [index, status] of [[9, 403], [10, 503]] as const) {
+      responseStatus = status
+      await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=now()+interval '30 seconds' WHERE "operationId"=$1`, [operationId])
+      await fixture.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,2,'purchased','test',$3)`,
+        [randomUUID(), workspaceId, randomUUID()])
+      await assert.rejects(connectComputer(workspaceId, sandboxId))
+      assert.equal(requests.at(-1)?.path, `/v2/sandboxes/${sandboxId}/connect`)
+      assert.ok(JSON.parse(requests.at(-1)!.body).timeout > 300)
+      assert.deepEqual(await remainingReceipt(index), status === 403
+        ? { ...expected(index, successorId), state: 'failed', cost: 0 }
+        : expected(index, successorId))
+    }
+    const sent = requests.length
+    await assert.rejects(connectComputer(workspaceId, sandboxId), { code: 'e2b_limit_reached' })
+    assert.equal(requests.length, sent)
+  } finally {
+    connectInfo.mock.restore()
+  }
+
   const missingOperation = randomUUID()
   responseStatus = 422
   await assert.rejects(createOnWire(missingOperation))
@@ -342,15 +374,15 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   await fixture.query(`UPDATE cloud_machines SET "sandboxId"=$3,"operationId"=$4,state='running' WHERE "workspaceId"=$1 AND "ownerId"=$2`,
     [workspaceId, ownerId, existingSandboxId, randomUUID()])
   await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('sandbox',$1,$2,'team:fixture')`, [existingSandboxId, ownerId])
-  const existing = await e2bSandboxTimeout(ownerId, existingSandboxId, 900_000, true, {
+  const existing = await withE2BProviderTime(ownerId, existingSandboxId, 900_000, {
     providerScope: 'team:fixture',
     inspect: async () => ({ sandboxId: existingSandboxId, templateId: 'retired-desktop', cpuCount: 2, memoryMB: 8192 }) as Awaited<ReturnType<typeof Sandbox.getInfo>>,
-  })
+  }, async timeoutMs => timeoutMs)
   assert.ok(existing > 270_000 && existing <= 300_000)
 
   const afterMismatch = await receipts()
   process.env.MIKKA_EDITION = 'community'
   assert.equal(await e2bCreationTimeout(ownerId, 'personal', randomUUID(), 'codex', { workspaceId, runId }, 900_000), 900_000)
-  assert.equal(await e2bSandboxTimeout(ownerId, sandboxId, 900_000), 900_000)
+  assert.equal(await resume(), 900_000)
   assert.deepEqual(await receipts(), afterMismatch)
 })

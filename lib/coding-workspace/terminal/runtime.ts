@@ -18,7 +18,8 @@ const INGRESS = '/opt/mikka/runtime/ingress-v1/guard.py'
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
 async function options(ownerId: string, sandboxId: string, signal?: AbortSignal) {
-  return { apiKey: (await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey,
+  const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
+  return { apiKey: account.apiKey, providerScope: account.scope,
     proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy, requestTimeoutMs: 15_000, retries: 0, signal }
 }
 
@@ -119,7 +120,13 @@ export async function prepareTerminal(scope: TaskReviewAuthority, signal?: Abort
     let current = await health(origin, key, signal)
     // Only opening/reconnecting performs this root check. Input/resize/close
     // keep the existing data plane and never issue a per-command SDK RPC.
-    const sandbox = await withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, { ...config, timeoutMs: 5 * 60_000 }))
+    const { withE2BProviderTime, E2B_TIMEOUT_REQUEST_BUDGET_MS } = await import('../../cloud-computer/e2b-compute-billing')
+    const sandbox = await withE2BProviderTime(scope.ownerId, scope.sandboxId, 5 * 60_000, {
+      providerScope: config.providerScope,
+      inspect: () => withE2BErrors(scope.ownerId, false, () => Sandbox.getInfo(scope.sandboxId, config)),
+    }, timeoutMs => withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, {
+      ...config, timeoutMs, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS,
+    })))
     // The review egress guard is a task-review runtime; thread machines are
     // not required to carry it.
     if (!scope.threadTerminal) await verifyRuntime(sandbox, signal)

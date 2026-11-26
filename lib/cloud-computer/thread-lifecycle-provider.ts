@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg'
 import 'server-only'
-import { createPrepaidE2B, releaseE2BKeepAlivePayment, useE2BKeepAlivePayment, e2bKeepAliveDispatchAllowed, prepareE2BKeepAliveDispatch, type KeepAlivePayment, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, verifyE2BAllocation, e2bSandboxTimeout, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
+import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, verifyE2BAllocation,
+  prepareE2BProviderTime, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
 import { bindE2BResource, e2bCreateAccount, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { environmentSnapshotScope, withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -71,29 +72,19 @@ export const threadLifecycleProvider = {
   async prepareKeepAlive(sandboxId: string, ownerId: string, timeoutMs: number, renew = true) {
     const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
     const prepared = options(account.apiKey)
-    const payment: KeepAlivePayment = {}
-    const paidMs = await e2bSandboxTimeout(ownerId, sandboxId, timeoutMs, renew, { providerScope: account.scope,
-      inspect: async () => {
-        const info = await withE2BErrors(ownerId, false, () => Sandbox.getInfo(sandboxId, prepared))
-        payment.baselineDeadline = info.endAt
-        return info
-      } }, payment).catch((error: unknown) => {
-      if (!renew && error instanceof E2BKeyError && error.code === 'e2b_limit_reached') return 0
-      throw error
-    })
-    const deadline = Date.now() + paidMs
-    // The lifecycle holds the run and machine locks while invoking this
-    // provider-only closure. Account lookup and settled billing are complete.
+    const intent = await prepareE2BProviderTime(ownerId, sandboxId, timeoutMs, {
+      providerScope: account.scope,
+      inspect: () => withE2BErrors(ownerId, false, () => Sandbox.getInfo(sandboxId, prepared)),
+    }, renew)
     return {
-      begin: () => prepareE2BKeepAliveDispatch(ownerId, payment),
+      begin: intent.begin,
       async apply(client: PoolClient) {
-        const remaining = Math.floor((deadline - Date.now()) / 1_000) * 1_000
-        if (remaining < 1 || !await e2bKeepAliveDispatchAllowed(client, ownerId, payment)) return null
-        await Sandbox.setTimeout(sandboxId, remaining, { ...prepared, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0 })
-        await useE2BKeepAlivePayment(client, ownerId, payment, true)
-        return deadline
+        const applied = await intent.apply(client, duration => Sandbox.setTimeout(sandboxId, duration, {
+          ...prepared, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+        }))
+        return applied?.deadline ?? null
       },
-      cancel: () => releaseE2BKeepAlivePayment(ownerId, payment),
+      cancel: intent.cancel,
     }
   },
   /** Snapshot the task's filesystem. The sandbox may be left paused by E2B;

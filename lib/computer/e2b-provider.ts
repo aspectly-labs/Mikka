@@ -1,5 +1,5 @@
 import 'server-only'
-import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
+import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, withE2BProviderTime, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { isCloudEdition } from '@/lib/edition'
 import { armDueTimerSoon } from '@/lib/due-timer'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
@@ -35,12 +35,12 @@ export async function connectComputer(workspaceId: string, id: string, signal?: 
   const request = runtimeRequestOptions(budget)
   const boundedSignal = signal && request.signal ? AbortSignal.any([signal, request.signal]) : signal ?? request.signal
   const inspect = () => withE2BErrors(owner, false, () => Sandbox.getInfo(id, { ...base, ...request, signal: boundedSignal }))
-  base.timeoutMs = await e2bSandboxTimeout(owner, id, base.timeoutMs, true, { providerScope: account.scope, inspect })
-  return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request,
-    ...(isCloudEdition() ? {
-      requestTimeoutMs: Math.min(E2B_TIMEOUT_REQUEST_BUDGET_MS, request.requestTimeoutMs ?? E2B_TIMEOUT_REQUEST_BUDGET_MS), retries: 0,
-    } : {}),
-    ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
+  return withE2BProviderTime(owner, id, base.timeoutMs, { providerScope: account.scope, inspect },
+    timeoutMs => withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, timeoutMs,
+      ...(isCloudEdition() ? {
+        requestTimeoutMs: Math.min(E2B_TIMEOUT_REQUEST_BUDGET_MS, request.requestTimeoutMs ?? E2B_TIMEOUT_REQUEST_BUDGET_MS), retries: 0,
+      } : {}),
+      ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) })))
 }
 
 export class PolicySandboxUnavailable extends Error {
@@ -93,8 +93,12 @@ export async function createComputer(workspaceId: string, operationId: string) {
   if (await e2bInitialAllocationNeedsRecovery(owner, operationId)) {
     const recovered = await reconcileInitialComputerAllocation(workspaceId, owner, operationId)
     if (!recovered) throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation recovery pending')
-    base.timeoutMs = await e2bSandboxTimeout(owner, recovered.sandboxId, lifetime)
-    return withE2BErrors(owner, false, () => Sandbox.connect(recovered.sandboxId, base))
+    const sandboxId = recovered.sandboxId
+    return withE2BProviderTime(owner, sandboxId, lifetime, { providerScope: account.scope,
+      inspect: () => withE2BErrors(owner, false, () => Sandbox.getInfo(sandboxId, base)) },
+    timeoutMs => withE2BErrors(owner, false, () => Sandbox.connect(sandboxId, {
+      ...base, timeoutMs, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+    })))
   }
   base.timeoutMs = await e2bCreationTimeout(owner, account.scope, operationId, template, { workspaceId, runId: null }, lifetime)
   if (isCloudEdition()) armDueTimerSoon('run-recovery')

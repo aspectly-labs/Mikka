@@ -1,7 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import { AuthenticationError, NotFoundError, Sandbox, SandboxNotFoundError, type SandboxApiOpts, type SandboxInfo } from 'e2b'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import { pool } from '@/lib/db'
 import { isCloudEdition } from '@/lib/edition'
 import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
@@ -18,7 +18,7 @@ const unavailable = () => new E2BKeyError('e2b_unavailable', 'E2B compute billin
 type Lease = { operationId: string; ownerId: string; workspaceId: string; providerScope: string;
   templateId: string; size: string; hourlyMicroUsd: number; chunkIndex: number }
 type Target = { workspaceId: string; runId: string | null }
-export type KeepAlivePayment = { operationId?: string; index?: number; activated?: number; dispatchId?: string; baselineDeadline?: Date }
+type KeepAlivePayment = { operationId?: string; index?: number; activated?: number; dispatchId?: string; baselineDeadline?: Date }
 
 async function paidTimeout(lease: Lease, target: Target, requestedMs: number, renew = true, creation = false, beforeRenew?: () => Promise<unknown>, payment?: KeepAlivePayment): Promise<number> {
   const claim = renew ? (await pool.query<{ chunkIndex: number; pendingRunId: string | null }>(
@@ -63,13 +63,11 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
   if (payment) {
     payment.operationId = lease.operationId
     payment.index = row.chunkIndex
-  } else if (!creation && !await useE2BKeepAlivePayment(pool, lease.ownerId, { operationId: lease.operationId, index: row.chunkIndex })) {
-    throw new E2BKeyError('e2b_limit_reached', 'The paid compute interval changed')
   }
   return seconds * 1_000
 }
 
-export async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment, observed = false) {
+async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment, observed = false) {
   if (!payment.operationId) return true
   const result = await query.query(`UPDATE e2b_compute_leases l SET "usedChunkIndex"=greatest("usedChunkIndex",$3),"renewalReviewAt"=NULL,
       "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL
@@ -83,8 +81,15 @@ export async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId
 /** Record possible external I/O before taking the APP lifecycle locks.
  * A rollback or a crashed process therefore cannot turn a sent request into
  * an apparently untouched prepayment. An expired ticket cannot send. */
-export async function prepareE2BKeepAliveDispatch(ownerId: string, payment: KeepAlivePayment) {
-  if (!payment.operationId || !payment.baselineDeadline) return
+async function prepareE2BKeepAliveDispatch(ownerId: string, payment: KeepAlivePayment, inspect: () => Promise<SandboxInfo>) {
+  if (!payment.operationId) return
+  if (!payment.baselineDeadline) {
+    const waiting = await pool.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3
+      AND "renewalReviewAt">clock_timestamp() AND "renewalDispatchId" IS NULL AND "usedChunkIndex"<$3`,
+    [payment.operationId, ownerId, payment.index])
+    if (!waiting.rowCount) return
+    payment.baselineDeadline = (await inspect()).endAt
+  }
   const id = randomUUID()
   payment.dispatchId = id
   const marked = await pool.query(`UPDATE e2b_compute_leases SET "renewalDispatchId"=$4,
@@ -96,7 +101,7 @@ export async function prepareE2BKeepAliveDispatch(ownerId: string, payment: Keep
   if (!marked.rowCount) payment.dispatchId = undefined
 }
 
-export async function e2bKeepAliveDispatchAllowed(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment) {
+async function e2bKeepAliveDispatchAllowed(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment) {
   if (!payment.operationId) return true
   const result = await query.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3
     AND "paidUntil">clock_timestamp() AND ($3=0 OR "usedChunkIndex">=$3
@@ -105,7 +110,7 @@ export async function e2bKeepAliveDispatchAllowed(query: Pick<Pool, 'query'>, ow
   return result.rowCount === 1
 }
 
-export async function releaseE2BKeepAlivePayment(ownerId: string, payment: KeepAlivePayment) {
+async function releaseE2BKeepAlivePayment(ownerId: string, payment: KeepAlivePayment) {
   if (!payment.operationId) return
   if (payment.dispatchId) await pool.query(`UPDATE e2b_compute_leases SET "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL
     WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND "renewalDispatchId"=$4`,
@@ -290,6 +295,14 @@ export async function e2bCanReplaceOperation(query: Pick<Pool, 'query'>, ownerId
   return existing.rowCount === 1
 }
 
+function definitiveE2BRefusal(error: unknown) {
+  const cause = error instanceof E2BKeyError && error.cause ? error.cause : error
+  const status = cause && typeof cause === 'object' ? (cause as { status?: unknown; statusCode?: unknown }).status
+    ?? (cause as { statusCode?: unknown }).statusCode : undefined
+  return cause instanceof AuthenticationError || cause instanceof NotFoundError || cause instanceof SandboxNotFoundError
+    || status === 400 || status === 401 || status === 403 || status === 404
+}
+
 /** Void only unambiguous invalid create requests. Lost responses keep the paid
  * operation so the existing provider reconciliation can safely look it up. */
 export async function createPrepaidE2B<T>(ownerId: string, operationId: string, create: () => Promise<T>): Promise<T> {
@@ -301,11 +314,7 @@ export async function createPrepaidE2B<T>(ownerId: string, operationId: string, 
   try {
     return await create()
   } catch (error) {
-    const cause = error instanceof E2BKeyError && error.cause ? error.cause : error
-    const status = cause && typeof cause === 'object' ? (cause as { status?: unknown; statusCode?: unknown }).status
-      ?? (cause as { statusCode?: unknown }).statusCode : undefined
-    if (attempt.creationAttempts === 1 && (cause instanceof AuthenticationError || cause instanceof NotFoundError || cause instanceof SandboxNotFoundError
-      || status === 400 || status === 401 || status === 403 || status === 404))
+    if (attempt.creationAttempts === 1 && definitiveE2BRefusal(error))
       await voidUnallocatedE2BCompute(ownerId, operationId, false, true)
     throw error
   }
@@ -346,7 +355,7 @@ async function adoptHostedE2BLease(ownerId: string, sandboxId: string, providerS
 
 type E2BObservation = { providerScope: string; inspect: () => Promise<SandboxInfo> }
 
-export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requestedMs: number, renew = true, observe?: E2BObservation, payment?: KeepAlivePayment): Promise<number> {
+async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requestedMs: number, renew = true, observe?: E2BObservation, payment?: KeepAlivePayment): Promise<number> {
   if (!isCloudEdition()) return requestedMs
   const readLease = async () => (await pool.query<Lease & { runId: string | null }>(`SELECT l.*,
     (SELECT "runId" FROM thread_machines WHERE "ownerId"=l."ownerId" AND "workspaceId"=l."workspaceId"
@@ -361,6 +370,56 @@ export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requ
   }
   if (!lease || observe && lease.providerScope !== observe.providerScope) throw unavailable()
   return paidTimeout(lease, lease, requestedMs, renew, false, inspected ? undefined : observe?.inspect, payment)
+}
+
+export function readPaidE2BTimeout(ownerId: string, sandboxId: string, requestedMs: number) {
+  return e2bSandboxTimeout(ownerId, sandboxId, requestedMs, false)
+}
+
+/** Shared accounting for every provider action that can extend a paid lease. */
+export async function prepareE2BProviderTime(ownerId: string, sandboxId: string, requestedMs: number, observe: E2BObservation, renew = true) {
+  const payment: KeepAlivePayment = {}
+  const inspect = async () => {
+    const info = await observe.inspect()
+    payment.baselineDeadline = info.endAt
+    return info
+  }
+  const paidMs = await e2bSandboxTimeout(ownerId, sandboxId, requestedMs, renew, { ...observe, inspect }, payment).catch((error: unknown) => {
+    if (!renew && error instanceof E2BKeyError && error.code === 'e2b_limit_reached') return 0
+    throw error
+  })
+  const deadline = Date.now() + paidMs
+  return {
+    begin: () => prepareE2BKeepAliveDispatch(ownerId, payment, inspect),
+    async apply<T>(query: Pick<PoolClient, 'query'>, send: (timeoutMs: number) => Promise<T>): Promise<{ result: T; deadline: number } | null> {
+      if (!await e2bKeepAliveDispatchAllowed(query, ownerId, payment)) return null
+      const remaining = Math.floor((deadline - Date.now()) / 1_000) * 1_000
+      if (remaining < 1) return null
+      const result = await send(remaining)
+      await useE2BKeepAlivePayment(query, ownerId, payment, true)
+      return { result, deadline }
+    },
+    cancel: () => releaseE2BKeepAlivePayment(ownerId, payment),
+  }
+}
+
+export async function withE2BProviderTime<T>(ownerId: string, sandboxId: string, requestedMs: number, observe: E2BObservation,
+  send: (timeoutMs: number) => Promise<T>): Promise<T> {
+  if (!isCloudEdition()) return send(requestedMs)
+  const intent = await prepareE2BProviderTime(ownerId, sandboxId, requestedMs, observe)
+  let sent = false
+  try {
+    await intent.begin()
+    const applied = await intent.apply(pool, timeoutMs => {
+      sent = true
+      return send(timeoutMs)
+    })
+    if (!applied) throw new E2BKeyError('e2b_limit_reached', 'The paid compute interval is awaiting reconciliation')
+    return applied.result
+  } catch (error) {
+    if (!sent || definitiveE2BRefusal(error)) await intent.cancel()
+    throw error
+  }
 }
 
 export async function recordE2BComputeSnapshot(ownerId: string, sandboxId: string, snapshotId: string) {

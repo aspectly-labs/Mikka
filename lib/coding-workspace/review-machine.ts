@@ -28,11 +28,14 @@ export async function resumeReviewMachine(scope: TaskReviewAuthority, lease: Lea
   signal?.throwIfAborted()
   const database = dependencies?.database ?? (await import('@/lib/db')).pool
   const resume = dependencies?.resume ?? (async (target, milliseconds, abort) => {
-    const apiKey = (await e2bResourceAccount(target.ownerId, 'sandbox', target.sandboxId)).apiKey
-    await withE2BErrors(target.ownerId, false, () => Sandbox.connect(target.sandboxId, {
-      apiKey, timeoutMs: milliseconds, requestTimeoutMs: 20_000, signal: abort, retries: 0,
-      proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
-    }))
+    const { withE2BProviderTime, E2B_TIMEOUT_REQUEST_BUDGET_MS } = await import('../cloud-computer/e2b-compute-billing')
+    const account = await e2bResourceAccount(target.ownerId, 'sandbox', target.sandboxId)
+    const options = { apiKey: account.apiKey, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, signal: abort, retries: 0,
+      proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+    await withE2BProviderTime(target.ownerId, target.sandboxId, milliseconds, {
+      providerScope: account.scope,
+      inspect: () => withE2BErrors(target.ownerId, false, () => Sandbox.getInfo(target.sandboxId, options)),
+    }, timeoutMs => withE2BErrors(target.ownerId, false, () => Sandbox.connect(target.sandboxId, { ...options, timeoutMs })))
   })
   const values = [scope.runId, scope.ownerId, scope.workspaceId, scope.deviceId, scope.sandboxId,
     scope.machineEpoch, scope.machineOperationId, lease.id, scope.bindingId]

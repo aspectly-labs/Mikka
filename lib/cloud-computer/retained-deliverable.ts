@@ -42,10 +42,12 @@ const defaultRuntime: RetainedDeliverableRuntime = {
   },
   async connect(scope, budget) {
     const [{ Sandbox }, { withE2BErrors }, options] = await Promise.all([import('e2b'), import('../secrets/e2b-runtime'), ownerOptions(scope)])
-    const { e2bSandboxTimeout } = await import("./e2b-compute-billing")
-    const timeoutMs = await e2bSandboxTimeout(scope.ownerId, scope.sandboxId, 60_000, true, { providerScope: options.providerScope,
-      inspect: () => withE2BErrors(scope.ownerId, false, () => Sandbox.getInfo(scope.sandboxId, { ...options, ...requestOptions(budget, 8_000) })) })
-    return withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, { ...options, timeoutMs, ...requestOptions(budget, 10_000) }))
+    const { withE2BProviderTime, E2B_TIMEOUT_REQUEST_BUDGET_MS } = await import('./e2b-compute-billing')
+    return withE2BProviderTime(scope.ownerId, scope.sandboxId, 60_000, { providerScope: options.providerScope,
+      inspect: () => withE2BErrors(scope.ownerId, false, () => Sandbox.getInfo(scope.sandboxId, { ...options, ...requestOptions(budget, 8_000) })) },
+    timeoutMs => withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, {
+      ...options, timeoutMs, ...requestOptions(budget, E2B_TIMEOUT_REQUEST_BUDGET_MS),
+    })))
   },
   async pause(scope, budget) {
     const [{ Sandbox }, { withE2BErrors }, options] = await Promise.all([import('e2b'), import('../secrets/e2b-runtime'), ownerOptions(scope)])
