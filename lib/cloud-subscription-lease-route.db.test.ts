@@ -45,11 +45,13 @@ test('the retired subscription lease route refuses even an authorized device wit
     assert.equal(caller?.tokenId, tokenId)
   })
   await t.test('a valid session gets an upgrade error and never receives provider credentials', async () => {
-    for (const [deviceId, id] of [[device, runId], [otherDevice, otherRun], [device, randomUUID()]]) {
-      const response = await route.POST(request(deviceId, id), { params: Promise.resolve({ deviceId, runId: id }) })
-      assert.equal(response.status, 410)
-      assert.deepEqual(await response.json(), { error: 'subscription_gateway_required' })
-      assert.equal(response.headers.get('cache-control'), 'private, no-store')
+    const response = await route.POST(request(), { params: Promise.resolve({ deviceId: device, runId }) })
+    assert.equal(response.status, 410)
+    assert.deepEqual(await response.json(), { error: 'subscription_gateway_required' })
+    assert.equal(response.headers.get('cache-control'), 'private, no-store')
+    for (const [deviceId, id] of [[otherDevice, otherRun], [device, randomUUID()]]) {
+      const foreign = await route.POST(request(deviceId, id), { params: Promise.resolve({ deviceId, runId: id }) })
+      assert.equal(foreign.status, 401)
     }
     assert.equal(issued, 0)
   })
