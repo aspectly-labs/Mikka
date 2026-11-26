@@ -16,10 +16,11 @@ import { desktopFeatures } from './features'
 import { getEdition } from '@/lib/edition'
 import type { DesktopBootstrap, DesktopConfig } from './wire'
 import { publicEnv } from '@/lib/public-env.mjs'
+import { runtimeEnv } from '@/lib/env/server'
 
 export async function desktopConfig(userId?: string): Promise<DesktopConfig> {
   const [emailEnabled, features, githubEnabled] = await Promise.all([emailSignInEnabled(), desktopFeatures(userId), githubSignInEnabled()])
-  return { edition: getEdition(), googleEnabled, githubEnabled, emailEnabled, features, daemonPackageName: publicEnv('MIKKA_DAEMON_PACKAGE_NAME', process.env, '@aspectlylabs/mikka') }
+  return { edition: getEdition(), googleEnabled, githubEnabled, emailEnabled, features, daemonPackageName: publicEnv('MIKKA_DAEMON_PACKAGE_NAME', runtimeEnv(), '@aspectlylabs/mikka') }
 }
 
 export async function desktopSession() {

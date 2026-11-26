@@ -1,6 +1,7 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
+import { readEnv } from '@/lib/env/server'
 import { workspacePool } from '@/lib/workspace-db'
 import { ComputerError } from '@/lib/computer/store'
 import { cloudflareTaskMachineSource } from '@/lib/cloud-computer/task-compute-provider'
@@ -51,7 +52,7 @@ export async function beginTaskEnvironmentPreparation(pool: Pick<Pool,'query'>, 
   const checked = environmentConfiguration.safeParse(build.recipe)
   if (!checked.success || checked.data.runtime === 'local')
     throw new ComputerError(409, `Environment base image is unavailable on ${provider === 'cloudflare' ? 'Cloudflare' : 'E2B'}`)
-  const workerSha = process.env.MIKKA_CLOUD_WORKER_SHA
+  const workerSha = readEnv('MIKKA_CLOUD_WORKER_SHA')
   if (!workerSha || !/^[a-f0-9]{40}$/.test(workerSha)) return false
   const { scope, template } = preparation[provider]
   const reserved = await workspacePool.query(`

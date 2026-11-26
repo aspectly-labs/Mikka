@@ -6,6 +6,8 @@ import { linearConnections, linearOAuthStates, linearTeamSyncs } from '@/lib/db/
 import { ownerWorkspaceSettingsChanged } from '@/lib/live/lists'
 import { authBaseURL } from '@/lib/auth'
 import { withBasePath } from '@/lib/base-path'
+import { LOCALHOST_HOSTNAME } from '@/lib/env/hosts'
+import { readEnv } from '@/lib/env/server'
 import { hashValue, seal, unseal } from './crypto'
 import { linearIdentity } from './client'
 import { oauthCredentials, postToken } from './tokens'
@@ -20,23 +22,22 @@ export function linearOAuthConfigured() {
   try {
     oauthCredentials()
     linearRedirectUrl()
-    return /^[a-f\d]{64}$/i.test(process.env.LINEAR_TOKEN_ENCRYPTION_KEY ?? '')
+    return /^[a-f\d]{64}$/i.test(readEnv('LINEAR_TOKEN_ENCRYPTION_KEY') ?? '')
   } catch {
     return false
   }
 }
 
 export function linearRedirectUrl() {
-  const fallback = process.env.VERCEL_ENV === 'preview'
+  const fallback = readEnv('VERCEL_ENV') === 'preview'
     ? ''
     : authBaseURL ? new URL(LINEAR_OAUTH_CALLBACK_PATH, authBaseURL).toString() : ''
-  const value = process.env.LINEAR_REDIRECT_URL ?? fallback
+  const value = readEnv('LINEAR_REDIRECT_URL') ?? fallback
   if (!value) throw new Error('Linear OAuth is not configured')
   const url = new URL(value)
-  if (url.protocol !== 'https:' && url.hostname !== 'localhost') throw new Error('Linear redirect URL must use HTTPS')
+  if (url.protocol !== 'https:' && url.hostname !== LOCALHOST_HOSTNAME) throw new Error('Linear redirect URL must use HTTPS')
   return url.toString()
 }
-
 export async function createLinearAuthorizationUrl(userId: string) {
   const { clientId } = oauthCredentials()
   const redirectUri = linearRedirectUrl()

@@ -2,6 +2,7 @@ import 'server-only'
 import { createTranslator } from '@/lib/intl/i18n-server'
 import { pool } from '@/lib/db'
 import { BASE_PATH } from '@/lib/base-path'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 import { workspaceLink } from '@/lib/workspace-navigation'
 import { installationCredential } from './installation-store'
 import type { RunNotice } from '@/lib/schedules/store'
@@ -10,13 +11,13 @@ import type { RunNotice } from '@/lib/schedules/store'
 const escape = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 /** The app's public link to a page, for a message outside the app. */
-function appLink(path: string, env: NodeJS.ProcessEnv) {
+function appLink(path: string, env: EnvMap) {
   const origin = env.BETTER_AUTH_URL ?? env.MIKKA_APP_ORIGIN
   if (!origin) return null
   try { return `${new URL(origin).origin}${BASE_PATH}${path}` } catch { return null }
 }
-const taskLink = (id: string, env: NodeJS.ProcessEnv) => appLink(workspaceLink({ issue: id }), env)
-const automationLink = (id: string, env: NodeJS.ProcessEnv) => appLink(`${workspaceLink({ section: 'automations' })}&automation=${encodeURIComponent(id)}`, env)
+const taskLink = (id: string, env: EnvMap) => appLink(workspaceLink({ issue: id }), env)
+const automationLink = (id: string, env: EnvMap) => appLink(`${workspaceLink({ section: 'automations' })}&automation=${encodeURIComponent(id)}`, env)
 /** Slack's chat:write.customize: posting under another name and picture. Installations from before it was asked for lack it. */
 export const SLACK_CUSTOMIZE_SCOPE = 'chat:write.customize'
 
@@ -33,7 +34,7 @@ async function runnerIdentity(userId: string) {
  * asked, as the person it runs as, in the locale saved with the automation; quiet leaves out the status mark and footer.
  * The task is a link back to the app; the error is its code's copy, never raw output.
  */
-export async function postRunNotice(notice: RunNotice, env: NodeJS.ProcessEnv = process.env, send: typeof fetch = fetch) {
+export async function postRunNotice(notice: RunNotice, env: EnvMap = runtimeEnv(), send: typeof fetch = fetch) {
   const app = env.SLACK_APP_ID
   if (!app) throw new Error('slackNotConfigured')
   // Written outside a request, in the locale saved with the automation.

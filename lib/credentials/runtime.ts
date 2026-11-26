@@ -12,6 +12,7 @@ import { isCloudEdition } from '@/lib/edition'
 import { CredentialStore, type BrowserTarget } from './store'
 import { credentialVaultEnabled } from './feature'
 import { cloudflareCredentialToken, credentialRuntimeEnvironment } from './runtime-identity'
+import { readEnv } from '@/lib/env/server'
 
 export const credentialStore = new CredentialStore(pool, credentialKms('app'))
 export async function credentialActor(request: Request) {
@@ -68,15 +69,16 @@ export async function executeCredentialLease(lease: string, origin: string, scop
     return result
   }
   const cloudflare = credentialRuntimeEnvironment()
-  const broker = new URL(cloudflare ? 'https://broker.internal' : process.env.CREDENTIAL_BROKER_URL ?? '')
+  const broker = new URL(cloudflare ? 'https://broker.internal' : readEnv('CREDENTIAL_BROKER_URL') ?? '')
   if (!cloudflare && (broker.protocol !== 'https:' || !broker.hostname.endsWith('.vercel.app') || broker.pathname !== '/' || broker.username || broker.password || broker.search || broker.hash)) throw new CredentialError()
   let dispatched = false, responseReceived = false
   try {
     const identity = cloudflare ? await cloudflareCredentialToken() : await getVercelOidcToken()
+    const previewBypass = !cloudflare ? readEnv('CREDENTIAL_BROKER_PREVIEW_BYPASS') : undefined
     dispatched = true
     const response = await fetch(new URL('/api/fill', broker), { method: 'POST', headers: {
       'Content-Type': 'application/json', ...(identity ? { Authorization: `Bearer ${identity}` } : {}),
-      ...(!cloudflare && process.env.CREDENTIAL_BROKER_PREVIEW_BYPASS ? { 'x-vercel-protection-bypass': process.env.CREDENTIAL_BROKER_PREVIEW_BYPASS } : {}),
+      ...(previewBypass ? { 'x-vercel-protection-bypass': previewBypass } : {}),
     }, body: JSON.stringify({ lease }), redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(40_000) })
     responseReceived = true
     if (!response.ok) {

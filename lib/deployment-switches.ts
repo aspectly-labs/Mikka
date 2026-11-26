@@ -33,6 +33,7 @@ import { deploymentStage } from './deployment-stage.mjs'
 import { publicEnv } from './public-env.mjs'
 import { posthogConfig } from './posthog-config'
 import { isCloudEdition } from './edition'
+import { runtimeEnv } from './env/runtime.mjs'
 
 export interface Switch {
   /** The PostHog flag. */
@@ -120,7 +121,7 @@ export const PRODUCTION_SWITCH_DEFAULTS: Readonly<Record<DeploymentSwitch, boole
  * property `deployment` so one PostHog project can hold a flag on for
  * production only.
  */
-export function deploymentName(env: Env = process.env): string {
+export function deploymentName(env: Env = runtimeEnv()): string {
   return deploymentStage(env) ?? 'local'
 }
 
@@ -140,9 +141,9 @@ function answered(entry: Switch, answers: Answers): boolean | undefined {
 }
 
 /** Whether the switch's feature is on now. Never throws, never waits. */
-export function deploymentSwitch(name: DeploymentSwitch, env: Env = process.env, now = Date.now()): boolean {
+export function deploymentSwitch(name: DeploymentSwitch, env: Env = runtimeEnv(), now = Date.now()): boolean {
   const entry: Switch = DEPLOYMENT_SWITCHES[name]
-  if (env === process.env) scheduleRefresh(now)
+  if (env === runtimeEnv()) scheduleRefresh(now)
   return testOverrides()?.get(name) ?? answered(entry, state.answers) ?? entry.legacy?.(env)
     ?? (!isCloudEdition(env) && !publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', env) ? PRODUCTION_SWITCH_DEFAULTS[name] : entry.fallback)
 }
@@ -158,7 +159,7 @@ function testOverrides(): Map<string, boolean> | undefined {
  * and any variable. Throws in a deployment or a production build, and only
  * test files may import it (deployment-switches.test.ts checks both).
  */
-export function overrideDeploymentSwitch(name: DeploymentSwitch, value: boolean | undefined, env: Env = process.env): void {
+export function overrideDeploymentSwitch(name: DeploymentSwitch, value: boolean | undefined, env: Env = runtimeEnv()): void {
   if (deploymentStage(env) || env.NODE_ENV === 'production') throw new Error('overrideDeploymentSwitch is for tests only')
   const holder = globalThis as { [OVERRIDES]?: Map<string, boolean> }
   const map = holder[OVERRIDES] ??= new Map()
@@ -231,7 +232,7 @@ export async function personSwitch(name: PersonSwitch, userId: string, options: 
 export interface SwitchLookup { env?: Env; token?: string; fetcher?: typeof fetch; now?: number; timeoutMs?: number }
 
 /** The lookup behind personSwitch, for any switch entry; exported for tests. */
-export async function switchForPerson(entry: Switch, userId: string, { env = process.env, token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY'), fetcher = fetch, now = Date.now(), timeoutMs = SWITCH_TIMEOUT_MS }: SwitchLookup = {}): Promise<boolean> {
+export async function switchForPerson(entry: Switch, userId: string, { env = runtimeEnv(), token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY'), fetcher = fetch, now = Date.now(), timeoutMs = SWITCH_TIMEOUT_MS }: SwitchLookup = {}): Promise<boolean> {
   const key = `${entry.flag}|${userId}`
   let cached = personAnswers.get(key)
   if (!cached || now - cached.at >= SWITCH_REFRESH_MS) {

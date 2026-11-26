@@ -5,6 +5,7 @@ import 'server-only'
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { userE2bKeys, workspaceE2bKeys, type E2B_KEY_ERROR_CODES } from '@/lib/db/secrets-schema'
+import { runtimeEnv } from '@/lib/env/server'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { e2bKeyAad, openSecret, sealSecret, SecretsKeyMissingError, userE2bKeyAad } from './crypto'
 import { e2bKeyInput } from './format'
@@ -41,7 +42,7 @@ const sealKey = (apiKey: string, userId: string) => {
  * workspace, so SQL cannot move it: the person who saved it adopts it here on first use, re-sealed
  * to them, and the workspace row goes. Nobody else ever reads it again.
  */
-async function adoptWorkspaceKey(userId: string, env: Record<string, string | undefined> = process.env) {
+async function adoptWorkspaceKey(userId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()) {
   const [own] = await guardSecretsDb(() => db.select({ userId: userE2bKeys.userId }).from(userE2bKeys).where(eq(userE2bKeys.userId, userId)))
   if (own) return
   const [legacy] = await guardSecretsDb(() => db.select().from(workspaceE2bKeys).where(eq(workspaceE2bKeys.createdBy, userId)).orderBy(desc(workspaceE2bKeys.updatedAt)).limit(1))
@@ -125,7 +126,7 @@ export async function recordE2BKeyError(userId: string, code: (typeof E2B_KEY_ER
  * The E2B API key for sandboxes this person owns: always their own key, or
  * E2BKeyError('e2b_key_missing'). Never another member's, never the platform key.
  */
-export async function getUserE2BApiKey(userId: string, env: Record<string, string | undefined> = process.env): Promise<string> {
+export async function getUserE2BApiKey(userId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Promise<string> {
   if (!byoE2BKeyEnabled(env)) throw new E2BKeyError('e2b_unavailable', 'Personal E2B keys are disabled on Cloud')
   await adoptWorkspaceKey(userId, env)
   const [row] = await guardSecretsDb(() => db.select().from(userE2bKeys).where(eq(userE2bKeys.userId, userId)))
@@ -151,7 +152,7 @@ export function e2bErrorCode(status: number): E2BKeyErrorCode {
  * Every E2B key a run in this workspace could hold, for masking output only: the own keys of
  * its active members and a key saved here before keys were personal. Reads only; adopts nothing.
  */
-export async function maskableE2BKeys(workspaceId: string, env: Record<string, string | undefined> = process.env): Promise<string[]> {
+export async function maskableE2BKeys(workspaceId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Promise<string[]> {
   if (!byoE2BKeyEnabled(env)) return env.E2B_API_KEY?.trim() ? [env.E2B_API_KEY.trim()] : []
   const { workspaceDb } = await import('@/lib/workspace-db')
   const { workspaceMembers } = await import('@/lib/db/workspace-schema')

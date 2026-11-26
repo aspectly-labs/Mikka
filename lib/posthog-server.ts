@@ -4,6 +4,7 @@ import { gatedFeatureEnabled, isTaskProviderFlagVariant, localFlagOverride, prod
 import { posthogConfig } from '@/lib/posthog-config'
 import { registerTelemetryFlush } from '@/lib/tracing/flush'
 import { safeErrorAttributes } from '@mikka/protocol/tracing'
+import { readEnv } from '@/lib/env/server'
 
 // PostHog on the server, for per-person flags and LLM usage. It uses the same
 // project as the browser (MIKKA_PUBLIC_POSTHOG_KEY) and the same distinct id,
@@ -29,7 +30,7 @@ let client: ServerPostHog | null | undefined
 export function serverPostHog(): ServerPostHog | null {
   if (client !== undefined) return client
   client = posthogConfig.token
-    ? new PostHog(posthogConfig.token, { host: posthogConfig.apiHost, secretKey: process.env.POSTHOG_SECRET_KEY || undefined, featureFlagsPollingInterval: FLAG_CACHE_MS,
+    ? new PostHog(posthogConfig.token, { host: posthogConfig.apiHost, secretKey: readEnv('POSTHOG_SECRET_KEY') || undefined, featureFlagsPollingInterval: FLAG_CACHE_MS,
       flushAt: 20, maxQueueSize: 512, flushInterval: 10_000, requestTimeout: 5_000, fetchRetryCount: 0, disableGeoip: true })
     : null
   if (client) {

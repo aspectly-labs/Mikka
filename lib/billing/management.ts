@@ -8,6 +8,7 @@ import { organizationBillingAccounts, organizationEntitlements, organizationMemb
 import { workspaceEntitlements } from '@/lib/db/team-entitlements-schema'
 import { resolveEntitlements } from '@/lib/governance/policy'
 import { deploymentMode } from '@/lib/governance/edition'
+import { getRuntimeConfig } from '@/lib/runtime-config'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
 import { requireOrganizationAdmin } from '@/lib/governance/organizations'
 import type { EnterprisePrincipal } from '@/lib/enterprise/principal'
@@ -24,6 +25,7 @@ import { withBasePath } from '@/lib/base-path'
 import { ensureLegacyVerification } from '@/lib/abuse/runtime'
 import { withBillingAuthority } from './authority'
 import type { BillingManagementOperation, BillingManagementView, BillingScope } from './management-contract'
+import { runtimeEnv } from '@/lib/env/server'
 
 export const billingScopeSchema = z.object({ kind: z.enum(['workspace', 'organization']), id: z.uuid() })
 
@@ -84,7 +86,12 @@ export async function billingManagementView(actorId: string, target: BillingScop
     const entitlementOrganizationId = grantLink?.id ?? organizationId
     const [localGrant] = accountId ? await tx.select().from(workspaceEntitlements).where(eq(workspaceEntitlements.workspaceId, accountId)).limit(1) : []
     const [orgGrant] = entitlementOrganizationId ? await tx.select().from(organizationEntitlements).where(eq(organizationEntitlements.organizationId, entitlementOrganizationId)).limit(1) : []
-    const effective = resolveEntitlements({ mode: deploymentMode(), kind: account?.kind === 'personal' ? 'personal' : 'team', grants: [localGrant, orgGrant] })
+    const effective = resolveEntitlements({
+      mode: deploymentMode(),
+      kind: account?.kind === 'personal' ? 'personal' : 'team',
+      grants: [localGrant, orgGrant],
+      capabilityOverrides: getRuntimeConfig('planEntitlementOverrides'),
+    })
     const [designation] = accountId ? await tx.select().from(organizationBillingAccounts).where(eq(organizationBillingAccounts.workspaceId, accountId)).limit(1) : []
     const canManageRecharge = Boolean(account && (designation ? organization?.id === designation.organizationId && organization.role === 'owner' : account.ownerId === actorId))
     const memberCount = target.kind === 'organization'
@@ -104,7 +111,7 @@ export async function billingManagementView(actorId: string, target: BillingScop
     const payerFilter = `($3::boolean and "workspaceId"=$4::uuid or not $3::boolean and coalesce("usageWorkspaceId","workspaceId")=any($5::uuid[]))`
     const usageParams = [start, end, target.kind === 'organization', accountId, usageIds]
     const [billing, credits, budgets, totals, external, policies, memberModels] = await Promise.all([
-      accountId ? readBillingAccount(accountId, process.env, memberCount) : null,
+      accountId ? readBillingAccount(accountId, runtimeEnv(), memberCount) : null,
       accountId ? readCreditBillingAccount(accountId) : null,
       budgetWorkspaceId ? readResourceBudgets(pool, [budgetWorkspaceId]) : [],
       pool.query<{ id: string | null; day: string | null; cost: number; held: number; unknown: number }>(`select "actorId" id,
@@ -141,7 +148,7 @@ export async function billingManagementView(actorId: string, target: BillingScop
     return { scope: { ...target, name: scopeName! }, account: account ? { workspaceId: account.id, name: account.name } : null,
       billing, credits, organizations: organizationChoices, platformAccountWorkspaceId, canPurchasePlatform: accountId === platformAccountWorkspaceId, canManagePayments: Boolean(accountId && administrable.has(accountId)), canManageRecharge,
       canManageBudget: Boolean(budgetWorkspaceId && administrable.has(budgetWorkspaceId)), organization,
-      capacity: { plan: effective.plan, hostedMaxInFlight: effective.hostedMaxInFlight, activeHumanLimit: effective.activeHumanLimit },
+      capacity: { plan: effective.plan, hostedMaxInFlight: effective.hostedMaxInFlight, activeHumanLimit: effective.activeHumanLimit, capabilities: effective.capabilities },
       budgetWorkspaceId, workspaces: available.map(row => ({ id: row.id, name: row.name, canEdit: administrable.has(row.id) })), members,
       resourceTargets: resources, resourceTargetsAvailable: Boolean(policies.rows[0]?.available), budgets,
       usage: { month, costMicroUsd: byMember.reduce((sum, row) => sum + row.cost, 0), reservedMicroUsd: byMember.reduce((sum, row) => sum + row.held, 0),
@@ -185,7 +192,7 @@ export async function mutateBillingManagement(actorId: string, target: BillingSc
   const accountId = current.account.workspaceId
   return withBillingAuthority(actorId, accountId, async () => {
     if (value.action === 'topup') return pointsPurchaseUrl(actorId, accountId, value.amount, value.locale)
-    const origin = resolveAppOrigin(process.env)
+    const origin = resolveAppOrigin(runtimeEnv())
     if (!origin) throw new WorkspaceError('billingNotConfigured')
     const back = new URL(withBasePath('/settings'), origin)
     back.searchParams.set('section', 'billing'); back.searchParams.set('workspace', accountId); back.searchParams.set('billing_return', '1')

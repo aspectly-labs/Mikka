@@ -8,6 +8,7 @@ import { singleFlight } from '@/lib/single-flight'
 import { readCompactRunFailure, runFailureBrief, type CompactRunFailure } from '@/lib/run-failure-projection'
 
 import { createHash } from 'node:crypto'
+import { readEnv } from '@/lib/env/server'
 import { headers } from '@/lib/server-runtime/headers'
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { deviceOnlineStates, deviceSessionOpen } from '@/lib/device-presence'
@@ -34,6 +35,7 @@ import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { joinThreadRead, threadUnread } from '@/lib/thread-reads'
 import { issueVisibility } from '@/lib/issue-visibility'
+import { runtimeEnv } from '@/lib/env/server'
 
 /** The newest run on each issue, for the right column's 我的任务 groups (MIK-38). */
 export interface TaskRun {
@@ -195,7 +197,7 @@ async function readThreads(known?: string, previous?: ListPosition[]) {
     const signature = await queryVersionWithExpiry(snapshot, sql`min(snapshot."createdAt")+${runHistoryWindow}`)
     const version = createHash('sha256').update(JSON.stringify([session.user.id, context.workspace.id, signature.version])).digest('hex').slice(0, 32)
     const visible = snapshot.as('thread_list_expiry')
-    const live = withDevicePresence(await ownerListRead(session.user.id, [signature.expiresAt], observedAt, begun), presenceDevices, process.env, observedAt)
+    const live = withDevicePresence(await ownerListRead(session.user.id, [signature.expiresAt], observedAt, begun), presenceDevices, runtimeEnv(), observedAt)
     // Device presence has its own bounded watcher prerequisite. Until that
     // route is ready, queued local work retains the shared slow fallback.
     // A session change pushes thread_list (lib/device-session.ts): no fallback read.
@@ -549,7 +551,7 @@ export async function listThreadFolders(): Promise<{ folders: string[] }> {
 export async function listComposerSlackChannels(expectedWorkspaceId?: string): Promise<{ connected: boolean; channels: { id: string; name: string; private: boolean }[] }> {
   const { ownerId, workspaceId } = await conversationActor()
   if (expectedWorkspaceId && expectedWorkspaceId !== workspaceId) throw new ActionFailureError('validationGeneric')
-  const app = process.env.SLACK_APP_ID
+  const app = readEnv('SLACK_APP_ID')
   if (!app) return { connected: false, channels: [] }
   const { slackInstallationChannels } = await import('@/lib/slack/automation-channels')
   try {

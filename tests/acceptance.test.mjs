@@ -8,7 +8,7 @@ import { recoverAcceptanceSession } from '../lib/acceptance-recovery.ts'
 test('预览分区 Cookie 保持 HttpOnly、Secure 和 SameSite=None', async () => {
   const source = await readFile(new URL('../lib/auth.ts', import.meta.url), 'utf8')
   // The partitioned cookie stays limited to an https development origin, inside advanced.
-  assert.match(source, /advanced: \{[\s\S]*\.\.\.\(process\.env\.NODE_ENV === 'development' && authBaseURL\?\.startsWith\('https:\/\/'\) \? \{\s*defaultCookieAttributes: \{ sameSite: 'none' as const, secure: true, partitioned: true \},?\s*\} : \{\}\)/)
+  assert.match(source, /advanced: \{[\s\S]*\.\.\.\(isDevelopmentEnv\(\) && authBaseURL\?\.startsWith\('https:\/\/'\) \? \{\s*defaultCookieAttributes: \{ sameSite: 'none' as const, secure: true, partitioned: true \},?\s*\} : \{\}\)/)
   const { sessionToken } = getCookies({
     baseURL: 'https://preview.example.com',
     advanced: { defaultCookieAttributes: { sameSite: 'none', secure: true, partitioned: true } },

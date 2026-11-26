@@ -1,9 +1,10 @@
 import { QUARTER_HOUR, runSchedule } from '../../cloudflare/suggestions-cron/src/schedule.mjs'
 import { isCloudEdition } from '../edition'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Environment = Readonly<Record<string, string | undefined>>
 
-export function schedulerConfig(env: Environment = process.env) {
+export function schedulerConfig(env: Environment = runtimeEnv()) {
   if (env.MIKKA_EXTERNAL_CRON === '1' || isCloudEdition(env) || env.VERCEL || !env.BETTER_AUTH_URL || !env.CRON_SECRET) return null
   try {
     const url = new URL(env.BETTER_AUTH_URL)

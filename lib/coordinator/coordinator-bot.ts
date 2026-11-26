@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg'
 import { ownerListChanged } from '@/lib/live/lists'
 import { botChatChanged } from '@/lib/live/chats'
 import { applyCliFold, applyExternalFold, foldCliRunPolicy, foldExternalWritePermissions } from '@/lib/operations/workspace-policy-fold'
+import { readEnv } from '@/lib/env/server'
 
 /**
  * The person's Coordinator is an ordinary bot (glossary), one per person per
@@ -307,7 +308,7 @@ async function moveExecutionRows(client: PoolClient, ownerId: string, botId: str
  * the next turn would drop it as unverified. One that does not verify stays as it was.
  */
 async function movedSummary(ownerId: string, botId: string, summary: string): Promise<string> {
-  const key = process.env.BETTER_AUTH_SECRET ?? ''
+  const key = readEnv('BETTER_AUTH_SECRET') ?? ''
   if (key.length < 32) return summary
   const { rescopeSummary } = await import('./message-safety')
   return rescopeSummary(summary, { key, scope: JSON.stringify([ownerId, null]) }, { key, scope: JSON.stringify([ownerId, botId]) }) ?? summary

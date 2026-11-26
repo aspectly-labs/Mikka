@@ -31,7 +31,7 @@ declaration appears without an owned manifest entry.
 - The CF `EveRuntime` container is always-on by code:
   `onActivityExpired(){}` and `onStop()` restarts it
   (`cloudflare/eve-runtime/src/index.mjs`). No `mikka-eve-*` application was in
-  the inventory; production Eve is the Oracle VM behind
+  the inventory; production Eve at that capture was the Oracle VM behind
   `mikka-eve-relay-prod`, reached through the cloudflared tunnel to
   `pdf.nebula-spaces.com`.
 - API→Eve deliveries (`MIKKA_EVE_ORIGIN`) have no wake path; the Graphile

@@ -6,6 +6,7 @@ import { workspaceDb, workspacePool } from '@/lib/workspace-db'
 import { issueForUser } from '@/lib/issue-access'
 import { assertCredentialSafeChat } from '@/lib/credentials/chat-guard'
 import { armDueTimerSoon } from '@/lib/due-timer'
+import { readEnv } from '@/lib/env/server'
 import { nextScheduleDue, ScheduleStore, type AutomationSeams, type DispatchRun, type WorkspaceGuard } from './store'
 import type { TaskRunSettings } from '@/lib/task-run-settings'
 import { ScheduleError, type Actor, type Command, type DispatchTask, type ScheduledRead } from './contract'
@@ -115,7 +116,7 @@ export const automationSeams:AutomationSeams={
   async notify(notice){await (await import('@/lib/slack/automation-notice')).postRunNotice(notice)},
   /** Channels the workspace's Slack installation can see, for a creator who is a member of it; null otherwise. */
   async slackChannels(ownerId,workspaceId){
-    const app=process.env.SLACK_APP_ID
+    const app=readEnv('SLACK_APP_ID')
     if(!app)return null
     const {slackInstallationChannels}=await import('@/lib/slack/automation-channels')
     try{const channels=await slackInstallationChannels(app,ownerId,workspaceId);return channels?new Set(channels.map(channel=>channel.id)):null}

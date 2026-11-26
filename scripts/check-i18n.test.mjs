@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
@@ -6,6 +9,7 @@ import {
   compareMessages,
   extractActionErrorCodes,
   extractPlaceholders,
+  findBusinessLiteralsInMessages,
   findHardcodedText,
   findMissingTranslationKeys,
   findBannedThreadWords,
@@ -159,4 +163,152 @@ test('Chinese copy never says 对话 for a thread or chat; 对话框 (a dialog b
   const problems = findBannedThreadWords({ 'zh-CN': { a: '新建对话', b: { c: 'Bot 对话' }, d: '与 Coordinator 的对话框外的对话', e: '关闭对话框' }, en: { a: '对话' } })
   assert.deepEqual(problems.map(problem => problem.split('"')[1]), ['a', 'b.c', 'd'])
   assert.deepEqual(findBannedThreadWords({ 'zh-CN': { a: '关闭对话框', b: '线程', c: '打开对话框后继续' } }), [])
+})
+
+test('G2 findBusinessLiteralsInMessages rejects hardcoded currency, rates, machine SKUs, and credit conversions', () => {
+  const bad = {
+    en: {
+      Billing: {
+        proPrice: '$20/mo',
+        cny: '¥100',
+        cnyCode: '100 CNY',
+        eur: '€19.99',
+        eurCode: '19.99 EUR',
+        gbp: '£5',
+        gbpCode: '5 GBP',
+        usdPrefix: 'US$1.00',
+        usdSuffix: '25 USD',
+        creditRate: '100 credits = US$1.00',
+        creditRatePartial: '100 credits = {amount}',
+        pointsRate: '100 points = {amount}',
+        machineDefault: 'Mikka standard (2 vCPU · 8 GiB · $0.20/hr)',
+        machineSpecOnly: 'Runs on 4 vCPU · 16 GiB',
+        plainRate: '0.20/hr',
+        weeklyRate: '10/wk',
+        weekRate: '$10/week',
+        yearlyRate: '199/yr',
+        yearRate: '$199/year',
+        allowance: 'Nothing is charged; verifying adds $1 of free <model><mark></mark> Mikka Default</model> use',
+      },
+    },
+    'zh-CN': {
+      Billing: {
+        proPrice: '$20/月 · 每月 $20 Mikka 额度',
+        creditRate: '100 额度 = US$1.00',
+        pointsRateZh: '100 点数 = {amount}',
+        machineDefault: 'Mikka 标准规格（默认，2 vCPU · 8 GiB · $0.20/小时）',
+        allowance: '不扣款；验证后可免费使用 1 美元的 <model><mark></mark> Mikka 默认模型</model>',
+        rmb: '每次充值最低 10 人民币',
+        yuanSpaced: '单次充值 10 元',
+        yuanCompact: '满100元立减',
+        plainRateZh: '按 20/月 计费',
+        weeklyRateZh: '按 20/周 计费',
+        yearlyRateZh: '按 199/年 计费',
+        currencyYearlyZh: '¥199/年',
+      },
+    },
+  }
+  const problems = findBusinessLiteralsInMessages(bad)
+  assert.equal(problems.length, 32)
+
+  const allowanceProblem = problems.find(item => item.includes('en: "Billing.allowance"'))
+  assert.ok(allowanceProblem, 'expected en Billing.allowance to be flagged')
+  assert.ok(allowanceProblem.includes('currency amount'))
+  assert.ok(!allowanceProblem.includes('hardcoded rate'), 'closing </model> tag must not trigger hardcoded rate')
+
+  const zhAllowanceProblem = problems.find(item => item.includes('zh-CN: "Billing.allowance"'))
+  assert.ok(zhAllowanceProblem, 'expected zh-CN Billing.allowance (1 美元) to be flagged')
+  assert.ok(zhAllowanceProblem.includes('currency amount'))
+
+  const pointsEn = problems.find(item => item.includes('en: "Billing.pointsRate"'))
+  assert.ok(pointsEn?.includes('credit conversion rate'))
+  const pointsZh = problems.find(item => item.includes('zh-CN: "Billing.pointsRateZh"'))
+  assert.ok(pointsZh?.includes('credit conversion rate'))
+
+  const weeklyEn = problems.find(item => item.includes('en: "Billing.weeklyRate"'))
+  assert.ok(weeklyEn?.includes('hardcoded rate'))
+  const yearlyZh = problems.find(item => item.includes('zh-CN: "Billing.yearlyRateZh"'))
+  assert.ok(yearlyZh?.includes('hardcoded rate'))
+
+  const yuanSpaced = problems.find(item => item.includes('zh-CN: "Billing.yuanSpaced"'))
+  assert.ok(yuanSpaced?.includes('currency amount'))
+  const yuanCompact = problems.find(item => item.includes('zh-CN: "Billing.yuanCompact"'))
+  assert.ok(yuanCompact?.includes('currency amount'))
+})
+
+test('G2 findBusinessLiteralsInMessages allows properly parameterized ICU templates, non-SKU limits, and non-currency Chinese words (元素/单元)', () => {
+  const good = {
+    en: {
+      Specs: {
+        machineTemplate: '{vcpu} vCPU · {gib} GiB · {hourlyRate}',
+        machinePriceTemplate: '{vcpu} vCPU · {gib} GiB · ${price}/hr',
+        cloudflareCost: 'This task’s Cloudflare machine is paid from Mikka credits at ${price}/hour',
+        subscriptionSummary: '{price}/{interval} · {credits} of Mikka credits every month',
+        weeklyParam: '{price}/week or {price}/wk',
+        yearlyParam: '{price}/year or {price}/yr',
+        creditConversion: '{points} credits = {amount}',
+        pointsConversion: '{points} points = {amount}',
+        pointsRemaining: '100 points remaining',
+        uploadLimit: 'Up to 2 MB',
+        allowanceParam: 'Nothing is charged; verifying adds {amount} of free <model><mark></mark> Mikka Default</model> use',
+        hourlyAwake: '${price} / h while awake',
+      },
+    },
+    'zh-CN': {
+      Specs: {
+        machinePriceTemplate: '{vcpu} vCPU · {gib} GiB · ${price}/小时',
+        cloudflareCost: '此任务的 Cloudflare 机器按 ${price}/小时从 Mikka 额度扣除',
+        weeklyYearlyParam: '{price}/周 或 {price}/年',
+        creditConversion: '{points} 额度 = {amount}',
+        pointsConversion: '{points} 点数 = {amount}',
+        uploadLimit: '最大 2 MB',
+        elementsCount: '包含 3 元素（共 5 个元素）',
+        elementsCompact: '最多显示3元素',
+        unitsCount: '共 4 单元，第 2 单元已完成',
+        allowanceParam: '不扣款；验证后可免费使用 {amount} 的 <model><mark></mark> Mikka 默认模型</model>',
+        hourlyAwake: '醒着时 ${price} / 小时',
+      },
+    },
+  }
+  assert.deepEqual(findBusinessLiteralsInMessages(good), [])
+})
+
+test('G2 findBusinessLiteralsInMessages honors optional baseline and fails on unlisted keys or malformed JSON', () => {
+  const sample = {
+    en: {
+      Billing: {
+        legacy: '$20/mo',
+        added: '$50/mo',
+      },
+    },
+    'zh-CN': {
+      Billing: {
+        legacy: '$20/月',
+      },
+    },
+  }
+
+  // Without baseline: strict zero tolerance
+  assert.equal(findBusinessLiteralsInMessages(sample).length, 3)
+
+  // With baseline covering only legacy entries: added key still fails immediately
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mikka-i18n-baseline-'))
+  try {
+    const baselinePath = path.join(dir, 'i18n-business-literals.json')
+    fs.writeFileSync(
+      baselinePath,
+      JSON.stringify({ 'en:Billing.legacy': 1, 'zh-CN:Billing.legacy': 1 }),
+    )
+    const remaining = findBusinessLiteralsInMessages(sample, { baselinePath })
+    assert.equal(remaining.length, 1)
+    assert.ok(remaining[0].includes('en: "Billing.added"'))
+
+    // Malformed baseline fails closed
+    fs.writeFileSync(baselinePath, '{bad json')
+    const failedClosed = findBusinessLiteralsInMessages(sample, { baselinePath })
+    assert.ok(failedClosed.some(item => item.includes('Invalid baseline JSON')))
+    assert.ok(failedClosed.length >= 4)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })

@@ -32,7 +32,7 @@ Tier 1 documents are the **sole active prose authority**. Update the owning Tier
 - **SDLC & engineering process:** `docs/engineering/HANDBOOK.md` (this document) and [`docs/dev-workflow.md`](../dev-workflow.md).
 - **Agent context routers:** [`AGENTS.md`](../../AGENTS.md), `mikka-hosted-ui/AGENTS.md`, and `mikka-cloud/AGENTS.md`.
 - **Product & visual standards:** [`docs/design/design-system.md`](../design/design-system.md), [`docs/design/glossary.md`](../design/glossary.md), [`docs/design/rules.md`](../design/rules.md), [`docs/design/components.md`](../design/components.md), [`docs/design/copy.md`](../design/copy.md), and [`docs/design/brand.md`](../design/brand.md).
-- **Executable architecture map:** [`docs/architecture/primitives.md`](../architecture/primitives.md).
+- **Executable architecture & truth standards:** [`docs/architecture/primitives.md`](../architecture/primitives.md) and [`docs/architecture/five-tier-truth.md`](../architecture/five-tier-truth.md).
 - **Build & release ownership:** [`docs/operations/build-source-of-truth.md`](../operations/build-source-of-truth.md) and [`docs/operations/tracing.md`](../operations/tracing.md).
 
 Keep one source of truth per topic. Link to the owning Tier 1 document rather than restating its rules in a second file.
@@ -160,6 +160,7 @@ The following gates run in CI (`source-checks` in `.github/workflows/ui-policy.y
 | **Error causes & polling** | `scripts/error-cause-policy.mjs`, `scripts/polling-policy.mjs`, `scripts/focus-refetch-policy.mjs`, `tests/idle-request-budget.json` | Preserves `{ cause: error }` and localized `RunErrors.*`; bans new polling loops (`refreshInterval`, `setInterval`) in favor of `lib/live/*` push; idle page request ceilings in `tests/idle-request-budget.json` only decrease (`#1212`) |
 | **Execution & cloud boundaries** | `pnpm check:cloud-boundary` (`scripts/cloud-boundary-policy.mjs`), `scripts/litellm-policy.mjs`, `scripts/external-client-mock-policy.mjs`, `scripts/check-migrations.mjs`, `scripts/no-public-ui.test.mjs` | Keeps private cloud code out of public `Mikka`, enforces LiteLLM-only managed model egress, forbids unreviewed `DROP COLUMN`, and keeps Web/Desktop UI out of public `Mikka` |
 | **UI, copy & paid-block ratchets** | `pnpm lint:ui` (`scripts/ui-policy.mjs`, `scripts/interaction-policy.mjs`, `scripts/control-size-policy.mjs`, `scripts/motion-policy.mjs`, `scripts/split-pane-policy.mjs`, `scripts/icon-button-policy.mjs`, `scripts/navigation-policy.mjs`, `scripts/copy-policy.mjs`), `pnpm i18n:check`, `node scripts/check-copy.mjs`, `mikka-hosted-ui/scripts/paid-overrides.mjs`, `mikka-hosted-ui/scripts/frontend-best-practices-policy.mjs` | Enforces Design System v2 tokens, control heights, motion tokens, copy/i18n rules, zero stale paid patches, per-file patch-count ceiling, and bans `transform`+`translate` double-shift, scrollWidth-inflating negative tab insets, `absolute` + `pointer-coarse:opacity-100` row-icon overlays, raw hex colors, and duplicate icon/UI imports |
+| **Anti-hardcoding & five-tier truth** | `pnpm test:anti-hardcoding`, `pnpm check:config-contracts`, `pnpm lint:semantic`, `scripts/oxlint-plugin-mikka.mjs`, `scripts/config-contract-sync.mjs`, `scripts/semantic-lint/index.mjs`, `mikka-hosted-ui/scripts/oxlint-plugin-mikka-ui.mjs` | Enforces the [Five-Tier Truth Model](../architecture/five-tier-truth.md) (T1–T5) at zero baselines: bans raw `process.env`, plan-name branching, hardcoded model IDs, hardcoded loopback/internal hosts, business literals in `messages/*.json` (`pnpm i18n:check`), full-repository semantic AST anti-patterns, and drift between runtime-config/capability schemas and [configuration contracts](../operations/config-contracts.md) |
 | **Handbook & ADR integrity** | `pnpm check:handbook` (`scripts/engineering-handbook.test.mjs`), `pnpm check:rule-as-code` (`scripts/rule-as-code-audit.mjs`) | Verifies every ADR in `docs/design/decisions/20*.md` carries a valid `Status:` header, `docs/design/decisions.md` stays frozen, and every local path, link, and `pnpm` script referenced by `HANDBOOK.md` and `primitives.md` exists |
 
 ### Review risk triage
@@ -181,21 +182,18 @@ CI is the independent final merge gate, not the first debugging loop. Draft PRs 
 2. **Isolated PostgreSQL 17 database shards:** `Database checks` runs across isolated PG17 shards with empty-database migration replay (`tests/migrate-empty-db.test.mjs`), `workspace-governance-checks`, and `analytics-checks` — zero skipped suites permitted (`REQUIRE_DB=1`).
 3. **Scripted model acceptance (never live inference):** Development acceptance, CI, and local-loop jobs substitute only the LiteLLM HTTP boundary with scripted or recorded responses covering streaming, tool calls, timeouts, `429`, upstream `5xx`, and usage/cost receipts ([2026-11-20-1855](../design/decisions/2026-11-20-1855-scripted-model-acceptance.md)).
 
-### Frontend verification, universal layout audit, and visual gates (`aspectly-labs/mikka-hosted-ui`)
+### Frontend verification, local visual review, and browser-free CI (`aspectly-labs/mikka-hosted-ui`)
 
-1. **Zero known test failures:** `mikka-hosted-ui/scripts/known-test-failures.json` stays ratcheted at `0`. `mikka-hosted-ui/scripts/run-hosted-tests.mjs` fails CI on any broken test.
-2. **Real compiled Fixture-Mode E2E (Chromium + WebKit):** Interactive Playwright suites (`mikka-hosted-ui/scripts/e2e-fixture-flows.mjs`) run against the compiled Vite Fixture-Mode app across **Desktop (`1440×900`)** and **Mobile (`390×844`)** on **both Chromium and WebKit (Safari engine)** so iOS Safari layout bugs fail before merge. Do not write pure `readFileSync` regex-only tests for new UI behavior when real DOM or Fixture-Mode behavior can be tested.
-3. **Universal all-route layout invariant audit (`mikka-hosted-ui/scripts/universal-layout-audit.mjs`):** Scans every Fixture-Mode route (Chat, Chat + Right Sidebar, PR Directory, Threads Directory, Tasks/Issues, Settings, Design System) × Desktop/Mobile × Light/Dark and fails red on:
-   - Horizontal overflow (`document.documentElement.scrollWidth > window.innerWidth`).
-   - Unexpected bounding-box overlap between visible interactive controls and text/icon leaves.
-   - Off-screen viewport clipping or mobile right-drawer width below viewport width.
-   - Any `console.error`, uncaught `pageerror`, or broken `<img>` (`naturalWidth === 0`).
-   - WCAG AA contrast `< 4.5:1` or chat scrollable transcript `< 55%` desktop / `< 50%` compact (`mikka-hosted-ui/scripts/design-system-geometry.test.mjs`).
-4. **All-route pixel snapshot diff and PR `## 视觉对照` enforcement:**
-   - Deterministic Playwright capture (`prefers-reduced-motion: reduce`, fixed fixture clock) diffs PR screenshots against `main`'s `ui-visual-evidence` artifact (`mikka-hosted-ui/scripts/visual-pixel-diff.mjs`), uploading `diffs/*-diff.png` and posting a sticky PR visual summary comment.
-   - On `Mikka`, `scripts/ci/frontend-screenshot-check.mjs` verifies that frontend PR descriptions include a screenshot/media link or an accepted opt-out reason. On `mikka-hosted-ui`, `mikka-hosted-ui/.github/workflows/ui-policy.yml` enforces the `## 视觉对照` / `## Visual comparison` section naming the reference target alongside uploaded `ui-visual-evidence`. No UI PR merges until visual evidence passes and side-by-side comparison is verified.
-5. **PR bundle size budget (`mikka-hosted-ui/scripts/bundle-budget.mjs`):** Runs in `pairs-with-public-main.yml` after the official Web Vite build, records raw, gzip-9, and brotli-11 totals in `bundle-report.{json,md}`, and fails CI if Total JS, Total CSS, Largest JS, or Largest CSS exceeds the tight `+8%` ceiling in `mikka-hosted-ui/scripts/bundle-budget.json`.
-6. **Native iOS 26/27 & macOS 26 App Icon gate (`.github/workflows/app-icon.yml`):** Compiles `apps/desktop/build/icon.icon` for both iOS and macOS with Xcode `actool` on `macos-26`, and exports all six Liquid Glass renditions (`Default`, `Dark`, `TintedLight`, `TintedDark`, `ClearLight`, `ClearDark`) with `ictool` into `app-icon-previews`.
+Per [2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md](../design/decisions/2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md) and [2026-11-01-1520-no-browser-tests-in-ci.md](../design/decisions/2026-11-01-1520-no-browser-tests-in-ci.md), automatic hosted-UI CI is browser-free and visual verification runs locally in cloud Linux against a real compiled build:
+
+1. **Zero known test failures:** `mikka-hosted-ui/scripts/known-test-failures.json` stays ratcheted at `0`. Automatic Cloudflare CI (`Cloudflare UI Policy` & `Workers Builds`) runs all non-browser hosted unit/policy tests, `paid-overrides`, `oxlint`, `frontend-best-practices-policy`, and `pr-visual-evidence-check` on Ready PRs and `main` pushes (Draft PRs launch zero CI containers).
+2. **Targeted local visual verification (`mikka-hosted-ui/scripts/local-visual-verify.mjs`):** Before marking a UI PR Ready, verify changed routes locally in cloud Linux via `pnpm --dir mikka-hosted-ui visual:local --target <slug>` against the real compiled build using local Chrome/Chromium (Desktop `1440×900` & Mobile `390×844`, Light & Dark). Inspect every rendered PNG directly for layout, contrast, horizontal overflow (`scrollWidth <= innerWidth`), tab/drawer geometry, and zero console/page errors.
+3. **PR `## 视觉对照` / `## Visual comparison` enforcement:**
+   - On `Mikka`, `scripts/ci/frontend-screenshot-check.mjs` verifies that frontend PR descriptions include a screenshot/media link or an accepted opt-out reason.
+   - On `mikka-hosted-ui`, `mikka-hosted-ui/scripts/pr-visual-evidence-check.mjs` enforces the `## 视觉对照` / `## Visual comparison` section naming the reference target and documenting local real-build screenshot verification.
+   - Full-route Playwright scripts (`mikka-hosted-ui/scripts/e2e-fixture-flows.mjs`, `universal-layout-audit.mjs`, `cloudflare-playwright-ci.mjs`) remain manual opt-in audit tools only and never run automatically on PRs or pushes.
+4. **PR bundle size budget (`mikka-hosted-ui/scripts/bundle-budget.mjs`):** Runs in `Cloudflare UI Fast Gate` / `Workers Builds` after the official Web Vite build, records raw, gzip-9, and brotli-11 totals in `bundle-report.{json,md}`, and fails CI if Total JS, Total CSS, Largest JS, or Largest CSS exceeds the tight `+8%` ceiling in `mikka-hosted-ui/scripts/bundle-budget.json`.
+5. **Native iOS 26/27 & macOS 26 App Icon gate (`.github/workflows/app-icon.yml`):** Compiles `apps/desktop/build/icon.icon` for both iOS and macOS with Xcode `actool` on `macos-26`, and exports all six Liquid Glass renditions (`Default`, `Dark`, `TintedLight`, `TintedDark`, `ClearLight`, `ClearDark`) with `ictool` into `app-icon-previews`.
 
 ---
 
@@ -212,9 +210,9 @@ Code merge, artifact build, staging qualification, and production promotion are 
 
 Because private `aspectly-labs/mikka-hosted-ui` cannot rely solely on GitHub branch protection, `mikka-cloud/scripts/verify-hosted-ui-gates.mjs` enforces fail-closed admission on every overlay sync (`mikka-cloud/.github/workflows/overlay-source-sync.yml`) and before every staging or production deployment (`mikka-cloud/operations/business-api/pipeline-preflight.mjs`):
 
-1. `ui-policy.yml` reached `completed` + `success` on `main` for the exact `overlaySource` SHA (never exemptible).
-2. That exact run uploaded a non-expired, non-empty `ui-visual-evidence` artifact proving real rendered screenshots and geometry invariants passed (never exemptible).
-3. `pairs-with-public-main.yml` reached `completed` + `success` on `main` for that exact SHA (exemptible only with an explicit audited break-glass reason).
+1. `Cloudflare UI Policy` (browser-free static UI policy, `paid-overrides`, `oxlint`, `frontend-policy`, and non-browser hosted unit tests; or legacy `ui-policy.yml`) reached `completed` + `success` on `main` for the exact `overlaySource` SHA (never exemptible).
+2. `Cloudflare UI Fast Gate` / `Workers Builds` (official Web Vite build + `bundle-budget`; or legacy `pairs-with-public-main.yml`) reached `completed` + `success` on `main` for that exact SHA (exemptible only with an explicit audited break-glass reason).
+3. Remote CI screenshot archives (`ui-visual-evidence`) are not required for routine promotion; visual verification happens locally in cloud Linux before merge (operators may still opt in to strict artifact checks via `--require-visual-artifact` after a manual audit).
 
 ### Staging qualification, production cutover, and mobile releases
 

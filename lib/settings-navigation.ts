@@ -1,4 +1,6 @@
-const BASE_PATH = process.env.MIKKA_BASE_PATH ?? ''
+import { getPublicBasePath } from './env/public.ts'
+
+const BASE_PATH = getPublicBasePath()
 const appPaths = new Set(['/', '/settings', '/settings/teams', '/settings/members'])
 const locales = new Set(['en', 'zh-CN'])
 

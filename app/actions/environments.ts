@@ -20,6 +20,7 @@ import { e2bMachineOptions, type E2BComputeSpec } from '@/lib/cloud-computer/e2b
 import { isCloudEdition } from '@/lib/edition'
 import type { CloudTemplateKind } from '@/lib/cloud-template-models'
 import type { SecretDelivery } from '@/lib/secrets/delivery'
+import { runtimeEnv } from '@/lib/env/server'
 
 export type EnvironmentView = { id: string; name: string; revision: number; configuration: EnvironmentConfiguration & { networkAccess: EnvironmentNetworkAccess }; instructions?: string; archived: boolean; defaultMachineSize: MachineSize | null
   /** 'personal' (「仅我」) is listed only for its owner; 'workspace' is shared. */
@@ -109,7 +110,7 @@ export async function listEnvironments(workspaceId?: string): Promise<Environmen
     const member = memberRows[0]
     const policyKeys = Array.isArray(resources.policy.repositoryKeys) ? resources.policy.repositoryKeys : []
     const restrictedAllowlist = resources.policy.mode === 'restricted' ? new Set(policyKeys) : null
-    const normalizeOptions = { allowFile: daemonTestMode(process.env) }
+    const normalizeOptions = { allowFile: daemonTestMode(runtimeEnv()) }
     const deviceRepoKeys = deviceRepoRows.flatMap(row => {
       if (row.repoPath.startsWith('v2/')) return [row.repoPath]
       if (!row.remoteUrl) return []

@@ -12,6 +12,7 @@ import {
   MICRO_USD_PER_POINT,
   PaidResourceError,
 } from './policy'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 const expiredMachineHold = `state='unknown' AND COALESCE("machineCompute"->>'source'='cloudflare_cgroup_list',false)
   AND "createdAt" < now() - interval '24 hours'`
@@ -188,7 +189,7 @@ export class HostedUsageStore {
     workspaceId: string,
     model: string,
     id: string,
-    env: Record<string, string | undefined> = process.env,
+    env: EnvMap = runtimeEnv(),
     estimate = HOSTED_CALL_HOLD_MICRO_USD,
     prepaid: boolean | { machineMeter: Record<string, unknown> } = false,
   ) {
@@ -435,7 +436,7 @@ export class HostedUsageStore {
   }
   async status(
     workspaceId: string,
-    env: Record<string, string | undefined> = process.env,
+    env: EnvMap = runtimeEnv(),
   ) {
     const balance = await this.balance(workspaceId)
     if (!this.metered) return { state: 'ready', balance }

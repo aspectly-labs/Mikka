@@ -23,7 +23,7 @@ the later task-title/current-Agent header. The SwiftUI popover described by
 the original frame is not an implementation instruction.
 
 - **Status:** accepted with two changes (Alex, 2026-11-06): icons only in the title bar; an Artifact button that is always there
-- **Figma:** file `zPe5LKycb2XuT1ivCLRw07`, page 「待 Alex 确认 · 线程运行位置与 PR 验收（2026-11-06）」 `1052:6875`
+- **Figma:** file `zPe5LKycb2XuT1ivCLRw07`, 「线程运行位置与 PR 验收」评审页 `1052:6875`
 - **Owner thread:** run-location mark and hover card (web, desktop, iOS) in this
   thread; the PR review view goes to the Factory delivery thread once confirmed.
 

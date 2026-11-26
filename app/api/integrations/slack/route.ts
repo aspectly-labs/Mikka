@@ -16,6 +16,7 @@ import {
   updatePreferences,
 } from '@/lib/slack/installation-store'
 import { defineRoute } from '@/lib/primitives/define-route'
+import { runtimeEnv } from '@/lib/env/server'
 
 const reply = (value: unknown, status = 200) =>
   RouteResponse.json(value, { status, headers: { 'Cache-Control': 'private, no-store' } })
@@ -117,7 +118,7 @@ async function handle(request: Request, session: ApiSession) {
           owner,
           workspace,
           (token) => uninstallSlack(platform, token),
-          process.env,
+          runtimeEnv(),
           admin,
         )
         return ok ? reply({ ok: true }) : reply({ error: 'slackProviderUnavailable' }, 503)

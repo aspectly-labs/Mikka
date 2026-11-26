@@ -32,6 +32,8 @@ export function operationsInput(env) {
     'runtime-native-alert': ['prepare', 'enable', 'disable'],
     'product-task-canary': ['verify', 'run'],
     'production-daemon-qualification': ['verify', 'run'],
+    'hosted-ui-ci-workers': ['verify', 'deploy'],
+    'open-artifact-host': ['inspect', 'provision', 'deploy', 'verify'],
   }
   check(Object.hasOwn(actions, operation) && actions[operation].includes(action), 'PUBLIC_OPERATIONS_INPUT_REQUIRED')
   check(sha.test(env.MIKKA_CF_OPERATIONS_SHA ?? ''), 'PUBLIC_OPERATIONS_INPUT_REQUIRED')
@@ -83,7 +85,7 @@ export function operationsInput(env) {
   }
   const target = env.WORLD_ENVIRONMENT || 'staging'
   check(['staging', 'production'].includes(target), 'PUBLIC_OPERATIONS_INPUT_REQUIRED')
-  return {operation, action, ...(operation === 'eve-world-resources' ? {target} : {})}
+  return {operation, action, ...(['eve-world-resources', 'open-artifact-host'].includes(operation) ? {target} : {})}
 }
 
 /** Select only the fixed reviewed request data; never a caller-supplied path or executable. */

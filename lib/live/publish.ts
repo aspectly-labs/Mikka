@@ -1,11 +1,12 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import type { LiveInvalidation } from './events'
 import { bumpLiveRevisions, withLiveRevisions, type LiveRevisions } from './revisions'
 import { liveGatewayConfig, type LiveScope } from './scope'
 
 /** Raise each distinct key's revision once for the whole fan-out, then send.
  * A failed raise sends plain keys: a key without a revision always reads. */
-export async function sendLiveTargets(database: Pick<PoolClient, 'query'>, targets: readonly { scope: LiveScope; events: LiveInvalidation[] }[], env = process.env) {
+export async function sendLiveTargets(database: Pick<PoolClient, 'query'>, targets: readonly { scope: LiveScope; events: LiveInvalidation[] }[], env = runtimeEnv()) {
   if (!targets.length || !liveGatewayConfig(env)) return
   const { sendLiveInvalidations } = await import('./notify')
   let revisions: LiveRevisions = {}

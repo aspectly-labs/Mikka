@@ -1,21 +1,22 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError, ServiceBusyError } from 'e2b'
+import { runtimeEnv } from '@/lib/env/server'
 import { byoE2BKeyEnabled, E2BKeyError, type E2BKeyErrorCode } from './flag'
 import { cloudTemplateModels, type CloudTemplateKind } from '../cloud-template-models'
 import { e2bTemplateForSize, type E2BMachineSize } from '../cloud-computer/e2b-template-pricing'
 import { isCloudEdition } from '../edition'
 
-type Env = Record<string, string | undefined>
+type Env = Readonly<Record<string, string | undefined>>
 
-export function environmentSnapshotApiKey(env: Env = process.env): string {
+export function environmentSnapshotApiKey(env: Env = runtimeEnv()): string {
   const key = env.E2B_API_KEY?.trim()
   if (!key) throw new E2BKeyError('e2b_key_missing', 'Instance E2B API key required')
   return key
 }
 
 /** A configured team ID survives credential rotation. Without one, fail closed on a key change. */
-export function environmentSnapshotScope(env: Env = process.env): string {
+export function environmentSnapshotScope(env: Env = runtimeEnv()): string {
   const team = env.E2B_TEAM_ID?.trim()
   if (team) return 'team:' + team
   const key = env.E2B_API_KEY?.trim()
@@ -23,7 +24,7 @@ export function environmentSnapshotScope(env: Env = process.env): string {
 }
 
 /** Credential lookup for callers without an existing provider resource. */
-export async function e2bApiKey(ownerId: string, _platformMissing: string, env: Env = process.env): Promise<string> {
+export async function e2bApiKey(ownerId: string, _platformMissing: string, env: Env = runtimeEnv()): Promise<string> {
   if (!byoE2BKeyEnabled(env) || env.E2B_API_KEY?.trim()) return environmentSnapshotApiKey(env)
   return (await import('./e2b')).getUserE2BApiKey(ownerId, env)
 }
@@ -49,7 +50,7 @@ function selectedTemplate(kind: CloudTemplateKind, variable: string, env: Env): 
 }
 
 /** New Bot computers use the verified additive official-desktop release. */
-export function computerTemplate(env: Env = process.env): string {
+export function computerTemplate(env: Env = runtimeEnv()): string {
   return selectedTemplate('desktop', 'E2B_BYO_COMPUTER_TEMPLATE', env)
 }
 
@@ -57,7 +58,7 @@ export function computerTemplate(env: Env = process.env): string {
 const TASK_TEMPLATE_ENV = { claude_code: 'E2B_CLAUDE_TEMPLATE', codex: 'E2B_CODEX_TEMPLATE' } as const
 
 /** New repository tasks use their harness's verified additive image. */
-export function taskTemplate(harness: string, env: Env = process.env): string {
+export function taskTemplate(harness: string, env: Env = runtimeEnv()): string {
   const key = Object.hasOwn(TASK_TEMPLATE_ENV, harness) ? TASK_TEMPLATE_ENV[harness as keyof typeof TASK_TEMPLATE_ENV] : undefined
   if (!key) throw new E2BKeyError('e2b_template_unavailable', 'Official task template required')
   const official = harness === 'codex' ? 'codex' : 'claude'
@@ -65,7 +66,7 @@ export function taskTemplate(harness: string, env: Env = process.env): string {
 }
 
 /** Hosted and plan-limited task tiers use the verified release inventory. */
-export function sizedTaskTemplate(harness: string, size?: E2BMachineSize, env: Env = process.env, requireVerifiedHardware = false): string {
+export function sizedTaskTemplate(harness: string, size?: E2BMachineSize, env: Env = runtimeEnv(), requireVerifiedHardware = false): string {
   const medium = taskTemplate(harness, env)
   if ((!isCloudEdition(env) && !requireVerifiedHardware) || !size) return medium
   const variant = e2bTemplateForSize(harness === 'codex' ? 'codex' : 'claude', size, env)
@@ -96,7 +97,7 @@ const CARD_CODE = { e2b_key_invalid: 'invalid', e2b_limit_reached: 'rate_limited
  * failure on the settings card (lastErrorCode). Never logs the key or the response body.
  * Unclassified failures are rethrown.
  */
-export async function withE2BErrors<T>(ownerId: string, creating: boolean, run: () => Promise<T>, _env: Env = process.env): Promise<T> {
+export async function withE2BErrors<T>(ownerId: string, creating: boolean, run: () => Promise<T>, _env: Env = runtimeEnv()): Promise<T> {
   try { return await run() } catch (error) {
     if (error instanceof E2BKeyError) throw error
     const code = classifyE2BError(error, creating)

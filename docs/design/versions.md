@@ -24,9 +24,9 @@ in `decisions/` and the relevant feature specs.
 | 4 | Thread card and dispatch | `365:10368` frames `03a`, `03b`, `03c`, `03c-2`, `03d`; PR states in `355:4750` | Current |
 | 5 | Group chat | `305:4750`, frames `A1`, `A2`, `A3` | 待批, not in `decisions.md` |
 | 6 | 建议 | `365:10368` frames `08a`, `08b` | Current |
-| 7 | Connect a computer and device approval | `346:4792`, frames `01`–`11` | 待 Alex 确认 |
-| 8 | Stop a thread | `364:4869`, frame `372:4786` (running / stopping / timeout × light, dark, narrow) | 待 Alex 确认 |
-| 9 | Thread output: artifact, Factory approval, Live Diff | `395:15023` (artifact placement and share `11a`–`11e`), `357:4750`, `497:4860` | 待 Alex 确认; Live Diff 待审核 |
+| 7 | Connect a computer and device approval | `346:4792`, frames `01`–`11` | registered in `docs/decisions/pending.yaml` as `settings-version-review-rows` |
+| 8 | Stop a thread | `364:4869`, frame `372:4786` (running / stopping / timeout × light, dark, narrow) | registered in `docs/decisions/pending.yaml` as `settings-version-review-rows` |
+| 9 | Thread output: artifact, Factory approval, Live Diff | `395:15023` (artifact placement and share `11a`–`11e`), `357:4750`, `497:4860` | registered in `docs/decisions/pending.yaml` as `settings-version-review-rows`; Live Diff 待审核 |
 | 10 | Settings | `551:6857` 设置 v4 · 全部接通 (V01–V15, N1–N6, S-A…S-Q); v3 `476:4860` kept as history | Current; clickable prototype (nav + dialogs linked, start frame `551:6858`) |
 | 11 | Mobile | `358:9186`, frames `01`–`22` | Current |
 
@@ -73,7 +73,7 @@ frames; this note records no fresh inspection of those frames.
 - It does not redraw any frame. Yesterday's Claude Code work is kept as-is.
 - It does not change avatars. The multi-colour stacked group avatar follows
   Grok bot and is intentional.
-- It does not settle any 待 Alex 确认 page; those stay as drawn until Alex
+- It does not settle registered design-review pages; those stay as drawn until Alex
   accepts them.
 
 ## Settings v4 (2026-10-29)

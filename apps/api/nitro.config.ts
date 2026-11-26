@@ -5,6 +5,7 @@ import type { ModuleOptions as WorkflowOptions } from 'workflow/nitro'
 import { configuredDeploymentId } from '../../lib/deployment-id.mjs'
 import { deploymentStage } from '../../lib/deployment-stage.mjs'
 import { publicEnv, withLegacyPublicDefines } from '../../lib/public-env.mjs'
+import { envValue } from '../../lib/env/runtime.mjs'
 import { apiAliases } from './compat-aliases.mjs'
 import { nodeRuntimePackages, productWorkflowDirectories, workflowNodeExternals } from './build-contract.mjs'
 import { publicAssetConfiguration } from './public-assets.mjs'
@@ -14,7 +15,7 @@ import { workflowDevelopmentAliases } from './workflow-development-aliases.mjs'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
 const stage = deploymentStage()
-const revision = process.env.MIKKA_BUILD_REVISION || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+const revision = envValue('MIKKA_BUILD_REVISION') || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
 if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error('API_BUILD_SHA_REQUIRED')
 // An empty value counts as unset, under either name (lib/public-env.mjs).
 const build = publicEnv('MIKKA_PUBLIC_BUILD') || revision
@@ -38,10 +39,10 @@ export default defineConfig({
   workflow: { dirs: productWorkflowDirectories, runtime: 'nodejs24.x', sourcemap: false, dashboard: false } satisfies WorkflowOptions,
   // Each public constant is also replaced under its legacy NEXT_PUBLIC_* name until phase 2 (lib/public-env.mjs).
   replace: withLegacyPublicDefines({
-    'process.env.MIKKA_UI_OVERLAY_SHA': JSON.stringify(process.env.MIKKA_UI_OVERLAY_SHA ?? ''),
+    'process.env.MIKKA_UI_OVERLAY_SHA': JSON.stringify(envValue('MIKKA_UI_OVERLAY_SHA') ?? ''),
     'process.env.MIKKA_BASE_PATH': JSON.stringify('/mikka'),
     'process.env.MIKKA_PUBLIC_BUILD': JSON.stringify(build),
-    'process.env.MIKKA_TEST_BUILD_SHA': JSON.stringify(process.env.MIKKA_TEST_DEPLOYMENT_SHA ?? ''),
+    'process.env.MIKKA_TEST_BUILD_SHA': JSON.stringify(envValue('MIKKA_TEST_DEPLOYMENT_SHA') ?? ''),
     'process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT': JSON.stringify(stage ?? ''),
   }),
   sourcemap: false,

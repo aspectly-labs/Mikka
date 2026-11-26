@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit, databaseCommitScope } from '../db/commit-effects'
 import { LIVE_ID, type LiveInvalidation } from './events'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -154,7 +155,7 @@ export async function runChangeTargets(database: Database, workspaceDatabase: Da
 }
 
 async function changed(executor: object, kind: 'issue_document' | 'issue_threads' | 'run' | 'thread', id: string) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive } = await import('./notify')
   const databaseScope = databaseCommitScope(executor)
   const publish = async () => {
@@ -202,7 +203,7 @@ export const threadChanged = (executor: object, runId: string) => changed(execut
 /** Capture only from the writer's locked issue, before its scope changes. An
  * invalidation contains the already-known ID, never the old or new body. */
 export async function documentScopesBeforeChange(issue: { id: string; userId: string; scope: string; workspaceId: string | null }): Promise<LiveScope[]> {
-  if (!liveGatewayConfig(process.env)) return []
+  if (!liveGatewayConfig(runtimeEnv())) return []
   try {
     const { workspacePool } = await import('../workspace-db')
     return await documentScopes(workspacePool, issue.workspaceId ? [issue.workspaceId] : [])
@@ -215,7 +216,7 @@ export async function documentScopesBeforeChange(issue: { id: string; userId: st
 /** Old subscriptions must reauthorize and move to the new canonical channel.
  * Membership is rechecked after COMMIT, including for previously allowed keys. */
 export async function documentScopeChanged(executor: object, issueId: string, previous: LiveScope[]) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterDatabaseCommit(executor, `issue-scope:${issueId}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

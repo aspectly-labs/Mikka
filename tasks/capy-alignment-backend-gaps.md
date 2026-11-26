@@ -1,7 +1,7 @@
 # 对齐 Capy：后端缺口清单（2026-11-19）
 
 依据 `origin/main` 只读审计。A = 界面已有；B = 后端已支持、界面没露出；C = 后端缺失。
-Figma 对照页：`待 Alex 审核 · 交互、弹窗与 Automations 对齐 Capy（2026-11-19）`（1235:2）。
+Figma 对照页：交互、弹窗与 Automations 对齐 Capy 审核页（1235:2）。
 
 ## Automations（22 项）
 

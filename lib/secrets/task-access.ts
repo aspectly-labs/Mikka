@@ -1,5 +1,6 @@
 import { CodedError } from '@mikka/protocol/coded-error'
 import { TASK_SECRET_MAX_CAPABILITIES, TASK_SECRET_MAX_ASSIGNMENT_BYTES, taskSecretAccessSchema, type TaskSecretAccess } from '@mikka/protocol/task-secrets'
+import { runtimeEnv } from '@/lib/env/server'
 import { issueEgressCapability, type EgressCapabilityBinding } from './egress-capability'
 import type { TaskSecretInjection } from './runtime'
 
@@ -10,7 +11,7 @@ export function issueTaskSecretAccess(input: {
   injection: TaskSecretInjection
   endpoint: string
   leaseExpiresAt: string | Date
-}, nowMs = Date.now(), env: Record<string, string | undefined> = process.env): TaskSecretAccess | undefined {
+}, nowMs = Date.now(), env: Readonly<Record<string, string | undefined>> = runtimeEnv()): TaskSecretAccess | undefined {
   if (!input.injection.protectedSecrets.length && !input.injection.unavailable.length) return undefined
   const grants: TaskSecretAccess['grants'] = []
   const unavailable = new Set(input.injection.unavailable)

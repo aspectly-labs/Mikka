@@ -21,12 +21,13 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `308` dated decision records carry verified `Status:` headers (`222` Accepted, `23` Superseded, `63` Superseded in part).
+All `309` dated decision records carry verified `Status:` headers (`223` Accepted, `23` Superseded, `63` Superseded in part).
 
 ### Key active architectural decisions
 
 | Area | Decision record | Status | Owning Tier 1 standard |
 | --- | --- | --- | --- |
+| **Local UI visual verification & browser-free hosted-UI CI** | [2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md](2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md) | Accepted | [`HANDBOOK.md`](../../engineering/HANDBOOK.md), `mikka-hosted-ui/AGENTS.md` |
 | **Brand mark & App Icon** | [2026-11-24-2235-new-mikka-ribbon-mark.md](2026-11-24-2235-new-mikka-ribbon-mark.md) | Accepted | [`docs/design/brand.md`](../brand.md) |
 | **Design System v2** | [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) | Accepted | [`docs/design/design-system.md`](../design-system.md) |
 | **All Web/Desktop UI in `mikka-hosted-ui`** | [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |

@@ -8,6 +8,7 @@ import { enrollmentConfiguration } from '@/lib/subscription-enrollment-runtime'
 import { enrollmentBindHTTP } from '@/lib/subscription-enrollment-bind'
 import { byosEnrollmentEnabled } from '@/lib/cloud-computer-flag'
 import { enrollmentBindingDatabaseIdentity, enrollmentBindingPage, verifyEnrollmentBindingProof } from '@/lib/subscription-enrollment-binding-proof'
+import { readEnv } from '@/lib/env/server'
 
 export const maxDuration = 120
 export const GET = defineRoute(
@@ -17,13 +18,13 @@ export const GET = defineRoute(
 
 // Accepts operator bearer token or authenticated user session + HMAC binding proof inside enrollmentBindHTTP.
 const handleBind = enrollmentBindHTTP({
-  operator: async request => byosEnrollmentEnabled() ? enrollmentOperator(request, process.env.MIKKA_BYOS_ENROLLMENT_OPERATOR_TOKEN) : null,
+  operator: async request => byosEnrollmentEnabled() ? enrollmentOperator(request, readEnv('MIKKA_BYOS_ENROLLMENT_OPERATOR_TOKEN')) : null,
   session: async request => {
     const session = await auth.api.getSession({ headers: request.headers })
     return session ? { userId: session.user.id, tokenWorkspaceId: session.tokenWorkspaceId } : null
   },
   handoff: async (request, ownerId, body) => {
-    const operator = process.env.MIKKA_BYOS_ENROLLMENT_OPERATOR_TOKEN
+    const operator = readEnv('MIKKA_BYOS_ENROLLMENT_OPERATOR_TOKEN')
     const databaseUrl = pool.options.connectionString
     if (!byosEnrollmentEnabled() || !operator || !databaseUrl || !body.proof) return null
     if (!verifyEnrollmentBindingProof(operator, body.proof, { id: body.id, ownerId, workspaceId: body.workspaceId, origin: new URL(request.url).origin, databaseIdentity: enrollmentBindingDatabaseIdentity(databaseUrl) })) return null
@@ -33,10 +34,10 @@ const handleBind = enrollmentBindHTTP({
   workspace: authorizeSubscriptionWorkspace,
   client: () => {
     const databaseUrl = pool.options.connectionString
-    const canonicalGrantPath = process.env.MIKKA_BYOS_INFISICAL_PATH
-    const accessPath = process.env.MIKKA_BYOS_ACCESS_INFISICAL_PATH
+    const canonicalGrantPath = readEnv('MIKKA_BYOS_INFISICAL_PATH')
+    const accessPath = readEnv('MIKKA_BYOS_ACCESS_INFISICAL_PATH')
     if (!databaseUrl || !canonicalGrantPath || !accessPath) throw new Error('subscription_binding_unavailable')
-    return new EnrollmentClient({ ...enrollmentConfiguration(), databaseUrl, canonicalGrantPath, accessPath, accessProject: process.env.MIKKA_BYOS_ACCESS_INFISICAL_PROJECT })
+    return new EnrollmentClient({ ...enrollmentConfiguration(), databaseUrl, canonicalGrantPath, accessPath, accessProject: readEnv('MIKKA_BYOS_ACCESS_INFISICAL_PROJECT') })
   },
 })
 

@@ -1,10 +1,11 @@
 import 'server-only'
 import type { userSecrets, workspaceSecrets } from '@/lib/db/secrets-schema'
+import { runtimeEnv } from '@/lib/env/server'
 import { e2bKeyAad, openSecret, secretAad, SecretsKeyMissingError, userE2bKeyAad, userSecretAad, type Sealed } from './crypto'
 import { byoE2BKeyEnabled, E2BKeyError, workspaceSecretsConfigured } from './flag'
 import { createSecretMasker, identityMasker, maskDeep, withCredentialMasking, type MaskableSecret } from './mask'
 
-type Env = Record<string, string | undefined>
+type Env = Readonly<Record<string, string | undefined>>
 type WorkspaceMaterial = Pick<typeof workspaceSecrets.$inferSelect, 'id' | 'workspaceId' | 'name' | 'kind' | 'scopeType' | 'scopeRef'> & Sealed
 type OwnerMaterial = Pick<typeof userSecrets.$inferSelect, 'id' | 'userId' | 'name' | 'kind'> & Sealed
 type Materials = {
@@ -28,7 +29,7 @@ function requiredSecret(row: WorkspaceMaterial | OwnerMaterial, aad: string, sco
  * Workspace membership stays on the workspace database. The four app-database
  * projections share one statement snapshot; no material survives this call or
  * enters MapFacts, its logical metadata allowance, or a response. */
-export async function maskProjectMapFacts<T>(target: { workspaceId: string; ownerId: string }, value: T, env: Env = process.env): Promise<T> {
+export async function maskProjectMapFacts<T>(target: { workspaceId: string; ownerId: string }, value: T, env: Env = runtimeEnv()): Promise<T> {
   const instanceKey = env.E2B_API_KEY?.trim()
   const keys: MaskableSecret[] = instanceKey ? [{ name: 'E2B_API_KEY', value: instanceKey }] : []
   if (!workspaceSecretsConfigured(env)) return maskDeep(value, withCredentialMasking(keys.length ? createSecretMasker(keys) : identityMasker))

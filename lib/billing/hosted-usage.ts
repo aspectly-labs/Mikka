@@ -62,6 +62,11 @@ export { POINTS_PURCHASE_AMOUNTS } from './points'
 export const POINTS_PER_USD = 100
 const MICRO_USD_PER_POINT = 10_000
 
+/** Converts whole points to whole USD cents using floor rounding consistently across catalog, checkout, and webhooks. */
+export function pointsToCreditCents(points: number): number {
+  return Math.floor((points * 100) / POINTS_PER_USD)
+}
+
 /**
  * The refusal code in a model failure, or null. Failure records carry the code
  * as the whole message or inside a longer one (`Error: verification_required`).

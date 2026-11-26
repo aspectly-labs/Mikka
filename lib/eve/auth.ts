@@ -2,15 +2,17 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { EveAuthResult } from 'eve/channels/eve'
 import { eveScopeSchema, scopeAuth, assertEveScope, type EveScope } from './scope'
 import { maxRemainingMs, signInternalEveAuthorization } from './host-authorization.mjs'
+import { DEFAULT_LOCAL_APP_ORIGIN } from '../env/hosts'
+import { readEnv } from '../env/server'
 
 function hostKey() {
-  const key = process.env.BETTER_AUTH_SECRET
+  const key = readEnv('BETTER_AUTH_SECRET')
   if (!key || key.length < 32) throw new Error('authRequired')
   return key
 }
 /** Existing host key, domain-separated; never a user credential or model input. */
 export function internalEveAuthorization(scope: EveScope, now = Date.now()) {
-  return signInternalEveAuthorization(scope, process.env.BETTER_AUTH_SECRET, now)
+  return signInternalEveAuthorization(scope, readEnv('BETTER_AUTH_SECRET'), now)
 }
 export function internalEveScope(header: string | null, now = Date.now()): EveScope | null {
   if (!header?.startsWith('Bearer mev_')) return null
@@ -31,13 +33,13 @@ export function internalEveScope(header: string | null, now = Date.now()): EveSc
  * The public ingress removes both headers; only a binding entrypoint can stamp
  * the trusted header. Other hosts retain their existing transport contract. */
 export function internalEveHeaders(scope: EveScope): Record<string, string> {
-  if (process.env.MIKKA_API_INGRESS === 'cloudflare' || process.env.MIKKA_EVE_HOST === 'cloudflare') {
+  if (readEnv('MIKKA_API_INGRESS') === 'cloudflare' || readEnv('MIKKA_EVE_HOST') === 'cloudflare') {
     return { 'x-mikka-eve-scope': JSON.stringify(eveScopeSchema.parse(scope)) }
   }
   return { authorization: internalEveAuthorization(scope) }
 }
 export function internalEveRequestScope(request: Request): EveScope | null {
-  if (process.env.MIKKA_API_INGRESS === 'cloudflare' || process.env.MIKKA_EVE_HOST === 'cloudflare') {
+  if (readEnv('MIKKA_API_INGRESS') === 'cloudflare' || readEnv('MIKKA_EVE_HOST') === 'cloudflare') {
     try {
       const parsed = eveScopeSchema.safeParse(JSON.parse(request.headers.get('x-mikka-eve-binding-scope') ?? 'null'))
       return parsed.success ? parsed.data : null
@@ -62,7 +64,7 @@ export async function authenticateEveRequest(request: Request, readExpectation?:
     let origin:string, expected:string
     try {
       origin = new URL(request.headers.get('origin') ?? '').origin
-      expected = new URL(process.env.BETTER_AUTH_URL ?? process.env.MIKKA_APP_ORIGIN ?? 'http://127.0.0.1:3000').origin
+      expected = new URL(readEnv('BETTER_AUTH_URL') ?? readEnv('MIKKA_APP_ORIGIN') ?? DEFAULT_LOCAL_APP_ORIGIN).origin
     } catch { return null }
     if (origin !== expected) return null
   }

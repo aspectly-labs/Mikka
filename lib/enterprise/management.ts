@@ -13,6 +13,7 @@ import { requireOrganizationAdmin } from '@/lib/governance/organizations'
 import { resolveEntitlements } from '@/lib/governance/policy'
 import { deploymentMode } from '@/lib/governance/edition'
 import { GovernanceError } from '@/lib/governance/errors'
+import { getRuntimeConfig } from '@/lib/runtime-config'
 import type { WorkspaceTransaction } from '@/lib/workspace-access'
 import type { OrganizationAuditInput } from '@/lib/governance/audit-events'
 import { withBasePath } from '@/lib/base-path'
@@ -62,7 +63,12 @@ async function administratorInTransaction(tx: WorkspaceTransaction, organization
   const result = await requireOrganizationAdmin(tx, organizationId, userId)
   if (licensed) {
     const [grant] = await tx.select().from(organizationEntitlements).where(eq(organizationEntitlements.organizationId, organizationId))
-    if (resolveEntitlements({ mode: deploymentMode(), kind: 'team', grant }).plan !== 'enterprise') throw new GovernanceError('feature_unavailable')
+    if (!resolveEntitlements({
+      mode: deploymentMode(),
+      kind: 'team',
+      grant,
+      capabilityOverrides: getRuntimeConfig('planEntitlementOverrides'),
+    }).capabilities.canUseSso) throw new GovernanceError('feature_unavailable')
   }
   return result
 }

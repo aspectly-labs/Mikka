@@ -28,6 +28,7 @@ import { factoryTaskDetail, type FactoryTaskDetail } from "./task-detail";
 import { readFactoryFlowStates } from './public-flow';
 import { publicFactoryTaskSummary, type FactoryPublicTaskSummary } from './public-task';
 import { factoryScopeAllows, type FactoryIssueScope } from "./scope";
+import { runtimeEnv } from '@/lib/env/server';
 import { captureIdOf, hasFactoryVisualEvidence, factoryHandoffEvidenceError, factoryEvidenceBlockReason, FACTORY_VISUAL_EVIDENCE_REQUIRED, FACTORY_PUBLIC_EVIDENCE_REQUIRED } from "./evidence";
 import { escapeLiteral, type Pool, type PoolClient, type QueryResult } from "pg";
 import { z } from "zod";
@@ -81,7 +82,7 @@ async function providerRepositoryRetryMatches(tx: PoolClient, prior: ProviderRun
       before.workspaceId === prior.agentDefinition?.executionIdentity?.workspaceId && after.workspaceId === retry.agentDefinition?.executionIdentity?.workspaceId
   if (prior.agentDefinition?.readOnly !== true || retry.agentDefinition?.readOnly !== true || !before.remoteUrl || !after.remoteUrl) return false
   try {
-    const options = { allowFile: daemonTestMode(process.env) }
+    const options = { allowFile: daemonTestMode(runtimeEnv()) }
     return repositoryBindingMatches(before.repoPath, before.remoteUrl, options) && repositoryBindingMatches(after.repoPath, after.remoteUrl, options) &&
       normalizeRepository(before.remoteUrl, options).key === normalizeRepository(after.remoteUrl, options).key
   } catch { return false }

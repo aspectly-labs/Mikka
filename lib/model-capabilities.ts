@@ -45,19 +45,13 @@ export interface ModelCapabilities {
   daybreak?: DaybreakTier
 }
 
-/**
- * The models Pro runs on. Neither the Gateway catalogue (`/v1/mikka/catalog`) nor the Codex account catalogue names a
- * field for `reasoning.mode: "pro"`, so this is the one list, copied from Capy's shipped catalogue (its model entries
- * with `pro: true`; every one is OpenAI's, offered on credits and API keys, never on a subscription seat). Keys are
- * `modelKeyOf` keys. Update it here when OpenAI adds or retires a Pro model; nothing else may infer Pro from a name.
- */
-export const PRO_MODELS: ReadonlySet<string> = new Set([
-  'openai/gpt-6.2-astra', 'openai/gpt-6-astra', 'openai/gpt-6.2-sol', 'openai/gpt-6.1-sol', 'openai/gpt-6-sol',
-  'openai/gpt-6-luna', 'openai/gpt-6.1-terra', 'openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna',
-])
+import { CATALOG_PRO_MODELS, catalogProviderHarness, catalogProviderLab } from './model-catalog-metadata'
 
-/** The lab a provider name stands for when a model id has no catalogue vendor (a subscription's or a key's provider). */
-const LAB: Readonly<Record<string, string>> = { claude: 'anthropic', anthropic: 'anthropic', codex: 'openai', openai: 'openai' }
+/**
+ * The models Pro runs on, centralized in `lib/model-catalog-metadata.ts`
+ * (every one is offered on credits and OpenAI API keys, never on a subscription seat).
+ */
+export const PRO_MODELS: ReadonlySet<string> = CATALOG_PRO_MODELS
 
 /**
  * One model, whatever runs it (Capy's `lab/id-without-prefix`): the routes of the same model — Mikka 额度, a plan, a
@@ -72,7 +66,7 @@ export function modelKeyOf(modelId: string, provider: string, routeLabel = ''): 
   const name = id.slice(slash + 1)
   const bare = name.startsWith('claude-') ? name.replace(/\./g, '-') : name
   const vendor = slash >= 0 ? id.slice(0, slash) : catalogIdFor(modelId)?.split('/')[0]
-  const lab = LAB[provider] ?? vendor ?? provider.toLowerCase()
+  const lab = catalogProviderLab(provider) ?? vendor ?? provider.toLowerCase()
   return `${lab}/${bare}`
 }
 
@@ -86,9 +80,7 @@ function builtinKey(modelId: string): string {
 
 /** The CLI family whose built-in list describes a model. */
 export function capabilityHarness(modelId: string, provider?: string): OrderHarness {
-  if (provider === 'codex' || provider === 'openai') return 'codex'
-  if (provider === 'claude' || provider === 'anthropic') return 'claude_code'
-  return /(^|\/)(gpt|o\d)/i.test(modelId) ? 'codex' : 'claude_code'
+  return catalogProviderHarness(provider) ?? (/(^|\/)(gpt|o\d)/i.test(modelId) ? 'codex' : 'claude_code')
 }
 
 export function resolveModelCapabilities(input: {

@@ -1,5 +1,6 @@
 import { gatewayLiteLlm } from './model-gateway/config'
 import 'server-only'
+import { envExact, readEnv } from '@/lib/env/server'
 import type { SubscriptionModelRequestPolicy } from './subscription-service-tier'
 import { deploymentSwitch } from '@/lib/deployment-switches'
 import { z } from 'zod'
@@ -44,9 +45,9 @@ export async function authorizeSubscriptionUse(userId: string, workspaceId: stri
     if (bot && bot.ownerId !== userId) throw new SubscriptionRefusal('account_unavailable')
   }
 }
-export function subscriptionRuntime(nativeBroker = false, custodyOnly = false, options: { accountDeletionGrant?: string; modelRequestPolicy?: SubscriptionModelRequestPolicy } = {}): SubscriptionService {
+export function subscriptionRuntime(nativeBroker = false, custodyOnly = false, options: { exportAccessLease?: boolean; accountDeletionGrant?: string; modelRequestPolicy?: SubscriptionModelRequestPolicy } = {}): SubscriptionService {
   if (!byosEnabled() && !(custodyOnly && byosEnrollmentEnabled())) throw new SubscriptionRefusal('backend_unavailable')
-  const binary = process.env.MIKKA_BYOS_WORKER_BINARY ?? join(process.cwd(), 'packages/subscription-worker/bin/mikka-subscription-worker')
+  const binary = readEnv('MIKKA_BYOS_WORKER_BINARY') ?? join(process.cwd(), 'packages/subscription-worker/bin/mikka-subscription-worker')
   // pool is request-scoped; never send a preview worker to the production DB.
   let databaseUrl = pool.options.connectionString
   if (options.accountDeletionGrant !== undefined) {
@@ -63,19 +64,19 @@ export function subscriptionRuntime(nativeBroker = false, custodyOnly = false, o
   // so the repository needs a checkout as well as the bound query. Without
   // connect every new sign-in was refused as backend_unavailable.
   const database = Object.assign(captureDatabaseQuery(pool), { connect: () => connectForCommitEffects(pool) })
-  const infisicalOrigin = process.env.MIKKA_BYOS_INFISICAL_ORIGIN
-  const project = process.env.MIKKA_BYOS_INFISICAL_PROJECT
-  const environment = process.env.MIKKA_BYOS_INFISICAL_ENVIRONMENT
-  const path = process.env.MIKKA_BYOS_INFISICAL_PATH
-  const workloadToken = process.env.MIKKA_BYOS_INFISICAL_TOKEN
-  const accessPath = process.env.MIKKA_BYOS_ACCESS_INFISICAL_PATH
-  const accessProject = process.env.MIKKA_BYOS_ACCESS_INFISICAL_PROJECT
-  const accessToken = process.env.MIKKA_BYOS_ACCESS_INFISICAL_TOKEN
-  const custodyId = process.env.MIKKA_BYOS_CUSTODY_CLIENT_ID
-  const custodySecret = process.env.MIKKA_BYOS_CUSTODY_CLIENT_SECRET
-  const accessId = process.env.MIKKA_BYOS_ACCESS_CLIENT_ID
-  const accessSecret = process.env.MIKKA_BYOS_ACCESS_CLIENT_SECRET
-  const sharedCustodyIdentity = process.env.MIKKA_BYOS_SHARED_CUSTODY_IDENTITY === '1'
+  const infisicalOrigin = readEnv('MIKKA_BYOS_INFISICAL_ORIGIN')
+  const project = readEnv('MIKKA_BYOS_INFISICAL_PROJECT')
+  const environment = readEnv('MIKKA_BYOS_INFISICAL_ENVIRONMENT')
+  const path = readEnv('MIKKA_BYOS_INFISICAL_PATH')
+  const workloadToken = readEnv('MIKKA_BYOS_INFISICAL_TOKEN')
+  const accessPath = readEnv('MIKKA_BYOS_ACCESS_INFISICAL_PATH')
+  const accessProject = readEnv('MIKKA_BYOS_ACCESS_INFISICAL_PROJECT')
+  const accessToken = readEnv('MIKKA_BYOS_ACCESS_INFISICAL_TOKEN')
+  const custodyId = readEnv('MIKKA_BYOS_CUSTODY_CLIENT_ID')
+  const custodySecret = readEnv('MIKKA_BYOS_CUSTODY_CLIENT_SECRET')
+  const accessId = readEnv('MIKKA_BYOS_ACCESS_CLIENT_ID')
+  const accessSecret = readEnv('MIKKA_BYOS_ACCESS_CLIENT_SECRET')
+  const sharedCustodyIdentity = envExact('MIKKA_BYOS_SHARED_CUSTODY_IDENTITY', '1')
   if (sharedCustodyIdentity && (!custodyId || !custodySecret)) throw new SubscriptionRefusal('backend_unavailable')
   const staticIdentity = Boolean(workloadToken && (custodyOnly || (accessToken && accessToken !== workloadToken)))
   const workloadIdentity = Boolean(custodyId && custodySecret && (custodyOnly || (accessId && accessSecret && accessId !== custodyId)))
@@ -106,9 +107,9 @@ export function subscriptionRuntime(nativeBroker = false, custodyOnly = false, o
     } : undefined
     const nativeLiteLlm = nativeBroker && !custodyOnly ? gatewayLiteLlm() : null
     const nativeCa = nativeLiteLlm && new URL(nativeLiteLlm.url).hostname === 'litellm.internal'
-      ? process.env.NODE_EXTRA_CA_CERTS : undefined
-    return new SubscriptionWorkerClient({ binary, ...(nativeCa ? { env: { SSL_CERT_FILE: nativeCa } } : {}) }, { scope, ...(nativeLiteLlm ? { nativeLiteLlmUrl: nativeLiteLlm.url, nativeLiteLlmKey: nativeLiteLlm.masterKey } : {}), databaseUrl, infisicalOrigin, project, environment, path, workloadToken: sharedCustodyIdentity ? '' : workloadToken ?? '', accessPath, accessProject, accessToken: custodyOnly || sharedCustodyIdentity ? undefined : accessToken, retainEnrollmentSources: retainEnrollmentSourcesForAcceptance(), enrollmentAttemptPath: process.env.MIKKA_BYOS_ENROLLMENT_ATTEMPT_PATH, enrollmentClaimPath: process.env.MIKKA_BYOS_ENROLLMENT_CLAIM_PATH, enrollmentGrantPath: process.env.MIKKA_BYOS_ENROLLMENT_GRANT_PATH, enableRuntime: !custodyOnly, // Plain model calls run only after access() found the route ready for this owner (subscriptionRouteReady).
-      enablePlainModels: !custodyOnly, enableCodexOAuth: deploymentSwitch('byosCodexOAuth'), enableClaudeOAuth: deploymentSwitch('byosClaudeOAuth') }, resolve, streamIdentity)
+      ? readEnv('NODE_EXTRA_CA_CERTS') : undefined
+    return new SubscriptionWorkerClient({ binary, ...(nativeCa ? { env: { SSL_CERT_FILE: nativeCa } } : {}) }, { scope, ...(nativeLiteLlm ? { nativeLiteLlmUrl: nativeLiteLlm.url, nativeLiteLlmKey: nativeLiteLlm.masterKey } : {}), databaseUrl, infisicalOrigin, project, environment, path, workloadToken: sharedCustodyIdentity ? '' : workloadToken ?? '', accessPath, accessProject, accessToken: custodyOnly || sharedCustodyIdentity ? undefined : accessToken, retainEnrollmentSources: retainEnrollmentSourcesForAcceptance(), enrollmentAttemptPath: readEnv('MIKKA_BYOS_ENROLLMENT_ATTEMPT_PATH'), enrollmentClaimPath: readEnv('MIKKA_BYOS_ENROLLMENT_CLAIM_PATH'), enrollmentGrantPath: readEnv('MIKKA_BYOS_ENROLLMENT_GRANT_PATH'), enableRuntime: !custodyOnly, // Plain model calls run only after access() found the route ready for this owner (subscriptionRouteReady).
+      enablePlainModels: !custodyOnly, enableCodexOAuth: deploymentSwitch('byosCodexOAuth'), enableClaudeOAuth: deploymentSwitch('byosClaudeOAuth'), ...(options.exportAccessLease && !custodyOnly ? { exportAccessLease: true } : {}) }, resolve, streamIdentity)
   }, {
     ready: async (route: SubscriptionRoute, ownerId: string) => !custodyOnly && await subscriptionRouteReady(route, ownerId),
     oauth: { codex: deploymentSwitch('byosCodexOAuth'), claude: deploymentSwitch('byosClaudeOAuth') },
