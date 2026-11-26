@@ -2,22 +2,7 @@
 
 Apply the universal invariants below on every task, then load the matching Tier 1 standard or skill from the branch table before acting.
 
-## Standing rules (Alex, 2026-11-25; [2026-11-26-0200](docs/design/decisions/2026-11-26-0200-best-practice-review-copy.md))
-
-These apply to every session and every agent, in this repository and in `mikka-hosted-ui`. Do not ask Alex about them again.
-
-1. **Best practice wins.** Everything follows frontend/UX best practice and what top products ship. When an existing rule, decision record or `AGENTS.md` exception conflicts with best practice, replace that rule in the same change (supersede the record); do not work around it. Do not ask Alex what best practice or top products already answer; ask only what has no evidence.
-2. **Independent screenshot review.** Before any UI screenshot goes to Alex, a separate subagent — not the agent that made the change — reviews it against the reference (Capy/Codex source and the top-product screenshots), `docs/design/` and [copy.md](docs/design/copy.md); its findings are fixed or listed with the screenshot. Self-review does not count ([Handbook](docs/engineering/HANDBOOK.md#independent-screenshot-review)).
-3. **UI copy: no padding.** Labels are only labels and values only values: no parenthetical notes, no restating what is already on screen, no sentences or full stops in labels; what a person needs to act stays visible in one short line, other explanation goes in a tooltip or nowhere; write it as Capy/Codex ship it ([C-11](docs/design/copy.md), ratcheted by `node scripts/check-copy.mjs`). Review UI copy with the skills listed in copy.md.
-4. **Benchmark agent products first:** Capy, ChatGPT/Codex, Claude, Cursor, Devin, Perplexity. Category leaders (Linear, Jira, GitHub, Vercel …) are a reference only for a surface no agent product has. A feature no agent product has is not built unless Alex asks for it.
-5. **No sprints or cycles (迭代).** No agent product has them, so Mikka does not build them.
-6. **Settled product facts — never ask Alex again:**
-   - **iPhone app: 「即将推出」 / "Coming soon"** everywhere (site, docs, FAQ, UI). It is in development; never mention
-     TestFlight or say an iOS app is available (Alex, 2026-11-26).
-   - **Memory (记忆)** is hidden on purpose (flag `mikka-memory` off; reason on the flag in `lib/feature-flags.ts`).
-   - **Execution runs on E2B**; Mikka Cloud uses Mikka's own E2B account, users can't bring their own E2B key on Mikka
-     Cloud (self-host only) (Alex, 2026-11-25/26).
-   Before asking Alex anything, check this list, the flag comments and the decision records.
+UI rules, UI decisions and design docs live in the private hosted repo (`mikka-hosted-ui`), not here.
 
 ## Authority and boundaries
 
@@ -28,7 +13,7 @@ These apply to every session and every agent, in this repository and in `mikka-h
 ## Core engineering invariants
 
 - **Domain & terminology ([glossary](docs/design/glossary.md)):** Run settings belong to an **Environment** (`workspace_environments`), not a Project; Bots are Capy-style Captains without Promote/Demote; creating a task records it only and assigning a Bot wakes it; task states are workspace-defined while Needs you / Waiting are derived run states. Name threads `线程` (never `会话` or "Conversation"; avoid `对话` except `对话框`; group chats are `群聊`; `pnpm i18n:check`). Keep thread root run ID, task ID, and execution run ID distinct (`conversation` in code is the `conversations` table family).
-- **UI reuse, copy & libraries ([design-system](docs/design/design-system.md)):** Reuse primitives (R-90), theme paid blocks with Mikka's tokens through their hooks, patch only what hooks cannot reach ([2026-11-25-1630](docs/design/decisions/2026-11-25-1630-paid-blocks-themed-by-mikka-tokens.md)), and benchmark against top agent products rather than keeping a design by precedent, and preserve `components/ui/`, `components/reui/`, and `components/motion/` even when unimported. Cut every word whose removal leaves the screen unchanged (R-40: no sheet/dialog subtitles except shipped paid-block slots, mark-only `🔒 Secured by Mikka`, state-only status lines). Replies use Markdown across Web, Desktop, and iOS ([OpenUI retired](docs/design/decisions/2026-11-25-remove-openui.md)). Screenshot official builds (`Mikka` + `mikka-hosted-ui`).
+- **UI reuse, copy & libraries ([design-system](docs/design/design-system.md)):** Reuse primitives (R-90), keep paid blocks as shipped (data and copy only), and preserve `components/ui/`, `components/reui/`, and `components/motion/` even when unimported. Cut every word whose removal leaves the screen unchanged (R-40: no sheet/dialog subtitles except shipped paid-block slots, mark-only `🔒 Secured by Mikka`, state-only status lines). Replies use Markdown across Web, Desktop, and iOS ([OpenUI retired](docs/design/decisions/2026-11-25-remove-openui.md)). Screenshot official builds (`Mikka` + `mikka-hosted-ui`).
 - **Local-first & Mac boundary:** Run dev servers, databases, `pnpm build`, `pnpm typecheck`, PG17/daemon suites, and production-build screenshots in cloud Linux (`pnpm local:plan`, `pnpm local:check`, `pnpm local:ready`) or CI — **never on the developer's Mac** (small source-only `node --test` checks are fine). Draft PRs fail closed on required aggregators; treat only checks on the latest Ready head as acceptance evidence.
 - **Scripted model acceptance ([2026-11-20-1855](docs/design/decisions/2026-11-20-1855-scripted-model-acceptance.md)):** Keep admission, auth, tools, daemon, and PG17 real, mocking only the LiteLLM HTTP boundary. Never send live model prompts from dev acceptance, CI, local-loop, or nightly jobs.
 - **Runtime, error & secret hygiene:** Push live updates via `lib/live/*` and `hooks/use-live-key.tsx` — zero new polling (`scripts/polling-policy.mjs`) and non-increasing `tests/idle-request-budget.json` (`pnpm test:idle-budget`). Preserve error causes (`{ cause: error }`, `CodedError`, localized `RunErrors.*`, log name/code only; `scripts/error-cause-policy.mjs`). Keep secrets in secret managers/workload delivery; never commit, write locally, or print secrets; preserve unrelated changes.

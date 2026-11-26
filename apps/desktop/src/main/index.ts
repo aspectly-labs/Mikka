@@ -517,7 +517,7 @@ function messageBox(options: Electron.MessageBoxOptions): Promise<Electron.Messa
 const copy = () => updateCopy(app.getLocale())
 const updates = new Updates(autoUpdater, {
   ready: version => {
-    // Capy's words (spec-desktop.md §5): ready to install, installs on restart, Restart Now / Later.
+    // Capy's words: ready to install, installs on restart, Restart Now / Later.
     void messageBox({ type: 'info', message: copy().ready, detail: copy().readyDetail(version), buttons: [copy().restartNow, copy().later], defaultId: 0, cancelId: 1 })
       .then(({ response }) => { if (response === 0) updates.install() })
   },
