@@ -128,6 +128,21 @@ test('resolveStructuredMentions resolves workspace-scoped entities, deduplicates
   assert.match(expanded, /- \[file\] src\/index\.ts \(file\)/)
   assert.match(expanded, /- \[file\] <unavailable>/)
   assert.match(expanded, /- \[folder\] <unavailable>/)
+
+  // Runtime-discovered harness skills resolve when explicitly provided by verified data-available-commands,
+  // while unverified skill names still fail closed.
+  const runtimeResolved = await resolveStructuredMentions(
+    db as never,
+    'user-1',
+    'ws-1',
+    [
+      { kind: 'skill', id: 'audit-ui', label: 'audit-ui', start: 0, end: 9 },
+      { kind: 'skill', id: 'unverified-skill', label: 'unverified-skill', start: 10, end: 27 },
+    ],
+    { runtimeSkills: [{ name: 'audit-ui', description: 'Audit UI tokens' }] },
+  )
+  assert.deepEqual(runtimeResolved[0], { kind: 'skill', id: 'audit-ui', state: 'ok', title: 'audit-ui', detail: 'Audit UI tokens' })
+  assert.deepEqual(runtimeResolved[1], { kind: 'skill', id: 'unverified-skill', state: 'broken', title: 'unverified-skill', detail: null })
 })
 
 test('stripMachineContextBlocks removes machine-only <mentions> prefix and skill trailer while preserving user text', async () => {

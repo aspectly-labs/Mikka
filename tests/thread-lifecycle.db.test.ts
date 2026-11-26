@@ -507,4 +507,78 @@ test('forkNote resolves web-submitted user messages by submissionId and cuts off
   assert.doesNotMatch(fromAgentNote, /Attempt 2 secret later reply/)
 })
 
+test('deviceWork correlates run_messages to owner coordinator_events without dropping control or bleeding across tenants', async () => {
+  const { deviceWork } = await import('@/lib/device-link')
+  const { agentId, issueId, rootId } = await fixture()
+  const deviceId = randomUUID(), repoId = randomUUID()
+  const remote = 'https://github.com/acme/device-work-corr.git'
+  await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,harnesses) VALUES ($1,$2,'local-corr','local',true,'[{"harness":"claude_code","installed":true}]'::jsonb)`, [deviceId, owner.id])
+  await pool.query(`UPDATE agents SET "deviceId"=$2, harness='claude_code' WHERE id=$1`, [agentId, deviceId])
+  await pool.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath","remoteUrl") VALUES ($1,$2,$3,$4,$5)`, [repoId, deviceId, owner.id, remoteKey(remote), remote])
+  await pool.query(`UPDATE agent_runs SET status='running',"deviceId"=$2,"deviceRepoId"=$3,"agentDefinition"=$4::jsonb WHERE id=$1`, [
+    rootId, deviceId, repoId, JSON.stringify({ harness: 'claude_code', model: 'claude-sonnet-4-6' }),
+  ])
+
+  // Seed a distracting earlier coordinator_events row without control, AND a cross-tenant steer+compact row.
+  const distractorId = randomUUID()
+  const foreignEventId = randomUUID()
+  await pool.query(
+    `INSERT INTO coordinator_events (id, "userId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt", "createdAt")
+     VALUES
+       ($1, $2, $3, 'user_message', $4, '{"text":"distractor"}'::jsonb, 'background', now(), now() - interval '10 seconds'),
+       ($5, $6, $3, 'user_message', $7, '{"threadSubmission":{"delivery":"steer","control":{"kind":"compact","instructions":"foreign"}}}'::jsonb, 'background', now(), now() - interval '9 seconds')`,
+    [distractorId, owner.id, issueId, `corr-dist:${distractorId}`, foreignEventId, outsider.id, `corr-foreign:${foreignEventId}`],
+  )
+
+  const compactMsgId = randomUUID()
+  const slashMsgId = randomUUID()
+  const composedMsgId = randomUUID()
+  const plainMsgId = randomUUID()
+  const crossTenantMsgId = randomUUID()
+
+  await pool.query(
+    `INSERT INTO coordinator_events (id, "userId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt")
+     VALUES
+       ($1, $2, $3, 'user_message', $4, $5::jsonb, 'background', now()),
+       ($6, $2, $3, 'user_message', $7, $8::jsonb, 'background', now()),
+       ($9, $2, $3, 'user_message', $10, $11::jsonb, 'background', now()),
+       ($12, $13, $3, 'user_message', $14, $15::jsonb, 'background', now())`,
+    [
+      compactMsgId, owner.id, issueId, `corr-c:${compactMsgId}`, JSON.stringify({ threadSubmission: { control: { kind: 'compact', instructions: 'keep schemas' } } }),
+      slashMsgId, `corr-s:${slashMsgId}`, JSON.stringify({ threadSubmission: { control: { kind: 'slash', name: 'review', args: 'src/' } } }),
+      composedMsgId, `corr-t:${composedMsgId}`, JSON.stringify({ threadSubmission: { control: { kind: 'client_composed' } } }),
+      // Deliberately insert a coordinator_events row with crossTenantMsgId under `outsider.id` to verify userId scoping!
+      crossTenantMsgId, outsider.id, `corr-x:${crossTenantMsgId}`, JSON.stringify({ threadSubmission: { delivery: 'steer', control: { kind: 'compact', instructions: 'hijack' } } }),
+    ],
+  )
+  await pool.query(
+    `INSERT INTO run_messages (id, "runId", "userId", text, origin, "mailboxWakeDepth", "createdAt")
+     VALUES
+       ($1, $2, $3, '/compact keep schemas', 'owner', 0, now() - interval '4 seconds'),
+       ($4, $2, $3, '/review src/', 'owner', 0, now() - interval '3 seconds'),
+       ($5, $2, $3, '/login', 'owner', 0, now() - interval '2 seconds'),
+       ($6, $2, $3, 'plain follow up', 'owner', 0, now() - interval '1 second'),
+       ($7, $2, $3, 'owner message sharing id with foreign event', 'owner', 0, now())`,
+    [compactMsgId, rootId, owner.id, slashMsgId, composedMsgId, plainMsgId, crossTenantMsgId],
+  )
+
+  const work = await deviceWork(deviceId, [], { activeTurnSteer: true, runControlCommands: true })
+  const byId = new Map(work.commands.filter((c): c is Extract<typeof c, { messageId: string }> => 'messageId' in c).map(c => [c.messageId, c]))
+
+  assert.deepEqual(byId.get(compactMsgId), { kind: 'compact', runId: rootId, messageId: compactMsgId, instructions: 'keep schemas' })
+  assert.deepEqual(byId.get(slashMsgId), { kind: 'input', runId: rootId, messageId: slashMsgId, text: '/review src/', slashCommand: { name: 'review', args: 'src/' } })
+  assert.deepEqual(byId.get(composedMsgId), { kind: 'input', runId: rootId, messageId: composedMsgId, text: '/login', clientComposed: true })
+  assert.equal(byId.get(plainMsgId)?.kind, 'input', 'plain message must not inherit steer or compact control from unrelated rows')
+  assert.equal(byId.get(crossTenantMsgId)?.kind, 'input', 'owner message must never inherit steer or compact control from another user coordinator_events row')
+  assert.equal('clientComposed' in (byId.get(crossTenantMsgId) ?? {}), false)
+
+  // Also verify listIssueRunChains excludes spawned side threads so task composer never gets hijacked.
+  const side = await spawnThread(owner, rootId, { relation: 'side', question: 'Which port?' })
+  assert.ok(side)
+  kept.push(side.id)
+  const { listIssueRunChains } = await import('@/lib/run-chain')
+  const chains = await listIssueRunChains(pool, issueId, [owner.id], 20)
+  assert.deepEqual(chains.map(c => c.rootRunId), [rootId], 'listIssueRunChains must exclude side threads from task conversation roots')
+})
+
 

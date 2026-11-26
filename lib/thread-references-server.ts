@@ -88,7 +88,10 @@ export async function resolveStructuredMentions(
   ownerId: string,
   workspaceId: string | null,
   mentions: readonly import('@mikka/protocol/slash-commands').StructuredMention[],
-  options?: { slackChannels?: readonly { id: string; name: string }[] | null },
+  options?: {
+    slackChannels?: readonly { id: string; name: string }[] | null
+    runtimeSkills?: readonly { name: string; description?: string }[]
+  },
 ): Promise<ResolvedStructuredMention[]> {
   const unique = mentions.filter(
     (m, idx, arr) => arr.findIndex(o => o.kind === m.kind && o.id === m.id) === idx,
@@ -105,6 +108,11 @@ export async function resolveStructuredMentions(
       })().catch(() => null)
     }
     return slackChannelsPromise
+  }
+  const runtimeSkillByLower = new Map<string, { name: string; description?: string }>()
+  for (const skill of options?.runtimeSkills ?? []) {
+    const normalized = skill.name.trim().replace(/^\/+/, '').toLowerCase()
+    if (normalized) runtimeSkillByLower.set(normalized, skill)
   }
   return Promise.all(unique.map(async (m): Promise<ResolvedStructuredMention> => {
     const fail: ResolvedStructuredMention = { kind: m.kind, id: m.id, state: 'broken', title: m.label ?? null, detail: null }
@@ -182,9 +190,14 @@ export async function resolveStructuredMentions(
             `SELECT name, slug, source FROM personal_skills WHERE user_id=$1 AND enabled=true AND (id::text=$2 OR lower(slug)=lower($2) OR lower(name)=lower($2)) LIMIT 1`,
             [ownerId, m.id],
           )
-          return row
-            ? { kind: m.kind, id: m.id, state: 'ok', title: row.name, detail: row.slug }
-            : fail
+          if (row) return { kind: m.kind, id: m.id, state: 'ok', title: row.name, detail: row.slug }
+          if (m.kind === 'skill') {
+            const runtimeSkill = runtimeSkillByLower.get(m.id.trim().replace(/^\/+/, '').toLowerCase())
+            if (runtimeSkill) {
+              return { kind: 'skill', id: runtimeSkill.name, state: 'ok', title: runtimeSkill.name, detail: runtimeSkill.description || 'skill' }
+            }
+          }
+          return fail
         }
         case 'slack_channel': {
           const channels = await readVerifiedSlackChannels()

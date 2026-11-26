@@ -260,6 +260,11 @@ test('the newest visible conversational continuation owns replies even after a p
     assert.equal(reply?.latestRunId, 'resumed')
   }
   assert.equal(taskThreadRoots([review, redacted]).reply, null)
+
+  // Side and subagent child runs on a task must never hijack the main conversation reply target.
+  const side = { ...later, id: 'side-1', latestRunId: 'side-1', threadRelation: 'side' as const, createdAt: new Date('2026-01-05'), attempts: [{ ...later.attempts[0], runId: 'side-1', createdAt: new Date('2026-01-05') }] }
+  const subagent = { ...later, id: 'sub-1', latestRunId: 'sub-1', threadRelation: 'subagent' as const, createdAt: new Date('2026-01-06'), attempts: [{ ...later.attempts[0], runId: 'sub-1', createdAt: new Date('2026-01-06') }] }
+  assert.equal(taskThreadRoots([first, side, subagent]).reply?.latestRunId, 'resumed')
 })
 
 test('only an authorized thread owner sees the runtime-observed model in the task work list', () => {

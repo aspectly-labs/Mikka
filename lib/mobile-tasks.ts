@@ -100,7 +100,7 @@ async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: s
   const [identifiers, runs, [decoration], versions, [document], labels, blockers, assignees] = await Promise.all([
     taskIdentifiers([{ id, ownerId: issue.userId, scope: issue.scope, number: metadata.number, issuedIdentifier: issue.issuedIdentifier }]),
     db.select({ ...taskStateRunColumns, pullRequest: runPublications.pullRequest,
-      kind: agentRuns.kind, createdAt: agentRuns.createdAt,
+      kind: agentRuns.kind, threadRelation: agentRuns.threadRelation, createdAt: agentRuns.createdAt,
       harness: sql<string>`coalesce(${agentRuns.agentDefinition}->>'harness', ${agents.harness})`,
       model: sql<string | null>`${agentRuns.agentDefinition}->>'model'`,
       bot: { id: bots.id, name: bots.name, color: bots.color, shape: bots.shape },

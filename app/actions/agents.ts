@@ -911,7 +911,8 @@ export async function sendIssueThreadMessage(input: {
     const parsedMentions = slashProtocol.structuredMentionsSchema.safeParse(input.mentions)
     if (!parsedMentions.success) throw new ActionFailureError('validationGeneric')
     const { resolveStructuredMentions, expandStructuredMentions } = await import('@/lib/thread-references-server')
-    const resolvedMentions = await resolveStructuredMentions(pool, user.id, row.workspaceId ?? null, parsedMentions.data)
+    const runtimeSkills = runtime?.commands.filter(c => c._meta.source === 'skill').map(c => ({ name: c.name, description: c.description }))
+    const resolvedMentions = await resolveStructuredMentions(pool, user.id, row.workspaceId ?? null, parsedMentions.data, { runtimeSkills })
     const mentionPrefix = expandStructuredMentions(resolvedMentions)
     if (mentionPrefix && body.length + mentionPrefix.length <= 10_000) {
       body = mentionPrefix + body

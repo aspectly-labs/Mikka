@@ -239,8 +239,8 @@ export async function deviceWork(deviceId: string, skip: readonly string[], opti
   if (live.length === 0) return { commands: takenBack.slice(0, 500), queuedRuns }
   const messages = await db
     .select({ id: runMessages.id, runId: runMessages.runId, text: runMessages.text, origin: runMessages.origin,
-      steer: sql<boolean>`EXISTS (SELECT 1 FROM coordinator_events e WHERE e.id=${runMessages.id} AND e."userId"=${runMessages.userId} AND e.payload#>>'{threadSubmission,delivery}'='steer')`,
-      control: sql<Record<string, unknown> | null>`(SELECT e.payload->'threadSubmission'->'control' FROM coordinator_events e WHERE e.id=${runMessages.id} AND e."userId"=${runMessages.userId} LIMIT 1)` })
+      steer: sql<boolean>`EXISTS (SELECT 1 FROM coordinator_events e WHERE e.id="run_messages".id AND e."userId"="run_messages"."userId" AND e.payload#>>'{threadSubmission,delivery}'='steer')`,
+      control: sql<Record<string, unknown> | null>`(SELECT e.payload->'threadSubmission'->'control' FROM coordinator_events e WHERE e.id="run_messages".id AND e."userId"="run_messages"."userId" LIMIT 1)` })
     .from(runMessages)
     .where(and(isNull(runMessages.deliveredAt), sql`failure IS NULL`, inArray(runMessages.runId, live.map(run => run.id))))
     .orderBy(asc(runMessages.createdAt))
