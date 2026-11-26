@@ -1,6 +1,6 @@
 import 'server-only'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { and, asc, eq, or } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
@@ -115,10 +115,10 @@ export function taskReaderScope(reader: Reader) {
 function membership(userId: string, workspaceId?: string,
   workspace: typeof workspaces | typeof readerWorkspace = workspaces, member: typeof workspaceMembers | typeof readerMember = workspaceMembers) {
   return and(
-    eq(member.userId, userId), eq(member.status, 'active'),
-    workspaceId ? eq(workspace.id, workspaceId) : undefined,
+    sql`${member.userId}=${userId}`, sql`${member.status}='active'`,
+    workspaceId ? sql`${workspace.id}=${workspaceId}` : undefined,
     // Even a corrupt membership row cannot turn a personal tenant into a team.
-    or(eq(workspace.kind, 'team'), and(eq(workspace.kind, 'personal'), eq(workspace.userId, userId))),
+    sql`(${workspace.kind}='team' or (${workspace.kind}='personal' and ${workspace.userId}=${member.userId}))`,
   )
 }
 
@@ -149,7 +149,7 @@ export async function activeTaskWorkspaces(reader: Reader, requestedId?: string,
     const rows = await filterEnterpriseWorkspaceLinks(reader, [{ id: lease.workspaceId, kind: lease.kind, organizationId: lease.organizationId, factorAt: lease.factorAt }], appExecutor)
     return rows.map(({ id, kind }) => ({ id, kind }))
   }
-  const rows = await workspaceDb.select({ id: readerWorkspace.id, kind: readerWorkspace.kind, factorAt: readerWorkspace.twoFactorRequiredAt, organizationId: readerOrganization.organizationId }).from(readerWorkspace)
+  const rows = await workspaceDb.select({ id: readerWorkspace.id, kind: readerWorkspace.kind, factorAt: sql`${readerWorkspace.twoFactorRequiredAt}`.mapWith(readerWorkspace.twoFactorRequiredAt).as('mfa'), organizationId: sql`${readerOrganization.organizationId}`.mapWith(readerOrganization.organizationId).as('org') }).from(readerWorkspace)
     .innerJoin(readerMember, eq(readerMember.workspaceId, readerWorkspace.id))
     .leftJoin(readerOrganization, eq(readerOrganization.workspaceId, readerWorkspace.id))
     .where(membership(scope.userId, selectedId, readerWorkspace, readerMember)).orderBy(asc(readerWorkspace.createdAt))

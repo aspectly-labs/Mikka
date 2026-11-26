@@ -19,7 +19,7 @@ after(() => {
   }
 })
 
-const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\", \"mikka_organization_workspaces\".\"organizationId\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\" = $1 and \"mikka_workspace_members\".\"status\" = $2 and \"mikka_workspaces\".\"id\" = $3 and (\"mikka_workspaces\".\"kind\" = $4 or (\"mikka_workspaces\".\"kind\" = $5 and \"mikka_workspaces\".\"userId\" = $6))) order by \"mikka_workspaces\".\"createdAt\" asc"
+const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\" as \"mfa\", \"mikka_organization_workspaces\".\"organizationId\" as \"org\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\"=$1 and \"mikka_workspace_members\".\"status\"='active' and \"mikka_workspaces\".\"id\"=$2 and (\"mikka_workspaces\".\"kind\"='team' or (\"mikka_workspaces\".\"kind\"='personal' and \"mikka_workspaces\".\"userId\"=\"mikka_workspace_members\".\"userId\"))) order by \"mikka_workspaces\".\"createdAt\" asc"
 function expandMembershipAliases(sql) {
   for (const [table, name] of [['mikka_workspaces', 'w'], ['mikka_workspace_members', 'm'], ['mikka_organization_workspaces', 'o']]) {
     sql = sql.replaceAll('"' + table + '" "' + name + '"', '"' + table + '"')
@@ -89,7 +89,7 @@ function workspaceQuery(columns) {
       assert.deepEqual(Object.keys(columns), ['id', 'kind', 'factorAt', 'organizationId'])
       const compiled = statement.orderBy(order).toSQL()
       assert.equal(expandMembershipAliases(compiled.sql), expectedMembershipSql)
-      assert.deepEqual(compiled.params, [p.run.userId, 'active', p.workspace.id, 'team', 'personal', p.run.userId])
+      assert.deepEqual(compiled.params, [p.run.userId, p.workspace.id])
       return p.memberAllowed && p.workspaceMemberAllowed ? [{ ...p.workspace, organizationId: null }] : []
     },
   }

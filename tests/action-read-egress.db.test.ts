@@ -573,12 +573,12 @@ test('task-run visibility skips unused team metadata without weakening fresh wor
       assert.equal(result.value.live.ownerId, owner)
       assert.equal(result.value.live.workspaceId, selected)
       assert.deepEqual(result.value.live.revisions, revisions, 'the same pre-data Live revision still reaches the caller')
-      assert.equal(result.reads.filter(read => read.fields.join(',') === 'id,kind,factorAt,organizationId'
+      assert.equal(result.reads.filter(read => read.fields.join(',') === 'id,kind,mfa,org'
         && read.text.includes('from "mikka_workspaces"')).length, 1, 'the operation still performs its fresh workspace-membership read')
       assert.ok(result.reads.every(read => read.route === '/actions/task-runs/read'))
       sub.diagnostic(JSON.stringify({ read: 'task-run-visibility', selectedRows: result.value.items.length,
         teamMetadataQueries: teamReads(result.reads).length, freshWorkspaceMembershipReads: result.reads.filter(read =>
-          read.fields.join(',') === 'id,kind,factorAt,organizationId' && read.text.includes('from "mikka_workspaces"')).length }))
+          read.fields.join(',') === 'id,kind,mfa,org' && read.text.includes('from "mikka_workspaces"')).length }))
       assert.equal(teamReads(result.reads).length, 0, 'task runs consume only the predicate, never team settings or link pages')
       assert.deepEqual((await poll(personal)).items.map(row => row.runId), [personalRun])
     })
@@ -641,7 +641,7 @@ test('Native workspace choices share only undispatched real SELECTs and retain f
       withDesktopSession(session, () => withReadBatchContext(() => work(reader()))))
   }, selected)
   const choices = (values: Read[]) => values.filter(read =>
-    read.fields.join(',') === 'id,name,kind,role,organizationId'
+    read.fields.join(',') === 'id,name,kind,role,mfa,o'
     && read.text.includes('from "mikka_workspaces"')
     && read.text.includes('join "mikka_workspace_members"'))
   const policyReads = (values: Read[]) => values.filter(read => read.text.includes('from enterprise_org_policy'))
@@ -672,7 +672,7 @@ test('Native workspace choices share only undispatched real SELECTs and retain f
     rawPool.query = function (this: typeof rawPool, ...args: unknown[]) {
       const text = typeof args[0] === 'string' ? args[0] : (args[0] as { text?: string })?.text ?? ''
       const parameters = Array.isArray(args[1]) ? args[1] : (args[0] as { values?: unknown[] })?.values
-      const target = text.startsWith('select "mikka_workspaces"."id", "mikka_workspaces"."name", "mikka_workspaces"."kind", "mikka_workspace_members"."role", "mikka_organization_workspaces"."organizationId" from "mikka_workspaces" inner join "mikka_workspace_members"')
+      const target = text.startsWith('select "w"."id", "w"."name", "w"."kind", "m"."role", "w"."twoFactorRequiredAt" as "mfa", "o"."organizationId" as "o" from "mikka_workspaces" "w" inner join "mikka_workspace_members" "m"')
         && parameters?.includes(owner)
       if (held || !target) return Reflect.apply(query, this, args)
       held = true

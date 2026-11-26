@@ -19,7 +19,7 @@ function reader(rows:unknown[][]) {
   return {executor,get writes(){return writes},get reads(){return index}}
 }
 const issue={id:randomUUID(),userId:'owner',workspaceId:randomUUID(),ownershipState:'bound',scope:'workspace',linearSyncPolicy:'explicit',linearSyncBlocked:false,scopeVersion:2,content:{type:'doc',content:[]}}
-const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\", \"mikka_organization_workspaces\".\"organizationId\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\" = $1 and \"mikka_workspace_members\".\"status\" = $2 and \"mikka_workspaces\".\"id\" = $3 and (\"mikka_workspaces\".\"kind\" = $4 or (\"mikka_workspaces\".\"kind\" = $5 and \"mikka_workspaces\".\"userId\" = $6))) order by \"mikka_workspaces\".\"createdAt\" asc"
+const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\" as \"mfa\", \"mikka_organization_workspaces\".\"organizationId\" as \"org\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\"=$1 and \"mikka_workspace_members\".\"status\"='active' and \"mikka_workspaces\".\"id\"=$2 and (\"mikka_workspaces\".\"kind\"='team' or (\"mikka_workspaces\".\"kind\"='personal' and \"mikka_workspaces\".\"userId\"=\"mikka_workspace_members\".\"userId\"))) order by \"mikka_workspaces\".\"createdAt\" asc"
 const workspace = { select: (projection: Record<string, unknown>) => {
   assert.deepEqual(Object.keys(projection), ['id', 'kind', 'factorAt', 'organizationId'])
   let source: PgTable | undefined, member: PgTable | undefined, organization: PgTable | undefined
@@ -50,7 +50,7 @@ const workspace = { select: (projection: Record<string, unknown>) => {
             .replaceAll('"' + name + '".', '"' + table + '".')
         }
         assert.equal(actualSql, expectedMembershipSql)
-        assert.deepEqual(compiled.params, [issue.userId, 'active', issue.workspaceId, 'team', 'personal', issue.userId])
+        assert.deepEqual(compiled.params, [issue.userId, issue.workspaceId])
         // This active Shared fixture is not linked to an Organization. Keep
         // the real Enterprise filter in the call path with its SQL NULL link.
         return [{ id: issue.workspaceId, kind: 'team', organizationId: null }]
