@@ -476,7 +476,7 @@ async function queueNextSideRun(
           ? await freezeExecutionIdentity(client, authority, undefined, run.workspaceId)
           : await revalidateExecutionIdentity(client, authority)
       } catch (error) {
-        if (error instanceof ExecutionIdentityError) throw new ActionFailureError('executionAccountUnavailable')
+        if (error instanceof ExecutionIdentityError) throw new ActionFailureError('executionAccountUnavailable', undefined, undefined, { cause: error })
         throw error
       }
     }
