@@ -179,6 +179,8 @@ jobs:
       - name: Verify production auth and lease acceptance drivers without credentials
         run: node --test scripts/acceptance/auth-audit-production.test.mjs scripts/acceptance/cloud-lease-audit.test.mjs scripts/acceptance/cloud-lease-recovery.test.mjs scripts/acceptance/shared-account-queue.test.mjs scripts/ops/production-smoke.test.mjs
         if: always()
+      - run: pnpm docs:check
+        if: always()
       - run: pnpm lint:code
         if: always()
       - run: node apps/api/scripts/generate-routes.mjs --check

@@ -18,7 +18,13 @@ export function featureFlags() {
   const body = /export const gatedFeatures = \{([\s\S]*?)\n\} as const/.exec(source)?.[1] ?? ''
   const rows = [...body.matchAll(/^\s{2}(\w+): \{ key: '([^']+)'(?:, waitsOn: (\d+))? \}/gm)]
     .map(([, name, key, issue]) => `| \`${name}\` | \`${key}\` | ${issue ? `[#${issue}](https://github.com/aspectly-labs/Mikka/issues/${issue})` : '—'} |`)
-  const defaults = [...(/export const PRODUCTION_FLAG_DEFAULTS[\s\S]*?= \{([\s\S]*?)\n\}/.exec(source)?.[1] ?? '').matchAll(/^\s{2}'([^']+)': (true|false),/gm)]
+  const defaultsBody = /export const PRODUCTION_FLAG_DEFAULTS[\s\S]*?= \{([\s\S]*?)\n\}/.exec(source)?.[1] ?? ''
+  const literalDefaults = [...defaultsBody.matchAll(/^\s{2}'([^']+)': (true|false),/gm)]
+  const upcomingBody = /export const upcomingFeatures = \{([\s\S]*?)\n\} satisfies/.exec(source)?.[1] ?? ''
+  const spreadDefaults = [...upcomingBody.matchAll(/^\s{2}\w+: \{ key: '([^']+)'/gm)]
+    .filter(match => !literalDefaults.some(([, literal]) => literal === match[1]))
+    .map(match => [match[0], match[1], 'false'])
+  const defaults = [...literalDefaults, ...spreadDefaults]
     .map(([, key, value]) => `| \`${key}\` | \`${value}\` |`)
   return [
     'Source: `lib/feature-flags.ts`.', '',
@@ -29,14 +35,16 @@ export function featureFlags() {
 
 export function machineSizes() {
   const source = read('lib/cloud-computer/machine-pricing.ts')
+  const microPerGibHour = Number((/MICRO_USD_PER_GIB_HOUR = ([0-9_]+)/.exec(source)?.[1] ?? '25000').replace(/_/g, ''))
+  const usdPerGibHour = microPerGibHour / 1_000_000
   const rows = [...source.matchAll(/^\s{2}'([^']+)': \{ vcpu: ([0-9.]+), gib: ([0-9.]+) \},$/gm)]
     .map(([, id, vcpu, gib]) => {
-      const hourly = Number(gib) * 0.025
+      const hourly = Number(gib) * usdPerGibHour
       return `| \`${id}\` | ${vcpu} | ${gib} | $${hourly.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')} |`
     })
   const defaultSize = /DEFAULT_MACHINE_SIZE: MachineSize = '([^']+)'/.exec(source)?.[1] ?? 'unknown'
   return [
-    'Source: `lib/cloud-computer/machine-pricing.ts`. List price is USD 0.025 per GiB-hour.',
+    `Source: \`lib/cloud-computer/machine-pricing.ts\`. List price is USD ${usdPerGibHour} per GiB-hour.`,
     '',
     `Default size: \`${defaultSize}\`.`,
     '',

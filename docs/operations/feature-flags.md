@@ -22,4 +22,8 @@ Source: `lib/feature-flags.ts`.
 | `mikka-computer-tab-off` | `false` |
 | `mikka-proactive-profile` | `false` |
 | `mikka-proactive-research` | `false` |
+| `mikka-upcoming-product-features` | `false` |
+| `mikka-upcoming-integrations` | `false` |
+| `mikka-upcoming-administration` | `false` |
+| `mikka-upcoming-team-settings` | `false` |
 <!-- /generated:feature-flags -->
