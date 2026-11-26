@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { WorkerDefinitionSnapshot } from './agent-kit/worker'
 import { organizationResourceAllowed, assertOrganizationModelProvider } from './governance/resource-access'
 import { McpValidationError, PluginError } from './plugins/contracts'
-import { ownE2BKeySql } from './secrets/e2b-owner-sql'
+import { hasE2BRuntimeCredential } from './secrets/e2b-owner-sql'
 
 /** Authority is host data, never a Decision/model argument. References only: no credentials. */
 const resource = z.object({
@@ -102,8 +102,7 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
     await (await import('./cloud-computer/sponsored-task')).verifySponsoredChoice(query,placement)
     resourceBindings.push({kind:'cloudflare_sponsored',id:workspaceId!,ownerId:'mikka-hosted',access:'workspace_share',workspaceId:workspaceId!})
   } else if (device.kind === 'cloud') {
-    const { rows: [key] } = await query.query(`SELECT 1 WHERE ${ownE2BKeySql('$1::text')}`, [run.userId])
-    if (!key) return denied()
+    if (!await hasE2BRuntimeCredential(query, run.userId)) return denied()
     resourceBindings.push({ kind: 'e2b', id: run.userId, ownerId: run.userId, access: 'owner' })
   }
   return { version: 1, requester: run.userId, botId: run.botId, botOwner: bot?.ownerId ?? null,

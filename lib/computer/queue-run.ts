@@ -14,7 +14,7 @@ import { freezeWorkerDefinition, type WorkerModelDispatch } from '@/lib/agent-ki
 import { captureTraceContext } from '@/lib/tracing/context'
 import type { AgentExecution } from '@/lib/agent-kit/store'
 import { ComputerError } from './store'
-import { ownE2BKeySql } from '../secrets/e2b-owner-sql'
+import { hasE2BRuntimeCredential } from '../secrets/e2b-owner-sql'
 import { RunModelMissingError } from './run-model'
 import { runCredentialSource, type RunApiKey } from '@/lib/run-credential-source'
 import { cloudTaskTarget } from './cloud-task-target'
@@ -199,9 +199,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
           ...(provision && provision.requested !== compute.size
             ? { requestedSize: provision.requested, sizeReason: compute.size !== provision.size ? 'plan_limit' : provision.adjusted ?? undefined } : {}) }
       } else {
-        const { rows: [availability] } = await client.query<{ configured: boolean }>(
-          `SELECT ${ownE2BKeySql('$1::text')} AS configured`, [actor.userId])
-        if (!availability?.configured) throw new ComputerError(503, taskProviderUnavailableMessage('e2b'))
+        if (!await hasE2BRuntimeCredential(client, actor.userId)) throw new ComputerError(503, taskProviderUnavailableMessage('e2b'))
       }
     } else if (sponsored) {
       throw new ComputerError(409, 'Cloudflare coding task requires a repository.')
