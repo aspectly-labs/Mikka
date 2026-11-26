@@ -309,10 +309,11 @@ Decision [2026-11-15-1930](../design/decisions/2026-11-15-1930-automation-linear
   active automations with a matching Linear trigger whose creator has an unrevoked
   `linear_connections` row for the event's organization; then the shared `queueEvent`
   (operation `event:linear:<delivery>`, caps and concurrency as GitHub's).
-- The Linear webhook sends events directly to `app/api/webhooks/linear/route.ts`. The route
-  verifies the provider signature and returns 503 on a retryable delivery failure. The
-  submission carries `schedule.linear: true`. See [Linear sync retirement](../linear-sync.md)
-  for delivery setup and the local Chromium consent regression.
+- Direct deliveries use `/api/webhooks/linear`. The automation-only forwarding endpoint
+  `/api/webhooks/linear/automations` also accepts the original provider headers and body.
+  Both endpoints verify the provider signature and return 503 on a retryable delivery
+  failure. The submission carries `schedule.linear: true`. See
+  [Linear sync retirement](../linear-sync.md) for delivery setup and the Chromium consent regression.
 
 ## Slack triggers (2026-11-15)
 
