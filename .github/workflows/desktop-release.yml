@@ -166,6 +166,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
+          path: .release-verifier-checkout
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             scripts/release
@@ -176,10 +177,11 @@ jobs:
       - name: Copy the trusted release verifier outside the build workspace
         run: |
           mkdir -p "$RUNNER_TEMP/release-verifier/scripts" "$RUNNER_TEMP/release-verifier/lib/env"
-          cp -R scripts/release "$RUNNER_TEMP/release-verifier/scripts/release"
-          cp scripts/cloudflare-source.mjs "$RUNNER_TEMP/release-verifier/scripts/cloudflare-source.mjs"
-          cp lib/deployment-id.mjs "$RUNNER_TEMP/release-verifier/lib/deployment-id.mjs"
-          cp lib/env/runtime.mjs "$RUNNER_TEMP/release-verifier/lib/env/runtime.mjs"
+          cp -R .release-verifier-checkout/scripts/release "$RUNNER_TEMP/release-verifier/scripts/release"
+          cp .release-verifier-checkout/scripts/cloudflare-source.mjs "$RUNNER_TEMP/release-verifier/scripts/cloudflare-source.mjs"
+          cp .release-verifier-checkout/lib/deployment-id.mjs "$RUNNER_TEMP/release-verifier/lib/deployment-id.mjs"
+          cp .release-verifier-checkout/lib/env/runtime.mjs "$RUNNER_TEMP/release-verifier/lib/env/runtime.mjs"
+          rm -rf .release-verifier-checkout
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.preflight.outputs.product }}
