@@ -287,6 +287,15 @@ export async function selectedOrderCandidates(query: Query, scope: OrderScope, e
     .filter(candidate => entryKey(candidate) === entryKey(entry))
 }
 
+/**
+ * What a new Bot gets when its owner picks nothing (新建 Bot shows it as a real value, never 「默认」): the person's
+ * 运行位置 and reasoning effort in this workspace, as the dispatcher reads them.
+ */
+export async function personalRunDefaults(query: Query, scope: OrderScope): Promise<{ location: RunLocation; effort: ModelRoutingEffort }> {
+  const row = await settingsRow(query, scope)
+  return { location: row.location, effort: row.defaultEffort }
+}
+
 async function settingsRow(query: Query, scope: OrderScope) {
   const { rows: [row] } = await query.query<{ location: RunLocation; customized: boolean; preferredHarness: OrderHarness; autoModelRouting: boolean; defaultEffort: string | null; defaultServiceTier: string | null }>(
     `SELECT location,customized,"preferredHarness","autoModelRouting",

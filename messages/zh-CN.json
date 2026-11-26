@@ -5213,22 +5213,24 @@
       "loading": "正在加载…",
       "noEnvironment": "不用环境",
       "shapes": {
-        "fantome": "幽灵",
-        "ecran": "屏幕",
-        "capsule": "胶囊",
-        "coeur": "爱心",
-        "etoile": "星星",
-        "squircle": "圆角方",
-        "galet": "卵石",
-        "cercle": "圆形",
-        "feuille": "叶子",
-        "hexagone": "六边形",
-        "goutte": "水滴",
-        "champignon": "蘑菇",
-        "chat": "猫",
-        "fleur": "花",
+        "clover": "四叶草",
+        "flower": "花朵",
         "triangle": "三角",
-        "nuage": "云朵"
+        "square": "方块",
+        "blob": "软团",
+        "ghost": "幽灵",
+        "circle": "圆",
+        "drop": "水滴",
+        "star": "星星",
+        "droid": "机器人",
+        "mech": "机甲",
+        "alien": "外星人",
+        "hexagon": "六角螺母",
+        "cat": "猫",
+        "cloud": "云朵",
+        "pill": "胶囊",
+        "pebble": "鹅卵石",
+        "puddle": "水洼"
       },
       "efforts": {
         "xhigh": "超高",
@@ -5271,8 +5273,43 @@
       "accessShared": "工作区",
       "effort": "推理强度",
       "noRepository": "不用仓库",
-      "namePlaceholder": "名字",
-      "color": "颜色"
+      "namePlaceholder": "给 Bot 起个名字",
+      "color": "颜色",
+      "looks": {
+        "colors": {
+          "none": "原色",
+          "red": "红色",
+          "orange": "橙色",
+          "amber": "琥珀色",
+          "green": "绿色",
+          "teal": "青色",
+          "sky": "天蓝",
+          "blue": "蓝色",
+          "violet": "紫色",
+          "pink": "粉色",
+          "custom": "自定义颜色"
+        },
+        "hat": "帽子",
+        "hats": {
+          "none": "无",
+          "beret": "贝雷帽",
+          "beanie": "毛线帽",
+          "party": "派对帽",
+          "crown": "皇冠"
+        },
+        "glasses": "眼镜",
+        "glassesKinds": {
+          "none": "无",
+          "round": "圆框",
+          "square": "方框",
+          "shades": "墨镜"
+        },
+        "details": "细节",
+        "mouth": "嘴巴",
+        "headphones": "耳机",
+        "bowTie": "领结",
+        "reset": "恢复默认"
+      }
     },
     "newGroup": {
       "reviewGroups": "查看群聊",

@@ -656,3 +656,55 @@ test('frontend_web_vitals keeps bounded CWV timings, drops empty/invalid payload
   })
   assert.deepEqual(pageview.properties, { distinct_id: 'opaque-user-id' })
 })
+
+test('a control click keeps only its build-time owner; anything else in it, or a malformed owner, is dropped', () => {
+  const owner = 'web/components/settings/members.tsx#MembersPage:Button[Invite]'
+  const event = sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: {
+    owner, token: 'public-project-token', distinct_id: 'opaque-user-id', $el_text: 'private@example.com',
+    $elements: [{ text: 'private' }], email: 'private@example.com', $current_url: 'https://example.com/settings?email=x',
+  } })
+  assert.deepEqual(event.properties, {
+    token: 'public-project-token', distinct_id: 'opaque-user-id', owner,
+    $current_url: 'https://example.com/settings', $pathname: '/settings',
+  })
+  for (const bad of [undefined, 42, 'private@example.com', 'not-a-file#X:button', `web/a.tsx#A:button[${'x'.repeat(200)}]`]) {
+    assert.equal(sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: { owner: bad } }), null, String(bad))
+  }
+})
+
+test('a control owner names a file under a UI source root and a plugin-written label, never data', () => {
+  const kept = owner => sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: { owner } })?.properties.owner
+  // Owners the UI checkout's plugin writes (scripts/track-owner/vite-plugin.mjs).
+  for (const owner of [
+    'web/components/settings/members.tsx#MembersPage:Button[Invite]',
+    'web/components/demo/panel.tsx#Fancy:button[Save draft]',
+    'slots/a.tsx#A:button.1',
+    'slots/thread.tsx#ThreadSlot:Tabs.Trigger[Changes].2',
+    'core/components/sidebar.tsx#Sidebar:a[Open sidebar]',
+    'components/mikka/create-window.tsx#CreateWindow:button[新建任务]',
+    'components/mikka/right-column-strip/strip.tsx#Strip:button[onClick=props.onCloseRightColumnTabAndFocus]',
+    'lib/settings-frame.tsx#SettingsFrame:Link[settings.nav.general]',
+    'shared/x.jsx#module:input.3',
+    'preview/templates.tsx#Templates:summary[Version 2026]',
+    `web/a.tsx#A:button[${'x'.repeat(48)}]`,
+  ]) assert.equal(kept(owner), owner, owner)
+  for (const owner of [
+    'web/a.tsx#A:button[x@y.com]',
+    'web/a.tsx#A:button[Mail alex@example.com]',
+    '../../etc/passwd.tsx#A:b',
+    'web/../../etc/passwd.tsx#A:b',
+    'web/./a.tsx#A:b',
+    'etc/passwd.tsx#A:b',
+    'node_modules/pkg/a.tsx#A:button',
+    '/web/a.tsx#A:button',
+    'web.tsx#A:button',
+    `web/a.tsx#A:button[${'x'.repeat(49)}]`,
+    'web/a.tsx#A:button[https://example.com]',
+    'web/a.tsx#A:button[www.example.com]',
+    'web/a.tsx#A:button[example.com/reset?token=abc]',
+    'web/a.tsx#A:button[mailto:alex]',
+    'web/a.tsx#A:button[Order 123456]',
+    'web/a.tsx#A:button[Call +1 (555) 123-4567]',
+    'web/a.tsx#A:button[onClick=x@y.com]',
+  ]) assert.equal(kept(owner), undefined, owner)
+})

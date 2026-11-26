@@ -307,7 +307,11 @@ test('the Bot list for a shown workspace is read from that workspace, not the se
 
 test('bot defaults and workspace bot list actions', async () => {
   reset()
-  assert.deepEqual((await botActions.getWorkspaceBotDefaults()).error, undefined)
+  // 新建 Bot shows the person's own run location and effort; with no settings row yet, the dispatcher's defaults.
+  assert.deepEqual(await botActions.getWorkspaceBotDefaults(), {
+    defaultModel: 'codex', defaultRepository: null, models: ['mikka', 'codex', 'claude'], repositories: ['acme/app'],
+    personal: { location: 'cloud', effort: 'medium' },
+  })
   assert.deepEqual(await botActions.updateWorkspaceBotDefaults({ defaultModel: 'claude' }), { defaultModel: 'claude', defaultRepository: null })
   assert.deepEqual(await botActions.listWorkspaceBots(), { bots: [{ id: 'b', name: 'Bot', status: 'running', runningThreads: 2 }] })
   assert.deepEqual(relevant(), [['botDefaultOptions', actor.workspaceId], ['saveBotDefaults', actor.userId, actor.workspaceId, { defaultModel: 'claude' }], ['workspaceBots', actor.workspaceId]])

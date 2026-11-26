@@ -1,6 +1,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { applicationPlugin, frontend, repository } from './scripts/application-plugin.mjs'
 import { deploymentPlugin, pinnedUrl } from './scripts/deployment-plugin.mjs'
@@ -26,6 +28,16 @@ function applicationBuild() {
     try { resolvedApplicationBuild = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { resolvedApplicationBuild = '' }
   }
   return resolvedApplicationBuild
+}
+
+/** The UI checkout's data-track-owner plugin (its scripts/track-owner/vite-plugin.mjs), when it has one. The plugin
+ * decides whether it writes anything: MIKKA_TRACK_OWNER=1|0, else on for the dev server and off for a production
+ * build, so production ships no owners unless analytics asks for them. */
+export async function trackOwnerPlugins(overlay) {
+  const path = overlay.dir && resolve(overlay.dir, 'scripts/track-owner/vite-plugin.mjs')
+  if (!path || !existsSync(path)) return []
+  const { trackOwnerPlugin } = await import(pathToFileURL(path).href)
+  return [trackOwnerPlugin({ root: overlay.dir })]
 }
 
 export async function frontendConfig({ target = 'web', command = 'build', outdir, clean = true } = {}) {
@@ -74,7 +86,7 @@ export async function frontendConfig({ target = 'web', command = 'build', outdir
       }),
       'process.env': '{}',
     },
-    plugins: [await applicationPlugin(target, { deploymentId, overlay }), react(), await deploymentPlugin({ repository, deploymentId })],
+    plugins: [...await trackOwnerPlugins(overlay), await applicationPlugin(target, { deploymentId, overlay }), react(), await deploymentPlugin({ repository, deploymentId })],
     experimental: deploymentId ? { renderBuiltUrl: filename => pinnedUrl(`/mikka/${filename}`, deploymentId) } : {},
     // The official UI checkout (docs/ui-overlay.md) carries its own node_modules; React stays this repository's.
     resolve: { dedupe: ['react', 'react-dom'] },

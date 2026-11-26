@@ -51,6 +51,9 @@ export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean | TaskPro
   'mikka-computer-tab-off': false,
   'mikka-proactive-profile': false,
   'mikka-proactive-research': false,
+  // Owner-click analytics (the UI checkout's components/mikka/observability/track-owner-clicks.ts); needs a build
+  // made with MIKKA_TRACK_OWNER=1 as well.
+  'mikka-track-owner-clicks': false,
   ...Object.fromEntries(Object.values(upcomingFeatures).map(feature => [feature.key, false])),
 }
 export const productionFlagDefault = (key: string) => PRODUCTION_FLAG_DEFAULTS[key] ?? false
