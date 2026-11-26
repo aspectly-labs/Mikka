@@ -16,15 +16,16 @@ import {
   withPendingSuffix,
 } from '../lib/settings-sections.ts'
 
-test('every nav item has exactly one section, grouped by true ownership scope (Personal / Agent & Compute / Workspace)', () => {
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'personal' && !s.withheld && !s.unbuilt && s.sidebar !== false).map(s => s.id), ['preferences', 'appearance', 'account', 'security', 'notifications', 'shortcuts'])
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'agent' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['models', 'environments', 'computers', 'secrets', 'connections', 'instructions', 'team-skills', 'threads', 'git', 'memory'])
+test('every nav item has exactly one section: 个人 · untitled connections & compute · Agent · 工作区 (resolved-settings R-S06)', () => {
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'personal' && !s.withheld && !s.unbuilt && s.sidebar !== false).map(s => s.id), ['preferences', 'appearance', 'account', 'security', 'notifications', 'shortcuts', 'privacy'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'compute' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['models', 'environments', 'computers', 'secrets', 'integrations', 'connections', 'developer'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'agent' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['instructions', 'team-skills', 'threads', 'git', 'agent-configs', 'agent-permissions', 'memory'])
   assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'review' && !s.unbuilt && !s.withheld).map(s => s.id), [])
-  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['general', 'issue-states', 'members', 'teams', 'permissions', 'audit', 'developer', 'activity', 'billing', 'usage', 'organization', 'cloud'])
+  assert.deepEqual(SETTINGS_SECTIONS.filter(s => s.group === 'workspace' && !s.unbuilt && !s.withheld && s.sidebar !== false).map(s => s.id), ['general', 'identity', 'issue-states', 'members', 'teams', 'billing', 'usage', 'activity', 'audit', 'organization', 'cloud'])
 })
 
 test('old links keep landing on the page that now holds their content, and deleted bot-permissions is not a legacy alias', () => {
-  for (const [old, now] of [['profile', 'account'], ['integrations', 'connections'], ['devices', 'computers'], ['workspace', 'general'], ['memory', 'memory'], ['privacy', 'account']]) {
+  for (const [old, now] of [['profile', 'account'], ['devices', 'computers'], ['workspace', 'general'], ['memory', 'memory'], ['permissions', 'agent-permissions']]) {
     assert.equal(resolveSettingsSection('/settings', old), now, old)
   }
   assert.equal(isSettingsSectionParam('bot-permissions'), false)
@@ -51,7 +52,7 @@ test('hrefs keep the workspace, support extra query params, and use the routed p
 
 const PENDING_SECTIONS = []
 const SKIPPED_SECTIONS = ['review-repositories', 'review-config', 'referrals', 'experiments', 'cloud-credentials']
-const SIDEBAR_OFF = ['logins', 'mcp']
+const SIDEBAR_OFF = ['logins', 'mcp', 'permissions']
 
 test('centralized 3-tier status governs section and item presentation', () => {
   for (const id of PENDING_SECTIONS) assert.equal(settingSectionStatus(id), 'pending', id)
@@ -73,10 +74,9 @@ test('centralized 3-tier status governs section and item presentation', () => {
 
 test('members do not see admin-only sections; admins see every built one', () => {
   const member = visibleSettingsSections({ admin: false }).map(s => s.id)
-  assert.equal(member.includes('permissions'), false)
-  for (const id of ['general', 'members', 'teams', 'computers', 'usage', 'billing', 'environments']) assert.equal(member.includes(id), true, id)
+  for (const id of ['general', 'members', 'teams', 'computers', 'usage', 'billing', 'environments', 'privacy', 'integrations']) assert.equal(member.includes(id), true, id)
   for (const id of SIDEBAR_OFF) assert.equal(member.includes(id), false, id)
-  for (const id of ['permissions', 'audit']) assert.equal(member.includes(id), false, id)
+  for (const id of ['agent-permissions', 'identity', 'audit']) assert.equal(member.includes(id), false, id)
   assert.deepEqual(visibleSettingsSections({ admin: true, memory: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] === 'available' && !SIDEBAR_OFF.includes(s.id) && s.id !== 'cloud').map(s => s.id))
 })
 
@@ -98,7 +98,7 @@ test('身份与访问 is in the public team sidebar; a personal workspace has no
   }
   assert.equal(visibleSettingsSections({ admin: true, organization: true }).some(s => s.id === 'organization'), true)
   const personalMember = visibleSettingsSections({ admin: false, organization: true, personal: true, memory: true }).map(s => s.id)
-  for (const teamOnly of ['organization', 'members', 'teams', 'permissions', 'audit']) assert.equal(personalMember.includes(teamOnly), false, teamOnly)
+  for (const teamOnly of ['organization', 'members', 'teams', 'permissions', 'audit', 'identity']) assert.equal(personalMember.includes(teamOnly), false, teamOnly)
   assert.deepEqual(visibleSettingsSections({ admin: true, cloudAdmin: true, organization: true, memory: true }).map(s => s.id), SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] === 'available' && !SIDEBAR_OFF.includes(s.id)).map(s => s.id))
 })
 
@@ -122,8 +122,8 @@ test('skipped pages (05/06/13 and UI-only 20/21) are not links and never appear'
 
 test('sidebar names reflect Wave 5 unified Plugins and scope-honest English search titles', () => {
   const title = id => SETTINGS_SECTIONS.find(s => s.id === id).title
-  assert.deepEqual(['computers', 'developer', 'environments', 'secrets', 'connections', 'mcp', 'permissions', 'logins'].map(title), ['Devices', 'API', 'Cloud environments', 'Secrets & Credentials', 'Plugins', 'Custom MCP', 'Team permissions', 'Secrets and logins'])
-  // `?section=mcp` stays a valid direct URL opening the unified Plugins Custom MCP tab.
+  assert.deepEqual(['computers', 'developer', 'environments', 'secrets', 'integrations', 'connections', 'mcp', 'agent-permissions', 'logins'].map(title), ['Devices', 'API', 'Cloud environments', 'Secrets & Credentials', 'Integrations', 'Connectors and MCP', 'Custom MCP', 'Agent permissions', 'Secrets and logins'])
+  // `?section=mcp` stays a valid direct URL opening 连接器与 MCP on its Custom MCP tab.
   assert.equal(isSettingsSectionParam('mcp'), true)
   assert.equal(resolveSettingsSection('/settings', 'mcp'), 'mcp')
 })
@@ -135,10 +135,10 @@ test('a current id wins over a legacy alias with the same name', () => {
 
 test('a personal workspace has every setting of the workspace itself; only what is between people is a team\'s', () => {
   const personal = visibleSettingsSections({ admin: true, personal: true, memory: true }).map(s => s.id)
-  const account = SETTINGS_SECTIONS.filter(s => (s.group === 'personal' || s.group === 'agent') && SETTINGS_SECTION_STATUS[s.id] === 'available' && s.sidebar !== false).map(s => s.id)
-  assert.deepEqual(personal, [...account, 'general', 'issue-states', 'developer', 'activity', 'billing', 'usage'])
+  const account = SETTINGS_SECTIONS.filter(s => ['personal', 'compute', 'agent'].includes(s.group) && SETTINGS_SECTION_STATUS[s.id] === 'available' && s.sidebar !== false).map(s => s.id)
+  assert.deepEqual(personal, [...account, 'general', 'issue-states', 'billing', 'usage', 'activity'])
   const team = visibleSettingsSections({ admin: true }).map(s => s.id)
-  for (const id of ['general', 'organization', 'members', 'teams', 'environments', 'secrets', 'permissions', 'audit', 'usage', 'activity', 'billing']) assert.ok(team.includes(id), id)
+  for (const id of ['general', 'identity', 'organization', 'members', 'teams', 'environments', 'secrets', 'agent-permissions', 'audit', 'usage', 'activity', 'billing']) assert.ok(team.includes(id), id)
   assert.equal(team.includes('logins'), false)
 })
 
