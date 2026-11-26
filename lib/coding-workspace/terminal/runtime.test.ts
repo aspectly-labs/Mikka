@@ -49,6 +49,10 @@ const state = {
   },
 }
 
+// This control-plane fixture uses its own E2B key. Hosted reservations use
+// the split-pool billing fixture.
+process.env.MIKKA_EDITION = 'community'
+
 mock.module('../../secrets/e2b-resource', { namedExports: {
   e2bResourceAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
   e2bCreateAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),

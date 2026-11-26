@@ -1,4 +1,7 @@
 import 'server-only'
+import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, withE2BProviderTime, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
+import { isCloudEdition } from '@/lib/edition'
+import { armDueTimerSoon } from '@/lib/due-timer'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -22,12 +25,26 @@ const ownerOf = async (workspaceId: string, id: string) => {
   return owner
 }
 
-export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget) {
+export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget, policyOnly = false) {
+  // E2B connect can resume after a concurrent pause. Apply the saved policy
+  // when the normal runtime path next opens an authorized computer.
+  if (policyOnly) throw new PolicySandboxUnavailable()
   const owner = await ownerOf(workspaceId, id)
-  const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
+  const account = await e2bResourceAccount(owner, 'sandbox', id)
+  const base = options(account.apiKey)
   const request = runtimeRequestOptions(budget)
   const boundedSignal = signal && request.signal ? AbortSignal.any([signal, request.signal]) : signal ?? request.signal
-  return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
+  const inspect = () => withE2BErrors(owner, false, () => Sandbox.getInfo(id, { ...base, ...request, signal: boundedSignal }))
+  return withE2BProviderTime(owner, id, base.timeoutMs, { providerScope: account.scope, inspect },
+    timeoutMs => withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, timeoutMs,
+      ...(isCloudEdition() ? {
+        requestTimeoutMs: Math.min(E2B_TIMEOUT_REQUEST_BUDGET_MS, request.requestTimeoutMs ?? E2B_TIMEOUT_REQUEST_BUDGET_MS), retries: 0,
+      } : {}),
+      ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) })))
+}
+
+export class PolicySandboxUnavailable extends Error {
+  constructor() { super('No running prepaid sandbox to synchronize') }
 }
 
 /** The machine's sandbox no longer exists at E2B (killed, or expired while paused). */
@@ -72,13 +89,49 @@ export async function createComputer(workspaceId: string, operationId: string) {
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'cloud machine has no owner record')
   const account = await e2bCreateAccount(owner, operationId)
   const base = options(account.apiKey)
-  const sandbox = await withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, idempotencyKey: operationId,
-    metadata: { application: 'mikka', workspaceId },
+  const metadata = { application: 'mikka', workspaceId, operationId }
+  if (await e2bInitialAllocationNeedsRecovery(owner, operationId)) {
+    const recovered = await reconcileInitialComputerAllocation(workspaceId, owner, operationId)
+    if (!recovered) throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation recovery pending')
+    const sandboxId = recovered.sandboxId
+    return withE2BProviderTime(owner, sandboxId, lifetime, { providerScope: account.scope,
+      inspect: () => withE2BErrors(owner, false, () => Sandbox.getInfo(sandboxId, base)) },
+    timeoutMs => withE2BErrors(owner, false, () => Sandbox.connect(sandboxId, {
+      ...base, timeoutMs, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+    })))
+  }
+  base.timeoutMs = await e2bCreationTimeout(owner, account.scope, operationId, template, { workspaceId, runId: null }, lifetime)
+  if (isCloudEdition()) armDueTimerSoon('run-recovery')
+  const sandbox = await createPrepaidE2B(owner, operationId, () => withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, retries: 0, idempotencyKey: operationId,
+    metadata,
     lifecycle: { onTimeout: 'pause', autoResume: false },
-  }))
+  })))
+  await verifyE2BAllocation(owner, operationId, sandbox.sandboxId, base)
   await bindE2BResource(owner, 'sandbox', sandbox.sandboxId, account.scope)
   if (template === 'desktop') await bootstrapOfficialInstance(sandbox, 'desktop')
   return sandbox
+}
+
+/** Observe an expired desktop allocation by its exact durable create identity.
+ * Recovery does not connect, allocate or renew a sandbox. */
+export async function reconcileInitialComputerAllocation(workspaceId: string, ownerId: string, operationId: string) {
+  if (await releaseInterruptedE2BCreation(ownerId, operationId)) return null
+  const account = await e2bResourceAccount(ownerId, 'operation', operationId)
+  const prepared = { ...options(account.apiKey), requestTimeoutMs: 8_000, retries: 0 }
+  const metadata = { application: 'mikka', workspaceId, operationId }
+  const candidates = Sandbox.list({ ...prepared, limit: 2, query: { metadata, state: ['running', 'paused'] } })
+  const matches = await withE2BErrors(ownerId, false, () => candidates.nextItems(prepared))
+  if (matches.length > 1 || candidates.hasNext
+    || matches.some(item => Object.entries(metadata).some(([key, value]) => item.metadata[key] !== value)))
+    throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation identity unavailable')
+  const recovered = matches[0]
+  if (!recovered) {
+    await observeMissingE2BAllocation(ownerId, operationId)
+    return null
+  }
+  await verifyE2BAllocation(ownerId, operationId, recovered.sandboxId, prepared, recovered)
+  await bindE2BResource(ownerId, 'sandbox', recovered.sandboxId, account.scope)
+  return recovered
 }
 
 /** Refresh authorization guards without replacing the desktop script baked

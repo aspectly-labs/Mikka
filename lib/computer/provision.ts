@@ -5,7 +5,9 @@ import * as provider from './e2b-provider'
 import { connectForCommitEffects } from '../db/commit-effects'
 import { machineChanged, machineCommitted } from '@/lib/live/computer-state'
 import { armDueTimerSoon } from '@/lib/due-timer'
+import { isCloudEdition } from '@/lib/edition'
 import { ownE2BKeySql } from '@/lib/secrets/e2b-owner-sql'
+import { e2bCanReplaceOperation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { E2BKeyError } from '@/lib/secrets/flag'
 
 type Actor={userId:string;workspaceId:string}
@@ -25,12 +27,18 @@ export async function ensureCloudMachine(pool:Pool,actor:Actor,runtime:Runtime=p
     await client.query('INSERT INTO cloud_machines("workspaceId","ownerId","operationId") VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[actor.workspaceId,actor.userId,randomUUID()])
     const row=(await client.query(`SELECT * FROM cloud_machines WHERE "workspaceId"=$1 AND "ownerId"=$2 FOR UPDATE`,[actor.workspaceId,actor.userId])).rows[0]
     if(row.provisionLeaseUntil && new Date(row.provisionLeaseUntil).getTime()>Date.now()) {await client.query('COMMIT');return null}
+    if (!row.sandboxId && await e2bCanReplaceOperation(client, actor.userId, row.operationId)) {
+      row.operationId = randomUUID()
+      await client.query('UPDATE cloud_machines SET "operationId"=$3 WHERE "workspaceId"=$1 AND "ownerId"=$2',
+        [actor.workspaceId, actor.userId, row.operationId])
+    }
     machine=row
     await client.query(`UPDATE cloud_machines SET "provisionLeaseId"=$3,"provisionLeaseUntil"=now()+interval '3 minutes',state='waking',"errorCode"=NULL WHERE "workspaceId"=$1 AND "ownerId"=$2`,[actor.workspaceId,actor.userId,leaseId])
     await machineChanged(client, pool, actor.userId, actor.workspaceId)
     await client.query('COMMIT')
   } catch(error) {await client.query('ROLLBACK');throw error} finally {client.release()}
   if(!machine) throw new Error('Owned cloud machine unavailable')
+  if (isCloudEdition() && !machine.sandboxId) armDueTimerSoon('run-recovery')
   try {
     let sandbox=machine.sandboxId?await runtime.connectComputer(actor.workspaceId,machine.sandboxId).catch(error=>{if(runtime.computerGone?.(error)) return null;throw error}):null
     if(machine.sandboxId&&(!sandbox||await stale(pool,actor,sandbox,runtime))) {
@@ -61,7 +69,10 @@ export async function ensureCloudMachine(pool:Pool,actor:Actor,runtime:Runtime=p
   } catch(error) {
     const missing = error instanceof E2BKeyError && error.code === 'e2b_key_missing'
     const failed = await pool.query(`UPDATE cloud_machines SET state=$4,"errorCode"=$5,"provisionLeaseId"=NULL,"provisionLeaseUntil"=NULL WHERE "workspaceId"=$1 AND "ownerId"=$2 AND "provisionLeaseId"=$3`,[actor.workspaceId,actor.userId,leaseId,missing ? machine.state : 'error',missing ? null : provisionErrorCode(error)])
-    if (failed.rowCount) await machineCommitted(pool, actor.userId, actor.workspaceId)
+    if (failed.rowCount) {
+      await machineCommitted(pool, actor.userId, actor.workspaceId)
+      if (isCloudEdition() && !machine.sandboxId) armDueTimerSoon('run-recovery')
+    }
     throw error
   }
 }
