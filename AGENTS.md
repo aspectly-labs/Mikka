@@ -17,6 +17,8 @@ These apply to every session and every agent, in this repository and in `mikka-h
    - **Memory (记忆)** is hidden on purpose (flag `mikka-memory` off; reason on the flag in `lib/feature-flags.ts`).
    - **Execution runs on E2B**; Mikka Cloud uses Mikka's own E2B account, users can't bring their own E2B key on Mikka
      Cloud (self-host only) (Alex, 2026-11-25/26).
+   - **Paid component source may be modified** (BoardUI Pro, affectUI, beUI Pro licences allow it; Alex, 2026-11-26).
+   - **Claude Max (and similar) subscriptions may be connected** to run models; already connected (Alex, 2026-11-26).
    Before asking Alex anything, check this list, the flag comments and the decision records.
 
 ## Authority and boundaries
