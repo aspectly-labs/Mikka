@@ -244,6 +244,7 @@ test(
     assert.equal(projected.E2B_TEAM_ID, 'sdk-team')
     const env = {
       NODE_ENV: 'test',
+      MIKKA_EDITION: 'cloud',
       E2B_API_KEY: projected.E2B_API_KEY,
       E2B_TEAM_ID: projected.E2B_TEAM_ID,
       E2B_API_URL: services.e2bOptions.apiUrl,
@@ -279,13 +280,18 @@ test(
         variables: { BUILD_LABEL: 'sdk' },
       },
     })
-    const { reserveEnvironmentBuild } = await import('../lib/project-resources/environment-snapshots')
+    const { enqueueEnvironmentBuild, reserveEnvironmentBuild } = await import('../lib/project-resources/environment-snapshots')
     const seed = { workspaceId:ws.id,environmentId,revision,userId:user,templateId:'codex',templateKind:'codex' as const,workerSha:sha }
     const first = await Promise.all([reserveEnvironmentBuild(seed,'manual'),reserveEnvironmentBuild(seed,'save')])
     assert.equal(first[0].id,first[1].id)
+    const scheduled: string[] = []
+    await Promise.all(first.map(({ id }) => enqueueEnvironmentBuild(id, async (buildId) => {
+      scheduled.push(buildId)
+    })))
+    assert.deepEqual(scheduled, [first[0].id])
     const audit = await db.query("SELECT detail FROM workspace_resource_events WHERE kind='environment.snapshot_build_requested' AND \"resourceId\"=$1", [environmentId])
     assert.equal(audit.rowCount,1)
-    assert.equal(audit.rows[0].detail.funding,'self_hosted_installation')
+    assert.equal(audit.rows[0].detail.funding,'mikka_platform')
     const build = async (id:string) => {
       await buildEnvironmentSnapshot(id, async (actor, repository) => {
         assert.equal(actor, user)

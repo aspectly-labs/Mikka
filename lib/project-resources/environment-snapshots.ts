@@ -161,6 +161,32 @@ export async function reserveEnvironmentBuild(seed: SnapshotSeed, trigger: 'save
   finally { client.release() }
 }
 
+export async function enqueueEnvironmentBuild(
+  id: string,
+  launch = (buildId: string): Promise<unknown> => start(environmentSnapshotWorkflow, [buildId]),
+) {
+  // Lock dispatch separately from the reservation. A lost acknowledgement
+  // may retry delivery, and both deliveries share the provider operation ID.
+  const client = await workspacePool.connect()
+  try {
+    await client.query('BEGIN')
+    const pending = await client.query(
+      `SELECT id FROM environment_snapshots WHERE id=$1 AND state='building' AND "enqueuedAt" IS NULL FOR UPDATE`,
+      [id],
+    )
+    if (pending.rowCount) {
+      await launch(id)
+      await client.query('UPDATE environment_snapshots SET "enqueuedAt"=now() WHERE id=$1', [id])
+    }
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotInput, trigger: 'save' | 'manual' = 'manual') {
   const input = snapshotInput.parse(raw)
   if (!(await enabled(reader)) || !configuredProvider()) throw new ActionFailureError('projectEnvironmentUnavailable')
@@ -172,28 +198,7 @@ export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotIn
   if (!workerSha || !/^[a-f0-9]{40}$/.test(workerSha)) throw new ActionFailureError('projectEnvironmentUnavailable')
   if (!(await hasRepositoryAccess(userOf(reader), environment.repositories))) throw new ActionFailureError('projectEnvironmentUnavailable')
   const claim = await reserveEnvironmentBuild({ ...input, revision:environment.revision, userId:userOf(reader),templateId,workerSha },trigger)
-  if (claim.enqueue) {
-    // Lock dispatch separately from the reservation. A lost acknowledgement
-    // may retry delivery, and both deliveries share the provider operation ID.
-    const client = await workspacePool.connect()
-    try {
-      await client.query('BEGIN')
-      const pending = await client.query(
-        `SELECT id FROM environment_snapshots WHERE id=$1 AND state='building' AND "enqueuedAt" IS NULL FOR UPDATE`,
-        [claim.id],
-      )
-      if (pending.rowCount) {
-        await start(environmentSnapshotWorkflow, [claim.id])
-        await client.query('UPDATE environment_snapshots SET "enqueuedAt"=now() WHERE id=$1', [claim.id])
-      }
-      await client.query('COMMIT')
-    } catch (error) {
-      await client.query('ROLLBACK')
-      throw error
-    } finally {
-      client.release()
-    }
-  }
+  if (claim.enqueue) await enqueueEnvironmentBuild(claim.id)
   return { id: claim.id, revision: environment.revision }
 }
 
