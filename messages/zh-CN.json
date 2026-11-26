@@ -5451,7 +5451,7 @@
     "close": "关闭",
     "stage": {
       "review": "审查",
-      "verify": "验证",
+      "verify": "检查",
       "execute": "执行"
     },
     "verifyThread": "检查",
@@ -5460,17 +5460,17 @@
     "environmentLabel": "环境",
     "publicationUnavailable": "发布暂不可用：尚未配置发布目标。",
     "rejectSubmit": "退回",
-    "previewLabel": "Preview",
+    "previewLabel": "预览",
     "accept": "合并",
     "revoke": "撤销批准",
     "envChip": {
       "production": "Production",
       "cloud": "云端",
       "device": "设备",
-      "preview": "Preview"
+      "preview": "预览"
     },
     "passed": "通过",
-    "retryVerify": "重新验证",
+    "retryVerify": "重新检查",
     "checkRetryFailed": "重试未完成",
     "production": "生产",
     "copySha": "复制完整 sha {sha}",
@@ -5481,7 +5481,7 @@
     },
     "rejectNote": "退回备注",
     "blocked": "受阻",
-    "verify": "验证",
+    "verify": "检查",
     "previous": "上一条证据",
     "cannotMerge": "无法合并",
     "review": "审阅",
