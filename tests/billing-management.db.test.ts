@@ -152,7 +152,12 @@ test('billing management HTTP preserves independent tenants, owners and immutabl
     await pool.query(`insert into mikka_workspace_entitlements("workspaceId",plan,source) values($1,'enterprise','cloud')
       on conflict ("workspaceId") do update set plan='enterprise',source='cloud',"expiresAt"=null`, [first.id])
     const view = await (await orgGet()).json() as BillingManagementView
-    assert.deepEqual(view.capacity, { plan: 'enterprise', hostedMaxInFlight: 128, activeHumanLimit: null })
+    assert.equal(view.capacity.plan, 'enterprise')
+    assert.equal(view.capacity.hostedMaxInFlight, 128)
+    assert.equal(view.capacity.activeHumanLimit, null)
+    assert.equal(view.capacity.capabilities?.canUseEnterpriseGovernance, true)
+    assert.equal(view.capacity.capabilities?.canUseSso, true)
+    assert.equal(view.capacity.capabilities?.isPaidPlan, true)
     const day = (await pool.query<{ date: string }>(`select to_char("createdAt" at time zone 'UTC','YYYY-MM-DD') date
       from hosted_usage where "workspaceId"=$1 and state='settled'`, [first.id])).rows[0].date
     assert.deepEqual(view.usage.daily?.find(row => row.date === day), { date: day, costMicroUsd: 2500000, reservedMicroUsd: 400000, unknownCalls: 1 })

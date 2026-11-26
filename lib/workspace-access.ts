@@ -2,7 +2,7 @@ import { tokenWorkspace } from '@/lib/tokens/principal'
 import { getLocale } from '@/lib/intl/i18n-server'
 import 'server-only'
 import { cookies } from '@/lib/server-runtime/headers'
-import { and, asc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, or } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { users } from '@/lib/db/schema'
 import { z } from 'zod'
@@ -17,7 +17,11 @@ import { actingContext } from '@/lib/activity-actor'
 import { readPendingWorkspaceChoices } from '@/lib/desktop-rpc/workspace-choices'
 import { desktopHumanSessionId } from '@/lib/desktop-rpc/session'
 import { workspaces, workspaceMembers, workspaceInvitations } from '@/lib/db/workspace-schema'
-import { organizationWorkspaces } from '@/lib/db/governance-schema'
+import { organizationEntitlements, organizations, organizationWorkspaces } from '@/lib/db/governance-schema'
+import { workspaceEntitlements } from '@/lib/db/team-entitlements-schema'
+import { deploymentMode } from '@/lib/governance/edition'
+import { resolveEntitlements, type WorkspaceCapabilities } from '@/lib/governance/policy'
+import { getRuntimeConfig } from '@/lib/runtime-config'
 import { renameGeneratedWorkspace, type WorkspaceLocale } from '@/lib/workspace-name'
 import { ensurePersonalWorkspace } from '@/lib/personal-workspace'
 import type { ListLiveRead } from '@/lib/live/list-read'
@@ -124,17 +128,55 @@ async function readWorkspaceContext(userId: string, email: string, name: string,
   }
 }
 
+async function loadWorkspaceCapabilities(workspaceId: string, kind: 'personal' | 'team'): Promise<WorkspaceCapabilities> {
+  const mode = deploymentMode()
+  const capabilityOverrides = getRuntimeConfig('planEntitlementOverrides')
+  try {
+    const [grants] = await workspaceDb
+      .select({
+        local: workspaceEntitlements,
+        organization: organizationEntitlements,
+      })
+      .from(workspaces)
+      .leftJoin(workspaceEntitlements, eq(workspaceEntitlements.workspaceId, workspaces.id))
+      .leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, workspaces.id))
+      .leftJoin(organizations, and(eq(organizations.id, organizationWorkspaces.organizationId), isNull(organizations.archivedAt)))
+      .leftJoin(organizationEntitlements, eq(organizationEntitlements.organizationId, organizations.id))
+      .where(eq(workspaces.id, workspaceId))
+      .limit(1)
+    return resolveEntitlements({
+      mode,
+      kind,
+      grants: [grants?.local, grants?.organization],
+      capabilityOverrides,
+    }).capabilities
+  } catch (error) {
+    const err = error && typeof error === 'object' ? (error as { code?: unknown; cause?: unknown }) : null
+    const cause = err?.cause && typeof err.cause === 'object' ? (err.cause as { code?: unknown }) : null
+    const pgCode = (typeof err?.code === 'string' && err.code)
+      || (typeof cause?.code === 'string' && cause.code)
+      || undefined
+    // Fail closed to base plan capabilities only when entitlement tables are
+    // absent (PostgreSQL undefined_table SQLSTATE 42P01).
+    if (pgCode === '42P01') {
+      return resolveEntitlements({ mode, kind, capabilityOverrides }).capabilities
+    }
+    throw error
+  }
+}
+
 export async function loadWorkspaceSettings(requestedId?: string, authenticatedUser?: AuthenticatedUser) {
   const observedAt = Date.now()
   const context = await loadWorkspaceContext(requestedId, authenticatedUser)
   const workspaceId = context.workspace.id
-  const [members, invitations] = await Promise.all([
+  const [members, invitations, capabilities] = await Promise.all([
     workspaceDb.select({ userId: workspaceMembers.userId, name: workspaceMembers.name, email: workspaceMembers.email, role: workspaceMembers.role, status: workspaceMembers.status, createdAt: workspaceMembers.createdAt })
       .from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId)).orderBy(asc(workspaceMembers.createdAt)),
     context.role === 'admin'
       ? workspaceDb.select({ id: workspaceInvitations.id, email: workspaceInvitations.email, role: workspaceInvitations.role, status: workspaceInvitations.status, createdAt: workspaceInvitations.createdAt, expiresAt: workspaceInvitations.expiresAt })
         .from(workspaceInvitations).where(and(eq(workspaceInvitations.workspaceId, workspaceId), eq(workspaceInvitations.status, 'pending'))).orderBy(asc(workspaceInvitations.createdAt))
       : [],
+    loadWorkspaceCapabilities(workspaceId, context.workspace.kind),
   ])
   // Auth profiles are only queried for members already authorized by the selected workspace.
   const profiles = members.length ? await db.select({ id: users.id, image: users.image }).from(users)
@@ -147,7 +189,11 @@ export async function loadWorkspaceSettings(requestedId?: string, authenticatedU
     ...(nextExpiry === undefined ? {} : { deadline: { at: new Date(nextExpiry).toISOString(), afterMs: nextExpiry - observedAt } }),
   } }
   // Optional on the wire for clients that still connect to a pre-edition server.
-  const deployment: { edition?: MikkaEdition; serverAdmin?: boolean } = { edition: getEdition(), serverAdmin: isServerAdmin(context.currentUserId) }
+  const deployment: { edition?: MikkaEdition; serverAdmin?: boolean; capabilities?: WorkspaceCapabilities } = {
+    edition: getEdition(),
+    serverAdmin: isServerAdmin(context.currentUserId),
+    capabilities,
+  }
   return {
     ...context,
     ...live,
