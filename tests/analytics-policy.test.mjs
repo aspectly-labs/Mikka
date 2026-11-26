@@ -687,6 +687,14 @@ test('a control owner names a file under a UI source root and a plugin-written l
     'shared/x.jsx#module:input.3',
     'preview/templates.tsx#Templates:summary[Version 2026]',
     `web/a.tsx#A:button[${'x'.repeat(48)}]`,
+    `web/a.tsx#A:button[onClick=${'h'.repeat(64)}]`,
+    'web/a.tsx#A:button.999',
+    // Hashed message keys are names (the UI checkout's FeatureCopy.c_<8 hex>).
+    'slots/settings-members.tsx#TeamsTab:Button[FeatureCopy.c_30108106]',
+    'slots/settings-members.tsx#TeamMembersPage:Button[FeatureCopy.c_352987c4]',
+    'web/components/slots/settings-sidebar.tsx#SettingsSidebar:SidebarMenuButton[FeatureCopy.c_cb11190c]',
+    'web/components/x.tsx#X:button[Settings.nav.createTeam]',
+    'web/components/x.tsx#X:a[versionPullRequest].2',
   ]) assert.equal(kept(owner), owner, owner)
   for (const owner of [
     'web/a.tsx#A:button[x@y.com]',
@@ -706,5 +714,30 @@ test('a control owner names a file under a UI source root and a plugin-written l
     'web/a.tsx#A:button[Order 123456]',
     'web/a.tsx#A:button[Call +1 (555) 123-4567]',
     'web/a.tsx#A:button[onClick=x@y.com]',
+    // Data anywhere in the owner, not only in its label.
+    'web/alex@example.com/a.tsx#A:button',
+    'web/www.example.com/a.tsx#A:button',
+    'web/4111111111111111.tsx#A:button',
+    'web/evil.example.com/a.tsx#A:button',
+    'web/a.tsx#A:button[onClick=www.example.com]',
+    'web/a.tsx#A:button[onClick=x4111111111111111]',
+    `web/a.tsx#A:button[onClick=${'h'.repeat(65)}]`,
+    'web/a.tsx#A:button.4111111111111111',
+    'web/a.tsx#A:button.1234',
+    'web/a.tsx#A4111111111111111:button',
+    'web/a.tsx#A:Menu.x4111111111111111',
+    // Control and invisible characters, other scripts' forms of data.
+    'web/a.tsx#A:button[Save\rDraft]',
+    'web/a.tsx#A:button[Save\u0000]',
+    'web/a.tsx#A:button[Save\u202eDraft]',
+    'web/a.tsx#A:button[alex＠example.com]',
+    'web/a.tsx#A:button[４１１１ ４１１１ ４１１１ ４１１１]',
+    'web/a.tsx#A:button[٤١١١٤١١١٤١١١٤١١١]',
+    'web/a.tsx#A:button[4111/1111/1111/1111]',
+    'web/a.tsx#A:button[evil.example.com]',
+    'web/a.tsx#A:button[10.0.0.1]',
+    'web/a.tsx#A:button[data:text/html,x]',
+    'web/a.tsx#A:button[FeatureCopy.c_30108106 4111111]',
+    'web/a.tsx#A:button[FeatureCopy.c_301081061]',
   ]) assert.equal(kept(owner), undefined, owner)
 })

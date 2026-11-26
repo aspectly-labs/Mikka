@@ -1,5 +1,6 @@
 import { scrubLocalString } from '@mikka/protocol/tracing'
 import { safeDomain, safeLabel, safeLanding } from './first-touch.ts'
+import { isTrackOwner } from './track-owner-rule.ts'
 
 const allowedEvents = new Set(['$pageview', '$identify', '$feature_flag_called', 'mikka_team_created', 'mikka_team_updated', 'mikka_live_socket', 'mikka_live_received', 'mikka_live_skipped', 'mikka_live_read'])
 const allowedProperties = new Set([
@@ -237,28 +238,10 @@ function sanitizeFrontendRumEvent<T extends { event: string; properties: Record<
   return narrow(event, kept)
 }
 
-/** A click on a control, reported by its build-time `data-track-owner` (the UI checkout's
- * scripts/track-owner/format.mjs: `<path>.tsx#<Component>:<element>[<label>]`). The owner is source text written at
- * build time, never user data; anything not shaped like one is dropped with the event. The path starts at one of the
- * UI checkout's source roots and never climbs out of it; the label is the plugin's own (at most 48 characters, or
- * `[onClick=handler]`), and a label that looks like an email address, a URL or a long number is refused, since that
- * is data rather than a control's name. */
+/** A click on a control, reported by its build-time `data-track-owner`. The owner is source text written at build
+ * time, never user data; anything not shaped like one, or with anything in it that looks like data, is dropped with
+ * the event (lib/track-owner-rule.ts). */
 const OWNER_CLICK_EVENT = 'ui_control_click'
-const TRACK_OWNER = /^((?:core|web|slots|components|lib|shared|preview)(?:\/[\w.@$-]+)+\.(?:tsx|jsx))#[A-Za-z_$][\w$]*:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\[(?:on[A-Z][A-Za-z]*=[A-Za-z_$][\w$.]*|([^[\]\n]{1,48}))\])?(?:\.\d+)?$/
-const OWNER_LABEL_DATA = [
-  /[^\s@]@[^\s@]/, // an email address
-  /[a-z][a-z\d+.-]*:\/\/|\bwww\.|\b(?:mailto|tel|data|javascript):|\b[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}\/\S/i, // a URL
-  /\d{5,}|(?:\d[\s().+-]*){7,}/, // an id, phone or card number
-]
-
-function isTrackOwner(owner: unknown): owner is string {
-  if (typeof owner !== 'string' || owner.length > 191) return false
-  const match = TRACK_OWNER.exec(owner)
-  if (!match) return false
-  if (match[1].split('/').some(segment => /^\.+$/.test(segment))) return false
-  const label = match[2]
-  return label === undefined || !OWNER_LABEL_DATA.some(shape => shape.test(label))
-}
 
 function sanitizeOwnerClickEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T): T | null {
   const owner = event.properties.owner
