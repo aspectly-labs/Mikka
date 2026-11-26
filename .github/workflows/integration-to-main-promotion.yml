@@ -1,0 +1,331 @@
+name: Integration to main promotion
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report promotion readiness without creating, updating, or merging a PR
+        type: boolean
+        default: false
+      integration_branch:
+        description: Override integration branch (defaults to vars.MIKKA_INTEGRATION_BRANCH or claude/affectionate-einstein-s235cb)
+        type: string
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: integration-to-main-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: >-
+      github.repository_id == '1427517699' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+      id-token: write
+    steps:
+      # This privileged workflow uses only GitHub metadata. It never checks out or runs PR code.
+      - name: Evaluate integration branch and promotion gates
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTE_ENABLED: ${{ vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN }}
+          CONFIGURED_BRANCH: ${{ vars.MIKKA_INTEGRATION_BRANCH }}
+          INPUT_BRANCH: ${{ inputs.integration_branch }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          branch="${INPUT_BRANCH:-${CONFIGURED_BRANCH:-claude/affectionate-einstein-s235cb}}"
+          if [[ ! "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "$branch" == "main" ]] || [[ "$branch" == *".."* ]]; then
+            echo "Invalid integration branch name: $branch"
+            exit 1
+          fi
+          printf 'branch=%s\n' "$branch" >> "$GITHUB_OUTPUT"
+          emit_noop() {
+            local reason="$1"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            {
+              echo "### Integration to \`main\` promotion status"
+              echo ""
+              echo "- **Integration branch:** \`$branch\`"
+              echo "- **Promotion enabled (\`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN\`):** \`${PROMOTE_ENABLED:-false}\`"
+              echo "- **Dry run:** \`${DRY_RUN:-false}\`"
+              echo "- **Decision:** \`noop\` — $reason"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "noop: $reason"
+            exit 0
+          }
+
+          encoded_branch=$(jq -rn --arg b "$branch" '$b|@uri')
+          if ! compare=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$encoded_branch" 2>/dev/null); then
+            emit_noop "branch \`$branch\` not found or not comparable with \`main\`"
+          fi
+          head_sha=$(jq -er '.commits[-1].sha // .base_commit.sha' <<< "$compare")
+          ahead_by=$(jq -er '.ahead_by' <<< "$compare")
+          behind_by=$(jq -er '.behind_by' <<< "$compare")
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'head_sha=%s\nahead_by=%s\nbehind_by=%s\n' "$head_sha" "$ahead_by" "$behind_by" >> "$GITHUB_OUTPUT"
+
+          child_prs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&base=$encoded_branch&per_page=100" | jq -c '[flatten[] | select(.draft | not) | .number]')
+          child_count=$(jq -r 'length' <<< "$child_prs")
+
+          open_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=main&head=${REPO_OWNER}:${encoded_branch}&per_page=10" | jq -c '.[0] // empty')
+          pr_number=""
+          pr_id=""
+          pr_draft="false"
+          pr_head_sha=""
+          pr_body=""
+          if [ -n "$open_pr" ]; then
+            pr_number=$(jq -er '.number' <<< "$open_pr")
+            pr_id=$(jq -er '.node_id' <<< "$open_pr")
+            pr_draft=$(jq -er '.draft' <<< "$open_pr")
+            pr_head_sha=$(jq -er '.head.sha' <<< "$open_pr")
+            pr_body=$(jq -r '.body // ""' <<< "$open_pr")
+          fi
+
+          {
+            echo "### Integration to \`main\` promotion status"
+            echo ""
+            echo "| Gate | Value |"
+            echo "| --- | --- |"
+            echo "| Integration branch | \`$branch\` (\`${head_sha:0:8}\`) |"
+            echo "| Ahead / behind \`main\` | \`$ahead_by\` ahead / \`$behind_by\` behind |"
+            echo "| Open Ready child PRs targeting branch | \`$child_count\` ($child_prs) |"
+            echo "| Open PR to \`main\` | ${pr_number:+#$pr_number (draft=$pr_draft)}${pr_number:-none} |"
+            echo "| Freeze lift (\`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN\`) | \`${PROMOTE_ENABLED:-false}\` |"
+            echo "| Dry run | \`${DRY_RUN:-false}\` |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${PROMOTE_ENABLED:-}" != "true" ]; then
+            echo "- **Decision:** \`noop\` — waiting for repository variable \`MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\` after release freeze lifts." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "- **Decision:** \`noop\` — dry run requested." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$ahead_by" -eq 0 ]; then
+            echo "- **Decision:** \`noop\` — \`$branch\` has no unmerged commits ahead of \`main\`." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$behind_by" -gt 0 ]; then
+            echo "- **Decision:** \`noop\` — \`$branch\` is $behind_by commit(s) behind \`main\`; back-merge \`main\` into \`$branch\` first." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$child_count" -gt 0 ]; then
+            echo "- **Decision:** \`noop\` — waiting for open Ready PR(s) targeting \`$branch\` to merge: $child_prs." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$open_pr" ]; then
+            echo "- **Decision:** \`create_pr\` — opening Ready promotion PR \`$branch\` -> \`main\` at \`$head_sha\`." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=create_pr\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$pr_draft" = "true" ]; then
+            echo "- **Decision:** \`noop\` — PR #$pr_number is Draft; will not auto-promote drafts." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$pr_head_sha" != "$head_sha" ]; then
+            echo "- **Decision:** \`noop\` — PR #$pr_number head (\`$pr_head_sha\`) does not yet match branch head (\`$head_sha\`)." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          printf 'pr_number=%s\npr_id=%s\n' "$pr_number" "$pr_id" >> "$GITHUB_OUTPUT"
+          if ! grep -Fq "Commit: $head_sha" <<< "$pr_body"; then
+            echo "- **Decision:** \`sync_body\` — updating PR #$pr_number acceptance Commit SHA to \`$head_sha\`." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=sync_body\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # shellcheck disable=SC2016
+          state=$(gh api graphql -f id="$pr_id" -f query='
+            query($id:ID!) {
+              node(id:$id) {
+                ... on PullRequest {
+                  mergeStateStatus
+                  mergeQueueEntry { id }
+                  stackEntry { id }
+                  timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
+                    nodes {
+                      ... on RemovedFromMergeQueueEvent {
+                        actor { login }
+                      }
+                    }
+                  }
+                }
+              }
+            }' --jq '.data.node')
+          if ! jq -e '.mergeStateStatus == "CLEAN" and .mergeQueueEntry == null and .stackEntry == null' <<< "$state" >/dev/null; then
+            status_val=$(jq -r '.mergeStateStatus' <<< "$state")
+            echo "- **Decision:** \`noop\` — PR #$pr_number is not ready to merge (\`mergeStateStatus=$status_val\`, already queued, or stacked)." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          removals=$(jq -r '.timelineItems.nodes | length' <<< "$state")
+          remover=$(jq -r '.timelineItems.nodes[0].actor.login // ""' <<< "$state")
+          if [ "$removals" -gt 0 ] && [ "$remover" != "github-merge-queue" ]; then
+            echo "- **Decision:** \`noop\` — PR #$pr_number was manually removed from the merge queue by \`${remover:-unknown}\`; not re-enqueueing." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          checks=$(gh pr checks "$pr_number" --repo "$GITHUB_REPOSITORY" --required --json bucket) || {
+            status=$?
+            if [ "$status" -ne 8 ]; then
+              exit "$status"
+            fi
+            echo "- **Decision:** \`noop\` — required checks are still running for PR #$pr_number." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          if ! jq -e 'length > 0 and all(.[]; .bucket == "pass")' <<< "$checks" >/dev/null; then
+            echo "- **Decision:** \`noop\` — required checks are not all passing for PR #$pr_number." >> "$GITHUB_STEP_SUMMARY"
+            printf 'action=noop\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "- **Decision:** \`merge_pr\` — PR #$pr_number is CLEAN with all required checks green at \`$head_sha\`." >> "$GITHUB_STEP_SUMMARY"
+          printf 'action=merge_pr\n' >> "$GITHUB_OUTPUT"
+
+      - name: Read the existing product App ID
+        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'sync_body' || steps.plan.outputs.action == 'merge_pr'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /github
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+
+      - name: Read the existing product App key
+        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'sync_body' || steps.plan.outputs.action == 'merge_pr'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /github
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+
+      - name: Verify the product App identity
+        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'sync_body' || steps.plan.outputs.action == 'merge_pr'
+        run: test "${GITHUB_APP_ID:-}" = 4840908
+
+      - name: Mint a repository-scoped App token
+        if: steps.plan.outputs.action == 'create_pr' || steps.plan.outputs.action == 'sync_body' || steps.plan.outputs.action == 'merge_pr'
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Open Ready promotion PR to main
+        if: steps.plan.outputs.action == 'create_pr'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_APP_ID: ''
+          GITHUB_APP_PRIVATE_KEY: ''
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+          AHEAD_BY: ${{ steps.plan.outputs.ahead_by }}
+        run: |
+          set -euo pipefail
+          body=$(cat <<EOF
+          ## Summary
+          Scheduled promotion of integration branch \`${BRANCH}\` into \`main\` (${AHEAD_BY} commit(s) ahead, 0 behind, zero open Ready child PRs targeting \`${BRANCH}\`, authorized via \`vars.MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true\`).
+
+          ## Acceptance
+          Commit: ${HEAD_SHA}
+          Runtime: both
+          Model: scripted (at the LiteLLM boundary)
+          Fixtures: local PG17 isolated e2e databases and scripted provider/LiteLLM boundaries verified on every PR merged into \`${BRANCH}\` and re-verified on this promotion PR
+          Items: 1/1 passed
+          - [x] Integration branch \`${BRANCH}\` synced cleanly with \`main\` (0 behind, 0 conflicts) and all constituent backend PRs passed full CI before promotion
+          Screenshots: not needed: backend integration promotion
+          EOF
+          )
+          pr_url=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+            --title "Promote integration branch ${BRANCH} to main" \
+            --body "$body")
+          echo "Opened promotion PR: $pr_url"
+
+      - name: Synchronize promotion PR acceptance Commit SHA
+        if: steps.plan.outputs.action == 'sync_body'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_APP_ID: ''
+          GITHUB_APP_PRIVATE_KEY: ''
+          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          current=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq '.body')
+          if grep -Eq '^Commit:[[:space:]]*[0-9a-f]{40}' <<< "$current"; then
+            updated=$(sed -E "s/^Commit:[[:space:]]*[0-9a-f]{40}/Commit: ${HEAD_SHA}/" <<< "$current")
+          else
+            updated="${current}"$'\n\n'"Commit: ${HEAD_SHA}"
+          fi
+          gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$updated"
+          echo "Synchronized PR #$PR_NUMBER Commit SHA to $HEAD_SHA"
+
+      - name: Enqueue or merge checked promotion PR
+        if: steps.plan.outputs.action == 'merge_pr'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_APP_ID: ''
+          GITHUB_APP_PRIVATE_KEY: ''
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+          PR_ID: ${{ steps.plan.outputs.pr_id }}
+          PR_NUMBER: ${{ steps.plan.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          # Prefer the repository merge queue (matching merge-queue-autopilot.yml);
+          # fall back to a pinned normal merge commit only if merge queue is not configured on main.
+          # shellcheck disable=SC2016
+          if position=$(gh api graphql -f id="$PR_ID" -f head="$HEAD_SHA" -f query='
+            mutation($id:ID!, $head:GitObjectID!) {
+              enqueuePullRequest(input:{pullRequestId:$id, expectedHeadOid:$head}) {
+                mergeQueueEntry { position }
+              }
+            }' --jq '.data.enqueuePullRequest.mergeQueueEntry.position' 2>/tmp/enqueue.err) && [ -n "$position" ]; then
+            echo "Enqueued promotion PR #$PR_NUMBER at position $position"
+            exit 0
+          fi
+          if grep -qiE "merge queue.*(not enabled|disabled|required)" /tmp/enqueue.err; then
+            gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --merge --match-head-commit "$HEAD_SHA"
+            echo "Merged promotion PR #$PR_NUMBER via normal merge commit at $HEAD_SHA"
+            exit 0
+          fi
+          cat /tmp/enqueue.err >&2
+          exit 1

@@ -468,3 +468,8 @@ rollout and flag deadlines follow the [production acceptance decision](../../doc
 ## Engineering sandbox
 
 `engineering-sandbox.yml` authenticates explicitly dispatched main jobs to the configured engineering Worker and runs the Factory handoff, startup-timing and isolated PostgreSQL 17 policy-migration suites there. External agents can dispatch a supported suite on a committed source SHA using the [engineering runner instructions](../../docs/operations/engineering-sandbox.md).
+
+## Scheduled integration-to-main promotion
+
+`integration-to-main-promotion.yml` runs on a 30-minute schedule (and on manual `workflow_dispatch`, with an optional `dry_run` input) on `main`. It inspects only GitHub metadata and fails closed while repository variable `MIKKA_INTEGRATION_PROMOTE_TO_MAIN` is unset or not `'true'`, logging readiness status to the job summary without reading App credentials or mutating PRs. Once `MIKKA_INTEGRATION_PROMOTE_TO_MAIN=true` is set and the integration branch (`vars.MIKKA_INTEGRATION_BRANCH`, default `claude/affectionate-einstein-s235cb`) is ahead of `main`, `0` commits behind `main`, and has no open Ready child PRs targeting it, the workflow opens or updates the Ready promotion PR using the existing repository GitHub App (`4840908`) and enqueues it (or performs a pinned normal merge commit) only after `mergeStateStatus == "CLEAN"`, all required checks pass on the exact head SHA, and no human has removed it from the merge queue.
+
