@@ -403,7 +403,7 @@ export type RunModelCredential = z.infer<typeof runModelCredentialSchema>
 /** A native subscription uses only a scoped Mikka model gateway credential. */
 export function isSubscriptionGatewayCredential(credential: RunModelCredential | undefined, protocol: 'anthropic' | 'openai'): credential is Extract<RunModelCredential, { kind: 'provider' }> {
   if (credential?.kind !== 'provider' || credential.protocol !== protocol ||
-      !/^mkg_[A-Za-z0-9_-]{43}$/.test(credential.key)) return false
+      !/^mkg_[A-Za-z0-9_-]{43}$/.test(credential.key) || !runModelCredentialSchema.safeParse(credential).success) return false
   const path = protocol === 'anthropic' ? '/api/model-gateway/anthropic' : '/api/model-gateway/openai/v1'
   return URL.parse(credential.baseUrl)?.pathname.endsWith(path) === true
 }
