@@ -82,7 +82,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   const lifecycleInfo = t.mock.method(Sandbox, 'getInfo', async () => ({
     sandboxId, state: 'running', endAt: new Date(Date.now()+30_000), cpuCount: 2, memoryMB: 8192,
   }) as Awaited<ReturnType<typeof Sandbox.getInfo>>)
-  const lifecycleTimeout = t.mock.method(Sandbox, 'setTimeout', async (_id, timeoutMs) => {
+  const lifecycleTimeout = t.mock.method(Sandbox, 'setTimeout', async (_id: string, timeoutMs: number) => {
     assert.ok(timeoutMs > 300_000 && timeoutMs <= 330_000)
   })
   try {

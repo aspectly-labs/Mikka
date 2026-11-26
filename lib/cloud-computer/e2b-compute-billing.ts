@@ -10,6 +10,7 @@ import { fundE2BChunk } from './machine-billing'
 import { MACHINE_CHUNK_MS } from './machine-pricing'
 
 export const E2B_RENEW_LEAD_MS = 45_000
+export const E2B_TIMEOUT_REQUEST_BUDGET_MS = 5_000
 const unavailable = () => new E2BKeyError('e2b_unavailable', 'E2B compute billing identity unavailable')
 
 type Lease = { operationId: string; ownerId: string; workspaceId: string; providerScope: string;
@@ -42,7 +43,7 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
     `SELECT floor(extract(epoch FROM ("paidUntil"-clock_timestamp()))*1000)::int AS "remainingMs"
       FROM e2b_compute_leases WHERE "operationId"=$1`, [lease.operationId])
   // E2B rounds up to seconds. Use whole seconds and allow for provider request latency.
-  const seconds = Math.floor((Math.min(requestedMs, row?.remainingMs ?? 0, MACHINE_CHUNK_MS + E2B_RENEW_LEAD_MS) - 1_000) / 1_000)
+  const seconds = Math.floor((Math.min(requestedMs, row?.remainingMs ?? 0, MACHINE_CHUNK_MS + E2B_RENEW_LEAD_MS) - E2B_TIMEOUT_REQUEST_BUDGET_MS - 1_000) / 1_000)
   if (seconds < 1) throw new E2BKeyError('e2b_limit_reached', 'Mikka credits are insufficient for five minutes of compute')
   return seconds * 1_000
 }
@@ -65,10 +66,13 @@ export async function e2bCreationTimeout(ownerId: string, providerScope: string,
   return MACHINE_CHUNK_MS
 }
 
-export async function recordE2BComputeSandbox(ownerId: string, operationId: string, sandboxId: string) {
+export async function recordE2BComputeSandbox(ownerId: string, operationId: string, sandboxId: string, startedAt?: Date) {
   if (!isCloudEdition()) return
-  const result = await pool.query(`UPDATE e2b_compute_leases SET "sandboxId"=$3,"creationMissingAt"=NULL WHERE "operationId"=$1
-    AND "ownerId"=$2 AND "paidUntil" IS NOT NULL AND ("sandboxId" IS NULL OR "sandboxId"=$3)`, [operationId,ownerId,sandboxId])
+  const result = await pool.query(`UPDATE e2b_compute_leases SET "sandboxId"=$3,"creationMissingAt"=NULL,
+    "paidUntil"=CASE WHEN "sandboxId" IS NULL AND "chunkIndex"=0 AND $4::timestamptz<=now()
+      THEN greatest("paidUntil",$4::timestamptz+$5::int*interval '1 millisecond') ELSE "paidUntil" END
+    WHERE "operationId"=$1
+    AND "ownerId"=$2 AND "paidUntil" IS NOT NULL AND ("sandboxId" IS NULL OR "sandboxId"=$3)`, [operationId, ownerId, sandboxId, startedAt ?? null, MACHINE_CHUNK_MS])
   if (result.rowCount !== 1) throw unavailable()
 }
 
@@ -137,7 +141,7 @@ export async function createPrepaidE2B<T>(ownerId: string, operationId: string, 
 }
 
 export async function verifyE2BAllocation(ownerId: string, operationId: string, sandboxId: string,
-  options: SandboxApiOpts, observed?: Pick<E2BComputeSpec, 'cpuCount' | 'memoryMB'>) {
+  options: SandboxApiOpts, observed?: Pick<E2BComputeSpec, 'cpuCount' | 'memoryMB'> & { startedAt?: Date }) {
   if (!isCloudEdition()) return
   // An uncertain observation retains the prepayment and operation for reconciliation.
   const specs = observed ?? await Sandbox.getInfo(sandboxId, options)
@@ -146,7 +150,8 @@ export async function verifyE2BAllocation(ownerId: string, operationId: string, 
     await voidUnallocatedE2BCompute(ownerId, operationId)
     throw new E2BKeyError('e2b_template_unavailable', 'E2B allocation did not match its verified hardware')
   }
-  await recordE2BComputeSandbox(ownerId, operationId, sandboxId)
+  const startedAt = specs.startedAt && Number.isFinite(specs.startedAt.getTime()) ? specs.startedAt : undefined
+  await recordE2BComputeSandbox(ownerId, operationId, sandboxId, startedAt)
 }
 
 /** Existing hosted sandboxes predate the compute ledger. Only a bound

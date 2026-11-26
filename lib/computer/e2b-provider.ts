@@ -1,5 +1,5 @@
 import 'server-only'
-import { createPrepaidE2B, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
+import { createPrepaidE2B, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, e2bSandboxTimeout, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { isCloudEdition } from '@/lib/edition'
 import { armDueTimerSoon } from '@/lib/due-timer'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
@@ -41,7 +41,9 @@ export async function connectComputer(workspaceId: string, id: string, signal?: 
     throw error
   }
   return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request,
-    ...(policyOnly ? { requestTimeoutMs: 5_000, retries: 0 } : {}),
+    ...(isCloudEdition() ? {
+      requestTimeoutMs: Math.min(E2B_TIMEOUT_REQUEST_BUDGET_MS, request.requestTimeoutMs ?? E2B_TIMEOUT_REQUEST_BUDGET_MS), retries: 0,
+    } : {}),
     ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
 }
 

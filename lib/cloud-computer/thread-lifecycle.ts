@@ -261,7 +261,7 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     }
     return result.rowCount ? due ?? false : now + 1
   }
-  const keepAlive = async (due: number, reason: string) => {
+  const keepAlive = async (due: number, reason: string, observedDeadline: number | null) => {
     const canFund = !row.stopRequestedAt && !['stop_pending', 'task_closed', 'execution_lease_lost', 'provider_paused'].includes(reason)
     const prepared = await deps.provider.prepareKeepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, canFund)
     // A static provider timeout cannot resume a paused VM. Hold the same
@@ -290,7 +290,7 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
       }
       const stopping = Boolean(run?.stopRequestedAt)
       const providerDeadline = stopping && canFund
-        ? (provider?.endAt ?? deps.now())
+        ? (observedDeadline ?? deps.now())
         : (prepared ? await prepared() : await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS, !stopping))
           ?? deps.now() + THREAD_MACHINE_PROVIDER_MS
       const renewalAt = stopping ? due : Math.max(deps.now() + 5_000, providerDeadline - E2B_RENEW_LEAD_MS + 3_000)
@@ -419,10 +419,10 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         return finish({ phase: 'needs_reconciliation', reason: 'execution_condition_changed' }, deps.now() + 1)
       observed.observedStop = true
       const stopAt = deps.now() + THREAD_MACHINE_STOP_GRACE_MS
-      if (provider?.state === 'running' && row.state === 'running') return await keepAlive(stopAt, decision.reason)
+      if (provider?.state === 'running' && row.state === 'running') return await keepAlive(stopAt, decision.reason, provider.endAt)
       return await finish({ phase: 'needs_reconciliation', reason: decision.reason, observedStop: true }, stopAt)
     }
-    if (decision.action === 'keep') return await keepAlive(decision.at!, decision.reason)
+    if (decision.action === 'keep') return await keepAlive(decision.at!, decision.reason, provider?.endAt ?? null)
     if (decision.action === 'missing') {
       const missing = await pool.query(`UPDATE thread_machines SET state='error',"runningSince"=NULL,
           lifecycle=lifecycle||jsonb_build_object('providerMissingReceipt',$4::text),

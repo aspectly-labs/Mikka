@@ -1,5 +1,5 @@
 import 'server-only'
-import { createPrepaidE2B, e2bCreationTimeout, verifyE2BAllocation, e2bSandboxTimeout, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
+import { createPrepaidE2B, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, verifyE2BAllocation, e2bSandboxTimeout, recordE2BComputeSnapshot, e2bSnapshotComputeTemplate } from './e2b-compute-billing'
 import { bindE2BResource, e2bCreateAccount, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { environmentSnapshotScope, withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -79,7 +79,7 @@ export const threadLifecycleProvider = {
     // provider-only closure. Account lookup and settled billing are complete.
     return async () => {
       const remaining = Math.floor((deadline - Date.now()) / 1_000) * 1_000
-      if (remaining > 0) await Sandbox.setTimeout(sandboxId, remaining, { ...prepared, requestTimeoutMs: 5_000, retries: 0 })
+      if (remaining > 0) await Sandbox.setTimeout(sandboxId, remaining, { ...prepared, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0 })
       return deadline
     }
   },
