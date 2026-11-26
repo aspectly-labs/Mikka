@@ -1,5 +1,5 @@
 import { sleep } from 'workflow'
-import type { PullWakeEvent } from '@/lib/github/pull-request-wake'
+import type { PullWakeEvent } from '@/lib/github/pull-request-wake-event'
 import { checkPullRequestWake } from './steps'
 
 /** GitHub calculates mergeability asynchronously. Persist the delays outside the webhook request. */

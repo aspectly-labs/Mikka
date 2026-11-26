@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { dbUrl, seedAgent, seedIssue, seedRun, seedUser, seedWorkspace } from '../../tests/support/workspace-admin-db'
-import type { PullWakeEvent } from './pull-request-wake'
+import type { PullWakeEvent } from './pull-request-wake-event'
 
 test('an undecided GitHub conflict uses bounded workflow retries and the existing thread receipt', { skip: !dbUrl }, async t => {
   const database = new Pool({ connectionString: dbUrl })

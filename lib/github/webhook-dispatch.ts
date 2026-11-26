@@ -4,6 +4,7 @@ import { PULL_REQUEST_REFRESH_ACTIONS, reviewRefreshEvent } from './publication-
 import { noteLogOutcome } from '@/lib/request-log'
 import { reviewCheckEvent } from './review-checks'
 import { completedCiSuite } from './ci-suite-event'
+import { pullWakeEvent } from './pull-request-wake-event'
 import { createHash } from 'node:crypto'
 
 export const GITHUB_WEBHOOK_MAX_BYTES = 1_000_000
@@ -53,7 +54,6 @@ export async function dispatchVerifiedGitHubWebhook(event: string | null, rawBod
   const pr = payload.pull_request as { html_url?: unknown; merged?: unknown; merge_commit_sha?: unknown; head?: { sha?: unknown } } | undefined
   const merged = event === 'pull_request' && payload.action === 'closed' && pr?.merged === true && typeof pr.html_url === 'string'
     ? { url: pr.html_url, headSha: typeof pr.head?.sha === 'string' ? pr.head.sha : null, mergeCommitSha: typeof pr.merge_commit_sha === 'string' ? pr.merge_commit_sha : null } : null
-  const { pullWakeEvent, wakePullRequestThreads } = await import('./pull-request-wake')
   const wake = pullWakeEvent(event, payload)
   if (!wake && !suite && !refresh && !review && !merged && !hasNotifications) { noteLogOutcome(automationEvents ? 'work' : 'ignored'); return new Response(null, { status: automationEvents ? 202 : 204, headers: noStore }) }
   // A suite is a durable resume hint. Persist it before acknowledging GitHub:
@@ -62,7 +62,7 @@ export async function dispatchVerifiedGitHubWebhook(event: string | null, rawBod
   if (suite) await (await import('./ci-suite-wake')).wakeLinkedCiSuite(suite)
   // A synchronize event must update the qualified publication head before checking conflict.
   if (wake && refresh) await (await import('./publication-webhook')).refreshPublishedPullRequest(event, payload)
-  if (wake && await wakePullRequestThreads(wake, deliveryKey)) {
+  if (wake && await (await import('./pull-request-wake')).wakePullRequestThreads(wake, deliveryKey)) {
     // The durable workflow rechecks only the authorized PR and original head.
     // Start it before acknowledgement so this delivery can be retried if it fails to start.
     const { start } = await import('workflow/api')

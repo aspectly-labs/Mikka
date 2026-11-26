@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { pullWakeEvent } from './pull-request-wake'
+import { pullWakeEvent } from './pull-request-wake-event'
 
 const base = { installation: { id: 1 }, repository: { id: 2, full_name: 'org/repo' },
   pull_request: { number: 8, state: 'open', mergeable: false }, sender: { type: 'User' }, action: 'created' }

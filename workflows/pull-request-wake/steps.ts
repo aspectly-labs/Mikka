@@ -1,4 +1,4 @@
-import type { PullWakeEvent } from '@/lib/github/pull-request-wake'
+import type { PullWakeEvent } from '@/lib/github/pull-request-wake-event'
 
 export async function checkPullRequestWake(event: PullWakeEvent, deliveryKey: string) {
   'use step'
