@@ -1,7 +1,8 @@
 'use server'
 
 import { headers } from '@/lib/server-runtime/headers'
-import { z } from 'zod'
+import { candidatesSchema, type runCandidate, type mergedCandidate, type mentionCandidate } from '@/lib/platform/desktop-notification-input'
+import type { z } from 'zod'
 import { ActionFailureError, runAction } from '@/lib/action-error'
 import type { ActionResult } from '@/lib/action-result'
 import { auth } from '@/lib/auth'
@@ -11,11 +12,6 @@ import { inDndWindow, pushAllowed } from '@/lib/push-allowed'
 import { readDesktopNotificationRuntime } from '@/lib/settings/notification-preferences'
 import { listTaskRuns, listThreads } from './task-runs'
 
-const runCandidate = z.object({ id: z.string().max(300), issueId: z.string().max(100), kind: z.enum(['awaiting', 'failed', 'finished']) })
-// A merged pull request names its thread; a mention names its group message. Both are re-read here.
-const mergedCandidate = z.object({ id: z.string().max(300), kind: z.literal('merged'), runId: z.string().max(100) })
-const mentionCandidate = z.object({ id: z.string().max(300), kind: z.literal('mentioned'), messageId: z.uuid() })
-const candidatesSchema = z.array(z.union([runCandidate, mergedCandidate, mentionCandidate])).max(20)
 const STATUS = { awaiting: 'waiting_input', failed: 'failed', finished: 'succeeded' } as const
 
 /** The person's own merged threads among `runIds`, named as the thread list names them. */

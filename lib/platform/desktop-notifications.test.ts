@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { desktopCandidateReason, desktopMentionUpdate, desktopMergeUpdate, desktopNotifyQuestions, desktopRunUpdate, type DesktopGroup, type DesktopRun, type DesktopThread } from './desktop-notifications'
+import { readDesktopMentions, desktopCandidateReason, desktopMentionUpdate, desktopMergeUpdate, desktopNotifyQuestions, desktopRunUpdate, type DesktopGroup, type DesktopRun, type DesktopThread } from './desktop-notifications'
 
 function run(overrides: Partial<DesktopRun> = {}): DesktopRun {
   return {
@@ -151,4 +151,18 @@ test('mentions and merged pull requests ride the 等你 switch and get their own
   ])
   assert.match(mentioned!.instructions, /Sam mentioned the person in the group chat "Release crew"/)
   assert.match(merged!.instructions, /pull request of the thread "Login fix" \(Codex\) was just merged/)
+})
+
+test('a later unmentioned message does not hide earlier unread mentions across page boundaries', async () => {
+  const latest = group({ position: '10', mentions: [] })
+  const pageMessage = (position: string) => ({ ...group({}).lastMessage!, id: position, position })
+  const pages: string[] = []
+  const update = await readDesktopMentions(new Map([[GROUP, '2']]), [{ ...latest, lastReadPosition: '5' }], 'u-1', async (_group, before) => {
+    pages.push(before!)
+    if (before === '10') return { messages: ['9', '8'].map(pageMessage), nextBefore: '8' }
+    return { messages: ['7', '6', '5'].map(pageMessage), nextBefore: '5' }
+  })
+  assert.deepEqual(pages, ['10', '8'])
+  assert.deepEqual(update.notifications.map(item => item.id), ['mentioned:6', 'mentioned:7', 'mentioned:8', 'mentioned:9'])
+  assert.deepEqual((await readDesktopMentions(update.next, [latest], 'u-1')).notifications, [])
 })
