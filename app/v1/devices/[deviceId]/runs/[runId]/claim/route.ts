@@ -335,6 +335,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   // The gateway token is minted at claim for this run only. Key validation records the run so
   // withdrawing the key stops it. The provider key stays on the server.
   let modelCredential: RunModelCredential | undefined
+  let creditsTokenHash: string | undefined
   const openRunKey = async (): Promise<RouteResponse | null> => {
     if (!frozenKey && !frozenCredits) return null
     const [{ validateRunApiKey }, { WorkspaceError }] = await Promise.all([import('@/lib/model-api-keys'), import('@/lib/workspace-error')])
@@ -362,12 +363,13 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         return RouteResponse.json({ error: 'API key unavailable.' }, { status: 409 })
       }
     }
-    const { mintGatewayToken } = await import('@/lib/model-gateway/token')
+    const { hashGatewayToken, mintGatewayToken } = await import('@/lib/model-gateway/token')
     const { token } = await mintGatewayToken(pool, { runId, ownerId: caller.userId, workspaceId: run.workspaceId ?? null, harness,
       model: frozenKey?.model ?? frozenCredits!.model, source: frozenKey ? { kind: 'api_key', keyId: frozenKey.keyId } : { kind: 'credits' } })
     const parsed = runModelCredentialSchema.safeParse({ kind: 'provider', protocol: harness === 'claude_code' ? 'anthropic' : 'openai', baseUrl: gatewayUrl.toString(), key: token })
     if (!parsed.success) return refuse()
     modelCredential = parsed.data
+    if (!frozenKey) creditsTokenHash = hashGatewayToken(token)
     return null
   }
   let computer: Awaited<ReturnType<typeof claimCloudRun>> = null
@@ -444,7 +446,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     // interactive desktop. Its policy must not gate their file-only claim.
     const useComputer = desktop && run.agentDefinition?.readOnly !== true
     let claimed: Awaited<ReturnType<typeof claimCloudRun>>
-    try { claimed = await claimCloudRun(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId! }, runId, deviceId, new Date(leaseExpiresAt), subscription?.id ?? null, beforeClaim, afterClaim, useComputer) }
+    try { claimed = await claimCloudRun(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId! }, runId, deviceId, new Date(leaseExpiresAt), subscription?.id ?? null, beforeClaim, afterClaim, useComputer, creditsTokenHash) }
     catch (error) { if (error instanceof AgentProfileAdmissionError) return rejectProfile(error); throw error }
     if (!claimed) return RouteResponse.json({ error: 'Cloud computer run unavailable.' }, { status: 409 })
     // Without a desktop the run gets none (the daemon refuses a `computer` it cannot serve).
