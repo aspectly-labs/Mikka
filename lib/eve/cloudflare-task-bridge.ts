@@ -1,5 +1,10 @@
 import 'server-only'
 import type { Pool, PoolClient } from 'pg'
+import { randomUUID } from 'node:crypto'
+import { portableTaskWorkspaceReceiptSchema } from '@mikka/protocol/device'
+import { checkedWorkspaceStream } from '../cloud-computer/e2b-task-workspace-archive'
+import type { loadTaskWorkspaceArchive } from '../cloud-computer/task-workspace-archive-store'
+import type { Masker } from '../secrets/mask'
 import { releaseGrant, withSponsoredTaskGrant, type TaskMachineActor } from '../cloud-computer/sponsored-task'
 import { newWebSocketRpcSession, type RpcTarget } from 'capnweb'
 import { WebSocket } from 'undici'
@@ -29,9 +34,17 @@ function request(path:string, body:unknown, signal = AbortSignal.timeout(70_000)
 export function taskReviewRequest(grant:TaskMachineGrant, operation:Record<string,unknown>, signal?:AbortSignal) {
   return request('review',{grant,operation},signal)
 }
-async function post(path:string, body:unknown) {
-  const response = await request(path,body)
-  if (!response.ok) { await response.body?.cancel(); throw Error('Private task machine '+path+' HTTP '+response.status) }
+export class CloudflareTaskProviderError extends Error {
+  constructor(readonly status: number, options?: ErrorOptions) {
+    super('Cloudflare task machine unavailable', options)
+  }
+}
+async function post(path: string, body: unknown, signal?: AbortSignal) {
+  const response = await request(path, body, signal).catch(cause => { throw new CloudflareTaskProviderError(503, { cause }) })
+  if (!response.ok) {
+    await response.body?.cancel()
+    throw new CloudflareTaskProviderError(response.status)
+  }
   return response
 }
 
@@ -76,19 +89,41 @@ const binding:TaskWorkspaceBinding={
   async park(grant){await (await post('park',{grant})).body?.cancel()},
 }
 
-export async function openOwnedCloudflareTaskMachine(pool:Pool, actor:TaskMachineActor, runId:string) {
+type Archive = NonNullable<Awaited<ReturnType<typeof loadTaskWorkspaceArchive>>>
+
+export async function openOwnedCloudflareTaskMachine(pool:Pool, actor:TaskMachineActor, runId:string,
+  archive?: Archive, signal = AbortSignal.timeout(120_000),
+) {
   return withSponsoredTaskGrant(pool,actor,runId,async initial=>{
     const authorized=<T>(operation:(grant:TaskMachineGrant)=>Promise<T>)=>
       withSponsoredTaskGrant(pool,actor,runId,grant=>{
         if (grant.operationId!==initial.operationId) throw Error('Task machine lease changed')
         return operation(grant)
       })
-    const opened = await (await post('open',{grant:initial})).json()
+    const portable = archive ? portableTaskWorkspaceReceiptSchema.parse({ size: archive.manifest.size, sha256: archive.manifest.sha256, headSha: archive.manifest.headSha }) : undefined
+    if (portable && initial.requiredCheckpoint) throw Error('Original task checkpoint is required')
+    const grant = portable ? { ...initial, portableWorkspace: portable } : initial
+    const opened = await (await post('open',{grant}, signal)).json()
     if (opened.state !== 'running' || typeof opened.instanceId !== 'string' || !/^[0-9a-f]{64}$/.test(opened.instanceId)) {
       throw Error('Cloudflare did not acknowledge the task machine')
     }
     if (initial.requiredCheckpoint && (opened.restored !== true || opened.instanceId !== initial.requiredCheckpoint.instanceId)) {
       throw Error('Original task checkpoint is unavailable')
+    }
+    if (portable && archive) {
+      const response = await fetch(origin + '/v1/stage-portable-archive', {
+        method: 'POST', redirect: 'error', cache: 'no-store', signal,
+        headers: { authorization: token(), 'content-type': 'application/octet-stream',
+          'x-mikka-task-grant': Buffer.from(JSON.stringify(grant)).toString('base64') },
+        body: archive.stream, duplex: 'half',
+      } as RequestInit & { duplex: 'half' })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw Error('Cloudflare did not stage the portable task workspace')
+      }
+      const staged = portableTaskWorkspaceReceiptSchema.parse(await response.json())
+      if (staged.size !== portable.size || staged.sha256 !== portable.sha256 || staged.headSha !== portable.headSha)
+        throw Error('Cloudflare task workspace receipt changed')
     }
     // The authorized grant never crosses the public API. Cleanup may release
     // the original lease after membership or the Run was revoked.
@@ -99,8 +134,39 @@ export async function openOwnedCloudflareTaskMachine(pool:Pool, actor:TaskMachin
       removePath:(_,path,options)=>authorized(g=>binding.removePath(g,path,options)),
       park:()=>binding.park(initial),
     },initial)
-    return { connection, instanceId: opened.instanceId as string }
+    return { connection, instanceId: opened.instanceId as string, portableWorkspace: portable }
   })
+}
+
+export async function readCloudflareComputeMeter(grant: TaskMachineGrant, index: number, rollover: boolean) {
+  const result: unknown = await (await post('compute-meter', { grant, index, rollover }, AbortSignal.timeout(8_000))).json()
+  return result
+}
+
+/** Read the same immutable, writer-free guest file twice. Reject credentials
+ * and verify its receipt before the caller uploads any bytes to Mikka R2. */
+export async function captureOwnedCloudflareTaskWorkspace(pool: Pool, actor: TaskMachineActor,
+  runId: string, operationId: string, mask: Masker, signal: AbortSignal) {
+  const grant = await releaseGrant(pool, actor, runId, operationId)
+  const id = randomUUID()
+  const call = (operation: 'capture'|'read'|'delete', abort: AbortSignal) =>
+    post('portable-archive', { grant, operation, id }, abort)
+  const dispose = async () => { await (await call('delete', AbortSignal.timeout(5000))).body?.cancel() }
+  try {
+    const receipt = portableTaskWorkspaceReceiptSchema.parse(await (await call('capture', signal)).json())
+    const read = async () => {
+      const { body } = await call('read', signal)
+      if (!body) throw Error('Cloudflare task workspace archive is unavailable')
+      return body
+    }
+    const reader = checkedWorkspaceStream(await read(), receipt, mask).getReader()
+    try { while (!(await reader.read()).done) { /* verify the sealed source first */ } }
+    finally { await reader.cancel().catch(() => undefined) }
+    return { manifest: { id, ...receipt }, stream: await read(), dispose }
+  } catch (error) {
+    await dispose().catch(() => undefined)
+    throw error
+  }
 }
 
 export async function releaseOwnedCloudflareTaskMachine(db:Pick<PoolClient,'query'>, actor:TaskMachineActor, runId:string, operationId:string) {

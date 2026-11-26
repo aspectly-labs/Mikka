@@ -16,6 +16,7 @@ import { resolveTrustedRunPolicy } from '@/lib/agent-tool-approval/policy-snapsh
 import { githubRepositoryReadCredential } from '@/lib/github/user-access'
 import type { EnvironmentConfiguration } from './contracts'
 import { listProjectResources } from './store'
+import { CLOUDFLARE_ENVIRONMENT_SCOPE, CLOUDFLARE_ENVIRONMENT_TEMPLATE } from './cloudflare-environment-snapshot'
 import {
   snapshotInput,
   eligibleConfiguration,
@@ -107,7 +108,8 @@ export async function readEnvironmentSnapshot(
   const input = snapshotInput.parse(raw)
   if (!(await enabled(reader))) return { enabled: false, snapshot: null }
   const { environment, eligible } = await snapshotConfiguration(reader, input)
-  const templateId = environmentSnapshotTemplate(input.templateKind, environment.configuration)
+  const cloudflare = input.provider === 'cloudflare'
+  const templateId = cloudflare ? CLOUDFLARE_ENVIRONMENT_TEMPLATE : environmentSnapshotTemplate(input.templateKind, environment.configuration)
   const result = await workspacePool.query<SnapshotView & { repositoryIds: Record<string, string> }>(
     `SELECT id,revision,"templateKind",
     CASE WHEN revision<>$5 OR "expiresAt"<=now() OR "templateId"<>$6 OR "workerSha" IS DISTINCT FROM $7 OR NOT $8 THEN 'outdated' ELSE state END AS state,
@@ -117,12 +119,12 @@ export async function readEnvironmentSnapshot(
     [
       input.workspaceId,
       input.environmentId,
-      environmentSnapshotScope(),
+      cloudflare ? CLOUDFLARE_ENVIRONMENT_SCOPE : environmentSnapshotScope(),
       input.templateKind,
       environment.revision,
       templateId,
       process.env.MIKKA_CLOUD_WORKER_SHA ?? null,
-      eligible && Boolean(templateId) && configuredProvider(),
+      cloudflare ? environment.configuration.runtime !== 'local' : eligible && Boolean(templateId) && configuredProvider(),
     ],
   )
   const row = result.rows[0]
@@ -130,7 +132,7 @@ export async function readEnvironmentSnapshot(
   const { repositoryIds, ...snapshot } = row
   if (
     snapshot.state === 'ready' &&
-    !(await hasRepositoryAccess(userOf(reader), environment.repositories, repositoryIds))
+    !(await hasRepositoryAccess(userOf(reader), environment.repositories, cloudflare ? undefined : repositoryIds))
   )
     snapshot.state = 'outdated'
   return {
@@ -203,7 +205,7 @@ export async function enqueueEnvironmentBuild(
 
 export async function requestEnvironmentSnapshot(reader: Reader, raw: SnapshotInput, trigger: 'save' | 'manual' = 'manual') {
   const input = snapshotInput.parse(raw)
-  if (!(await enabled(reader)) || !configuredProvider()) throw new ActionFailureError('projectEnvironmentUnavailable')
+  if (input.provider === 'cloudflare' || !(await enabled(reader)) || !configuredProvider()) throw new ActionFailureError('projectEnvironmentUnavailable')
   const { environment, eligible } = await snapshotConfiguration(reader, input)
   if (!eligible || !environment.repositories.some((repo) => repo.clone === 'start'))
     throw new ActionFailureError('projectEnvironmentUnavailable')
@@ -275,7 +277,16 @@ export async function readyEnvironmentSnapshot(input: Omit<SnapshotSeed, 'templa
     ],
   )
   const row = rows[0]
-  if (!row) return null
+  if (!row) {
+    // A provider rollback or first placement on this provider can miss
+    // without an outdated row. The authorized recipe still provisions the
+    // task while the same bounded build reservation warms the provider cache.
+    if (environment.repositories.some(repo => repo.clone === 'start')) {
+      const cacheInput = { workspaceId: input.workspaceId, environmentId: input.environmentId, templateKind: kind }
+      await requestEnvironmentSnapshot(input.userId, cacheInput, 'save').catch(() => undefined)
+    }
+    return null
+  }
   // Every startup clone is present in this image, including repositories the
   // current task does not use. Re-check the entire set and its immutable IDs.
   if (!(await hasRepositoryAccess(input.userId, environment.repositories, row.repositoryIds))) return null

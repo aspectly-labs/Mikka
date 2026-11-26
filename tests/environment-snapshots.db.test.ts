@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID, createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { Pool } from 'pg'
-import { dbUrl, seedUser, seedWorkspace } from './support/workspace-admin-db'
+import { dbUrl, seedAgent, seedIssue, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { repositorySeed, eligibleConfiguration } from '../lib/project-resources/environment-snapshot-contract'
 import { environmentConfiguration, portableEnvironmentDefinition, PORTABLE_ENVIRONMENT_BASE } from '../lib/project-resources/contracts'
 
@@ -118,6 +118,38 @@ test(
     process.env.MIKKA_FLAG_OVERRIDES = '{"mikka-environment-snapshots":true}'
     const ready = { id, providerId: 'fixture-good' }
     assert.deepEqual(await readyEnvironmentSnapshot(input), ready)
+    await t.test('Cloudflare preparation is scoped independently and needs the exact authenticated guest', async () => {
+      const { beginCloudflareEnvironmentBuild, finishCloudflareEnvironmentBuild } = await import('../lib/project-resources/cloudflare-environment-snapshot')
+      const cloudInput = { ...readInput, provider: 'cloudflare' } as const
+      const actor = { userId: owner, workspaceId: ws.id }
+      const issueId = await seedIssue(fixture, owner, ws.id)
+      const agentId = await seedAgent(fixture, owner)
+      const runId = await seedRun(fixture, { userId: owner, workspaceId: ws.id, agentId, issueId, status: 'preparing' })
+      const deviceId = randomUUID(), token = randomUUID()
+      await fixture.query('INSERT INTO devices (id,"ownerId",name,kind) VALUES($1,$2,$3,$4)', [deviceId, owner, 'snapshot-fixture', 'cloud'])
+      const environment = { id: environmentId, revision, runtime: 'cloud', baseImage: PORTABLE_ENVIRONMENT_BASE,
+        setup: { approved: true, command: 'printf build > generated.txt', copyFiles: [] }, variables: { MODE: 'verify' }, secretIds: [] }
+      const setEnvironment = (next: object) => fixture.query(`UPDATE agent_runs SET "deviceId"=$2,
+        "deviceTokenId"=$3, "agentDefinition"=$4::jsonb WHERE id=$1`, [runId, deviceId, token, {
+        taskCompute: { provider: 'cloudflare', size: 'standard-3' }, projectExecution: { environment: next },
+      }])
+      await setEnvironment({ ...environment, baseImage: 'debian:custom' })
+      await fixture.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","issueId","deviceId","snapshotId","sandboxId","operationId",state)
+        VALUES($1,$2,$3,$4,$5,'cloudflare-task-v1','fixture-cloudflare-' || $6::uuid::text,$6::uuid,'running')`, [runId, ws.id, owner, issueId, deviceId, randomUUID()])
+      await assert.rejects(beginCloudflareEnvironmentBuild(fixture, actor, runId), /base image is unavailable/)
+      await setEnvironment(environment)
+      await beginCloudflareEnvironmentBuild(fixture, actor, runId)
+      assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'building')
+      assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.id, id)
+      await finishCloudflareEnvironmentBuild(fixture, actor, runId, token, 'ready')
+      assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'building')
+      await fixture.query(`UPDATE agent_runs SET status='running',"worktreePath"='/workspace/worktrees/fixture' WHERE id=$1`, [runId])
+      await finishCloudflareEnvironmentBuild(fixture, actor, runId, randomUUID(), 'ready')
+      assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'building')
+      await finishCloudflareEnvironmentBuild(fixture, actor, runId, token, 'ready')
+      assert.equal((await readEnvironmentSnapshot(owner, cloudInput)).snapshot?.state, 'ready')
+      assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.id, id)
+    })
     await fixture.query('UPDATE environment_snapshots SET "repositoryIds"=$2 WHERE id=$1', [id, { revoked: '123' }])
     assert.equal((await readEnvironmentSnapshot(owner, readInput)).snapshot?.state, 'outdated')
     assert.equal(await readyEnvironmentSnapshot(input), null)

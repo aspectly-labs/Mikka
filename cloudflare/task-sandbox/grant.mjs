@@ -28,15 +28,24 @@ export function verifyCheckpoint(required, instanceId, saved) {
   }
 }
 
+export function portableReceipt(value) {
+  if (!value || !Number.isSafeInteger(value.size) || value.size <= 0 ||
+      typeof value.sha256 !== 'string' || !hex.test(value.sha256) ||
+      typeof value.headSha !== 'string' || !/^[a-f0-9]{40}$/.test(value.headSha)) throw Error('Invalid task machine grant')
+  return { size: value.size, sha256: value.sha256, headSha: value.headSha }
+}
+
 export function machineGrant(input) {
   if (!input || typeof input.ownerId !== 'string' || !input.ownerId || input.ownerId.length > 256 ||
       ![input.workspaceId, input.taskId, input.runId, input.operationId].every(v => typeof v === 'string' && uuid.test(v)) ||
       typeof input.repositoryKey !== 'string' || input.repositoryKey.length > 320 || !repository.test(input.repositoryKey) ||
-      !Number.isSafeInteger(input.expiresAt) ||
+      !Number.isSafeInteger(input.expiresAt) || (input.metered !== undefined && input.metered !== true) || (input.portableWorkspace !== undefined && input.requiredCheckpoint !== undefined) ||
       (input.size !== undefined && (typeof input.size !== 'string' || !MACHINE_SIZES.has(input.size)))) throw new Error('Invalid task machine grant')
   const { ownerId, workspaceId, taskId, runId, operationId, expiresAt } = input
   return { ownerId, workspaceId, taskId, repositoryKey: input.repositoryKey.toLowerCase(), runId, operationId, expiresAt,
     ...(input.size === undefined ? {} : {size: input.size}),
+    ...(input.metered === true ? {metered: true} : {}),
+    ...(input.portableWorkspace === undefined ? {} : {portableWorkspace:portableReceipt(input.portableWorkspace)}),
     ...(input.requiredCheckpoint === undefined ? {} : {requiredCheckpoint:requiredCheckpoint(input.requiredCheckpoint)}) }
 }
 
