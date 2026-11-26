@@ -1,6 +1,6 @@
 import { workspaceLink } from '@/lib/workspace-navigation'
 import type { TaskRun, Thread } from '@/app/actions/task-runs'
-import type { GroupSummary } from '@/lib/group-messages'
+import { fetchGroupMessages, type GroupSummary } from '@/lib/group-messages'
 import type { DecisionAnswer, DecisionQuestion } from '@/lib/coordinator/decision'
 import { inDndWindow, type ChannelCategoryOverrides, type DndSchedule } from '@/lib/push-allowed'
 import type { PushReason } from '@/lib/push-reasons'
@@ -83,12 +83,7 @@ export function desktopMergeUpdate(previous: Map<string, Thread['pullState'] | n
 
 export type DesktopGroup = Pick<GroupSummary, 'id' | 'title' | 'lastMessage'>
 
-/**
- * Someone @-mentioning the person in a group chat (Capy's "Mentioned you"): a group's newest message
- * changed since the last read of the group list, names the person, and is not their own. Only the newest
- * message of each group is in the list, so a mention followed by another message before the read is missed;
- * the inbox and the group's unread count still carry it.
- */
+/** Single-message summary comparison retained for older renderer callers. */
 export function desktopMentionUpdate(previous: Map<string, string | null> | null, groups: readonly DesktopGroup[], userId: string): DesktopListUpdate<string | null> {
   const next = new Map(groups.map(group => [group.id, group.lastMessage?.id ?? null]))
   if (previous === null) return { notifications: [], next }
@@ -96,17 +91,47 @@ export function desktopMentionUpdate(previous: Map<string, string | null> | null
   for (const group of groups) {
     const message = group.lastMessage
     if (!message || previous.get(group.id) === message.id) continue
-    if (message.authorType === 'user' && message.authorId === userId) continue
-    if (!message.mentions.some(mention => mention.memberType === 'user' && mention.memberId === userId)) continue
-    notifications.push({
-      id: `mentioned:${message.id}`,
-      kind: 'mentioned',
-      title: group.title,
-      body: message.body.slice(0, 200),
-      href: workspaceLink({ section: 'group', group: group.id }),
-    })
+    const candidate = mentionNotification(group, message, userId)
+    if (candidate) notifications.push(candidate)
   }
   return { notifications, next }
+}
+
+function mentionNotification(group: DesktopGroup, message: NonNullable<DesktopGroup['lastMessage']>, userId: string): DesktopNotification | null {
+  if (message.authorType === 'user' && message.authorId === userId) return null
+  if (!message.mentions.some(mention => mention.memberType === 'user' && mention.memberId === userId)) return null
+  return { id: `mentioned:${message.id}`, kind: 'mentioned', title: group.title, body: message.body.slice(0, 200),
+    href: workspaceLink({ section: 'group', group: group.id }) }
+}
+
+/** Reads only the gap between two observed group tips, skipping messages already read in the chat. */
+export async function readDesktopMentions(previous: Map<string, string | null> | null, groups: readonly (DesktopGroup & Pick<GroupSummary, 'lastReadPosition'>)[], userId: string, read = fetchGroupMessages): Promise<DesktopListUpdate<string | null>> {
+  const next = new Map(groups.map(group => [group.id, group.lastMessage?.position ?? null]))
+  const notifications: DesktopNotification[] = []
+  if (!previous) return { next, notifications }
+  for (const group of groups) {
+    const tip = group.lastMessage
+    if (!tip) continue
+    const observed = BigInt(previous.get(group.id) ?? 0)
+    const readThrough = BigInt(group.lastReadPosition ?? 0)
+    const floor = observed > readThrough ? observed : readThrough
+    if (BigInt(tip.position) <= floor) continue
+    const matches: DesktopNotification[] = []
+    const addMention = (message: typeof tip) => {
+      const candidate = mentionNotification(group, message, userId)
+      if (candidate) matches.push(candidate)
+    }
+    addMention(tip)
+    let before = tip.position
+    while (BigInt(before) > floor + 1n) {
+      const page = await read(group.id, before)
+      for (const message of page.messages) if (BigInt(message.position) > floor) addMention(message)
+      if (!page.nextBefore || BigInt(page.nextBefore) >= BigInt(before)) break
+      before = page.nextBefore
+    }
+    for (const candidate of matches.reverse()) notifications.push(candidate)
+  }
+  return { next, notifications }
 }
 
 // Whether a run's transition interrupts the person with a system notification
