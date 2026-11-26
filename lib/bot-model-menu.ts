@@ -131,8 +131,7 @@ export async function botModelMenu(
   const creditsOption = (model: { id: string; name?: string; pricing?: { input: number; output: number } | null }): BotModelMenuOption => ({
     id: creditsOptionId(model.id), modelId: model.id, provider: "mikka", ...(model.name ? { name: model.name } : {}),
     ...(model.pricing ? { price: { input: model.pricing.input, output: model.pricing.output } } : {}),
-    // No server-side featured subset (#3315); keep featured: true for remaining consumers (Onboarding / older clients) so every authorized Mikka-credit model is shown.
-    featured: true, ...(hostedSource ? { hostedSource } : {}),
+    ...(hostedSource ? { hostedSource } : {}),
     route: { source: "credits", connectionId: null, label: "" },
     ...(usable ? {} : { unavailable: { reason: "points" as const }, health: modelRouteRejection("balance")?.health }),
   });

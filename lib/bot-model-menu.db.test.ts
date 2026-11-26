@@ -224,12 +224,12 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
         assert.equal(hosted.options.length, CATALOG_SNAPSHOT.length + 1);
         const extraOption = hosted.options.find(option => option.modelId === extra.id);
         assert.ok(extraOption, "non-FEATURED_MODELS catalogue model is included in Mikka credits");
-        assert.equal(hosted.options.every(option => option.featured === true), true,
-          "every authorized Mikka-credit option sets compatibility featured=true so no consumer filters by a featured subset");
+        assert.equal(hosted.options.every(option => !("featured" in option)), true,
+          "Mikka-credit options omit the removed featured property");
         assert.ok(listedMenu.models?.some(model => model.routes.some(route => route.id === extraOption.id)));
         const chosen = await chooseBotModel(pool, settings, alice, bot, extraOption.id);
         assert.equal(chosen.current.id, extraOption.id);
-        assert.equal(chosen.current.featured, true);
+        assert.equal("featured" in chosen.current, false);
         assert.deepEqual(await freezeBotModel({ ownerId: "alice", botId: bot, workspaceId: workspace }, {
           service: () => ({ repository: new SubscriptionRepository(pool) }) as never,
           workspace: async () => {},
