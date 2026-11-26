@@ -5,10 +5,37 @@
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { needsOfficialUi, readUi } from './official-ui-tree.mjs'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { needsOfficialUi, officialCore, readUi } from './official-ui-tree.mjs'
 
-// The tokens live in the official UI checkout's core/app/globals.css; without it there is nothing to compute.
+// The tokens live in the official UI checkout's core/app/globals.css; without it there is nothing to compute. Their
+// values name Mikka's colour primitives (`var(--mk-gray-l540)`), which the checkout's styles/tokens.css spells: a
+// value is resolved through the same block, then tokens.css (the theme's block, then its theme-invariant :root).
 const css = needsOfficialUi ? '' : readUi('app/globals.css')
+const tokensCss = needsOfficialUi ? '' : readFileSync(join(officialCore, '..', 'styles/tokens.css'), 'utf8')
+
+/** Every top-level `selector { … }` block of a stylesheet with that exact selector, merged in order. */
+function declarationsOf(text, selector) {
+  const out = {}
+  for (const match of text.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/^([^\s{}][^{}\n]*?)\s*\{([^{}]*)\}/gm)) {
+    if (match[1].trim() !== selector) continue
+    for (const [, name, value] of match[2].matchAll(/--([\w-]+):\s*([^;]+);/g)) out[name] = value.trim()
+  }
+  return out
+}
+const tokenBlocks = {
+  ':root': [declarationsOf(tokensCss, ':root:not(.dark)'), declarationsOf(tokensCss, ':root')],
+  '.dark': [declarationsOf(tokensCss, ':root.dark'), declarationsOf(tokensCss, ':root')],
+}
+/** A token's value with every `var(--name)` it consists of replaced by the name's value, as far as it resolves. */
+function resolved(value, own, selector, depth = 0) {
+  const match = /^var\(--([\w-]+)\)$/.exec(value.trim())
+  if (!match || depth > 8) return value.trim()
+  const next = own[match[1]] ?? tokenBlocks[selector].map(block => block[match[1]]).find(v => v != null)
+  assert.ok(next != null, `${value} is not defined in core/app/globals.css or styles/tokens.css`)
+  return resolved(next, own, selector, depth + 1)
+}
 
 /** The declarations of one top-level block (`:root` or `.dark`), as a name → value map. */
 function block(selector) {
@@ -16,7 +43,8 @@ function block(selector) {
   assert.ok(start > 0, `${selector} block not found`)
   const end = css.indexOf('\n}', start)
   const declarations = css.slice(start, end)
-  return Object.fromEntries([...declarations.matchAll(/^\s*--([\w-]+):\s*([^;]+);/gm)].map(([, name, value]) => [name, value.trim()]))
+  const own = Object.fromEntries([...declarations.matchAll(/^\s*--([\w-]+):\s*([^;]+);/gm)].map(([, name, value]) => [name, value.trim()]))
+  return Object.fromEntries(Object.entries(own).map(([name, value]) => [name, resolved(value, own, selector)]))
 }
 
 const linear = channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
@@ -24,13 +52,18 @@ const srgb = channel => channel <= 0.0031308 ? 12.92 * channel : 1.055 * channel
 
 /** A colour token as { y: linear luminance, channels: sRGB 0…1 triple }. */
 function colour(value) {
-  const oklch = value.match(/^oklch\(\s*([\d.]+)\s+0\s+0\s*\)$/)
+  const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (hex) {
+    const digits = hex[1].length === 3 ? [...hex[1]].map(d => d + d).join('') : hex[1]
+    value = `rgb(${[0, 2, 4].map(i => parseInt(digits.slice(i, i + 2), 16)).join(' ')})`
+  }
+  const oklch = value.match(/^oklch\(\s*([\d.]+)\s+0\s+(?:0|none)\s*\)$/)
   if (oklch) {
     // An achromatic oklch colour has Y = L³; its channels are that grey encoded.
     const y = Number(oklch[1]) ** 3
     return { y, channels: [srgb(y), srgb(y), srgb(y)] }
   }
-  const rgb = value.match(/^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\)$/)
+  const rgb = value.match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)\s*\)$/)
   if (rgb) {
     const channels = rgb.slice(1).map(channel => Number(channel) / 255)
     const [r, g, b] = channels.map(linear)
