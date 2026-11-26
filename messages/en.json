@@ -11401,7 +11401,7 @@
     "resizeSidebar": "Resize sidebar",
     "resizeWorkArea": "Resize the right column",
     "phoneBack": "Back",
-    "phoneColumnMenu": "Work area contents"
+    "phoneColumnMenu": "Right column contents"
   },
   "DeviceSetup": {
     "path": "Local repository path",
