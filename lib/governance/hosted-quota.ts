@@ -1,6 +1,7 @@
 import 'server-only'
 import type { Pool, PoolClient } from 'pg'
 import type { HostedQuotaLease } from '@/lib/abuse/store'
+import { getRuntimeConfig } from '@/lib/runtime-config'
 import { deploymentMode } from './edition'
 import { resolveEntitlements, type DeploymentMode, type PlanGrant } from './policy'
 import { GovernanceError } from './errors'
@@ -33,7 +34,15 @@ export async function acquireHostedQuota(workspaceId: string, database?: Pick<Po
     }
     const { rows: grants } = await client.query<PlanGrant>(`select plan,source,"seatLimit","expiresAt","billingPlan","billingExpiresAt" from mikka_workspace_entitlements where "workspaceId"=$1
       union all select plan,source,"seatLimit","expiresAt","billingPlan","billingExpiresAt" from mikka_organization_entitlements where "organizationId"=$2`, [workspaceId, link?.organizationId ?? null])
-    return { limit: resolveEntitlements({ mode, kind: workspace.kind, grants }).hostedMaxInFlight, close,
-      billingAccount: { workspaceId: account?.workspaceId ?? workspaceId, organizationId: account ? link!.organizationId : null } }
+    return {
+      limit: resolveEntitlements({
+        mode,
+        kind: workspace.kind,
+        grants,
+        capabilityOverrides: getRuntimeConfig('planEntitlementOverrides'),
+      }).hostedMaxInFlight,
+      close,
+      billingAccount: { workspaceId: account?.workspaceId ?? workspaceId, organizationId: account ? link!.organizationId : null },
+    }
   } catch (error) { await close(); throw error }
 }

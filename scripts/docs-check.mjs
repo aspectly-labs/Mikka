@@ -2,10 +2,12 @@ import { readFileSync } from 'node:fs'
 import { GENERATED_DOCUMENTS } from './docs-generate.mjs'
 import { renderGenerated } from './docs-generated.mjs'
 import { validatePendingRegister, pendingLintProblems } from './pending-decisions.mjs'
+import { checkConfigContracts } from './config-contract-sync.mjs'
 
 
 const EXPECTED_GENERATED = {
   'docs/hosted-models.md': ['hosted-models'],
+  'docs/operations/config-contracts.md': ['config-contracts'],
   'docs/operations/feature-flags.md': ['feature-flags'],
   'docs/operations/machine-sizes.md': ['machine-sizes'],
   'docs/settings.md': ['settings-sections'],
@@ -31,6 +33,7 @@ for (const path of GENERATED_DOCUMENTS) {
   problems.push(...generatedMarkerProblems(before, path))
   if (renderGenerated(before) !== before) problems.push(`${path}: generated content is stale; run pnpm docs:generate`)
 }
+problems.push(...checkConfigContracts({ rootDir: '.' }))
 problems.push(...validatePendingRegister('.'))
 problems.push(...pendingLintProblems('.'))
 const claims = JSON.parse(readFileSync('docs/doc-claims.json', 'utf8'))

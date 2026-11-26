@@ -7,6 +7,7 @@ import { billingEntitlementOutbox, workspaceBilling, workspaceCreditGrants } fro
 import { hostedBillingChanged } from '@/lib/live/billing'
 import { BILLING_LIVE_STATUSES } from '@/lib/workspace-admin/general'
 import { resourcePrice, subscriptionEntitlement, RESOURCE_BILLING_VERSION } from './resource-plan'
+import { POINTS_PER_USD } from './hosted-usage'
 import { stripeConfig, stripeGet } from './stripe'
 import type { PointsWebhookOptions } from './points-webhook'
 import { invoiceFullyRefunded, invoicePaymentAllocations, reconcilePlanRefunds } from './plan-refunds'
@@ -27,6 +28,7 @@ const subscriptionSchema = z.object({
 const invoiceSchema = z.object({ id: stripeId, customer: expandableId, status: z.string().nullable(), amount_paid: z.number().int().nonnegative(),
   payment_intent: expandableId.nullish(),
   currency: z.string(), billing_reason: z.string().nullable(), hosted_invoice_url: z.url().nullish(),
+  metadata: z.record(z.string(), z.unknown()).nullish(),
   lines: z.object({ has_more: z.boolean(), data: z.array(z.object({
     price: z.object({ id: stripeId }).loose().nullish(),
     pricing: z.object({ price_details: z.object({ price: expandableId }).loose().nullish() }).loose().nullish(),
@@ -41,6 +43,44 @@ const invoiceTypes = new Set(['invoice.paid', 'invoice.payment_succeeded', 'invo
 function invoiceSubscription(object: Record<string, unknown>): string | null {
   const parsed = z.object({ subscription: expandableId.nullish(), parent: z.object({ subscription_details: z.object({ subscription: expandableId }).loose().nullish() }).loose().nullish() }).loose().parse(object)
   return parsed.subscription ?? parsed.parent?.subscription_details?.subscription ?? null
+}
+
+const introCreditCentsSchema = z.preprocess(
+  value => (typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value.trim()) : value),
+  z.number().int().nonnegative(),
+)
+
+function normalizeIntroCreditCap(value: unknown): unknown {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed !== '' ? trimmed : undefined
+  }
+  return value
+}
+
+/**
+ * Resolves the points granted for a paid subscription invoice.
+ * Intro-offer initial invoices (`subscription_create`) carrying a validated
+ * `mikka_intro_credit_cents` metadata cap grant at most that intro allowance;
+ * renewals (`subscription_cycle`) always grant the full `monthlyPoints`.
+ */
+export function resolveSubscriptionGrantPoints(input: {
+  billingReason: string | null | undefined
+  monthlyPoints: number
+  invoiceMetadata?: Record<string, unknown> | null
+  subscriptionMetadata?: Record<string, unknown> | null
+}): number {
+  if (input.billingReason !== 'subscription_create') return input.monthlyPoints
+  const rawCap = normalizeIntroCreditCap(input.invoiceMetadata?.mikka_intro_credit_cents)
+    ?? normalizeIntroCreditCap(input.subscriptionMetadata?.mikka_intro_credit_cents)
+  if (rawCap === undefined) return input.monthlyPoints
+  const parsed = introCreditCentsSchema.safeParse(rawCap)
+  if (!parsed.success || !Number.isSafeInteger(parsed.data)) throw new Error('billing_intro_credit_cap_invalid')
+  const introCreditCents = parsed.data
+  const maxCentsEquivalent = Math.floor((input.monthlyPoints * 100) / POINTS_PER_USD)
+  if (introCreditCents > maxCentsEquivalent) throw new Error('billing_intro_credit_cap_invalid')
+  return Math.min(input.monthlyPoints, Math.floor((introCreditCents * POINTS_PER_USD) / 100))
 }
 
 /** Canonical Stripe reads occur under the account lock, so event arrival order cannot restore an old plan. */
@@ -118,7 +158,13 @@ export async function applySubscriptionEvent(tx: Transaction, event: { id: strin
       if (existing && (existing.workspaceId !== workspaceId || existing.stripeInvoiceId !== invoice.data.id
         || existing.bucket !== 'plan' || existing.reason !== 'subscription')) throw new Error('billing_invoice_grant_scope_mismatch')
       const paymentAllocations = existing?.paymentAllocations ?? await invoicePaymentAllocations(invoice.data, get)
-      const granted = await tx.insert(workspaceCreditGrants).values({ id: randomUUID(), workspaceId, bucket: 'plan', points: approved.monthlyPoints,
+      const grantPoints = resolveSubscriptionGrantPoints({
+        billingReason: invoice.data.billing_reason,
+        monthlyPoints: approved.monthlyPoints,
+        invoiceMetadata: invoice.data.metadata,
+        subscriptionMetadata: sub.metadata,
+      })
+      const granted = await tx.insert(workspaceCreditGrants).values({ id: randomUUID(), workspaceId, bucket: 'plan', points: grantPoints,
         reason: 'subscription', externalId: `invoice:${invoice.data.id}`, amountCents: invoice.data.amount_paid, currency: 'usd',
         stripeInvoiceId: invoice.data.id, paymentAllocations,
         stripePaymentIntentId: Object.keys(paymentAllocations).length === 1 ? Object.keys(paymentAllocations)[0] : null,

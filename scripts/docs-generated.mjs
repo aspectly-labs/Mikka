@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import yaml from 'js-yaml'
+import { renderConfigContractsMarkdown } from './config-contract-sync.mjs'
 
 export const GENERATED_RE = /<!-- generated:([a-z0-9-]+) -->\n[\s\S]*?<!-- \/generated:\1 -->/g
 
@@ -63,6 +64,7 @@ export function settingsSections() {
 
 export function generatedContent(name) {
   if (name === 'hosted-models') return hostedModels()
+  if (name === 'config-contracts') return renderConfigContractsMarkdown()
   if (name === 'feature-flags') return featureFlags()
   if (name === 'settings-sections') return settingsSections()
   if (name === 'machine-sizes') return machineSizes()
