@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, chmod, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createServer as httpsServer } from 'node:https'
@@ -21,11 +21,6 @@ import { subscriptionNativeHTTP } from '../lib/subscription-native-http.ts'
 import { SubscriptionWorkerClient } from '../packages/daemon/src/subscription-worker-client.ts'
 import { resolveAgentSubscription } from '../lib/agent-subscription.ts'
 import { resolveAgentModel } from '../lib/agent-model.ts'
-import { hostedSubscriptionLauncher } from '../packages/daemon/src/subscription-launcher.ts'
-import { buildChildEnv } from '../packages/daemon/src/env.ts'
-import { NoSandbox } from '../packages/daemon/src/agents/sandbox.ts'
-import { ToolApprovalGate } from '../packages/daemon/src/agents/tool-approval.ts'
-import { createLogger } from '../packages/daemon/src/log.ts'
 import { startSubscriptionChatProcess } from './support/subscription-chat-process.mjs'
 import { authorizeSubscriptionUse } from '../lib/subscription-runtime.ts'
 import { authorizedAccessName } from '../lib/subscription-access-snapshot.ts'
@@ -48,7 +43,6 @@ test(scenario, { timeout: 90_000 }, async t => {
   const binary = process.env.MIKKA_BYOS_FIXTURE_BINARY
   assert.ok(binary, 'build acceptance-only worker first; no production fallback')
   const directory = await mkdtemp(join(tmpdir(), 'mikka-byos-app-'))
-  const sessions = []
   const pool = new Pool({ connectionString: databaseUrl, max: 4 })
   const secrets = new Map()
   const secretMethods = []
@@ -403,7 +397,11 @@ test(scenario, { timeout: 90_000 }, async t => {
         const metadata=await contextResponse.json();assert.equal(metadata.route,nativeRoute);assert.equal(metadata.revision,revision);assert.ok(!JSON.stringify(metadata).includes('accessToken'));assert.ok(!JSON.stringify(metadata).includes('fixture-access'))
         const payload={path:provider==='codex'?'/responses':'/v1/messages',headers:{'user-agent':'Mikka/1.0',originator:'Mikka',authorization:'Bearer caller-placeholder'},body:provider==='codex'?{model:'fixture-model',stream:true,store:false,input:[{role:'user',content:'HELLO'}]}:{model:'fixture-model',stream:true,max_tokens:16,messages:[{role:'user',content:'HELLO'}]}}
         if (nativeLiteLlm && task === 0) await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model' })
-        const nativeResponse=await nativePost(runId,{action:'request',payload});assert.equal(nativeResponse.status,200);const output=await nativeResponse.text();assert.ok(output.includes('subscription fixture'));assert.ok(!output.includes('fixture-access'))
+        const callsBeforeRetiredRoute = providerCalls
+        const retired = await nativePost(runId, { action: 'request', payload })
+        assert.equal(retired.status, 410)
+        assert.deepEqual(await retired.json(), { error: 'subscription_gateway_required' })
+        assert.equal(providerCalls, callsBeforeRetiredRoute)
         const before=providerCalls
         await pool.query('update devices set enabled=false where id=$1',[deviceId])
         assert.equal((await nativePost(runId,{action:'context'})).status,409)
@@ -412,7 +410,6 @@ test(scenario, { timeout: 90_000 }, async t => {
         await pool.query('update devices set harnesses=$2::jsonb where id=$1',[deviceId,nativeHarnesses])
         assert.equal((await nativePost(runId,{action:'context'},'fixture-other')).status,409)
         assert.equal((await nativePost(runId,{action:'context'},'fixture-device',randomUUID())).status,409)
-        assert.equal((await nativePost(runId,{action:'request',payload:{...payload,body:{...payload.body,model:'another-model'}}})).status,409)
         await pool.query('update agent_runs set "stopRequestedAt"=now() where id=$1',[runId])
         assert.equal((await nativePost(runId,{action:'context'})).status,409)
         assert.equal(providerCalls,before)
@@ -420,27 +417,7 @@ test(scenario, { timeout: 90_000 }, async t => {
       }
       assert.equal(secretMethods.filter(method=>method==='POST').length,noLoginCreates,'hosted tasks must reuse the original OAuth connection')
       await pool.query('delete from agents where id=$1',[agentId]);await pool.query('delete from devices where id=$1',[deviceId])
-      const native = await post({ action: 'bind', connectionId, revision, consumerId, route: nativeRoute, modelId: 'fixture-model' })
-      const runtime = join(directory, `native-${provider}`); await mkdir(runtime)
-      const cwd = join(runtime, 'project'); await mkdir(cwd)
-      execFileSync('git', ['init', '-q', cwd])
-      const binaryPath = resolve(root, `packages/daemon/test/fakes/fake-${provider === 'codex' ? 'codex' : 'claude'}-subscription.mjs`); await chmod(binaryPath, 0o755)
-      const options = { runId: randomUUID(), cwd, prompt: provider === 'codex' ? 'REFRESH' : 'HANG', env: buildChildEnv({ host: { PATH: process.env.PATH, HOME: runtime } }), log: createLogger({ level: 'silent' }) }
-      // This case exercises account custody with synthetic CLIs. Install a
-      // host-scoped gate without approving any tool operation; production
-      // assignments obtain their gate from the authenticated server link.
-      options.toolApproval = new ToolApprovalGate(options.runId, { permission: () => 'deny', ask: async () => 'deny', isLive: () => true })
-      const launched = await service.launchNative('alice', consumerId, native.body.bindingId, hostedSubscriptionLauncher(options, { stateDir: runtime, sandbox: new NoSandbox(), codexBinary: binaryPath, claudeBinary: binaryPath }))
-      sessions.push(launched)
-      if (provider === 'claude') {
-        assert.equal((await post({ action: 'disconnect', connectionId, revision })).status, 200)
-        // The server stops the run and pushes a run control; the daemon's push invalidates the gate (no poll).
-        options.toolApproval.invalidate()
-      }
-      const events = []; for await (const event of launched.events()) events.push(event)
-      assert.equal(events.at(-1).outcome, provider === 'codex' ? 'succeeded' : 'cancelled')
-      assert.ok(!JSON.stringify(events).includes('fixture-access'))
-      if (provider === 'codex') assert.equal((await post({ action: 'disconnect', connectionId, revision })).status, 200)
+      assert.equal((await post({ action: 'disconnect', connectionId, revision })).status, 200)
       await assert.rejects(service.model(use), { code: 'disconnected' })
       const stateAfter = await repository.connection('alice', connectionId)
       assert.equal(stateAfter.accountLabel, 'fixture@example.invalid', 'a disconnected row keeps its email')
@@ -576,7 +553,6 @@ test(scenario, { timeout: 90_000 }, async t => {
     console.log('BYOS browser acceptance: actual Settings -> CPA device pending/complete + registered Claude callback URL handoff -> owner-bound persistence -> disconnect; synthetic providers only')
 
   } finally {
-    for (const session of sessions) await session.cancel().catch(() => {})
     if (browser) await browser.close()
     if (browserServer) await new Promise(resolve => browserServer.close(resolve))
     await new Promise(resolve => infisical.close(resolve))

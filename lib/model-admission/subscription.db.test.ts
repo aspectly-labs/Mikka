@@ -155,7 +155,7 @@ test('managed subscription routes authorize the existing service and native HTTP
     assert.equal(await count('model.denied'), denied + 1, 'suppressing allowed audits never suppresses a denial')
     assert.equal(workerCalls, workerBefore, 'revoked probes cannot reach the worker')
   })
-  await t.test('native HTTP uses a broker in the frozen task tenant and rejects foreign Bot attribution', async () => {
+  await t.test('the native gateway is scoped to the frozen task tenant and rejects foreign Bot attribution', async () => {
     const botId = await seedBot(pool, two.id, ownerId)
     const foreignBot = await seedBot(pool, one.id, ownerId)
     const team = await seedTeam(pool, two.id, ownerId)
@@ -172,8 +172,8 @@ test('managed subscription routes authorize the existing service and native HTTP
     const payload = { path: '/responses', headers: {}, body: { model: 'fixture-model', stream: true } }
     const post = (body: unknown) => fetch(`${origin}/native/${deviceId}/${runId}`, { method: 'POST', body: JSON.stringify(body) })
     const before = providerCalls
-    // A typed model-policy denial is authoritative and must remain a conflict.
-    assert.equal((await post({ action: 'request', payload })).status, 409)
+    // The metadata probe enforces policy before any provider call.
+    assert.equal((await post({ action: 'context' })).status, 409)
     assert.equal(providerCalls, before)
     await set(two.id, [rule('codex_cli')])
     const context = await post({ action: 'context' })
@@ -181,27 +181,23 @@ test('managed subscription routes authorize the existing service and native HTTP
     const metadata = await context.json()
     assert.equal(metadata.route, 'codex_cli')
     assert.equal(Object.hasOwn(metadata, 'accessToken'), false)
-    const allowed = await post({ action: 'request', payload })
-    assert.equal(allowed.status, 200)
-    assert.match(await allowed.text(), /permitted/)
+    assert.equal((await post({ action: 'request', payload })).status, 410)
+    assert.equal(providerCalls, before)
+    const use = await service.nativeRun(ownerId, deviceId, runId)
+    const allowed = await service.nativeRequest(use, payload)
+    assert.match(await new Response(allowed.body).text(), /permitted/)
     assert.equal(providerCalls, before + 1)
-    let rawLauncherCalled = false
-    await assert.rejects(service.launchNative(ownerId, agentId, bindingId, async () => { rawLauncherCalled = true }), /modelRouteDenied/)
-    assert.equal(rawLauncherCalled, false)
     await set(two.id, [rule('codex_cli')], true)
-    assert.equal((await post({ action: 'request', payload })).status, 409)
+    await assert.rejects(service.nativeRequest(use, payload), /modelPolicyRevoked/)
     assert.equal(providerCalls, before + 1)
     await set(two.id, [rule('codex_cli')])
     for (const changed of [{ ...payload, path: 'https://proxy.invalid/responses' }, { ...payload, body: { model: 'denied-model', stream: true } }])
-      assert.equal((await post({ action: 'request', payload: changed })).status, 409)
+      await assert.rejects(service.nativeRequest(use, changed))
     await pool.query(`UPDATE mikka_workspace_members SET status='suspended' WHERE "workspaceId"=$1 AND "userId"=$2`, [two.id, ownerId])
-    // This membership guard currently throws an unclassified plain error,
-    // not a typed authority refusal. It fails closed without a provider call.
-    assert.equal((await post({ action: 'request', payload })).status, 503)
-    assert.equal(providerCalls, before + 1)
+    await assert.rejects(service.nativeRequest(use, payload))
     await pool.query(`UPDATE mikka_workspace_members SET status='active' WHERE "workspaceId"=$1 AND "userId"=$2`, [two.id, ownerId])
     await pool.query(`UPDATE agent_runs SET status='stopped',"stopRequestedAt"=now(),"finishedAt"=now() WHERE id=$1`, [runId])
-    assert.equal((await post({ action: 'request', payload })).status, 409)
+    await assert.rejects(service.nativeRequest(use, payload))
     assert.equal(providerCalls, before + 1)
   })
   await t.test('audit names the actual fixed subscription transport without credentials, prompt text or invented geography', async () => {

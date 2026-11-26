@@ -12,7 +12,7 @@ import { readSubscriptionQuota } from '../packages/daemon/src/subscription-quota
 import { SubscriptionRepository } from './subscription-repository'
 import { runMayUseCredentialSql } from './personal-policy'
 import { resolveSubscriptionModel } from './subscription-model'
-import { nativeBrokerContextSchema, nativeLeaseSchema, type NativeBrokerRequest } from '@mikka/protocol/subscription'
+import { nativeBrokerContextSchema, type NativeBrokerRequest } from '@mikka/protocol/subscription'
 import { accountLabel, failedUsage, parseSubscriptionUsage, type SubscriptionUsage, type WorkerUsage } from './subscription-usage'
 import { BACKEND_FAILURES, GENERATION_FAILURES, PRIVATE_FAILURES, generationFailureDetails } from './subscription-generation-diagnostics'
 import { stepIdentity } from './model-call-timing'
@@ -276,38 +276,6 @@ export class SubscriptionService {
         route: binding.route, modelId: selected.modelId ?? binding.modelId, revision: authorized.binding.connectionRevision })
     })
   }
-  /** Prepare a device's direct-provider credential once. nativeAuth performs
-   * the custody refresh itself and returns the expiry with the access token;
-   * separate prepare/context child processes would repeat that same work. */
-  async nativeLease(use: SubscriptionUse, signal?: AbortSignal, includeModelCatalogue = false) {
-    return measureSubscriptionNative('lease', use.runId, async timing => {
-      const binding = await timing.measure('binding', () => this.repository.binding(use.ownerId, use.bindingId))
-      const selected = await timing.measure('selection', () => this.nativeRunSelection(use, binding.modelId))
-      const model = selected.modelId ?? binding.modelId
-      const scope = { ownerId: selected.executionOwnerId, workspaceId: binding.workspaceId, runId: use.runId }
-      await timing.measure('admit_before', () => this.admitModel(scope, model, binding.route, signal, false))
-      const authorized = await timing.measure('access', () => this.check(use, signal, model ?? null))
-      await timing.measure('admit_after', () => this.admitModel(scope, model, binding.route, signal, false))
-      const row = await timing.measure('connection', () => this.repository.connection(use.ownerId, binding.connectionId))
-      // This is evidence for the prepared model, not another authorization
-      // round trip. Reuse the exact connection/epoch already read for custody.
-      // Older strict lease clients retain their original response shape.
-      const catalogue = row.modelCatalog
-      const modelCatalogueVerified = includeModelCatalogue && binding.route === 'claude_code_cli'
-        && row.id === binding.connectionId && String(row.ownerId) === use.ownerId
-        && row.state === 'connected' && !row.paused
-        && Number(row.epoch) === authorized.binding.connectionRevision
-        && catalogue != null && Number(catalogue.revision) === Number(row.epoch)
-        && Array.isArray(catalogue.models) && catalogue.models.includes(model)
-      const lease = await timing.measure('native_auth', () => this.worker(this.repository.scope(row)).forUse(use)
-        .call<{ accessToken?: unknown; expiresAt?: unknown; accountId?: unknown; chatgptAccountId?: unknown; chatgptPlanType?: unknown }>('nativeAuth', { revision: authorized.binding.connectionRevision }, signal))
-      return nativeLeaseSchema.parse({ route: binding.route, modelId: model, revision: authorized.binding.connectionRevision,
-        ...(modelCatalogueVerified ? { modelCatalogueVerified: true } : {}),
-        accountId: binding.route === 'codex_cli' ? lease.chatgptAccountId : lease.accountId,
-        ...(typeof lease.chatgptPlanType === 'string' ? { plan: lease.chatgptPlanType } : {}),
-        accessToken: lease.accessToken, expiresAt: typeof lease.expiresAt === 'string' ? new Date(lease.expiresAt).toISOString() : lease.expiresAt })
-    })
-  }
   async nativeRequest(use: SubscriptionUse, request: NativeBrokerRequest, signal?: AbortSignal) {
     return measureSubscriptionNative('request', use.runId, async timing => {
       const binding=await timing.measure('binding', () => this.repository.binding(use.ownerId,use.bindingId))
@@ -338,24 +306,6 @@ export class SubscriptionService {
       if (row.agentDefinition?.cliModelSelection==='explicit') selectedModel=row.agentDefinition.model
     }
     return { modelId: selectedModel, executionOwnerId }
-  }
-  /**
-   * In-process native launch, used only by the BYOS custody test
-   * (tests/byos-application.test.mjs) to drive synthetic CLIs through
-   * disconnect and reconnect. No production path calls it: a device run gets
-   * native credentials through `nativeRun`, which needs a runId and checks
-   * `runMayUseCredentialSql` and membership on both sides.
-   */
-  async launchNative<T>(ownerId: string, consumerId: string, bindingId: string, run: (context: { use: SubscriptionUse; modelId: string; worker: Pick<SubscriptionWorkerClient, 'call'>; access(): Promise<SubscriptionAccess> }) => Promise<T>) {
-    const binding = await this.repository.binding(ownerId, bindingId)
-    // This legacy in-process launcher hands credentials to its adapter. It is
-    // not the task-bound HTTP broker and cannot claim controlled model routing.
-    const { assertUnmanagedModelTransport } = await import('./model-admission/runtime')
-    await assertUnmanagedModelTransport({ ownerId, workspaceId: binding.workspaceId }, binding.modelId)
-    const use: SubscriptionUse = { ownerId, consumerId, bindingId, workspaceId: binding.workspaceId, execution: 'native' }
-    await this.check(use)
-    const row = await this.repository.connection(ownerId, binding.connectionId)
-    return run({ use, modelId: binding.modelId, access: () => this.access(use), worker: this.worker(this.repository.scope(row)).forUse(use) })
   }
   /** Fresh allowance for model admission, under the same owner custody as Usage.
    * Settings-only account/profile reads and account writes stay in usage(). */
