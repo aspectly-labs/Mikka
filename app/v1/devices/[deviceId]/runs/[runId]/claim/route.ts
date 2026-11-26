@@ -274,7 +274,8 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   let factoryClaim: Record<string, unknown> = {}
   let factoryToken: Awaited<ReturnType<typeof issueRunToken>> | undefined
   let portableTaskWorkspace: ReturnType<typeof portableTaskWorkspaceReceiptSchema.parse> | undefined
-  const portableTask = device.kind === 'cloud' && Boolean(repo.remoteUrl) && !run.agentDefinition?.readOnly &&
+  const portableTask = device.kind === 'cloud' && Boolean(repo.remoteUrl) && !run.agentDefinition?.readOnly
+  const canCapturePortableTask = portableTask &&
     (await import('@/lib/cloud-computer/e2b-task-workspace-archive')).portableTaskArchiveEnabled()
   const beforeClaim = async (tx: import('pg').PoolClient) => {
     // Same lock order as a `disconnected` report (device, then run): either it
@@ -297,7 +298,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
            lifecycle->>'portableWorkspaceCapture' AS capture,
            lifecycle->>'portableWorkspaceCaptureUntil' AS "captureUntil" FROM thread_machines
          WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
-           AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended' FOR UPDATE`, [runId, deviceId, caller.userId, run.workspaceId])
+           AND state<>'ended' FOR UPDATE`, [runId, deviceId, caller.userId, run.workspaceId])
       if (machine?.restorePending || (machine?.capture === 'pending' && Number(machine.captureUntil) > Date.now())) return false
       if (machine?.receipt != null) {
         if (request.headers.get(PORTABLE_TASK_WORKSPACE_HEADER) !== '1') return false
@@ -309,7 +310,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   let fromEnvironmentSnapshot = false
   const afterClaim = async (tx: import('pg').PoolClient) => {
     await tx.query('UPDATE agent_runs SET "deviceTokenId"=$2,"machineAuthority"=$4 WHERE id=$1 AND "userId"=$3', [runId, caller.tokenId, caller.userId, receivesRunCredentials])
-    if (portableTask) {
+    if (canCapturePortableTask) {
       await tx.query(`UPDATE thread_machines SET lifecycle=(lifecycle-'portableWorkspaceCaptureId'-'portableWorkspaceCaptureUntil')
           ||'{"portableWorkspaceCapture":"writing"}'::jsonb
         WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4

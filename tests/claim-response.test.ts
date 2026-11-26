@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib'
 import { defaultRunPolicy } from '@mikka/protocol/agent-policy'
 import { CodedError } from '@mikka/protocol/coded-error'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
-import { REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, RUN_CREDENTIALS_HEADER, MODEL_CREDENTIAL_HEADER, CUSTOM_TASK_BRANCH_HEADER, type RunCheckpoint } from '@mikka/protocol/device'
+import { REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, RUN_CREDENTIALS_HEADER, MODEL_CREDENTIAL_HEADER, CUSTOM_TASK_BRANCH_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, type RunCheckpoint } from '@mikka/protocol/device'
 import { SUBSCRIPTION_MODEL_CATALOGUE_HEADER } from '@mikka/protocol/subscription'
 import { normalizeRepository } from '@mikka/protocol/repository'
 import { SKILL_ARTIFACT_HEADER } from '@mikka/protocol/skill'
@@ -81,6 +81,8 @@ function fixture() {
     credentialOwners: [] as string[],
     credentialFailure: undefined as Error | undefined,
     beforeCredential: undefined as (() => Promise<void>) | undefined,
+    portableWorkspaceCapability: false,
+    portableMachine: undefined as { snapshotId: string; receipt: { sha256: string; headSha: string; size: number } } | undefined,
     environmentCapability: undefined as string | undefined,
     environmentInjection: undefined as TaskSecretInjection | undefined,
     environmentSnapshot: undefined as string | undefined,
@@ -96,7 +98,7 @@ function fixture() {
 async function claim(probe: ReturnType<typeof fixture>, preparation = ['skill-preflight','policy','secrets','publication','claim','skill-claim','benchmark-claim','token','settings'], expectsProjectAdmission = true) {
   const diagnostics: unknown[][] = []
   const errors = mock.method(console, 'error', (...args: unknown[]) => { diagnostics.push(args) })
-  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',[ENVIRONMENT_REPOSITORIES_HEADER]:'1',...(probe.customBranchCapability ? {[CUSTOM_TASK_BRANCH_HEADER]:'1'} : {}),...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {}),...(probe.nativeMcpServers ? { [TASK_MCP_HEADER]: probe.taskMcpVersion } : {}),...(probe.taskMcpToolFilter ? {[TASK_MCP_TOOL_FILTER_HEADER]:'1'} : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
+  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',[ENVIRONMENT_REPOSITORIES_HEADER]:'1',...(probe.portableWorkspaceCapability ? {[PORTABLE_TASK_WORKSPACE_HEADER]:'1'} : {}),...(probe.customBranchCapability ? {[CUSTOM_TASK_BRANCH_HEADER]:'1'} : {}),...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {}),...(probe.nativeMcpServers ? { [TASK_MCP_HEADER]: probe.taskMcpVersion } : {}),...(probe.taskMcpToolFilter ? {[TASK_MCP_TOOL_FILTER_HEADER]:'1'} : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
   finally {
     errors.mock.restore()
     // The route logs only error names. Keep the intentional refusal distinct
@@ -211,6 +213,8 @@ test('allowed local and cloud claims send the frozen Environment recipe and sele
         Object.assign(probe, { caller: { userId: 'member', scopeDeviceId: 'device', scopeWorkspaceId: workspaceId },
           cloud: { subscription: { id: definition.subscription.bindingId, workspaceId, modelId: definition.subscription.modelId, route: definition.subscription.route, consumerId: 'agent' } } })
         Object.assign(probe.device, { kind: 'cloud', harnesses: [{ harness: 'claude_code', installed: true, toolApproval: true, subscriptionBroker: true }] })
+        probe.portableMachine = { snapshotId: 'cloudflare-task-v1', receipt: { sha256: 'a'.repeat(64), headSha: 'b'.repeat(40), size: 180 } }
+        probe.portableWorkspaceCapability = true
       }
       const response = await claim(probe, runtime === 'cloud'
         ? ['skill-preflight', 'policy', 'model-admission', 'environment-secrets', 'claim', 'skill-claim', 'benchmark-claim', 'token', 'settings', 'environment-snapshot']
@@ -218,6 +222,7 @@ test('allowed local and cloud claims send the frozen Environment recipe and sele
       assert.equal(response.status, 200, runtime)
       const body = await response.json()
       assert.equal(body.baseBranch, 'release/frozen-environment')
+      assert.deepEqual(body.portableTaskWorkspace, probe.portableMachine?.receipt)
       assert.equal(body.harness, 'claude_code', 'the frozen harness takes precedence over the current Agent')
       assert.deepEqual(body.projectEnvironment, { id: snapshot.environment!.id, revision: 7, setup: snapshot.environment!.setup })
       assert.deepEqual(body.taskEnv, probe.environmentInjection!.env)

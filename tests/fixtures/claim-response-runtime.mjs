@@ -291,6 +291,18 @@ const sources = new Map([
     function claimTransaction(){
       const p=globalThis.claimResponseProbe
       return {query(sql,args){
+        if (sql.startsWith('SELECT id FROM agent_runs WHERE')) {
+          if (args[0]!==p.run.id||args[1]!==p.run.userId) throw new Error('unexpected portable run scope')
+          return Promise.resolve({rows:[{id:p.run.id}],rowCount:1})
+        }
+        if (sql.includes("lifecycle->'portableWorkspaceRestore' AS receipt")) {
+          if (args[0]!==p.run.id||args[1]!==p.device.id||args[2]!==p.run.userId||args[3]!==p.run.workspaceId)
+            throw new Error('unexpected portable machine scope')
+          const machine=p.portableMachine
+          const rows=machine && !(sql.includes("<>'cloudflare-task-v1'") && machine.snapshotId==='cloudflare-task-v1')
+            ? [{receipt:machine.receipt,restorePending:false,capture:null,captureUntil:null}] : []
+          return Promise.resolve({rows,rowCount:rows.length})
+        }
         if(!sql.startsWith('UPDATE agent_runs SET "deviceTokenId"=$2')||args[0]!==p.run.id||args[1]!=="synthetic-device-token"||args[2]!=="member")throw new Error("unexpected SQL in claim fixture")
         p.run.deviceTokenId=args[1]
         p.run.machineAuthority=args[3]
