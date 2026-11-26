@@ -9,6 +9,7 @@ import { cloudStartupSpan, cloudStartupPhases, cloudStartupRunAttributes } from 
 import { captureTraceContext, withRunSpan } from '@/lib/tracing/context'
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
+import { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, verifyE2BAllocation, e2bSnapshotFallbackSafe } from './e2b-compute-billing'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
 import { rebindExecutionDevice, revalidateExecutionIdentity } from '../execution-identity'
@@ -22,7 +23,7 @@ import { repositoryBindingMatches } from '@mikka/protocol/repository'
 import { matchesRepositoryAdmission } from '@/lib/repository-admission'
 import { ComputerError } from '@/lib/computer/store'
 import { computerPermission } from '@/lib/computer/permission'
-import { connectComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
+import { connectComputer, connectRunningComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
 import { CLOUD_WORKER_COMMAND, CLOUD_PRELOADER_WAKE_COMMAND, CLOUD_PRELOADER_WAKE_RECEIPT } from '@/lib/computer/worker-command'
 import { cloudTemplateOrigin, threadMachineTemplateKind, type CloudTemplateKind } from '@/lib/cloud-template-models'
 import { computerTemplate, sizedTaskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -126,7 +127,7 @@ type ThreadSnapshotRow = {
 function snapshotUnusable(error: unknown) {
   if (sandboxGone(error)) return true
   const status = error && typeof error === 'object' ? (error as { status?: unknown; statusCode?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode : undefined
-  return status === 400 || status === 422
+  return status === 400
 }
 
 /** Delete snapshots this run superseded. A failure keeps the old reference so
@@ -214,7 +215,7 @@ async function takeThreadSnapshot(client: PoolClient, actor: Actor, runId: strin
   const observed = await threadLifecycleProvider.info(machine.sandboxId, actor.userId).catch(() => null)
   if (!observed || observed.state !== 'running') return
   try {
-    const sandbox = await threadMachineProvider.connect(machine.sandboxId, actor.workspaceId)
+    const sandbox = await threadMachineArchiveProvider.connectRunning(actor.userId, machine.sandboxId, client)
     const scrubbed = await sandbox.commands.run(credentialScrubCommand(), { user: 'root', timeoutMs: 20_000 })
     if (scrubbed.exitCode !== 0) throw new Error('Thread credential scrub failed')
   } catch {
@@ -302,7 +303,10 @@ export async function restoreThreadMachineFromSnapshot(pool: Pool, actor: Actor,
     const sandbox = await threadLifecycleProvider.createFromSnapshot(transition.filesystemSnapshotId, transition.operationId, metadata, actor.userId)
     return { sandbox, machine: transition }
   } catch (error) {
+    // Missing geometry is an unresolved historical snapshot, not a provider
+    // refusal. Preserve its filesystem and stop before replacing its checkout.
     if (!snapshotUnusable(error)) throw error
+    if (!await e2bSnapshotFallbackSafe(pool, actor.userId, transition.operationId)) throw error
     await releaseUnusableSnapshot(pool, actor, runId, transition.epoch, transition.operationId)
     const replaced = await replaceGoneSandbox(pool, runId, template, leaseId)
     // error-cause: the unusable snapshot is already recorded; this new error reports that the lease moved away
@@ -324,6 +328,8 @@ const threadMachineStopPreparation: { prepareKill?: (ownerId: string, id: string
     }
   },
 }
+export const threadMachineArchiveProvider = { connectRunning: connectRunningComputer }
+
 /** Provider calls of scoped thread operations; tests replace them, production uses E2B. */
 export const threadMachineProvider = {
   ...threadMachineStopPreparation,
@@ -332,8 +338,12 @@ export const threadMachineProvider = {
     if (!cloudTemplateOrigin(snapshotId)) throw new ComputerError(409, 'Verified cloud template required')
     const attributes = metadata.runId ? cloudStartupRunAttributes(metadata.runId) : {}
     const account = await cloudStartupSpan('cloud.sandbox.credentials', attributes, () => e2bCreateAccount(ownerId, operationId))
+    const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, snapshotId, { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000)
     const base = { apiKey: account.apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
-    const sandbox = await cloudStartupSpan('cloud.sandbox.create', attributes, () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, idempotencyKey: operationId, timeoutMs: 15 * 60_000, metadata, lifecycle: { onTimeout: 'pause', autoResume: false } })))
+    const sandbox = await createPrepaidE2B(ownerId, operationId, () => cloudStartupSpan('cloud.sandbox.create', attributes,
+      () => withE2BErrors(ownerId, true, () => Sandbox.create(snapshotId, { ...base, retries: 0, idempotencyKey: operationId, timeoutMs,
+        metadata, lifecycle: { onTimeout: 'pause', autoResume: false } }))))
+    await verifyE2BAllocation(ownerId, operationId, sandbox.sandboxId, base)
     await bindE2BResource(ownerId, 'sandbox', sandbox.sandboxId, account.scope)
     if (isOfficialE2BTemplate(snapshotId)) await cloudStartupSpan('cloud.sandbox.bootstrap', attributes, () => bootstrapOfficialInstance(sandbox, snapshotId))
     return sandbox
@@ -697,9 +707,7 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
           released = true
           try {
             const signal = AbortSignal.timeout(120_000)
-            const observed = await threadLifecycleProvider.info(fence.sandboxId, actor.userId)
-            if (observed.state !== 'running') throw new ComputerError(409, 'Task machine must be running to preserve its workspace')
-            const sandbox = await threadMachineProvider.connect(fence.sandboxId, actor.workspaceId)
+            const sandbox = await threadMachineArchiveProvider.connectRunning(actor.userId, fence.sandboxId)
             const { manifest, stream, dispose } = await captureE2BTaskWorkspace(sandbox, runId, mask, signal)
             try { archive = await prepareTaskWorkspaceArchive(pool, archiveScope, manifest, stream, signal) }
             finally {
@@ -1135,8 +1143,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       machine.state = 'paused'
     }
     if (machine?.workerLeaseUntil && new Date(machine.workerLeaseUntil).getTime() > Date.now() && machine.state !== 'paused') throw new ComputerError(409, 'Thread provisioning in progress')
-    // No Mikka caps: the person's own E2B account sets the limit (orchestration.md § 5).
-    if (!machine || machine.snapshotId === 'pending' || (!machine.sandboxId && !cloudTemplateOrigin(machine.snapshotId))) {
+    if (!machine || machine.snapshotId === 'pending' || (!machine.sandboxId && (!cloudTemplateOrigin(machine.snapshotId)
+      || await e2bCanReplaceOperation(client, actor.userId, machine.operationId)))) {
       // A follow-up keeps this task's own machine. A new repository task starts
       // from the anonymous ready template of its harness (E2B's claude or codex
       // with Mikka's worker, decision 2026-11-01-2335): the daemon clones its admitted
@@ -1284,9 +1292,10 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
         if (!reserved.rowCount) throw new ComputerError(409, 'Thread provisioning cancelled')
         machine.environmentSnapshotId = candidate.id
         try {
-          started = await threadLifecycleProvider.createFromSnapshot(candidate.providerId, machine.operationId, metadata(), actor.userId, true)
+          started = await threadLifecycleProvider.createFromSnapshot(candidate.providerId, machine.operationId, metadata(), actor.userId, machine.snapshotId)
         } catch (error) {
           if (!snapshotUnusable(error)) throw error
+          if (!await e2bSnapshotFallbackSafe(pool, actor.userId, machine.operationId)) throw error
           const cacheKind = cloudTemplateOrigin(machine.snapshotId)?.kind
           if (execution?.environment && (cacheKind === 'claude' || cacheKind === 'codex')) {
             const { rebuildMissingEnvironmentSnapshot } = await import('../project-resources/environment-snapshots')

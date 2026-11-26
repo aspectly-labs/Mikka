@@ -603,6 +603,8 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
 
   // ---- #436 QA round (cases from qa-pr436.db.test.ts) ----
   const crypto = await import('../lib/secrets/crypto')
+  const withoutDbSamples = (lines: string[]) => lines.filter(line =>
+    !line.includes('"msg":"db_sample"') && !line.includes('"msg":"db_transport_sample"'))
   const captureLogs = async <T>(work: () => Promise<T>) => {
     const lines: string[] = [], original = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug }
     for (const k of Object.keys(original) as (keyof typeof original)[]) console[k] = (...args: unknown[]) => { lines.push(args.map(a => a instanceof Error ? `${a.stack} ${JSON.stringify(a)} ${String((a as { cause?: unknown }).cause)}` : typeof a === 'string' ? a : JSON.stringify(a)).join(' ')) }
@@ -628,7 +630,7 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
     const { result, lines } = await captureLogs(() => store.listWorkspaceSecrets(admin, b.id))
     assert.ok('ok' in result && !JSON.stringify(result).includes(V))
     assert.ok(lines.every(line => !line.includes(V)))
-    assert.deepEqual(lines.filter(line => !line.includes('"msg":"db_sample"') && !line.includes('"msg":"db_transport_sample"')), [])
+    assert.deepEqual(withoutDbSamples(lines), [])
     await assert.rejects(stored(crossWs.id), 'AAD binds the row: moved ciphertext does not open')
     assert.equal(await stored(source.id), V)
   })
@@ -642,7 +644,7 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
     const { result, lines } = await captureLogs(() => e2b.getUserE2BApiKey(thief, on))
     const error = (result as { error?: unknown }).error
     assert.ok(error instanceof e2b.E2BKeyError && error.code === 'e2b_unavailable', 'mapped, not the raw crypto Error')
-    assert.deepEqual(lines, [`[secrets] e2b_unavailable id=${thief}`])
+    assert.deepEqual(withoutDbSamples(lines), [`[secrets] e2b_unavailable id=${thief}`])
     assert.ok(!JSON.stringify([error, String((error as Error).stack), lines]).includes(K))
     await e2b.removeE2BKey(admin, a.id)
   })

@@ -37,11 +37,7 @@ export function cloudTemplateModels(env: Record<string, string | undefined> = pr
   } catch { return null }
 }
 
-/** Only release-gated catalogue IDs identify additive images. Bare official
- * names remain usable for rollback; arbitrary replacement IDs are refused. */
-export function cloudTemplateOrigin(templateId: string, env: Record<string, string | undefined> = process.env): { kind: CloudTemplateKind; preinstalled: boolean } | null {
-  const official = cloudTemplateKindSchema.safeParse(templateId)
-  if (official.success) return { kind: official.data, preinstalled: false }
+function releasedCloudTemplates(env: Record<string, string | undefined>) {
   const catalogues = [cloudTemplateModels(env)]
   try {
     const previous = JSON.parse(env.MIKKA_CLOUD_RUNTIME_PREVIOUS ?? '')
@@ -49,7 +45,25 @@ export function cloudTemplateOrigin(templateId: string, env: Record<string, stri
       catalogues.push(cloudTemplateModels(previous.configuration))
     }
   } catch { /* No previous release is configured. */ }
-  for (const catalogue of catalogues) {
+  return catalogues
+}
+
+/** A paused desktop's exact release image identifies the worker installed by
+ * the release, independent of the currently selected template ID. */
+export function releasedDesktopWorker(templateId: string, env: Record<string, string | undefined> = process.env) {
+  for (const catalogue of releasedCloudTemplates(env)) {
+    const desktop = catalogue?.templates.desktop
+    if (desktop?.templateId === templateId && desktop.preinstalled === true) return catalogue?.workerSha
+  }
+  return undefined
+}
+
+/** Only release-gated catalogue IDs identify additive images. Bare official
+ * names remain usable for rollback; arbitrary replacement IDs are refused. */
+export function cloudTemplateOrigin(templateId: string, env: Record<string, string | undefined> = process.env): { kind: CloudTemplateKind; preinstalled: boolean } | null {
+  const official = cloudTemplateKindSchema.safeParse(templateId)
+  if (official.success) return { kind: official.data, preinstalled: false }
+  for (const catalogue of releasedCloudTemplates(env)) {
     if (!catalogue) continue
     const variant = catalogue.machineVariants?.find(row => row.templateId === templateId)
     if (variant) return { kind:variant.kind, preinstalled:true }

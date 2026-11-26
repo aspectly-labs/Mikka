@@ -224,7 +224,7 @@ export async function ensureSponsoredTaskMachine(pool: Pool, actor: TaskMachineA
   try {
     // Machine time is paid from Mikka 额度 before the machine opens (decision 2026-11-15-1900).
     const { fundMachineChunk } = await import('./machine-billing')
-    if (!await fundMachineChunk({ ownerId: actor.userId, workspaceId: actor.workspaceId, runId, operationId: handoff.operationId, index: 0, size: handoff.size }))
+    if (!await fundMachineChunk({ provider: 'cloudflare', ownerId: actor.userId, workspaceId: actor.workspaceId, runId, operationId: handoff.operationId, index: 0, size: handoff.size }))
       throw new PaidResourceError('points_exhausted')
     const { connection, instanceId } = await openOwnedCloudflareTaskMachine(pool, actor, runId)
     const changed = await pool.query(
@@ -396,7 +396,7 @@ async function renewSponsoredMachine(pool: Pool, actor: TaskMachineActor, runId:
   const size = provisionableMachineSize(stored, verifiedMachineQuota()).size
   const index = typeof row.lifecycle.sponsoredChunks === 'number' ? row.lifecycle.sponsoredChunks : 1
   const { fundMachineChunk } = await import('./machine-billing')
-  const funded = await fundMachineChunk({ ownerId: actor.userId, workspaceId: actor.workspaceId, runId, operationId: row.operationId!, index, size })
+  const funded = await fundMachineChunk({ provider: 'cloudflare', ownerId: actor.userId, workspaceId: actor.workspaceId, runId, operationId: row.operationId!, index, size })
   if (!funded) {
     // Out of Mikka 额度: the run stops at the end of what is paid, with its reason in the thread.
     await pool.query(
