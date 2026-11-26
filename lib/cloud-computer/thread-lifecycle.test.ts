@@ -19,6 +19,9 @@ after(() => {
 const lifecycleLog = mock.method(console, 'info', () => {})
 beforeEach(() => lifecycleLog.mock.resetCalls())
 
+// This fixture models self-hosted E2B with an owner-provided key.
+process.env.MIKKA_EDITION = 'community'
+
 const now = Date.UTC(2026, 10, 7)
 const running = { state: 'running' as const, endAt: now + 15 * 60_000 }
 const paused = { state: 'paused' as const, endAt: null }

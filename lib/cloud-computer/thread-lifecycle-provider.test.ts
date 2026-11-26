@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test, { mock } from 'node:test'
 
+// This fixture models self-hosted E2B with an owner-provided key.
+process.env.MIKKA_EDITION = 'community'
+
 mock.module('../secrets/e2b-resource', { namedExports: {
   e2bResourceAccount: async () => ({ apiKey: 'synthetic-provider-key', scope: 'personal' }),
   e2bCreateAccount: async () => ({ apiKey: 'synthetic-provider-key', scope: 'personal' }),
