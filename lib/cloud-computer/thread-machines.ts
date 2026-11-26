@@ -23,7 +23,7 @@ import { repositoryBindingMatches } from '@mikka/protocol/repository'
 import { matchesRepositoryAdmission } from '@/lib/repository-admission'
 import { ComputerError } from '@/lib/computer/store'
 import { computerPermission } from '@/lib/computer/permission'
-import { connectComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
+import { connectComputer, connectRunningComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
 import { CLOUD_WORKER_COMMAND, CLOUD_PRELOADER_WAKE_COMMAND, CLOUD_PRELOADER_WAKE_RECEIPT } from '@/lib/computer/worker-command'
 import { cloudTemplateOrigin, threadMachineTemplateKind, type CloudTemplateKind } from '@/lib/cloud-template-models'
 import { computerTemplate, sizedTaskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
@@ -212,7 +212,7 @@ async function takeThreadSnapshot(client: PoolClient, actor: Actor, runId: strin
   const observed = await threadLifecycleProvider.info(machine.sandboxId, actor.userId).catch(() => null)
   if (!observed || observed.state !== 'running') return
   try {
-    const sandbox = await threadMachineProvider.connect(machine.sandboxId, actor.workspaceId)
+    const sandbox = await threadMachineProvider.connectRunning(actor.userId, machine.sandboxId, client)
     const scrubbed = await sandbox.commands.run(credentialScrubCommand(), { user: 'root', timeoutMs: 20_000 })
     if (scrubbed.exitCode !== 0) throw new Error('Thread credential scrub failed')
   } catch {
@@ -328,6 +328,7 @@ const threadMachineStopPreparation: { prepareKill?: (ownerId: string, id: string
 /** Provider calls of scoped thread operations; tests replace them, production uses E2B. */
 export const threadMachineProvider = {
   ...threadMachineStopPreparation,
+  connectRunning: connectRunningComputer,
   connect: (sandboxId: string, workspaceId: string, budget?: RuntimeBudget) => connectComputer(workspaceId, sandboxId, undefined, budget),
   create: async (snapshotId: string, operationId: string, metadata: Record<string, string>, ownerId: string) => {
     if (!cloudTemplateOrigin(snapshotId)) throw new ComputerError(409, 'Verified cloud template required')
@@ -701,9 +702,7 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
           released = true
           try {
             const signal = AbortSignal.timeout(120_000)
-            const observed = await threadLifecycleProvider.info(fence.sandboxId, actor.userId)
-            if (observed.state !== 'running') throw new ComputerError(409, 'Task machine must be running to preserve its workspace')
-            const sandbox = await threadMachineProvider.connect(fence.sandboxId, actor.workspaceId)
+            const sandbox = await threadMachineProvider.connectRunning(actor.userId, fence.sandboxId)
             const { manifest, stream, dispose } = await captureE2BTaskWorkspace(sandbox, runId, mask, signal)
             try { archive = await prepareTaskWorkspaceArchive(pool, archiveScope, manifest, stream, signal) }
             finally {

@@ -235,6 +235,6 @@ test('production park preserves the prior portable archive on failed upload with
   assert.equal(freeSlotReads, 3, 'the rejected staged archive never reached storage')
   assert.equal(objects.size, 2)
   assert.deepEqual(await archive(), current)
-
-
+  assert.equal((await app.query('SELECT 1 FROM e2b_compute_leases')).rowCount, 0,
+    'capturing a running workspace never purchases or extends compute')
 })

@@ -45,7 +45,9 @@ export async function connectComputer(workspaceId: string, id: string, signal?: 
 /** Open only the existing envd data plane. The authenticated GET exposes the
  * envd token that Sandbox.getInfo projects away. The Sandbox constructor does
  * no provider I/O, so a concurrent pause cannot be undone by this path. */
-export async function connectComputerForPolicy(owner: string, id: string, client?: PoolClient): Promise<Sandbox> {
+export const connectComputerForPolicy = connectRunningComputer
+
+export async function connectRunningComputer(owner: string, id: string, client?: PoolClient): Promise<Sandbox> {
   const read = () => e2bResourceAccount(owner, 'sandbox', id)
   const account = client ? await (await import('@/lib/db')).withDatabaseClient(client, read) : await read()
   const prepared = { ...options(account.apiKey), requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0 }
@@ -56,7 +58,7 @@ export async function connectComputerForPolicy(owner: string, id: string, client
   if (response.status === 404 || data?.state === 'paused' || data?.lifecycle?.autoResume === true)
     throw new PolicySandboxUnavailable()
   if (!data || data.sandboxID !== id || data.state !== 'running' || !data.envdVersion || !data.envdAccessToken)
-    throw new E2BKeyError('e2b_unavailable', 'Running E2B policy data plane unavailable')
+    throw new E2BKeyError('e2b_unavailable', 'Running E2B data plane unavailable')
   const end = Date.parse(data.endAt)
   if (!Number.isFinite(end) || end <= Date.now()) throw new PolicySandboxUnavailable()
   return new Sandbox({ ...prepared, sandboxId: id, sandboxDomain: data.domain ?? undefined,
