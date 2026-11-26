@@ -477,7 +477,7 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
     delete process.env.MIKKA_FLAG_OVERRIDES
     process.env.MIKKA_TASK_MACHINE_BRIDGE_TOKEN = 'synthetic-legacy-coordinator-fixture'
     for (const withServer of [false, true]) {
-      const fixture = await person('legacy-cloudflare-billing', false)
+      const fixture = await person('legacy-cloudflare-billing', false, withServer ? 33295 : 33294)
       process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES = fixture.workspaceId
       const event = randomUUID()
       await pool.query(`INSERT INTO coordinator_events (id,"userId","botId","issueId",kind,"dedupeKey",payload,"deliveredAt")
