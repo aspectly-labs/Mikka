@@ -32,11 +32,11 @@ export async function holdCloudflareCompute(pool: Pick<Pool, 'query'>, chunk: Cl
   const hold = machineListUsageMicroUsd(price, MACHINE_CHUNK_MS, machineSkuGeometry(chunk).vcpu * MACHINE_CHUNK_MS)
   if (!hold) return false
   const id = machineChunkId(chunk), label = machineLedgerLabel(chunk)
-  const read = async () => (await pool.query<{ state: string; model: string }>(`
-    SELECT state,model FROM hosted_usage WHERE id=$1 AND "usageWorkspaceId"=$2 AND "executionOwnerId"=$3
+  const read = async () => (await pool.query<{ state: string; model: string; outcome: string | null }>(`
+    SELECT state,model,"machineCompute"->>'outcome' AS outcome FROM hosted_usage WHERE id=$1 AND "usageWorkspaceId"=$2 AND "executionOwnerId"=$3
       AND "machineCompute"->>'source'='cloudflare_cgroup_list'`, [id, chunk.workspaceId, chunk.ownerId])).rows[0]
   const prior = await read()
-  if (prior) return prior.model === label && ['unknown', 'settled'].includes(prior.state)
+  if (prior) return prior.model === label && prior.outcome === null && ['unknown', 'settled'].includes(prior.state)
   const [{ hostedUsage }, { hostedBillingScope }, { withSharedCredits }] = await Promise.all([
     import('../abuse/runtime'), import('../abuse/context'), import('../credit-shares'),
   ])
@@ -53,16 +53,27 @@ export async function holdCloudflareCompute(pool: Pick<Pool, 'query'>, chunk: Cl
     if (error.code !== 'usage_in_progress') return false
   }
   const held = await read()
-  return held?.model === label && ['unknown', 'settled'].includes(held.state)
+  return held?.model === label && held.outcome === null && ['unknown', 'settled'].includes(held.state)
 }
 
-type MeterReceipt = { id: string; machineCompute: { price: unknown; grant: TaskMachineGrant; index: number }; hold: number }
+type MeterReceipt = {
+  id: string
+  state: string
+  machineCompute: { price: unknown; grant: TaskMachineGrant; index: number }
+  hold: number
+}
 
 async function settleCloudflareReceipt(receipt: MeterReceipt, rollover: boolean) {
   const { machineCompute: { grant, index } } = receipt
+  if (receipt.state === 'settled') {
+    const recorded = measurement.safeParse(receipt.machineCompute)
+    return recorded.success ? recorded.data : null
+  }
+  if (receipt.state !== 'unknown') return null
+  const { hostedUsage } = await import('../abuse/runtime')
+  if (await hostedUsage.expireMeasuredMachine(receipt.id)) return null
   const price = rate.parse(receipt.machineCompute.price)
   const raw = await readCloudflareComputeMeter(grant, index, rollover)
-  const { hostedUsage } = await import('../abuse/runtime')
   if (raw && typeof raw === 'object' && 'notStarted' in raw && raw.notStarted === true) {
     await hostedUsage.settleMeasuredMachine(receipt.id, 0, { outcome: 'not_started' })
     return null
@@ -82,20 +93,20 @@ async function settleCloudflareReceipt(receipt: MeterReceipt, rollover: boolean)
 
 export async function settleCloudflareCompute(pool: Pick<Pool, 'query'>, chunk: CloudflareMachineChunk, rollover: boolean) {
   const { rows: [receipt] } = await pool.query<MeterReceipt>(`
-    SELECT id,"machineCompute","holdMicroUsd"::int AS hold FROM hosted_usage
+    SELECT id,state,"machineCompute","holdMicroUsd"::int AS hold FROM hosted_usage
     WHERE id=$1 AND model=$2 AND "usageWorkspaceId"=$3 AND "executionOwnerId"=$4
       AND "machineCompute"->>'source'='cloudflare_cgroup_list'`,
   [machineChunkId(chunk), machineLedgerLabel(chunk), chunk.workspaceId, chunk.ownerId])
   return receipt ? settleCloudflareReceipt(receipt, rollover) : null
 }
 
-/** Keep the original grant and index after the run moves to another operation.
- * Temporary provider outages must not recreate a charge or close its hold. */
+/** Retry using the original grant after a run moves operations. Expired holds
+ * close without a charge if no provider receipt arrived within the review window. */
 export async function reconcileCloudflareCompute(pool: Pick<Pool, 'query'>) {
   const { rows } = await pool.query<MeterReceipt>(`WITH due AS (
     SELECT id FROM hosted_usage WHERE "machineComputeReviewAt"<=clock_timestamp()
       ORDER BY "machineComputeReviewAt" LIMIT 20 FOR UPDATE SKIP LOCKED
   ) UPDATE hosted_usage u SET "machineComputeReviewAt"=clock_timestamp()+interval '30 seconds'
-    FROM due WHERE u.id=due.id RETURNING u.id,u."machineCompute",u."holdMicroUsd"::int AS hold`)
+    FROM due WHERE u.id=due.id RETURNING u.id,u.state,u."machineCompute",u."holdMicroUsd"::int AS hold`)
   for (const receipt of rows) await settleCloudflareReceipt(receipt, false).catch(() => undefined)
 }

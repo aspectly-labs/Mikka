@@ -87,6 +87,7 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
   const platformFunded = readFileSync('drizzle/20261123210000_hosted_usage_platform_funded.sql', 'utf8')
   await pool.query(platformFunded)
   await pool.query(platformFunded)
+  await pool.query(readFileSync('drizzle/20261126035203_cloudflare_compute_measurements.sql', 'utf8'))
   await t.test('prepaid machine reservations settle exactly once and require the full paid balance', async () => {
     const workspaceId = randomUUID()
     const usageId = `machine:e2b:${randomUUID()}:0`
@@ -102,6 +103,33 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     const result = await pool.query(`SELECT state,"costMicroUsd"::int AS cost,"purchasedMicroUsd"::int AS purchased,
       "unpaidMicroUsd"::int AS unpaid FROM hosted_usage WHERE id=$1`, [usageId])
     assert.deepEqual(result.rows, [{ state: 'settled', cost: 20_000, purchased: 20_000, unpaid: 0 }])
+  })
+  await t.test('Cloudflare metering holds expire without an estimated charge and reject late or duplicate settlement', async () => {
+    const workspaceId = randomUUID()
+    const usageId = `machine:${randomUUID()}:${randomUUID()}:0`
+    const nextId = `machine:${randomUUID()}:${randomUUID()}:0`
+    const meter = { machineMeter: { source: 'cloudflare_cgroup_list' } }
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,4,'purchased')", [randomUUID(), workspaceId])
+    await store.reserve(workspaceId, 'machine/cloudflare-standard-3', usageId, {}, 30_000, meter)
+    assert.equal(await store.expireMeasuredMachine(usageId), false)
+    await assert.rejects(store.reserve(workspaceId, 'machine/cloudflare-standard-3', nextId, {}, 30_000, meter), { code: 'points_exhausted' })
+
+    await pool.query(`UPDATE hosted_usage SET "createdAt"=now()-interval '25 hours' WHERE id=$1`, [usageId])
+    await store.reserve(workspaceId, 'machine/cloudflare-standard-3', nextId, {}, 30_000, meter)
+    await store.settleMeasuredMachine(usageId, 20_000, { activeVcpuMs: 30 })
+    await Promise.all([store.settleMeasuredMachine(nextId, 10_000, { activeVcpuMs: 10 }), store.settleMeasuredMachine(nextId, 10_000, { activeVcpuMs: 10 })])
+    const receipts = await pool.query(`SELECT id,state,"costMicroUsd"::int AS cost,"purchasedMicroUsd"::int AS purchased,
+      "machineCompute"->>'outcome' AS outcome,"machineComputeReviewAt" AS review FROM hosted_usage WHERE id=ANY($1::text[])`, [[usageId, nextId]])
+    const byId = Object.fromEntries(receipts.rows.map(row => [row.id, row]))
+    assert.deepEqual(byId[usageId], { id: usageId, state: 'failed', cost: null, purchased: 0, outcome: 'measurement_expired', review: null })
+    assert.deepEqual(byId[nextId], { id: nextId, state: 'settled', cost: 10_000, purchased: 10_000, outcome: null, review: null })
+
+    const stalledId = `machine:${randomUUID()}:${randomUUID()}:0`
+    await store.reserve(workspaceId, 'machine/cloudflare-standard-3', stalledId, {}, 30_000, meter)
+    await pool.query(`UPDATE hosted_usage SET "createdAt"=now()-interval '25 hours' WHERE id=$1`, [stalledId])
+    assert.equal(await store.expireMeasuredMachine(stalledId), true)
+    assert.equal(await store.expireMeasuredMachine(stalledId), false)
   })
   await t.test('a scripted LiteLLM BYOK receipt keeps its usage and does not consume the workspace budget', async t => {
     const { createServer } = await import('node:http')

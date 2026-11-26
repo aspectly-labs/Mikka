@@ -13,8 +13,12 @@ import {
   PaidResourceError,
 } from './policy'
 
-const abandonedHold = `"settledAt" IS NULL AND "createdAt" < now() - interval '10 minutes'
-  AND (state='pending' OR (state='unknown' AND "generationId" IS NULL))`
+const expiredMachineHold = `state='unknown' AND COALESCE("machineCompute"->>'source'='cloudflare_cgroup_list',false)
+  AND "createdAt" < now() - interval '24 hours'`
+const abandonedHold = `"settledAt" IS NULL AND (("createdAt" < now() - interval '10 minutes'
+  AND (state='pending' OR (state='unknown' AND "generationId" IS NULL))) OR (${expiredMachineHold}))`
+const releaseMachineHold = `"machineCompute"="machineCompute"||'{"outcome":"measurement_expired"}'::jsonb,
+  "machineComputeReviewAt"=NULL`
 type Query = Pick<PoolClient, 'query'>
 export type HostedQuotaLease = { limit: number; close(): Promise<void>;
   billingAccount?: { workspaceId: string; organizationId: string | null } }
@@ -62,7 +66,9 @@ export class HostedUsageStore {
    */
   private async releaseAbandoned(tx: Query, workspaceId: string) {
     const reaped = await tx.query<{ reservedFree: string }>(
-      `UPDATE hosted_usage SET state='failed',"settledAt"=now()
+      `UPDATE hosted_usage SET state='failed',"settledAt"=now(),
+        "machineCompute"=CASE WHEN ${expiredMachineHold} THEN "machineCompute"||'{"outcome":"measurement_expired"}'::jsonb ELSE "machineCompute" END,
+        "machineComputeReviewAt"=CASE WHEN ${expiredMachineHold} THEN NULL ELSE "machineComputeReviewAt" END
        WHERE "workspaceId"=$1 AND (${abandonedHold})
        RETURNING "reservedFree"`,
       [workspaceId],
@@ -303,6 +309,14 @@ export class HostedUsageStore {
       [id, JSON.stringify(usage), 'cf-cgroup:' + id, cost])
       if (held.rowCount) await this.settleLocked(tx, id, cost, 0, 0, undefined, undefined, undefined, true)
     })
+  }
+
+  /** A lost provider receipt cannot authorize an estimate or retain credits indefinitely. */
+  async expireMeasuredMachine(id: string) {
+    if (!this.metered) return false
+    const expired = await this.pool.query(`UPDATE hosted_usage SET state='failed',"settledAt"=now(),${releaseMachineHold}
+      WHERE id=$1 AND (${expiredMachineHold})`, [id])
+    return Boolean(expired.rowCount)
   }
 
   private async settleLocked(
