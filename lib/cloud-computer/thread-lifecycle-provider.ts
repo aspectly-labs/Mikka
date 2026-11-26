@@ -78,7 +78,7 @@ export const threadLifecycleProvider = {
     }, renew)
     return {
       begin: intent.begin,
-      async apply(client: PoolClient) {
+      async apply(client: Pick<PoolClient, 'query'>) {
         const applied = await intent.apply(client, duration => Sandbox.setTimeout(sandboxId, duration, {
           ...prepared, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
         }))

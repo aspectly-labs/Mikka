@@ -250,7 +250,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
         }
         return result
       }) as PoolClient['query']
-      const dispatch = stalled.apply({ query }, async () => assert.fail('An expired dispatch must not send'))
+      const dispatch = stalled.apply({ query })
       try {
         await Promise.race([entered.promise, dispatch.then(() => assert.fail('The gated checkout completed early'))])
         assert.equal((await fixture.query(`SELECT 1 FROM e2b_compute_leases WHERE "operationId"=$1 FOR UPDATE SKIP LOCKED`, [operationId])).rowCount, 0)
