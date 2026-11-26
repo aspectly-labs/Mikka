@@ -16,8 +16,11 @@ export const projectBranch = z.string().trim().min(1).max(250)
 const envName = z.string().regex(SECRET_NAME).refine(name => !isReservedEnvName(name))
 export const ENVIRONMENT_NETWORK_ACCESS = ['inherit', 'full', 'restricted', 'none'] as const
 export type EnvironmentNetworkAccess = (typeof ENVIRONMENT_NETWORK_ACCESS)[number]
+export const PORTABLE_ENVIRONMENT_BASE = 'mikka-runtime-v1'
 
 export const environmentConfiguration = z.object({
+  /** Portable base runtime. Provider image and snapshot IDs are only cache references. */
+  baseImage: z.literal(PORTABLE_ENVIRONMENT_BASE).optional(),
   runtime: z.enum(['any', 'local', 'cloud']).default('any'),
   /** An official task harness constraint; this is not an independently provisioned machine. */
   harness: z.enum(['any', 'claude_code', 'codex', 'cursor']).default('any'),
@@ -34,6 +37,15 @@ export const environmentConfiguration = z.object({
   repositoryKeys: z.array(projectRepositoryKey).max(100).default([]),
 }).strict().refine(value => Object.keys(value.variables).length <= 100)
 export type EnvironmentConfiguration = z.infer<typeof environmentConfiguration>
+
+export function portableEnvironmentDefinition(configuration: EnvironmentConfiguration) {
+  return {
+    baseImage: configuration.baseImage ?? PORTABLE_ENVIRONMENT_BASE,
+    setup: configuration.setup,
+    variables: configuration.variables,
+    secretIds: configuration.secretIds,
+  }
+}
 
 /** 'personal' (「仅我」): visible to and usable by its owner only. 'workspace': shared with every member. */
 export const ENVIRONMENT_SCOPES = ['personal', 'workspace'] as const

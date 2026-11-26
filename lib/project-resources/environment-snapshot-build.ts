@@ -9,6 +9,7 @@ import { quoteShell } from '@/lib/computer/registration-command'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import { githubRepositoryReadCredential } from '@/lib/github/user-access'
 import { gatedFeatures } from '@/lib/feature-flags'
+import { portableEnvironmentDefinition } from './contracts'
 import { environmentSnapshotTemplate, snapshotConfiguration } from './environment-snapshots'
 import { repositorySeed, type SnapshotSeed, type SnapshotState } from './environment-snapshot-contract'
 
@@ -264,7 +265,8 @@ export async function buildEnvironmentSnapshot(
           JSON.stringify(repositoryIds),
         ])
         stage('setup')
-        const setup = environment.configuration.setup
+        const definition = portableEnvironmentDefinition(environment.configuration)
+        const setup = definition.setup
         if (setup?.approved && setup.command) {
           // Run once in each repository just as a new task would; environment
           // variables are scoped to this command, never stored in E2B metadata.
@@ -291,7 +293,7 @@ export async function buildEnvironmentSnapshot(
             await machine.commands.run(setup.command, {
               ...context,
               envs: {
-                ...environment.configuration.variables,
+                ...definition.variables,
                 ...(others.length ? { ENVIRONMENT_REPOSITORIES: staging } : {}),
               },
               timeoutMs: 180_000,

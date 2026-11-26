@@ -15,7 +15,7 @@ import { readRepositorySettings } from '@/lib/device-repositories'
 import { daemonTestMode, repositoryBindingMatches } from '@mikka/protocol/repository'
 import { localExecutionHarnesses } from '@/lib/device-agents'
 import { runTestFixture } from '@/lib/run-test-fixture'
-import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_SNAPSHOT_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
+import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_SNAPSHOT_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, portableTaskWorkspaceReceiptSchema, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
 import { SUBSCRIPTION_MODEL_CATALOGUE_HEADER, type NativeLease } from '@mikka/protocol/subscription'
 import { POLICY_SNAPSHOT_HEADER, POLICY_SNAPSHOT_VERSION } from '@mikka/protocol/policy-snapshot'
 import { issuePolicySnapshot, policyDistributionContext } from '@/lib/agent-tool-approval/policy-distribution'
@@ -273,10 +273,24 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const leaseExpiresAt = new Date(Date.now() + SESSION_LEASE_MS).toISOString()
   let factoryClaim: Record<string, unknown> = {}
   let factoryToken: Awaited<ReturnType<typeof issueRunToken>> | undefined
+  let portableTaskWorkspace: ReturnType<typeof portableTaskWorkspaceReceiptSchema.parse> | undefined
+  const portableTask = device.kind === 'cloud' && Boolean(repo.remoteUrl) && !run.agentDefinition?.readOnly &&
+    (await import('@/lib/cloud-computer/e2b-task-workspace-archive')).portableTaskArchiveEnabled()
   const beforeClaim = async (tx: import('pg').PoolClient) => {
     // Same lock order as a `disconnected` report (device, then run): either it
     // waits for this claim and ends its lease, or this claim sees the session closed.
     if (!await deviceSessionHeld(tx, deviceId)) return false
+    if (portableTask) {
+      const { rows: [machine] } = await tx.query<{ receipt: unknown; capture: string | null }>(
+        `SELECT lifecycle->'portableWorkspaceRestore' AS receipt, lifecycle->>'portableWorkspaceCapture' AS capture FROM thread_machines
+         WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
+           AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended' FOR UPDATE`, [runId, deviceId, caller.userId, run.workspaceId])
+      if (machine?.capture === 'pending') return false
+      if (machine?.receipt != null) {
+        if (request.headers.get(PORTABLE_TASK_WORKSPACE_HEADER) !== '1') return false
+        portableTaskWorkspace = portableTaskWorkspaceReceiptSchema.parse(machine.receipt)
+      }
+    }
     // Scope may change while publication/policy preparation awaits. Recheck the same frozen
     // binding, including both members and the share, before taking the lease.
     if (subscription && !await nativeRunBinding(tx, caller.userId, agent.id, harness, subscription.workspaceId, subscription.id)) return false
@@ -288,6 +302,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   let fromEnvironmentSnapshot = false
   const afterClaim = async (tx: import('pg').PoolClient) => {
     await tx.query('UPDATE agent_runs SET "deviceTokenId"=$2,"machineAuthority"=$4 WHERE id=$1 AND "userId"=$3', [runId, caller.tokenId, caller.userId, receivesRunCredentials])
+    if (portableTask) {
+      await tx.query(`UPDATE thread_machines SET lifecycle=lifecycle||'{"portableWorkspaceCapture":"writing"}'::jsonb
+        WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
+          AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended'`, [runId, deviceId, caller.userId, run.workspaceId])
+    }
     if (device.kind === 'cloud' && projectEnvironment && request.headers.get(ENVIRONMENT_SNAPSHOT_HEADER) === '1') {
       const source = await tx.query(`SELECT 1 FROM thread_machines WHERE "runId"=$1 AND "deviceId"=$2
         AND "ownerId"=$3 AND "workspaceId"=$4 AND "environmentSnapshotId" IS NOT NULL`, [runId, deviceId, caller.userId, run.workspaceId])
@@ -638,6 +657,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...(subscriptionLease ? { subscriptionLease } : {}),
     ...(computer && assignmentPolicy.permissions.computer_use !== 'deny' ? { computer: { botId: computer.botId, ownerId: computer.ownerId, display: computer.display, policyVersion: computer.policyVersion } } : {}),
     ...(localComputer ? { localComputer } : {}),
+    ...(portableTaskWorkspace ? { portableTaskWorkspace } : {}),
     ...(projectEnvironment ? { projectEnvironment: { id: projectEnvironment.id, revision: projectEnvironment.revision, ...(fromEnvironmentSnapshot ? { fromSnapshot: true } : {}), ...(startup.length ? { startupRepositories: startup } : {}), ...(projectEnvironment.setup ? { setup: projectEnvironment.setup } : {}) } } : {}),
     ...(Object.keys(assignedEnv).length ? { taskEnv: assignedEnv } : {}),
     ...(taskSecretNames.length ? { taskSecretNames } : {}),

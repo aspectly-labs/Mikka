@@ -4,7 +4,7 @@ import { test } from 'node:test'
 import { Pool } from 'pg'
 import { dbUrl, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { repositorySeed, eligibleConfiguration } from '../lib/project-resources/environment-snapshot-contract'
-import { environmentConfiguration } from '../lib/project-resources/contracts'
+import { environmentConfiguration, portableEnvironmentDefinition, PORTABLE_ENVIRONMENT_BASE } from '../lib/project-resources/contracts'
 
 test('prebuilt GitHub checkouts use the daemon cache identity and credential-bearing setup is never captured', () => {
   const key = 'v2/github.com/acme/test'
@@ -19,6 +19,18 @@ test('prebuilt GitHub checkouts use the daemon cache identity and credential-bea
     setup: { approved: true, command: 'test -n "$SECRET"', copyFiles: [] },
   })
   assert.equal(eligibleConfiguration(config, [], { mode: 'inherit', repositoryKeys: [] }), false)
+})
+
+test('historical environment definitions preserve approved setup, variables and encrypted secret references', () => {
+  const setup = { approved: true, command: 'npm ci', copyFiles: ['.npmrc'] }
+  const variables = { BUILD_MODE: 'production', KEEP_EMPTY: '' }
+  const secretIds = [randomUUID()]
+  // Match the persisted definition from before baseImage was introduced.
+  const historical = { runtime: 'cloud', setup, variables, secretIds }
+  const parsed = environmentConfiguration.parse(JSON.parse(JSON.stringify(historical)))
+  assert.equal(parsed.baseImage, undefined)
+  assert.deepEqual(portableEnvironmentDefinition(parsed), { baseImage: PORTABLE_ENVIRONMENT_BASE, setup, variables, secretIds })
+  assert.equal(eligibleConfiguration(parsed, [], { mode: 'inherit', repositoryKeys: [] }), false)
 })
 
 test(
