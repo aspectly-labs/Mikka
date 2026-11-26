@@ -93,12 +93,21 @@ The same release produces the immutable template report for the private
 Cloudflare API deployment.
 
 Desktop uses its existing signed and notarized macOS workflow. A push records
-in its run summary that no installer was built. The serving-release observation
-starts it as described above; a manual dispatch on main with a fresh
-`cloudflare_receipt` still works.
+in its run summary that no installer was built. Both a serving-release
+observation (`actions:RUN_ID:ATTEMPT`) and an automatic `pipeline-production`
+promotion (`pipeline:RUN_ID:ATTEMPT`, bound to its `deploy-production` receipt
+archive and funded model acceptance) start it as described above; a manual
+dispatch on main with either receipt still works. Automatic pipeline triggers
+skip commits only when the latest release's `mikka-ui-overlay.json` matches
+the promoted overlay, its commit already covers the served Web/API builds, and
+no Desktop input path changed.
 It verifies the serving Web version and exact overlay before allocating the
 Mac, before loading credentials, and immediately before publishing the sealed
-installer. The approved backend must contain the installer commit.
+installer. For serving observations the approved backend must contain the
+installer commit; for automatic `pipeline-production` promotions the promoted
+manifest cryptographically binds the served Web/API builds (rebuilt or reused
+under identical `contextDigest`) to the installer commit and rejects any stale
+receipt behind `releases/latest`.
 
 See the [private runbook](https://github.com/alexj11324/mikka-cloud/blob/main/docs/operations/web-deploy.md).
 
