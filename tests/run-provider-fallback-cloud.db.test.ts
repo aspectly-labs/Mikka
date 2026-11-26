@@ -238,6 +238,36 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
     assert.deepEqual((await row(f.runId)).agentDefinition.taskCompute, f.admitted.agentDefinition.taskCompute)
   })
 
+  await t.test('new cloud task SKUs honor the effective plan on both providers', async t => {
+    const f = await fixture('provider-plan-geometry')
+    const { rows: [target] } = await pool.query<{ agentId: string; deviceId: string }>(`SELECT a.id AS "agentId",a."deviceId"
+      FROM bot_cloud_runtimes r JOIN agents a ON a.id=r."agentId" WHERE r."botId"=$1 AND r.harness='claude_code'`, [f.botId])
+    const repository = await ensureDeviceRepository(f.actor.userId, target.deviceId, f.remote!)
+    const variables = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_TASK_MACHINE_PLAN_LIMITS', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN'] as const
+    const saved = variables.map(key => process.env[key])
+    t.after(() => variables.forEach((key, index) => {
+      const value = saved[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    Object.assign(process.env, { NODE_ENV: 'test', MIKKA_TASK_MACHINE_BRIDGE_TOKEN: 'synthetic-plan-fixture',
+      MIKKA_TASK_MACHINE_PLAN_LIMITS: JSON.stringify({ free: { vcpu: 1, ramGib: 4 }, enterprise: { vcpu: 2, ramGib: 8 } }) })
+    const queueFor = async (provider: 'e2b' | 'cloudflare') => {
+      process.env.MIKKA_FLAG_OVERRIDES = JSON.stringify({ 'mikka-task-provider': provider })
+      const { runId } = await queueCloudRun(pool, f.actor, { botId: f.botId, issueId: f.issueId,
+        agentId: target.agentId, deviceRepoId: repository.id, title: 'Plan admission', body: '', readOnly: true,
+        model: 'fixture-claude-a', apiKeyId: f.first.id })
+      return (await row(runId)).agentDefinition.taskCompute
+    }
+    assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'small' })
+    assert.deepEqual(await queueFor('cloudflare'), { provider: 'cloudflare', size: 'standard-1' })
+    await workspacePool.query(`INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,'enterprise','license')`, [f.actor.workspaceId])
+    assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'medium' })
+    assert.deepEqual(await queueFor('cloudflare'), { provider: 'cloudflare', size: 'standard-3' })
+    process.env.MIKKA_TASK_MACHINE_PLAN_LIMITS = JSON.stringify({ enterprise: { vcpu: 0.5, ramGib: 4 } })
+    await assert.rejects(queueFor('e2b'), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+  })
+
   for (const change of ['environment', 'repository'] as const) await t.test(`${change} withdrawal preserves terminal completion and stops provider recovery before runtime preparation, including replay`, async () => {
     const f = await fixture(`provider-cloud-resource-${change}`, true)
     const { issueRunToken } = await import('../lib/mcp/worker')

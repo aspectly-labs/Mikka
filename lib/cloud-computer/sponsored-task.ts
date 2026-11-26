@@ -21,7 +21,7 @@ export type SponsoredTaskPlacement = Readonly<{
   /** The requested size when the quota gate moved it (#3080); `size` is what runs and is billed. */
   requestedSize?: import('./machine-pricing').MachineSize
   /** Why `size` differs from `requestedSize`. */
-  sizeReason?: 'provider_quota_unverified'
+  sizeReason?: 'provider_quota_unverified' | 'plan_limit'
 }>
 export type TaskMachineActor = { userId: string; workspaceId: string }
 type Query = Pick<PoolClient, 'query'>

@@ -20,7 +20,7 @@ import { runCredentialSource, type RunApiKey } from '@/lib/run-credential-source
 import { cloudTaskTarget } from './cloud-task-target'
 import { provisionableMachineSize } from '../cloud-computer/machine-pricing'
 import { hostedTaskEnabled, verifiedMachineQuota } from '../cloud-computer/sponsored-task'
-import { selectTaskProvider, taskComputeSku, taskProviderUnavailableMessage } from '../cloud-computer/task-provider-admission'
+import { selectTaskProvider, taskComputeSku, taskMachinePlanLimit, taskProviderUnavailableMessage } from '../cloud-computer/task-provider-admission'
 import { runListChanged } from '@/lib/live/lists'
 import { runChanged } from '@/lib/live/panels'
 import { resolveRunOrigin, type RunOrigin, type RunOriginRef } from '@/lib/run-origin'
@@ -180,9 +180,12 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
       const { provider, source } = await selectTaskProvider(actor, sponsored, earlierPlacement ? 'cloudflare' : undefined)
       if (source === 'remote') delete frozen.allowLocalRecovery
       const requestedSize = settings.machineSize ?? effectiveExecution?.environment?.defaultMachineSize
-      frozen.taskCompute = taskComputeSku(provider, {
+      const planLimit = await taskMachinePlanLimit(actor.workspaceId)
+      const compute = taskComputeSku(provider, {
         cloudflare: requestedSize, e2b: effectiveExecution?.environment?.e2bMachineSize ?? undefined,
-      }, verifiedMachineQuota())
+      }, verifiedMachineQuota(), planLimit)
+      if (!compute) throw new ComputerError(409, 'Task machine size is unavailable on this workspace plan.')
+      frozen.taskCompute = compute
       if (frozen.taskCompute.provider === 'cloudflare') {
         if (!hostedTaskEnabled(actor.workspaceId) || !effectiveExecution?.repositoryKey ||
             !['codex','claude_code'].includes(target.harness)) {
@@ -193,7 +196,8 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
           taskId: input.issueId, botId: input.botId, repositoryKey: effectiveExecution.repositoryKey,
           requestEventId: sponsored ? input.sourceEventId! : source === 'previous' ? earlierPlacement?.requestEventId ?? null : null,
           size: frozen.taskCompute.size,
-          ...(provision?.adjusted ? { requestedSize: provision.requested, sizeReason: provision.adjusted } : {}) }
+          ...(provision && provision.requested !== compute.size
+            ? { requestedSize: provision.requested, sizeReason: compute.size !== provision.size ? 'plan_limit' : provision.adjusted ?? undefined } : {}) }
       } else {
         const { rows: [availability] } = await client.query<{ configured: boolean }>(
           `SELECT ${ownE2BKeySql('$1::text')} AS configured`, [actor.userId])
