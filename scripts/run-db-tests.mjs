@@ -543,7 +543,7 @@ export async function runScript(command, args, options) {
   const files = args.slice(testIndex + 1)
   const direct = command === process.execPath && testIndex >= 0 && flags.includes('--test-force-exit') && files.length
     && files.every(file => /^[\w./-]+\.test\.[cm]?[jt]sx?$/.test(file))
-    && !flags.some(flag => flag.startsWith('--test-isolation'))
+    && !flags.some(flag => /^--(?:experimental-)?test-isolation(?:=|$)/.test(flag))
   if (!direct) return runCommand(command, args, options)
 
   // Node forwards force-exit to its isolated children, whose private pipes
@@ -559,7 +559,7 @@ export async function runScript(command, args, options) {
       while (next < files.length) {
         const index = next++
         const file = files[index]
-        const result = await runCommand(command, [...flags, '--test-isolation=none', '--test', file],
+        const result = await runCommand(command, [...flags, '--experimental-test-isolation=none', '--test', file],
           { ...options, script: `${options.script ?? command} ${file}` }, ['stdout', 'stderr'].map(stream => join(directory, `${index}.${stream}`)))
         const error = checkSummary(file, result.status, parseSummary(`${result.stdout}\n${result.stderr}`))
         results[index] = { ...result, error }
