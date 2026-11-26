@@ -10590,7 +10590,21 @@
     "refresh": "刷新",
     "retry": "重试",
     "later": "稍后",
-    "newVersion": "有新版本"
+    "newVersion": "有新版本",
+    "optional": "可选",
+    "clear": "清除",
+    "copy": "复制",
+    "copied": "已复制",
+    "confirm": "确认",
+    "addItem": "添加…",
+    "removeItem": "移除 {name}",
+    "itemAdded": "已添加 {name}",
+    "itemsAdded": "已添加 {count} 项",
+    "itemRemoved": "已移除 {name}",
+    "atMost": "一次最多 {max} 项",
+    "all": "全部",
+    "back": "返回",
+    "noResults": "没有匹配的结果"
   },
   "Overview": {
     "viewsTitle": "工作区视图",

@@ -10590,7 +10590,21 @@
     "refresh": "Refresh",
     "retry": "Retry",
     "later": "Later",
-    "newVersion": "New version available"
+    "newVersion": "New version available",
+    "optional": "Optional",
+    "clear": "Clear",
+    "copy": "Copy",
+    "copied": "Copied",
+    "confirm": "Confirm",
+    "addItem": "Add…",
+    "removeItem": "Remove {name}",
+    "itemAdded": "{name} added",
+    "itemsAdded": "{count} added",
+    "itemRemoved": "{name} removed",
+    "atMost": "Up to {max} at a time",
+    "all": "All",
+    "back": "Back",
+    "noResults": "No matching results"
   },
   "Overview": {
     "viewsTitle": "Workspace views",
