@@ -152,7 +152,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "f89610ca9e86c57acaa02c6f716818b1f3dc40259a7bce77cb827a7eddb19c2c"
+      "sourceHash": "42ccc230b67a8f50bd3bcf556ff5e4c0d4334629e29a8ea29f727488e31a1925"
     },
     {
       "path": "/mikka/api/artifacts/shared/[token]/frame",
