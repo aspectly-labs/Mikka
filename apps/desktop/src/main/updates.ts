@@ -68,6 +68,7 @@ export class Updates {
   /** The downloaded version, waiting for a restart. */
   ready: string | null = null
   /** A menu check found a version that is still downloading; answer once it lands. */
+  private required = false
   private announce = false
   private interactive = false
 
@@ -81,6 +82,7 @@ export class Updates {
       if (this.take()) report.upToDate()
     })
     updater.on('update-downloaded', info => {
+      if (this.required) return
       this.ready = info.version
       onReady(info.version)
       if (this.announce) {
@@ -96,8 +98,20 @@ export class Updates {
     })
   }
 
+  /** Give the gate exclusive control of installations, including a previously downloaded release. */
+  beginRequiredUpdate(): string | null {
+    this.required = true
+    this.announce = false
+    this.interactive = false
+    this.updater.autoInstallOnAppQuit = false
+    const cached = this.ready
+    this.ready = null
+    return cached
+  }
+
   /** A background check stays silent; once a version is downloaded there is nothing left to check. */
   async check(interactive: boolean): Promise<void> {
+    if (this.required) return
     if (this.ready) {
       if (interactive) this.report.ready(this.ready)
       return
