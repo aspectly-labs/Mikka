@@ -545,7 +545,9 @@ async function dispatchByRules(userId: string, { followed, sponsoredDefault, ...
         sponsored = destination.data.provider === 'cloudflare'
       }
     }
-    const { target, agentProfile, selectionMode } = await timedPhase('resolveModelDispatch', () => resolveAgentProfileDispatch(pool, { ownerId: userId, workspaceId, botId }, { issueId: input.issueId, stage, note: input.note, profileId: input.profileId, asked: input.model, location: place === 'cloud' ? 'cloud' : undefined, ...(sponsored ? {cloudPurpose:'cloudflare_task' as const}:{}), agentId: input.agentId, defaultOnly: Boolean(input.threadRunId) }))
+    const { taskProviderSelectionConfigured } = await import('@/lib/cloud-computer/task-provider-admission')
+    const cloudPurpose = sponsored || taskProviderSelectionConfigured(workspaceId) ? 'repository_admission' as const : undefined
+    const { target, agentProfile, selectionMode } = await timedPhase('resolveModelDispatch', () => resolveAgentProfileDispatch(pool, { ownerId: userId, workspaceId, botId }, { issueId: input.issueId, stage, note: input.note, profileId: input.profileId, asked: input.model, location: place === 'cloud' ? 'cloud' : undefined, cloudPurpose, agentId: input.agentId, defaultOnly: Boolean(input.threadRunId) }))
     if (target.kind === 'none') {
       if (target.reason === 'cloudNotConfigured' && !sponsored) {
         const { cloudDispatchFailureReason } = await import('@/lib/cloud-dispatch-failure')
@@ -768,10 +770,29 @@ export async function dispatchComputerTask(userId: string, input: { sourceEventI
     const { ComputerError } = await import('@/lib/computer/store')
     console.warn('cloud task dispatch refused', { error: error instanceof Error ? error.constructor.name : typeof error, code: error instanceof ComputerError ? error.status : undefined })
     if (input.threadRunId && error instanceof ComputerError && error.message === 'Bot subscription unavailable') return { error: 'threadModelUnavailable' as const, threadRunId: input.threadRunId }
+    const { TaskProviderAdmissionUnavailable, taskProviderUnavailableMessage } = await import('@/lib/cloud-computer/task-provider-admission')
+    if (error instanceof TaskProviderAdmissionUnavailable && !error.allowLocalRecovery) {
+      return { error: 'taskProviderUnavailable' as const, provider: error.provider, retryable: true as const,
+        message: taskProviderUnavailableMessage(error.provider) }
+    }
     // A machine startup failure is not an Owner stop. Finalize only a still
     // unclaimed run, before cleanup can reconcile it as a cancelled task.
     if (queuedRunId) {
       const failed = await (await import('@/lib/run-leases')).failUnclaimedCloudStart({ userId, workspaceId: target.workspaceId }, queuedRunId, error)
+      if (failed) {
+        const { PaidResourceError } = await import('@/lib/abuse/policy')
+        if (error instanceof PaidResourceError) return { error: error.code, failedRunId: queuedRunId }
+        const { TaskComputeUnavailable } = await import('@/lib/cloud-computer/thread-machines')
+        const { rows: [receipt] } = await pool.query<{ allowLocalRecovery: boolean; provider: string | null }>(`SELECT
+          "agentDefinition"->'allowLocalRecovery' = 'true'::jsonb AS "allowLocalRecovery",
+          "agentDefinition"#>>'{taskCompute,provider}' AS provider FROM agent_runs
+          WHERE id=$1 AND "userId"=$2 AND "workspaceId"=$3`, [queuedRunId, userId, target.workspaceId])
+        if (receipt?.provider && !receipt.allowLocalRecovery) {
+          if (error instanceof TaskComputeUnavailable) return { error: 'taskProviderUnavailable' as const, provider: error.provider,
+            retryable: true as const, message: taskProviderUnavailableMessage(error.provider), failedRunId: queuedRunId }
+          return { error: 'cloudComputerUnavailable' as const, recoveryBlocked: true as const }
+        }
+      }
       // A claim, newer provisioning lease or Owner stop may have won. None
       // permits this failed caller to start another placement of the task.
       return failed ? { error: 'cloudComputerUnavailable' as const, failedRunId: queuedRunId }

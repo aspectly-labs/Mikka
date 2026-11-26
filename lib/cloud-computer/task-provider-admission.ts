@@ -1,11 +1,30 @@
 import 'server-only'
 import { z } from 'zod'
-import { productionFlagDefault, taskProviderFlag } from '../feature-flags'
+import { ComputerError } from '../computer/store'
+import { localFlagOverride, productionFlagDefault, taskProviderFlag } from '../feature-flags'
+import { posthogConfig } from '../posthog-config'
 import { serverTaskProviderVariant } from '../posthog-server'
 import { DEFAULT_MACHINE_SIZE, machineSkuGeometry, provisionableMachineSize, type E2BMachineSize, type MachineGeometry, type MachineProvider, type MachineSize, type MachineSku } from './machine-pricing'
 
 export const taskProviderUnavailableMessage = (provider: MachineProvider) =>
   `${provider === 'cloudflare' ? 'Cloudflare' : 'E2B'} coding task unavailable. Retry the run.`
+
+export class TaskProviderAdmissionUnavailable extends ComputerError {
+  constructor(readonly provider: MachineProvider, readonly allowLocalRecovery = false) {
+    super(503, taskProviderUnavailableMessage(provider))
+  }
+}
+
+/** Legacy E2B installations can keep their early readiness check when there
+ * is no remote or local selector to change that provider. This reads no flag
+ * remotely, including when the admission key is replayed. */
+export function taskProviderSelectionConfigured(workspaceId: string) {
+  return Boolean(posthogConfig.token) || localFlagOverride(taskProviderFlag) !== undefined
+    || productionFlagDefault(taskProviderFlag) === 'cloudflare' || legacyCloudflareWorkspace(workspaceId)
+}
+
+const legacyCloudflareWorkspace = (workspaceId: string) =>
+  process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES?.split(/[,\s]+/).includes(workspaceId) === true
 
 export async function selectTaskProvider(
   actor: { userId: string; workspaceId: string },
@@ -15,7 +34,7 @@ export async function selectTaskProvider(
   const remote = await serverTaskProviderVariant(actor.userId, actor.workspaceId)
   if (remote) return { provider: remote, source: 'remote' }
   if (explicitCloudflare) return { provider: 'cloudflare', source: 'legacy_explicit' }
-  if (process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES?.split(/[,\s]+/).includes(actor.workspaceId)) {
+  if (legacyCloudflareWorkspace(actor.workspaceId)) {
     return { provider: 'cloudflare', source: 'legacy_workspace' }
   }
   if (previous) return { provider: previous, source: 'previous' }

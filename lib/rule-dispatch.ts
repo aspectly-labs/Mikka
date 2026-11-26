@@ -22,6 +22,7 @@ export async function cloudReady(
   purpose?: import('./cloud-template-models').CloudModelPurpose,
 ) {
   if (!cloudComputerRunsEnabled()) return false;
+  if (purpose === 'repository_admission') return true;
   if (purpose === 'cloudflare_task') {
     const { hostedTaskEnabled } = await import('./cloud-computer/sponsored-task')
     if (hostedTaskEnabled(scope.workspaceId)) return true

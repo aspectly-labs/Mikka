@@ -20,7 +20,7 @@ import { runCredentialSource, type RunApiKey } from '@/lib/run-credential-source
 import { cloudTaskTarget } from './cloud-task-target'
 import { provisionableMachineSize } from '../cloud-computer/machine-pricing'
 import { hostedTaskEnabled, verifiedMachineQuota } from '../cloud-computer/sponsored-task'
-import { selectTaskProvider, taskComputeSku, taskMachinePlanLimit, taskProviderUnavailableMessage } from '../cloud-computer/task-provider-admission'
+import { selectTaskProvider, taskComputeSku, taskMachinePlanLimit, TaskProviderAdmissionUnavailable } from '../cloud-computer/task-provider-admission'
 import { runListChanged } from '@/lib/live/lists'
 import { runChanged } from '@/lib/live/panels'
 import { resolveRunOrigin, type RunOrigin, type RunOriginRef } from '@/lib/run-origin'
@@ -189,7 +189,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
       if (frozen.taskCompute.provider === 'cloudflare') {
         if (!hostedTaskEnabled(actor.workspaceId) || !effectiveExecution?.repositoryKey ||
             !['codex','claude_code'].includes(target.harness)) {
-          throw new ComputerError(503, taskProviderUnavailableMessage('cloudflare'))
+          throw new TaskProviderAdmissionUnavailable('cloudflare')
         }
         const provision = requestedSize ? provisionableMachineSize(requestedSize, verifiedMachineQuota()) : null
         frozen.taskMachine = { provider: 'cloudflare', payer: 'mikka', ownerId: actor.userId, workspaceId: actor.workspaceId,
@@ -199,7 +199,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
           ...(provision && provision.requested !== compute.size
             ? { requestedSize: provision.requested, sizeReason: compute.size !== provision.size ? 'plan_limit' : provision.adjusted ?? undefined } : {}) }
       } else {
-        if (!await hasE2BRuntimeCredential(client, actor.userId)) throw new ComputerError(503, taskProviderUnavailableMessage('e2b'))
+        if (!await hasE2BRuntimeCredential(client, actor.userId)) throw new TaskProviderAdmissionUnavailable('e2b', frozen.allowLocalRecovery === true)
       }
     } else if (sponsored) {
       throw new ComputerError(409, 'Cloudflare coding task requires a repository.')

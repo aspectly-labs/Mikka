@@ -14,6 +14,7 @@ import { sameOriginMutationAllowed, workspaceErrorStatus } from '@/lib/http-secu
 import { defineRoute } from '@/lib/primitives/define-route'
 import { FactoryError } from '@/lib/factory/contract'
 import { ComputerError } from '@/lib/computer/store'
+import { TaskProviderAdmissionUnavailable } from '@/lib/cloud-computer/task-provider-admission'
 import { latestThreadRunModel } from '@/lib/computer/run-model'
 import { queueFactoryCloudRun } from '@/lib/factory/queue-cloud'
 
@@ -117,6 +118,10 @@ export const POST = defineRoute<'session', 'none', { botId: string }>(
     if (eveDrive) await eveDrive()
     else if ('runId' in result && result.thread !== 'message') {
       const started = await (await import('@/lib/run-leases')).startThreadMachine({ userId: session.user.id, workspaceId: context.workspace.id }, result.runId)
+      if (started?.state === 'unavailable' && started.reason === 'billing_refused') {
+        return Response.json({ error: started.code, runId: result.runId },
+          { status: started.code === 'points_exhausted' ? 402 : 409, headers })
+      }
       if (started?.state === 'unavailable' && started.reason === 'provider_unavailable') {
         const { taskProviderUnavailableMessage } = await import('@/lib/cloud-computer/task-provider-admission')
         return Response.json({ error: taskProviderUnavailableMessage(started.provider), code: 'task_provider_unavailable',
@@ -132,6 +137,8 @@ export const POST = defineRoute<'session', 'none', { botId: string }>(
     if (error instanceof AgentProfileError) return Response.json({ error: error.code }, { status: error.status, headers })
     if (error instanceof AgentProfileAdmissionError) return Response.json({ error: error.message }, { status: 409, headers })
     if (error instanceof FactoryError) return Response.json({ error: error.code }, { status: 409, headers })
+    if (error instanceof TaskProviderAdmissionUnavailable) return Response.json({ error: error.message,
+      code: 'task_provider_unavailable', provider: error.provider, retryable: true }, { status: error.status, headers })
     if (error instanceof ComputerError) return Response.json({ error: error.message }, { status: error.status, headers })
     if (error instanceof WorkspaceError) return Response.json({ error: error.code }, { status: workspaceErrorStatus(error), headers })
     return Response.json({ error: 'Cloud computer task unavailable' }, { status: 503, headers })

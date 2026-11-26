@@ -412,7 +412,10 @@ export async function startThreadMachine(actor: { userId: string; workspaceId: s
             AND old."deviceId"=m."deviceId" AND old."repoId"=m."repoId" AND old.state='ended' AND old."sandboxId" IS NULL
             AND previous.status IN ('succeeded','failed','stopped','cancelled'))`, [runId,actor.userId,actor.workspaceId])
     if (retained.rowCount) return { state: 'unavailable' as const, reason: 'retained_runtime' as const }
-    await failUnclaimedCloudStart(actor, runId, error)
+    const settled = await failUnclaimedCloudStart(actor, runId, error)
+    const { PaidResourceError } = await import('./abuse/policy')
+    if (settled && error instanceof PaidResourceError)
+      return { state: 'unavailable' as const, reason: 'billing_refused' as const, code: error.code }
     const [failed] = await db.select({ definition: agentRuns.agentDefinition, status: agentRuns.status, error: agentRuns.error }).from(agentRuns)
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, actor.userId), eq(agentRuns.workspaceId, actor.workspaceId))).limit(1)
     const provider = failed?.definition?.taskCompute?.provider
@@ -424,12 +427,13 @@ export async function startThreadMachine(actor: { userId: string; workspaceId: s
 /** A startup error is an infrastructure failure, never an Owner stop. Commit
  * that distinction before machine cleanup invokes the Factory end hook. */
 export async function failUnclaimedCloudStart(actor: { userId: string; workspaceId: string }, runId: string, error: unknown): Promise<boolean> {
-  const { RetainedTaskMachineUnavailable, threadMachineAction, threadMachineStartFailure } = await import('@/lib/cloud-computer/thread-machines')
+  const { RetainedTaskMachineUnavailable, TaskComputeUnavailable, threadMachineAction, threadMachineStartFailure } = await import('@/lib/cloud-computer/thread-machines')
   const { ComputerError } = await import('@/lib/computer/store')
   if (error instanceof RetainedTaskMachineUnavailable ||
     (error instanceof ComputerError && error.status === 409 && error.message === 'Thread provisioning in progress')) return false
   const provisionFailure = threadMachineStartFailure(error)
   if (provisionFailure && (provisionFailure.userId !== actor.userId || provisionFailure.workspaceId !== actor.workspaceId || provisionFailure.runId !== runId)) return false
+  const { PaidResourceError } = await import('./abuse/policy')
   const noMachine = await noMachineCard()
   const failed = await db.transaction(async tx => {
     const [run] = await tx.select().from(agentRuns).where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, actor.userId),
@@ -458,9 +462,9 @@ export async function failUnclaimedCloudStart(actor: { userId: string; workspace
     if (retained.rowCount) return null
     const [ended] = await tx.update(agentRuns).set({ status: 'failed', pauseReason: null, resumeStatus: null,
       stopReason: 'device_lost', failureDetails: serverRunFailure(runId, now),
-      error: run.error ?? (run.agentDefinition?.taskCompute
-        ? taskProviderUnavailableMessage(run.agentDefinition.taskCompute.provider)
-        : DEVICE_STAYED_OFFLINE), finishedAt: now, updatedAt: now })
+      error: run.error ?? (error instanceof PaidResourceError ? error.code
+        : error instanceof TaskComputeUnavailable && run.agentDefinition?.taskCompute?.provider === error.provider
+          ? taskProviderUnavailableMessage(error.provider) : DEVICE_STAYED_OFFLINE), finishedAt: now, updatedAt: now })
       .where(eq(agentRuns.id, runId)).returning()
     const event = runFinishedEvent({ ...ended, stopReason: 'device_lost', report: null })
     await recordTerminalEvent(tx, { ...event, payload: { ...event.payload, noMachine } })

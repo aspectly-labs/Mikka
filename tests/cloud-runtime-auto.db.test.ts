@@ -447,6 +447,25 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
     assert.equal(await count('SELECT count(*)::int AS n FROM bot_cloud_runtimes WHERE "botId"=$1', [n.botId]), 0)
   })
 
+  await t.test('a repository dispatch can select Cloudflare without an E2B key and preserves the billing refusal', async t => {
+    const fixture = await person('cloudflare-without-e2b', false)
+    const keys = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN'] as const
+    const previous = keys.map(key => process.env[key])
+    t.after(() => keys.forEach((key, index) => {
+      const value = previous[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    Object.assign(process.env, { NODE_ENV: 'test', MIKKA_TASK_MACHINE_BRIDGE_TOKEN: 'synthetic-coordinator-fixture',
+      MIKKA_FLAG_OVERRIDES: JSON.stringify({ 'mikka-task-provider': 'cloudflare' }) })
+    const result = await dispatch(fixture.id, fixture.issueId, fixture.botId) as { error?: string; failedRunId?: string }
+    assert.equal(result.error, 'points_exhausted', JSON.stringify(result))
+    assert.ok(result.failedRunId)
+    const { rows: [run] } = await pool.query(`SELECT status,error,"agentDefinition"->'taskCompute'->>'provider' AS provider
+      FROM agent_runs WHERE id=$1 AND "userId"=$2`, [result.failedRunId, fixture.id])
+    assert.deepEqual(run, { status: 'failed', error: 'points_exhausted', provider: 'cloudflare' })
+  })
+
   await t.test('the Coordinator: its own bot row gets the runtime, once, and never borrows a bot\'s', async () => {
     const c = await person('coordinator')
     // The person already has a bot named Coordinator: it keeps its name and stays theirs.
