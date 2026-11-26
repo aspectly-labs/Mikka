@@ -92,6 +92,38 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
     await e2b.removeE2BKey(member, ws.id)
   })
 
+  await t.test('the resource migration distinguishes unallocated Bot placeholders from uncertain creates', async t => {
+    const operation = randomUUID(), attempted = randomUUID()
+    const { readFile } = await import('node:fs/promises')
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      for (const table of ['cloud_machines', 'thread_machines', 'sandbox_kill_retries', 'workspace_snapshots', 'e2b_resource_accounts'])
+        await client.query(`CREATE TEMP TABLE ${table} AS SELECT * FROM ${table} WITH NO DATA`)
+      await client.query(`INSERT INTO cloud_machines("ownerId","operationId",state,"runtimeReady")
+        VALUES($1,$2,'sleeping',false),($1,$3,'error',false)`, [admin, operation, attempted])
+      await client.query(await readFile(new URL('../drizzle/20261126034000_e2b_resource_accounts.sql', import.meta.url), 'utf8'))
+      const { rows } = await client.query('SELECT id,scope FROM e2b_resource_accounts')
+      assert.deepEqual(rows, [{ id: attempted, scope: 'personal' }])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+    const previous = { MIKKA_EDITION: process.env.MIKKA_EDITION, E2B_API_KEY: process.env.E2B_API_KEY }
+    t.after(() => {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    })
+    process.env.MIKKA_EDITION = 'cloud'
+    process.env.E2B_API_KEY = 'synthetic-cloud-instance-key'
+    const { bindE2BResource, e2bCreateAccount } = await import('../lib/secrets/e2b-resource')
+    await bindE2BResource(admin, 'operation', attempted, 'personal')
+    assert.equal((await e2bCreateAccount(admin, operation)).apiKey, 'synthetic-cloud-instance-key')
+    await assert.rejects(e2bCreateAccount(admin, attempted), /e2b_unavailable/)
+  })
+
   await t.test('the recordAudit hook writes name-only rows inside the write transaction', async () => {
     const { secretAuditHook } = await import('../lib/secrets/audit')
     const auditWs = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }])

@@ -24,7 +24,7 @@ import { ComputerError } from '@/lib/computer/store'
 import { computerPermission } from '@/lib/computer/permission'
 import { connectComputer, installComputerRuntime, startDesktop, syncDesktopLease } from '@/lib/computer/e2b-provider'
 import { CLOUD_WORKER_COMMAND, CLOUD_PRELOADER_WAKE_COMMAND, CLOUD_PRELOADER_WAKE_RECEIPT } from '@/lib/computer/worker-command'
-import { cloudTemplateOrigin, threadMachineTemplateKind } from '@/lib/cloud-template-models'
+import { cloudTemplateOrigin, threadMachineTemplateKind, type CloudTemplateKind } from '@/lib/cloud-template-models'
 import { computerTemplate, sizedTaskTemplate, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { bootstrapOfficialInstance, isOfficialE2BTemplate, stageOfficialWorkerRelease, switchOfficialWorkerRelease, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from '@/lib/computer/official-runtime'
 import type { Actor } from './subagents'
@@ -467,7 +467,7 @@ const unconfirmedNativeExitSql = `((m.lifecycle->>'requiresNativeExit' IS NOT DI
  * the worker survive. No other task's machine can match. Caller holds BEGIN
  * and the new run's lock.
  */
-async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string, run: { issueId: string; runtimeBotId: string; repoPath: string; remoteUrl: string | null }, template: string | null) {
+async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string, run: { issueId: string; runtimeBotId: string; repoPath: string; remoteUrl: string | null }, templateKind: CloudTemplateKind) {
   // New-run admission revokes the previous run's review capability. Its VM
   // cannot change hands until the root gateways close PTY/HTTP/WS and ACK.
   const pendingReview = await client.query(`SELECT 1 FROM coding_review_sessions s
@@ -477,7 +477,6 @@ async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string,
   // The run's bot runtime is recorded on the new row; the old row's bot does not have to match.
   // A repository task's machine holds only its harness's CLI. Keep the same
   // harness's VM across additive releases; its private worker upgrades below.
-  const templateKind = template ? cloudTemplateOrigin(template)?.kind ?? template : null
   // A person can continue immediately after the terminal receipt, before the
   // lifecycle parks the VM. Use the same locked handoff as adjacent stages;
   // a terminal status without native exit never authorizes this transfer.
@@ -1068,8 +1067,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       // with Mikka's worker, decision 2026-11-01-2335): the daemon clones its admitted
       // remote and creates the task worktree from the configured base branch.
       // Non-repository work starts from the official desktop template too.
-      const template = freshTemplate()
-      const adopted = run.issueId ? await adoptTaskMachine(client, actor, runId, run, template) : null
+      const kind = !repositoryTask ? 'desktop' : run.runHarness === 'claude_code' ? 'claude' : run.runHarness === 'codex' ? 'codex' : null
+      const adopted = run.issueId && kind ? await adoptTaskMachine(client, actor, runId, run, kind) : null
       if (adopted) { machine = adopted; retainedSandboxId = adopted.sandboxId }
       else {
         if (run.issueId) {
@@ -1080,6 +1079,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
               AND (m."sandboxId" IS NOT NULL OR m."workerLeaseUntil">now()) LIMIT 1`, [run.issueId, actor.userId, actor.workspaceId, runId])
           if (busy.rowCount) throw new ComputerError(409, 'Thread provisioning in progress')
         }
+        const template = freshTemplate()
         selectEnvironmentSnapshot = repositoryTask
         machine = (await client.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","botId","issueId","snapshotId","operationId",state,"templateKind")
           VALUES ($1,$2,$3,$4,$5,$6,$7,'starting',$8) ON CONFLICT ("runId") DO UPDATE SET

@@ -53,6 +53,8 @@ test('hosted E2B only selects a configured tier attested in the release', () => 
   }
   assert.equal(sizedTaskTemplate('codex', 'small', hosted), 'codex-small')
   assert.equal(sizedTaskTemplate('codex', undefined, hosted), 'derived-codex')
+  assert.equal(sizedTaskTemplate('codex', 'medium', hosted), 'derived-codex')
+  assert.throws(() => sizedTaskTemplate('codex', 'medium', { MIKKA_EDITION: 'cloud' }), /e2b_template_unavailable/)
   assert.equal(sizedTaskTemplate('codex', 'small', { ...hosted, MIKKA_EDITION: 'community' }), 'derived-codex')
   assert.throws(() => sizedTaskTemplate('codex', 'large', hosted), /e2b_template_unavailable/)
   catalogue.machineVariants.at(-1)!.memoryMB = 8192

@@ -1,6 +1,7 @@
 import 'server-only'
 import type { Pool } from 'pg'
 import { pool } from '@/lib/db'
+import { isCloudEdition } from '@/lib/edition'
 import { getComposio, retireComposioAccount } from '@/lib/composio'
 import { listComposioPages } from '@/lib/composio-pagination'
 import { cleanupErrorIdentifier, type AccountCleanupReport, type AccountDeletionLease } from './cleanup-result'
@@ -33,6 +34,10 @@ export async function cleanupAccountConnections(ownerId: string, database: Pool,
   const subscription = await cleanupAccountSubscriptions(ownerId, database, undefined, job)
   blocked.push(...subscription.blockedReasons); warnings.push(...subscription.warnings)
   const blockerErrors = { ...subscription.blockerErrors }
+  if (isCloudEdition()) {
+    const external = await database.query("SELECT 1 FROM e2b_resource_accounts WHERE \"ownerId\"=$1 AND scope='personal' LIMIT 1", [ownerId])
+    if (external.rowCount) warnings.push('e2b_external_resources_managed_at_provider')
+  }
   blocked.push(...await cleanupAccountRuntimes(ownerId, database, { job, blockerErrors }))
   try {
     const { cleanupOwnerEnvironmentSnapshots } = await import('@/lib/project-resources/environment-snapshot-build')
