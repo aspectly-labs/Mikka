@@ -67,7 +67,7 @@ export function taskTemplate(harness: string, env: Env = process.env): string {
 /** Hosted task tiers come from the verified release hardware inventory. */
 export function sizedTaskTemplate(harness: string, size?: E2BMachineSize, env: Env = process.env): string {
   const medium = taskTemplate(harness, env)
-  if (!isCloudEdition(env) || !size || size === 'medium') return medium
+  if (!isCloudEdition(env) || !size) return medium
   const variant = e2bTemplateForSize(harness === 'codex' ? 'codex' : 'claude', size, env)
   if (!variant) throw new E2BKeyError('e2b_template_unavailable', 'Verified E2B compute tier required')
   return variant

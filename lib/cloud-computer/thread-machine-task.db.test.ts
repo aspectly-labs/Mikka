@@ -1471,10 +1471,23 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
       }
     });
 
-    await t.test('additive releases preserve the task VM and official harness provenance after catalogue rotation', async () => {
+    await t.test('additive releases preserve the task VM after its configured tier leaves the catalogue', async t => {
       const issueId = await task(), before = await parked(issueId, { template: 'retired-derived-codex' });
       await pool.query('UPDATE thread_machines SET "templateKind"=$2 WHERE "runId"=$1', [before.runId, 'codex']);
       const next = await run(issueId), fixture = fake();
+      const placement = { workspaceId, issueId, repositoryKey: 'v2/github.com/acme/app', runtime: 'cloud' as const, harness: 'codex' as const, baseBranch: 'main' };
+      const { seedRunProjectResources } = await import('../../tests/helpers/run-project-resources');
+      const { saveEnvironment, withProjectExecution } = await import('../project-resources/store');
+      const { environment } = await seedRunProjectResources(pool, { ...placement, ownerId: owner });
+      await saveEnvironment(owner, {
+        workspaceId, id: environment!.id, revision: environment!.revision, name: 'Tier fixture',
+        configuration: { runtime: 'cloud', harness: 'codex', e2bMachineSize: 'small' },
+      });
+      const projectExecution = await withProjectExecution({ ...placement, userId: owner }, async current => current);
+      await pool.query('UPDATE agent_runs SET "agentDefinition"=$2,"baseBranch"=$3 WHERE id=$1', [next, { projectExecution }, 'main']);
+      const edition = process.env.MIKKA_EDITION;
+      process.env.MIKKA_EDITION = 'cloud';
+      t.after(() => { if (edition === undefined) delete process.env.MIKKA_EDITION; else process.env.MIKKA_EDITION = edition; });
       fixture.provider.connect = async id => { fixture.calls.push(`connect:${id}`); throw new Error('fixture retained derived runtime'); };
       await assert.rejects(ensureThreadMachine(pool, actor, next, fixture.provider), RetainedTaskMachineUnavailable);
       assert.deepEqual(fixture.calls, [`connect:${before.sandboxId}`]);
