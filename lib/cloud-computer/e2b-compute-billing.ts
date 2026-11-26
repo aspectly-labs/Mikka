@@ -161,8 +161,9 @@ export async function reconcileE2BKeepAlivePayments() {
     try {
       const account = await e2bResourceAccount(ownerId, 'sandbox', row.sandboxId)
       if (account.scope !== row.providerScope) continue
-      const observed = await Sandbox.getInfo(row.sandboxId, { apiKey: account.apiKey, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
-        proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy })
+      const observed = await Sandbox.getInfo(row.sandboxId, {
+        apiKey: account.apiKey, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+      })
       if (observed.sandboxId !== row.sandboxId || !Number.isFinite(observed.endAt.getTime())) continue
       if (!row.renewalBaselineDeadline) continue
       if (observed.endAt.getTime() !== row.renewalBaselineDeadline.getTime()) {

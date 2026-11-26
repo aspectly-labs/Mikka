@@ -27,16 +27,5 @@ CREATE TABLE IF NOT EXISTS e2b_compute_leases (
   "renewalUnchangedAt" timestamptz,
   "renewalBaselineDeadline" timestamptz
 );
-ALTER TABLE e2b_compute_leases
-  ADD COLUMN IF NOT EXISTS "creationAttempts" integer NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS "usedChunkIndex" integer NOT NULL DEFAULT -1,
-  ADD COLUMN IF NOT EXISTS "previousPaidUntil" timestamptz,
-  ADD COLUMN IF NOT EXISTS "activeChunkIndex" integer NOT NULL DEFAULT -1,
-  ADD COLUMN IF NOT EXISTS "previousActiveChunkIndex" integer NOT NULL DEFAULT -1,
-  ADD COLUMN IF NOT EXISTS "renewalReviewAt" timestamptz,
-  ADD COLUMN IF NOT EXISTS "renewalDispatchId" uuid,
-  ADD COLUMN IF NOT EXISTS "renewalDispatchUntil" timestamptz,
-  ADD COLUMN IF NOT EXISTS "renewalUnchangedAt" timestamptz,
-  ADD COLUMN IF NOT EXISTS "renewalBaselineDeadline" timestamptz;
 CREATE INDEX IF NOT EXISTS e2b_compute_renewal_due_idx ON e2b_compute_leases("renewalReviewAt") WHERE "renewalReviewAt" IS NOT NULL;
 ALTER TABLE e2b_resource_accounts ADD COLUMN IF NOT EXISTS "computeTemplateId" text;
