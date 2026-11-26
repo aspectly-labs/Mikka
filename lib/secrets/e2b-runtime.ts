@@ -1,6 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
-import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError } from 'e2b'
+import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError, ServiceBusyError } from 'e2b'
 import { byoE2BKeyEnabled, E2BKeyError, type E2BKeyErrorCode } from './flag'
 import { cloudTemplateModels, type CloudTemplateKind } from '../cloud-template-models'
 import { e2bTemplateForSize, type E2BMachineSize } from '../cloud-computer/e2b-template-pricing'
@@ -84,6 +84,7 @@ export function classifyE2BError(error: unknown, creating: boolean): E2BKeyError
   const code = status(error)
   if (error instanceof AuthenticationError || code === 401 || code === 403) return 'e2b_key_invalid'
   if (error instanceof RateLimitError || code === 429) return 'e2b_limit_reached'
+  if (error instanceof ServiceBusyError || code !== undefined && code >= 500) return 'e2b_unavailable'
   if (creating && !(error instanceof SandboxNotFoundError) && (error instanceof NotFoundError || code === 404)) return 'e2b_template_unavailable'
   return null
 }
