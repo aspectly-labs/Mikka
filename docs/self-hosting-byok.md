@@ -94,6 +94,7 @@ S3 配置优先于 R2。配置其中一部分却缺少必要字段时会拒绝�
 | `mikka-email-sign-in-off` | `false` | 邮箱登录可用 |
 | `mikka-computer-tab-off` | `false` | 电脑 tab 可用 |
 | `mikka-proactive-profile` / `mikka-proactive-research` | `false` | 不打开实验能力 |
+| `mikka-track-owner-clicks` | `false` | 不上报控件点击（owner-click 分析） |
 | 四个 `mikka-upcoming-*` | `false` | 不显示尚未实现的功能 |
 | 未知 flag | `false` | 不凭未知 key 打开能力 |
 | `mikka-linear-sync` | 关闭 | 保留 Alex 关闭的全局 Linear 同步；连接自己的 Linear 账号是另一条路径 |
