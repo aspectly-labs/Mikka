@@ -38,7 +38,7 @@ test('Chromium follows desktop account confirmation to a separate Linear consent
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
     t.after(() => { server.closeAllConnections(); server.close() })
   }
-  const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH })
+  const browser = await chromium.launch({ executablePath: process.env.MIKKA_CHROMIUM_EXECUTABLE_PATH })
   t.after(() => browser.close())
   const page = await browser.newPage()
   const target = '/api/integrations/linear/connect?account=alice'

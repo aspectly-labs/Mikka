@@ -7,3 +7,5 @@ Historical links, publications, detachments and delivery records remain availabl
 Signed Linear webhooks can still trigger automations and process OAuth revocations. The automation editor can connect a new account or reconnect one whose credentials Linear rejected. The system browser opens the account-bound connect URL and completes a PKCE grant with the `read` scope. The editor reloads team choices on return. A provider outage leaves the existing connection in place.
 
 Deployments that use Linear event triggers need a provider webhook configured to deliver signed events to `/api/webhooks/linear`. Retiring the sync workers does not configure that external endpoint. The legacy sync status endpoint returns `enabled: false`, and older clients receive `linearSyncDisabled` when requesting a sync or retry.
+
+Run `pnpm test:linear-consent-browser` in cloud Linux to check the desktop account handoff against a synthetic consent origin. The test uses the `MIKKA_CHROMIUM_EXECUTABLE_PATH` set by local bootstrap when available.
