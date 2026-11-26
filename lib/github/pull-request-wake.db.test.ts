@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { Pool } from 'pg'
+import { startGitHubAccessHttp } from '../../tests/fakes/github-access-http.mjs'
 import { dbUrl, seedAgent, seedIssue, seedRun, seedUser, seedWorkspace } from '../../tests/support/workspace-admin-db'
 import type { PullWakeEvent } from './pull-request-wake-event'
 
@@ -21,6 +22,38 @@ test('an undecided GitHub conflict uses bounded workflow retries and the existin
   const scheduled: (() => Promise<unknown>)[] = []
   const delays: string[] = []
   let pendingChecks = 1, checks = 0
+  const realFetch = globalThis.fetch
+  const previousAppId = process.env.GITHUB_APP_ID
+  process.env.GITHUB_APP_ID = '4840908'
+  const expectedAuth = `Bearer fixture-token-${owner}`
+  const githubHttp = await startGitHubAccessHttp({
+    installationId,
+    getUser: req => req.headers.authorization === expectedAuth ? { id: 42, login: 'conflict-wake' } : null,
+    getRepositories: req => req.headers.authorization === expectedAuth
+      ? [{ id: repositoryId, full_name: repository, private: true }]
+      : null,
+    onRequest: (reqUrl, req) => {
+      if (reqUrl.pathname === `/repositories/${repositoryId}/pulls/${number}`) {
+        assert.equal(req.headers.authorization, expectedAuth)
+        checks++
+        return Response.json({
+          state: 'open',
+          number,
+          head: { sha: head },
+          mergeable: pendingChecks-- > 0 ? null : false,
+        })
+      }
+      return undefined
+    },
+  })
+  globalThis.fetch = githubHttp.routeFetch(realFetch) as typeof fetch
+  t.after(async () => {
+    globalThis.fetch = realFetch
+    if (previousAppId === undefined) delete process.env.GITHUB_APP_ID
+    else process.env.GITHUB_APP_ID = previousAppId
+    await githubHttp.close()
+  })
+
   const workflow = await import('workflow')
   const workflowApi = await import('workflow/api')
   t.mock.module('workflow', { namedExports: { ...workflow, sleep: async (delay: string) => { delays.push(delay) } } })
@@ -29,11 +62,10 @@ test('an undecided GitHub conflict uses bounded workflow retries and the existin
       scheduled.push(() => work(...args))
     },
   } })
-  t.mock.module('./user-access', { namedExports: {
-    authorizedPullWake: async (userId: string, repo: string, repoId: number, appId: number, conflict: { number: number; head: string }) => {
-      assert.deepEqual([userId, repo, repoId, appId, conflict], [owner, repository, repositoryId, installationId, { head, number }])
-      checks++
-      return pendingChecks-- > 0 ? null : true
+  t.mock.module('./connection', { namedExports: {
+    githubConnectionToken: async (userId: string) => {
+      assert.equal(userId, owner)
+      return { token: `fixture-token-${userId}`, githubAccountId: '42', expiresAt: null }
     },
   } })
   const [{ dispatchVerifiedGitHubWebhook }, { pool }, { workspacePool }, { coordinatorWakeTransport }] = await Promise.all([
