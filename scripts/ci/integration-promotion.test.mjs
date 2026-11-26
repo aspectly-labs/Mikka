@@ -410,7 +410,10 @@ test('verifyPairingInWorkspace runs end-to-end against separate integration/main
       mkdirSync(join(dir, 'scripts/acceptance'), { recursive: true })
       mkdirSync(join(dir, 'scripts/release'), { recursive: true })
       mkdirSync(join(dir, 'node_modules/.bin'), { recursive: true })
+      mkdirSync(join(dir, 'node_modules/tsx'), { recursive: true })
       mkdirSync(join(dir, '.hosted-ui'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules/tsx/package.json'), '{"name":"tsx","type":"module","exports":"./index.mjs"}\n')
+      writeFileSync(join(dir, 'node_modules/tsx/index.mjs'), 'export {}\n')
       writeFileSync(join(dir, '.hosted-ui/tsconfig.json'), '{"compilerOptions":{}}\n')
       writeFileSync(join(dir, 'apps/frontend/scripts/build.mjs'), `
         import { writeFileSync } from 'node:fs'
