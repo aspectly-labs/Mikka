@@ -55,7 +55,7 @@ export async function connectRunningComputer(owner: string, id: string, client?:
   const config = new ConnectionConfig(prepared)
   const requestSignal = config.getSignal(E2B_TIMEOUT_REQUEST_BUDGET_MS)
   const { data, response } = await new ApiClient(config).api.GET('/sandboxes/{sandboxID}', {
-    params: { path: { sandboxID: id } }, signal: signal ? AbortSignal.any([signal, requestSignal]) : requestSignal,
+    params: { path: { sandboxID: id } }, signal: signal && requestSignal ? AbortSignal.any([signal, requestSignal]) : signal ?? requestSignal,
   })
   if (response.status === 404 || data?.state === 'paused' || data?.lifecycle?.autoResume === true)
     throw new PolicySandboxUnavailable()

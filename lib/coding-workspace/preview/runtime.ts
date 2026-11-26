@@ -195,7 +195,9 @@ export async function revokeRunPreview(target: PreviewRevokeTarget, options: { l
       if (options.leaseIds?.length && options.expiresAt && Number.isFinite(Date.parse(options.expiresAt)) && Date.parse(options.expiresAt) <= Date.now()) return
       throw new PreviewRuntimeError('scope_changed', 409)
     }
-    const sandbox = await connect(target.workspaceId, target.sandboxId, AbortSignal.timeout(15_000))
+    const signal = AbortSignal.timeout(15_000)
+    const sandbox = connect ? await connect(target.workspaceId, target.sandboxId, signal)
+      : await connectRunningComputer(target.ownerId, target.sandboxId, undefined, signal)
     if (sandbox.sandboxId !== target.sandboxId) throw new PreviewRuntimeError('scope_changed', 409)
     const present = await sandbox.commands.run(`if test -S ${ROOT}/control.sock; then printf present; else printf absent; fi`, { user: 'root', timeoutMs: 5_000 })
     if (present.stdout === 'absent') return
@@ -204,6 +206,7 @@ export async function revokeRunPreview(target: PreviewRevokeTarget, options: { l
     if (reply.revoked !== true) throw new PreviewRuntimeError('protocol')
   } catch (cause) {
     if (computerGone(cause)) return
+    if (cause instanceof PolicySandboxUnavailable) throw new PreviewRuntimeError('scope_changed', 409, { cause })
     if (cause instanceof PreviewRuntimeError) throw cause
     throw new PreviewRuntimeError('runtime', 503, { cause })
   }
