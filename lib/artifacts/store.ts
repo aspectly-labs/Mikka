@@ -22,6 +22,7 @@ import { activeTaskWorkspaces, activeWorkspaceShareIssuer, taskReaderScope, with
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { readWorkspaceSharingDefaults } from '@/lib/settings/workspace-sharing'
 import { artifactShareVisibilityInput } from './share-input'
+import { openArtifactEmbedUrl } from './open-artifact-config'
 
 // Artifacts in Neon (who, which version, share links) with their files in R2.
 // Every read is scoped to the owner, or to a live share token.
@@ -78,7 +79,7 @@ export async function submitArtifact(submitter: ArtifactSubmitter, input: { titl
       await tx.update(artifacts).set({ title, latestVersion: version, updatedAt: new Date() }).where(eq(artifacts.id, artifactId))
     } else {
       artifactId = crypto.randomUUID()
-      await tx.insert(artifacts).values({ id: artifactId, userId: submitter.userId, workspaceId, kind: input.kind, title, runId: submitter.runId, issueId: submitter.issueId })
+      await tx.insert(artifacts).values({ id: artifactId, userId: submitter.userId, workspaceId, kind: input.kind, engine: 'native', artifactType: input.kind, title, runId: submitter.runId, issueId: submitter.issueId })
     }
     const storageKey = `${submitter.userId}/${artifactId}/v${version}-${hash.slice(0, 12)}.${ARTIFACT_EXTENSIONS[input.kind]}`
     // The file goes up before the row commits, so a row never points at a missing object.
@@ -103,13 +104,20 @@ const acceptanceTask = sql<string | null>`(SELECT f."taskId" FROM factory_accept
 
 export async function artifactSummaries(reader: ArtifactReader, ids: readonly string[]): Promise<Record<string, ArtifactSummary>> {
   if (!ids.length) return {}
-  const rows = await db.select({ id: artifacts.id, kind: artifacts.kind, title: artifacts.title, latestVersion: artifacts.latestVersion, acceptanceTaskId: acceptanceTask })
+  const rows = await db.select({
+    id: artifacts.id, kind: artifacts.kind, engine: artifacts.engine, externalId: artifacts.externalId,
+    artifactType: artifacts.artifactType, title: artifacts.title, latestVersion: artifacts.latestVersion, acceptanceTaskId: acceptanceTask,
+  })
     .from(artifacts).where(and(await artifactAccess(reader), inArray(artifacts.id, [...new Set(ids)])))
-  return Object.fromEntries(rows.map(row => [row.id, row]))
+  return Object.fromEntries(rows.map(row => [row.id, { ...row, embedUrl: openArtifactEmbedUrl(row.engine, row.externalId) }]))
 }
 
-async function detail(where: ReturnType<typeof and>): Promise<ArtifactDetail | null> {
-  const [row] = await db.select({ id: artifacts.id, userId: artifacts.userId, workspaceId: artifacts.workspaceId, kind: artifacts.kind, title: artifacts.title, latestVersion: artifacts.latestVersion, runId: artifacts.runId, issueId: artifacts.issueId })
+async function detail(where: ReturnType<typeof and>, options: { shareToken?: string } = {}): Promise<ArtifactDetail | null> {
+  const [row] = await db.select({
+    id: artifacts.id, userId: artifacts.userId, workspaceId: artifacts.workspaceId,
+    kind: artifacts.kind, engine: artifacts.engine, externalId: artifacts.externalId, artifactType: artifacts.artifactType,
+    title: artifacts.title, latestVersion: artifacts.latestVersion, runId: artifacts.runId, issueId: artifacts.issueId,
+  })
     .from(artifacts).where(where).limit(1)
   if (!row) return null
   const versions = await db.select({ version: artifactVersions.version, authorName: artifactVersions.authorName, createdAt: artifactVersions.createdAt })
@@ -124,11 +132,15 @@ async function detail(where: ReturnType<typeof and>): Promise<ArtifactDetail | n
     .innerJoin(bots, eq(bots.id, agentRuns.botId)).where(eq(agentRuns.id, row.runId)).limit(1) : []
   const look = (name: string) => named.find(bot => bot.name.toLowerCase() === name.toLowerCase()) ?? runBot ?? null
   const { userId: _owner, workspaceId: _workspace, ...summary } = row
-  return { ...summary, versions: versions.map(version => {
-    if (agent?.wrote(version.authorName)) return { ...version, authorName: agent.name, createdAt: version.createdAt.toISOString(), authorColor: null, authorShape: null, authorHarness: agent.harness }
-    const bot = look(version.authorName)
-    return { ...version, createdAt: version.createdAt.toISOString(), authorColor: bot?.color ?? null, authorShape: bot?.shape ?? null, authorHarness: null }
-  }) }
+  return {
+    ...summary,
+    embedUrl: openArtifactEmbedUrl(row.engine, row.externalId, { shareToken: options.shareToken }),
+    versions: versions.map(version => {
+      if (agent?.wrote(version.authorName)) return { ...version, authorName: agent.name, createdAt: version.createdAt.toISOString(), authorColor: null, authorShape: null, authorHarness: agent.harness }
+      const bot = look(version.authorName)
+      return { ...version, createdAt: version.createdAt.toISOString(), authorColor: bot?.color ?? null, authorShape: bot?.shape ?? null, authorHarness: null }
+    }),
+  }
 }
 
 /** One of the person's artifacts with every version, oldest first. */
@@ -172,7 +184,12 @@ async function acceptanceReport(artifactId: string): Promise<Pick<ArtifactDetail
 
 const LIST_LIMIT = 200
 
-const listColumns = { id: artifacts.id, kind: artifacts.kind, title: artifacts.title, latestVersion: artifacts.latestVersion, acceptanceTaskId: acceptanceTask, runId: artifacts.runId, issueId: artifacts.issueId, botId: agentRuns.botId, updatedAt: artifacts.updatedAt, authorName: artifactVersions.authorName }
+const listColumns = {
+  id: artifacts.id, kind: artifacts.kind, engine: artifacts.engine, externalId: artifacts.externalId,
+  artifactType: artifacts.artifactType, title: artifacts.title, latestVersion: artifacts.latestVersion,
+  acceptanceTaskId: acceptanceTask, runId: artifacts.runId, issueId: artifacts.issueId,
+  botId: agentRuns.botId, updatedAt: artifacts.updatedAt, authorName: artifactVersions.authorName,
+}
 /** The run that made it, for its bot (a run is the person's own, as the artifact is). */
 const madeBy = and(eq(agentRuns.id, artifacts.runId), eq(agentRuns.userId, artifacts.userId))
 const latestVersion = and(eq(artifactVersions.artifactId, artifacts.id), eq(artifactVersions.version, artifacts.latestVersion))
@@ -195,7 +212,7 @@ async function withIssueKeys(reader: ArtifactReader, rows: (Omit<ArtifactListIte
   return rows.map(({ updatedAt, ...row }) => {
     const number = row.issueId ? numbers.get(row.issueId) ?? null : null
     const issueKey = row.issueId && numbers.has(row.issueId) ? identifiers.get(row.issueId) ?? (number === null ? null : `#${number}`) : null
-    return { ...row, issueKey, updatedAt: updatedAt.toISOString() }
+    return { ...row, embedUrl: openArtifactEmbedUrl(row.engine, row.externalId), issueKey, updatedAt: updatedAt.toISOString() }
   })
 }
 
@@ -318,12 +335,13 @@ async function sharedArtifactAccess(token: string, viewer?: ShareViewer) {
   return and(eq(artifacts.id, share.artifactId), await artifactAccess(share.createdBy))
 }
 
-/** Markdown is rendered inline. An HTML share's iframe reads its own body. */
+/** Markdown is rendered inline. An HTML or Open Artifact share renders through its sandboxed/embedded frame. */
 export async function sharedArtifact(token: string, viewer?: ShareViewer): Promise<(ArtifactDetail & { content: string | null }) | null> {
   const access = await sharedArtifactAccess(token, viewer)
   if (!access) return null
-  const found = await detail(access)
+  const found = await detail(access, { shareToken: token })
   if (!found) return null
+  if (found.engine === 'open_artifact') return { ...found, content: null }
   if (found.kind === 'html') return found.versions.some(row => row.version === found.latestVersion) ? { ...found, content: null } : null
   const content = await versionContent(found.id, found.latestVersion)
   return content === null ? null : { ...found, content }

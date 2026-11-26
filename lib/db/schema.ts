@@ -8,6 +8,7 @@ import type { HarnessInfo } from '@mikka/protocol/harness'
 import type { RunFailure } from '@mikka/protocol/run-failure'
 import type { DaemonUpdateFailure, SetupRecipe } from '@mikka/protocol/device'
 import type { CaptureContentType, CaptureKind, CaptureSource } from '@mikka/protocol/capture'
+import type { ArtifactEngine, RichArtifactType } from '@mikka/protocol/open-artifact'
 import type { AttentionLevel } from '@/lib/attention/judgment'
 import type { UserFactKind, UserFactState, MemorySourceKind, MemoryReviewStatus, MemoryScopeKind } from '@/lib/profile/kinds'
 import type { RunOrigin, RunOriginRef } from '@/lib/run-origin'
@@ -1243,6 +1244,12 @@ export const artifacts = pgTable('artifacts', {
   /** Immutable tenant; unresolved legacy artifacts remain quarantined. */
   workspaceId: uuid('workspaceId'),
   kind: text('kind').$type<ArtifactKind>().notNull(),
+  /** Unified catalog engine (`'native'` for Neon/R2 markdown+html, `'open_artifact'` for Cloudflare-hosted rich artifacts). */
+  engine: text('engine').$type<ArtifactEngine>().notNull().default('native'),
+  /** External document ID in Open Artifact host when `engine === 'open_artifact'`. */
+  externalId: text('externalId'),
+  /** Specific rich artifact type when populated (e.g. `docs`, `slides`, `design`, `whiteboard`, `sheets`, `data`, `motion`, `page`). */
+  artifactType: text('artifactType').$type<RichArtifactType>(),
   title: varchar('title', { length: 200 }).notNull(),
   /** The run that made it; null when an agent outside a run (OAuth) sent it. */
   runId: uuid('runId').references(() => agentRuns.id, { onDelete: 'set null' }),
@@ -1250,7 +1257,13 @@ export const artifacts = pgTable('artifacts', {
   latestVersion: integer('latestVersion').notNull().default(1),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
-}, table => [index('artifacts_user_idx').on(table.userId, table.updatedAt), index('artifacts_run_idx').on(table.runId)])
+}, table => [
+  index('artifacts_user_idx').on(table.userId, table.updatedAt),
+  index('artifacts_run_idx').on(table.runId),
+  uniqueIndex('artifacts_workspace_external_id_uidx')
+    .on(table.workspaceId, table.externalId)
+    .where(sql`${table.engine} = 'open_artifact' AND ${table.externalId} IS NOT NULL`),
+])
 
 export const artifactVersions = pgTable('artifact_versions', {
   /** Immutable author/resource/payer provenance; null means historical or external OAuth. */

@@ -119,6 +119,33 @@
       "sourceHash": "b0ea1cebbaf7184793fe8aaa359b6b10ed4bc9badf56e5615d22e52f272c6e94"
     },
     {
+      "path": "/mikka/api/artifacts/open-artifact/bridge",
+      "template": "/api/artifacts/open-artifact/bridge",
+      "source": "app/api/artifacts/open-artifact/bridge/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "ea6d2a83208fead1b3c2a6493f32fc195790f0710b1d6ab28b0e7b2c97f63491"
+    },
+    {
+      "path": "/mikka/api/artifacts/open-artifact/config",
+      "template": "/api/artifacts/open-artifact/config",
+      "source": "app/api/artifacts/open-artifact/config/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "ccf21bd44ac16f03a773fdde39cf84ae242bffa45a7262644dda31f2c039a55d"
+    },
+    {
+      "path": "/mikka/api/artifacts/open-artifact/wake",
+      "template": "/api/artifacts/open-artifact/wake",
+      "source": "app/api/artifacts/open-artifact/wake/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "64c518464db13ad6d24b3771d6b848c32d31ce677eeecac989af5eb17257bd9a"
+    },
+    {
       "path": "/mikka/api/artifacts/shared/[token]",
       "template": "/api/artifacts/shared/[token]",
       "source": "app/api/artifacts/shared/[token]/route.ts",
