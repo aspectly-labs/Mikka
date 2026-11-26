@@ -1,6 +1,6 @@
 /**
- * A bot's look is one of bot-avatars' eighteen bodies (libraries.dev/bots,
- * decision 2026-11-25-1200), each with its own colour. The hosted UI draws it;
+ * A bot's look is one of bot-avatars' eighteen bodies (libraries.dev/bots),
+ * each with its own colour. The hosted UI draws it;
  * this file only names the bodies so the API can check what it stores.
  */
 export const BOT_SHAPES = [
@@ -52,8 +52,8 @@ export type BotColor = (typeof BOT_COLORS)[number]
 export const DEFAULT_BOT_COLOR: BotColor = 'encre'
 
 /**
- * What a person can change about a bot's look besides its body (decision
- * 2026-11-25-1400): bot-avatars' own props. Every field left out is the body's
+ * What a person can change about a bot's look besides its body:
+ * bot-avatars' own props. Every field left out is the body's
  * default, so `{}` is the body as shipped.
  */
 export interface BotLook {

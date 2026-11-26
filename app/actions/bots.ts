@@ -158,7 +158,7 @@ export async function getWorkspaceBotDefaults(workspaceId?: string): Promise<Act
   return workspaceAction(async () => {
     const actor = await currentWorkspaceActor(workspaceId)
     const { personalRunDefaults } = await import('@/lib/model-order')
-    // 新建 Bot shows what the Bot will really use: the person's own 运行位置 and reasoning effort (decision 2026-11-25-1500).
+    // 新建 Bot shows what the Bot will really use: the person's own 运行位置 and reasoning effort, so the window never shows a default the Bot would not run with.
     const [options, personal] = await Promise.all([botDefaultOptions(actor.workspaceId), personalRunDefaults(pool, { ownerId: actor.userId, workspaceId: actor.workspaceId })])
     return { ...options, personal }
   })
