@@ -16,6 +16,9 @@ import { projectRepositoryKey, type EnvironmentConfiguration, type EnvironmentNe
 import { runAction } from '@/lib/action-error'
 import type { z } from 'zod'
 import { isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
+import { e2bMachineOptions, type E2BComputeSpec } from '@/lib/cloud-computer/e2b-template-pricing'
+import { isCloudEdition } from '@/lib/edition'
+import type { CloudTemplateKind } from '@/lib/cloud-template-models'
 import type { SecretDelivery } from '@/lib/secrets/delivery'
 
 export type EnvironmentView = { id: string; name: string; revision: number; configuration: EnvironmentConfiguration & { networkAccess: EnvironmentNetworkAccess }; instructions?: string; archived: boolean; defaultMachineSize: MachineSize | null
@@ -51,6 +54,7 @@ export type EnvironmentsView = {
   canCreatePersonal: boolean
   availableRepositories: EnvironmentAvailableRepository[]
   availableSecrets: EnvironmentAvailableSecret[]
+  e2bMachineOptions?: (E2BComputeSpec & { kind: CloudTemplateKind })[]
 }
 
 function repositoryLabel(key: string): string {
@@ -162,6 +166,7 @@ export async function listEnvironments(workspaceId?: string): Promise<Environmen
       canCreatePersonal: Boolean(member),
       availableRepositories,
       availableSecrets,
+      ...(isCloudEdition() ? { e2bMachineOptions: e2bMachineOptions() } : {}),
     }
   })
 }

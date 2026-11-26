@@ -1,7 +1,12 @@
+import type { PoolClient } from 'pg'
 import 'server-only'
+import { isCloudEdition } from '@/lib/edition'
+import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, verifyE2BAllocation,
+  prepareE2BProviderTime, isLegacyE2BThreadAllocation, recordE2BComputeSnapshot, e2bSnapshotCompute } from './e2b-compute-billing'
 import { bindE2BResource, e2bCreateAccount, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { environmentSnapshotScope, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { E2BKeyError } from '@/lib/secrets/flag'
 
 const options = (apiKey: string) => ({
   apiKey,
@@ -38,6 +43,7 @@ const filesystemSnapshotUnavailable = (error: unknown) => {
  * machine. Snapshots exist only on the owner's own key. */
 export const threadLifecycleProvider = {
   async findCreated(runId: string, workspaceId: string, operationId: string, ownerId: string): Promise<ThreadCreatedSandbox | null> {
+    if (await releaseInterruptedE2BCreation(ownerId, operationId)) return null
     const metadata = { application: 'mikka-thread', workspaceId, runId, operationId }
     const account = await e2bResourceAccount(ownerId, 'operation', operationId)
     const pages = Sandbox.list({ ...options(account.apiKey), limit: 2, query: { metadata, state: ['running', 'paused'] } })
@@ -47,9 +53,23 @@ export const threadLifecycleProvider = {
     if (found.length > 1 || pages.hasNext || found.some(item => Object.entries(metadata).some(([key, value]) => item.metadata[key] !== value)))
       throw new Error('Thread allocation identity unavailable')
     const item = found[0]
-    if (item) await bindE2BResource(ownerId, 'sandbox', item.sandboxId, account.scope)
-    return item ? { sandboxId: item.sandboxId, state: item.state, startedAt: item.startedAt.getTime(),
-      endAt: item.state === 'paused' ? null : item.endAt.getTime() } : null
+    if (!item) return null
+    const prepared = options(account.apiKey)
+    let state = item.state
+    if (await isLegacyE2BThreadAllocation(ownerId, workspaceId, runId, operationId, account.scope, item)) {
+      if (state === 'running') {
+        // An installation-owned historical sandbox must stop using compute
+        // until the next duly funded wake. Never debit this old interval.
+        const paused = await Sandbox.pause(item.sandboxId, { ...prepared, retries: 0 })
+        if (!paused) throw new E2BKeyError('e2b_unavailable', 'Historical thread pause was not confirmed')
+        state = 'paused'
+      }
+    } else {
+      await verifyE2BAllocation(ownerId, operationId, item.sandboxId, prepared, item)
+    }
+    await bindE2BResource(ownerId, 'sandbox', item.sandboxId, account.scope)
+    return { sandboxId: item.sandboxId, state, startedAt: item.startedAt.getTime(),
+      endAt: state === 'paused' ? null : item.endAt.getTime() }
   },
   async info(sandboxId: string, ownerId: string): Promise<ThreadProviderInfo> {
     try {
@@ -61,9 +81,23 @@ export const threadLifecycleProvider = {
       throw error
     }
   },
-  async keepAlive(sandboxId: string, ownerId: string, timeoutMs: number): Promise<void> {
-    const prepared = options((await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey)
-    await withE2BErrors(ownerId, false, () => Sandbox.setTimeout(sandboxId, timeoutMs, prepared))
+  async prepareKeepAlive(sandboxId: string, ownerId: string, timeoutMs: number, renew = true) {
+    const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
+    const prepared = options(account.apiKey)
+    const intent = await prepareE2BProviderTime(ownerId, sandboxId, timeoutMs, {
+      providerScope: account.scope,
+      inspect: () => withE2BErrors(ownerId, false, () => Sandbox.getInfo(sandboxId, prepared)),
+    }, renew)
+    return {
+      begin: intent.begin,
+      async apply(client: Pick<PoolClient, 'query'>) {
+        const applied = await intent.apply(client, duration => Sandbox.setTimeout(sandboxId, duration, {
+          ...prepared, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+        }))
+        return applied?.deadline ?? null
+      },
+      cancel: intent.cancel,
+    }
   },
   /** Snapshot the task's filesystem. The sandbox may be left paused by E2B;
    * the caller's pause is idempotent. */
@@ -78,6 +112,7 @@ export const threadLifecycleProvider = {
       info = await withE2BErrors(ownerId, false, () => Sandbox.createSnapshot(sandboxId, { ...prepared, name }))
     }
     await bindE2BResource(ownerId, 'snapshot', info.snapshotId, account.scope)
+    await recordE2BComputeSnapshot(ownerId, sandboxId, info.snapshotId)
     return { snapshotId: info.snapshotId, names: info.names }
   },
   /** Reconcile a snapshot whose create response was lost. Exact per-run name:
@@ -88,7 +123,10 @@ export const threadLifecycleProvider = {
     const pages = Sandbox.listSnapshots({ ...prepared, sandboxId, name })
     const rows: ThreadSnapshotInfo[] = []
     while (pages.hasNext) rows.push(...(await pages.nextItems(prepared)).map(item => ({ snapshotId: item.snapshotId, names: item.names })))
-    for (const row of rows) await bindE2BResource(ownerId, 'snapshot', row.snapshotId, account.scope)
+    for (const row of rows) {
+      await bindE2BResource(ownerId, 'snapshot', row.snapshotId, account.scope)
+      await recordE2BComputeSnapshot(ownerId, sandboxId, row.snapshotId)
+    }
     return rows
   },
   async deleteSnapshot(snapshotId: string, ownerId: string): Promise<boolean> {
@@ -98,15 +136,20 @@ export const threadLifecycleProvider = {
   /** Restore from a snapshot on the same owner's key. The snapshot is written
    * only by this module for this task's machine; no template-origin check is
    * applicable to an owner-created snapshot. */
-  async createFromSnapshot(snapshotId: string, operationId: string, metadata: Record<string, string>, ownerId: string, environmentSnapshot = false) {
+  async createFromSnapshot(snapshotId: string, operationId: string, metadata: Record<string, string>, ownerId: string, environmentTemplate?: string) {
     if (!snapshotIdPattern.test(snapshotId)) throw new Error('Thread filesystem snapshot unavailable')
-    const scope = environmentSnapshot ? environmentSnapshotScope() : (await e2bResourceAccount(ownerId, 'snapshot', snapshotId)).scope
+    const scope = environmentTemplate ? environmentSnapshotScope() : (await e2bResourceAccount(ownerId, 'snapshot', snapshotId)).scope
     const account = await e2bCreateAccount(ownerId, operationId, scope)
+    const saved = !environmentTemplate && isCloudEdition() ? await e2bSnapshotCompute(ownerId, snapshotId, scope) : null
+    if (!environmentTemplate && isCloudEdition() && !saved) throw new E2BKeyError('e2b_template_unavailable', 'E2B snapshot has no verified compute record')
+    const timeoutMs = await e2bCreationTimeout(ownerId, account.scope, operationId, environmentTemplate ?? saved?.templateId ?? '',
+      { workspaceId: metadata.workspaceId, runId: metadata.runId }, 15 * 60_000, saved?.price)
     const prepared = options(account.apiKey)
-    const sandbox = await withE2BErrors(ownerId, false, () => Sandbox.create(snapshotId, {
-      ...prepared, idempotencyKey: operationId, timeoutMs: 15 * 60_000, metadata,
+    const sandbox = await createPrepaidE2B(ownerId, operationId, () => withE2BErrors(ownerId, false, () => Sandbox.create(snapshotId, {
+      ...prepared, retries: 0, idempotencyKey: operationId, timeoutMs, metadata,
       lifecycle: { onTimeout: 'pause', autoResume: false },
-    }))
+    })))
+    await verifyE2BAllocation(ownerId, operationId, sandbox.sandboxId, prepared)
     await bindE2BResource(ownerId, 'sandbox', sandbox.sandboxId, account.scope)
     return sandbox
   },

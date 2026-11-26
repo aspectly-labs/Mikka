@@ -508,7 +508,8 @@ export async function getThreadSummary(issueId: string | null, runId: string) {
       : null
     return {
       cost: threadCost?.totals ?? null,
-      machine: machine ? { kind: machine.kind, size: location.machineSize, state: machine.state } : null,
+      machine: machine ? { kind: machine.kind, size: location.machineSize, state: machine.state,
+        ...(machine.cloud?.compute ? { e2bCompute: machine.cloud.compute } : {}) } : null,
       repository: location.repository,
       branch: location.branch,
       context: { ...context, windowTokens },

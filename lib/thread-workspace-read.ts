@@ -24,7 +24,8 @@ export interface ThreadWorkspace {
    */
   checkout: { runId: string; repoId: string; key: string | null; name: string | null } | null
   /** Where the live run runs (readThreadMachinePlacement): its kind, state, size and, for a sandbox, when it started. */
-  machine: { kind: ThreadMachine['kind']; state: ThreadMachine['state']; size: MachineSize | null; name: string | null; startedAt: string | null; endedAt: string | null } | null
+  machine: { kind: ThreadMachine['kind']; state: ThreadMachine['state']; size: MachineSize | null; name: string | null; startedAt: string | null; endedAt: string | null
+    e2bCompute?: NonNullable<ThreadMachine['cloud']>['compute'] } | null
   /** The Environment frozen on the live run at admission (agentDefinition.projectExecution.environment). */
   environment: {
     id: string; name: string; runtime: string
@@ -102,6 +103,7 @@ export async function readThreadWorkspace(
     // A computer's own name; a sandbox has none.
     name: placement.machine.name,
     startedAt: placement.machine.cloud?.createdAt ?? null, endedAt: placement.machine.cloud?.endedAt ?? null,
+    ...(placement.machine.cloud?.compute ? { e2bCompute: placement.machine.cloud.compute } : {}),
   } : null
 
   return {
