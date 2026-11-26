@@ -123,7 +123,12 @@ test('task provider targets the authenticated person and workspace, with no stal
 })
 
 test('task placement defaults preserve the legacy workspace and explicit Cloudflare choices', async () => {
-  const { selectTaskProvider, taskComputeSku } = await import('./cloud-computer/task-provider-admission')
+  const {
+    DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS,
+    configuredTaskMachinePlanLimits,
+    selectTaskProvider,
+    taskComputeSku,
+  } = await import('./cloud-computer/task-provider-admission')
   const previous = { node: process.env.NODE_ENV, flags: process.env.MIKKA_FLAG_OVERRIDES, workspaces: process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES }
   try {
     process.env.NODE_ENV = 'test'
@@ -140,6 +145,29 @@ test('task placement defaults preserve the legacy workspace and explicit Cloudfl
     assert.deepEqual(await selectTaskProvider(outside, false), { provider: 'cloudflare', source: 'remote' })
     assert.deepEqual(taskComputeSku('e2b', { cloudflare: 'standard-3' }, false), { provider: 'e2b', size: 'medium' })
     assert.deepEqual(taskComputeSku('cloudflare', { e2b: 'large' }, false), { provider: 'cloudflare', size: 'standard-4' })
+
+    // #3330: Mikka Cloud defaults block Free and align Pro ($20) with Capy's 4 vCPU / 16 GiB ceiling.
+    assert.deepEqual(DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS, {
+      free: null,
+      pro: { vcpu: 4, ramGib: 16 },
+      enterprise: { vcpu: 8, ramGib: 32 },
+    })
+    assert.equal(configuredTaskMachinePlanLimits({ MIKKA_EDITION: 'community' }), null)
+    assert.deepEqual(configuredTaskMachinePlanLimits({ MIKKA_EDITION: 'cloud' }), DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS)
+    assert.deepEqual(
+      configuredTaskMachinePlanLimits({
+        MIKKA_EDITION: 'cloud',
+        MIKKA_TASK_MACHINE_PLAN_LIMITS: JSON.stringify({ free: null, pro: { vcpu: 2, ramGib: 8 } }),
+      }),
+      { free: null, pro: { vcpu: 2, ramGib: 8 } },
+    )
+    assert.equal(taskComputeSku('e2b', { e2b: 'small' }, false, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.free), null)
+    assert.equal(taskComputeSku('cloudflare', { cloudflare: 'standard-1' }, false, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.free), null)
+    assert.deepEqual(taskComputeSku('e2b', { e2b: 'large' }, false, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.pro), { provider: 'e2b', size: 'large' })
+    assert.deepEqual(taskComputeSku('e2b', { e2b: 'ultra' }, false, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.pro), { provider: 'e2b', size: 'large' })
+    assert.deepEqual(taskComputeSku('e2b', { e2b: 'ultra' }, false, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.enterprise), { provider: 'e2b', size: 'ultra' })
+    assert.deepEqual(taskComputeSku('cloudflare', { cloudflare: 'standard-4-16' }, true, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.pro), { provider: 'cloudflare', size: 'standard-4-16' })
+    assert.deepEqual(taskComputeSku('cloudflare', { cloudflare: 'standard-4-16' }, false, DEFAULT_CLOUD_TASK_MACHINE_PLAN_LIMITS.pro), { provider: 'cloudflare', size: 'standard-4' })
   } finally {
     for (const [key, value] of [['NODE_ENV', previous.node], ['MIKKA_FLAG_OVERRIDES', previous.flags], ['MIKKA_CLOUDFLARE_TASK_WORKSPACES', previous.workspaces]] as const) {
       if (value === undefined) delete process.env[key]

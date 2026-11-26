@@ -183,11 +183,12 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     if (threadPreferredSize) frozen.preferredMachineSize = threadPreferredSize
     const effectiveBaseBranch = effectiveExecution ? effectiveExecution.baseBranch : retainSource ? prior.baseBranch : projectExecution.baseBranch
     const earlierPlacement = prior?.agentDefinition?.taskMachine
+    const planLimit = await taskMachinePlanLimit(actor.workspaceId)
+    if (planLimit === null) throw new ComputerError(409, 'Task machine size is unavailable on this workspace plan.')
     if (repository.remoteUrl) {
       const { provider, source } = await selectTaskProvider(actor, sponsored, earlierPlacement ? 'cloudflare' : undefined)
       if (source === 'remote') delete frozen.allowLocalRecovery
       const requestedSize = threadPreferredSize ?? settings.machineSize ?? effectiveExecution?.environment?.defaultMachineSize
-      const planLimit = await taskMachinePlanLimit(actor.workspaceId)
       const compute = taskComputeSku(provider, {
         cloudflare: requestedSize, e2b: threadPreferredSize ? undefined : effectiveExecution?.environment?.e2bMachineSize ?? undefined,
       }, verifiedMachineQuota(), planLimit)
