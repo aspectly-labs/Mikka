@@ -165,13 +165,13 @@ test('provider-selected task runs keep their pin and restore the same workspace 
   await pool.query(`INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,500,'purchased','test',$3)`,
     [randomUUID(), workspaceId, randomUUID()])
   const actor = { userId: ownerId, workspaceId }
-  const enqueue = async (issueId: string, requestId = randomUUID()) => {
+  const enqueue = async (issueId: string, requestId = randomUUID(), readOnly = false) => {
     const sourceEventId = requestId
     await pool.query(`INSERT INTO coordinator_events(id,"userId","botId","issueId",kind,"dedupeKey",payload,"deliveredAt")
       VALUES($1,$2,$3,$4,'user_message',$5,'{"taskDestination":{"kind":"cloud","provider":"cloudflare"}}',now()) ON CONFLICT (id) DO NOTHING`,
     [sourceEventId, ownerId, botId, issueId, 'fixture:' + sourceEventId])
     return (await queueCloudRun(pool, actor, { botId, issueId, agentId, deviceRepoId, sourceEventId, idempotencyKey: requestId,
-      title: 'Portable checkout fixture', body: '', model: creditsModel, credits: { model: creditsModel } })).runId
+      title: 'Portable checkout fixture', body: '', model: creditsModel, credits: { model: creditsModel }, readOnly })).runId
   }
   const claim = async (machine: { sandboxId: string; deviceId: string; runId: string }, provider: Provider) => {
     const dataDir = registrationDirs.get(services.guest(provider, machine.sandboxId))
@@ -226,7 +226,7 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     const id = await enqueue(await seedIssue(pool, ownerId, workspaceId))
     assert.equal((await row(id)).snapshotId, 'cloudflare-task-v1')
   })
-  await t.test('Factory handoff publishes the previous stage archive before switching providers', async () => {
+  await t.test('Factory handoff waits for review expiry before archiving and switching providers', async () => {
     const issueId = await seedIssue(pool, ownerId, workspaceId)
     const { environment } = await seedRunProjectResources(pool, { ownerId, workspaceId, issueId, repositoryKey, runtime: 'cloud', harness: 'codex' })
     assert.ok(environment)
@@ -234,7 +234,8 @@ test('provider-selected task runs keep their pin and restore the same workspace 
     variant('e2b')
     const first = await enqueue(issueId)
     await ensureThreadMachine(pool, actor, first)
-    await daemon(await row(first), 'e2b', 'write', null)
+    const sourceMachine = await row(first)
+    await daemon(sourceMachine, 'e2b', 'write', null)
     await pool.query(`UPDATE agent_runs SET status='succeeded',report='{"safePoint":{"session":"exited"}}',"startedAt"=now(),"finishedAt"=now() WHERE id=$1`, [first])
     assert.equal((await sourceAt(issueId)).rowCount, 0)
 
@@ -247,6 +248,16 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       SELECT $7, id, 'execute', 1, 1, 'running', $8, 'Factory handoff fixture' FROM task`,
     [randomUUID(), ownerId, workspaceId, botId, issueId, randomUUID(), randomUUID(), next])
     const { handoffFactoryCloudStage } = await import('../lib/factory/cloud-stage-handoff')
+    const review = randomUUID()
+    const expiresAt = new Date(Date.now() + 60_000)
+    await pool.query(`INSERT INTO coding_review_sessions (id,kind,name,"taskId","runId","ownerId","workspaceId","deviceId","repoId","deviceTokenId","bindingId","sandboxId","machineEpoch","machineOperationId","credentialKind","credentialId","expiresAt",provider)
+      VALUES ($1,'terminal','',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'session',$13,$14,'e2b')`,
+    [review, issueId, first, ownerId, workspaceId, sourceMachine.deviceId, sourceMachine.repoId, randomUUID(), 'a'.repeat(64),
+      sourceMachine.sandboxId, sourceMachine.epoch, sourceMachine.operationId, randomUUID(), expiresAt])
+    assert.deepEqual(await handoffFactoryCloudStage(pool, actor, first, next), { retryAt: expiresAt.getTime() })
+    assert.equal((await row(next)).status, 'queued')
+    assert.equal((await sourceAt(issueId)).rowCount, 0)
+    await pool.query(`UPDATE coding_review_sessions SET "createdAt"=clock_timestamp()-interval '1 minute',"expiresAt"=clock_timestamp() WHERE id=$1`, [review])
     assert.equal(await handoffFactoryCloudStage(pool, actor, first, next), true)
     const pointer = (await sourceAt(issueId)).rows[0]
     assert.equal(pointer.sourceRunId, first)
@@ -297,7 +308,8 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       assert.equal(from === 'e2b' ? services.e2b.e2b.requests.length : services.cloudflare.length, sourceCalls)
       assert.deepEqual((await sourceAt(issueId)).rows[0], pointer)
 
-      const next = await enqueue(issueId)
+      const readOnly = to === 'cloudflare'
+      const next = await enqueue(issueId, randomUUID(), readOnly)
       assert.deepEqual((await row(next)).agentDefinition.taskCompute, { provider: to, size: sizes[to] })
       await ensureThreadMachine(pool, actor, next)
       const restored = await row(next)
@@ -307,7 +319,12 @@ test('provider-selected task runs keep their pin and restore the same workspace 
       assert.equal(snapshot.state, 'building')
       assert.equal((await pool.query('SELECT "buildRunId" FROM environment_snapshots WHERE id=$1', [snapshot.id])).rows[0].buildRunId, next)
       assert.deepEqual(services.boots.at(-1), { provider: to, runId: next })
-      const { portableTaskWorkspace: receipt } = await claim(restored, to)
+      const assignment = await claim(restored, to)
+      if (readOnly) {
+        assert.equal(assignment.policy?.readOnly, true)
+        assert.equal((await row(next)).lifecycle.portableWorkspaceCapture, undefined)
+      }
+      const { portableTaskWorkspace: receipt } = assignment
       assert.deepEqual(receipt, { size: Number(pointer.size), sha256: pointer.sha256, headSha: pointer.headSha })
       assert.deepEqual(restored.agentDefinition.projectExecution.environment, original.agentDefinition.projectExecution.environment)
       await daemon(restored, to, 'verify', receipt)

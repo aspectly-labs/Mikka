@@ -1,5 +1,5 @@
 import { handoffStage, finishQuestionWakeStep, questionWakeStillOwns } from './steps'
-import { getWorkflowMetadata } from 'workflow'
+import { getWorkflowMetadata, sleep } from 'workflow'
 import { maintainUntilCap } from '../thread-machine/lifecycle'
 import type { QuestionWake } from '@/lib/factory/questions/wake'
 
@@ -7,7 +7,12 @@ export async function factoryCloudStageHandoff(actor: { userId: string; workspac
   'use workflow'
   const workflowRunId = questionWake ? getWorkflowMetadata().workflowRunId : undefined
   try {
-    if (!await handoffStage(actor, previousRunId, runId, providerContinuation, questionWake, workflowRunId)) return
+    let handoff = await handoffStage(actor, previousRunId, runId, providerContinuation, questionWake, workflowRunId)
+    while (typeof handoff === 'object') {
+      await sleep(new Date(handoff.retryAt))
+      handoff = await handoffStage(actor, previousRunId, runId, providerContinuation, questionWake, workflowRunId)
+    }
+    if (!handoff) return
   } catch (error) {
     if (questionWake && workflowRunId) await finishQuestionWakeStep(actor, runId, questionWake, workflowRunId, true)
     throw error

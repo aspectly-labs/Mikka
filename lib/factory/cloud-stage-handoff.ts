@@ -63,9 +63,10 @@ export async function handoffFactoryCloudStage(pool: Pool, actor: Actor, previou
             await assertRunProjectResources(client, current)
             const destination = admittedTaskCompute(current.agentDefinition)?.sku
             if (destination && !current.retryOf && !current.questionContinuation) {
-              const { rows: [source] } = await client.query<{ epoch: number; sandboxId: string; snapshotId: string; size: string | null }>(`
+              const { rows: [source] } = await client.query<{ epoch: number; sandboxId: string; snapshotId: string; size: string | null; hardwareVerified: boolean }>(`
                 SELECT m.epoch,m."sandboxId",m."snapshotId",
-                  COALESCE(m.lifecycle->>'sponsoredSize', l.size, r."agentDefinition"#>>'{taskCompute,size}') AS size
+                  COALESCE(m.lifecycle->>'sponsoredSize', l.size, r."agentDefinition"#>>'{taskCompute,size}') AS size,
+                  (l."operationId" IS NOT NULL OR COALESCE(r."agentDefinition"#>'{taskCompute,requireVerifiedHardware}'='true'::jsonb,false)) AS "hardwareVerified"
                 FROM thread_machines m
                 JOIN agent_runs r ON r.id=m."runId" AND r."userId"=m."ownerId"
                 JOIN device_repos source_repo ON source_repo.id=m."repoId" AND source_repo."userId"=m."ownerId"
@@ -75,7 +76,9 @@ export async function handoffFactoryCloudStage(pool: Pool, actor: Actor, previou
                   AND m.state<>'ended' AND m."sandboxId" IS NOT NULL
                   AND source_repo."repoPath"=target_repo."repoPath" AND target_repo."remoteUrl" IS NOT NULL
               `, [previousRunId, actor.userId, actor.workspaceId, current.issueId, current.deviceRepoId])
-              if (source && (allocatedTaskProvider(source) !== destination.provider || source.size && source.size !== destination.size))
+              const requiresHardware = destination.provider === 'e2b' && current.agentDefinition?.taskCompute?.requireVerifiedHardware === true
+              if (source && (allocatedTaskProvider(source) !== destination.provider ||
+                (source.size !== null && source.size !== destination.size) || (requiresHardware && !source.hardwareVerified)))
                 archiveSource = { epoch: source.epoch, sandboxId: source.sandboxId }
             }
             // Same-runtime retention keeps the original destination lock.
@@ -93,7 +96,7 @@ export async function handoffFactoryCloudStage(pool: Pool, actor: Actor, previou
       if (previousRunId && archiveSource) {
         const { parkThreadMachine } = await import('../cloud-computer/thread-machines')
         const parked = await parkThreadMachine(pool, actor, previousRunId, undefined, undefined, undefined, archiveSource)
-        if (parked?.reviewHeldUntil) throw new Error('Previous stage workspace is held for review')
+        if (parked?.reviewHeldUntil) return { retryAt: parked.reviewHeldUntil }
       }
       const started = await factoryAutomaticRuntime.start(actor, runId)
       if (started?.state === 'unavailable' && started.reason === 'project_resources') return false
