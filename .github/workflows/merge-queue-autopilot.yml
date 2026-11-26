@@ -33,14 +33,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          INTEGRATION_BRANCH: ${{ vars.MIKKA_INTEGRATION_BRANCH }}
         run: |
           set -euo pipefail
           [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          integration_branch="${INTEGRATION_BRANCH:-claude/affectionate-einstein-s235cb}"
           prs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA/pulls?per_page=100")
-          pr=$(jq -c --arg head "$HEAD_SHA" --arg branch "$HEAD_BRANCH" --arg repo "$GITHUB_REPOSITORY" '
+          # Integration promotion PRs have their own fail-closed freeze and Ready child PR gates
+          # in integration-to-main-promotion.yml; keep a single automated enqueue path for them.
+          pr=$(jq -c --arg head "$HEAD_SHA" --arg branch "$HEAD_BRANCH" --arg repo "$GITHUB_REPOSITORY" --arg integration_branch "$integration_branch" '
             [flatten[] | select(.state == "open" and .base.ref == "main" and .head.repo.full_name == $repo)] as $open
             | $open[] as $pr
             | select($pr.head.sha == $head and $pr.head.ref == $branch and ($pr.draft | not))
+            | select($pr.head.ref != $integration_branch)
             | select(all($open[]; .number == $pr.number or (.head.ref | startswith("batch/") | not)))
             | {id: $pr.node_id, number: $pr.number}
           ' <<< "$prs")
