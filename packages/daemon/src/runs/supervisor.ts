@@ -1082,7 +1082,7 @@ export class RunSupervisor {
     }
     const branch = assignment.pushBranch
     const base = await this.deps.baseRef(assignment)
-    if (!branch || !pushDecision(runPolicy(assignment.policy)).push) return base
+    if (assignment.freshEnvironmentCheckout || !branch || !pushDecision(runPolicy(assignment.policy)).push) return base
     try {
       return await withRunGitCredentials(assignment, runPaths(this.deps.adapterStateDir ?? join(tmpdir(), "mikka-run-state"), runId).privateDir,
         env => this.deps.worktrees.fetchBranch(
@@ -1294,7 +1294,9 @@ export class RunSupervisor {
       run.observedModel = observedModel
       this.push(runId, { kind: "run", patch: { state: "running", sessionId, observedModel } })
     }
-    const startupDirectory = assignment.projectEnvironment?.startupRepositories?.length ? '.mikka-repositories-' + randomUUID() : null
+    const startupDirectory = assignment.projectEnvironment?.startupRepositories?.length
+      ? '.mikka-repositories-' + (assignment.projectEnvironment.fromSnapshot ? assignment.projectEnvironment.id : randomUUID())
+      : null
     const taskEnv = startupDirectory ? { ...assignment.taskEnv, ENVIRONMENT_REPOSITORIES: startupDirectory } : assignment.taskEnv
     const baseOptions = {
       traceContext,
@@ -1409,7 +1411,8 @@ export class RunSupervisor {
       continued ??
       (await this.stage(runId, "worktree", async () => {
         const start = await this.startPoint(runId, repo, assignment)
-        if (assignment.projectEnvironment?.fromSnapshot && !runPolicy(assignment.policy).readOnly) {
+        if (assignment.projectEnvironment?.fromSnapshot && !runPolicy(assignment.policy).readOnly &&
+          (!startupDirectory || !assignment.projectEnvironment.setup?.command || assignment.projectEnvironment.setup.maintenance?.trim())) {
           const prepared = await this.deps.worktrees.createFromEnvironmentSnapshot(runId, repo.path, start, Boolean(assignment.projectEnvironment.setup?.maintenance?.trim()))
           if (prepared) {
             usedEnvironmentSnapshot = true

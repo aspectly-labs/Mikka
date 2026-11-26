@@ -63,6 +63,11 @@ test('Environment repository/policy admission on real PostgreSQL', { skip: !dbUr
     await connection.query('insert into workspace_task_legacy_repository_branches ("issueId","workspaceId","repositoryKey","baseBranch") values ($1,$2,$3,$4)', [issueId, workspace.id, repoA, 'release'])
     assert.equal((await admission()).baseBranch, 'release')
     assert.equal((await admission()).environment, null)
+    const botId = randomUUID()
+    await connection.query('insert into bots (id,"workspaceId","ownerId",name,"environmentId") values($1,$2,$3,$4,$5)', [botId, workspace.id, owner, 'Migration Bot', environmentId])
+    assert.equal((await resources.withProjectExecution({ ...request, botId }, async snapshot => snapshot)).baseBranch, 'release')
+    await withRunProjectExecution({ ...request, botId, baseBranch: 'release' }, undefined, async () => undefined)
+
   })
   await t.test('the task\'s environment, its repository rows and the Workspace policy form the admission', async () => {
     await assignTaskEnvironment(connection, owner, workspace.id, [issueId], environmentId)

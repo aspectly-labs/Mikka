@@ -36,7 +36,7 @@ export async function cleanupAccountConnections(ownerId: string, database: Pool,
   blocked.push(...await cleanupAccountRuntimes(ownerId, database, { job, blockerErrors }))
   try {
     const { cleanupOwnerEnvironmentSnapshots } = await import('@/lib/project-resources/environment-snapshot-build')
-    await cleanupOwnerEnvironmentSnapshots(ownerId)
+    await cleanupOwnerEnvironmentSnapshots(ownerId, soloWorkspaceIds)
   } catch (error) {
     blocked.push('cloud_snapshot_cleanup_required')
     blockerErrors.cloud_snapshot_cleanup_required = cleanupErrorIdentifier(error)

@@ -14,7 +14,7 @@ type Lease = { operationId: string; ownerId: string; workspaceId: string; provid
   templateId: string; size: string; hourlyMicroUsd: number; chunkIndex: number }
 type Target = { workspaceId: string; runId: string | null }
 
-async function paidTimeout(lease: Lease, target: Target, requestedMs: number, renew = true, creation = false): Promise<number> {
+async function paidTimeout(lease: Lease, target: Target, requestedMs: number, renew = true, creation = false, beforeRenew?: () => Promise<unknown>): Promise<number> {
   const claim = renew ? (await pool.query<{ chunkIndex: number; pendingRunId: string | null }>(
     `UPDATE e2b_compute_leases SET "pendingAt"=coalesce("pendingAt",greatest(now(),"paidUntil")),
         "pendingRunId"=CASE WHEN "pendingAt" IS NULL THEN $2 ELSE "pendingRunId" END
@@ -23,6 +23,7 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
         AND NOT EXISTS (SELECT 1 FROM agent_runs WHERE id=$2 AND "stopRequestedAt" IS NOT NULL)
       RETURNING "chunkIndex","pendingRunId"`, [lease.operationId, target.runId, E2B_RENEW_LEAD_MS, creation])).rows[0] : undefined
   if (claim) {
+    await beforeRenew?.()
     const index = claim.chunkIndex + 1
     const funded = await fundE2BChunk({ ownerId: lease.ownerId, workspaceId: target.workspaceId, runId: claim.pendingRunId,
       operationId: lease.operationId, index, size: lease.size, hourlyMicroUsd: lease.hourlyMicroUsd })
@@ -97,14 +98,14 @@ export async function verifyE2BAllocation(ownerId: string, operationId: string, 
   await recordE2BComputeSandbox(ownerId, operationId, sandboxId)
 }
 
-export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requestedMs: number, renew = true): Promise<number> {
+export async function e2bSandboxTimeout(ownerId: string, sandboxId: string, requestedMs: number, renew = true, beforeRenew?: () => Promise<unknown>): Promise<number> {
   if (!isCloudEdition()) return requestedMs
   const { rows: [lease] } = await pool.query<Lease & {runId: string | null}>(`SELECT l.*,
     (SELECT "runId" FROM thread_machines WHERE "ownerId"=l."ownerId" AND "workspaceId"=l."workspaceId"
       AND "sandboxId"=l."sandboxId" AND state<>'ended' ORDER BY "lastActiveAt" DESC LIMIT 1) AS "runId"
     FROM e2b_compute_leases l WHERE l."ownerId"=$1 AND l."sandboxId"=$2`,[ownerId,sandboxId])
   if (!lease) throw unavailable()
-  return paidTimeout(lease, lease, requestedMs, renew)
+  return paidTimeout(lease, lease, requestedMs, renew, false, beforeRenew)
 }
 
 export async function recordE2BComputeSnapshot(ownerId: string, sandboxId: string, snapshotId: string) {

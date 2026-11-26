@@ -25,6 +25,7 @@ test('the environment migration moves unambiguous Project data onto task 环境 
         [id, ws, name, JSON.stringify({ runtime: 'any', harness: 'any', variables: {}, secretIds: [], repositoryKeys }), owner])
       return id
     }
+    const sharedProjects: Array<{ id: string; workspaceId: string }> = []
     const project = async (bindings: { environmentId: string; isDefault: boolean }[], repositories: { key: string; baseBranch: string | null; environmentId: string | null; isPrimary: boolean }[], tasks: string[]) => {
       const id = randomUUID()
       await client.query(`INSERT INTO workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
@@ -33,6 +34,7 @@ test('the environment migration moves unambiguous Project data onto task 环境 
       for (const repo of repositories) await client.query('INSERT INTO workspace_project_repositories("projectId","workspaceId","repositoryKey","baseBranch","environmentId","isPrimary") VALUES($1,$2,$3,$4,$5,$6)',
         [id, ws, repo.key, repo.baseBranch, repo.environmentId, repo.isPrimary])
       for (const issueId of tasks) await client.query('INSERT INTO workspace_project_tasks("issueId","projectId","workspaceId") VALUES($1,$2,$3)', [issueId, id, ws])
+      sharedProjects.push({ id, workspaceId: ws })
       return id
     }
     const [defaulted, onlyBound, ambiguous, unbound, kept] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()]
@@ -50,6 +52,17 @@ test('the environment migration moves unambiguous Project data onto task 环境 
     // A person's own choice made after the release is never overwritten by a replay.
     await client.query('INSERT INTO workspace_task_environments("issueId","workspaceId","environmentId","updatedBy") VALUES($1,$2,$3,$4)', [kept, ws, e2, owner])
 
+    const withheld = await environment('Existing shared environment', [])
+    const privateTask = randomUUID()
+    await project([{ environmentId: withheld, isDefault: true }], [{ key: repoC, baseBranch: 'private', environmentId: null, isPrimary: true }], [privateTask])
+    sharedProjects.pop()
+    const hundred = Array.from({length:100}, (_, i) => 'v2/github.com/acme/migration-' + i)
+    const full = await environment('Full', hundred)
+    await project([{ environmentId: full, isDefault: true }], [
+      { key: hundred[0], baseBranch: 'release', environmentId: null, isPrimary: true },
+      { key: repoC, baseBranch: 'overflow', environmentId: null, isPrimary: false },
+    ], [])
+    await client.query("SELECT set_config('mikka.shared_project_backfill',$1,true)",[JSON.stringify(sharedProjects)])
     const sql = await migration()
     await client.query(sql)
     const taskEnvironments = async () => Object.fromEntries((await client.query<{ issueId: string; environmentId: string; updatedBy: string | null }>(
@@ -58,6 +71,7 @@ test('the environment migration moves unambiguous Project data onto task 环境 
       [defaulted]: [e1, null],
       [onlyBound]: [e2, null],
       [kept]: [e2, owner],
+      [privateTask]: [withheld, null],
     }, 'the default, else the only bound environment; ambiguous and unbound tasks get none')
     assert.deepEqual((await client.query('select "repositoryKey","baseBranch" from workspace_task_legacy_repository_branches where "workspaceId"=$1 and "issueId"=$2',[ws,unbound])).rows,
       [{ repositoryKey: repoA, baseBranch: 'old' }])
@@ -69,6 +83,11 @@ test('the environment migration moves unambiguous Project data onto task 环境 
     ] }, 'start rows follow repositoryKeys and take the Project branch and 主仓库; the revision is unchanged')
     assert.deepEqual((await repositories(e2)).repositories, [{ key: repoC, clone: 'demand', baseBranch: 'feature-x', primary: false }],
       'an environment that admitted any repository keeps its bound repositories as on-demand rows')
+    assert.deepEqual((await repositories(withheld)).repositories, [])
+    assert.equal((await client.query('SELECT "baseBranch" FROM workspace_task_legacy_repository_branches WHERE "issueId"=$1', [privateTask])).rows[0].baseBranch, 'private')
+    const fullRows = (await repositories(full)).repositories
+    assert.equal(fullRows.length, 100)
+    assert.equal(fullRows[0].baseBranch, 'release')
     assert.deepEqual((await repositories(e3a)).repositories, [])
     assert.deepEqual((await repositories(e4)).repositories, [
       { key: repoA, clone: 'start', baseBranch: null, primary: false },

@@ -1,7 +1,7 @@
 # Factory 交接必须有可视证据
 
 - Date: 2026-11-08
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-26-0210](2026-11-26-0210-acceptance-from-benchmark.md) (rule 6: evidence is shown in the PR tab, not an acceptance-report Artifact)
 - Source: Alex，在软件工厂验收证据对齐 Warp Factories 的实现任务中要求：
   「每个实现任务必须产出至少一段可视证据，默认录视频」「没有可视证据的候选不能进入『交给你』：服务端硬性拒绝，任务停在『阻塞』并写明原因，不允许用『未验证』顶替交接。」
 - Rule: —

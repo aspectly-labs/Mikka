@@ -1,16 +1,18 @@
 /**
- * Settings sections and item-level backend availability, in the order of
- * 2026-11-21 Figma page 1508:2 (Capy's four groups).
+ * Settings sections and item-level backend availability. Groups (resolved-settings R-S06, 2026-11-25):
+ * 个人 · an untitled connections & compute group · Agent · 工作区 (Capy's catalog `sJ`).
  * The sidebar, URL parsing and the page bodies all read this single source of truth.
  */
-export type SettingsGroup = 'personal' | 'agent' | 'review' | 'workspace'
+export type SettingsGroup = 'personal' | 'compute' | 'agent' | 'review' | 'workspace'
 
-export const SETTINGS_GROUPS = ['personal', 'agent', 'review', 'workspace'] as const satisfies readonly SettingsGroup[]
+/** `compute` has no title in the sidebar, only a divider (Capy, Cursor, Devin). */
+export const SETTINGS_GROUPS = ['personal', 'compute', 'agent', 'review', 'workspace'] as const satisfies readonly SettingsGroup[]
 
 export type SettingsSectionId =
-  | 'preferences' | 'appearance' | 'account' | 'security' | 'notifications' | 'shortcuts'
-  | 'models' | 'environments' | 'mcp' | 'connections' | 'developer' | 'secrets' | 'logins' | 'computers'
-  | 'instructions' | 'team-skills' | 'threads' | 'git' | 'memory'
+  | 'preferences' | 'appearance' | 'account' | 'security' | 'notifications' | 'shortcuts' | 'privacy'
+  | 'models' | 'environments' | 'mcp' | 'connections' | 'integrations' | 'developer' | 'secrets' | 'logins' | 'computers'
+  | 'instructions' | 'team-skills' | 'threads' | 'git' | 'agent-configs' | 'agent-permissions' | 'memory'
+  | 'identity'
   | 'review-repositories' | 'review-config'
   | 'general' | 'organization' | 'issue-states' | 'members' | 'teams'
   | 'billing' | 'usage' | 'activity' | 'permissions' | 'audit' | 'cloud'
@@ -31,10 +33,12 @@ export const SETTINGS_SECTION_STATUS: Readonly<Record<SettingsSectionId, Setting
   security: 'available',
   notifications: 'available',
   shortcuts: 'available',
+  privacy: 'available',
   models: 'available',
   environments: 'available',
   mcp: 'available',
   connections: 'available',
+  integrations: 'available',
   developer: 'available',
   secrets: 'available',
   logins: 'available',
@@ -43,10 +47,13 @@ export const SETTINGS_SECTION_STATUS: Readonly<Record<SettingsSectionId, Setting
   'team-skills': 'available',
   threads: 'available',
   git: 'available',
+  'agent-configs': 'available',
+  'agent-permissions': 'available',
   memory: 'available',
   'review-repositories': 'skipped',
   'review-config': 'skipped',
   general: 'available',
+  identity: 'available',
   organization: 'available',
   'issue-states': 'available',
   members: 'available',
@@ -159,35 +166,49 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'security', group: 'personal', title: 'Security' },
   { id: 'notifications', group: 'personal', title: 'Notifications' },
   { id: 'shortcuts', group: 'personal', title: 'Shortcuts' },
+  // R-S05: export, shared links, archived threads (ChatGPT Data controls, Claude Privacy, Codex Data & Privacy).
+  { id: 'privacy', group: 'personal', title: 'Data and privacy' },
   // Personal secrets stay one click from an old link; the sidebar entry is Secrets & Credentials.
   { id: 'logins', group: 'personal', title: 'Secrets and logins', sidebar: false },
-  // Agent & Compute (models, cloud environments, local devices, secrets, MCP, integrations, instructions, skills, threads, git)
-  { id: 'models', group: 'agent', title: 'Models and subscriptions' },
-  { id: 'environments', group: 'agent', title: 'Cloud environments' },
-  { id: 'computers', group: 'agent', title: 'Devices' },
-  { id: 'secrets', group: 'agent', title: 'Secrets & Credentials' },
-  // Direct `?section=mcp` links open the unified Plugins page on its Custom MCP tab.
-  { id: 'mcp', group: 'agent', title: 'Custom MCP', sidebar: false },
-  { id: 'connections', group: 'agent', title: 'Plugins' },
+  // Connections & compute: no group title (R-S06; Capy's untitled rows, Cursor's and Devin's dividers).
+  { id: 'models', group: 'compute', title: 'Models and subscriptions' },
+  { id: 'environments', group: 'compute', title: 'Cloud environments' },
+  { id: 'computers', group: 'compute', title: 'Devices' },
+  { id: 'secrets', group: 'compute', title: 'Secrets & Credentials' },
+  // R-S19: accounts Mikka talks through (GitHub, Linear, Slack, Telegram) apart from the tools an Agent calls.
+  { id: 'integrations', group: 'compute', title: 'Integrations' },
+  { id: 'connections', group: 'compute', title: 'Connectors and MCP' },
+  // Direct `?section=mcp` links open 连接器与 MCP on its Custom MCP tab.
+  { id: 'mcp', group: 'compute', title: 'Custom MCP', sidebar: false },
+  // API keys act as you or a service account (Capy lists API with the connections).
+  { id: 'developer', group: 'compute', title: 'API' },
+  // Agent
   { id: 'instructions', group: 'agent', title: 'Instructions' },
   { id: 'team-skills', group: 'agent', title: 'Skills' },
   { id: 'threads', group: 'agent', title: 'Threads' },
   { id: 'git', group: 'agent', title: 'Git and pull requests' },
+  // R-S20: tasks and Bots both pick one, so it is its own entry, not part of 指令.
+  { id: 'agent-configs', group: 'agent', title: 'Agent configurations' },
+  // R-S25: approval policy and templates (Codex Configuration, Claude Code permissions).
+  { id: 'agent-permissions', group: 'agent', title: 'Agent permissions', adminOnly: true },
   { id: 'memory', group: 'agent', title: 'Memory' },
   // Review (withheld)
   { id: 'review-repositories', group: 'review', title: 'Review repositories' },
   { id: 'review-config', group: 'review', title: 'Review config' },
-  // Workspace (team / workspace administration, API, activity, billing, governance)
+  // Workspace (team / workspace administration, activity, billing, identity)
   { id: 'general', group: 'workspace', title: 'Workspace general' },
+  // R-S27: domains, single sign-on, required two-step verification (Capy's order: right after General).
+  { id: 'identity', group: 'workspace', title: 'Identity and access', adminOnly: true },
   { id: 'issue-states', group: 'workspace', title: 'Task states' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
-  { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true },
-  { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
-  { id: 'developer', group: 'workspace', title: 'API' },
-  { id: 'activity', group: 'workspace', title: 'Activity' },
+  // R-S02: 团队权限 is gone; each policy sits on the page of what it controls. Old links open Agent 权限.
+  { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true, sidebar: false },
   { id: 'billing', group: 'workspace', title: 'Billing' },
   { id: 'usage', group: 'workspace', title: 'Usage' },
+  { id: 'activity', group: 'workspace', title: 'Activity' },
+  { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
+  // R-S01: shown only once the workspace is bound to an organization or on the enterprise plan.
   { id: 'organization', group: 'workspace', title: 'Organization' },
   { id: 'cloud', group: 'workspace', title: 'Mikka Cloud' },
   { id: 'referrals', group: 'personal', title: 'Referrals' },
@@ -207,18 +228,16 @@ export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = RAW_SECTIONS.map
 /** Section ids from before the four groups. Old links open the page that now holds the content. */
 const LEGACY: Record<string, SettingsSectionId> = {
   profile: 'account',
-  integrations: 'connections',
   devices: 'computers',
   workspace: 'general',
   bots: 'models',
-  privacy: 'account',
 }
 
 /**
  * What only a team has: what is between people (decision 2026-11-02-0203). A
  * personal workspace has every setting of the workspace itself and none of these.
  */
-export const TEAM_ONLY_SECTIONS: ReadonlySet<SettingsSectionId> = new Set(['organization', 'members', 'teams', 'permissions', 'audit'])
+export const TEAM_ONLY_SECTIONS: ReadonlySet<SettingsSectionId> = new Set(['organization', 'members', 'teams', 'permissions', 'audit', 'identity'])
 
 export type SettingsVisibility = {
   admin: boolean
@@ -255,6 +274,8 @@ export function isSettingsSectionParam(section: string): boolean {
 export function resolveSettingsSection(pathname: string, section: string | null | undefined): SettingsSectionId {
   if (pathname.endsWith('/settings/members')) return 'members'
   if (pathname.endsWith('/settings/teams')) return 'teams'
+  // 团队权限's policies moved (R-S02); an old link opens Agent 权限, which holds its templates.
+  if (section === 'permissions') return 'agent-permissions'
   if (section && openable.has(section)) return section as SettingsSectionId
   if (section && Object.hasOwn(LEGACY, section)) return LEGACY[section]
   return 'preferences'

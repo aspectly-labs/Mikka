@@ -1,12 +1,14 @@
+-- migrate: reviewed-data #3320 Create the environment snapshot receipt table and indexes, modifying zero existing rows.
 -- target: DATABASE_URL
--- Provider images are owned by individual E2B accounts. Keep the receipt even
+-- Provider images belong to an installation. Keep the receipt even
 -- after an environment is removed so its durable expiry job can delete it.
 CREATE TABLE IF NOT EXISTS environment_snapshots (
   id uuid PRIMARY KEY,
   "workspaceId" uuid NOT NULL,
   "environmentId" uuid NOT NULL,
   revision integer NOT NULL CHECK (revision > 0),
-  "userId" text NOT NULL,
+  "providerScope" text NOT NULL,
+  "requestedBy" text,
   "templateKind" text NOT NULL CHECK ("templateKind" IN ('codex','claude')),
   "templateId" text NOT NULL,
   "workerSha" text NOT NULL,
@@ -19,7 +21,7 @@ CREATE TABLE IF NOT EXISTS environment_snapshots (
   "expiresAt" timestamptz NOT NULL DEFAULT now() + interval '7 days'
 );
 CREATE INDEX IF NOT EXISTS environment_snapshots_lookup ON environment_snapshots
-  ("workspaceId","environmentId","userId","templateKind",revision,"createdAt" DESC);
+  ("workspaceId","environmentId","providerScope","templateKind",revision,"createdAt" DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS environment_snapshots_building ON environment_snapshots
-  ("workspaceId","environmentId",revision,"userId","templateKind","templateId","workerSha")
+  ("workspaceId","environmentId",revision,"providerScope","templateKind","templateId","workerSha")
   WHERE state='building';

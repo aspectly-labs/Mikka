@@ -32,12 +32,26 @@
 - **C-08 具体。** 能写数字、日期、对象就写，不用「出错」「异常」「失败」兜底。
   兜底只用于确实无法归因的情况。
 - **C-09 线程，不写对话。** 中文界面里线程、Bot 的聊天、目录和新建入口一律叫「线程」，不写「对话」
-  （Alex，2026-11-15）；群聊特指群聊时仍叫「群聊」。只有「对话框」（dialog box）保留这两个字；
+  （Alex，2026-11-15）；群聊是加了成员的线程，只在指出多人时叫「群聊」，入口写「添加成员」，不写「新建群聊」
+  （[2026-11-26-0110](decisions/2026-11-26-0110-pages-environments-from-benchmark.md)）。只有「对话框」（dialog box）保留这两个字；
   「会话」只指登录会话。英文照 `glossary.md`。
 - **C-10 状态条与信息密度预算（Design System v2）。** 照 ChatGPT / Codex 与 Claude Code 标准（[`design-system.md`](design-system.md) §5，[2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)）：
   - 额度、限流、模型不可用、离线等非阻塞提示用**单行状态条**（40–44px）：2–5 字状态标题 + 同行简短元信息（如重置时间）+ **最多 1 个主操作按钮** + 可选关闭或 `…` 次级菜单；不放段落、不放开关、不堆 4–6 个按钮。
   - 输入框的模型胶囊只显示模型名（受限时可加小圆点），不把整句额度提示拼进胶囊里。
   - 审批或提问卡片底部最多 2–3 个控件；原始错误堆栈、参数和 ID 一律折叠在 `详情` 内，界面绝不泄露原始 UUID、枚举 key 或错位语言分隔符（英文禁用中文顿号 `、`）。
+- **C-11 标签只放标签，值只放值。** 标签写名称或动作，值写数据，各自不加别的（Alex，2026-11-25；
+  来源见「来源」表，[2026-11-26-0200](decisions/2026-11-26-0200-best-practice-review-copy.md)）：
+  - **标签是 1–3 个词**（中文一般 2–6 字）的名词或动词短语，不写句子，不带句号、冒号，不加「一个」「的」这类虚词；
+    不写「将会」「用于」「可以」这类说明。
+  - **不加括号注释**：写 `模型`，不写 `模型（用于新线程）`；写 `Claude Sonnet`，不写 `Claude Sonnet（推荐）`。
+    只有两种例外：可选字段末尾的 `（选填）` / `(optional)`；第一次出现的缩写或术语的全称。单位放进输入框后缀，
+    「推荐」「默认」用徽章或次级文字，复数用 ICU `plural`，不写 `(s)`。
+  - **不复述旁边已经显示的信息**：标题、分组名、同一行已显示的对象，不在标签、值、帮助文字或 tooltip 里再说一遍
+    （行里已有仓库名，值就不再写「仓库：」或再写一遍仓库）；tooltip 不重复按钮文字。
+  - **解释分三档**：完成操作**必需**的（格式、限制、后果、去哪里找）常显，放在字段下一句帮助文字（不带句号）或错误
+    文字里，不放 tooltip、不放占位符；少数人需要的补充放 tooltip；其余不写。需要解释界面怎么用，先改界面。
+  - **先看对标**：写一处文案前，先看 Capy / Codex（再 ChatGPT、Claude、Cursor、Devin、Perplexity）同一处怎么写；
+    它们那里没有这段字，就不加。
 
 ## 错误状态
 
@@ -93,6 +107,23 @@
 | C-06 | GitHub Primer（use the same terms as the UI that triggered it） |
 | C-07 | Microsoft（present tense for a state that still exists） |
 | C-08 | Shopify Polaris（specific, exact numbers and dates）；Material 3（explain consequences neutrally） |
+| C-11 标签短、不成句、不带句号或冒号 | [Polaris Form layout](https://polaris-site-prod-kit.shopify.prod.shopifyapps.com/components/layout-and-structure/form-layout)（"Labels are not help text … Short and succinct (1–3 words)"）；[NN/g UI copy](https://www.nngroup.com/articles/ui-copy/)（"no more than 2–4 words. Avoid overexplaining"）；[Microsoft Windows writing style](https://learn.microsoft.com/en-us/windows/apps/design/style/writing-style)（"Don't end text for buttons, radio buttons, labels, or checkboxes with a period"）；[GOV.UK](https://www.gov.uk/service-manual/design/writing-for-user-interfaces)（"input field labels are sentence case, but not punctuated"）；[Material 2 Writing](https://m2.material.io/design/communication/writing.html)（"Skip colons after labels"）；[Atlassian](https://atlassian.design/foundations/content/language-and-grammar)（"Avoid articles in buttons, labels"） |
+| C-11 不加括号注释 | [Elastic EUI](https://eui.elastic.co/docs/content/writing/guidelines)（"Don't … add parentheses ()"，"Don't: Use (s), a colon after labels, or parenthetical statements"）；[GitLab Pajamas](https://design.gitlab.com/content/punctuation)（parentheses "Use only to define acronyms or jargon … Avoid other uses"）。例外 `（选填）`：[GOV.UK Question pages](https://design-system.service.gov.uk/patterns/question-pages/)（"add ‘(optional)’ to the labels of optional fields"）与 Polaris 相同 |
+| C-11 不复述 | [Elastic EUI](https://eui.elastic.co/docs/content/writing/guidelines)（"Don't repeat what's already been said or state the obvious"）；Polaris 帮助文字（"Avoid repeating the field label"）；[NN/g Tooltip guidelines](https://www.nngroup.com/articles/tooltip-guidelines/)（tooltip 重复按钮文字 "repetitive and unnecessary"）；[Apple HIG Writing](https://developer.apple.com/design/human-interface-guidelines/writing)（"“Favorites” conveys the same message as “Your Favorites”"，"Check each word to be sure it needs to be there"） |
+| C-11 解释分三档 | [NN/g Tooltip guidelines](https://www.nngroup.com/articles/tooltip-guidelines/)（"field requirements, shouldn’t be in a tooltip … Important information should always be on the page"；"If you can’t think of particularly helpful content, don’t offer a tooltip"）；[GOV.UK text input](https://design-system.service.gov.uk/components/text-input/)（hint text "relevant to the majority of users … a single short sentence, without any full stops"）；[GOV.UK](https://www.gov.uk/service-manual/design/writing-for-user-interfaces)（"Fix the interface so it does not need explaining"）；[Material 2](https://m2.material.io/design/communication/writing.html)（"Communicate only essential details … Sometimes the most effective UI contains no text at all"） |
+
+## 写文案时用的 skill
+
+写或审 UI 文案时按顺序用这些 skill；它们与本文件冲突时以本文件为准。
+
+| Skill | 用来做什么 |
+|---|---|
+| `unslop`（[`.claude/skills/unslop/`](../../.claude/skills/unslop/SKILL.md) 第 4 节 Copy 与 `references/signs.md` 的 Copy） | 必用。短标签、标签和按钮不带句号、不用感叹号、问候标题和 hype 词 |
+| `kubai-design-tips` 的 `notes/design-system-pass.md` 第 5 节（`mikka-hosted-ui/.claude/skills/kubai-design-tips/`） | 必用（整屏或整页文案收敛时）。删掉重复界面已显示内容的文字；少用的帮助移进 tooltip 或内联提示 |
+| `design:ux-copy`（插件，会话里有就用） | CTA、确认框、空状态的结构。它的 "Human / empathetic / celebratory" 语气让位于 C-01、C-03 |
+
+`interface-design:design-deslop` 只管视觉，没有文案规则；`mobbin:plain-writing` 只用于 Mobbin skill 写给人的报告；
+`writing-for-agents` 用于 AGENTS.md 和 skill。三者都不用于 UI 文案。
 
 ## 历史文案复核记录
 
@@ -145,12 +176,16 @@
 - C-03 道歉和感叹（「抱歉」「对不起」「请稍等」「请稍候」、`sorry`、`oops`）。
 - C-09 中文值里的「对话」（「对话框」除外），由 `pnpm i18n:check`（`scripts/check-i18n.mjs`）拦截。
 - C-10 状态条按钮预算与原始 UUID/占位符泄露，由 `mikka-hosted-ui/scripts/copy-budget.test.mjs` 静态拦截。
+- C-11 标签形状（棘轮）：标签类 key（以 `Button` / `Label` / `Title` / `Heading` / `Tab` / `Cta` 结尾，`Tooltip`、`Placeholder`
+  不算）去掉 ICU 参数后，不以句号结尾，不含括号注释（`（选填）` / `（可选）` / `(optional)` 放行）。规则之前就有的条目记在
+  `scripts/check-copy-baseline.json`，只对新出现的失败；修好一条就删掉它的基线行。测试：`scripts/check-copy.test.mjs`。
 
 不检查：
 
 - 完整句里的「请」该不该保留：取决于组件里有没有按钮，按 C-04 人工判断。
 - 英文缩写（`couldn't`、`can't`、`doesn't`）。
 - 状态行有没有给出下一步（第 3 类），审查时人工核对。
+- C-11 的复述、标签里的说明性句子、帮助文字该不该常显，审查时人工核对（独立截图审查也要对照 C-11）。
 
 ## 尚未收敛
 

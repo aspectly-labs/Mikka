@@ -26,9 +26,10 @@ const ownerOf = async (workspaceId: string, id: string) => {
 export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget) {
   const owner = await ownerOf(workspaceId, id)
   const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
-  base.timeoutMs = await e2bSandboxTimeout(owner, id, base.timeoutMs)
   const request = runtimeRequestOptions(budget)
   const boundedSignal = signal && request.signal ? AbortSignal.any([signal, request.signal]) : signal ?? request.signal
+  base.timeoutMs = await e2bSandboxTimeout(owner, id, base.timeoutMs, true,
+    () => withE2BErrors(owner, false, () => Sandbox.getInfo(id, { ...base, ...request, signal: boundedSignal })))
   return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
 }
 
