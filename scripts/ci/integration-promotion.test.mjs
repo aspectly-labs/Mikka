@@ -71,11 +71,16 @@ test('merge-queue-autopilot excludes integration promotion PRs while keeping nor
 
 test('promotion workflow parses cleanly as YAML with four isolated jobs and strict security boundaries', () => {
   const parsed = yaml.load(promotionWorkflow)
+  assert.deepEqual(Object.keys(parsed.on), ['workflow_dispatch'],
+    'promotion workflow must be on-demand workflow_dispatch only (no background schedule cron)')
+  assert.equal(parsed.on.workflow_dispatch.inputs.dry_run.default, true,
+    'workflow_dispatch must fail closed to dry_run=true by default')
   assert.deepEqual(Object.keys(parsed.jobs), ['plan', 'auto-sync', 'verify-overlay-pairing', 'promote'])
   assert.match(parsed.env.PROBE_DOCKER_IMAGE, /^node:24\.22\.1-trixie@sha256:[0-9a-f]{64}$/)
 
   const planEval = parsed.jobs.plan.steps.find(step => step.id === 'eval')
   assert.ok(planEval)
+  assert.match(planEval.run, /dry_run="true"/)
   assert.match(planEval.run, /branches\/\$encoded_branch/)
   assert.match(planEval.run, /sync_pr_includes_base/)
   assert.match(planEval.run, /jq -er '\.draft \| booleans \| tostring'/)
