@@ -289,7 +289,7 @@ test('operator admission binds the real OIDC producer before any private credent
   assert.equal(operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'verify'}).action, 'verify')
   assert.equal(operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'deploy'}).action, 'deploy')
   assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'remove'}))
-  for (const action of ['inspect', 'provision', 'deploy', 'verify']) {
+  for (const action of ['inspect', 'provision', 'deploy', 'verify', 'enable']) {
     assert.deepEqual(
       operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:action, WORLD_ENVIRONMENT:'production'}),
       {operation:'open-artifact-host', action, target:'production'},
