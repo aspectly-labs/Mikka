@@ -115,25 +115,35 @@ export async function deleteTaskComment(input: TaskCommentRef) {
     const allowed = author ? await mayWrite(tx, user, task) : await workspaceAdmin(user.id, task.workspaceId)
     if (!allowed) return { error: 'taskCommentDeleteForbidden' as const }
     const deleted = deleteThreadMessage(doc, located, user.id, at)
-    await forgetCommentReactions(tx, taskId, deleted.messageIds)
+    await forgetCommentReactions(tx, taskId, threadId, deleted.messageIds)
     if (!author) await recordAudit(tx, { workspaceId: task.workspaceId, actor: { type: 'user', id: user.id, name: user.name || user.email },
       action: 'task.comment_deleted', target: { type: 'task', id: taskId, label: task.issuedIdentifier } })
     return { deleted: deleted.result, threadRemoved: deleted.threadRemoved }
   })
 }
 
-type ReactionRow = { messageId: string; emoji: string; count: number; reacted: boolean; users: TaskCommentReaction['users'] }
+type ReactionRow = { threadId: string; messageId: string; emoji: string; count: number; reacted: boolean; users: TaskCommentReaction['users'] }
 
 /** Reactions on a task's comments (or these messages), grouped by emoji in the order each was first given. */
-async function readReactions(executor: Pick<Transaction, 'execute'>, taskId: string, viewerId: string, messageIds?: readonly string[]) {
-  const { rows } = await executor.execute<ReactionRow>(sql`SELECT r."messageId", r.emoji, count(*)::int AS count, bool_or(r."userId"=${viewerId}) AS reacted,
+async function readReactions(executor: Pick<Transaction, 'execute'>, taskId: string, viewerId: string, ref?: { threadId: string; messageId: string }) {
+  const { rows } = await executor.execute<ReactionRow>(sql`SELECT r."threadId", r."messageId", r.emoji, count(*)::int AS count, bool_or(r."userId"=${viewerId}) AS reacted,
       json_agg(json_build_object('id', u.id, 'name', u.name, 'image', u.image) ORDER BY r."createdAt", u.id) AS users
     FROM task_comment_reactions r JOIN "user" u ON u.id=r."userId"
-    WHERE r."taskId"=${taskId} ${messageIds ? sql`AND r."messageId" = ANY(${sql.param([...messageIds])}::text[])` : sql``}
-    GROUP BY r."messageId", r.emoji ORDER BY r."messageId", min(r."createdAt"), r.emoji`)
-  const result: Record<string, TaskCommentReaction[]> = {}
-  for (const row of rows) (result[row.messageId] ??= []).push({ emoji: row.emoji, count: row.count, reacted: row.reacted, users: row.users })
-  return result
+    WHERE r."taskId"=${taskId} ${ref ? sql`AND r."threadId"=${ref.threadId} AND r."messageId"=${ref.messageId}` : sql``}
+    GROUP BY r."threadId", r."messageId", r.emoji ORDER BY r."threadId", r."messageId", min(r."createdAt"), r.emoji`)
+  const threads = new Map<string, Map<string, TaskCommentReaction[]>>()
+  const byId = new Map<string, TaskCommentReaction[] | null>()
+  for (const row of rows) {
+    const thread = threads.get(row.threadId) ?? new Map<string, TaskCommentReaction[]>()
+    threads.set(row.threadId, thread)
+    const entries = thread.get(row.messageId) ?? []
+    thread.set(row.messageId, entries)
+    entries.push({ emoji: row.emoji, count: row.count, reacted: row.reacted, users: row.users })
+    byId.set(row.messageId, byId.has(row.messageId) && byId.get(row.messageId) !== entries ? null : entries)
+  }
+  const reactions = Object.fromEntries([...byId].filter((entry): entry is [string, TaskCommentReaction[]] => entry[1] !== null))
+  const reactionsByThread = Object.fromEntries([...threads].map(([id, messages]) => [id, Object.fromEntries(messages)]))
+  return { reactions, reactionsByThread }
 }
 
 /**
@@ -149,19 +159,20 @@ export async function setTaskCommentReaction(input: SetTaskCommentReactionInput)
     if (!located || isDeletedMessage(located.message)) return { error: 'taskCommentNotFound' as const }
     if (!await mayWrite(tx, user, task)) return { error: 'taskCommentReadOnly' as const }
     // One writer per comment at a time keeps its distinct-emoji cap exact.
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`task-comment-reactions:${taskId}:${messageId}`}, 0))`)
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`task-comment-reactions:${taskId}:${threadId}:${messageId}`}, 0))`)
     let changed: number | null = 0
     if (reacted) {
       const { rows: [present] } = await tx.execute<{ distinct: number; mine: boolean }>(sql`SELECT count(DISTINCT emoji)::int AS distinct, bool_or(emoji=${emoji}) AS mine
-        FROM task_comment_reactions WHERE "taskId"=${taskId} AND "messageId"=${messageId}`)
+        FROM task_comment_reactions WHERE "taskId"=${taskId} AND "threadId"=${threadId} AND "messageId"=${messageId}`)
       if (!present?.mine && (present?.distinct ?? 0) >= TASK_COMMENT_REACTIONS_MAX) return { error: 'taskCommentReactionLimit' as const }
       changed = (await tx.execute(sql`INSERT INTO task_comment_reactions ("taskId","threadId","messageId","userId",emoji) VALUES (${taskId},${threadId},${messageId},${user.id},${emoji})
         ON CONFLICT DO NOTHING`)).rowCount
     } else {
-      changed = (await tx.execute(sql`DELETE FROM task_comment_reactions WHERE "taskId"=${taskId} AND "messageId"=${messageId} AND "userId"=${user.id} AND emoji=${emoji}`)).rowCount
+      changed = (await tx.execute(sql`DELETE FROM task_comment_reactions WHERE "taskId"=${taskId} AND "threadId"=${threadId} AND "messageId"=${messageId} AND "userId"=${user.id} AND emoji=${emoji}`)).rowCount
     }
     if (changed) await taskCommentsChanged(tx, taskId)
-    return { reactions: (await readReactions(tx, taskId, user.id, [messageId]))[messageId] ?? [] }
+    const { reactions } = await readReactions(tx, taskId, user.id, { threadId, messageId })
+    return { reactions: Object.hasOwn(reactions, messageId) ? reactions[messageId] : [] }
   })
   return result
 }
@@ -181,6 +192,6 @@ export async function readTaskCommentState(taskId: string): Promise<TaskCommentS
       await workspaceAdmin(user.id, workspaceId),
       await readReactions(tx, issue.id, user.id),
     ]
-    return { viewerId: user.id, features: TASK_COMMENT_FEATURES, canComment, canModerate, quickReactions: TASK_COMMENT_QUICK_REACTIONS, reactions }
+    return { viewerId: user.id, features: TASK_COMMENT_FEATURES, canComment, canModerate, quickReactions: TASK_COMMENT_QUICK_REACTIONS, ...reactions }
   })
 }

@@ -9,7 +9,7 @@ import * as store from '@/lib/task-comments/store'
 // does, app/actions/collaboration.ts): edit, delete and reactions, as Linear,
 // Jira, GitHub and Asana offer them. Rules: lib/task-comments/contract.ts.
 
-/** Who may do what on the task's comments, and every comment's reactions (by message id). */
+/** Who may do what on the task's comments, and every comment's reactions (by thread and message id). */
 export async function getTaskCommentState(taskId: string): Promise<ActionResult<TaskCommentState>> {
   return runAction(() => store.readTaskCommentState(taskId))
 }

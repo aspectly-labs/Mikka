@@ -74,7 +74,9 @@ export type TaskCommentState = {
   /** The viewer is a workspace admin: may delete anyone's comment. */
   canModerate: boolean
   quickReactions: readonly string[]
-  /** By message id. */
+  /** Every comment's reactions, keyed by the thread and message that own them. */
+  reactionsByThread: Record<string, Record<string, TaskCommentReaction[]>>
+  /** Compatibility view for message ids whose reactions belong to one thread. */
   reactions: Record<string, TaskCommentReaction[]>
 }
 

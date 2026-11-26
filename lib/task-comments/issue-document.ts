@@ -1,28 +1,15 @@
 import 'server-only'
-import { getSchema } from '@tiptap/core'
-import { Highlight } from '@tiptap/extension-highlight'
-import { TaskItem, TaskList } from '@tiptap/extension-list'
-import { TextAlign } from '@tiptap/extension-text-align'
-import { StarterKit } from '@tiptap/starter-kit'
+import { serverIssueSchema } from '@/lib/issue-editor-schema-snapshot'
 import { prosemirrorJSONToYXmlFragment } from '@tiptap/y-tiptap'
-import { CommentMark, THREADS_FIELD } from '@/lib/rich-text/comment-mark'
+import { THREADS_FIELD } from '@/lib/rich-text/comment-mark'
 import type { ThreadMessage, ThreadRecord } from '@/lib/rich-text/comments-model'
 import type { JSONContent } from '@tiptap/core'
 import * as Y from 'yjs'
 
-const schema = getSchema([
-  StarterKit.configure({ undoRedo: false, heading: { levels: [1, 2, 3] }, link: { openOnClick: false, defaultProtocol: 'https' } }),
-  TaskList,
-  TaskItem.configure({ nested: true }),
-  TextAlign.configure({ types: ['heading', 'paragraph'] }),
-  Highlight.configure({ multicolor: true }),
-  CommentMark,
-])
-
 export function loadIssueDocument(state: string | null, content: JSONContent) {
   const doc = new Y.Doc()
   if (state) Y.applyUpdate(doc, Buffer.from(state, 'base64'))
-  else prosemirrorJSONToYXmlFragment(schema, content, doc.getXmlFragment('default'))
+  else prosemirrorJSONToYXmlFragment(serverIssueSchema(), content, doc.getXmlFragment('default'))
   return doc
 }
 

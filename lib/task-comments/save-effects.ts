@@ -1,8 +1,9 @@
 import { sql } from 'drizzle-orm'
 import type { JSONContent } from '@tiptap/core'
 import { armDueTimerAfterCommit } from '@/lib/due-timer'
+import { isDeletedMessage } from './contract'
 import type { ThreadRecord } from '@/lib/task-discussion'
-import { liveMessageIds, referencedTaskFileIds } from './document'
+import { referencedTaskFileIds } from './document'
 
 // What saving a task document changes beside the document itself: reactions of
 // comments that are gone, and which inline files are still referenced. Called in
@@ -13,9 +14,9 @@ type Executor = { execute: (query: ReturnType<typeof sql>) => Promise<{ rows: un
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Removes the reactions of these comments (deleted, or taken out of the document). */
-export async function forgetCommentReactions(tx: Executor, taskId: string, messageIds: readonly string[]) {
+export async function forgetCommentReactions(tx: Executor, taskId: string, threadId: string, messageIds: readonly string[]) {
   if (!messageIds.length) return
-  await tx.execute(sql`DELETE FROM task_comment_reactions WHERE "taskId"=${taskId} AND "messageId" = ANY(${sql.param([...messageIds])}::text[])`)
+  await tx.execute(sql`DELETE FROM task_comment_reactions WHERE "taskId"=${taskId} AND "threadId"=${threadId} AND "messageId" = ANY(${sql.param([...messageIds])}::text[])`)
 }
 
 /**
@@ -45,8 +46,12 @@ export async function syncTaskInlineFileReferences(tx: Executor, taskId: string,
 /** A document save's effects on reactions and inline files, from what it held before and after. */
 export async function discussionSaveEffects(tx: Executor, taskId: string,
   before: { content: JSONContent | null; threads: readonly ThreadRecord[] }, after: { content: JSONContent | null; threads: readonly ThreadRecord[] }) {
-  const live = liveMessageIds(after.threads)
-  await forgetCommentReactions(tx, taskId, [...liveMessageIds(before.threads)].filter(id => !live.has(id)))
+  const surviving = new Map(after.threads.map(thread => [thread.id, new Set(thread.messages.filter(message => !isDeletedMessage(message)).map(message => message.id))]))
+  for (const thread of before.threads) {
+    const live = surviving.get(thread.id)
+    const removed = thread.messages.filter(message => !isDeletedMessage(message) && !live?.has(message.id))
+    await forgetCommentReactions(tx, taskId, thread.id, removed.map(message => message.id))
+  }
   const filesBefore = referencedTaskFileIds(before.content, before.threads)
   const filesAfter = referencedTaskFileIds(after.content, after.threads)
   if (filesBefore.length !== filesAfter.length || filesAfter.some(id => !filesBefore.includes(id))) await syncTaskInlineFileReferences(tx, taskId, filesAfter)
