@@ -105,8 +105,20 @@ const STRING_NORM_METHODS = new Set([
   'toLocaleUpperCase',
 ])
 
-const PREFILTER_RE =
-  /['"`](?:openai|anthropic|google|vertex|bedrock|gemini|xai|deepseek|mistral|cohere|groq|openrouter|together|fireworks|azure|perplexity|moonshot|kimi|qwen|zhipu|minimax|free|pro|enterprise|starter|max|team_free|team_pro|business|hobby|scale)['"`]/
+const PREFILTER_STEM =
+  '(?:openai|anthropic|google|vertex|bedrock|gemini|xai|deepseek|mistral|cohere|groq|openrouter|together|fireworks|azure|perplexity|moonshot|kimi|qwen|zhipu|minimax|free|pro|enterprise|starter|max|team_free|team_pro|business|hobby|scale)'
+
+const PREFILTER_QUOTED_RE = new RegExp(`['"\`]${PREFILTER_STEM}['"\`]`, 'i')
+const PREFILTER_OBJ_KEY_RE = new RegExp(
+  `(?<![.\\w$])${PREFILTER_STEM}\\s*(?::|[,}]|\\([^)]*\\)\\s*(?::[^{;]+)?\\{|\\/[/*])`,
+  'i',
+)
+
+const PREFILTER_RE = {
+  test(source) {
+    return PREFILTER_QUOTED_RE.test(source) || (source.includes('{') && PREFILTER_OBJ_KEY_RE.test(source))
+  },
+}
 
 function unwrapExpr(node) {
   let current = node

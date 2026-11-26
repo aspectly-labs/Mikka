@@ -98,20 +98,13 @@ const BUSINESS_PROPERTY_KEY_RE =
 const BUSINESS_STRING_VALUE_RE =
   /(?:^\s*\$\d+(?:\.\d{1,2})?\s*$|\$\d+\.\d{2}\b|\$\d+(?:\.\d+)?\s*\/\s*(?:mo|month|yr|year|seat|user)\b|\b(?:claude-|gpt-|gemini-)[a-z0-9._-]+)/i
 
-const PREFILTER_ASSERT_RE =
-  /\b(?:assert(?:\s*\(|\s*\.\s*(?:equal|strictEqual|deepEqual|deepStrictEqual|notEqual|notStrictEqual|match|ok))|expect\s*\()/
+const PREFILTER_ASSERT_RE = /\b(?:assert|expect)\b/
 
-const PREFILTER_TAINTED_VAR_RE =
-  /\b(?:const|let|var)\s+[A-Za-z_$][\w$]*(?:expected|mock|fake|stub|dummy|hardcoded|price|prices|pricing|plan|plans|tier|tiers|limit|limits|quota|quotas|catalog|catalogue|model|models|trial|promo|discount|offer|offers|billing|credit|credits|entitlement|entitlements|seat|seats|fee|fees|rate|rates)[\w$]*\s*(?::[^=\n]+)?=\s*(?:['"`\d+-]|true\b|false\b|null\b|\{|\[|Object\.freeze|\([^)]*\)\s*=>|function\b)/i
-
-const PREFILTER_TAINTED_FN_RE =
-  /\bfunction\s+[A-Za-z_$][\w$]*(?:expected|mock|fake|stub|dummy|hardcoded|price|prices|pricing|plan|plans|tier|tiers|limit|limits|quota|quotas|catalog|catalogue|model|models|trial|promo|discount|offer|offers|billing|credit|credits|entitlement|entitlements|seat|seats|fee|fees|rate|rates)[\w$]*\s*\(/i
-
-const PREFILTER_BUSINESS_PROP_RE =
-  /\b(?:price|prices|monthlyPrice|annualPrice|yearlyPrice|priceCents|amountCents|plan|planId|planName|tier|subscriptionTier|limit|quota|maxInFlight|approvalTemplateLimit|activeHumanLimit|trialDays|promoDays|discount|discountPercent|discountRate|offer|catalog|credits|seats|seatLimit)\s*:\s*(?:['"`\d+-]|true\b|false\b|\{|\[)/
+const PREFILTER_TAINTED_TOKEN_RE =
+  /\b[A-Za-z0-9_$]*(?:expected|mock|fake|stub|dummy|hardcoded|price|prices|pricing|plan|plans|tier|tiers|limit|limits|quota|quotas|catalog|catalogue|model|models|trial|promo|discount|offer|offers|billing|credit|credits|entitlement|entitlements|seat|seats|fee|fees|rate|rates|amountCents|maxInFlight)[A-Za-z0-9_$]*\b/i
 
 const PREFILTER_BUSINESS_LITERAL_RE =
-  /(?:=|=>|\breturn\b|:)\s*(?:Object\.freeze\s*\(\s*)?[[{(\s]*['"`](?:[^'"`\n]*(?:\$\d+\.\d{2}\b|\$\d+(?:\.\d+)?\s*\/\s*(?:mo|month|yr|year|seat|user)\b|\b(?:claude-|gpt-|gemini-)[a-z0-9._-]+)|\s*\$\d+(?:\.\d{1,2})?\s*)['"`]/i
+  /(?:['"`]\s*\$\d+(?:\.\d{1,2})?\s*['"`]|\$\d+\.\d{2}\b|\$\d+(?:\.\d+)?\s*\/\s*(?:mo|month|yr|year|seat|user)\b|\b(?:claude-|gpt-|gemini-)[a-z0-9._-]+)/i
 
 const EQUALITY_OPS = new Set([
   ts.SyntaxKind.EqualsEqualsEqualsToken,
@@ -618,24 +611,27 @@ function blockExercisesRealCode(bodyNode, productionBindings, trivialHelpers) {
   return exercisesReal
 }
 
-function getTestBlockCallback(node) {
+const TEST_BLOCK_NAMES = new Set(['test', 'it'])
+const SUITE_BLOCK_NAMES = new Set(['describe', 'suite'])
+
+function getNamedCallCallback(node, names) {
   if (!ts.isCallExpression(node)) return null
   const callee = unwrapExpr(node.expression)
   if (!callee) return null
 
-  let isTestCall = false
-  if (ts.isIdentifier(callee) && (callee.text === 'test' || callee.text === 'it')) {
-    isTestCall = true
+  let matched = false
+  if (ts.isIdentifier(callee) && names.has(callee.text)) {
+    matched = true
   } else if (
     ts.isPropertyAccessExpression(callee)
     && ts.isIdentifier(callee.expression)
-    && (callee.expression.text === 'test' || callee.expression.text === 'it')
+    && names.has(callee.expression.text)
     && (callee.name.text === 'only' || callee.name.text === 'todo' || callee.name.text === 'skip')
   ) {
-    isTestCall = true
+    matched = true
   }
 
-  if (!isTestCall) return null
+  if (!matched) return null
   for (let i = node.arguments.length - 1; i >= 0; i -= 1) {
     const arg = unwrapExpr(node.arguments[i])
     if (arg && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg))) {
@@ -679,12 +675,7 @@ export const noConstantStubTestsRule = Object.freeze({
   mightMatch(source) {
     return (
       PREFILTER_ASSERT_RE.test(source)
-      && (
-        PREFILTER_TAINTED_VAR_RE.test(source)
-        || PREFILTER_TAINTED_FN_RE.test(source)
-        || PREFILTER_BUSINESS_PROP_RE.test(source)
-        || PREFILTER_BUSINESS_LITERAL_RE.test(source)
-      )
+      && (PREFILTER_TAINTED_TOKEN_RE.test(source) || PREFILTER_BUSINESS_LITERAL_RE.test(source))
     )
   },
   check(ctx) {
@@ -694,21 +685,30 @@ export const noConstantStubTestsRule = Object.freeze({
     const topLevel = collectScopeBindings(sf.statements, new Map(), new Map())
 
     let foundTestBlock = false
-    const visit = node => {
-      const callback = getTestBlockCallback(node)
-      if (callback) {
+    const visit = (node, currentScope) => {
+      const suiteCallback = getNamedCallCallback(node, SUITE_BLOCK_NAMES)
+      if (suiteCallback) {
+        const stmts = ts.isBlock(suiteCallback.body) ? suiteCallback.body.statements : []
+        const nextScope = collectScopeBindings(stmts, currentScope.staticBindings, currentScope.trivialHelpers)
+        ts.forEachChild(suiteCallback.body, child => visit(child, nextScope))
+        return
+      }
+
+      const testCallback = getNamedCallCallback(node, TEST_BLOCK_NAMES)
+      if (testCallback) {
         foundTestBlock = true
-        const stmts = ts.isBlock(callback.body) ? callback.body.statements : []
-        const scoped = collectScopeBindings(stmts, topLevel.staticBindings, topLevel.trivialHelpers)
-        if (!blockExercisesRealCode(callback.body, productionBindings, scoped.trivialHelpers)) {
-          inspectAssertionsInNode(callback.body, scoped.staticBindings, scoped.trivialHelpers, ctx.report)
+        const stmts = ts.isBlock(testCallback.body) ? testCallback.body.statements : []
+        const scoped = collectScopeBindings(stmts, currentScope.staticBindings, currentScope.trivialHelpers)
+        if (!blockExercisesRealCode(testCallback.body, productionBindings, scoped.trivialHelpers)) {
+          inspectAssertionsInNode(testCallback.body, scoped.staticBindings, scoped.trivialHelpers, ctx.report)
         }
         return
       }
-      ts.forEachChild(node, visit)
+
+      ts.forEachChild(node, child => visit(child, currentScope))
     }
 
-    visit(sf)
+    visit(sf, topLevel)
 
     // Also inspect top-level bare test scripts that do not wrap assertions in test()/it()
     if (!foundTestBlock && !blockExercisesRealCode(sf, productionBindings, topLevel.trivialHelpers)) {

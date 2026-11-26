@@ -33,7 +33,7 @@ export const ALLOWLIST = Object.freeze([
 ])
 
 const MODE_FLAG_IDENTIFIER_RE =
-  /^(?:isHostedMode|isCloudMode|isSelfHostMode|isSelfHostedMode|isCommunityMode|hostedMode|cloudMode|selfHostMode|selfHostedMode|communityMode|surfaceMode|deploymentModeFlag|hostModeFlag|cloudModeFlag|hostedModeFlag|selfHostModeFlag|IS_HOSTED_MODE|IS_CLOUD_MODE|IS_SELF_HOST_MODE|IS_SELF_HOSTED_MODE|IS_COMMUNITY_MODE|HOSTED_MODE|CLOUD_MODE|SELF_HOST_MODE|SELF_HOSTED_MODE|SURFACE_MODE|DEPLOYMENT_MODE_FLAG)$/
+  /^(?:isHostedMode|isCloudMode|isSelfHostMode|isSelfHostedMode|isCommunityMode|hostedMode|cloudMode|selfHostMode|selfHostedMode|communityMode|surfaceMode|deploymentModeFlag|hostModeFlag|cloudModeFlag|hostedModeFlag|selfHostModeFlag|IS_HOSTED_MODE|IS_CLOUD_MODE|IS_SELF_HOST_MODE|IS_SELF_HOSTED_MODE|IS_COMMUNITY_MODE|HOSTED_MODE|CLOUD_MODE|SELF_HOST_MODE|SELF_HOSTED_MODE|COMMUNITY_MODE|SURFACE_MODE|DEPLOYMENT_MODE_FLAG)$/
 
 const MODE_SUBJECT_IDENTIFIER_RE =
   /^(?:mode|deploymentMode|hostMode|surfaceMode|runtimeMode|appMode|envMode|edition|workspaceEdition|serverEdition|mikkaEdition|deployment)$/i
@@ -65,12 +65,12 @@ const STRING_NORM_METHODS = new Set([
 ])
 
 const PREFILTER_FLAG_RE =
-  /(?:isHostedMode|isCloudMode|isSelfHostMode|isSelfHostedMode|isCommunityMode|hostedMode|cloudMode|selfHostMode|selfHostedMode|communityMode|surfaceMode|deploymentModeFlag|hostModeFlag|cloudModeFlag|hostedModeFlag|selfHostModeFlag|IS_HOSTED_MODE|IS_CLOUD_MODE|IS_SELF_HOST_MODE|IS_SELF_HOSTED_MODE|IS_COMMUNITY_MODE|HOSTED_MODE|CLOUD_MODE|SELF_HOST_MODE|SELF_HOSTED_MODE|SURFACE_MODE|DEPLOYMENT_MODE_FLAG)/
+  /(?:isHostedMode|isCloudMode|isSelfHostMode|isSelfHostedMode|isCommunityMode|hostedMode|cloudMode|selfHostMode|selfHostedMode|communityMode|surfaceMode|deploymentModeFlag|hostModeFlag|cloudModeFlag|hostedModeFlag|selfHostModeFlag|IS_HOSTED_MODE|IS_CLOUD_MODE|IS_SELF_HOST_MODE|IS_SELF_HOSTED_MODE|IS_COMMUNITY_MODE|HOSTED_MODE|CLOUD_MODE|SELF_HOST_MODE|SELF_HOSTED_MODE|COMMUNITY_MODE|SURFACE_MODE|DEPLOYMENT_MODE_FLAG)/
 
 const PREFILTER_MODE_LITERAL_RE =
   /['"`](?:cloud|hosted|selfhost|self-hosted|self_hosted|community)['"`]/
 
-const PREFILTER_BRANCH_RE = /(?:\belse\s+if\b|\bswitch\s*\()/
+const PREFILTER_BRANCH_RE = /\b(?:else|switch)\b/
 
 function unwrapExpr(node) {
   let current = node

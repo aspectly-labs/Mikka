@@ -60,16 +60,16 @@ As-shipped paid-block vendor directories remain untouched under R-90.
 
 ## Semantic lint gate
 
-Static AST rules (G1–G5) catch syntactic patterns deterministically, while `scripts/semantic-lint/` (`scripts/semantic-lint/index.mjs`, run via `pnpm lint:semantic` and verified via `pnpm test:semantic-lint`) audits changed diffs for higher-level architectural anti-patterns that evade literal matching:
+Static AST rules (G1–G5) catch token- and expression-level patterns deterministically, while `scripts/semantic-lint/` (`scripts/semantic-lint/index.mjs`, run via `pnpm lint:semantic` and verified via `pnpm test:semantic-lint`) executes a full-repository TypeScript AST scan across `DEFAULT_SCAN_ROOTS` at zero baselines to catch higher-level architectural anti-patterns that evade literal matching:
 
 | Rule | Anti-pattern caught | Required truth tier / pattern |
 | --- | --- | --- |
-| `no-hardcoded-business-policy` | Commercial prices, promotional offers, trial windows, credit rates, SKU specs, or mutable limits encoded directly in application or UI logic. | Read from T3 (`lib/billing/catalog.ts`, `lib/governance/capabilities.ts`) or T4 (`lib/runtime-config/`), with ICU-parameterized T5 copy. |
-| `no-mode-flags` | Parallel execution-mode toggles (`demoMode`, `mockMode`, `legacyMode`, or dual code paths) that fork runtime behavior instead of using unified boundaries. | Keep one production code path (T1) and inject explicit boundary dependencies (`EnvMap`, adapters, or HTTP mocks at the LiteLLM boundary in tests). |
-| `no-provider-or-plan-special-casing` | Ad-hoc vendor, model-family, or plan-tier branches scattered outside provider/catalog adapters or governance policy modules. | Centralize provider metadata in `lib/model-catalog*.ts` / `lib/billing/` and feature gating in `lib/governance/capabilities.ts`. |
-| `no-constant-stub-tests` | Tautological unit tests that replace the subject with constant stubs or assert fixture constants instead of exercising real validation and resolution logic. | Test real T1–T4 boundaries with injected `EnvMap`, Zod schema inputs, and real capability/catalog/config evaluators. |
+| `no-hardcoded-business-policy` | Hardcoded trial/promo durations, pricing/discount constants, campaign start/end dates, and plan quota ceilings encoded directly in application logic (i18n/UI credit rates and SKU specs are guarded separately by G2 and `mikka-ui/no-hardcoded-pricing-literals`). | Read from T3 (`lib/billing/catalog.ts`, `lib/governance/capabilities.ts`) or T4 (`lib/runtime-config/`), with ICU-parameterized T5 copy. |
+| `no-mode-flags` | Host/deployment/surface mode boolean flags (`isHostedMode`, `isCloudMode`, `isSelfHostMode`, `surfaceMode`, `deploymentModeFlag`, etc.) and multi-branch `if/else if` or `switch` checks on `'cloud' \| 'hosted' \| 'selfhost' \| 'community'`. | Branch on declarative `WorkspaceCapabilities` (`lib/governance/capabilities.ts`) or platform adapters (`lib/platform/`) instead of edition/host mode toggles. |
+| `no-provider-or-plan-special-casing` | Scattered AI provider checks, switches, or lookup maps (`openai`, `anthropic`, `google`, `vertex`, `bedrock`, etc.) and plan-tier branching (`tier`, `subscriptionTier`, `planSlug`, etc.) outside model gateway/catalog/provider adapters or governance/billing policy modules. | Centralize provider metadata in `lib/model-gateway/` / `lib/model-catalog*.ts` and feature gating in `lib/governance/capabilities.ts`. |
+| `no-constant-stub-tests` | Tautological constant-stub test assertions that compare local hardcoded business/pricing/plan/model constants or trivial stub helpers against static literals without calling any production code. | Import and exercise real T1–T4 production modules with injected `EnvMap`, Zod schema inputs, and real capability/catalog/config evaluators. |
 
-Calibration methodology, benchmark corpus results, and alert/blocking thresholds are maintained in [`docs/operations/semantic-lint-calibration.md`](../operations/semantic-lint-calibration.md).
+Calibration methodology, allowlist justification, and full-repository scan results are maintained in [`docs/operations/semantic-lint-calibration.md`](../operations/semantic-lint-calibration.md).
 
 ## Verification commands
 

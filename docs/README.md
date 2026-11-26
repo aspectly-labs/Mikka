@@ -53,7 +53,7 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
   separates structural code invariants (T1), validated env boundaries (T2),
   authoritative domain/billing catalogs (T3), mutable runtime configuration (T4),
   and parameterized localized copy (T5), enforced by zero-baseline gates G1–G6
-  and semantic diff linting.
+  and full-repository semantic AST linting.
 
 ## Connect and run Mikka
 
@@ -93,8 +93,8 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
   inventory of Tier-4 runtime configuration keys and Tier-3 workspace capability
   owners, verified mechanically by G6 (`pnpm check:config-contracts`).
 - [Semantic lint calibration](operations/semantic-lint-calibration.md) documents
-  the four semantic diff-lint rules, calibration corpus, and thresholds for
-  `pnpm lint:semantic`.
+  the four full-repository semantic AST lint rules, allowlists, and calibration
+  results for `pnpm lint:semantic`.
 - [Hosted credential operations](infisical-cloud.md) points to the private operating guide.
 
 - [Inbox API](inbox-api.md) defines pending, snoozed and completed items, actions, permissions and live refresh.

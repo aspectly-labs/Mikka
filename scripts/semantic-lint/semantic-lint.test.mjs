@@ -67,6 +67,7 @@ test('all four semantic rules export clean { name, description, allowlist, check
     'cloudflare',
     'lib',
     'services',
+    'tests',
     'workflows',
   ])
 })
@@ -231,6 +232,151 @@ test('inline justification directives allow reasoned suppressions and reject bar
       assert.equal(wrongRuleFindings[0].rule, 'no-hardcoded-business-policy')
     },
   )
+
+  // Template-literal spoofing must NEVER suppress a violation or trigger false invalid directives,
+  // and valid directives after interpolated templates must still work (AST-backed parser).
+  withTempWorkspace(
+    {
+      'lib/template-spoof.ts': [
+        'const msg = `hello ${1}',
+        '// semantic-lint-allow: no-mode-flags — spoofed inside template string',
+        '`; export const isHostedMode = true',
+      ].join('\n'),
+      'lib/after-template.ts': [
+        'export const label = (name: string) => `hello ${name}`',
+        '// semantic-lint-allow: no-mode-flags — valid suppression after interpolated template',
+        'export const isHostedMode = false',
+      ].join('\n'),
+      'lib/unknown-rule.ts': [
+        '// semantic-lint-allow: nonexistent-rule — typo in rule name',
+        'export const ok = 1',
+      ].join('\n'),
+      'lib/trivial-reason.ts': [
+        '// semantic-lint-allow: no-mode-flags — ...',
+        'export const isHostedMode = true',
+      ].join('\n'),
+    },
+    dir => {
+      const spoof = runSemanticLint({ root: path.join(dir, 'lib', 'template-spoof.ts') })
+      assert.equal(spoof.totalFindings, 1)
+      assert.equal(spoof.findings[0].rule, 'no-mode-flags')
+      assert.ok(spoof.findings[0].message.includes('Mode flag "isHostedMode"'))
+
+      const afterTemplate = runSemanticLint({ root: path.join(dir, 'lib', 'after-template.ts') })
+      assert.equal(afterTemplate.totalFindings, 0)
+
+      const unknownRule = runSemanticLint({ root: path.join(dir, 'lib', 'unknown-rule.ts') })
+      assert.equal(unknownRule.totalFindings, 1)
+      assert.ok(unknownRule.findings[0].message.includes('Unknown rule "nonexistent-rule"'))
+
+      const trivial = runSemanticLint({ root: path.join(dir, 'lib', 'trivial-reason.ts') })
+      assert.equal(trivial.totalFindings, 2)
+      assert.ok(trivial.findings.some(f => f.message.includes('Bare or trivial semantic-lint-allow directive')))
+      assert.ok(trivial.findings.some(f => f.message.includes('Mode flag "isHostedMode"')))
+    },
+  )
+})
+
+test('standalone counter-examples prove 100% prefilter recall and describe-scope coverage for every rule', () => {
+  const cases = [
+    {
+      label: 'unquoted provider lookup object',
+      rule: 'no-provider-or-plan-special-casing',
+      file: 'lib/unquoted-provider.ts',
+      code: [
+        'const PROVIDER_TIMEOUT_MS: Record<string, number> = { openai: 30_000, anthropic: 45_000 }',
+        'export const getTimeout = (provider: string) => PROVIDER_TIMEOUT_MS[provider] ?? 10_000',
+      ].join('\n'),
+    },
+    {
+      label: 'unquoted plan-tier lookup object',
+      rule: 'no-provider-or-plan-special-casing',
+      file: 'lib/unquoted-tier.ts',
+      code: [
+        'const TIER_CONCURRENCY: Record<string, number> = { free: 4, pro: 32, enterprise: 128 }',
+        'export const getConcurrency = (workspaceTier: string) => TIER_CONCURRENCY[workspaceTier] ?? 1',
+      ].join('\n'),
+    },
+    {
+      label: 'defaultTrialDays and PascalCase trial durations',
+      rule: 'no-hardcoded-business-policy',
+      file: 'lib/default-trial.ts',
+      code: 'export const defaultTrialDays = 14\nexport const defaultGracePeriodDays = 7\n',
+    },
+    {
+      label: 'no-mode-flags with inline comment in else-if and COMMUNITY_MODE',
+      rule: 'no-mode-flags',
+      file: 'lib/commented-mode.ts',
+      code: [
+        'export const COMMUNITY_MODE = true',
+        'export function route(mode: string) {',
+        "  if (mode === 'cloud') return 1",
+        "  else /* comment */ if (mode === 'community') return 2",
+        '  return 0',
+        '}',
+      ].join('\n'),
+    },
+    {
+      label: 'leading-keyword stub variable (const expectedValue = 2000)',
+      rule: 'no-constant-stub-tests',
+      file: 'lib/leading-var.test.ts',
+      code: [
+        "import test from 'node:test'",
+        "import assert from 'node:assert/strict'",
+        "test('tautology', () => { const expectedValue = 2000; assert.equal(expectedValue, 2000) })",
+      ].join('\n'),
+    },
+    {
+      label: 'leading-keyword stub function (function mockData)',
+      rule: 'no-constant-stub-tests',
+      file: 'lib/leading-fn.test.ts',
+      code: [
+        "import test from 'node:test'",
+        "import assert from 'node:assert/strict'",
+        'function mockData() { return 42 }',
+        "test('tautology', () => { assert.equal(mockData(), 42) })",
+      ].join('\n'),
+    },
+    {
+      label: 'describe-scoped constant-stub test',
+      rule: 'no-constant-stub-tests',
+      file: 'lib/describe-stub.test.ts',
+      code: [
+        "describe('billing', () => {",
+        '  const MOCK_PRO_PRICE = 2000',
+        "  it('checks price', () => { expect(MOCK_PRO_PRICE).toBe(2000) })",
+        '})',
+      ].join('\n'),
+    },
+    {
+      label: 'bare tainted model literal in assertion',
+      rule: 'no-constant-stub-tests',
+      file: 'lib/bare-literal.test.ts',
+      code: [
+        "import test from 'node:test'",
+        "import assert from 'node:assert/strict'",
+        "const x = 'claude-sonnet-4.5'",
+        "test('tautology', () => { assert.equal(x, 'claude-sonnet-4.5') })",
+      ].join('\n'),
+    },
+  ]
+
+  for (const tc of cases) {
+    const ruleObj = RULES.find(r => r.name === tc.rule)
+    assert.ok(ruleObj, `missing rule ${tc.rule}`)
+    assert.equal(
+      ruleObj.mightMatch(tc.code),
+      true,
+      `prefilter mightMatch() must return true for standalone case: ${tc.label}`,
+    )
+    withTempWorkspace({ [tc.file]: tc.code }, dir => {
+      const report = runSemanticLint({ root: dir, rules: [tc.rule] })
+      assert.ok(
+        report.totalFindings >= 1,
+        `expected >= 1 finding for standalone case "${tc.label}", got 0`,
+      )
+    })
+  }
 })
 
 test('per-rule allowlists, excluded directories, TSX files, and mixed unit/stub tests behave accurately', () => {

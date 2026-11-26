@@ -42,6 +42,7 @@ export const DEFAULT_SCAN_ROOTS = Object.freeze([
   'cloudflare',
   'lib',
   'services',
+  'tests',
   'workflows',
 ])
 
@@ -171,7 +172,43 @@ function offsetToLineColumn(lineStarts, offset) {
  *   // semantic-lint-allow: <rule-name> — <reason>
  *   (also accepts --, –, -, or : as separator; reason must have >= 3 meaningful chars)
  */
-export function parseAllowDirectives(source, knownRules = new Set(Object.keys(RULE_MAP))) {
+function collectSingleLineCommentsFromAst(source, filePath = 'file.ts') {
+  const sf = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    getScriptKind(filePath),
+  )
+  const seen = new Set()
+  const comments = []
+
+  const recordRanges = ranges => {
+    if (!ranges) return
+    for (const range of ranges) {
+      if (range.kind !== ts.SyntaxKind.SingleLineCommentTrivia) continue
+      if (seen.has(range.pos)) continue
+      seen.add(range.pos)
+      comments.push({
+        pos: range.pos,
+        text: source.slice(range.pos, range.end).trim(),
+      })
+    }
+  }
+
+  const visit = node => {
+    recordRanges(ts.getLeadingCommentRanges(source, node.pos))
+    recordRanges(ts.getTrailingCommentRanges(source, node.end))
+    for (const child of node.getChildren(sf)) {
+      visit(child)
+    }
+  }
+  visit(sf)
+  comments.sort((a, b) => a.pos - b.pos)
+  return comments
+}
+
+export function parseAllowDirectives(source, knownRules = new Set(Object.keys(RULE_MAP)), filePath = 'file.ts') {
   const allowedByLine = new Map()
   const invalidDirectives = []
 
@@ -180,18 +217,12 @@ export function parseAllowDirectives(source, knownRules = new Set(Object.keys(RU
   }
 
   const lineStarts = computeLineStarts(source)
-  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, source)
+  const comments = collectSingleLineCommentsFromAst(source, filePath)
 
-  while (true) {
-    const token = scanner.scan()
-    if (token === ts.SyntaxKind.EndOfFileToken) break
-    if (token !== ts.SyntaxKind.SingleLineCommentTrivia) continue
-
-    const text = scanner.getTokenText().trim()
+  for (const { pos, text } of comments) {
     if (!ANY_ALLOW_DIRECTIVE_RE.test(text)) continue
 
-    const startOffset = scanner.getTokenPos()
-    const { line, column } = offsetToLineColumn(lineStarts, startOffset)
+    const { line, column } = offsetToLineColumn(lineStarts, pos)
     const validMatch = VALID_ALLOW_DIRECTIVE_RE.exec(text)
 
     if (validMatch) {
@@ -365,7 +396,7 @@ export function runSemanticLint(options = {}) {
     }
     filesScanned += 1
 
-    const { allowedByLine, invalidDirectives } = parseAllowDirectives(source)
+    const { allowedByLine, invalidDirectives } = parseAllowDirectives(source, undefined, relPath)
 
     for (const bad of invalidDirectives) {
       const targetRule = bad.ruleName ?? activeRules[0]?.name ?? 'semantic-lint-directive'
