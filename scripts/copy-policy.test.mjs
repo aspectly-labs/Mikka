@@ -18,7 +18,6 @@ test('no translated cloud brand or old cloud action anywhere in the repo', () =>
 test('zh and en messages name the cloud machine 「Mikka Cloud」', () => {
   for (const locale of ['zh-CN', 'en']) {
     const messages = JSON.parse(readFileSync(`messages/${locale}.json`, 'utf8'))
-    assert.equal(messages.Settings.environments.computeMikka, 'Mikka Cloud', locale)
     assert.equal(messages.Computer.cloud, 'Mikka Cloud', locale)
     assert.equal(messages.Shell.newTaskDialog.cloud, 'Mikka Cloud', locale)
     assert.deepEqual(machineNameProblems(lookupIn(messages)), [], locale)

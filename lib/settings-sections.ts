@@ -208,8 +208,8 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'usage', group: 'workspace', title: 'Usage' },
   { id: 'activity', group: 'workspace', title: 'Activity' },
   { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
-  // R-S01: the workspace switcher and enterprise console link here directly.
-  { id: 'organization', group: 'workspace', title: 'Organization', sidebar: false },
+  // R-S01: shown only once the workspace is bound to an organization or on the enterprise plan.
+  { id: 'organization', group: 'workspace', title: 'Organization' },
   { id: 'cloud', group: 'workspace', title: 'Mikka Cloud' },
   { id: 'referrals', group: 'personal', title: 'Referrals' },
   { id: 'experiments', group: 'personal', title: 'Experiments' },
@@ -244,17 +244,18 @@ export type SettingsVisibility = {
   personal?: boolean
   billing?: boolean
   cloudAdmin?: boolean
-  /** Accepted by older sidebar callers that supply organization availability. */
+  /** A UI layer draws 组织. */
   organization?: boolean
   /** Accepted by hosted sidebar callers for memory-gate compatibility. */
   memory?: boolean
 }
 
 /** One place decides whether a section is listed. The sidebar and search both ask this. */
-export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false, memory = false }: SettingsVisibility): boolean {
+export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false, organization = true, memory = false }: SettingsVisibility): boolean {
   if (SETTINGS_SECTION_STATUS[section.id] !== 'available' || section.sidebar === false) return false
   if (section.adminOnly && !admin) return false
   if (personal && TEAM_ONLY_SECTIONS.has(section.id)) return false
+  if (!organization && section.id === 'organization') return false
   if (!billing && section.id === 'billing') return false
   if (!cloudAdmin && section.id === 'cloud') return false
   if (!memory && section.id === 'memory') return false
