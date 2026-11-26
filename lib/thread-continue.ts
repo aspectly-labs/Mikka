@@ -46,11 +46,11 @@ export async function sendThreadMessage(userId: string, runId: string, text: str
     catch (error) { if (error instanceof ChatFileError) throw new ActionFailureError('messageRequired', undefined, undefined, { cause: error }); throw error }
   }
   const active = UNFINISHED_RUN_STATUSES.some(status => status === chain.attempts.at(-1)?.status)
-  if (delivery === 'queue' && requestId && !parsed.data.modelChoice && !control) {
+  if (delivery === 'queue' && requestId && !parsed.data.modelChoice) {
     const { queueThreadReply, readQueuedReplyReceipt } = await import('./thread-delivery-queue')
-    const receipt = await readQueuedReplyReceipt(pool, userId, chain, parsed.data.text, requestId, parsed.data.runId)
+    const receipt = await readQueuedReplyReceipt(pool, userId, chain, parsed.data.text, requestId, parsed.data.runId, control)
     if (receipt) return receipt
-    if (active) return queueThreadReply(pool, userId, chain, parsed.data.text, requestId, parsed.data.runId)
+    if (active) return queueThreadReply(pool, userId, chain, parsed.data.text, requestId, parsed.data.runId, control)
   }
   if (delivery && !requestId) throw new ActionFailureError('validationGeneric')
   if (parsed.data.requestId) {
@@ -258,14 +258,16 @@ async function continueThread(userId: string, text: string, source: Source,
   if (!run.issueId || !run.deviceRepoId) throw new ActionFailureError('threadCannotContinue')
   const issueId = run.issueId
   const { dispatchToTask, latestTaskRun } = await import('@/lib/thread-dispatch')
+  const isSideThread = run.threadRelation === 'side'
   // Another thread took the task over (a new thread was asked for): this one is history now.
-  if ((await latestTaskRun(pool, userId, issueId))?.id !== run.id) throw new ActionFailureError('threadReplaced')
+  if (!isSideThread && (await latestTaskRun(pool, userId, issueId))?.id !== run.id) throw new ActionFailureError('threadReplaced')
   const version = delivery === 'version' ? (await pool.query<{ executionNote:string }>(
     'SELECT "executionNote" FROM thread_reply_versions WHERE "sourceEventId"=$1 AND "userId"=$2 AND "workspaceId"=$3 AND "admissionRunId"=$4 AND text=$5',
     [sourceEventId,userId,run.workspaceId,run.id,text])).rows[0] : undefined
   if (delivery === 'version' && !version) throw new ActionFailureError('submissionConflict')
   const result = await dispatchToTask(userId, issueId, {
     note: text, requireContinuation: Boolean(modelChoice),
+    ...(isSideThread ? { sideRunId: run.id } : {}),
     ...(sourceEventId ? { expectedRunId: run.id } : {}),
     start: async (previous, note) => {
       if (previous?.id !== run.id) throw new ActionFailureError('threadReplaced')

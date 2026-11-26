@@ -317,6 +317,7 @@ describe("Issue #3333: runtime slash commands, blocklist, real /compact, system 
     const mailbox = {
       tools: [{ name: "ping", description: "Ping test tool", inputSchema: { type: "object" as const, properties: {} } }],
       request: async () => ({ content: [{ type: "text" as const, text: "pong" }], isError: false }),
+      close: async () => {},
     }
 
     const session = await adapter.start({
@@ -338,6 +339,27 @@ describe("Issue #3333: runtime slash commands, blocklist, real /compact, system 
 
     expect(events.some(e => e.type === "chunk" && e.chunk.type === "data-system-event" && e.chunk.data.kind === "compact_boundary")).toBe(true)
     expect(events.at(-1)).toMatchObject({ type: "exit", outcome: "succeeded" })
+
+    // Resumed continuation with mailbox enabled and followUpControl: { kind: 'compact' } as the very first turn
+    const resumedCompact = await adapter.start({
+      runId: "codex-mb-compact-resumed",
+      cwd,
+      prompt: "Full brief",
+      mailbox,
+      continueSession: {
+        sessionId: session.sessionId,
+        runId: "codex-mb-compact-1",
+        message: "/compact",
+        followUpControl: { kind: "compact" },
+      },
+      env: buildChildEnv({ host: { PATH: process.env.PATH, HOME: stateDir } }),
+      log: createLogger({ level: "silent" }),
+      toolApproval: new ToolApprovalGate("codex-mb-compact-resumed", { isLive: () => true }),
+    })
+    const resumedEvents: AgentEvent[] = []
+    for await (const event of resumedCompact.events()) resumedEvents.push(event)
+    expect(resumedEvents.some(e => e.type === "chunk" && e.chunk.type === "data-system-event" && e.chunk.data.kind === "compact_boundary")).toBe(true)
+    expect(resumedEvents.at(-1)).toMatchObject({ type: "exit", outcome: "succeeded" })
 
     const reviewSession = await adapter.start({
       runId: "codex-mb-review-1",

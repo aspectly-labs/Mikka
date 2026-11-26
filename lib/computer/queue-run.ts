@@ -189,7 +189,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
       const requestedSize = threadPreferredSize ?? settings.machineSize ?? effectiveExecution?.environment?.defaultMachineSize
       const planLimit = await taskMachinePlanLimit(actor.workspaceId)
       const compute = taskComputeSku(provider, {
-        cloudflare: requestedSize, e2b: threadPreferredSize ?? effectiveExecution?.environment?.e2bMachineSize ?? undefined,
+        cloudflare: requestedSize, e2b: threadPreferredSize ? undefined : effectiveExecution?.environment?.e2bMachineSize ?? undefined,
       }, verifiedMachineQuota(), planLimit)
       if (!compute) throw new ComputerError(409, 'Task machine size is unavailable on this workspace plan.')
       frozen.taskCompute = compute

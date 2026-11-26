@@ -478,20 +478,27 @@ export const RUN_CHUNKS_LIMIT = 5_000
  */
 export async function readRunMessages(userId: string, runIds: string[], options?: { limit?: number | null }) {
   if (!runIds.length) return []
-  const base = db.select({ id: runMessages.id, text: runMessages.text, createdAt: runMessages.createdAt, sourceRunId: runMessages.runId,
+  const { systemEventDataSchema } = await import('@mikka/protocol/slash-commands')
+  const base = db.select({ id: runMessages.id, text: runMessages.text, createdAt: runMessages.createdAt, sourceRunId: runMessages.runId, userId: runMessages.userId,
     editable: sql<boolean>`${runMessages.userId}=${userId} AND ${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
-    submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'` })
+    submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'`,
+    systemEvent: sql<unknown>`${coordinatorEvents.payload}->'threadSystemEvent'` })
     .from(runMessages).leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id),
-      eq(coordinatorEvents.userId, userId), eq(coordinatorEvents.kind, 'user_message')))
+      eq(coordinatorEvents.userId, runMessages.userId), eq(coordinatorEvents.kind, 'user_message')))
     .where(inArray(runMessages.runId, runIds))
-  if (options?.limit === null) {
-    return base.orderBy(asc(runMessages.createdAt), asc(runMessages.id))
-  }
-  const limit = Math.max(1, Math.min(options?.limit ?? RUN_MESSAGES_LIMIT, RUN_MESSAGES_LIMIT))
-  const rows = await base
-    .orderBy(desc(runMessages.createdAt), desc(runMessages.id))
-    .limit(limit)
-  return rows.reverse()
+  const rawRows = options?.limit === null
+    ? await base.orderBy(asc(runMessages.createdAt), asc(runMessages.id))
+    : (await base
+        .orderBy(desc(runMessages.createdAt), desc(runMessages.id))
+        .limit(Math.max(1, Math.min(options?.limit ?? RUN_MESSAGES_LIMIT, RUN_MESSAGES_LIMIT)))).reverse()
+  return rawRows.map(({ userId: rowUserId, submissionId, systemEvent, ...rest }) => {
+    const parsed = systemEvent ? systemEventDataSchema.safeParse(systemEvent) : null
+    return {
+      ...rest,
+      submissionId: rowUserId === userId ? submissionId : null,
+      ...(parsed?.success ? { systemEvent: parsed.data } : {}),
+    }
+  })
 }
 
 export async function readRun(

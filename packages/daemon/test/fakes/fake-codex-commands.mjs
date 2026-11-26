@@ -2,7 +2,8 @@
 // Fake Codex app-server fixture for #3333 scripted-model slash-command acceptance tests.
 // Records received JSON-RPC calls (skills/list, thread/compact/start, review/start, turn/start)
 // and emits contextCompaction & exitedReviewMode items without contacting any live model.
-import { appendFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { createInterface } from "node:readline"
 
 const logFile = process.env.FAKE_CODEX_LOG_FILE
@@ -25,7 +26,20 @@ lines.on("line", line => {
     return send({ id, result: { userAgent: "codex_cli_rs/0.163.0 fake-commands" } })
   }
   if (method === "thread/start" || method === "thread/resume") {
-    return send({ id, result: { thread: { id: params?.threadId ?? threadId }, model: "gpt-5.3-codex" } })
+    const tid = params?.threadId ?? threadId
+    let path
+    if (process.env.CODEX_HOME) {
+      const sessionsDir = join(process.env.CODEX_HOME, "sessions")
+      mkdirSync(sessionsDir, { recursive: true })
+      path = join(sessionsDir, `${tid}.jsonl`)
+      if (method === "thread/start") {
+        writeFileSync(
+          path,
+          `${JSON.stringify({ type: "session_meta", payload: { id: tid, ...(params?.dynamicTools ? { dynamic_tools: params.dynamicTools } : {}) } })}\n`,
+        )
+      }
+    }
+    return send({ id, result: { thread: { id: tid, ...(path ? { path } : {}) }, model: "gpt-5.3-codex" } })
   }
   if (method === "skills/list") {
     return send({

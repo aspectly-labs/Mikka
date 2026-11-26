@@ -95,6 +95,8 @@ export async function dispatchToTask<R extends { runId: string }, E extends { er
   creation?: { eventId: string; botId: string; workspaceId: string }
   /** A browser submission already bound its original target before taking the task lock. */
   expectedRunId?: string
+  /** Explicit continuation of a finished side thread (kept separate from the primary task thread). */
+  sideRunId?: string
   /** A selected model applies only to a newly admitted run. */
   requireContinuation?: boolean
   /** The caller asked for a new thread; it is granted only when `explicit()` says the person asked for it. */
@@ -124,7 +126,9 @@ export async function dispatchToTask<R extends { runId: string }, E extends { er
         return { thread: 'existing' as const, runId, threadId: chain?.rootRunId ?? runId }
       }
     }
-    const previous = await latestTaskRun(pool, userId, issueId)
+    const previous = input.sideRunId
+      ? await readSideTaskRun(pool, userId, issueId, input.sideRunId)
+      : await latestTaskRun(pool, userId, issueId)
     if (input.expectedRunId && previous?.id !== input.expectedRunId) throw new ActionFailureError('threadReplaced')
     if (!previous) {
       const result = await input.start(null, input.note)
@@ -162,10 +166,28 @@ export async function dispatchToTask<R extends { runId: string }, E extends { er
     }
     const result = await input.start(previous, continuationNote(input.note, previous))
     if (!queued(result)) return result
-    const continued = await db.execute((await import('drizzle-orm')).sql`UPDATE agent_runs SET "continuesRunId"=${previous.id}::uuid,"updatedAt"=now() WHERE id=${result.runId}::uuid AND "userId"=${userId} AND id<>${previous.id}::uuid RETURNING id`)
+    const continued = input.sideRunId
+      ? await db.execute((await import('drizzle-orm')).sql`UPDATE agent_runs SET "continuesRunId"=${previous.id}::uuid,"threadRelation"='side',"updatedAt"=now() WHERE id=${result.runId}::uuid AND "userId"=${userId} AND id<>${previous.id}::uuid RETURNING id`)
+      : await db.execute((await import('drizzle-orm')).sql`UPDATE agent_runs SET "continuesRunId"=${previous.id}::uuid,"updatedAt"=now() WHERE id=${result.runId}::uuid AND "userId"=${userId} AND id<>${previous.id}::uuid RETURNING id`)
     if (continued.rowCount) { await runListChanged(db, result.runId); await runChanged(db, result.runId) }
     return { ...result, thread: 'continued' as const, threadId, continuesRunId: previous.id }
   })
+}
+
+async function readSideTaskRun(query: Query, userId: string, issueId: string, runId: string): Promise<TaskThreadRun | null> {
+  const { rows: [run] } = await query.query(`SELECT r.id,r.status,r."stopRequestedAt",r."agentId",r."deviceRepoId",r."botId",r."stopReason",r.error,
+      r.report->>'summary' AS summary,r."lastReply",d."remoteUrl",
+      coalesce(r."agentDefinition"->>'harness',a.harness) AS harness,${jsonbFlagIsTrueSql('r."agentDefinition"', 'readOnly')} AS "readOnly",
+      (r."agentDefinition"->>'allowLocalRecovery')='true' AS "allowLocalRecovery",
+      b."workspaceId" AS "cloudWorkspaceId",b."botId" AS "cloudBotId"
+    FROM agent_runs r JOIN agents a ON a.id=r."agentId"
+    LEFT JOIN device_repos d ON d.id=r."deviceRepoId"
+    LEFT JOIN computer_run_bindings b ON b."runId"=r.id AND b."ownerId"=r."userId"
+    WHERE r.id=$3 AND r."userId"=$1 AND r."issueId"=$2 AND r.kind<>'group_chat' AND r."threadRelation"='side' AND r."deletedAt" IS NULL
+    LIMIT 1`, [userId, issueId, runId])
+  if (!run) return null
+  const { cloudWorkspaceId, cloudBotId, ...rest } = run
+  return { ...rest, cloud: cloudWorkspaceId && cloudBotId ? { workspaceId: cloudWorkspaceId, botId: cloudBotId } : null } as TaskThreadRun
 }
 
 import { runChanged } from './live/panels'

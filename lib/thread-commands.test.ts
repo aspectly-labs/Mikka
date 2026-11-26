@@ -160,7 +160,7 @@ test('projectIssueThreads redacts private tags and folder for viewers without th
     report: null,
     agentId: 'agent-1',
     agentName: 'Claude',
-    agentHarness: 'claude_code',
+    harness: 'claude_code',
     deviceId: 'dev-1',
     deviceName: 'Mac',
     deviceKind: 'local',

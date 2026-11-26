@@ -28,17 +28,28 @@ const isActive = (status?: string) => UNFINISHED_RUN_STATUSES.some(value => valu
 const queueSupported = `(r."issueId" IS NOT NULL AND r."deviceRepoId" IS NOT NULL AND NOT EXISTS (
   SELECT 1 FROM factory_attempts f WHERE f."runId"=r.id AND f.stage IN ('review','verify','monitor')))`
 
-export async function readQueuedReplyReceipt(pool: Pool, userId: string, chain: RunChain, text: string, requestId: string, requestedRunId: string) {
+const queueControlKey = (queueId: string) => `thread-queue-control:${queueId}`
+
+async function readQueuedControl(query: Pick<Pool, 'query'>, userId: string, queueId: string): Promise<import('./thread-continue').ThreadMessageControl | undefined> {
+  const { rows: [row] } = await query.query<{ control: unknown }>(
+    `SELECT payload->'threadQueuedControl' AS control FROM coordinator_events WHERE "userId"=$1 AND "dedupeKey"=$2 LIMIT 1`,
+    [userId, queueControlKey(queueId)],
+  )
+  return row?.control && typeof row.control === 'object' ? (row.control as import('./thread-continue').ThreadMessageControl) : undefined
+}
+
+export async function readQueuedReplyReceipt(pool: Pool, userId: string, chain: RunChain, text: string, requestId: string, requestedRunId: string, control?: import('./thread-continue').ThreadMessageControl) {
   const id = factoryEventId('thread-queue', JSON.stringify([userId, requestId.toLowerCase()]))
   const { rows: [row] } = await pool.query<QueueRow>('SELECT * FROM thread_queued_messages WHERE id=$1 AND "userId"=$2', [id, userId])
   if (!row) return null
   return withFactoryBackgroundWorkspace(pool, userId, { kind: 'run', id: row.runId }, async () => {
-    if (row.text !== text || row.rootRunId !== chain.rootRunId || row.requestedRunId !== requestedRunId) throw new ActionFailureError('submissionConflict')
+    const savedControl = await readQueuedControl(pool, userId, id)
+    if (row.text !== text || row.rootRunId !== chain.rootRunId || row.requestedRunId !== requestedRunId || JSON.stringify(savedControl ?? null) !== JSON.stringify(control ?? null)) throw new ActionFailureError('submissionConflict')
     return { runId: row.runId, continued: false }
   })
 }
 
-export async function queueThreadReply(pool: Pool, userId: string, chain: RunChain, text: string, requestId: string, requestedRunId: string) {
+export async function queueThreadReply(pool: Pool, userId: string, chain: RunChain, text: string, requestId: string, requestedRunId: string, control?: import('./thread-continue').ThreadMessageControl) {
   const id = factoryEventId('thread-queue', JSON.stringify([userId, requestId.toLowerCase()]))
   return withFactoryBackgroundWorkspace(pool, userId, { kind: 'run', id: chain.latestRunId }, async () => {
     const client = await pool.connect()
@@ -46,8 +57,8 @@ export async function queueThreadReply(pool: Pool, userId: string, chain: RunCha
       await client.query('BEGIN')
       const dispatchId = factoryEventId('thread-submission', JSON.stringify([userId, requestId.toLowerCase()]))
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [dispatchId])
-      const { rows: [run] } = await client.query<{ status: string; workspaceId: string; stopRequestedAt: Date | null; continuable: boolean }>(
-        `SELECT r.status,r."workspaceId",r."stopRequestedAt",${queueSupported} AS continuable
+      const { rows: [run] } = await client.query<{ status: string; workspaceId: string; stopRequestedAt: Date | null; continuable: boolean; issueId: string | null; botId: string | null }>(
+        `SELECT r.status,r."workspaceId",r."stopRequestedAt",r."issueId",r."botId",${queueSupported} AS continuable
           FROM agent_runs r WHERE r.id=$1 AND r."userId"=$2 FOR UPDATE`, [chain.latestRunId, userId])
       if (!run) throw new ActionFailureError('runNotFound')
       // A replay can arrive after the original anchor finished. Match its
@@ -56,12 +67,25 @@ export async function queueThreadReply(pool: Pool, userId: string, chain: RunCha
       if (previous.rowCount) throw new ActionFailureError('submissionConflict')
       const { rows: [saved] } = await client.query<QueueRow>(
         'SELECT * FROM thread_queued_messages WHERE id=$1 AND "userId"=$2', [id, userId])
-      if (saved && (saved.rootRunId !== chain.rootRunId || saved.workspaceId !== run.workspaceId || saved.text !== text || saved.requestedRunId !== requestedRunId))
-        throw new ActionFailureError('submissionConflict')
+      if (saved) {
+        const savedControl = await readQueuedControl(client, userId, id)
+        if (saved.rootRunId !== chain.rootRunId || saved.workspaceId !== run.workspaceId || saved.text !== text || saved.requestedRunId !== requestedRunId || JSON.stringify(savedControl ?? null) !== JSON.stringify(control ?? null))
+          throw new ActionFailureError('submissionConflict')
+      }
       if (!saved && (!run.continuable || requestedRunId !== chain.latestRunId)) throw new ActionFailureError('threadDeliveryUnavailable')
       if (!saved && (!isActive(run.status) || run.stopRequestedAt)) throw new ActionFailureError('threadStopping')
-      if (!saved) await client.query(`INSERT INTO thread_queued_messages(id,"userId","workspaceId","rootRunId","runId",text,"requestId","requestedRunId")
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [id, userId, run.workspaceId, chain.rootRunId, chain.latestRunId, text, requestId, requestedRunId])
+      if (!saved) {
+        await client.query(`INSERT INTO thread_queued_messages(id,"userId","workspaceId","rootRunId","runId",text,"requestId","requestedRunId")
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [id, userId, run.workspaceId, chain.rootRunId, chain.latestRunId, text, requestId, requestedRunId])
+        if (control) {
+          await client.query(
+            `INSERT INTO coordinator_events (id, "userId", "botId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt")
+             VALUES ($1, $2, $3, $4, 'user_message', $5, $6::jsonb, 'background', now())
+             ON CONFLICT ("dedupeKey") DO NOTHING`,
+            [crypto.randomUUID(), userId, run.botId ?? null, run.issueId ?? null, queueControlKey(id), JSON.stringify({ threadQueuedControl: control })],
+          )
+        }
+      }
       await client.query('COMMIT')
       if (!saved) await runChanged(pool, chain.latestRunId)
       return { runId: saved?.runId ?? chain.latestRunId, continued: false }
@@ -187,7 +211,8 @@ export async function deliverQueuedThreadReply(pool: Pool, userId: string, runId
       // The worker cannot answer questions or promote a queued message into
       // a replacement request. Recheck the exact run under ordinary admission.
       if (!claimed.claimRunId || !claimed.claimMode) throw new ActionFailureError('threadRecoveryUnavailable')
-      const sent = await sendThreadMessage(userId, claimed.claimRunId, claimed.text, 'user', claimed.id, claimed.claimMode)
+      const queuedControl = await readQueuedControl(pool, userId, claimed.id)
+      const sent = await sendThreadMessage(userId, claimed.claimRunId, claimed.text, 'user', claimed.id, claimed.claimMode, undefined, queuedControl)
       await pool.query("UPDATE thread_queued_messages SET status='sent',\"sentRunId\"=$2 WHERE id=$1 AND status='delivering'", [claimed.id, sent.runId])
     } catch (error) {
       // Another replay can be between admission and writing its outcome.
