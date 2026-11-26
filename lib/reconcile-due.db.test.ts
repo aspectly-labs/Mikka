@@ -15,9 +15,9 @@ const target = process.env.E2E_DATABASE_URL
 const valid = isE2eTarget(target) && target === process.env.MIKKA_DATABASE_URL && target === process.env.DATABASE_URL
 if (process.env.REQUIRE_DB === '1' && !valid) throw new Error('Reconcile tests require matching isolated loopback _e2e URLs')
 
-const TABLES = ['coordinator_events', 'coordinator_sessions', 'user_schedules', 'schedule_occurrences', 'inbox_snoozes', 'inbox_conversation_snoozes', 'agent_runs', 'devices', 'cloud_machines',
+const TABLES = ['coordinator_events', 'coordinator_sessions', 'user_schedules', 'schedule_occurrences', 'inbox_snoozes', 'inbox_conversation_snoozes', 'agent_runs', 'devices', 'cloud_machines', 'e2b_compute_leases', 'hosted_usage',
   'thread_machines', 'coding_review_sessions', 'issues', 'sandbox_kill_retries', 'group_turns', 'group_task_bindings', 'factory_tasks', 'factory_attempts', 'factory_events',
-  'factory_deliverable_acceptances', 'factory_candidates', 'factory_merges', 'account_deletion_jobs', 'account_deletion_guards', 'chat_attachments', 'chat_attachment_retirements',
+  'factory_deliverable_acceptances', 'factory_candidates', 'factory_merges', 'account_deletion_jobs', 'account_deletion_guards', 'chat_attachments', 'chat_attachment_retirements', 'task_attachments',
   'workspace_audit_retention', 'workspace_audit_events', 'workspace_deletions', 'workspace_audit_outbox', 'mobile_push_receipts', 'coding_workspace_requests', 'coding_workspace_mentions']
 
 test('the safety-net check names exactly the jobs with work already due', { skip: !valid }, async t => {

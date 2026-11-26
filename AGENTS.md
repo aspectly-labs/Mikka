@@ -2,6 +2,8 @@
 
 Apply the universal invariants below on every task, then load the matching Tier 1 standard or skill from the branch table before acting.
 
+UI rules, UI decisions and design docs live in the private hosted repo (`mikka-hosted-ui`), not here.
+
 ## Authority and boundaries
 
 - **Three-Tier precedence ([Handbook](docs/engineering/HANDBOOK.md#three-tier-documentation-architecture)):** (1) Alex's explicit decision → (2) Tier 3 CI gates → (3) Tier 1 Living Standards → (4) current `main` → (5) Tier 2 dated ADRs (`docs/design/decisions/`). Keep ADRs immutable (edit only a superseded ADR's top `Status:` header), leave frozen [decisions.md](docs/design/decisions.md) untouched, and ignore dated audits, old screenshots, handoffs, or `publication=none` builds as policy.

@@ -543,6 +543,15 @@ dbTest('turn prompt assembly and pre-first-message preview enforce precedence, X
   assert.equal(foreignEnvAttempt.status, 404)
   assert.equal(JSON.stringify(await foreignEnvAttempt.json()).includes('TOP_SECRET_FOREIGN_ENV_INSTRUCTIONS'), false)
 
+  const privateEnvironment = await projectStore.saveEnvironment(adminId, {
+    workspaceId, scope: 'personal', name: 'Personal', instructions: 'Owner only', configuration: {},
+  })
+  assert.equal((await previewRoute.GET(jsonRequest(`http://127.0.0.1/api/settings/instructions/preview?workspaceId=${workspaceId}&environmentId=${privateEnvironment.id}`))).status, 404)
+  // A Bot bound before its environment became personal no longer reads the owner's instructions.
+  await projectStore.setEnvironmentScope(adminId, { workspaceId, environmentId: liveEnvId }, 'personal')
+  assert.equal(await readEnvironmentInstructionsForBot(adminId, ownerPrivateBotId), '')
+  await projectStore.setEnvironmentScope(adminId, { workspaceId, environmentId: liveEnvId }, 'workspace')
+
   // Archived environment -> 404
   assert.equal(
     (await previewRoute.GET(jsonRequest(`http://127.0.0.1/api/settings/instructions/preview?workspaceId=${workspaceId}&environmentId=${archivedEnvId}`))).status,

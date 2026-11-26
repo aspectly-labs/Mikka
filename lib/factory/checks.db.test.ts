@@ -1,11 +1,12 @@
 import { coordinatorWakeTransport } from '../coordinator/wake-after-commit';
+import { builtinGateway } from '../builtin-gateway/runtime';
 import { syncFactoryPresentation } from './stage-progress';
 import { readFactoryFlow } from './public-flow';
 import { createFactorySpecApproval } from './spec-approval';
 import { createFactoryHumanStore } from './human-store';
 import { handleFactoryFlow } from './flow-http';
 import { handleFactory } from './http';
-import { readIssueThreads, loadIssueDocument, encodedIssueDocument } from '../linear-sync/document';
+import { readIssueThreads, loadIssueDocument, encodedIssueDocument } from '../task-comments/issue-document';
 import { runArtifactSubmissions } from '../artifacts/run-submissions';
 // Real #192 migrations/store/dispatch/questions/claim and #193 consumers.
 // Run production code over isolated PG; queue, actor and terminal reports are fixtures.
@@ -3341,8 +3342,9 @@ test(
       );
       await t.test('first-use cloud single-review flow keeps its task VM without waking or installing a parent', async () => {
         const { beginFactoryTransaction, commitFactoryTransaction, rollbackFactoryTransaction } = await import('./transaction');
-        const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const;
+        const names = ['MIKKA_EDITION', 'WORKSPACE_SECRETS_KEY', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const;
         const saved = new Map(names.map(name => [name, process.env[name]]));
+        process.env.MIKKA_EDITION = 'community';
         process.env.WORKSPACE_SECRETS_KEY = createHash('sha256').update(randomUUID()).digest('hex');
         process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1';
         process.env.MIKKA_BYOS_ENABLED = '1';
@@ -3529,7 +3531,9 @@ test(
           // This suite retains its isolated database, including the actual
           // computer bindings. Do not delete their owner as if Workspace rows
           // still lived alone in a second shared database.
+          const gateway = builtinGateway();
           for (const name of names) { const value = saved.get(name); if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+          await gateway?.stop();
         }
       });
       await t.test('the owner Artifact reader retains its report task hint and media without exposing them to another reader', async () => {

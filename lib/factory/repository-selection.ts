@@ -63,7 +63,7 @@ export async function switchFactoryRepository(pool: Pool, tx: PoolClient, store:
   // GitHub access is necessary but cannot enlarge tenant/project policy.
   try {
     const { withProjectExecution } = await import('@/lib/project-resources/store')
-    await withProjectExecution({ userId: task.userId, workspaceId: task.workspaceId, issueId: task.issueId,
+    await withProjectExecution({ userId: task.userId, botId: task.botId, workspaceId: task.workspaceId, issueId: task.issueId,
       repositoryKey: target.key, baseBranch: null, runtime: cloud ? 'cloud' : 'local', harness: source.harness }, async () => undefined, true)
   } catch (error) {
     const { ActionFailureError } = await import('@/lib/action-error')

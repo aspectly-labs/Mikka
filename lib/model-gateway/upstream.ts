@@ -26,6 +26,7 @@ export function upstreamRequest(input: {
   clientHeaders: Headers
   upstream: GatewayUpstream
   /** Server-verified serving speed tier frozen on the run, if any. */
+  pro?: boolean
   serviceTier?: 'fast' | 'ultrafast'
 }): UpstreamRequest {
   if ((input.protocol === 'anthropic') !== (input.operation !== 'responses')) throw new Error('model_gateway_operation_mismatch')
@@ -45,7 +46,16 @@ export function upstreamRequest(input: {
     if (filtered.length) headers['anthropic-beta'] = filtered.join(',')
     else delete headers['anthropic-beta']
   }
-  if (input.serviceTier && input.operation !== 'count_tokens') {
+  // The caller can request effort or summaries; mode belongs to the host's frozen grant.
+  if (input.operation === 'responses' && body.reasoning && typeof body.reasoning === 'object') {
+    const reasoning = { ...body.reasoning as Record<string, unknown> }
+    delete reasoning.mode
+    body.reasoning = reasoning
+  }
+  if (input.pro && input.operation === 'responses') {
+    body.reasoning = { mode: 'pro' }
+    delete body.service_tier
+  } else if (input.serviceTier && input.operation !== 'count_tokens') {
     if (openaiTarget) {
       if (body.service_tier === undefined) body.service_tier = input.serviceTier === 'ultrafast' ? 'ultrafast' : 'priority'
     } else if (allowAnthropicFast) {

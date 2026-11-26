@@ -35,7 +35,7 @@ test('API keys: migration replay, sealed storage, shares, picker order and run a
       CREATE TABLE byos_connections (id uuid PRIMARY KEY, "ownerId" text, "workspaceId" text, "removedAt" timestamptz, "modelCatalog" jsonb);
       CREATE TABLE byos_bindings ("connectionId" uuid, "modelId" text);
       CREATE TABLE bots (id uuid PRIMARY KEY, "workspaceId" uuid NOT NULL, "ownerId" text);
-      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,kind text NOT NULL CHECK (kind IN ('personal','team')));
+      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,kind text NOT NULL CHECK (kind IN ('personal','team')), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,status text);
       CREATE TABLE bot_model_choices ("ownerId" text NOT NULL, "workspaceId" uuid NOT NULL, "botKey" text NOT NULL, "bindingId" uuid, PRIMARY KEY ("ownerId","workspaceId","botKey"));
       CREATE TABLE agent_runs (id uuid PRIMARY KEY, "userId" text NOT NULL, "botId" uuid, "deviceId" uuid, "agentDefinition" jsonb, status text NOT NULL, "stopRequestedAt" timestamptz, "leaseExpiresAt" timestamptz, "updatedAt" timestamptz)`)

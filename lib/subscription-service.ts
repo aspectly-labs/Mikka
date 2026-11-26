@@ -25,6 +25,9 @@ const MODEL_REQUEST_MAX_BYTES = 1_048_576
 // Used only to preserve the public refusal of inputs still over budget.
 const LEGACY_HOST_CODE_UNIT_LIMIT = 262144
 
+/** A provider's reasoning level name, as the worker passes it on (short lowercase word). */
+const EFFORT_NAME = /^[a-z][a-z0-9_-]{0,15}$/
+
 export interface SubscriptionCapabilities {
   /** Whether the route runs for this subscription owner (lib/subscription-routes.ts). */
   ready(route: SubscriptionRoute, ownerId: string): boolean | Promise<boolean>
@@ -370,12 +373,18 @@ export class SubscriptionService {
       if (item.prioritySupported !== undefined && typeof item.prioritySupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
       if (item.ultrafastSupported !== undefined && typeof item.ultrafastSupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
       if (item.fastSupported !== undefined && typeof item.fastSupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
+      if (item.efforts !== undefined && (!Array.isArray(item.efforts) || item.efforts.length > 12 || item.efforts.some((level: unknown) => typeof level !== 'string' || !EFFORT_NAME.test(level)))) throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_effort_invalid' })
+      if (item.defaultEffort !== undefined && (typeof item.defaultEffort !== 'string' || !item.efforts?.includes(item.defaultEffort))) throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_effort_invalid' })
+      if (item.daybreak !== undefined && (!Array.isArray(item.daybreak) || item.daybreak.length > 2 || item.daybreak.some((tier: unknown) => tier !== 'blue' && tier !== 'red'))) throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_daybreak_invalid' })
       if (!options.has(item.id)) options.set(item.id, {
         id: item.id,
         name: item.name,
         ...(row.provider === 'codex' && typeof item.prioritySupported === 'boolean' ? { prioritySupported: item.prioritySupported } : {}),
         ...(row.provider === 'codex' && typeof item.ultrafastSupported === 'boolean' ? { ultrafastSupported: item.ultrafastSupported } : {}),
         ...(row.provider === 'claude' && typeof item.fastSupported === 'boolean' ? { fastSupported: item.fastSupported } : {}),
+        ...(Array.isArray(item.efforts) ? { efforts: [...new Set(item.efforts as string[])] } : {}),
+        ...(typeof item.defaultEffort === 'string' ? { defaultEffort: item.defaultEffort } : {}),
+        ...(row.provider === 'codex' && Array.isArray(item.daybreak) && item.daybreak.length ? { daybreak: [...new Set(item.daybreak as ('blue' | 'red')[])] } : {}),
       })
     }
     return [...options.values()]

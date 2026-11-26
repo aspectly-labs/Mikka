@@ -9,10 +9,15 @@ import { subscriptionAvailability } from "./subscription-quota";
 import { botModelPreference, resolveBotModelChoice } from "./bot-model-choice";
 import { isCloudEdition } from "./edition";
 import { defaultModelTarget } from "./default-model";
+import { modelKeyOf, modesFor, modesFromTier, supportedModes, tierForModes, type ModelCapabilities, type ModelModes } from "./model-capabilities";
+import { modelDisplayName } from "./model-display-name";
+import { readModelFavorites, menuFavorites } from "./model-favorites";
+import { modelEnabled, type ModelSettings } from "./enabled-models-policy";
+import { modelRouteRejection, ModelRouteUnavailable, type ModelRouteHealth } from "./model-route-rejection";
 
 export { quotaExhausted } from "./subscription-quota";
 import {
-  apiKeyOptionId,
+  pickerRouteKey, groupModelOptions, orderedRouteGroups, apiKeyOptionId,
   creditsOptionId,
   NO_MODEL,
   type BotModelCurrent,
@@ -107,13 +112,17 @@ export async function botModelMenu(
     group.options.push({
       id: row.bindingId, modelId: row.modelId, provider: row.provider, ...priceFor(row.modelId),
       route: { source: "subscription", connectionId: key, label: group.credentialLabel ?? "", service: row.provider },
-      ...(quota.status === "exhausted" ? { unavailable: { reason: "quota" as const, resetsAt: quota.resetsAt } } : {}),
+      ...(quota.status === "exhausted" ? {
+        unavailable: { reason: "quota" as const, resetsAt: quota.resetsAt },
+        health: modelRouteRejection("quota", quota.resetsAt)?.health,
+      } : {}),
     });
   }
   // API keys and custom providers that reach bot chats (C22): the person's own, then teammates' shared ones.
   const keyLabel = (key: (typeof keys)[number]) => [key.name, key.last4 ? `····${key.last4}` : null].filter(Boolean).join(" ") || key.provider;
   const keyOptions = (key: (typeof keys)[number]): BotModelMenuOption[] =>
     key.models.map((model) => ({ id: apiKeyOptionId(key.id, model), modelId: model, provider: key.provider, ...priceFor(model),
+      ...(key.modelsError === "invalid" ? { health: modelRouteRejection("keyRefused")?.health } : {}),
       route: { source: "byok", connectionId: key.id, label: keyLabel(key) } }));
   const ownKeys = keys.filter((key) => key.mine);
   // Mikka 额度: every catalogue model, listed whenever the source is on; the balance is checked when a message is sent
@@ -125,11 +134,11 @@ export async function botModelMenu(
     ...(model.pricing ? { price: { input: model.pricing.input, output: model.pricing.output } } : {}),
     ...(featured ? { featured } : {}), ...(hostedSource ? { hostedSource } : {}),
     route: { source: "credits", connectionId: null, label: "" },
-    ...(usable ? {} : { unavailable: { reason: "points" as const } }),
+    ...(usable ? {} : { unavailable: { reason: "points" as const }, health: modelRouteRejection("balance")?.health }),
   });
   const { FEATURED_MODELS } = await import("./model-catalog");
   const featured = new Set<string>(FEATURED_MODELS);
-  const groups: BotModelMenuGroup[] = [
+  const groups = orderedRouteGroups([
     ...(catalogue.length ? [{ kind: "hosted" as const, ...(hostedSource ? { hostedSource } : { points }),
       options: catalogue.map((model) => creditsOption(model, local || featured.has(model.id))) }] : []),
     ...subscriptions.values(),
@@ -137,7 +146,7 @@ export async function botModelMenu(
     ...keys.filter((key) => !key.mine && ownerNames.has(key.ownerId)).map((key) => ({
       kind: "shared" as const, owner: ownerNames.get(key.ownerId)!, credentialLabel: keyLabel(key), options: keyOptions(key),
     })),
-  ];
+  ]);
   const state = { chosen: choice.chosen, ...(choice.fallback ? { fallback: choice.fallback } : {}) };
   let current: BotModelCurrent;
   if (choice.kind === "none") {
@@ -162,11 +171,103 @@ export async function botModelMenu(
       kind: "subscription", ...state, available: availability.status === "available", availability: availability.status,
       credentialLabel: binding.accountLabel?.trim() || `…${String(binding.connectionId).slice(-6)}`,
       route: { source: "subscription", connectionId: String(binding.connectionId), label: binding.accountLabel?.trim() || `…${String(binding.connectionId).slice(-6)}`, service: binding.provider },
-      ...(availability.status === "exhausted" ? { unavailable: { reason: "quota" as const, resetsAt: availability.resetsAt } } : {}),
+      ...(availability.status === "exhausted" ? {
+        unavailable: { reason: "quota" as const, resetsAt: availability.resetsAt },
+        health: modelRouteRejection("quota", availability.resetsAt)?.health,
+      } : {}),
       ...(choice.quota ? { quota: choice.quota } : {}),
     };
   }
-  return { groups, current, ...(inspectPreference ? { preferenceState: !preference.key && preference.selected === undefined ? "absent" as const : "present" as const } : {}) };
+  // Every option says what it can be asked for on its route, from the provider's own catalogue (decision 2026-11-25-1700).
+  const capabilityOf = await (await import("./model-capabilities-server")).modelCapabilityReader(pool,
+    [...groups.flatMap(group => group.options), current].flatMap(option => option.route?.source === "subscription" && option.route.connectionId ? [option.route.connectionId] : []));
+  const keyById = new Map(keys.map(key => [key.id, key]));
+  const withCapabilities = <T extends BotModelMenuOption>(option: T): T => {
+    if (!option.modelId || !option.route) return option;
+    const route = option.route;
+    const key = route.source === "byok" && route.connectionId ? keyById.get(route.connectionId) : undefined;
+    const modelKey = modelKeyOf(option.modelId, option.provider, key?.name || route.label);
+    const display = modelDisplayName(modelKey);
+    const name = display.family ? display.name : (catalogue.find(item => item.id === modelKey)?.name ?? display.name);
+    const kind = route.source === "subscription" ? "plan" : route.source === "byok" ? "key" : "credits";
+    return { ...option, modelKey, entryId: pickerRouteKey(option), name, route: { ...route, kind }, capabilities: route.source === "credits"
+      ? capabilityOf({ source: "credits", modelId: option.modelId })
+      : route.source === "subscription" && route.connectionId
+        ? capabilityOf({ source: "subscription", connectionId: route.connectionId, provider: option.provider, modelId: option.modelId })
+        : capabilityOf({ source: "byok", provider: option.provider, modelId: option.modelId, responsesApi: key?.responsesApi,
+          ...(key?.modelSpeedModes && Object.hasOwn(key.modelSpeedModes, option.modelId) ? { advertisedSpeedModes: key.modelSpeedModes[option.modelId] } : {}) }) };
+  };
+  for (const group of groups) group.options = group.options.map(withCapabilities);
+  current = withCapabilities(current);
+  const favoriteSlots = await readModelFavorites(pool, scope.ownerId);
+  const models = groupModelOptions(groups);
+  // The person's favorites, as Capy's: whole setups first in the picker; one this workspace cannot use stays, unavailable.
+  const favorites = menuFavorites(favoriteSlots, { groups });
+  const modes = current.capabilities ? modesFor(current.capabilities, preference.chat.modes) : modesFromTier(null);
+  const chat = { ...preference.chat, modes, effort: modes.pro ? null : preference.chat.effort };
+  const savedKey = preference.key && keys.find(key => key.id === preference.key?.keyId && (key.mine || ownerNames.has(key.ownerId)));
+  const unavailableSelection = choice.fallback === "preference" && preference.selected
+    ? await subscriptionPickerHealth(pool, scope.ownerId, preference.selected)
+    : savedKey?.modelsError === "invalid" ? modelRouteRejection("keyRefused")?.health : undefined;
+  return { groups, models, preferredRoutes: {}, current, chat, favorites,
+    ...(unavailableSelection ? { unavailableSelection } : {}),
+    ...(inspectPreference ? { preferenceState: !preference.key && preference.selected === undefined ? "absent" as const : "present" as const } : {}) };
+}
+
+/** Read only known, owned subscription entries. Missing and foreign entries have the same response. */
+async function subscriptionPickerHealth(pool: Pick<Pool, "query">, ownerId: string, id: string): Promise<ModelRouteHealth | undefined> {
+  const stable = /^subscription:([^:]+):(.+)$/.exec(id);
+  if (!z.uuid().safeParse(stable?.[1] ?? id).success) return;
+  const { rows: [route] } = await pool.query<{ state: string; paused: boolean; settings: ModelSettings | null; modelId: string }>(
+    `SELECT c.state,c.paused,to_jsonb(c)->'modelSettings' AS settings,b."modelId"
+     FROM byos_bindings b JOIN byos_connections c ON c.id=b."connectionId" AND c."ownerId"=b."ownerId"
+     WHERE b."ownerId"=$1 AND c."removedAt" IS NULL
+       AND (($3::text IS NULL AND b.id=$2::uuid) OR (b."connectionId"=$2::uuid AND b."modelId"=$3)) LIMIT 1`,
+    [ownerId, stable?.[1] ?? id, stable?.[2] ?? null]);
+  if (!route) return;
+  if (route.state === "reconnect_required") return modelRouteRejection("expired")?.health;
+  if (route.paused || !modelEnabled(route.settings, route.modelId)) return modelRouteRejection("paused")?.health;
+}
+
+/**
+ * Saves the chat's reasoning level and/or serving speed beside its model, for the Bot or the Coordinator (`botId`
+ * null). A field left out keeps its value; null clears it (the model's default level; the workspace's speed).
+ */
+export async function setChatModelSettings(pool: Pick<Pool, "query">, scope: ExecutionSettingsScope, botId: string | null,
+  change: { effort?: string | null; serviceTier?: string | null; modes?: ModelModes }, capabilities?: ModelCapabilities): Promise<void> {
+  const { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS } = await import("./model-routing");
+  if (change.modes) {
+    if (!supportedModes(capabilities, change.modes) || (change.serviceTier != null && change.serviceTier !== tierForModes(change.modes)))
+      throw new ActionFailureError("validationGeneric");
+    change = { ...change, serviceTier: change.serviceTier === null && !change.modes.fast && !change.modes.ultrafast ? null : tierForModes(change.modes), ...(change.modes.pro ? { effort: null } : {}) };
+  }
+  if (!change.modes && capabilities && change.serviceTier != null && !supportedModes(capabilities, modesFromTier(change.serviceTier)))
+    throw new ActionFailureError("validationGeneric");
+  if (change.effort != null && !MODEL_ROUTING_EFFORTS.some(level => level === change.effort)) throw new ActionFailureError("validationGeneric");
+  if (change.serviceTier != null && !MODEL_SERVICE_TIERS.some(tier => tier === change.serviceTier)) throw new ActionFailureError("validationGeneric");
+  if (botId !== null) {
+    if (!z.uuid().safeParse(botId).success) throw new ActionFailureError("botNotFound");
+    const { rowCount } = await pool.query('SELECT 1 FROM bots WHERE id=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND "archivedAt" IS NULL', [botId, scope.ownerId, scope.workspaceId]);
+    if (!rowCount) throw new ActionFailureError("botNotFound");
+  }
+  const effort = change.effort !== undefined, tier = change.serviceTier !== undefined;
+  if (!effort && !tier) return;
+  await pool.query(`INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey",effort,"serviceTier",pro) VALUES ($1,$2,$3,$4,$5,$8)
+    ON CONFLICT ("ownerId","workspaceId","botKey") DO UPDATE SET
+      effort = CASE WHEN (NOT $7 AND bot_model_choices.pro AND $9) THEN NULL WHEN $6 THEN EXCLUDED.effort ELSE bot_model_choices.effort END,
+      pro = CASE WHEN $7 THEN EXCLUDED.pro ELSE bot_model_choices.pro AND $9 END,
+      "serviceTier" = CASE WHEN $7 THEN EXCLUDED."serviceTier" ELSE bot_model_choices."serviceTier" END`,
+    [scope.ownerId, scope.workspaceId, botId ?? "coordinator", change.effort ?? null, change.serviceTier ?? null, effort, tier, change.modes?.pro === true, capabilities === undefined || capabilities.pro === true]);
+}
+
+/** Validate the device's route choice. Legacy callers receive the validated choice in this response only. */
+export async function setPreferredRoute(pool: Pool, settings: ExecutionSettings, scope: ExecutionSettingsScope,
+  botId: string | null, modelKey: string, optionId: string): Promise<BotModelMenu> {
+  const menu = await botModelMenu(pool, settings, scope, botId);
+  const route = menu.models?.find(model => model.key === modelKey)?.routes.find(option => option.id === optionId || option.entryId === optionId);
+  if (!route)
+    throw new ActionFailureError("executionModelUnknown");
+  return { ...menu, preferredRoutes: { [modelKey]: route.id } };
 }
 
 /** Active members' public names for shared API keys. Never the credential. */
@@ -232,6 +333,16 @@ export async function chooseBotModel(
   botId: string | null,
   id: string,
 ): Promise<BotModelMenu> {
+  if (id.startsWith("subscription:")) {
+    const menu = await botModelMenu(pool, settings, scope, botId);
+    const route = menu.models?.flatMap(model => model.routes).find(option => option.entryId === id);
+    if (!route) {
+      const health = await subscriptionPickerHealth(pool, scope.ownerId, id);
+      if (health) throw new ModelRouteUnavailable(health);
+      throw new ActionFailureError("executionModelUnknown");
+    }
+    id = route.id;
+  }
   const { parseApiKeyOption } = await import("./bot-model-menu-view");
   const apiKey = parseApiKeyOption(id);
   if (apiKey) {
@@ -240,9 +351,23 @@ export async function chooseBotModel(
     try {
       await setBotApiKeyChoice(pool, scope, botId, apiKey.keyId, apiKey.model);
     } catch (error) {
-      if (error instanceof WorkspaceError) throw new ActionFailureError(error.code === "botNotFound" ? "botNotFound" : "executionModelUnknown");
+      if (error instanceof WorkspaceError) {
+        const health = error.code === "apiKeyInvalid" ? modelRouteRejection("keyRefused")?.health : undefined;
+        if (health) throw new ModelRouteUnavailable(health, { cause: error });
+        throw new ActionFailureError(error.code === "botNotFound" ? "botNotFound" : "executionModelUnknown", undefined, undefined, { cause: error });
+      }
       throw error;
     }
-  } else await settings.setBotModel(scope, botId, id);
+  } else {
+    try {
+      await settings.setBotModel(scope, botId, id);
+    } catch (error) {
+      if (error instanceof ActionFailureError && error.code === "executionModelUnknown") {
+        const health = await subscriptionPickerHealth(pool, scope.ownerId, id);
+        if (health) throw new ModelRouteUnavailable(health, { cause: error });
+      }
+      throw error;
+    }
+  }
   return botModelMenu(pool, settings, scope, botId);
 }

@@ -39,6 +39,9 @@ import {
   hostedApiUpgrade,
   REPO_ORIGIN_HEADER,
   PROJECT_ENVIRONMENT_HEADER,
+  ENVIRONMENT_SNAPSHOT_HEADER,
+  PORTABLE_TASK_WORKSPACE_HEADER,
+  ENVIRONMENT_REPOSITORIES_HEADER,
   RECOVERY_WORKTREE_HEADER,
   MODEL_CREDENTIAL_HEADER,
   MODEL_GATEWAY_LOOPBACK_HEADER,
@@ -332,6 +335,9 @@ export class HttpServerLink implements ServerLink {
           [TEAM_SKILL_HEADER]: '1',
           [REPO_ORIGIN_HEADER]: '1',
           [PROJECT_ENVIRONMENT_HEADER]: '1',
+          [ENVIRONMENT_SNAPSHOT_HEADER]: '1',
+          [PORTABLE_TASK_WORKSPACE_HEADER]: '1',
+          [ENVIRONMENT_REPOSITORIES_HEADER]: '1',
           [RECOVERY_WORKTREE_HEADER]: '1',
           [MODEL_CREDENTIAL_HEADER]: '1',
           [MODEL_GATEWAY_LOOPBACK_HEADER]: '1',
@@ -494,8 +500,10 @@ export class HttpServerLink implements ServerLink {
   async nativeLease(deviceId:string,runId:string,signal?:AbortSignal) {
     return this.call('POST', `${devicePaths.claim(checkId(deviceId),checkId(runId)).replace(/\/claim$/, '')}/subscription-lease`, {schema:nativeLeaseSchema,signal})
   }
-  async githubLease(deviceId: string, runId: string, signal?: AbortSignal) {
-    return this.call('POST', `/v1/devices/${seg(deviceId)}/github-token?runId=${seg(runId)}`, {
+  async githubLease(deviceId: string, runId: string, signal?: AbortSignal, startupRepository?: string) {
+    const query = new URLSearchParams({runId: checkId(runId)})
+    if (startupRepository) query.set('startupRepository',startupRepository)
+    return this.call('POST', `/v1/devices/${seg(deviceId)}/github-token?${query}`, {
       schema: runGitHubCredentialSchema, signal,
     })
   }

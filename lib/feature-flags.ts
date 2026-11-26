@@ -22,9 +22,11 @@ export function featureAvailability(feature: UpcomingFeature, remoteValue: boole
 export const gatedFeatures = {
   /** The bots' cloud computer UI (#174); off until the E2B backend (#172) is live. */
   cloudComputer: 'mikka-cloud-computer',
+  /** Environment builds consume the owner's E2B quota; opt in per user. */
+  environmentSnapshots: 'mikka-environment-snapshots',
   /** Points that bill cloud computer time (计费 › 点数). Hidden while E2B runs on the workspace's own API key (Alex, 2026-10-30). */
   computerBilling: 'mikka-computer-billing',
-  /** 记忆 (sidebar entry, its page and its settings section). Hidden: it does not work yet (Alex, 2026-11-20). */
+  /** 记忆 (sidebar entry, its page and its settings section). Hidden; see the hosted repo. */
   memory: 'mikka-memory',
 } as const
 
@@ -36,6 +38,7 @@ export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
   'mikka-cloud-computer': true,
   'mikka-computer-billing': false,
   'mikka-memory': false,
+  'mikka-environment-snapshots': false,
   'mikka-byos-subscription-chat': true,
   'mikka-byos-subscription-native': true,
   'mikka-email-sign-in-off': false,

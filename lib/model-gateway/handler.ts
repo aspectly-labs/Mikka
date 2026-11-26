@@ -118,7 +118,7 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
     protocol, operation, model: grant.model,
     body: withoutDisabledFeatures(body, resolved.features ?? {}),
     clientHeaders: request.headers, upstream: resolved.upstream,
-    ...(grant.serviceTier ? { serviceTier: grant.serviceTier } : {}),
+    ...(grant.pro ? { pro: true } : grant.serviceTier ? { serviceTier: grant.serviceTier } : {}),
   })
   let response: Response
   try {

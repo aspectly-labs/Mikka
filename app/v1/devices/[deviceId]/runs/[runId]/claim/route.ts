@@ -15,7 +15,7 @@ import { readRepositorySettings } from '@/lib/device-repositories'
 import { daemonTestMode, repositoryBindingMatches } from '@mikka/protocol/repository'
 import { localExecutionHarnesses } from '@/lib/device-agents'
 import { runTestFixture } from '@/lib/run-test-fixture'
-import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
+import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_SNAPSHOT_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, portableTaskWorkspaceReceiptSchema, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
 import { SUBSCRIPTION_MODEL_CATALOGUE_HEADER, type NativeLease } from '@mikka/protocol/subscription'
 import { POLICY_SNAPSHOT_HEADER, POLICY_SNAPSHOT_VERSION } from '@mikka/protocol/policy-snapshot'
 import { issuePolicySnapshot, policyDistributionContext } from '@/lib/agent-tool-approval/policy-distribution'
@@ -68,6 +68,7 @@ import { TASK_SECRETS_HEADER, TASK_SECRETS_VERSION } from '@mikka/protocol/task-
 import { executionMembersActive, ExecutionMcpAuthorityError } from '@/lib/execution-identity'
 import { cloudStartupPhases, cloudStartupRunAttributes, cloudStartupSpan } from '@/lib/computer/startup-tracing'
 import { cloudStartupDiagnosticEnv } from '@/lib/computer/startup-diagnostics'
+import { startupRepositories } from '@/lib/project-resources/startup-repositories'
 import { withRunProjectExecution } from '@/lib/project-resources/run-lease'
 import { ActionFailureError } from '@/lib/action-error'
 import { deviceSessionHeld } from '@/lib/device-session'
@@ -142,6 +143,21 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const claimAuthorizedProject = async () => {
   const projectEnvironment = run.agentDefinition?.projectExecution?.environment
   if (projectEnvironment && request.headers.get(PROJECT_ENVIRONMENT_HEADER) !== '1') return RouteResponse.json({ error: 'Device update required for the selected environment.', code: 'projectEnvironmentUnavailable' }, { status: 409 })
+  const version = !run.retryOf && run.continuesRunId && (await pool.query(
+    'SELECT 1 FROM thread_reply_versions WHERE "resultRunId"=$1 AND "userId"=$2 AND "workspaceId"=$3',
+    [run.id,caller.userId,run.workspaceId])).rowCount
+  const [source] = !version && !run.retryOf && run.continuesRunId
+    ? await db.select({ baseBranch: agentRuns.baseBranch, sessionId: agentRuns.sessionId, deviceId: agentRuns.deviceId, agentId: agentRuns.agentId, agentDefinition: agentRuns.agentDefinition }).from(agentRuns).where(and(eq(agentRuns.id, run.continuesRunId), eq(agentRuns.userId, caller.userId), eq(agentRuns.issueId, issueId))).limit(1)
+    : []
+  // Keep the recorded thread ancestry. A different environment or base needs its
+  // own checkout and setup; an earlier worktree can still contain uncommitted work.
+  const previousEnvironment = source?.agentDefinition?.projectExecution?.environment
+  const freshEnvironmentCheckout = Boolean(source && (source.baseBranch !== run.baseBranch ||
+    previousEnvironment?.id !== projectEnvironment?.id || previousEnvironment?.revision !== projectEnvironment?.revision))
+  const earlier = freshEnvironmentCheckout ? undefined : source
+  const startup = startupRepositories(projectEnvironment, repo.repoPath)
+  if ((startup.length || freshEnvironmentCheckout) && request.headers.get(ENVIRONMENT_REPOSITORIES_HEADER) !== '1')
+    return RouteResponse.json({ error: 'Device update required for environment repositories.', code: 'projectEnvironmentUnavailable' }, { status: 409 })
   const rejectProfile = async (error: AgentProfileAdmissionError) => {
     logCodedError(error, { runId })
     const summary = 'The selected Agent Profile changed or is no longer available. Select an available Profile for a new run.'
@@ -257,6 +273,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const leaseExpiresAt = new Date(Date.now() + SESSION_LEASE_MS).toISOString()
   let factoryClaim: Record<string, unknown> = {}
   let factoryToken: Awaited<ReturnType<typeof issueRunToken>> | undefined
+  let portableTaskWorkspace: ReturnType<typeof portableTaskWorkspaceReceiptSchema.parse> | undefined
+  const portableTask = device.kind === 'cloud' && Boolean(repo.remoteUrl) && !run.agentDefinition?.readOnly &&
+    (await import('@/lib/cloud-computer/e2b-task-workspace-archive')).portableTaskArchiveEnabled()
   const beforeClaim = async (tx: import('pg').PoolClient) => {
     // Same lock order as a `disconnected` report (device, then run): either it
     // waits for this claim and ends its lease, or this claim sees the session closed.
@@ -264,13 +283,43 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     // Scope may change while publication/policy preparation awaits. Recheck the same frozen
     // binding, including both members and the share, before taking the lease.
     if (subscription && !await nativeRunBinding(tx, caller.userId, agent.id, harness, subscription.workspaceId, subscription.id)) return false
-    if (!deploymentSwitch('factoryRouting') || !deploymentSwitch('factoryLifecycle')) return true
-    const { guardFactoryClaim } = await import('@/lib/factory/runtime')
-    try { factoryClaim = await guardFactoryClaim(tx,caller.userId,deviceId,runId,leaseExpiresAt); return true }
-    catch (error) { if (error instanceof FactoryError) return false; throw error }
+    if (deploymentSwitch('factoryRouting') && deploymentSwitch('factoryLifecycle')) {
+      const { guardFactoryClaim } = await import('@/lib/factory/runtime')
+      try { factoryClaim = await guardFactoryClaim(tx,caller.userId,deviceId,runId,leaseExpiresAt) }
+      catch (error) { if (error instanceof FactoryError) return false; throw error }
+    }
+    if (portableTask) {
+      // Park locks the run before its machine. Take those locks in that
+      // order before returning a receipt or authorizing a new writer.
+      await tx.query('SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE', [runId, caller.userId])
+      const { rows: [machine] } = await tx.query<{ receipt: unknown; restorePending: boolean; capture: string | null; captureUntil: string | null }>(
+        `SELECT lifecycle->'portableWorkspaceRestore' AS receipt, lifecycle ? 'portableWorkspaceRestorePending' AS "restorePending",
+           lifecycle->>'portableWorkspaceCapture' AS capture,
+           lifecycle->>'portableWorkspaceCaptureUntil' AS "captureUntil" FROM thread_machines
+         WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
+           AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended' FOR UPDATE`, [runId, deviceId, caller.userId, run.workspaceId])
+      if (machine?.restorePending || (machine?.capture === 'pending' && Number(machine.captureUntil) > Date.now())) return false
+      if (machine?.receipt != null) {
+        if (request.headers.get(PORTABLE_TASK_WORKSPACE_HEADER) !== '1') return false
+        portableTaskWorkspace = portableTaskWorkspaceReceiptSchema.parse(machine.receipt)
+      }
+    }
+    return true
   }
+  let fromEnvironmentSnapshot = false
   const afterClaim = async (tx: import('pg').PoolClient) => {
     await tx.query('UPDATE agent_runs SET "deviceTokenId"=$2,"machineAuthority"=$4 WHERE id=$1 AND "userId"=$3', [runId, caller.tokenId, caller.userId, receivesRunCredentials])
+    if (portableTask) {
+      await tx.query(`UPDATE thread_machines SET lifecycle=(lifecycle-'portableWorkspaceCaptureId'-'portableWorkspaceCaptureUntil')
+          ||'{"portableWorkspaceCapture":"writing"}'::jsonb
+        WHERE "runId"=$1 AND "deviceId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
+          AND "snapshotId"<>'cloudflare-task-v1' AND state<>'ended'`, [runId, deviceId, caller.userId, run.workspaceId])
+    }
+    if (device.kind === 'cloud' && projectEnvironment && request.headers.get(ENVIRONMENT_SNAPSHOT_HEADER) === '1') {
+      const source = await tx.query(`SELECT 1 FROM thread_machines WHERE "runId"=$1 AND "deviceId"=$2
+        AND "ownerId"=$3 AND "workspaceId"=$4 AND "environmentSnapshotId" IS NOT NULL`, [runId, deviceId, caller.userId, run.workspaceId])
+      fromEnvironmentSnapshot = Boolean(source.rowCount)
+    }
     if (factoryClaim.preserveQuestionWorktree === true) {
       const { withDatabaseClient } = await import('@/lib/db')
       factoryToken = await withDatabaseClient(tx, () => issueRunToken(run))
@@ -282,11 +331,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const openRunKey = async (): Promise<RouteResponse | null> => {
     if (!frozenKey && !frozenCredits) return null
     const [{ validateRunApiKey }, { WorkspaceError }] = await Promise.all([import('@/lib/model-api-keys'), import('@/lib/workspace-error')])
-    const refuse = async () => {
+    const refuse = async (health?: import('@/lib/model-route-rejection').ModelRouteHealth) => {
       const { persistRunCompletion } = await import('@/lib/run-publications')
       await persistRunCompletion(caller.userId, runId, { stopReason: 'blocked', report: { summary: 'API key unavailable.', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } }, caller.scopeDeviceId)
       afterJob('after:coordinator-wake', async () => { const { wakeCoordinator } = await import('@/lib/coordinator/wake'); await wakeCoordinator(caller.userId) })
-      return RouteResponse.json({ error: 'API key unavailable.', code: 'apiKeyUnavailable' }, { status: 409 })
+      return RouteResponse.json({ error: 'API key unavailable.', code: 'apiKeyUnavailable', ...(health ? { health } : {}) }, { status: 409 })
     }
     if (harness !== 'claude_code' && harness !== 'codex') return refuse()
     // HTTP is only for a local runner on this server's configured loopback origin.
@@ -296,8 +345,14 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (frozenKey) {
       try { await validateRunApiKey(pool, runId, frozenKey.keyId) }
       catch (error) {
-        if (!(error instanceof WorkspaceError) || error.code !== 'apiKeyNotFound') return RouteResponse.json({ error: 'API key unavailable.' }, { status: 409 })
-        return refuse()
+        if (error instanceof WorkspaceError) {
+          if (error.code === 'apiKeyNotFound') return refuse()
+          if (error.code === 'apiKeyInvalid') {
+            const { modelRouteRejection } = await import('@/lib/model-route-rejection')
+            return refuse(modelRouteRejection('keyRefused')?.health)
+          }
+        }
+        return RouteResponse.json({ error: 'API key unavailable.' }, { status: 409 })
       }
     }
     const { mintGatewayToken } = await import('@/lib/model-gateway/token')
@@ -492,12 +547,6 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   // A historical version keeps its conversation lineage but starts a fresh
   // native session and worktree. Resuming the latest session would leak later
   // turns back into the historical prefix or overwrite its working files.
-  const version = !run.retryOf && run.continuesRunId && (await pool.query(
-    'SELECT 1 FROM thread_reply_versions WHERE "resultRunId"=$1 AND "userId"=$2 AND "workspaceId"=$3',
-    [run.id,caller.userId,run.workspaceId])).rowCount
-  const [earlier] = !version && !run.retryOf && run.continuesRunId
-    ? await db.select({ sessionId: agentRuns.sessionId, deviceId: agentRuns.deviceId, agentId: agentRuns.agentId, agentDefinition: agentRuns.agentDefinition }).from(agentRuns).where(and(eq(agentRuns.id, run.continuesRunId), eq(agentRuns.userId, caller.userId), eq(agentRuns.issueId, issueId))).limit(1)
-    : []
   const earlierHarness = earlier?.agentDefinition?.harness ?? (earlier?.agentDefinition == null && earlier?.agentId === run.agentId ? agent.harness : undefined)
   const followUp = earlier ? run.agentDefinition?.workspaceReview
     ? await (await import('@/lib/coding-workspace/diff/feedback-brief')).reviewBatchFollowUp(pool, run)
@@ -608,7 +657,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
           (request.headers.get(CUSTOM_TASK_BRANCH_HEADER) === '1' || /^mikka\/[a-z0-9-]+-[1-9][0-9]*$/.test(publication.pushBranch))
           ? { branch: publication.pushBranch } : {}) } } : {}),
     ...(run.agentDefinition?.model ? {model:run.agentDefinition.model} : {}),
-    ...((run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort)
+    ...(!run.agentDefinition?.modelDispatch?.pro && (run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort)
       ? { effort: run.agentDefinition?.modelDispatch?.effort ?? run.agentDefinition?.agentProfile?.effort ?? run.agentDefinition?.modelDispatch?.routing?.effort } : {}),
     ...(run.agentDefinition?.modelDispatch?.serviceTier ? { serviceTier: run.agentDefinition.modelDispatch.serviceTier } : {}),
     ...(modelCredential ? { modelCredential } : {}),
@@ -616,10 +665,12 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...(subscriptionLease ? { subscriptionLease } : {}),
     ...(computer && assignmentPolicy.permissions.computer_use !== 'deny' ? { computer: { botId: computer.botId, ownerId: computer.ownerId, display: computer.display, policyVersion: computer.policyVersion } } : {}),
     ...(localComputer ? { localComputer } : {}),
-    ...(projectEnvironment ? { projectEnvironment: { id: projectEnvironment.id, revision: projectEnvironment.revision, ...(projectEnvironment.setup ? { setup: projectEnvironment.setup } : {}) } } : {}),
+    ...(portableTaskWorkspace ? { portableTaskWorkspace } : {}),
+    ...(projectEnvironment ? { projectEnvironment: { id: projectEnvironment.id, revision: projectEnvironment.revision, ...(fromEnvironmentSnapshot ? { fromSnapshot: true } : {}), ...(startup.length ? { startupRepositories: startup } : {}), ...(projectEnvironment.setup ? { setup: projectEnvironment.setup } : {}) } } : {}),
     ...(Object.keys(assignedEnv).length ? { taskEnv: assignedEnv } : {}),
     ...(taskSecretNames.length ? { taskSecretNames } : {}),
     ...(taskSecrets ? { taskSecrets } : {}),
+    ...(freshEnvironmentCheckout ? { freshEnvironmentCheckout: true as const } : {}),
     ...threadContinuation,
     ...retry,
     ...withFactoryQuestionDeliveryContext(factoryClaim, {
@@ -681,7 +732,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     return RouteResponse.json({ error: 'Run ownership unavailable.' }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
   }
   try {
-    return await withRunProjectExecution({ userId: caller.userId, workspaceId: run.workspaceId, issueId: run.issueId,
+    return await withRunProjectExecution({ userId: caller.userId, botId: run.botId, workspaceId: run.workspaceId, issueId: run.issueId,
       repositoryKey: repo.remoteUrl ? repo.repoPath : null, baseBranch: run.baseBranch, runtime: device.kind === 'cloud' ? 'cloud' : 'local',
       harness: run.agentDefinition?.harness ?? agent.harness }, run.agentDefinition?.projectExecution, claimAuthorizedProject)
   } catch (error) {

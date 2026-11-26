@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  apiKeyWorkerDefinition,
   freezeWorkerDefinition,
   retryWorkerDefinition,
 } from "./agent-kit/worker";
@@ -41,4 +42,15 @@ test("explicit model and device stay frozen through retries", () => {
     snapshot.definitionDigest,
     freezeWorkerDefinition(base).definitionDigest,
   );
+});
+
+test("a fallback uses the newly admitted route's Pro setting", async () => {
+  const { providerContinuationDefinition } = await import("./run-provider-fallback");
+  const apiKey = { keyId: "10000000-0000-4000-8000-000000000002", model: "gpt-6.2-astra" };
+  const entry = { id: "initial", model: apiKey.model, harness: "codex" as const, source: { kind: "api_key" as const, keyId: apiKey.keyId } };
+  const source = freezeWorkerDefinition({ ...base, apiKey, modelDispatch: { mode: "preference", entry, pro: true } });
+  const next = apiKeyWorkerDefinition(source, base.prompt, { ...apiKey, model: "other" });
+  assert.equal(next.modelDispatch?.pro, undefined);
+  assert.equal(providerContinuationDefinition(source, next, base.prompt).modelDispatch?.pro, undefined);
+  assert.equal(providerContinuationDefinition(next, source, base.prompt).modelDispatch?.pro, true);
 });

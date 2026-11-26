@@ -6,7 +6,7 @@ import { mobileWebTarget } from './mobile-web-target'
 test('account and integration handoffs retain only the explicit page and locale', () => {
   const workspace = '11111111-1111-4111-8111-111111111111'
   for (const path of [
-    '/?settings=account', '/?settings=integrations', '/?settings=integrations&app=linear',
+    '/api/integrations/linear/connect?account=user-1', '/?settings=account', '/?settings=integrations', '/?settings=integrations&app=linear',
     '/?section=plugins', '/?section=plugins&app=gmail', '/en?section=plugins&app=linear',
     '/en?settings=account', '/settings?section=account', '/en/settings?section=connections&app=gmail',
     `/settings?section=integrations&workspace=${workspace}`,
@@ -19,6 +19,7 @@ test('account and integration handoffs retain only the explicit page and locale'
 
 test('handoff cannot target credentials, other origins or unvalidated query parameters', () => {
   for (const path of [
+    '/api/integrations/linear/connect', '/api/integrations/linear/connect?account=a&next=/auth',
     null, '', '/', '/en', 'https://evil.test/?settings=account', '//evil.test', '/\\evil.test',
     '/api/auth/get-session', '/api/auth/sign-out', '/api/mobile/open?token=forged',
     '/?settings=account&next=//evil.test', '/?settings=account&settings=integrations',

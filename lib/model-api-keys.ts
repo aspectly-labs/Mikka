@@ -444,9 +444,10 @@ export async function usableApiKeys(query: Query, userId: string, workspaceId: s
   return [...mine.map(row => usable(row, true)), ...others.filter((_, index) => grants[index]).map(row => usable(row, false))]
 }
 
-async function openKey(query: Query, keyId: string, env: Env) {
+async function openKey(query: Query, keyId: string, env: Env, forRun = false) {
   const { rows: [row] } = await query.query<Row & { ciphertext: string; iv: string; keyVersion: number }>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",ciphertext,iv,"keyVersion" FROM model_api_keys WHERE id=$1`, [keyId])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
+  if (forRun && row.modelsError === 'invalid') throw new WorkspaceError('apiKeyInvalid')
   try { return { row, apiKey: openSecret(row, keyAad(row.id, row.ownerId), env) } } catch (error) {
     if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     console.error(`[model-api-keys] open_failed id=${row.id}`)
@@ -461,7 +462,7 @@ async function openKey(query: Query, keyId: string, env: Env) {
  */
 export async function openGatewayApiKey(query: Query, keyId: string, env: Env = process.env) {
   z.uuid().parse(keyId)
-  const { row, apiKey } = await openKey(query, keyId, env)
+  const { row, apiKey } = await openKey(query, keyId, env, true)
   return { key: view(row), apiKey, features: parseGatewayFeatures(row.features) }
 }
 
@@ -499,6 +500,10 @@ export async function setBotApiKeyChoice(query: Query, scope: { ownerId: string;
   }
   const key = (await usableApiKeys(query, scope.ownerId, scope.workspaceId)).find(item => item.id === keyId)
   if (!key || !apiKeyChatBaseUrl(key) || !key.models.includes(modelName)) throw new WorkspaceError('executionModelUnknown')
+  if (key.modelsError === 'invalid') {
+    if (!key.mine && !await executionMembersActive(scope.workspaceId, [scope.ownerId, key.ownerId])) throw new WorkspaceError('executionModelUnknown')
+    throw new WorkspaceError('apiKeyInvalid')
+  }
   await query.query(`INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","bindingId","apiKeyId","apiKeyModel") VALUES ($1,$2,$3,NULL,$4,$5)
     ON CONFLICT ("ownerId","workspaceId","botKey") DO UPDATE SET "bindingId"=NULL,"apiKeyId"=EXCLUDED."apiKeyId","apiKeyModel"=EXCLUDED."apiKeyModel","creditsModel"=NULL`,
   [scope.ownerId, scope.workspaceId, botId ?? 'coordinator', keyId, modelName])
@@ -517,7 +522,7 @@ export async function openApiKeyForChat(query: Query, userId: string, workspaceI
   if (!usable || !baseUrl) throw new WorkspaceError('apiKeyNotFound')
   const { rows: [owner] } = await query.query<{ ownerId: string }>('SELECT "ownerId" FROM model_api_keys WHERE id=$1', [keyId])
   if (!owner || (owner.ownerId !== userId && !await executionMembersActive(workspaceId, [userId, owner.ownerId]))) throw new WorkspaceError('apiKeyNotFound')
-  const { row, apiKey } = await openKey(query, keyId, env)
+  const { row, apiKey } = await openKey(query, keyId, env, true)
   const modelSpeedModes = parseStoredSpeedModes(row.modelSettings)
   return { apiKey, baseUrl, keyOwnerId: row.ownerId, provider: row.provider, protocol: row.protocol, ...(modelSpeedModes ? { modelSpeedModes } : {}) }
 }
@@ -538,8 +543,10 @@ export async function validateRunApiKey(query: Query, runId: string, keyId: stri
     ? (await usableApiKeys(query, run.userId, run.workspaceId)).some(key => key.id === keyId)
     : Boolean((await query.query('SELECT 1 FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [keyId, run.userId])).rowCount)
   if (!usable) throw new WorkspaceError('apiKeyNotFound')
-  const { rows: [owner] } = await query.query<{ ownerId: string }>('SELECT "ownerId" FROM model_api_keys WHERE id=$1', [keyId])
+  const { rows: [owner] } = await query.query<{ ownerId: string; modelsError: ApiKeyView['modelsError'] }>(
+    `SELECT "ownerId",to_jsonb(k)->>'modelsError' AS "modelsError" FROM model_api_keys k WHERE id=$1`, [keyId])
   if (!owner || (owner.ownerId !== run.userId && (!run.agentDefinition?.apiKey || !run.workspaceId || !await executionMembersActive(run.workspaceId, [run.userId, owner.ownerId])))) throw new WorkspaceError('apiKeyNotFound')
+  if (owner.modelsError === 'invalid') throw new WorkspaceError('apiKeyInvalid')
   // Recorded so withdrawing the key or its share stops this run (stopRunsUsingApiKeys).
   await query.query(`INSERT INTO model_api_key_runs ("runId","keyId","workspaceId") VALUES ($1,$2,$3)
     ON CONFLICT ("runId") DO UPDATE SET "keyId"=EXCLUDED."keyId","workspaceId"=EXCLUDED."workspaceId"`, [runId, keyId, run.workspaceId])

@@ -53,6 +53,7 @@ import { MockAdapter } from "./adapters/mock"
 import type { AgentAdapter } from "./adapters/types"
 import { publishRun, snapshotTree } from "./agents/publish"
 import { agentPublishedReceipt, githubReceiptEnvironment } from './agents/github-runtime'
+import { checkoutEnvironmentRepositories } from './environment-repositories'
 import { prepareLocalGitHub } from './agents/local-github'
 import { runPaths } from "./agents/run-context"
 import { CAPTURES_DIR, CaptureUploader } from "./captures"
@@ -378,7 +379,8 @@ export class Daemon {
       this.options.retainResources,
       runId => this.journal.get(runId)?.assignment.traceContext,
     )
-    this.worktrees = new WorktreeManager(this.options.taskRegistered ? '/workspace/worktrees' : paths.worktrees, this.options.retainResources)
+    this.worktrees = new WorktreeManager(this.options.taskRegistered ? '/workspace/worktrees' : paths.worktrees,
+      this.options.retainResources, Boolean(this.options.taskRegistered || this.options.e2bContainerRuntime))
     this.repositories = new RepositoryCache(this.options.taskRegistered ? '/workspace/repos' : paths.repos, undefined, this.options.retainResources)
     // Hosted subscriptions start their CLIs through the hosted runner.
     this.sandbox = this.options.hostedSubscriptions ? null : await this.createAgentSandbox()
@@ -516,6 +518,7 @@ export class Daemon {
         : this.realAdapters()),
     ]))
     this.supervisor = new RunSupervisor({
+      runActivityChanged: active => this.rpc?.publishRunActivity(active),
       acquireWorkspaceControl: this.options.e2bContainerRuntime || this.options.taskRegistered
         ? (assignment, signal, onLost) => acquireCloudWorkspaceControl({ runId: assignment.runId, deviceId: assignment.deviceId, signal, onLost })
         : undefined,
@@ -571,6 +574,12 @@ export class Daemon {
             return result
           }
         : undefined,
+      prepareEnvironmentRepositories: (assignment, root, signal) => checkoutEnvironmentRepositories(root,
+        assignment.projectEnvironment!.startupRepositories!, async key => {
+          const link = this.options.link
+          if (!this.device.deviceId || !link.githubLease) throw new Error('Environment repository authorization unavailable')
+          return (await link.githubLease(this.device.deviceId, assignment.runId, signal, key)).token
+        }, signal),
       repository: assignment => this.repository(assignment),
       prepareRepository: (assignment, signal, githubEnvironment, policyReady, onRepositoryTiming) => prepareRunRepository(this.repositories,
         runPaths(this.paths.adapterState, assignment.runId).privateDir, assignment, signal, githubEnvironment, policyReady, this.options.collectCliTiming, onRepositoryTiming),
@@ -641,6 +650,7 @@ export class Daemon {
         pid: process.pid,
       }),
       handlers: this.handlers(),
+      isRunActive: () => this.supervisor.activeRunIds().length > 0,
       log: this.log,
     })
     await this.rpc.listen()

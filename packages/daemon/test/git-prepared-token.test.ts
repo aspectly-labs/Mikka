@@ -8,6 +8,7 @@ import type { Duplex } from 'node:stream'
 import { execa } from 'execa'
 import { afterEach, expect, it, vi } from 'vitest'
 import { withRunGitCredentials } from '../src/agents/github-runtime'
+import { checkoutEnvironmentRepositories } from '../src/environment-repositories'
 import { RepositoryCache } from '../src/repositories'
 import { cleanupTempDirs, makeRepo, tempDir } from './helpers'
 
@@ -44,7 +45,7 @@ async function fixture() {
       response.writeHead(301, { location: `${redirect}${url.pathname.slice('/Owner/Repo.git'.length)}${url.search}` }).end()
       return
     }
-    if (deny || (!url.pathname.startsWith('/Owner/Repo.git/') && !renamed)
+    if (deny || (!url.pathname.toLowerCase().startsWith('/owner/repo.git/') && !renamed)
       || host === 'github.com' && request.headers.authorization !== authorization) {
       response.writeHead(401, { 'www-authenticate': 'Basic realm="synthetic Git fixture"' }).end()
       return
@@ -55,7 +56,7 @@ async function fixture() {
     }
     const child = spawn('git', ['http-backend'], { env: { ...process.env,
       GIT_CONFIG_COUNT: '0', GIT_CONFIG_PARAMETERS: '', GIT_PROJECT_ROOT: root, GIT_HTTP_EXPORT_ALL: '1',
-      REQUEST_METHOD: request.method, PATH_INFO: renamed ? url.pathname.replace('/Other/', '/Owner/') : url.pathname, QUERY_STRING: url.search.slice(1),
+      REQUEST_METHOD: request.method, PATH_INFO: renamed ? url.pathname.replace('/Other/', '/Owner/') : url.pathname.replace(/^\/owner\/repo\.git\//i, '/Owner/Repo.git/'), QUERY_STRING: url.search.slice(1),
       CONTENT_TYPE: request.headers['content-type'] ?? '', REMOTE_USER: 'synthetic',
       HTTP_GIT_PROTOCOL: request.headers['git-protocol'] as string ?? '',
     }, stdio: ['pipe', 'pipe', 'ignore'] })
@@ -209,3 +210,22 @@ it('preserves an already prepared local environment and the no-GitHub path', asy
   expect(await withRunGitCredentials({ issueId: 'no-github' }, tempDir(), async env => env)).toEqual({})
 })
 
+
+it('checks out an additional authorized environment repository at its requested branch and cleans a partial checkout', async () => {
+  const f = await fixture()
+  const key = 'v2/github.com/owner/repo'
+  const target = join(f.root, 'startup')
+  try {
+    const resolveToken = vi.fn(async () => token)
+    const cleanup = await checkoutEnvironmentRepositories(target, [{ key, baseBranch: 'main' }], resolveToken, new AbortController().signal)
+    expect(resolveToken).toHaveBeenCalledWith(key)
+    const clone = join(target, 'owner', 'repo')
+    expect((await execa('git', ['rev-parse', 'HEAD'], { cwd: clone })).stdout)
+      .toBe((await execa('git', ['rev-parse', 'main'], { cwd: f.source })).stdout)
+    expect(readFileSync(join(clone, '.git', 'config'), 'utf8')).not.toContain(token)
+    await cleanup()
+    await expect(checkoutEnvironmentRepositories(target, [{ key, baseBranch: 'missing' }], resolveToken, new AbortController().signal))
+      .rejects.toThrow('Environment repository checkout failed')
+    expect(existsSync(target)).toBe(false)
+  } finally { await f.close() }
+})

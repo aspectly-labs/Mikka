@@ -40,7 +40,8 @@ export async function createFixtureWorkspaceTables(pool: Pick<Pool, 'query'>) {
     CREATE TABLE mikka_workspaces (
       id uuid PRIMARY KEY, "userId" text NOT NULL, name varchar(120) NOT NULL,
       slug varchar(64) UNIQUE, icon text, kind text NOT NULL DEFAULT 'team',
-      "createdAt" timestamptz NOT NULL DEFAULT now()
+      "createdAt" timestamptz NOT NULL DEFAULT now(),
+      "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz
     );
     CREATE TABLE mikka_workspace_members (
       "workspaceId" uuid NOT NULL, "userId" text NOT NULL, name text NOT NULL,

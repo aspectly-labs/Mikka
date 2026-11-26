@@ -162,16 +162,22 @@ export async function automationWebhookKey(input: { scheduleId: string; version:
 }
 
 /** Linear triggers' teams: those of the person's own Linear connection; `connected: false` without one. */
-export async function automationLinearTeams(): Promise<ActionResult<{ connected: boolean; teams: { id: string; key: string; name: string }[] }>> {
+export async function automationLinearTeams(): Promise<ActionResult<{ connected: boolean; canConnect?: boolean; teams: { id: string; key: string; name: string }[] }>> {
   return runAction(async () => {
     if (actingContext.getStore()) throw new ActionFailureError('authRequired')
     const [{ requireUser }, { pool }] = await Promise.all([import('@/lib/issue-access'), import('@/lib/db')])
     const user = await requireUser()
-    if (!(await pool.query('SELECT 1 FROM linear_connections WHERE "userId"=$1 AND "revokedAt" IS NULL', [user.id])).rowCount) return { connected: false, teams: [] }
+    const { linearOAuthConfigured } = await import('@/lib/linear-sync/oauth')
+    const disconnected = () => ({ connected: false, teams: [], canConnect: linearOAuthConfigured() })
+    if (!(await pool.query('SELECT 1 FROM linear_connections WHERE "userId"=$1 AND "revokedAt" IS NULL', [user.id])).rowCount) return disconnected()
     const [{ linearAccessToken }, { linearTeams }] = await Promise.all([import('@/lib/linear-sync/tokens'), import('@/lib/linear-sync/client')])
     try {
       return { connected: true, teams: (await linearTeams(await linearAccessToken(user.id))).map(({ id, key, name }) => ({ id, key, name })) }
-    } catch (error) { throw new ActionFailureError('scheduleLinearUnreachable', undefined, undefined, { cause: error }) }
+    } catch (error) {
+      const { LinearApiError } = await import('@/lib/linear-sync/graphql')
+      if (error instanceof LinearApiError && error.credentialRejected) return disconnected()
+      throw new ActionFailureError('scheduleLinearUnreachable', undefined, undefined, { cause: error })
+    }
   })
 }
 

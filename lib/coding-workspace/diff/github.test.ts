@@ -358,6 +358,7 @@ test('capture rejects force-pushes, base changes and publication changes observe
         if (change === 'head') f.state.pull.head.sha = f.state.replacementHead.sha
         else f.state.pull.base.sha = f.state.replacementBase.sha
       }
+      return undefined
     }
     await assert.rejects(f.capture(), code('workspace_snapshot_outdated'))
   })
@@ -372,7 +373,10 @@ test('lazy reads refuse head/base changes both before reading blobs and after th
         else f.state.pull.base.sha = f.state.replacementBase.sha
       }
       if (when === 'before') mutate()
-      else f.state.onRequest = url => { if (url.pathname.includes('/git/blobs/')) mutate() }
+      else f.state.onRequest = url => {
+        if (url.pathname.includes('/git/blobs/')) mutate()
+        return undefined
+      }
       await assert.rejects(f.provider.file(f.scope, snapshot, captured.files[0]!, identityMasker), code('workspace_snapshot_outdated'))
       assert.equal(f.requests.filter(url => url.pathname.includes('/git/blobs/')).length, when === 'before' ? 0 : 2)
     })

@@ -34,7 +34,7 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     CREATE TABLE workspace_credit_grants (id uuid primary key,"workspaceId" uuid not null,points integer not null,bucket text not null,"periodStart" timestamptz,"expiresAt" timestamptz,"parentGrantId" uuid);
     CREATE TABLE workspace_settings ("workspaceId" uuid primary key,"monthlyCreditLimit" integer);
     CREATE TABLE workspace_audit_events (id uuid primary key,"workspaceId" uuid,"actorType" text,"actorName" text,action text,category text,metadata jsonb);
-    CREATE TABLE mikka_workspaces(id uuid primary key,"userId" text);
+    CREATE TABLE mikka_workspaces(id uuid primary key,"userId" text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
     CREATE TABLE bots (id uuid primary key,"workspaceId" uuid);
     CREATE TABLE coordinator_events (id uuid primary key,"botId" uuid,kind text,payload jsonb)`)
   const old = randomUUID()
@@ -87,6 +87,22 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
   const platformFunded = readFileSync('drizzle/20261123210000_hosted_usage_platform_funded.sql', 'utf8')
   await pool.query(platformFunded)
   await pool.query(platformFunded)
+  await t.test('prepaid machine reservations settle exactly once and require the full paid balance', async () => {
+    const workspaceId = randomUUID()
+    const usageId = `machine:e2b:${randomUUID()}:0`
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,1,'purchased')", [randomUUID(), workspaceId])
+    await assert.rejects(store.reserve(workspaceId, 'machine/e2b-medium', usageId, {}, 20_000, true), { code: 'points_exhausted' })
+    assert.equal((await pool.query('SELECT id FROM hosted_usage WHERE id=$1', [usageId])).rowCount, 0)
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,3,'purchased')", [randomUUID(), workspaceId])
+    const attempts = await Promise.allSettled(Array.from({ length: 4 }, () =>
+      store.reserve(workspaceId, 'machine/e2b-medium', usageId, {}, 20_000, true)))
+    assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 1, attempts.flatMap(result => result.status === 'rejected' ? [result.reason?.message] : []).join('; '))
+    assert.ok(attempts.every(result => result.status === 'fulfilled' || result.reason?.code === 'usage_in_progress'))
+    const result = await pool.query(`SELECT state,"costMicroUsd"::int AS cost,"purchasedMicroUsd"::int AS purchased,
+      "unpaidMicroUsd"::int AS unpaid FROM hosted_usage WHERE id=$1`, [usageId])
+    assert.deepEqual(result.rows, [{ state: 'settled', cost: 20_000, purchased: 20_000, unpaid: 0 }])
+  })
   await t.test('a scripted LiteLLM BYOK receipt keeps its usage and does not consume the workspace budget', async t => {
     const { createServer } = await import('node:http')
     const { drizzle } = await import('drizzle-orm/node-postgres')

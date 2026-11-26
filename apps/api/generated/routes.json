@@ -728,7 +728,7 @@
         "GET"
       ],
       "maxDuration": 60,
-      "sourceHash": "04d7c948cf736481a93419804b17eeca6d1922f731a8b9990d47a9e7a16541e9"
+      "sourceHash": "1e9ac19a58a54d86474f135e54aa1875ba54495d774bf268e24d90d8f7e92a13"
     },
     {
       "path": "/mikka/api/cron/ops-monitor",
@@ -1579,7 +1579,16 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "606d930f5a509677879a9daa681dd03ada0c354b513bffc91223a29905c8f44e"
+      "sourceHash": "07a925be51de1bc561615aa4975ade9dd2267d566849a56ebf34563a09a1015c"
+    },
+    {
+      "path": "/mikka/api/integrations/linear/connect",
+      "template": "/api/integrations/linear/connect",
+      "source": "app/api/integrations/linear/connect/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "0ecf87ade6616b4545416495b0e32d888a9c225ad36ca7b0640fa15756ff2f92"
     },
     {
       "path": "/mikka/api/integrations/linear/status",
@@ -1588,7 +1597,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "dd5c0c9c0181999b7e1416572a975b99c27e2ac54b42df8ca12fc7b01911b03d"
+      "sourceHash": "3949c5caa765c9ee9df448f3a07b46720c150ad8491aca472a32787750c13e83"
     },
     {
       "path": "/mikka/api/integrations/mcp",
@@ -1973,7 +1982,7 @@
         "POST",
         "PUT"
       ],
-      "sourceHash": "da65687e89cd602a6d47dba2b18d4f68778435b42f27e00d60fa680edbff2396"
+      "sourceHash": "0cfcd30df3650572037bd75bfe14b4b656ca8cd4b4569347565dc75c1421bca7"
     },
     {
       "path": "/mikka/api/mobile/open",
@@ -1983,7 +1992,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "39d3a8775b11276b909730c1102c05ac92a8f757de46955dccb5438d406d16c1"
+      "sourceHash": "69b32e03036df2b5ee159bbce2f4be132a6fe1d4c2ecb1d5133a0f426ddf0903"
     },
     {
       "path": "/mikka/api/mobile/pending-actions/[id]",
@@ -3162,7 +3171,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "f876d678295bf38d9cb947a3dfa7523f4494a90084203b949be0ccb632b295e4"
+      "sourceHash": "b3f0e190d615cbc1e3b3bdb84eb1cc4a381658ea8523057cc9daf16f28af4240"
     },
     {
       "path": "/mikka/api/tasks/[taskId]/review",
@@ -3767,7 +3776,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "ff16b88d926018591f3dcacfa4bef23ec9eac66faad31222bb4d020586ed1eeb"
+      "sourceHash": "8e2bda0a8b41c4af7f242c9b22d478154537987c346ffee83208f35a715c9ade"
     },
     {
       "path": "/mikka/api/webhooks/linear/automations",
@@ -3996,7 +4005,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "3f5adb9610da3b43998f66a769d1cd0f9df50b93b139d8f9ac9465e1a866922b"
+      "sourceHash": "72c460bcd402c1bad0033f7d658b91086f2158024d3289ce3a950b3d86da0792"
     },
     {
       "path": "/mikka/api/workspaces/[workspaceId]/projects/[projectId]/setup",
@@ -4166,7 +4175,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "cc2a37740c4a1cb3fc6fa3dfbc5e1a8e26b08ff27bd90b33bf4eed32a3723f2b"
+      "sourceHash": "90f757f6ca4e4b4a7ea1acca41943c51d7d80160bc382bf4aee7bab0fe06a76a"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/report",
@@ -4211,7 +4220,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "9322808c62f3fdaf33aa233c74041c23eefafd90ddb01bec9dd7c060904a7641"
+      "sourceHash": "8d30a90dd9c31197ee57c20a19ad1bf7dd2d9eb2d4f5c1c6650859150f76d4a5"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
@@ -4333,7 +4342,7 @@
         "POST"
       ],
       "maxDuration": 120,
-      "sourceHash": "d84eb402a34e87bee40844f512ffc5cf2d575b59d30ff14be583e2f0f1a4f8e9"
+      "sourceHash": "c2ead6cc7713f4edfa3ed253794eead9a1d0082f7cd334c2f821393b298179a8"
     },
     {
       "path": "/mikka/v1/runs/[runId]/events",

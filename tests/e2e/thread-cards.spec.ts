@@ -99,7 +99,7 @@ test('A dispatched thread is a card under the reply that opens its conversation 
   await card.click()
   const thread = page.getByRole('region', { name: threadName })
   await expect(thread.getByRole('list', { name: '线程对话' })).toContainText('Home page loads in 3.8s.')
-  await expect(thread.getByRole('textbox', { name: '告诉 Codex 下一步做什么…' })).toBeVisible()
+  await expect(thread.getByRole('textbox', { name: '提出后续变更要求' })).toBeVisible()
   // The chat stays in the centre and the thread has its own address (R-82).
   await expect(page.getByRole('textbox', { name: '给 Coordinator 发消息' })).toBeVisible()
   await expect(page).toHaveURL(url => /^[0-9a-f-]{36}$/.test(url.searchParams.get('thread') ?? ''))

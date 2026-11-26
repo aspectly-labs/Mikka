@@ -77,7 +77,7 @@ test('a thread that stopped on a question waits for your reply and takes the ans
   // The status icon follows the thread's group (R-52): 等待你, beside the title and again in the badge (#929).
   await expect(panel.getByRole('img', { name: '等待你', exact: true })).toHaveCount(2)
   await expect(panel.getByText('等待你', { exact: true })).toBeVisible()
-  const box = panel.getByRole('textbox', { name: '告诉 Codex 下一步做什么…' })
+  const box = panel.getByRole('textbox', { name: '提出后续变更要求' })
   await expect(box).toBeVisible()
   await expect(panel.getByRole('button', { name: /停止/ })).toHaveCount(0)
   await box.fill('可以，Safari 15 以下用 JPEG')
@@ -122,7 +122,7 @@ test('a thread that stopped on a question waits for your reply and takes the ans
   const expired = page.getByRole('region', { name: 'Too late to answer', exact: true })
   await expect(expired.getByRole('list', { name: '线程对话' })).toBeVisible()
   await expect(expired.getByText('等待你', { exact: true })).toBeVisible()
-  await expect(expired.getByRole('textbox', { name: '告诉 Codex 下一步做什么…' })).toBeVisible()
+  await expect(expired.getByRole('textbox', { name: '提出后续变更要求' })).toBeVisible()
   await expect(expired.getByRole('button', { name: /停止/ })).toHaveCount(0)
   await shoot(page, testInfo, 'expired')
 })

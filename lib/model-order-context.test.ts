@@ -73,6 +73,8 @@ function fixture(allowed: boolean, ownerId = 'owner-a') {
         if (state.failCount) throw failure
         return { rows: [{ id: connectionId }] }
       }
+      // Settings › Models adapts each candidate's level and speed controls (lib/model-capabilities-server.ts).
+      if (sql.startsWith('SELECT id::text AS id, epoch::text AS epoch, "modelCatalog"->>\'revision\'')) return { rows: [] }
       throw new Error(`unexpected fixture query: ${sql}`)
     },
   }
@@ -89,11 +91,17 @@ const queryType = (query: FixtureQuery) => query as unknown as Parameters<typeof
 // The old implementation accepts and ignores a fourth JS argument, so this
 // regression demonstrates the real redundant reads before the overload exists.
 const context = (query: FixtureQuery) => Reflect.apply(orderView, undefined, [queryType(query), query.scope, async () => devices, 'context']) as Promise<Partial<OrderView>>
-const fields = (view: Partial<OrderView>) => ({ location: view.location, preferredHarness: view.preferredHarness, entries: view.entries, candidates: view.candidates, cloudReady: view.cloudReady, cloudModels: view.cloudModels })
+// Settings' per-model controls (capabilities) are not part of the prompt's projection.
+const fields = (view: Partial<OrderView>) => ({ location: view.location, preferredHarness: view.preferredHarness, entries: view.entries, candidates: view.candidates?.map(({ capabilities: _controls, ...candidate }) => candidate), cloudReady: view.cloudReady, cloudModels: view.cloudModels })
 
 for (const allowed of [false, true]) test(`prompt projection skips only unused credential counts when sharing is ${allowed}`, async t => {
   const fullQuery = fixture(allowed), promptQuery = fixture(allowed)
   const full = await orderView(queryType(fullQuery), fullQuery.scope, async () => devices)
+  // The capability read serves Settings' controls only; the prompt never needs it.
+  const capabilityRead = (row: { sql: string }) => row.sql.includes('"effortSupport"')
+  assert.equal(fullQuery.trace.filter(capabilityRead).length, 1)
+  assert.equal(promptQuery.trace.some(capabilityRead), false)
+  fullQuery.trace.splice(0, fullQuery.trace.length, ...fullQuery.trace.filter(row => !capabilityRead(row)))
   const prompt = await context(promptQuery)
   // The full view counts connected subscriptions and the own/shared key rows.
   // Empty shared-key candidates no longer issue an unused policy read.

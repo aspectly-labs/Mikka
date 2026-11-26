@@ -50,6 +50,7 @@ import * as actions33 from '@/app/actions/workspace'
 import * as actions34 from '@/app/actions/workspace-secrets'
 import * as actions35 from '@/app/actions/workspace-settings'
 import * as actions36 from '@/app/actions/thread-title-settings'
+import * as taskCommentActions from '@/app/actions/task-comments'
 import * as issueStateActions from '@/app/actions/issue-states'
 import * as taskListActions from '@/app/actions/task-list'
 import * as automations from '@/app/actions/automations'
@@ -58,6 +59,8 @@ import * as listViews from '@/app/actions/list-views'
 // This literal is the complete callable surface, independent of Next build IDs.
 const functions = {
   'settings.getSettings': settingsActions.getSettings,
+  'settings.getWorkspaceApprovalPolicy': settingsActions.getWorkspaceApprovalPolicy,
+  'settings.setWorkspaceApprovalPolicy': settingsActions.setWorkspaceApprovalPolicy,
   'settings.getWorkspaceSettings': settingsActions.getWorkspaceSettings,
   'settings.patchPersonalSettings': settingsActions.patchPersonalSettings,
   'settings.patchWorkspaceSettings': settingsActions.patchWorkspaceSettings,
@@ -251,6 +254,13 @@ const functions = {
   'execution-settings.getBotModelMenu': actions10.getBotModelMenu,
   'execution-settings.refreshBotModelMenuAction': actions10.refreshBotModelMenuAction,
   'execution-settings.chooseBotModel': actions10.chooseBotModel,
+  'execution-settings.setPreferredModelRoute': actions10.setPreferredModelRoute,
+  'execution-settings.setChatModelOptions': actions10.setChatModelOptions,
+  'execution-settings.addModelFavorite': actions10.addModelFavorite,
+  'execution-settings.updateModelFavorite': actions10.updateModelFavorite,
+  'execution-settings.removeModelFavorite': actions10.removeModelFavorite,
+  'execution-settings.reorderModelFavorites': actions10.reorderModelFavorites,
+  'execution-settings.chooseModelFavorite': actions10.chooseModelFavorite,
   'execution-settings.getUsageLimits': actions10.getUsageLimits,
   'issue-metadata.getIssuePropertyOptions': actions11.getIssuePropertyOptions,
   'issue-metadata.getNewTaskOptions': actions11.getNewTaskOptions,
@@ -264,6 +274,10 @@ const functions = {
   'issue-prefix.getIssuePrefixState': actions13.getIssuePrefixState,
   'issue-prefix.saveIssuePrefix': actions13.saveIssuePrefix,
   'issue-states.getIssueStates': issueStateActions.getIssueStates,
+  'task-comments.getTaskCommentState': taskCommentActions.getTaskCommentState,
+  'task-comments.editTaskComment': taskCommentActions.editTaskComment,
+  'task-comments.deleteTaskComment': taskCommentActions.deleteTaskComment,
+  'task-comments.setTaskCommentReaction': taskCommentActions.setTaskCommentReaction,
   'task-list.countTaskListViews': taskListActions.countTaskListViews,
   'task-list.listUnreadTaskIds': taskListActions.listUnreadTaskIds,
   'task-list.setTaskUnread': taskListActions.setTaskUnread,
@@ -278,7 +292,6 @@ const functions = {
   'issues.pollIssues': actions14.pollIssues,
   'issues.syncIssueList': actions14.syncIssueList,
   'issues.countAssignedWorkspaceTasks': actions14.countAssignedWorkspaceTasks,
-  'issues.countWorkspaceTaskViews': actions14.countWorkspaceTaskViews,
   'issues.listWorkspaceIssues': actions14.listWorkspaceIssues,
   'issues.listWorkspaceTaskPage': actions14.listWorkspaceTaskPage,
   'issues.getIssue': actions14.getIssue,
@@ -391,6 +404,7 @@ const functions = {
   'task-runs.setConversationOrganization': actions26.setConversationOrganization,
   'task-runs.renameConversation': actions26.renameConversation,
   'task-runs.regenerateConversationTitle': actions26.regenerateConversationTitle,
+  'task-runs.deleteAllThreads': actions26.deleteAllThreads,
   'task-runs.removeThread': actions26.removeThread,
   'task-runs.undoRemoveThread': actions26.undoRemoveThread,
   'task-runs.threadTags': actions26.threadTags,
@@ -411,8 +425,14 @@ const functions = {
   'project-resources.rollbackProjectSetup': projectResourcesActions.rollbackProjectSetup,
   'project-resources.listProjectResources': projectResourcesActions.listProjectResources,
   'environments.listEnvironments': environmentActions.listEnvironments,
+  'environments.setTaskEnvironment': environmentActions.setTaskEnvironment,
+  'environments.getSnapshot': environmentActions.getEnvironmentSnapshot,
+  'environments.buildSnapshot': environmentActions.buildEnvironmentSnapshot,
+  'environments.listTaskEnvironments': environmentActions.listTaskEnvironments,
   'project-resources.setProjectDefaultEnvironment': projectResourcesActions.setProjectDefaultEnvironment,
   'project-resources.saveEnvironment': projectResourcesActions.saveEnvironment,
+  'project-resources.shareEnvironment': projectResourcesActions.shareEnvironment,
+  'project-resources.unshareEnvironment': projectResourcesActions.unshareEnvironment,
   'project-resources.searchProjectPullAuthors': projectResourcesActions.searchProjectPullAuthors,
   'project-resources.listDependencyRepositories': projectResourcesActions.listDependencyRepositories,
   'project-resources.replaceDependencyRepositories': projectResourcesActions.replaceDependencyRepositories,

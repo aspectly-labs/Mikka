@@ -3,11 +3,13 @@ import { headers } from "@/lib/server-runtime/headers";
 import { auth } from "@/lib/auth";
 import { ActionFailureError, runAction } from "@/lib/action-error";
 import type { ActionResult } from "@/lib/action-result";
+import { chatModelOptionsSchema } from "@/lib/model-picker-options";
+import type { ModelModes } from "@/lib/model-capabilities";
 import type { BotModelMenu } from "@/lib/bot-model-menu-view";
 import { loadWorkspaceContext } from "@/lib/workspace-access";
 import { pool } from "@/lib/db";
 import { ExecutionSettings } from "@/lib/execution-settings";
-import { botModelMenu, botModelScope, chooseBotModel as chooseBotModelFor, refreshBotModelMenu } from "@/lib/bot-model-menu";
+import { botModelMenu, botModelScope, chooseBotModel as chooseBotModelFor, refreshBotModelMenu, setPreferredRoute, setChatModelSettings } from "@/lib/bot-model-menu";
 import { z } from "zod";
 import { chatBotId } from "@/lib/coordinator/coordinator-bot";
 async function context(workspaceId?: string) {
@@ -51,6 +53,89 @@ export async function chooseBotModel(chatBot: string | null, id: string): Promis
   return runAction(async () => {
     const { botId, scope } = await chatScope(chatBot);
     return chooseBotModelFor(pool, new ExecutionSettings(pool), scope, botId, id);
+  });
+}
+
+/**
+ * Saves the chat's reasoning level and/or serving speed beside its model (decision 2026-11-25-1700) and returns
+ * the menu. A field left out keeps its value; null goes back to the default. The picker offers only what the
+ * chosen model supports, and the next run checks it again against the model it freezes.
+ */
+export async function setChatModelOptions(chatBot: string | null, change: { effort?: string | null; serviceTier?: string | null; modes?: ModelModes }): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const parsed = chatModelOptionsSchema.safeParse(change);
+    if (!parsed.success) throw new ActionFailureError("validationGeneric");
+    const { botId, scope } = await chatScope(chatBot);
+    const settings = new ExecutionSettings(pool);
+    const menu = await botModelMenu(pool, settings, scope, botId);
+    await setChatModelSettings(pool, scope, botId, parsed.data, menu.current.capabilities);
+    return botModelMenu(pool, settings, scope, botId);
+  });
+}
+
+/** Validate a preference chosen by the caller's picker without changing the account or chat. */
+export async function setPreferredModelRoute(chatBot: string | null, modelKey: string, optionId: string): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const { botId, scope } = await chatScope(chatBot);
+    return setPreferredRoute(pool, new ExecutionSettings(pool), scope, botId, modelKey, optionId);
+  });
+}
+type FavoriteInput = { optionId: string; effort: string | null; serviceTier?: string | null; modes?: ModelModes };
+const favoriteIndex = z.number().int().min(0).max(99)
+function parsed<T>(schema: z.ZodType<T>, value: unknown): T {
+  const result = schema.safeParse(value)
+  if (!result.success) throw new ActionFailureError("validationGeneric")
+  return result.data
+}
+async function favoriteSetup(slot: unknown) {
+  const { modelFavoriteSlot } = await import("@/lib/model-favorites");
+  return parsed(modelFavoriteSlot, slot);
+}
+
+/** 「Add to favorites」 at the end; when the list is full, into slot `replace` (「Replace which favorite」). */
+export async function addModelFavorite(chatBot: string | null, slot: FavoriteInput, replace?: number): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const setup = await favoriteSetup(slot);
+    const at = replace === undefined ? undefined : parsed(favoriteIndex, replace);
+    const { botId, scope } = await chatScope(chatBot);
+    return (await import("@/lib/model-favorites")).addModelFavorite(pool, new ExecutionSettings(pool), scope, botId, setup, at);
+  });
+}
+
+/** 「Update favorite」: slot `index` takes this setup (normally the chat's current model, level and speed). */
+export async function updateModelFavorite(chatBot: string | null, index: number, slot: FavoriteInput): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const setup = await favoriteSetup(slot);
+    const at = parsed(favoriteIndex, index);
+    const { botId, scope } = await chatScope(chatBot);
+    return (await import("@/lib/model-favorites")).updateModelFavorite(pool, new ExecutionSettings(pool), scope, botId, at, setup);
+  });
+}
+
+/** 「Remove from favorites」: the later slots move up one. */
+export async function removeModelFavorite(chatBot: string | null, index: number): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const at = parsed(favoriteIndex, index);
+    const { botId, scope } = await chatScope(chatBot);
+    return (await import("@/lib/model-favorites")).removeModelFavorite(pool, new ExecutionSettings(pool), scope, botId, at);
+  });
+}
+
+/** A drag in the Favorites list: `order` is every current slot's index, in the new order. */
+export async function reorderModelFavorites(chatBot: string | null, order: number[]): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const indexes = parsed(z.array(favoriteIndex).max(10), order);
+    const { botId, scope } = await chatScope(chatBot);
+    return (await import("@/lib/model-favorites")).reorderModelFavorites(pool, new ExecutionSettings(pool), scope, botId, indexes);
+  });
+}
+
+/** Picks favorite `index` (a click, or its digit key): the chat's model, level and speed, together. */
+export async function chooseModelFavorite(chatBot: string | null, index: number): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const at = parsed(favoriteIndex, index);
+    const { botId, scope } = await chatScope(chatBot);
+    return (await import("@/lib/model-favorites")).chooseModelFavorite(pool, new ExecutionSettings(pool), scope, botId, at);
   });
 }
 

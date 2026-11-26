@@ -38,6 +38,8 @@ export interface HostedRuntimeSnapshot {
   modelSelection?: HostedModelSelection
   /** The Bot's saved reasoning effort for this turn (bot_model_choices.effort); absent is the model's default. */
   effort?: import('./model-routing').ModelRoutingEffort
+  /** OpenAI Responses reasoning mode, frozen after validating the chosen route. */
+  pro?: true
   /** The owner's saved serving speed tier (model_order_settings.defaultServiceTier); absent preserves legacy behavior. */
   serviceTier?: import('./model-routing').ModelServiceTier
 }

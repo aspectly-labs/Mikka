@@ -16,6 +16,7 @@ import { normalizeRepository } from '@mikka/protocol/repository'
 import { apiKeyHarnesses } from '../lib/model-api-key-providers'
 import { dbUrl, seedBot, seedIssue, seedPersonalWorkspace, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { recordPushGrant } from './support/github-app-stub'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 import { sealSecret, userE2bKeyAad } from '../lib/secrets/crypto'
 import { fakeThreadMachines } from './support/thread-machine-fake'
 import { verifyGatewayToken } from '../lib/model-gateway/token'
@@ -178,14 +179,13 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
       const selected = await createWorkspaceSecret(p.id, p.workspaceId, { name: 'PROJECT_PASSWORD', kind: 'secret', value: selectedValue, scope: { type: 'repository', repository: repositoryKey.slice('v2/github.com/'.length) }, delivery: { mode: 'direct', exposeToAgent: true } })
       await createWorkspaceSecret(p.id, p.workspaceId, { name: 'UNSELECTED_PASSWORD', kind: 'secret', value: unselectedValue })
       configuration.secretIds = [selected.id]
-      const environment = await resources.saveEnvironment(p.id, { workspaceId: p.workspaceId, name: 'Actual claim environment', configuration })
+      const environment = await resources.saveEnvironment(p.id, { workspaceId: p.workspaceId, name: 'Actual claim environment', configuration,
+        repositories: [{ key: repositoryKey, clone: 'start', baseBranch: 'environment-base', primary: true }] })
       await pool.query(`INSERT INTO workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
         VALUES($1,$2,$3,'Environment execution','','','planned','none','','','','','[]',1)`, [projectId, p.id, p.workspaceId])
       await (await import('../lib/resource-access/projects')).registerProjectAccess(p.id, projectId, p.workspaceId)
       await seedProjectTasks(pool, projectId, [p.issueId, changedIssue, revokedIssue])
-      await resources.saveProjectResources(p.id, { workspaceId: p.workspaceId, projectId, revision: 1,
-        repositories: [{ repositoryKey, baseBranch: 'environment-base', environmentId: environment.id, isPrimary: true }],
-        environmentIds: [environment.id], defaultEnvironmentId: environment.id })
+      await assignTaskEnvironment(pool, p.id, p.workspaceId, [p.issueId, changedIssue, revokedIssue], environment.id)
       const queue = (issueId: string) => queueRun(p.id, { issueId, agentId: p.agents.claude_code, repo: p.remote, model: 'fixture-model' }, p.botId)
       const persisted = async (runId: string) => ({
         run: (await pool.query('SELECT * FROM agent_runs WHERE id=$1', [runId])).rows[0],
@@ -266,7 +266,7 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
       await noPlaintext()
     } finally {
       rmSync(root, { recursive: true, force: true })
-      await workspacePool.query('DELETE FROM workspace_project_repositories WHERE "projectId"=$1', [projectId])
+      await workspacePool.query('DELETE FROM workspace_task_environments WHERE "workspaceId"=$1', [p.workspaceId])
       await workspacePool.query('DELETE FROM workspace_projects WHERE id=$1', [projectId])
       await workspacePool.query('DELETE FROM workspace_environments WHERE "workspaceId"=$1', [p.workspaceId])
       await workspacePool.query('DELETE FROM workspace_repository_policies WHERE "workspaceId"=$1', [p.workspaceId])
@@ -394,6 +394,20 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
     const run = (await pool.query('SELECT status,"stopReason" FROM agent_runs WHERE id=$1', [runId])).rows[0]
     assert.notEqual(run.status, 'queued', 'the run does not wait for a key that is gone')
     assert.notEqual(run.status, 'preparing')
+    assert.equal(await recorded(runId), null)
+  })
+
+  await t.test('a key newly known rejected refuses the frozen run at claim with credential health', async () => {
+    const p = await person('key-rejected-before-claim')
+    const key = await addKey(p.id, 'anthropic', `sk-ant-${randomBytes(16).toString('hex')}`, ['key-model-a'])
+    const { runId } = await queueRun(p.id, { issueId: p.issueId, agentId: p.agents.claude_code, repo: p.remote, model: 'key-model-a' }, p.botId)
+    assert.equal((await definition(runId)).apiKey.keyId, key.id)
+    await pool.query('UPDATE model_api_keys SET "modelsError"=$2 WHERE id=$1', [key.id, 'invalid'])
+    const response = await claim(p.deviceId, runId, p.token)
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), { error: 'API key unavailable.', code: 'apiKeyUnavailable',
+      health: { reason: 'key_rejected', action: 'replace_key' } })
+    assert.equal((await pool.query('SELECT "stopReason" FROM agent_runs WHERE id=$1', [runId])).rows[0]?.stopReason, 'blocked')
     assert.equal(await recorded(runId), null)
   })
 

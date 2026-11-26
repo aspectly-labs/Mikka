@@ -103,7 +103,7 @@ export async function workspaceBots(workspaceId: string): Promise<WorkspaceBotVi
   const owners = new Map(names.map(row => [row.userId, row.name]))
   const environmentIds = [...new Set(rows.flatMap(row => row.environmentId ? [row.environmentId] : []))]
   const environments = new Map((environmentIds.length ? (await workspaceDb.execute<{ id: string; first: string | null }>(sql`select id,configuration->'repositoryKeys'->>0 as first
-    from workspace_environments where "workspaceId"=${workspaceId} and "archivedAt" is null and id in (${sql.join(environmentIds.map(id => sql`${id}::uuid`), sql`,`)})`)).rows : []).map(row => [row.id, row.first]))
+    from workspace_environments where "workspaceId"=${workspaceId} and "archivedAt" is null and scope='workspace' and id in (${sql.join(environmentIds.map(id => sql`${id}::uuid`), sql`,`)})`)).rows : []).map(row => [row.id, row.first]))
   return rows.map(({ environmentId, ...row }) => {
     const runningThreads = threads.get(row.id) ?? 0
     // The Environment's first repository; the retired column only for a Bot not yet moved (lib/bot-environment.ts).

@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import { bindFixtureWorkspaceDatabase, createFixtureWorkspaceTables } from '../../tests/helpers/workspace-database'
 import { seedFixtureWorkspace } from '../../tests/helpers/task-workspace'
+import { builtinGateway } from '../builtin-gateway/runtime'
 import { ComputerStore } from './store'
 import { createComputerHandler } from './handler'
 import { bindComputerRun } from './run-binding'
@@ -23,6 +24,14 @@ import type * as provider from './e2b-provider'
 const databaseURL = process.env.COMPUTER_TEST_DATABASE_URL ?? process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1' && !databaseURL) throw new Error('Computer database test URL required')
 test('real PostgreSQL: allocation, owner boundary, control generations and recovery', { skip: !databaseURL }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(async () => {
+    const gateway = builtinGateway()
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+    await gateway?.stop()
+  })
   const schema = `computer_${randomUUID().replaceAll('-', '')}`
   assert.ok(['127.0.0.1', 'localhost'].includes(new URL(databaseURL!).hostname))
   const admin = new Pool({ connectionString: databaseURL })
@@ -60,6 +69,7 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
       CREATE TABLE workspace_project_tasks ("issueId" uuid PRIMARY KEY,"projectId" uuid NOT NULL,"workspaceId" uuid NOT NULL,
         FOREIGN KEY ("projectId","workspaceId") REFERENCES workspace_projects(id,"workspaceId"));`)
     await pool.query(await readFile(new URL('../../drizzle/20261111030004_project_resources.sql', import.meta.url), 'utf8'))
+    await pool.query(await readFile(new URL('../../drizzle/20261125223723_environment_scope_and_task_environments.sql', import.meta.url), 'utf8'))
     const queueTask = async () => {
       const id = randomUUID()
       await pool.query(`INSERT INTO issues (id,"userId","workspaceId","ownershipState") VALUES ($1,$2,$3,'bound')`, [id, actor.userId, actor.workspaceId])
