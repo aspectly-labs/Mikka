@@ -20,9 +20,6 @@ import { bindBotSubscription } from './bot-subscription'
 import { ComputerBroker } from '../../packages/daemon/src/computer/broker.mjs'
 import type * as provider from './e2b-provider'
 
-// This fixture models self-hosted E2B with an owner-provided key.
-process.env.MIKKA_EDITION = 'community'
-
 const databaseURL = process.env.COMPUTER_TEST_DATABASE_URL ?? process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1' && !databaseURL) throw new Error('Computer database test URL required')
 test('real PostgreSQL: allocation, owner boundary, control generations and recovery', { skip: !databaseURL }, async t => {

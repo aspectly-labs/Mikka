@@ -5,9 +5,6 @@ import { Pool } from 'pg'
 import { ensureCloudMachine } from './provision'
 import { E2BKeyError } from '../secrets/flag'
 
-// This fixture models self-hosted E2B with an owner-provided key.
-process.env.MIKKA_EDITION = 'community'
-
 const databaseURL = process.env.COMPUTER_TEST_DATABASE_URL ?? process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1' && !databaseURL) throw new Error('Computer database test URL required')
 
