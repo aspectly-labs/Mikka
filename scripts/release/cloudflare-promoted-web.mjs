@@ -423,9 +423,9 @@ async function verifyPromotion(workflow, { env = process.env, event, fetchImpl =
     // The installer is built from the served commit (MIKKA_DESKTOP_SOURCE once checked out), never from a later main.
     const desktopSource = env.MIKKA_DESKTOP_SOURCE || record.product
     requireProof(present(desktopSource, sha) && await containsDesktopSource({ ...api, expectedBuild: desktopSource, publicCommit: record.product }), 'desktopSource')
-    if (piped) {
-      // Because unchanged Web/API builds are reused across pipeline runs, never allow
-      // an older pipeline receipt to publish under a higher run number and downgrade releases/latest.
+    if (automated) {
+      // Because unchanged Web/API builds are reused across promotions, never allow
+      // an older receipt (actions: or pipeline:) to publish under a higher run number and downgrade releases/latest.
       const latest = await readLatestRelease(api)
       if (present(latest?.target_commitish, sha) && latest.target_commitish !== record.product) {
         requireProof(!await containsDesktopSource({ ...api, expectedBuild: record.product, publicCommit: latest.target_commitish }), 'staleRelease')
@@ -451,7 +451,7 @@ async function desktopAlreadyCovers(latest, record, api) {
   const latestSha = latest?.target_commitish
   if (!present(latestSha, sha)) return false
   const latestOverlay = await latestReleaseOverlay(latest, api)
-  if (latestOverlay && latestOverlay !== record.overlay) return false
+  if (latestOverlay !== record.overlay) return false
   if (!await containsDesktopSource({ ...api, expectedBuild: record.servedBuild, publicCommit: latestSha })) return false
   if (!await containsDesktopSource({ ...api, expectedBuild: record.apiBuild, publicCommit: latestSha })) return false
   const diff = await githubRead('/compare/' + latestSha + '...' + record.product + '?per_page=1', api)
@@ -504,7 +504,7 @@ export async function promotionTrigger(consumer, { env = process.env, event, fet
     const latest = await readLatestRelease(api)
     if (latest?.target_commitish === record.product) {
       const latestOverlay = await latestReleaseOverlay(latest, api)
-      if (!latestOverlay || latestOverlay === record.overlay) {
+      if (pipelineEvent ? latestOverlay === record.overlay : (!latestOverlay || latestOverlay === record.overlay)) {
         return { ready: false, reason: 'Desktop for ' + record.product + ' is already released' }
       }
     }

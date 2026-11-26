@@ -42,6 +42,12 @@ function fixture(change = {}) {
         return Response.json({ status: (change.main ?? product) === product ? 'identical' : 'ahead', merge_base_commit: { sha: product }, ...change.served })
       }
       if (u.pathname.includes('/compare/')) {
+        const latestSha = (change.latestRelease ?? { target_commitish: 'f'.repeat(40) }).target_commitish
+        if (u.pathname === api + '/compare/' + product + '...' + latestSha) {
+          assert.equal(u.searchParams.get('per_page'), '1')
+          return Response.json({ url: 'https://api.github.com/repos/' + repo + '/compare/' + product + '...' + latestSha, base_commit: { sha: product },
+            merge_base_commit: { sha: latestSha }, status: 'behind', ahead_by: 0, behind_by: 1, ...change.latestComparison })
+        }
         const path = api + '/compare/' + env.GITHUB_SHA + '...' + product
         assert.equal(u.pathname, path)
         assert.equal(u.searchParams.get('per_page'), '1')
@@ -207,6 +213,10 @@ test('Desktop and E2B accept only an original successful protected serving obser
   assert.equal((await f.observe()).verifiedAt,iso(0))
   assert.ok(!f.calls.some(path=>path.includes('/issues/')||path==='/dns-query'))
   assert.deepEqual(await fixture({observation,env,run:{...consumer,path:'.github/workflows/desktop-release.yml'}}).desktop(),{product,overlay,releasePin})
+  await assert.rejects(fixture({
+    observation, env, run: { ...consumer, path: '.github/workflows/desktop-release.yml' },
+    latestComparison: { merge_base_commit: { sha: product }, status: 'ahead', ahead_by: 1, behind_by: 0 },
+  }).desktop(), /staleRelease/)
   for (const change of [{observation:{...observation,run:{...run,conclusion:'failure'}}},
     {observation:{...observation,run:{...run,triggering_actor:{id:1}}}},
     {observation:{...observation,jobs:{total_count:2,jobs:[jobs.jobs[0],{...jobs.jobs[1],run_attempt:2}]}}},
@@ -517,6 +527,18 @@ test('automatic pipeline-production trigger handles change coverage, renames, ov
     },
   })
   assert.equal((await overlayOnlyDocsCommit.trigger(overlayOnlyDocsCommit.desktop)).ready, true)
+
+  // Missing overlay metadata on releases/latest fails closed and does NOT skip a pipeline Desktop release.
+  const missingOverlayDocsCommit = pipelineFixture({
+    ...coveredBase, latestOverlay: null,
+    compares: {
+      ...coveredBase.compares,
+      [latestSha + '...' + head]: { merge_base_commit: { sha: latestSha }, status: 'ahead', ahead_by: 1, behind_by: 0, files: [{ filename: 'docs/README.md' }] },
+    },
+  })
+  assert.equal((await missingOverlayDocsCommit.trigger(missingOverlayDocsCommit.desktop)).ready, true)
+  const missingOverlaySameCommit = pipelineFixture({ head, latestSha: head, latestOverlay: null })
+  assert.equal((await missingOverlaySameCommit.trigger(missingOverlaySameCommit.desktop)).ready, true)
 
   // A late older run whose commit is strictly behind releases/latest is skipped on trigger AND rejected on verify (no downgrade).
   const lateOlderRun = pipelineFixture({
