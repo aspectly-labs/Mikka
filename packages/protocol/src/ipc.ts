@@ -38,6 +38,8 @@ export const IPC = {
   /** Opens the OS notification settings for Mikka. */
   notificationsOpenSettings: "mikka:notifications:open-settings",
   /** renderer -> main: what the tray / menu bar menu lists (DesktopTrayState). */
+  appSettingsRead: "mikka:app-settings:read",
+  appSettingsWrite: "mikka:app-settings:write",
   trayUpdate: "mikka:tray:update",
   sshChanged: "mikka:ssh:changed",
   sshHosts: "mikka:ssh:hosts",

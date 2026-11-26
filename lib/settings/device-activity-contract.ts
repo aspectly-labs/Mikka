@@ -73,6 +73,9 @@ export interface WorkspaceSettingsActivity {
   groupBy: 'member'
   /** Calendar dates are the persisted Mikka event dates, not inferred GitHub dates. */
   dateSource: 'recorded_events'
+  mergedPullRequests: number
+  mergedPullRequestsAll: number | null
+  previous: { mergedPullRequests: number; mergedPullRequestsAll: number | null }
   contributions: WorkspaceContributionDay[]
   /** The complete model/machine ledger is owned by #2934. Unknown cost is null. */
   threadCosts: { available: false; reason: 'thread_cost_ledger_pending'; items: null }

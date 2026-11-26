@@ -1138,6 +1138,9 @@
         },
         "task": {
           "comment_deleted": "deleted a comment on {target}"
+        },
+        "thread": {
+          "bulk_deleted": "Deleted own threads"
         }
       },
       "actorTypes": {
@@ -4772,7 +4775,7 @@
     "memberInvalidEmail": "Enter a valid email address",
     "passwordNotSet": "This account has no password yet. Set one first.",
     "secretLimitReached": "This workspace has reached the limit of 500 secrets and variables.",
-    "inviteInvalid": "This invitation is invalid, expired, or the signed-in email does not match.",
+    "inviteInvalid": "Check that the invitation is still valid and switch to the account that received it.",
     "secretImportTooLarge": "The .env file is over 2 MB.",
     "usageLimitReached": "The usage limit has been reached. New tasks are paused; running tasks will finish.",
     "invalidCron": "The cron expression is invalid; it needs five fields.",
@@ -4845,7 +4848,9 @@
     "taskCommentDeleted": "This comment was deleted.",
     "taskCommentReadOnly": "You can read this task but not comment on it.",
     "taskCommentReactionInvalid": "Choose one emoji.",
-    "taskCommentReactionLimit": "This comment has the most reactions it can hold."
+    "taskCommentReactionLimit": "This comment has the most reactions it can hold.",
+    "skillReviewRequired": "Submit this skill for review.",
+    "skillPublishingDisabled": "Skill publishing is turned off in this workspace."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",
@@ -8673,6 +8678,30 @@
     "chatFont": {
       "label": "Chat font",
       "keywords": "chat|font|reading|dyslexia"
+    },
+    "requireTwoFactor": {
+      "label": "Require two-factor authentication",
+      "keywords": "Require two-factor authentication"
+    },
+    "skillPublishingPolicy": {
+      "label": "Skill publishing policy",
+      "keywords": "Skill publishing policy"
+    },
+    "prAutoOpen": {
+      "label": "Automatically open pull requests",
+      "keywords": "Automatically open pull requests"
+    },
+    "prWakeOnReview": {
+      "label": "Wake Agent on review comments",
+      "keywords": "Wake Agent on review comments"
+    },
+    "prWakeOnCiFailure": {
+      "label": "Wake Agent when CI fails",
+      "keywords": "Wake Agent when CI fails"
+    },
+    "prWakeOnConflict": {
+      "label": "Wake Agent on merge conflicts",
+      "keywords": "Wake Agent on merge conflicts"
     }
   },
   "MobilePush": {
@@ -12031,5 +12060,10 @@
     "joinableMeta": "Through your email domain",
     "join": "Join",
     "joined": "Joined"
+  },
+  "PullRequestWake": {
+    "prWakeOnReview": "A reviewer commented on this pull request.",
+    "prWakeOnCiFailure": "A CI check failed on this pull request.",
+    "prWakeOnConflict": "This pull request has a merge conflict."
   }
 }

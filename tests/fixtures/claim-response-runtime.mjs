@@ -19,7 +19,7 @@ after(() => {
   }
 })
 
-const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_organization_workspaces\".\"organizationId\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\" = $1 and \"mikka_workspace_members\".\"status\" = $2 and \"mikka_workspaces\".\"id\" = $3 and (\"mikka_workspaces\".\"kind\" = $4 or (\"mikka_workspaces\".\"kind\" = $5 and \"mikka_workspaces\".\"userId\" = $6))) order by \"mikka_workspaces\".\"createdAt\" asc"
+const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\" as \"mfa\", \"mikka_organization_workspaces\".\"organizationId\" as \"org\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\"=$1 and \"mikka_workspace_members\".\"status\"='active' and \"mikka_workspaces\".\"id\"=$2 and (\"mikka_workspaces\".\"kind\"='team' or (\"mikka_workspaces\".\"kind\"='personal' and \"mikka_workspaces\".\"userId\"=\"mikka_workspace_members\".\"userId\"))) order by \"mikka_workspaces\".\"createdAt\" asc"
 function expandMembershipAliases(sql) {
   for (const [table, name] of [['mikka_workspaces', 'w'], ['mikka_workspace_members', 'm'], ['mikka_organization_workspaces', 'o']]) {
     sql = sql.replaceAll('"' + table + '" "' + name + '"', '"' + table + '"')
@@ -32,14 +32,14 @@ function workspaceQuery(columns) {
   let table, condition, organizationJoin = false, statement = new QueryBuilder().select(columns)
   const organizations = () => {
     const p = globalThis.claimResponseProbe
-    assert.equal(table, 'mikka_organization_workspaces')
+    assert.equal(table, 'mikka_workspaces')
     assert.deepEqual(condition.params, [p.workspace.id])
-    assert.ok(condition.sql === '"mikka_organization_workspaces"."workspaceId" = $1'
-      || condition.sql === '"mikka_organization_workspaces"."workspaceId" in ($1)')
-    if (columns !== undefined) assert.deepEqual(Object.keys(columns), ['organizationId'])
+    assert.ok(condition.sql === '"mikka_workspaces"."id" = $1'
+      || condition.sql === '"mikka_workspaces"."id" in ($1)')
+    assert.deepEqual(Object.keys(columns), condition.sql.includes(' in ') ? ['workspaceId', 'organizationId', 'factorAt'] : ['organizationId', 'factorAt'])
     // This claim-composition fixture has no Organization-link row. The real
     // Enterprise gate consumes that exact projection; unknown queries fail.
-    return []
+    return [{ workspaceId: p.workspace.id, organizationId: null, factorAt: null }]
   }
   const query = {
     from(value) { table = value[Object.getOwnPropertySymbols(value).find(s => s.description === 'drizzle:Name')]; statement = statement.from(value); return query },
@@ -51,10 +51,13 @@ function workspaceQuery(columns) {
         assert.equal(value[Object.getOwnPropertySymbols(value).find(s => s.description === 'drizzle:Name')], 'mikka_organization_workspaces')
         assert.equal(join.sql, '"mikka_organization_workspaces"."workspaceId" = "mikka_workspace_members"."workspaceId"')
         assert.deepEqual(Object.keys(columns), ['id', 'organizationId'])
+      } else if (!columns.kind) {
+        assert.equal(table, 'mikka_workspaces')
+        assert.equal(join.sql, '"mikka_organization_workspaces"."workspaceId" = "mikka_workspaces"."id"')
       } else {
         // The unlocked membership path is checked as a complete real query
         // at orderBy, including its original base tables and all predicates.
-        assert.deepEqual(Object.keys(columns), ['id', 'kind', 'organizationId'])
+        assert.deepEqual(Object.keys(columns), ['id', 'kind', 'factorAt', 'organizationId'])
       }
       statement = statement.leftJoin(value, predicate)
       organizationJoin = true
@@ -83,10 +86,10 @@ function workspaceQuery(columns) {
     async orderBy(order) {
       const p = globalThis.claimResponseProbe
       assert.equal(organizationJoin, true)
-      assert.deepEqual(Object.keys(columns), ['id', 'kind', 'organizationId'])
+      assert.deepEqual(Object.keys(columns), ['id', 'kind', 'factorAt', 'organizationId'])
       const compiled = statement.orderBy(order).toSQL()
       assert.equal(expandMembershipAliases(compiled.sql), expectedMembershipSql)
-      assert.deepEqual(compiled.params, [p.run.userId, 'active', p.workspace.id, 'team', 'personal', p.run.userId])
+      assert.deepEqual(compiled.params, [p.run.userId, p.workspace.id])
       return p.memberAllowed && p.workspaceMemberAllowed ? [{ ...p.workspace, organizationId: null }] : []
     },
   }

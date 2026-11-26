@@ -34,7 +34,7 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     CREATE TABLE workspace_credit_grants (id uuid primary key,"workspaceId" uuid not null,points integer not null,bucket text not null,"periodStart" timestamptz,"expiresAt" timestamptz,"parentGrantId" uuid);
     CREATE TABLE workspace_settings ("workspaceId" uuid primary key,"monthlyCreditLimit" integer);
     CREATE TABLE workspace_audit_events (id uuid primary key,"workspaceId" uuid,"actorType" text,"actorName" text,action text,category text,metadata jsonb);
-    CREATE TABLE mikka_workspaces(id uuid primary key,"userId" text);
+    CREATE TABLE mikka_workspaces(id uuid primary key,"userId" text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
     CREATE TABLE bots (id uuid primary key,"workspaceId" uuid);
     CREATE TABLE coordinator_events (id uuid primary key,"botId" uuid,kind text,payload jsonb)`)
   const old = randomUUID()

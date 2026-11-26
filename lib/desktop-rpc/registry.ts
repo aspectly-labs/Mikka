@@ -59,6 +59,8 @@ import * as listViews from '@/app/actions/list-views'
 // This literal is the complete callable surface, independent of Next build IDs.
 const functions = {
   'settings.getSettings': settingsActions.getSettings,
+  'settings.getWorkspaceApprovalPolicy': settingsActions.getWorkspaceApprovalPolicy,
+  'settings.setWorkspaceApprovalPolicy': settingsActions.setWorkspaceApprovalPolicy,
   'settings.getWorkspaceSettings': settingsActions.getWorkspaceSettings,
   'settings.patchPersonalSettings': settingsActions.patchPersonalSettings,
   'settings.patchWorkspaceSettings': settingsActions.patchWorkspaceSettings,
@@ -395,6 +397,7 @@ const functions = {
   'task-runs.setConversationOrganization': actions26.setConversationOrganization,
   'task-runs.renameConversation': actions26.renameConversation,
   'task-runs.regenerateConversationTitle': actions26.regenerateConversationTitle,
+  'task-runs.deleteAllThreads': actions26.deleteAllThreads,
   'task-runs.removeThread': actions26.removeThread,
   'task-runs.undoRemoveThread': actions26.undoRemoveThread,
   'task-runs.threadTags': actions26.threadTags,

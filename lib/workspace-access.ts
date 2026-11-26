@@ -2,7 +2,8 @@ import { tokenWorkspace } from '@/lib/tokens/principal'
 import { getLocale } from '@/lib/intl/i18n-server'
 import 'server-only'
 import { cookies } from '@/lib/server-runtime/headers'
-import { and, asc, eq, inArray, or } from 'drizzle-orm'
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import { db } from '@/lib/db'
 import { users } from '@/lib/db/schema'
 import { z } from 'zod'
@@ -64,9 +65,9 @@ export async function loadWorkspaceContext(requestedId?: string, authenticatedUs
   if (patWorkspace && (requestedId && requestedId !== patWorkspace || selection.workspaceId && selection.workspaceId !== patWorkspace)) throw new WorkspaceError('workspaceAccessDenied')
   // An explicit business target keeps its existing access check. A supplied
   // transport selection is exact: inaccessible choices never fall back home.
-  const { organizationId, ...context } = await readWorkspaceContext(user.id, user.email, user.name, user.image ?? null, patWorkspace ?? requestedId ?? selection.workspaceId ?? '', locale, user)
+  const { organizationId, factorAt, ...context } = await readWorkspaceContext(user.id, user.email, user.name, user.image ?? null, patWorkspace ?? requestedId ?? selection.workspaceId ?? '', locale, user)
   if (selection.present && !context.choices.some(choice => choice.id === selection.workspaceId)) throw new WorkspaceError('workspaceAccessDenied')
-  if (!(await filterEnterpriseWorkspaceLinks(user, [{ id: context.workspace.id, organizationId }])).length) throw new WorkspaceError('workspaceAccessDenied')
+  if (!(await filterEnterpriseWorkspaceLinks(user, [{ id: context.workspace.id, organizationId, factorAt }])).length) throw new WorkspaceError('workspaceAccessDenied')
   return patWorkspace ? { ...context, choices: context.choices.filter(choice => choice.id === patWorkspace) } : context
 }
 
@@ -74,6 +75,11 @@ export async function loadWorkspaceContext(requestedId?: string, authenticatedUs
 // Native callers queued before that SELECT starts may share its observation;
 // every later call reads again, even while the earlier result is still pending.
 // Enterprise policy and principal checks remain independent for every caller.
+// Keep the extra MFA field within the workspace-choice wire budget.
+const choiceWorkspace = alias(workspaces, 'w')
+const choiceMember = alias(workspaceMembers, 'm')
+const choiceOrganization = alias(organizationWorkspaces, 'o')
+
 async function readWorkspaceContext(userId: string, email: string, name: string, image: string | null, requestedId: string, locale: WorkspaceLocale, reader: AuthenticatedUser) {
   const user = { id: userId, email, name, image }
   const cookieStore = await cookies()
@@ -83,11 +89,11 @@ async function readWorkspaceContext(userId: string, email: string, name: string,
     transaction: typeof workspaceDatabase.workspaceTransactionKey !== 'function' || workspaceDatabase.workspaceTransactionKey() !== null,
     identity: { userId, nativeSessionId: desktopHumanSessionId(), requestedId,
       tokenWorkspaceId: reader[tokenWorkspace], principal: reader[enterprisePrincipal], acting: actingContext.getStore() },
-  }, () => workspaceDb.select({ id: workspaces.id, name: workspaces.name, kind: workspaces.kind, role: workspaceMembers.role, organizationId: organizationWorkspaces.organizationId }).from(workspaces)
-    .innerJoin(workspaceMembers, eq(workspaceMembers.workspaceId, workspaces.id))
-    .leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, workspaces.id))
-    .where(and(eq(workspaceMembers.userId, user.id), eq(workspaceMembers.status, 'active'),
-      or(eq(workspaces.kind, 'team'), eq(workspaces.userId, user.id)))).orderBy(asc(workspaces.createdAt)))
+  }, () => workspaceDb.select({ id: choiceWorkspace.id, name: choiceWorkspace.name, kind: choiceWorkspace.kind, role: choiceMember.role, factorAt: sql`${choiceWorkspace.twoFactorRequiredAt}`.mapWith(choiceWorkspace.twoFactorRequiredAt).as('mfa'), organizationId: sql`${choiceOrganization.organizationId}`.mapWith(choiceOrganization.organizationId).as('o') }).from(choiceWorkspace)
+    .innerJoin(choiceMember, eq(choiceMember.workspaceId, choiceWorkspace.id))
+    .leftJoin(choiceOrganization, eq(choiceOrganization.workspaceId, choiceWorkspace.id))
+    .where(and(eq(choiceMember.userId, user.id), eq(choiceMember.status, 'active'),
+      or(eq(choiceWorkspace.kind, 'team'), eq(choiceWorkspace.userId, user.id)))).orderBy(asc(choiceWorkspace.createdAt)))
 
   let choices = await readChoices()
   // Every person has one personal workspace, including people whose first workspace came from an invite.
@@ -115,7 +121,7 @@ async function readWorkspaceContext(userId: string, email: string, name: string,
   }
   if (!selected) throw new WorkspaceError('workspaceAccessDenied')
   return {
-    organizationId: selected.organizationId,
+    organizationId: selected.organizationId, factorAt: selected.factorAt,
     workspace: { id: selected.id, name: selected.name, kind: selected.kind },
     choices: choices.map(({ id, name, kind }) => ({ id, name, kind })),
     currentUserId: user.id,

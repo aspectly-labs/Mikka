@@ -2,9 +2,9 @@ import { RetryableError } from 'workflow'
 
 export async function publishResult(runId: string) {
   'use step'
-  const { publishRunResult } = await import('@/lib/run-publications')
+  const { publishRunResult, withPublicationFactorJob } = await import('@/lib/run-publications')
   try {
-    return await publishRunResult(runId)
+    return await withPublicationFactorJob(runId, () => publishRunResult(runId))
   } catch {
     // Raw database/transport errors must not persist in Workflow or expose credentials;
     // an interrupted worker retains the DB lease for two minutes.
@@ -16,8 +16,8 @@ publishResult.maxRetries = 8
 
 export async function failResult(runId: string) {
   'use step'
-  const { failRunPublication } = await import('@/lib/run-publications')
-  return failRunPublication(runId)
+  const { failRunPublication, withPublicationFactorJob } = await import('@/lib/run-publications')
+  return withPublicationFactorJob(runId, () => failRunPublication(runId))
 }
 failResult.maxRetries = 8
 

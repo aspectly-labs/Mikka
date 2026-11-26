@@ -57,7 +57,9 @@ export const automationSeams:AutomationSeams={
   },
   /** The creator's 创建并派发, keyed by the occurrence: a retried run finds the same request and the same task. */
   async dispatch(input){
-    return (await import('@/lib/code-review/automation')).configuredReviewDispatch(input, async ({ownerId,workspaceId,scheduleId,occurrenceId,task,event,source,single,thread,run,codeReview}) => {
+    const { withWorkspaceFactorJob } = await import('@/lib/enterprise/workspace-factor-job')
+    const { configuredReviewDispatch } = await import('@/lib/code-review/automation')
+    return withWorkspaceFactorJob(input.ownerId, input.workspaceId, () => configuredReviewDispatch(input, async ({ownerId,workspaceId,scheduleId,occurrenceId,task,event,source,single,thread,run,codeReview}) => {
     const botId=await dispatchBot(ownerId,workspaceId,task)
     const [{db},{recordPersonalSubmission},{createIssueFromRequest}]=await Promise.all([import('@/lib/db'),import('@/lib/coordinator-submission'),import('@/lib/coordinator/issue-create')])
     // An event-started run carries the event after the creator's request, marked as GitHub's data or the webhook's.
@@ -82,7 +84,7 @@ export const automationSeams:AutomationSeams={
       LEFT JOIN task_creation_receipts r ON r."taskId"=i.id AND r."userId"=$2 WHERE i.id=$1`,[created.issueId,ownerId])).rows[0]
     if(!row)throw new ScheduleError('scheduleDispatchUnavailable',503)
     return {id:created.issueId,title:row.title,status:row.status,identifier:row.identifier,eventId,requestedBy:ownerId}
-    })
+    }))
   },
   async changed(tx,workspaceId){await (await import('@/lib/live/lists')).scheduleListChanged(tx,workspaceId)},
   /** 代码审查 owns the schedule it created; Settings is the one place it is turned off. */

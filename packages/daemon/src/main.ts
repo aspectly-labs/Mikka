@@ -517,6 +517,7 @@ export class Daemon {
         : this.realAdapters()),
     ]))
     this.supervisor = new RunSupervisor({
+      runActivityChanged: active => this.rpc?.publishRunActivity(active),
       acquireWorkspaceControl: this.options.e2bContainerRuntime || this.options.taskRegistered
         ? (assignment, signal, onLost) => acquireCloudWorkspaceControl({ runId: assignment.runId, deviceId: assignment.deviceId, signal, onLost })
         : undefined,
@@ -648,6 +649,7 @@ export class Daemon {
         pid: process.pid,
       }),
       handlers: this.handlers(),
+      isRunActive: () => this.supervisor.activeRunIds().length > 0,
       log: this.log,
     })
     await this.rpc.listen()

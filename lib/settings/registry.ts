@@ -188,6 +188,36 @@ export const SETTINGS_REGISTRY = {
     type: 'integer', guard: z.number().int().min(1).max(20), defaultValue: 6,
     personalOverride: false, writeAccess: { workspace: 'admin' }, personalContext: 'workspace',
   },
+  requireTwoFactor: {
+    key: 'requireTwoFactor', scope: ['workspace'], personalOverride: false, writeAccess: { workspace: 'admin' },
+    group: 'identity', page: 'identity', ...settingMetadata('requireTwoFactor'), personalContext: 'workspace',
+    type: 'boolean', guard: z.boolean(), defaultValue: false,
+  },
+  skillPublishingPolicy: {
+    key: 'skillPublishingPolicy', scope: ['workspace'], personalOverride: false, writeAccess: { workspace: 'admin' },
+    group: 'skills', page: 'skills', ...settingMetadata('skillPublishingPolicy'), personalContext: 'workspace',
+    type: 'string', guard: z.enum(['open', 'review', 'off']), defaultValue: 'open', options: ['open', 'review', 'off'],
+  },
+  prAutoOpen: {
+    ...inherited, key: 'prAutoOpen',
+    group: 'git', page: 'git', ...settingMetadata('prAutoOpen'), personalContext: 'workspace',
+    type: 'boolean', guard: z.boolean(), defaultValue: true,
+  },
+  prWakeOnReview: {
+    ...inherited, key: 'prWakeOnReview',
+    group: 'git', page: 'git', ...settingMetadata('prWakeOnReview'), personalContext: 'workspace',
+    type: 'boolean', guard: z.boolean(), defaultValue: false,
+  },
+  prWakeOnCiFailure: {
+    ...inherited, key: 'prWakeOnCiFailure',
+    group: 'git', page: 'git', ...settingMetadata('prWakeOnCiFailure'), personalContext: 'workspace',
+    type: 'boolean', guard: z.boolean(), defaultValue: false,
+  },
+  prWakeOnConflict: {
+    ...inherited, key: 'prWakeOnConflict',
+    group: 'git', page: 'git', ...settingMetadata('prWakeOnConflict'), personalContext: 'workspace',
+    type: 'boolean', guard: z.boolean(), defaultValue: false,
+  },
   prTitlePrefix: {
     ...inherited, key: 'prTitlePrefix', group: 'git', page: 'git',
     ...settingMetadata('prTitlePrefix'),

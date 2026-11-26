@@ -992,6 +992,27 @@ describe("follow-up runs", () => {
 // reason, and the issue gets a next owner or a named wait reason. Only a
 // submission whose verify passed goes to review.
 describe("run stops", () => {
+  it("publishes the local supervisor activity snapshot and final idle edge", async () => {
+    const { server, dataDir } = await setup()
+    const daemon = await boot(server, dataDir, Number.POSITIVE_INFINITY, 60_000)
+    const control = await connectDaemonInDataDir(dataDir, { name: "activity-control", version: "1" })
+    const watcher = await connectDaemonInDataDir(dataDir, { name: "activity-observer", version: "1" })
+    try {
+      const runId = queue(server, "stall")
+      await control.request("runs.start", { runId })
+      await waitFor(() => daemon.supervisor.activeRunIds().includes(runId))
+      const active: boolean[] = []
+      await watcher.watchRunActivity(value => active.push(value))
+      expect(active).toEqual([true])
+      await control.request("runs.cancel", { runId })
+      await waitFor(() => active.length === 2)
+      expect(active).toEqual([true, false])
+    } finally {
+      watcher.close()
+      control.close()
+    }
+  })
+
   it.each(['blocked', 'cancelled'] as const)('retains a clean repository-selection handoff only when it ended blocked (%s)', async stopReason => {
     const { repo, server, dataDir } = await setup()
     // The daemon clones this real local fixture into its own repository cache.

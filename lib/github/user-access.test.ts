@@ -613,3 +613,40 @@ test('admitted repository returns matching recent PR openers, independent of rev
   }
   assert.deepEqual(await access.recentRepositoryPullAuthors('person-1', 'v2/github.com/owner/project', 'ad', { deadline: Date.now() + 25_000 }), ['Ada'])
 })
+
+test('workspace merge totals count both periods and withhold a partial or inaccessible denominator', async () => {
+  connected = { token: expectedToken, githubAccountId: '42' }
+  const previous = answer
+  const queries: string[] = []
+  answer = url => {
+    if (url.pathname !== '/search/issues') return previous(url)
+    const q = url.searchParams.get('q')!
+    queries.push(q)
+    return json({ total_count: q.endsWith('11-07') ? 5 : 8, incomplete_results: false })
+  }
+  const read = (...keys: string[]) => access.countWorkspaceMergedPulls('person-1', keys,
+    new Date('2026-11-08Z'), new Date('2026-11-15Z'), new Date('2026-11-01Z'))
+  const key = 'v2/github.com/owner/project'
+  assert.deepEqual(await read(key, key), { current: 8, previous: 5 })
+  assert.deepEqual(queries.sort(), ['repo:Owner/Project is:pr is:merged merged:2026-11-01..2026-11-07', 'repo:Owner/Project is:pr is:merged merged:2026-11-08..2026-11-14'])
+  connected = null // The older GitHub sign-in account must also be able to count merges.
+  assert.deepEqual(await read(key), { current: 8, previous: 5 })
+  assert.deepEqual(await read(key, 'v2/github.com/other/private'), { current: null, previous: null })
+  answer = url => url.pathname === '/search/issues' ? json({ total_count: 0, incomplete_results: true }) : previous(url)
+  assert.deepEqual(await read(key), { current: null, previous: null })
+})
+
+test('unknown webhook mergeability uses the same authorized repository, installation, PR and commit', async () => {
+  connected = { token: expectedToken, githubAccountId: '42' }
+  const head = '1'.repeat(40)
+  const original = answer
+  answer = url => url.pathname === '/repositories/91/pulls/7' ? json({ number: 7, state: 'open', head: { sha: head }, mergeable: false }) : original(url)
+  const check = (installation: number, sha = head) => access.authorizedPullWake('person-1', 'owner/project', 91, installation, { number: 7, head: sha })
+  assert.equal(await check(11), true)
+  assert.equal(await check(12), false)
+  assert.equal(await access.authorizedPullWake('person-1', 'owner/project', 91, 12), false)
+  assert.equal(await check(11, '2'.repeat(40)), false)
+  answer = url => url.pathname === '/repositories/91/pulls/7' ? json({ number: 7, state: 'open', head: { sha: head }, mergeable: null }) : original(url)
+  assert.equal(await check(11), null)
+  assert.equal(await check(11, '2'.repeat(40)), false, 'a different head cannot schedule a recheck')
+})

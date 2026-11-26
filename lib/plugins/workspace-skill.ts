@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
+import { lockSkillPublishingPolicy, readRuntimeSetting } from '@/lib/settings/runtime'
 import { PluginError } from './contracts'
 import { skillDescription } from './skill-metadata'
 import { assertOrganizationResourceShare, organizationResourceAllowed, workspaceResourcePolicy } from '@/lib/governance/resource-access'
@@ -58,12 +59,13 @@ export class WorkspaceSkillStore {
     const members = await this.members()
     const allowed = await Promise.all(rows.map(row => row.ownerId === userId ? true : organizationResourceAllowed(workspaceId, 'skill', row.id, row.ownerId, members)))
     const policy = await workspaceResourcePolicy(workspaceId, members)
+    const publishing = await readRuntimeSetting(this.pool, 'skillPublishingPolicy', { userId, workspaceId })
     const skills = rows.filter((row, index) => row.ownerId === userId || (allowed[index] && names.has(row.ownerId))).map(row => ({
       id: row.id, name: row.name, description: skillDescription(row.body, row.name), slug: row.slug, source: row.source,
       sourceKind: row.sourceKind, sourceRevision: row.sourceRevision, enabled: row.enabled, ownerId: row.ownerId,
       ownerName: names.get(row.ownerId) ?? null, mine: row.ownerId === userId, shared: Boolean(row.shareId),
     }))
-    return { workspaceId, workspaceKind: workspace.kind, canShare: workspace.kind === 'team' && policy.mcpSharing !== 'deny', skills, count: skills.length }
+    return { workspaceId, workspaceKind: workspace.kind, canShare: workspace.kind === 'team' && policy.mcpSharing !== 'deny' && publishing.value === 'open', skills, count: skills.length }
   }
 
   async share(userId: string, input: z.infer<typeof shareSkillSchema>): Promise<WorkspaceSkillPage> {
@@ -74,6 +76,10 @@ export class WorkspaceSkillStore {
       await client.query('BEGIN')
       const locked = await client.query('SELECT 1 FROM personal_skills WHERE id=$1 AND user_id=$2 FOR UPDATE', [parsed.skillId, userId])
       if (!locked.rowCount) throw new PluginError('skillNotFound', 404)
+      if (parsed.shared) {
+        const policy = await lockSkillPublishingPolicy(client, { userId, workspaceId: parsed.workspaceId })
+        if (policy.value !== 'open') throw new PluginError(policy.value === 'review' ? 'skillReviewRequired' : 'skillPublishingDisabled', 403)
+      }
       if (parsed.shared) await assertOrganizationResourceShare(parsed.workspaceId, 'skill', parsed.skillId, userId, await this.members())
       if (parsed.shared) await client.query(`INSERT INTO personal_skill_workspace_shares(id,skill_id,workspace_id)
         VALUES($1,$2,$3) ON CONFLICT(skill_id,workspace_id) DO NOTHING`, [randomUUID(), parsed.skillId, parsed.workspaceId])

@@ -46,7 +46,7 @@ test('task identity: split DB migration, immutable issuance, historical aliases 
       INSERT INTO issue_prefixes VALUES ('owner','SAME'), ('peer','SAME');
     `)
     await ws.query(`
-      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, "userId" text NOT NULL DEFAULT 'owner', kind text NOT NULL DEFAULT 'team', "taskPrefix" varchar(4));
+      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, "userId" text NOT NULL DEFAULT 'owner', kind text NOT NULL DEFAULT 'team', "taskPrefix" varchar(4), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid NOT NULL, "userId" text NOT NULL, status text NOT NULL, PRIMARY KEY ("workspaceId","userId"));
       CREATE TABLE mikka_teams (id uuid PRIMARY KEY, "workspaceId" uuid NOT NULL, identifier varchar(12) NOT NULL);
       CREATE TABLE mikka_team_issues ("issueId" uuid PRIMARY KEY, "teamId" uuid NOT NULL,

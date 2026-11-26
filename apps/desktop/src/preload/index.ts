@@ -112,6 +112,10 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
     quota: {
       get: () => ipcRenderer.invoke(IPC.quotaGet),
     },
+    appSettings: {
+      read: () => ipcRenderer.invoke(IPC.appSettingsRead),
+      write: (patch: unknown) => ipcRenderer.invoke(IPC.appSettingsWrite, patch),
+    },
     tray: trayBridge(windowKindFromArgv(process.argv), state => ipcRenderer.invoke(IPC.trayUpdate, state)),
   }
   const bundledBridge: BundledBridge = {

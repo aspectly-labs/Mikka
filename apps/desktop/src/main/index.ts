@@ -2,15 +2,16 @@
 // the UI reads through `window.mikka`. The renderer is treated as untrusted;
 // every privileged call goes through the validated IPC surface in `./bridge`.
 
-import { app, BrowserWindow, Menu, Notification, Tray, dialog, nativeImage, nativeTheme, net, protocol, safeStorage, session, shell, webContents } from 'electron'
+import { app, BrowserWindow, Menu, Notification, Tray, dialog, nativeImage, nativeTheme, net, powerSaveBlocker, protocol, safeStorage, session, shell, webContents } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { mkdir } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 
 import { IPC, BUNDLED_IPC } from '@mikka/protocol/ipc'
 
+import { AppSettings } from './app-settings'
 import { registerBridge } from './bridge'
-import { localDeviceStatus, localQuota } from './daemon'
+import { localDeviceStatus, localQuota, watchLocalRunActivity } from './daemon'
 import { connectForUpdate, updateLocalDaemon } from './daemon-update'
 import { readLocalDeviceAccount, readLocalDeviceOwner } from './local-setup'
 import { AppLoadState, offlineReason, offlineRetryDelay } from './offline'
@@ -379,6 +380,8 @@ function sendMenuCommand(command: DesktopMenuCommand): void {
   if (!contents.isDestroyed() && isTrustedFrame(contents.getURL(), PAGE_URL)) contents.send(IPC.appMenuCommand, command)
 }
 
+let appSettings: AppSettings | undefined
+let runActivity: ReturnType<typeof watchLocalRunActivity> | undefined
 let tray: Tray | null = null
 let trayState: DesktopTrayState = { signedIn: false, waiting: 0, threads: null, hasMore: false }
 
@@ -708,7 +711,16 @@ async function start(): Promise<void> {
     }))
     session.fromPartition(PARTITION).protocol.handle('mikka', bundledProtocol(join(__dirname, 'renderer'), bundledAuth))
   }
+  appSettings = new AppSettings(join(app.getPath('userData'), 'app-settings.json'), {
+    loginSupported: process.platform === 'darwin' || process.platform === 'win32',
+    getLogin: () => app.getLoginItemSettings().openAtLogin,
+    setLogin: openAtLogin => app.setLoginItemSettings({ openAtLogin }),
+    tray: enabled => { if (enabled) installTray(); else { tray?.destroy(); tray = null } },
+    block: () => powerSaveBlocker.start('prevent-app-suspension'),
+    unblock: id => powerSaveBlocker.stop(id),
+  })
   registerBridge({
+    appSettings,
     appUrl: APP_URL,
     serverUrl: currentServer,
     rendererUrl: PAGE_URL,
@@ -756,14 +768,17 @@ async function start(): Promise<void> {
   // update downloads in the background. A downloaded version reaches the rail's 重启以更新 and the menu check's
   // 立即重启 / 稍后, and installs on quit. Only a server that requires a newer desktop blocks (enforceMinimumVersion).
   createMainWindow()
-  installTray()
+  appSettings.apply()
+  runActivity = watchLocalRunActivity(active => appSettings?.setActive(active))
   if (app.isPackaged && FLAVOR !== 'dev') {
     // This app may just have updated: the daemon on this computer updates too, when idle (daemon-update.ts).
     void updateLocalDaemon(FLAVOR, { connect: connectForUpdate({ name: 'mikka-desktop', version: APP_VERSION }) })
+      .then(() => runActivity?.refresh())
     setTimeout(() => { void checkForUpdates(false) }, BACKGROUND_UPDATE_DELAY_MS)
     setInterval(() => { void checkForUpdates(false) }, BACKGROUND_UPDATE_INTERVAL_MS)
   }
   app.on('activate', () => {
+    runActivity?.refresh()
     if (BrowserWindow.getAllWindows().length === 0 && !gate) createMainWindow()
   })
   // Only disk assets and the loading shell may overtake restoration. API and
@@ -784,6 +799,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', closeAuthServer)
   app.on('before-quit', () => { tray?.destroy(); tray = null })
   app.on('before-quit', closeReturnListener)
+  app.on('before-quit', () => runActivity?.close())
   app.on('before-quit', () => { bundledAuth?.dispose(); bundledLive?.closeAll(); bundledViewer?.closeAll() })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()

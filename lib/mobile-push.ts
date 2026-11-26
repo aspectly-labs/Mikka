@@ -7,6 +7,7 @@ import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { filterEnterpriseWorkspaceLinks } from '@/lib/enterprise/access'
 import { lockLiveRegistration } from '@/lib/enterprise/live-store'
+import { workspaces } from '@/lib/db/workspace-schema'
 import { organizationWorkspaces } from '@/lib/db/governance-schema'
 import { db, pool, withDatabaseClient } from '@/lib/db'
 import { agentRuns, bots } from '@/lib/db/schema'
@@ -83,8 +84,8 @@ export async function pushReply(userId: string, botId: string, text: string | nu
       const reader = { id: userId, [enterprisePrincipal]: principal, [tokenWorkspace]: origin.workspaceId }
       try {
         await withTaskWorkspace(reader, origin.workspaceId, async (_workspace, workspaceTx) => {
-          const [link] = await workspaceTx.select({ organizationId: organizationWorkspaces.organizationId })
-            .from(organizationWorkspaces).where(eq(organizationWorkspaces.workspaceId, origin.workspaceId)).limit(1)
+          const [link] = await workspaceTx.select({ organizationId: organizationWorkspaces.organizationId, factorAt: workspaces.twoFactorRequiredAt })
+            .from(workspaces).leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, workspaces.id)).where(eq(workspaces.id, origin.workspaceId)).limit(1)
           const organizationId = link?.organizationId ?? null
           const client = await pool.connect()
           try {
@@ -100,7 +101,7 @@ export async function pushReply(userId: string, botId: string, text: string | nu
                   [sessionId, userId])
                 if (!session.rowCount) return
                 // The Workspace transaction still holds its attachment lock. Recheck the live policy under the APP barrier.
-                const allowed = await filterEnterpriseWorkspaceLinks(reader, [{ id: origin.workspaceId, organizationId }], client)
+                const allowed = await filterEnterpriseWorkspaceLinks(reader, [{ id: origin.workspaceId, organizationId, factorAt: link?.factorAt ?? null }], client)
                 if (!allowed.length) return
                 const preferences = await readPreferences(userId)
                 const runtime = await readNotificationRuntimeSettings(userId)
