@@ -67,7 +67,7 @@ export function labelShapeProblems(key, value) {
   if (!shortLabelKey.test(key.split('.').at(-1))) return []
   const text = literalText(value)
   const problems = []
-  if (/[。．]$/.test(text) || (/\.$/.test(text) && !/\.\.\.$/.test(text))) problems.push({ rule: 'C-11-period', message: 'C-11 标签/按钮/标题不带句号' })
+  if (/[。．]$/.test(text) || (text.endsWith('.') && !text.endsWith('...'))) problems.push({ rule: 'C-11-period', message: 'C-11 标签/按钮/标题不带句号' })
   if (/[（(]/.test(text.replace(optionalMark, ''))) problems.push({ rule: 'C-11-paren', message: 'C-11 标签/按钮/标题不加括号注释（只允许「（选填）」）' })
   return problems
 }

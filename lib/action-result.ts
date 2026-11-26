@@ -180,6 +180,7 @@ export const ACTION_ERROR_CODES = [
   'projectArchived',
   'projectDeleteNotEmpty',
   'projectResourceConflict',
+  'projectBindingsRetired',
   'teamArchived',
   'teamPersonalWorkspace',
   'teamDeleteReferenced',

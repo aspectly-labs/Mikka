@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib'
 import { defaultRunPolicy } from '@mikka/protocol/agent-policy'
 import { CodedError } from '@mikka/protocol/coded-error'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
-import { REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, RECOVERY_WORKTREE_HEADER, RUN_CREDENTIALS_HEADER, MODEL_CREDENTIAL_HEADER, CUSTOM_TASK_BRANCH_HEADER, type RunCheckpoint } from '@mikka/protocol/device'
+import { REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, RUN_CREDENTIALS_HEADER, MODEL_CREDENTIAL_HEADER, CUSTOM_TASK_BRANCH_HEADER, type RunCheckpoint } from '@mikka/protocol/device'
 import { SUBSCRIPTION_MODEL_CATALOGUE_HEADER } from '@mikka/protocol/subscription'
 import { normalizeRepository } from '@mikka/protocol/repository'
 import { SKILL_ARTIFACT_HEADER } from '@mikka/protocol/skill'
@@ -43,7 +43,7 @@ function fixture() {
     publication: {pushBranch:'synthetic-claim-branch',policy:defaultRunPolicy()},
     checkpoint: null as RunCheckpoint | null,
     strictRecovery: false,
-    lost: undefined as {deviceId:string;sessionId:string;agentId:string;agentDefinition?:{harness?:'codex'|'claude_code'}|null}|undefined,
+    lost: undefined as {deviceId:string;sessionId:string;agentId:string;baseBranch?:string|null;agentDefinition?:{harness?:'codex'|'claude_code'}|null}|undefined,
     historicalReplyVersion:false,
     preparation:[] as string[],
     modelAdmissionCalls:[] as {scope:{workspaceId:string;ownerId:string};model:string}[],
@@ -96,7 +96,7 @@ function fixture() {
 async function claim(probe: ReturnType<typeof fixture>, preparation = ['skill-preflight','policy','secrets','publication','claim','skill-claim','benchmark-claim','token','settings'], expectsProjectAdmission = true) {
   const diagnostics: unknown[][] = []
   const errors = mock.method(console, 'error', (...args: unknown[]) => { diagnostics.push(args) })
-  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',...(probe.customBranchCapability ? {[CUSTOM_TASK_BRANCH_HEADER]:'1'} : {}),...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {}),...(probe.nativeMcpServers ? { [TASK_MCP_HEADER]: probe.taskMcpVersion } : {}),...(probe.taskMcpToolFilter ? {[TASK_MCP_TOOL_FILTER_HEADER]:'1'} : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
+  try { return await POST(new Request(claimRequestURL,{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[SKILL_ARTIFACT_HEADER]:'1',[ENVIRONMENT_REPOSITORIES_HEADER]:'1',...(probe.customBranchCapability ? {[CUSTOM_TASK_BRANCH_HEADER]:'1'} : {}),...(probe.strictRecovery ? {[RECOVERY_WORKTREE_HEADER]:'1'} : {}),...(probe.policyCapability?{[POLICY_SNAPSHOT_HEADER]:probe.policyCapability}:{}),...(probe.credentialCapability ? {[RUN_CREDENTIALS_HEADER]:'1'} : {}),...(probe.modelCredentialCapability ? {[MODEL_CREDENTIAL_HEADER]:'1'} : {}),...(probe.catalogueCapability ? {[SUBSCRIPTION_MODEL_CATALOGUE_HEADER]:'1'} : {}),...(probe.environmentCapability ? {[PROJECT_ENVIRONMENT_HEADER]:probe.environmentCapability} : {}),...(probe.secretCapability ? {[TASK_SECRETS_HEADER]:probe.secretCapability} : {}),...(probe.nativeMcpServers ? { [TASK_MCP_HEADER]: probe.taskMcpVersion } : {}),...(probe.taskMcpToolFilter ? {[TASK_MCP_TOOL_FILTER_HEADER]:'1'} : {})}}),{params:Promise.resolve({deviceId:'device',runId:'run'})}) }
   finally {
     errors.mock.restore()
     // The route logs only error names. Keep the intentional refusal distinct
@@ -224,7 +224,7 @@ test('allowed local and cloud claims send the frozen Environment recipe and sele
       assert.deepEqual(body.taskSecretNames, ['SELECTED_SECRET'])
       assert.deepEqual(probe.environmentReads, [{ workspaceId, repository: 'synthetic/claim-fixture', configuration: snapshot.environment, ownerId: probe.run.userId }])
       assert.deepEqual(probe.secretReads, [], 'selected Environment never reads the unrestricted task secret collection')
-      assert.deepEqual(probe.projectAdmission.calls, [{ input: { userId: 'member', workspaceId, issueId: 'issue', repositoryKey: probe.repo.repoPath,
+      assert.deepEqual(probe.projectAdmission.calls, [{ input: { userId: 'member', botId: probe.run.botId, workspaceId, issueId: 'issue', repositoryKey: probe.repo.repoPath,
         baseBranch: 'release/frozen-environment', runtime, harness: 'claude_code' }, frozen: snapshot }])
       assert.deepEqual(definition.projectExecution, frozen.projectExecution, 'claim never rewrites the historical Environment snapshot')
       assert.equal(probe.run.status, 'preparing')
@@ -884,7 +884,7 @@ test('Profile model, source or version changes keep ancestry but start a fresh n
     for (const change of ['same', 'model', 'source', 'version', 'harness'] as const) {
       const probe = fixture()
       Object.assign(probe.run, { agentDefinition: structuredClone(definition), ...(lineage === 'retry' ? { retryOf: 'profile-parent' } : { continuesRunId: 'profile-parent' }) })
-      probe.lost = { deviceId: 'device', sessionId: 'old-native-session', agentId: 'agent', agentDefinition: structuredClone(definition) }
+      probe.lost = { deviceId: 'device', sessionId: 'old-native-session', agentId: 'agent', baseBranch: probe.run.baseBranch, agentDefinition: structuredClone(definition) }
       if (lineage === 'retry') probe.checkpoint = validCheckpoint()
       const target = (probe.run as typeof probe.run & { agentDefinition: typeof definition }).agentDefinition
       if (change === 'model') target.model = target.agentProfile.targetEntry.model = 'other-currently-authorized-model'

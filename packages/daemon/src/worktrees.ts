@@ -586,7 +586,8 @@ async function excludeVerifyArtifacts(repoPath: string): Promise<void> {
     const file = join(info, 'exclude')
     if (existsSync(file) && !lstatSync(file).isFile()) throw new Error('Invalid repository exclude file')
     const existing = existsSync(file) ? readFileSync(file, 'utf8') : ''
-    if (!existing.split(/\r?\n/).includes('/.verify/')) appendFileSync(file, '\n/.verify/\n')
+    const missing = ['/.verify/', '/.mikka-repositories-*/'].filter(pattern => !existing.split(/\r?\n/).includes(pattern))
+    if (missing.length) appendFileSync(file, '\n' + missing.join('\n') + '\n')
   })
 }
 

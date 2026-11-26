@@ -19,6 +19,7 @@ import { ALLOWED_MODEL, codexWithModel, seedAllowedModel } from './support/allow
 import { isolateCoordinatorWakes } from './support/coordinator-wake'
 import { addFactoryVisualEvidence } from './helpers/factory-visual-evidence'
 import { threadPromptView } from '../lib/thread-prompt'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 
 test('provider failure continues the same task through its own Agent\'s authorized preferred models, never the other Agent\'s', { skip: !dbUrl }, async t => {
   const names = ['WORKSPACE_SECRETS_KEY', 'BETTER_AUTH_SECRET', 'MIKKA_BYOS_ENABLED', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'MIKKA_LITELLM_URL', 'MIKKA_LITELLM_MASTER_KEY'] as const
@@ -194,15 +195,14 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     ])
     const issueId = await task(p), projectId = randomUUID(), epoch = randomUUID(), sha = 'c'.repeat(40)
     const environment = await resources.saveEnvironment(p.id, { workspaceId: p.workspaceId, name: 'Frozen candidate environment',
-      configuration: { runtime: 'local', variables: { REVIEW_MODE: 'frozen' } } })
+      configuration: { runtime: 'local', variables: { REVIEW_MODE: 'frozen' } },
+      repositories: [{ key: normalizeRepository(p.remote).key, clone: 'start', baseBranch: 'environment-base', primary: true }] })
     try {
       await pool.query(`INSERT INTO workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
         VALUES($1,$2,$3,'Candidate checkout','','','planned','none','','','','','[]',1)`, [projectId, p.id, p.workspaceId])
       await (await import('../lib/resource-access/projects')).registerProjectAccess(p.id, projectId, p.workspaceId)
       await seedProjectTasks(pool, projectId, [issueId])
-      await resources.saveProjectResources(p.id, { workspaceId: p.workspaceId, projectId, revision: 1,
-        repositories: [{ repositoryKey: normalizeRepository(p.remote).key, baseBranch: 'environment-base', environmentId: environment.id, isPrimary: true }],
-        environmentIds: [environment.id], defaultEnvironmentId: environment.id })
+      await assignTaskEnvironment(pool, p.id, p.workspaceId, [issueId], environment.id)
       await pool.query(`INSERT INTO coordinator_events(id,"userId","botId","issueId",kind,"dedupeKey",payload)
         VALUES($1,$2,$3,$4,'user_message',$5,'{"text":"Review this exact candidate with the admitted environment"}')`, [epoch, p.id, p.botId, issueId, `candidate-fallback:${epoch}`])
       const repo = await ensureDeviceRepository(p.id, p.deviceId, p.remote)
@@ -252,7 +252,7 @@ test('provider failure continues the same task through its own Agent\'s authoriz
       assert.deepEqual((await row(check.runId)).report.modelFallback, original.report.modelFallback)
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM factory_attempts WHERE "taskId"=$1 AND stage=\'review\'', [routed.task.id])).rows[0].n, 2)
     } finally {
-      await workspacePool.query('DELETE FROM workspace_project_repositories WHERE "projectId"=$1', [projectId])
+      await workspacePool.query('DELETE FROM workspace_task_environments WHERE "environmentId"=$1', [environment.id])
       await workspacePool.query('DELETE FROM workspace_projects WHERE id=$1', [projectId])
       await workspacePool.query('DELETE FROM workspace_environments WHERE id=$1', [environment.id])
     }

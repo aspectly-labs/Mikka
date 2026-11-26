@@ -300,6 +300,8 @@ async function readIssueSnapshot(workspaceId?: string, known?: string, previous?
     return { version, live, positions, ...(previous ? { delta: true as const } : {}), items: liveRows.map(({ content, checklistTotal, checklistChecked, ...issue }) => ({
       ...issue, issuedIdentifier: identifiers.get(issue.id) ?? null, identifier: identifiers.get(issue.id) ?? null,
       projectId: taskProjects.get(issue.id)?.projectId ?? null, teamId: links.find(link => link.issueId === issue.id)?.teamId ?? null,
+      // The task's 「环境」; absent when it has none. Setting it is a task revision, so the row signature covers it.
+      ...(taskProjects.get(issue.id)?.environmentId ? { environmentId: taskProjects.get(issue.id)!.environmentId! } : {}),
       // Keep the legacy DTO union during the client rollout. taskAssignees
       // above is the runtime authority and emits only active members or null.
       metadata: { ...readIssueMetadata(content), assignee: assignees.get(issue.id) ?? null, project: taskProjects.get(issue.id)?.project ?? null } as ReturnType<typeof readIssueMetadata>,

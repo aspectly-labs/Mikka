@@ -27,7 +27,7 @@ export const MIGRATION_ACTOR = 'mikka:bot-environment-backfill'
  * (lib/project-resources/store.ts), under the same workspace resource lock.
  */
 async function placeRepository(client, workspaceId, key, bot, actor) {
-  const { rows: [listed] } = await client.query(`SELECT id FROM workspace_environments WHERE "workspaceId"=$1 AND "archivedAt" IS NULL
+  const { rows: [listed] } = await client.query(`SELECT id FROM workspace_environments WHERE "workspaceId"=$1 AND "archivedAt" IS NULL AND scope='workspace'
     AND configuration->'repositoryKeys' ? $2 ORDER BY "createdAt",id LIMIT 1`, [workspaceId, key])
   if (listed) return { id: listed.id, created: false }
   const id = crypto.randomUUID()

@@ -149,6 +149,7 @@ export interface SupervisorDeps extends PublicationDeps {
   /** A fresh hosted claim may overlap remote reads with policyReady. Any
    * empty-repository creation/push must await that same authorization. */
   prepareRepository: (assignment: RunAssignment, signal: AbortSignal, githubEnvironment?: Record<string, string>, policyReady?: Promise<unknown>, onRepositoryTiming?: RepositoryTimingObserver) => Promise<void>
+  prepareEnvironmentRepositories?: (assignment: RunAssignment, root: string, signal: AbortSignal) => Promise<() => Promise<void>>
   baseRef: (assignment: RunAssignment) => Promise<string>
   log: Logger
   /** Uploads what the run's agent queued with `submit_capture` (`captures.ts`). */
@@ -167,6 +168,7 @@ const DEFAULT_STOP_GRACE_MS = 3_000
 const DEFAULT_CANCEL_GRACE_MS = 10_000
 interface ActiveRun {
   workspaceControl?: WorkspaceControl
+  removeEnvironmentRepositories?: () => Promise<void>
   secretBridge?: TaskSecretBridge
   runtimeTiming?: RunRuntimeObservation
   github?: PreparedRunGitHub
@@ -1080,7 +1082,7 @@ export class RunSupervisor {
     }
     const branch = assignment.pushBranch
     const base = await this.deps.baseRef(assignment)
-    if (!branch || !pushDecision(runPolicy(assignment.policy)).push) return base
+    if (assignment.freshEnvironmentCheckout || !branch || !pushDecision(runPolicy(assignment.policy)).push) return base
     try {
       return await withRunGitCredentials(assignment, runPaths(this.deps.adapterStateDir ?? join(tmpdir(), "mikka-run-state"), runId).privateDir,
         env => this.deps.worktrees.fetchBranch(
@@ -1150,6 +1152,7 @@ export class RunSupervisor {
         }
       })
       .finally(async () => {
+        await run.removeEnvironmentRepositories?.().catch(() => this.deps.log.warn('Environment repository cleanup failed'))
         run.secretBridge?.close()
         run.repositoryPreparing?.abort.abort()
         await Promise.all([run.repositoryPreparing?.done.catch(() => undefined), this.closePrepared(run)])
@@ -1291,6 +1294,8 @@ export class RunSupervisor {
       run.observedModel = observedModel
       this.push(runId, { kind: "run", patch: { state: "running", sessionId, observedModel } })
     }
+    const startupDirectory = assignment.projectEnvironment?.startupRepositories?.length ? '.mikka-repositories-' + randomUUID() : null
+    const taskEnv = startupDirectory ? { ...assignment.taskEnv, ENVIRONMENT_REPOSITORIES: startupDirectory } : assignment.taskEnv
     const baseOptions = {
       traceContext,
       // The owner's own GitHub credential reaches every run that was sent one (decision 2026-11-02-1600).
@@ -1308,8 +1313,8 @@ export class RunSupervisor {
       env: taskExecutionEnv(buildChildEnv({
         adapterAllow: adapter.envAllow,
         runId,
-      }), { taskEnv: assignment.taskEnv, taskSecretEnv: run.secretBridge?.env }),
-      taskEnv: assignment.taskEnv,
+      }), { taskEnv, taskSecretEnv: run.secretBridge?.env }),
+      taskEnv,
       taskSecretEnv: run.secretBridge?.env,
       log,
       networkAllow: repo.networkAllow,
@@ -1337,7 +1342,7 @@ export class RunSupervisor {
       // In memory only: the adapter hands it to the run's CLI environment.
       credential: assignment.modelCredential,
     }
-    const prewarm = this.deps.prepareSubscription && ['claude_code', 'codex'].includes(assignment.harness)
+    const prewarm = !startupDirectory && this.deps.prepareSubscription && ['claude_code', 'codex'].includes(assignment.harness)
       && assignment.subscriptionBinding && assignment.subscriptionLease && !assignment.modelCredential
       && !entry.sessionId && !entry.worktree && !assignment.continuesRunId && !assignment.resumeSessionId
       && !assignment.requireSessionResume && !assignment.resumeFrom
@@ -1406,6 +1411,10 @@ export class RunSupervisor {
         repo.path,
         await this.startPoint(runId, repo, assignment),
       )))
+    if (startupDirectory) {
+      if (!this.deps.prepareEnvironmentRepositories) throw new Error('Environment repository checkout unavailable')
+      run.removeEnvironmentRepositories = await this.deps.prepareEnvironmentRepositories(assignment, join(worktree, startupDirectory), preparationSignal)
+    }
     run.workspaceControl?.setWorktree(worktree)
     if (!entry.worktree) {
       // A continued worktree was bootstrapped by the run that made it.
@@ -1446,7 +1455,7 @@ export class RunSupervisor {
       const setup = policy.readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree, effectiveRepo) : await this.deps.worktrees.bootstrap(worktree, repo.path, effectiveRepoSetup)
       if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup?.approved) {
         if (policy.permissions.install_dependency !== 'allow') throw new Error('Environment setup requires dependency-install permission')
-        await this.deps.worktrees.bootstrap(worktree, repo.path, assignment.projectEnvironment.setup, assignment.taskEnv, { includeWorktreeFile: false })
+        await this.deps.worktrees.bootstrap(worktree, repo.path, assignment.projectEnvironment.setup, taskEnv, { includeWorktreeFile: false })
       }
       log.info({ worktree, setup }, "worktree ready")
       this.deps.journal.update(runId, { worktree, baseCommit })
