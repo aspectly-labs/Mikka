@@ -577,7 +577,7 @@ function runUpdateGate(minimum: string): void {
   })
   const lang = /^zh\b/i.test(app.getLocale()) ? 'zh-CN' : 'en'
   void win.loadFile(join(__dirname, 'update.html'), { query: { lang } })
-  gate.start()
+  gate.start(updates.beginRequiredUpdate())
 }
 
 /**
@@ -603,7 +603,6 @@ async function enforceMinimumVersion(): Promise<void> {
   for (const win of children) win.hide()
   mainWindow?.hide()
   runUpdateGate(minimum)
-  if (updates.ready && meetsMinimumVersion(updates.ready, minimum)) updates.install()
 }
 
 async function checkForUpdates(interactive: boolean): Promise<void> {
@@ -641,7 +640,7 @@ function installMenu(): void {
     closeTab: guardAppAction(() => gate !== null, bringToFront, closeTabOrWindow),
     newWindow: guardAppAction(() => gate !== null, bringToFront, () => openChild(PAGE_URL)),
     reload: reloadApp,
-    checkForUpdates: () => { void checkForUpdates(true) },
+    checkForUpdates: guardAppAction(() => gate !== null, bringToFront, () => { void checkForUpdates(true) }),
     openWebsite: () => { void shell.openExternal('https://aspectlylabs.com/mikka') },
     showLogs: () => { void showLogs() },
     zoomItems: ZOOM_ITEMS,

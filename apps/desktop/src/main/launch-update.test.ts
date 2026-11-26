@@ -120,9 +120,9 @@ test('a failed download shows why and offers 重试; 重试 downloads again', as
 
 test('an update downloaded on an earlier run installs at once', async () => {
   const t = setup()
-  t.updater.next = u => { u.emit('update-downloaded', { version: '2.0.0' }) }
-  t.gate.start()
+  t.gate.start('2.0.0')
   await flush()
+  assert.equal(t.updater.checks, 0)
   assert.equal(t.updater.installs, 1)
   assert.deepEqual(t.states.at(-1), { kind: 'installing', version: '2.0.0' })
 })

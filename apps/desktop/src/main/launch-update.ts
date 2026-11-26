@@ -60,19 +60,14 @@ export class UpdateGate {
       if (percent !== this.state.percent) this.show({ ...this.state, percent })
     })
     this.listen('update-downloaded', (info: { version: string }) => {
-      if (this.finished || this.state.kind === 'installing') return
-      if (!meetsMinimumVersion(info.version, options.minimum)) return this.fail('')
-      this.stopTimer()
-      this.show({ kind: 'installing', version: info.version })
-      this.finished = true
-      this.detach()
-      this.updater.quitAndInstall()
+      if (!this.finished && !this.installCompatible(info.version)) this.fail('')
     })
     this.listen('error', (error: Error) => { this.fail(error) })
   }
 
   /** Starts the check; the timeout applies only until an update is found. */
-  start(): void {
+  start(cached: string | null = null): void {
+    if (cached && this.installCompatible(cached)) return
     this.show({ kind: 'checking' })
     this.timer = this.setTimer(() => { if (this.state.kind === 'checking') this.fail('ETIMEDOUT') }, this.options.timeoutMs ?? CHECK_TIMEOUT_MS)
     this.check()
@@ -82,6 +77,16 @@ export class UpdateGate {
   retry(): void {
     if (this.state.kind !== 'failed' || this.finished) return
     this.start()
+  }
+
+  private installCompatible(version: string): boolean {
+    if (!meetsMinimumVersion(version, this.options.minimum)) return false
+    this.finished = true
+    this.stopTimer()
+    this.show({ kind: 'installing', version })
+    this.detach()
+    this.updater.quitAndInstall()
+    return true
   }
 
   private check(): void {
