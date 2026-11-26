@@ -79,6 +79,7 @@ async function routeFixture(unavailable=false,stopped=false,modelDenied=false,is
     '@/lib/live/lists':{runListChanged:async(executor:unknown,runId:string)=>{
       assert.equal(executor,db);assert.equal(runId,run.id);assert.equal(run.status,'failed');calls.push('listChanged')
     }},
+    '@/lib/cloud-computer/e2b-task-workspace-archive':{portableTaskArchiveEnabled:()=>false},
     '@/lib/cloud-computer-flag':{cloudComputerTasksEnabled:()=>true},
     '@/lib/background':{afterJob:()=>{calls.push('wakeScheduled')}},
     '@/lib/server-runtime/server':{RouteResponse:class extends Response {static json(body:unknown,init?:ResponseInit){return Response.json(body,init)}}},

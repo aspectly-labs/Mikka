@@ -2460,6 +2460,12 @@
       "baseUrlPlaceholder": "https://api.example.com/v1"
     },
     "environments": {
+      "snapshotBuild": "Build snapshot",
+      "snapshotBuilding": "Building",
+      "snapshotReady": "Ready",
+      "snapshotFailed": "Build failed",
+      "snapshotOutdated": "Outdated",
+      "snapshotMaintenance": "Maintenance command",
       "machineSize": "Default machine size",
       "version": "Version {revision}",
       "title": "Cloud environments",

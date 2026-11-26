@@ -38,8 +38,8 @@ test('real PG: independent cross-Harness Profile stages and recorded cloud runti
   await createTestDatabase(admin, database)
   const isolated = new URL(dbUrl); isolated.pathname = `/${database}`
   const url = isolated.toString()
-  const old = { E2E_DATABASE_URL: process.env.E2E_DATABASE_URL, MIKKA_DATABASE_URL: process.env.MIKKA_DATABASE_URL, DATABASE_URL: process.env.DATABASE_URL }
-  Object.assign(process.env, { E2E_DATABASE_URL: url, MIKKA_DATABASE_URL: url, DATABASE_URL: url })
+  const old = { E2E_DATABASE_URL: process.env.E2E_DATABASE_URL, MIKKA_DATABASE_URL: process.env.MIKKA_DATABASE_URL, DATABASE_URL: process.env.DATABASE_URL, MIKKA_EDITION: process.env.MIKKA_EDITION }
+  Object.assign(process.env, { E2E_DATABASE_URL: url, MIKKA_DATABASE_URL: url, DATABASE_URL: url, MIKKA_EDITION: 'community' })
   const pool = new Pool({ connectionString: url, max: 12, options: '-c statement_timeout=15000 -c lock_timeout=5000' })
   observePoolCommits(pool)
   let appPool: Pool | undefined, workspacePool: Pool | undefined

@@ -1,8 +1,9 @@
 import 'server-only'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { Sandbox } from 'e2b'
 import type { Pool } from 'pg'
 import { TerminalError } from '@mikka/protocol/coding-terminal'
-import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { cloudflareReview, reviewReply } from './cloudflare-review'
 import type { ReviewSessionLease } from './review-sessions'
 import type { TaskReviewAuthority } from './review-authority'
@@ -27,7 +28,7 @@ export async function resumeReviewMachine(scope: TaskReviewAuthority, lease: Lea
   signal?.throwIfAborted()
   const database = dependencies?.database ?? (await import('@/lib/db')).pool
   const resume = dependencies?.resume ?? (async (target, milliseconds, abort) => {
-    const apiKey = await e2bApiKey(target.ownerId, 'Task review is not configured')
+    const apiKey = (await e2bResourceAccount(target.ownerId, 'sandbox', target.sandboxId)).apiKey
     await withE2BErrors(target.ownerId, false, () => Sandbox.connect(target.sandboxId, {
       apiKey, timeoutMs: milliseconds, requestTimeoutMs: 20_000, signal: abort, retries: 0,
       proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,

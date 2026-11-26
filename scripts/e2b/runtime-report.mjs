@@ -1,5 +1,6 @@
 // Complete runtime publication reports travel as immutable artifact files.
 // Job outputs contain only their identity, digest and bounded cleanup metadata.
+import { releaseTemplateRows } from './machine-variants.mjs'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -12,7 +13,7 @@ const DIGEST = /^[a-f0-9]{64}$/
 const NUMBER = /^[1-9][0-9]*$/
 const ID = /^[A-Za-z0-9_-]{1,128}$/
 export const TEMPLATE_KINDS = ['desktop', 'claude', 'codex']
-export const CLEANUP_IDENTITY_MAX_BYTES = 2048
+export const CLEANUP_IDENTITY_MAX_BYTES = 4096
 const fail = code => { throw Error(code) }
 const positive = value => typeof value === 'string' && NUMBER.test(value) && Number.isSafeInteger(Number(value))
 
@@ -33,11 +34,10 @@ export function assertReportIdentity(report, { sourceCommit, workerSha, runId, r
   if (report?.sourceCommit !== sourceCommit || report?.workerSha !== workerSha)
     fail('runtime_report_source_mismatch')
   const ids = new Set()
-  for (const kind of TEMPLATE_KINDS) {
-    const row = report.templates?.[kind]
+  for (const {kind,suffix,row} of releaseTemplateRows(report)) {
     if (row?.preinstalled !== true || typeof row?.buildId !== 'string' || !ID.test(row.buildId))
       fail('runtime_report_candidate_invalid')
-    if (row?.baseTemplate !== kind || row.name !== `mikka-${sourceCommit.slice(0, 12)}-${runId}-${runAttempt}-${kind}`
+    if (row?.baseTemplate !== kind || row.name !== `mikka-${sourceCommit.slice(0, 12)}-${runId}-${runAttempt}-${suffix}`
       || typeof row.templateId !== 'string' || !ID.test(row.templateId) || ids.has(row.templateId))
       fail('runtime_report_attempt_mismatch')
     ids.add(row.templateId)
@@ -169,9 +169,10 @@ export function assertCandidatePreserved(report, candidate, { published = false 
   if (!SHA.test(candidate?.sourceCommit ?? '') || !SHA.test(candidate?.workerSha ?? '')
     || report?.sourceCommit !== candidate.sourceCommit || report?.workerSha !== candidate.workerSha)
     fail('runtime_report_candidate_changed')
-  for (const kind of TEMPLATE_KINDS) {
-    const row = candidate.templates?.[kind]
-    if (!row || !isDeepStrictEqual(report.templates?.[kind], published ? { ...row, public: true, buildStatus: 'ready' } : row))
+  const original = releaseTemplateRows(candidate), actual = releaseTemplateRows(report)
+  if (actual.length !== original.length) fail('runtime_report_candidate_changed')
+  for (const [i,{suffix,row}] of original.entries()) {
+    if (!row || actual[i].suffix !== suffix || !isDeepStrictEqual(actual[i].row, published ? { ...row, public:true, buildStatus:'ready' } : row))
       fail('runtime_report_candidate_changed')
   }
   return report
@@ -182,9 +183,8 @@ export function assertCandidatePreserved(report, candidate, { published = false 
 export function cleanupIdentity(report, expected) {
   assertReportIdentity(report, expected)
   const receipt = { version: 1, sourceCommit: expected.sourceCommit, runId: expected.runId, runAttempt: expected.runAttempt,
-    templates: Object.fromEntries(TEMPLATE_KINDS.map(kind => {
-      const row = report.templates[kind]
-      return [kind, { baseTemplate: kind, name: row.name, templateId: row.templateId }]
+    templates: Object.fromEntries(releaseTemplateRows(report).map(({kind,suffix,row}) => {
+      return [suffix, { baseTemplate: kind, name: row.name, templateId: row.templateId }]
     })) }
   const text = JSON.stringify(receipt)
   if (Buffer.byteLength(text) > CLEANUP_IDENTITY_MAX_BYTES) fail('runtime_report_cleanup_identity_too_large')

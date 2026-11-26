@@ -1,9 +1,10 @@
 import 'server-only'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { Sandbox, SandboxNotFoundError } from 'e2b'
 import type { Pool } from 'pg'
 import { ComputerError } from '@/lib/computer/store'
 import { cloudMachineState, type ThreadMachineState } from '@/lib/thread-machine'
-import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { readComputerMetrics, connectComputer, computerGone } from '@/lib/computer/e2b-provider'
 import { E2BKeyError } from '@/lib/secrets/e2b'
 import { environmentSecretInjection, remoteRepositoryRef } from '@/lib/secrets/runtime'
@@ -55,7 +56,7 @@ export async function readThreadMachineDetail(pool: Pool, actor: Actor, runId: s
   // provider reads are skipped rather than refused (devin-review).
   if (machine.sandboxId && machine.snapshotId !== hostedSnapshot && state !== 'ended' && state !== 'error') {
     try {
-      const apiKey = await e2bApiKey(actor.userId, 'Cloud computer is not configured')
+      const apiKey = (await e2bResourceAccount(actor.userId, 'sandbox', machine.sandboxId)).apiKey
       const info = await withE2BErrors(actor.userId, false, () => Sandbox.getInfo(machine.sandboxId!, { apiKey, requestTimeoutMs: 10_000, signal }))
       sandbox = { state: info.state, startedAt: info.startedAt?.toISOString() ?? null, endAt: info.endAt?.toISOString() ?? null,
         cpuCount: info.cpuCount ?? null, memoryMB: info.memoryMB ?? null, templateId: info.templateId ?? null }

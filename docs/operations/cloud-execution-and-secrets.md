@@ -33,5 +33,21 @@ Derived E2B releases are additive and gated ([2026-11-03-1430](../design/decisio
 
 ## Secret hygiene and isolated test cleanup
 
+Mikka Cloud uses its deployment E2B key. Before the cutover, a personal E2B
+account may have created a sandbox or snapshot. Migration records preserve that
+owner and account scope. During account deletion, proven external resources
+stay with their E2B account and the deletion receipt discloses their custody.
+Mikka removes local access through account deletion.
+
 - Store credential values strictly in the deployment's secret manager and established workload delivery. Never commit values, write them to local environment files, or print them in terminal output, screenshots, or reports.
 - Running an authorized test includes setting up and cleaning up only the disposable fixtures, schemas, and temporary files created by that test in an isolated target. Verify target isolation first, never extend cleanup to shared or production data, and honor any explicit preservation hold.
+
+### Portable task workspaces
+
+The Environment record in Mikka PostgreSQL is the definition. It names the portable Mikka runtime base, the approved install and maintenance commands, plain variables, and encrypted secret references. The E2B image is a rebuildable cache for that revision. A provider cache miss invalidates the image and queues a replacement through the existing Environment snapshot workflow. The replacement task still uses the saved definition.
+
+When a writable E2B task reaches a confirmed native exit, Mikka saves the tracked working tree and ordinary untracked files to the Mikka task-workspace bucket. The archive is a checksummed `tar.zst` in the `task-workspaces/v1/` namespace also used by the Cloudflare task machine. A PostgreSQL receipt binds the immutable object to the owner, Workspace, task, repository, exact writer attempt, and Git commit. No Git private metadata, process state, platform credentials, or managed secret values belong in the archive. Mikka validates the sealed archive before uploading it and publishes the receipt before confirming park. The existing recovery cron removes expired objects that have no published receipt.
+
+A cold E2B machine stages the verified archive and supplies its receipt to the authenticated worker claim. The daemon uses the recorded Git base when the authorized clone can prove it is an ancestor. When a shallow clone or rewritten branch lacks that commit, the daemon rebuilds the full archived tree on the current authorized commit. Local-only commits remain as file changes. The daemon replaces the working files atomically and keeps the new Git linkage. A failed upload leaves the last published object intact, and a newer unfinished capture blocks cold restoration from that older object. Changes from a writer that never reaches a safe point may still exist on its original machine. The server cannot certify those changes as retained in Mikka storage.
+
+On R2 the default bucket is `mikka-task-workspaces`. The API can use separately scoped task-workspace R2 credentials, or an installation's existing S3-compatible storage configuration. Provider selection and the Cloudflare machine's existing backup remain in place.

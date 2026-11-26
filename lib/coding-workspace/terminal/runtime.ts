@@ -1,10 +1,11 @@
 import 'server-only'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Sandbox, SandboxNotFoundError } from 'e2b'
 import { TerminalError } from '@mikka/protocol/coding-terminal'
-import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { cloudflareReview, reviewReply, reviewRequest } from '../cloudflare-review'
 import type { ReviewSessionLease } from '../review-sessions'
 import type { TaskReviewAuthority } from '../review-authority'
@@ -16,8 +17,8 @@ const INSTALL = '/opt/mikka/terminal'
 const INGRESS = '/opt/mikka/runtime/ingress-v1/guard.py'
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
-async function options(ownerId: string, signal?: AbortSignal) {
-  return { apiKey: await e2bApiKey(ownerId, 'Task terminal is not configured'),
+async function options(ownerId: string, sandboxId: string, signal?: AbortSignal) {
+  return { apiKey: (await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey,
     proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy, requestTimeoutMs: 15_000, retries: 0, signal }
 }
 
@@ -33,7 +34,7 @@ function cloud(scope: TaskReviewAuthority & { threadTerminal?: boolean }): asser
 /** getInfo is read-only. Input and revocation never call Sandbox.connect,
  * which would silently resume a parked VM. */
 async function endpoint(target: TerminalTarget, signal?: AbortSignal) {
-  const config = await options(target.ownerId, signal)
+  const config = await options(target.ownerId, target.sandboxId, signal)
   const info = await withE2BErrors(target.ownerId, false, () => Sandbox.getInfo(target.sandboxId, config))
   if (info.state !== 'running') throw new TerminalError('terminal_binding_changed')
   // Use the SDK's routing primitive, without connecting/resuming its machine.
@@ -193,7 +194,7 @@ export async function terminalRequest(prepared: TerminalPrepared, operation: 'st
 /** Called by the durable shared revocation adapter. A missing/parked VM is
  * left pending for the existing lifecycle; revocation never wakes execution. */
 export async function revokeRunTerminal(target: TerminalTarget, control: { leaseIds: string[]; expiresAt?: string } = { leaseIds: [] }): Promise<void> {
-  const config = await options(target.ownerId)
+  const config = await options(target.ownerId, target.sandboxId)
   const info = await withE2BErrors(target.ownerId, false, () => Sandbox.getInfo(target.sandboxId, config)).catch(cause => {
     if (cause instanceof SandboxNotFoundError) return null
     throw new TerminalError('terminal_unavailable', { detail: 'runtime', cause })

@@ -1,4 +1,5 @@
 import { DirectoryBackup } from '@cloudflare/sandbox'
+import { TASK_WORKSPACE_PREFIX, TASK_WORKSPACE_SUFFIX } from '../../packages/protocol/src/task-workspace-storage.mjs'
 
 const path = '/workspace'
 const uuidArchive = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\.tar\.zst$/
@@ -9,7 +10,7 @@ export class TaskWorkspace {
   constructor(ctx, bucket) {
     this.storage = ctx.storage
     this.bucket = bucket
-    this.prefix = 'task-workspaces/v1/' + ctx.id.toString() + '/'
+    this.prefix = TASK_WORKSPACE_PREFIX + ctx.id.toString() + '/'
     this.backups = new DirectoryBackup(ctx.container, ctx.exports.DirectoryBackupGateway, {
       binding: 'WORKSPACES', prefix: this.prefix,
     })
@@ -41,7 +42,7 @@ export class TaskWorkspace {
   async prune() {
     const saved = await this.storage.get('checkpoint')
     // A first upload can finish before the first manifest is committed.
-    const keep = saved && this.prefix + saved.id + '.tar.zst'
+    const keep = saved && this.prefix + saved.id + TASK_WORKSPACE_SUFFIX
     let cursor
     do {
       const page = await this.bucket.list({ prefix: this.prefix, cursor, limit: 100 })

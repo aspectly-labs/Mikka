@@ -12,7 +12,7 @@ import {
   readFileSync,
   rmSync,
 } from "node:fs"
-import { lstat, readdir } from "node:fs/promises"
+import { lstat, readFile, readdir, rm } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 
 import { execa } from "execa"
@@ -22,6 +22,7 @@ import { assertBranchName, worktreeGitDir } from "./agents/publish"
 import { buildChildEnv } from "./env"
 import { assertSafeId } from "./ids"
 import type { SetupRecipe } from "./server-link"
+import { recordTaskArchiveBase, restoreTaskArchive } from './task-workspace-archive.mjs'
 
 /** Repo-root file listing gitignored local files to copy into fresh worktrees (Claude Code / Orca convention). */
 export const WORKTREE_INCLUDE_FILE = ".worktreeinclude"
@@ -203,7 +204,7 @@ export class WorktreeManager {
   private usageAt = 0
   private usageRefresh: Promise<number> | null = null
 
-  constructor(private readonly root: string, private readonly retainResources = false) {}
+  constructor(private readonly root: string, private readonly retainResources = false, private readonly portableExecution = false) {}
 
   /** The run's worktree dir; never outside the worktree root. */
   pathFor(runId: string) {
@@ -213,6 +214,36 @@ export class WorktreeManager {
       throw new Error(`worktree path escapes ${root}: ${runId}`)
     }
     return path
+  }
+
+  async portableWorktreeBase(repoPath: string, authorizedBase: string, headSha: string) {
+    if (!/^[a-f0-9]{40}$/.test(headSha)) throw new Error('Portable task workspace Git commit is invalid')
+    const resolveCommit = (ref: string) => execa('git', ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}'], { cwd: repoPath })
+    const resolved = await resolveCommit(authorizedBase).catch(() => resolveCommit('refs/remotes/origin/HEAD'))
+    const base = resolved.stdout.trim()
+    const ancestor = await execa('git', ['merge-base', '--is-ancestor', headSha, base], { cwd: repoPath, reject: false })
+    // The archive is the complete portable file tree. A shallow fetch or
+    // rewritten branch can make its original base unreachable. In that case
+    // use the freshly resolved authorized commit without importing source Git
+    // objects or fetching the archive-provided SHA.
+    return ancestor.exitCode === 0 ? headSha : base
+  }
+
+  async restorePortableWorkspace(runId: string, manifest: { size: number; sha256: string; headSha: string }, checkoutBase: string) {
+    if (!this.portableExecution) throw new Error('Portable task workspace requires a hosted worker')
+    const worktree = this.pathFor(runId)
+    const staged = join(dirname(this.root), 'portable-workspaces', assertSafeId('run id', runId))
+    const archive = staged + '.tar.zst'
+    const info = await lstat(archive)
+    if (!info.isFile() || info.size !== manifest.size) throw new Error('Portable task workspace size mismatch')
+    const current = (await execa('git', ['rev-parse', '--verify', 'HEAD'], { cwd: worktree })).stdout.trim()
+    if (current !== checkoutBase) throw new Error('Portable task workspace Git commit differs from the linked worktree')
+    await restoreTaskArchive(worktree, archive, manifest.sha256)
+  }
+
+  async clearPortableWorkspace(runId: string) {
+    const staged = join(dirname(this.root), 'portable-workspaces', assertSafeId('run id', runId))
+    await rm(staged + '.tar.zst', { force: true })
   }
 
   /**
@@ -240,7 +271,38 @@ export class WorktreeManager {
         baseBranch,
       ])
     )
+    if (this.portableExecution) await recordTaskArchiveBase(path)
     return path
+  }
+
+  /** Move the prebuilt checkout, including ignored dependency files, into the
+   * task. If its setup outputs conflict with the requested commit, a normal
+   * worktree and full setup can still run from the clean repository cache. */
+  async createFromEnvironmentSnapshot(runId: string, repoPath: string, baseBranch: string, canRefreshSetup = false): Promise<string | null> {
+    const prepared = repoPath + ".environment-setup"
+    const path = this.pathFor(runId)
+    if (!lstatSync(prepared, { throwIfNoEntry: false })?.isDirectory() || existsSync(path)) return null
+    await excludeVerifyArtifacts(repoPath)
+    return withRepoConfig(repoPath, async () => {
+      const gitDir = await worktreeGitDir(repoPath, prepared)
+      const commit = (await simpleGit(repoPath).raw(["rev-parse", "--verify", "--end-of-options", baseBranch + "^{commit}"])).trim()
+      // A changed commit may alter any input consumed by the setup command.
+      // Without maintenance only the exact built commit is safe to reuse.
+      const built = (await execa("git", ["rev-parse", "HEAD"], { cwd: prepared })).stdout.trim()
+      if (built !== commit && !canRefreshSetup) return null
+      const switched = await execa("git", ["-c", "core.hooksPath=/dev/null", "checkout", "--no-overwrite-ignore", "--detach", commit], {
+        cwd: prepared, env: { GIT_DIR: gitDir, GIT_WORK_TREE: prepared }, stdin: "ignore", reject: false,
+      })
+      if (switched.exitCode !== 0) return null
+      mkdirSync(this.root, { recursive: true })
+      const moved = await execa("git", [...FETCH_GIT, "worktree", "move", "--", prepared, path], {
+        cwd: repoPath, stdin: "ignore", reject: false,
+      })
+      if (moved.exitCode !== 0) return null
+      await execa("git", [...FETCH_GIT, "checkout", "-B", runBranch(runId), commit], { cwd: path, stdin: "ignore" })
+      if (this.portableExecution) await recordTaskArchiveBase(path)
+      return path
+    })
   }
 
   /**

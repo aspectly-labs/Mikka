@@ -177,3 +177,13 @@ export async function listTaskEnvironments(input: z.input<typeof taskEnvironment
   const { readTaskEnvironments } = await import('@/lib/project-resources/task-environment')
   return runAction(async () => ({ tasks: await readTaskEnvironments(await requireUser(), input) }))
 }
+
+export async function getEnvironmentSnapshot(input: import('@/lib/project-resources/environment-snapshot-contract').SnapshotInput) {
+  const { readEnvironmentSnapshot } = await import('@/lib/project-resources/environment-snapshots')
+  return runAction(async () => readEnvironmentSnapshot(await requireUser(), input))
+}
+
+export async function buildEnvironmentSnapshot(input: import('@/lib/project-resources/environment-snapshot-contract').SnapshotInput) {
+  const { requestEnvironmentSnapshot } = await import('@/lib/project-resources/environment-snapshots')
+  return runAction(async () => requestEnvironmentSnapshot(await requireUser(), input))
+}
