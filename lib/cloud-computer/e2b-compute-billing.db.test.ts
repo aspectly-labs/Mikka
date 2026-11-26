@@ -35,7 +35,9 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     }
   })
   const { pool } = await import('@/lib/db')
-  const { workspacePool } = await import('@/lib/workspace-db')
+  const { workspaceDb, workspacePool } = await import('@/lib/workspace-db')
+  workspacePool.options.max = 1
+  workspacePool.options.connectionTimeoutMillis = 1_000
   t.after(() => Promise.allSettled([pool.end(), workspacePool.end()]))
   const { createPrepaidE2B, e2bComputeWasVoided, e2bCreationTimeout, e2bSandboxTimeout, verifyE2BAllocation } = await import('./e2b-compute-billing')
   const operationId = randomUUID()
@@ -55,7 +57,8 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.deepEqual(await receipts(), [])
   await fixture.query('UPDATE agent_runs SET "stopRequestedAt"=NULL WHERE id=$1', [runId])
 
-  const initial = await Promise.all(Array.from({ length: 4 }, create))
+  const first = await workspaceDb.transaction(() => create())
+  const initial = [first, ...await Promise.all(Array.from({ length: 4 }, create))]
   assert.ok(initial.every(ms => ms > 270_000 && ms <= 300_000 && ms % 1_000 === 0))
   await verifyE2BAllocation(ownerId, operationId, sandboxId, {}, { cpuCount: 2, memoryMB: 8192 })
   await fixture.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","sandboxId","snapshotId","operationId",state)
