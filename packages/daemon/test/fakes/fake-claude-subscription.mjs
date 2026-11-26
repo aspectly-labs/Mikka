@@ -53,6 +53,7 @@ writeFileSync(processReceipt, JSON.stringify({ pid: process.pid, prompts }))
 const out = (value) => process.stdout.write(`${JSON.stringify(value)}\n`)
 const lines = createInterface({ input: process.stdin })
 const pending = new Map()
+let sdkServers = []
 lines.on("line", async (line) => {
   const frame = JSON.parse(line)
   if (frame.type === 'control_response') {
@@ -62,6 +63,7 @@ lines.on("line", async (line) => {
     return
   }
   if (frame.type === "control_request") {
+    if (frame.request.subtype === 'initialize') sdkServers = frame.request.sdkMcpServers ?? []
     if (token === 'fixture-timeout') return
     if (token === 'fixture-early-init') {
       out({ type: 'system', subtype: 'init', session_id: sessionId })
@@ -111,8 +113,18 @@ lines.on("line", async (line) => {
     execFileSync('git', ['config', 'mikka.machineProbe', 'actual-directory'])
   }
   if (text === 'ORIGINAL_QUESTION') {
-    const server = JSON.parse(flag('--mcp-config')).mcpServers.mikka
-    execFileSync(server.command, server.args, { input: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ask_human', arguments: { question: 'Please provide the owner answer', kind: 'external' } } }) + '\n', stdio: ['pipe', 'pipe', 'pipe'] })
+    const question = { jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'ask_human', arguments: { question: 'Please provide the owner answer', kind: 'external' } } }
+    if (sdkServers.includes('mikka')) {
+      const request_id = 'fixture-ask-human'
+      const received = new Promise(resolve => pending.set(request_id, resolve))
+      out({ type: 'control_request', request_id, request: { subtype: 'mcp_message', server_name: 'mikka', message: question } })
+      const response = await received
+      if (response.subtype !== 'success' || response.response?.mcp_response?.error || response.response?.mcp_response?.result?.isError) process.exit(2)
+    } else {
+      const server = JSON.parse(flag('--mcp-config')).mcpServers.mikka
+      execFileSync(server.command, server.args, { input: JSON.stringify(question) + '\n', stdio: ['pipe', 'pipe', 'pipe'] })
+    }
   }
   if (text === 'COMPUTER') {
     const config = JSON.parse(flag('--mcp-config') ?? '{}').mcpServers?.mikka_computer
