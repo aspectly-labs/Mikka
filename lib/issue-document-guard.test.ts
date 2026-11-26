@@ -38,7 +38,6 @@ mock.module(new URL('./issue-numbering.ts', import.meta.url).href, { namedExport
 mock.module(new URL('./task-workspace.ts', import.meta.url).href, { namedExports: { requireTaskWorkspace: async () => { throw new Error('not reached') } } })
 mock.module(new URL('./task-resource-registration.ts', import.meta.url).href, { namedExports: { registerTaskResourceAccess: async () => { throw new Error('not reached') } } })
 mock.module(new URL('./task-identifier-server.ts', import.meta.url).href, { namedExports: { issueView: () => { throw new Error('not reached') }, syncWorkspaceTaskPrefix: () => { throw new Error('not reached') } } })
-mock.module(new URL('./linear-sync/dispatch.ts', import.meta.url).href, { namedExports: { dispatchLinearIssueSync: () => {} } })
 mock.module(new URL('./task-activity-wake-store.ts', import.meta.url).href, { namedExports: { recordTaskActivityWakes: async () => {} } })
 const exchangeDocument: typeof import('../app/actions/collaboration').exchangeDocument = async input => (await import('../app/actions/collaboration')).exchangeDocument(input)
 

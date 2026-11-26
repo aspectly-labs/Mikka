@@ -3,7 +3,6 @@ import { before, beforeEach, mock, test } from 'node:test'
 
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports })
 let failed = false, returnedOwner = 'owner'
-let linearAvailability: 'disabled' | 'unavailable' = 'disabled'
 const row = (id: string, slug: string, status: string, isDisabled = false) => ({
   id, toolkit: { slug }, status, isDisabled, createdAt: '2026-11-01T00:00:00Z',
 })
@@ -17,14 +16,13 @@ stub('../lib/composio.ts', { getComposio: () => ({ connectedAccounts: { list: as
 stub('../lib/composio-account-store.ts', { listComposioAccountRecords: async (userId: string) => userId === 'owner' ? [{ accountId: 'g', toolkit: 'denied_by_provider', needsReconnect: true }] : [] })
 stub('../lib/db/index.ts', { db: {} })
 stub('../lib/db/schema.ts', { linearConnections: {} })
-stub('../lib/linear-sync/flags.ts', { linearSyncState: async () => linearAvailability })
 stub('../lib/linear-sync/oauth.ts', { linearOAuthConfigured: () => true })
 class GitHubAccessError extends Error { constructor(readonly code: string, readonly status: number) { super(code) } }
 stub('../lib/github/user-access.ts', { GitHubAccessError, listAuthorizedRepositories: async () => ({ userId: returnedOwner, installations: ['one'] }) })
 stub('../lib/telegram/connection-status.ts', { readTelegramIntegrationStatus: async (id: string) => ({ configured: true, connected: id === 'owner' }) })
 let read: typeof import('../lib/mobile-plugin-connections').mobilePluginConnections
 before(async () => { read = (await import('../lib/mobile-plugin-connections')).mobilePluginConnections })
-beforeEach(() => { failed = false; returnedOwner = 'owner'; linearAvailability = 'disabled' })
+beforeEach(() => { failed = false; returnedOwner = 'owner' })
 
 test('Settings count and both native plugin lists receive one unique set of held accounts', async () => {
   const summary = await read('owner', new Headers())
@@ -50,11 +48,8 @@ test('wrong-owner Github membership cannot appear in another user’s list', asy
 })
 
 test('global Linear pause never reads its connection table or claims account ownership', async () => {
-  for (const availability of ['disabled', 'unavailable'] as const) {
-    linearAvailability = availability
-    const snapshot = await read('owner', new Headers())
-    assert.deepEqual(snapshot.paused, ['linear'])
-    assert.equal(snapshot.toolkits.includes('linear'), false)
-    assert.deepEqual(snapshot.failed, [])
-  }
+  const snapshot = await read('owner', new Headers())
+  assert.deepEqual(snapshot.paused, ['linear'])
+  assert.equal(snapshot.toolkits.includes('linear'), false)
+  assert.deepEqual(snapshot.failed, [])
 })

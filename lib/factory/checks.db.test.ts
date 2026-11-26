@@ -6,7 +6,7 @@ import { createFactorySpecApproval } from './spec-approval';
 import { createFactoryHumanStore } from './human-store';
 import { handleFactoryFlow } from './flow-http';
 import { handleFactory } from './http';
-import { readIssueThreads, loadIssueDocument, encodedIssueDocument } from '../linear-sync/document';
+import { readIssueThreads, loadIssueDocument, encodedIssueDocument } from '../task-comments/issue-document';
 import { runArtifactSubmissions } from '../artifacts/run-submissions';
 // Real #192 migrations/store/dispatch/questions/claim and #193 consumers.
 // Run production code over isolated PG; queue, actor and terminal reports are fixtures.

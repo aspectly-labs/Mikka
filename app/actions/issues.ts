@@ -38,7 +38,6 @@ import { createUnstartedTask } from '@/lib/task-create-only'
 import { readTaskDispatchReceipt } from '@/lib/task-dispatch-receipt'
 import type { CreateOnlyCommand, DispatchReceiptInput } from '@/lib/task-create-command'
 import { promoteExistingIssueForUser } from '@/lib/team-issue-promotion'
-import { scheduleIssueEffect } from '@/lib/issue-effects'
 import { recordCoordinatorEvent } from '@/lib/coordinator-event-store'
 import { coordinatorBot } from '@/lib/coordinator/coordinator-bot'
 import { issueStatusEvent } from '@/lib/coordinator-events'
@@ -341,7 +340,7 @@ export async function pollIssue(id: string, known?: string): Promise<ActionResul
         // A reader may view discussions without sending the editor's initial Yjs seed or an update.
         const [document] = await tx.select({ state: issueDocuments.state }).from(issueDocuments)
           .where(and(eq(issueDocuments.issueId, id), eq(issueDocuments.userId, issue.userId)))
-        const { loadIssueDocument, readIssueThreads } = await import('@/lib/linear-sync/document')
+        const { loadIssueDocument, readIssueThreads } = await import('@/lib/task-comments/issue-document')
         const doc = document ? loadIssueDocument(document.state, body.content) : null
         try { return { viewerId: user.id, version, issue: { ...view, content: body.content, readOnlyDiscussions: doc ? readIssueThreads(doc) : [] } } }
         finally { doc?.destroy() }
@@ -436,7 +435,6 @@ async function persistIssue(input: SaveIssueInput, block?: BlockFlag, state?: Ch
         return { issue: await issueView(issue, tx) }
       })
       const result = existing ? await withIssueWorkspace(user, context.workspace.id, { issueId: existing.id, action: 'canSteer' }, save) : await withTaskWorkspace(user, context.workspace.id, save)
-      if ('issue' in result && result.issue?.linearSyncPolicy === 'explicit' && !result.issue.linearSyncBlocked && result.issue.linearTargetVerified) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
       return result
     } catch (error) {
       if (error instanceof ActionFailureError) throw error
@@ -513,7 +511,7 @@ export async function previewIssuePersonalScope(id: string) {
   })
 }
 
-/** The owner's confirmation retires the active link and queues its archive. */
+/** The owner's confirmation retires the local link. */
 export async function confirmIssuePersonalScope(input: { id: string; revision: number; confirmation: string }) {
   return runAction(async () => {
     const userId = await getUserId()
@@ -521,7 +519,6 @@ export async function confirmIssuePersonalScope(input: { id: string; revision: n
     if (!parsed.success) return { error: 'issueScopeInvalid' as const }
     await requireIssueAccess(parsed.data.id)
     const result = await changeIssueScopeLocally(userId, { id: parsed.data.id, revision: parsed.data.revision, scope: 'personal' }, { allowLinkedPersonal: true, confirmation: parsed.data.confirmation })
-    if ('issue' in result && result.issue) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
     return result
   })
 }
@@ -627,7 +624,7 @@ export async function loadEarlierIssueActivity(id: string, beforeRevision: numbe
 /**
  * The one-click scope change (MIK-47). The person's choice wins over the
  * agent's and becomes an example for its next judgment. Linked transitions
- * retain the team's history through the existing archive outbox.
+ * retain historical provider associations through local detachment records.
  */
 export async function setIssueScope(input: { id: string; revision: number; scope: string }): Promise<ActionResult<{ issue: IssueView }>> {
   return runAction(async () => {
@@ -640,7 +637,6 @@ export async function setIssueScope(input: { id: string; revision: number; scope
     // not infer the owner's active Linear team or publish an unassigned task.
     if (parsed.data.scope === 'workspace') return { error: 'issueScopeTeamRequired' }
     const result = await changeIssueScopeLocally(userId, parsed.data, { allowLinkedPersonal: true })
-    if ('issue' in result && result.issue) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
     return result
 
   })

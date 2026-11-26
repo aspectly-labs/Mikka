@@ -3,7 +3,7 @@
  * every feature switch goes through a PostHog feature flag).
  *
  * A deployment switch is one PostHog flag evaluated against one fixed distinct
- * id, as the Linear sync flag is (lib/linear-sync/flags.ts). A person switch
+ * id. A person switch
  * (PERSON_SWITCHES, personSwitch) is evaluated for the person's user id, so it
  * can be on for some people first. Either reads, in order:
  *
