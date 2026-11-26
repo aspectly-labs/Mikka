@@ -1,4 +1,5 @@
 import { coordinatorWakeTransport } from '../coordinator/wake-after-commit';
+import { builtinGateway } from '../builtin-gateway/runtime';
 import { syncFactoryPresentation } from './stage-progress';
 import { readFactoryFlow } from './public-flow';
 import { createFactorySpecApproval } from './spec-approval';
@@ -3530,7 +3531,9 @@ test(
           // This suite retains its isolated database, including the actual
           // computer bindings. Do not delete their owner as if Workspace rows
           // still lived alone in a second shared database.
+          const gateway = builtinGateway();
           for (const name of names) { const value = saved.get(name); if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+          await gateway?.stop();
         }
       });
       await t.test('the owner Artifact reader retains its report task hint and media without exposing them to another reader', async () => {

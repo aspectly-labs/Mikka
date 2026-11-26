@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import { bindFixtureWorkspaceDatabase, createFixtureWorkspaceTables } from '../../tests/helpers/workspace-database'
 import { seedFixtureWorkspace } from '../../tests/helpers/task-workspace'
+import { builtinGateway } from '../builtin-gateway/runtime'
 import { ComputerStore } from './store'
 import { createComputerHandler } from './handler'
 import { bindComputerRun } from './run-binding'
@@ -25,9 +26,11 @@ if (process.env.REQUIRE_DB === '1' && !databaseURL) throw new Error('Computer da
 test('real PostgreSQL: allocation, owner boundary, control generations and recovery', { skip: !databaseURL }, async t => {
   const savedEdition = process.env.MIKKA_EDITION
   process.env.MIKKA_EDITION = 'community'
-  t.after(() => {
+  t.after(async () => {
+    const gateway = builtinGateway()
     if (savedEdition === undefined) delete process.env.MIKKA_EDITION
     else process.env.MIKKA_EDITION = savedEdition
+    await gateway?.stop()
   })
   const schema = `computer_${randomUUID().replaceAll('-', '')}`
   assert.ok(['127.0.0.1', 'localhost'].includes(new URL(databaseURL!).hostname))
