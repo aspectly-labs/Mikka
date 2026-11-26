@@ -23,13 +23,13 @@ test('an undecided GitHub conflict uses bounded workflow retries and the existin
   let pendingChecks = 1, checks = 0
   const workflow = await import('workflow')
   const workflowApi = await import('workflow/api')
-  t.mock.module('workflow', { exports: { ...workflow, sleep: async (delay: string) => { delays.push(delay) } } })
-  t.mock.module('workflow/api', { exports: { ...workflowApi,
+  t.mock.module('workflow', { namedExports: { ...workflow, sleep: async (delay: string) => { delays.push(delay) } } })
+  t.mock.module('workflow/api', { namedExports: { ...workflowApi,
     start: async (work: (event: PullWakeEvent, key: string) => Promise<unknown>, args: [PullWakeEvent, string]) => {
       scheduled.push(() => work(...args))
     },
   } })
-  t.mock.module('./user-access', { exports: {
+  t.mock.module('./user-access', { namedExports: {
     authorizedPullWake: async (userId: string, repo: string, repoId: number, appId: number, conflict: { number: number; head: string }) => {
       assert.deepEqual([userId, repo, repoId, appId, conflict], [owner, repository, repositoryId, installationId, { head, number }])
       checks++
