@@ -51,7 +51,7 @@ export function threadRunModel(definition: Pick<WorkerDefinitionSnapshot, 'model
  */
 export async function latestThreadRunModel(pool: Pick<Pool, 'query'>, userId: string, issueId: string, agentId: string): Promise<RunModel | null> {
   const { rows } = await pool.query<{ agentDefinition: WorkerDefinitionSnapshot }>(`SELECT "agentDefinition" FROM agent_runs
-    WHERE "userId"=$1 AND "issueId"=$2 AND "agentId"=$3 AND kind<>'group_chat' AND coalesce("agentDefinition"->>'model','')<>''
+    WHERE "userId"=$1 AND "issueId"=$2 AND "agentId"=$3 AND kind<>'group_chat' AND "threadRelation" IS DISTINCT FROM 'side' AND coalesce("agentDefinition"->>'model','')<>''
     ORDER BY "createdAt" DESC,id DESC LIMIT 1`, [userId, issueId, agentId])
   return threadRunModel(rows[0]?.agentDefinition)
 }

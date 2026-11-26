@@ -233,7 +233,7 @@ const threadColumns = {
   id: agentRuns.id, issueId: agentRuns.issueId, userId: agentRuns.userId, workspaceId: agentRuns.workspaceId, agentId: agentRuns.agentId, status: agentRuns.status, title: agentRuns.title, prompt: agentRuns.prompt, promptTaskStart: agentRuns.promptTaskStart, promptTaskLength: agentRuns.promptTaskLength,
   // Only the report's summary: runSummaryText reads nothing else of it.
   sessionId: agentRuns.sessionId, deviceRepoId: agentRuns.deviceRepoId, failureDetails: agentRuns.failureDetails, report: sql<Record<string, unknown> | null>`case when jsonb_typeof(${agentRuns.report}) = 'object' then jsonb_build_object('summary', ${agentRuns.report}->'summary') end`, error: agentRuns.error, createdAt: agentRuns.createdAt, finishedAt: agentRuns.finishedAt,
-  agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind, threadRelation: agentRuns.threadRelation,
+  agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind, threadRelation: agentRuns.threadRelation, tags: agentRuns.tags, folder: agentRuns.folder,
   botId: sql<string | null>`(select b.id from bots b where b.id = ${runBotId})`, startedAt: agentRuns.startedAt,
   botColor: sql<string | null>`(select b.color from bots b where b.id = ${runBotId})`, botShape: sql<string | null>`(select b.shape from bots b where b.id = ${runBotId})`,
   // Who did the stretch (lib/issue-threads.ts threadProfile): the frozen Profile's public summary and its current mark.
@@ -547,18 +547,25 @@ async function readThreadComposerModel(runId: string) {
 
 async function readThreadMessages(runIds: string[], viewerId: string, ids?: string[]): Promise<IssueThreadDetail['messages']> {
   if (ids && !ids.length) return []
+  const { systemEventDataSchema } = await import('@mikka/protocol/slash-commands')
   const messages = await db.select({ id: runMessages.id, sourceRunId:runMessages.runId, editable:sql<boolean>`${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
       submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'`,
+      systemEvent: sql<unknown>`${coordinatorEvents.payload}->'threadSystemEvent'`,
       text: runMessages.text, at: runMessages.createdAt, userId: runMessages.userId, name: users.name, email: users.email, image: users.image })
       .from(runMessages).leftJoin(users, eq(users.id, runMessages.userId))
-      .leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id), eq(coordinatorEvents.userId, viewerId), eq(coordinatorEvents.kind, 'user_message')))
+      .leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id), eq(coordinatorEvents.userId, runMessages.userId), eq(coordinatorEvents.kind, 'user_message')))
       .where(ids ? and(inArray(runMessages.runId, runIds), inArray(runMessages.id, ids)) : inArray(runMessages.runId, runIds))
       .orderBy(asc(runMessages.createdAt), asc(runMessages.id))
-  return messages.map(message => ({
-    id: message.id, sourceRunId: message.sourceRunId, editable: message.editable && message.userId === viewerId,
-    ...(message.submissionId ? { submissionId: message.submissionId } : {}), text: message.text, at: message.at,
-    author: message.name || message.email || '', image: message.image ?? null, mine: message.userId === viewerId,
-  }))
+  return messages.map(message => {
+    const parsedEvent = message.systemEvent ? systemEventDataSchema.safeParse(message.systemEvent) : null
+    return {
+      id: message.id, sourceRunId: message.sourceRunId, editable: message.editable && message.userId === viewerId,
+      ...(message.submissionId && message.userId === viewerId ? { submissionId: message.submissionId } : {}),
+      ...(parsedEvent?.success ? { systemEvent: parsedEvent.data } : {}),
+      text: message.text, at: message.at,
+      author: message.name || message.email || '', image: message.image ?? null, mine: message.userId === viewerId,
+    }
+  })
 }
 
 async function readPagedThreadMessages(runIds: string[], viewerId: string, ids: string[], append: boolean) {
@@ -792,7 +799,30 @@ function safeHttpUrl(value: string) {
 }
 
 /** Something a person says in a running thread; the daemon delivers it to the agent. */
-export async function sendIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string; references?: import('@/lib/thread-references-server').ThreadReference[] }): Promise<{ runId: string; continued: boolean }> {
+export async function sendIssueThreadMessage(input: {
+  issueId: string | null
+  runId: string
+  text: string
+  requestId?: string
+  modelChoice?: ThreadModelChoice
+  delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode
+  expectedOwnerId?: string
+  expectedWorkspaceId?: string
+  retryOriginalSession?: true
+  questionWakeGeneration?: string
+  references?: import('@/lib/thread-references-server').ThreadReference[]
+  mentions?: import('@mikka/protocol/slash-commands').StructuredMention[]
+  sendAsText?: boolean
+}): Promise<{
+  runId: string
+  continued: boolean
+  blocked?: {
+    command: string
+    originalText: string
+    validCommands: string[]
+    reason: 'dangerous_passthrough' | 'terminal_only' | 'host_owned'
+  }
+}> {
   const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
   if (!text.success) throw new ActionFailureError('messageRequired')
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
@@ -839,17 +869,99 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
       }
     }
   }
+
+  const slashProtocol = await import('@mikka/protocol/slash-commands')
+  let control: import('@/lib/thread-continue').ThreadMessageControl | undefined
+  const leadingSlash = !input.sendAsText ? slashProtocol.parseLeadingSlashCommand(text.data) : null
+  const hasSkillSignal = Boolean(
+    !input.sendAsText &&
+    ((input.mentions?.some(m => m.kind === 'skill')) || /\$[a-z][a-z0-9-]*/.test(text.data)),
+  )
+  let runtime: Awaited<ReturnType<typeof import('@/lib/thread-commands').readThreadRuntimeCommands>> = null
+  if (leadingSlash || hasSkillSignal) {
+    const { readThreadRuntimeCommands } = await import('@/lib/thread-commands')
+    runtime = await readThreadRuntimeCommands(pool, user.id, row.id)
+  }
+
+  if (input.sendAsText) {
+    control = { kind: 'client_composed' }
+  } else if (leadingSlash && runtime) {
+    const cmdLower = leadingSlash.name.toLowerCase()
+    // Bug 1: block dangerous pass-through, terminal_slash_commands, and host-owned commands before reaching Claude CLI.
+    if (runtime.harness === 'claude_code') {
+      const blockedCheck = slashProtocol.isBlockedClaudeCommand(leadingSlash.name, runtime.terminalSlashCommands)
+      if (blockedCheck.blocked) {
+        const validCommands = runtime.commands.map(c => c.name)
+        const { appendThreadSystemEvent } = await import('@/lib/thread-commands')
+        await appendThreadSystemEvent(runtime.latestRunId, user.id, {
+          kind: 'command_blocked',
+          command: blockedCheck.canonical,
+          originalText: text.data,
+          validCommands,
+          reason: blockedCheck.reason,
+        })
+        return {
+          runId: runtime.latestRunId,
+          continued: false,
+          blocked: {
+            command: blockedCheck.canonical,
+            originalText: text.data,
+            validCommands,
+            reason: blockedCheck.reason,
+          },
+        }
+      }
+    }
+    // Bug 2: route /compact to real per-harness compaction while preserving requestId & human actor metadata.
+    if (cmdLower === 'compact') {
+      const instructions = leadingSlash.args.trim().slice(0, 4_000)
+      control = { kind: 'compact', ...(instructions ? { instructions } : {}) }
+    } else {
+      // Allowed runtime slash command (e.g. Claude custom/MCP/skill command or Codex /review, /init):
+      // deliver unwrapped via control.kind='slash'.
+      const matchedRuntime = runtime.commands.find(
+        c => c.name.toLowerCase() === cmdLower || c._meta.aliases?.some(a => a.toLowerCase() === cmdLower),
+      )
+      if (matchedRuntime) {
+        control = {
+          kind: 'slash',
+          name: matchedRuntime.name,
+          ...(leadingSlash.args ? { args: leadingSlash.args } : {}),
+        }
+      }
+    }
+  }
+
   let body = text.data
-  if (input.references?.length) {
+  if (!control && input.references?.length) {
     const refs = z.array((await import('@/lib/thread-references-server')).threadReference).max(20).safeParse(input.references)
     if (!refs.success) throw new ActionFailureError('validationGeneric')
     const resolved = await (await import('@/lib/thread-references-server')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data)
     body = (await import('@/lib/thread-references-server')).expandReferences(resolved) + body
     if (body.length > 10_000) throw new ActionFailureError('messageRequired')
   }
+  if (!control && input.mentions?.length) {
+    const parsedMentions = slashProtocol.structuredMentionsSchema.safeParse(input.mentions)
+    if (!parsedMentions.success) throw new ActionFailureError('validationGeneric')
+    const { resolveStructuredMentions, expandStructuredMentions } = await import('@/lib/thread-references-server')
+    const resolvedMentions = await resolveStructuredMentions(pool, user.id, row.workspaceId ?? null, parsedMentions.data)
+    const mentionPrefix = expandStructuredMentions(resolvedMentions)
+    if (mentionPrefix && body.length + mentionPrefix.length <= 10_000) {
+      body = mentionPrefix + body
+    }
+  }
+  if (!control && runtime) {
+    const skillMentions = (input.mentions ?? []).filter(m => m.kind === 'skill').map(m => m.id)
+    const runtimeSkills = runtime.commands.filter(c => c._meta.source === 'skill').map(c => c.name)
+    const knownSkills = [...new Set([...skillMentions, ...runtimeSkills])]
+    if (knownSkills.length) {
+      const resolvedSkills = slashProtocol.resolveSkillMentionsForHarness(runtime.harness, body, knownSkills)
+      if (resolvedSkills.text.length <= 10_000) body = resolvedSkills.text
+    }
+  }
   await refuseUnavailableReferences(user.id,row.id,text.data)
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
-  return sendThreadMessage(user.id,row.id,body,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
+  return sendThreadMessage(user.id,row.id,body,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice,control)
 }
 
 /** #2941 item 3: preview cards for the composer's typed references. Same
@@ -861,30 +973,41 @@ export async function getReferencePreview(input: { issueId: string | null; runId
   return { references: await (await import('@/lib/thread-references-server')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data) }
 }
 
-/** #2941 item 4: a side note stored in the thread that does NOT wake the
- * agent — the daemon reads it as context on the next ordinary turn. */
-export async function btwIssueThreadMessage(input: { issueId: string | null; runId: string; text: string }) {
+/**
+ * #3333: `/side` (alias `/btw`) asks a side question without disturbing or steering
+ * the main run. Spawns a real side thread (`relation: 'side'`) anchored to the
+ * thread (or `fromMessageId`) and records an inline `side_note` system event.
+ */
+export async function btwIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; fromMessageId?: string | null }) {
   const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
   if (!text.success) throw new ActionFailureError('messageRequired')
+  if (input.fromMessageId !== undefined && input.fromMessageId !== null && !z.uuid().safeParse(input.fromMessageId).success) {
+    throw new ActionFailureError('validationGeneric')
+  }
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
   await assertHumanWritableThread(user.id, row)
-  const { db } = await import('@/lib/db')
-  const { runMessages } = await import('@/lib/db/schema')
-  const { MAILBOX_NOTIFICATION_LIMIT } = await import('@/lib/mailbox-notification-budget')
-  const { personalRunMessageText } = await import('@/lib/personal-run-message')
-  const id = crypto.randomUUID()
-  await db.transaction(async tx => {
-    await tx.insert(runMessages).values({ id, runId: row.id, userId: user.id,
-      text: personalRunMessageText(id, `/btw ${text.data}`, 'user'), origin: 'peer',
-      mailboxWakeDepth: MAILBOX_NOTIFICATION_LIMIT })
+  const { spawnThread } = await import('@/lib/thread-lifecycle')
+  const { appendThreadSystemEvent } = await import('@/lib/thread-commands')
+  const chain = await readRunChain(pool, user.id, row.id)
+  const targetRunId = chain?.latestRunId ?? row.id
+  const sideRun = await spawnThread(user, row.id, {
+    relation: 'side',
+    fromMessageId: input.fromMessageId ?? null,
+    question: text.data,
   })
-  return { stored: true }
+  if (!sideRun) throw new ActionFailureError('threadCannotContinue')
+  await appendThreadSystemEvent(targetRunId, user.id, {
+    kind: 'side_note',
+    question: text.data,
+    sideRunId: String(sideRun.id),
+    status: 'pending',
+  })
+  return { stored: true, sideRunId: String(sideRun.id) }
 }
 
 /** #2941 item 4: context stats consistent with the summary read (same
- * conversationUsage module). `compact` asks the agent to fold now via a
- * waking peer directive. */
+ * conversationUsage module). */
 export async function getThreadContextStats(input: { issueId: string | null; runId: string }) {
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
@@ -892,13 +1015,86 @@ export async function getThreadContextStats(input: { issueId: string | null; run
   const chain = await readRunChain(pool, user.id, row.id)
   return { usage: await readContextUsage(chain?.attempts.map(a => a.runId) ?? [row.id], chain?.rootRunId ?? row.id, chain?.latestRunId ?? row.id) }
 }
-export async function compactThread(input: { issueId: string | null; runId: string }) {
+
+/**
+ * Real per-harness `/compact` (#3333 Bug 2):
+ * - Claude Code: raw `/compact [instructions]` user turn (no JSON wrapper, no `client_composed`).
+ * - Codex: app-server JSON-RPC `thread/compact/start`.
+ * Active runs receive a `compact` control command; ended runs continue with `followUpControl: { kind: 'compact' }`.
+ */
+export async function compactThread(input: { issueId: string | null; runId: string; instructions?: string }) {
+  const instructions = input.instructions?.trim().slice(0, 4_000) || undefined
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
   if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
   await assertHumanWritableThread(user.id, row)
-  const { addRunMessage } = await import('@/lib/agent-runs')
-  await addRunMessage(user.id, { runId: row.id, text: '/compact — fold the working context now.' }, 'peer')
-  return { requested: true }
+  const display = instructions ? `/compact ${instructions}` : '/compact'
+  const result = await sendThreadMessage(
+    user.id,
+    row.id,
+    display,
+    'user',
+    undefined,
+    undefined,
+    undefined,
+    { kind: 'compact', ...(instructions ? { instructions } : {}) },
+  )
+  return { requested: true, runId: result.runId, continued: result.continued }
+}
+
+/** Runtime-reported + host-owned `/` commands for this coding thread (#3333). */
+export async function getThreadCommands(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { readThreadAvailableCommands } = await import('@/lib/thread-commands')
+  const result = await readThreadAvailableCommands(pool, user.id, row.id)
+  if (!result) throw new ActionFailureError('runNotFound')
+  return result
+}
+
+/** Machine size options and the thread's current preferred machine size for `/machine` (#3333). */
+export async function getThreadMachineOptions(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { DEFAULT_MACHINE_SIZE, selectableMachineSizeOptions, isMachineSize } = await import('@/lib/cloud-computer/machine-pricing')
+  const chain = await readRunChain(pool, user.id, row.id)
+  const rootId = chain?.rootRunId ?? row.id
+  const latestId = chain?.latestRunId ?? row.id
+  const { rows } = await pool.query<{ id: string; preferred: string | null }>(
+    `SELECT id, "agentDefinition"->>'preferredMachineSize' AS preferred FROM agent_runs WHERE id = ANY($1::uuid[]) AND "userId"=$2`,
+    [[...new Set([latestId, rootId])], user.id],
+  )
+  const latestPref = rows.find(r => r.id === latestId)?.preferred
+  const rootPref = rows.find(r => r.id === rootId)?.preferred
+  const chosen = latestPref ?? rootPref
+  const current = chosen && isMachineSize(chosen) ? chosen : DEFAULT_MACHINE_SIZE
+  return {
+    current,
+    options: selectableMachineSizeOptions(),
+  }
+}
+
+/** Set the preferred machine size for this thread's next run via `/machine` (#3333). */
+export async function setThreadMachineSize(input: { issueId: string | null; runId: string; machineSize: string }) {
+  const { SELECTABLE_MACHINE_SIZES } = await import('@/lib/cloud-computer/machine-pricing')
+  if (!(SELECTABLE_MACHINE_SIZES as readonly string[]).includes(input.machineSize)) {
+    throw new ActionFailureError('validationGeneric')
+  }
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  await assertHumanWritableThread(user.id, row)
+  const chain = await readRunChain(pool, user.id, row.id)
+  const rootId = chain?.rootRunId ?? row.id
+  const latestId = chain?.latestRunId ?? row.id
+  const targetIds = [...new Set([rootId, latestId])]
+  await pool.query(
+    `UPDATE agent_runs SET "agentDefinition" = jsonb_set(coalesce("agentDefinition", '{}'::jsonb), '{preferredMachineSize}', to_jsonb($2::text), true), "updatedAt"=now()
+     WHERE id = ANY($1::uuid[]) AND "userId"=$3`,
+    [targetIds, input.machineSize, user.id],
+  )
+  const { runChanged } = await import('@/lib/live/panels')
+  await runChanged(pool, rootId)
+  if (latestId !== rootId) await runChanged(pool, latestId)
+  return { machineSize: input.machineSize }
 }
 
 /** #2941 item 5: thread-scoped env vars — names only, values never read back. */
@@ -977,7 +1173,17 @@ async function refuseUnavailableReferences(userId: string, runId: string, text: 
  * dispatch with no machine or model) returned as its code, so the thread says
  * why instead of 「发送失败」. Other failures still throw.
  */
-export async function sendIssueThreadReply(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string }): Promise<ActionResult<{ sent: true; runId: string; continued: boolean }>> {
+export async function sendIssueThreadReply(input: Parameters<typeof sendIssueThreadMessage>[0]): Promise<ActionResult<{
+  sent: true
+  runId: string
+  continued: boolean
+  blocked?: {
+    command: string
+    originalText: string
+    validCommands: string[]
+    reason: 'dangerous_passthrough' | 'terminal_only' | 'host_owned'
+  }
+}>> {
   return runAction(async () => { const result=await sendIssueThreadMessage(input); return { sent: true as const,...result } })
 }
 

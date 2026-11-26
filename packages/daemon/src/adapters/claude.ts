@@ -82,12 +82,21 @@ import {
   runPolicy,
   type RunPolicy,
 } from "../permissions"
-import type {
-  AgentAdapter,
-  AgentSession,
-  ExitEvent,
-  SessionOptions,
-  StartOptions,
+import {
+  isBlockedClaudeCommand,
+  normalizeClaudeCommands,
+  normalizeCommandName,
+  parseLeadingSlashCommand,
+  resolveSkillMentionsForHarness,
+  type AvailableCommand,
+} from "@mikka/protocol/slash-commands"
+import {
+  normalizeSendOptions,
+  type AgentAdapter,
+  type AgentSession,
+  type ExitEvent,
+  type SessionOptions,
+  type StartOptions,
 } from "./types"
 
 export interface ClaudeAdapterOptions {
@@ -237,6 +246,60 @@ export function claudeChunks(message: SDKMessage, turnModel?: string): RunChunk[
               ...(planTask ? { planTask } : {}),
             },
       )
+    }
+  } else if (message.type === "system") {
+    if (message.subtype === "local_command_output") {
+      const text = typeof message.content === "string" ? message.content : ""
+      if (text.trim()) {
+        chunks.push({
+          type: "data-system-event",
+          data: { kind: "local_command_output", text },
+        })
+      }
+    } else if (message.subtype === "status") {
+      const statusMsg = message as {
+        status?: "compacting" | "requesting" | null
+        compact_result?: "success" | "failed"
+        compact_error?: string
+      }
+      if (statusMsg.status === "compacting" || statusMsg.status === "requesting") {
+        chunks.push({
+          type: "data-system-event",
+          data: { kind: "status", status: statusMsg.status },
+        })
+      } else if (statusMsg.compact_result) {
+        chunks.push({
+          type: "data-system-event",
+          data: {
+            kind: "status",
+            status: "idle",
+            compactResult: statusMsg.compact_result,
+            ...(typeof statusMsg.compact_error === "string" && statusMsg.compact_error
+              ? { compactError: statusMsg.compact_error }
+              : {}),
+          },
+        })
+      }
+    } else if (message.subtype === "compact_boundary") {
+      const meta = (message as {
+        compact_metadata?: {
+          trigger?: "manual" | "auto"
+          pre_tokens?: number
+          post_tokens?: number
+          duration_ms?: number
+        }
+      }).compact_metadata
+      chunks.push({
+        type: "data-system-event",
+        data: {
+          kind: "compact_boundary",
+          harness: "claude_code",
+          ...(meta?.trigger ? { trigger: meta.trigger } : {}),
+          ...(typeof meta?.pre_tokens === "number" && Number.isFinite(meta.pre_tokens) ? { preTokens: Math.max(0, Math.round(meta.pre_tokens)) } : {}),
+          ...(typeof meta?.post_tokens === "number" && Number.isFinite(meta.post_tokens) ? { postTokens: Math.max(0, Math.round(meta.post_tokens)) } : {}),
+          ...(typeof meta?.duration_ms === "number" && Number.isFinite(meta.duration_ms) ? { durationMs: Math.max(0, Math.round(meta.duration_ms)) } : {}),
+        },
+      })
     }
   } else if (message.type === "result") {
     const usedModels = Object.keys(message.modelUsage ?? {})
@@ -399,12 +462,13 @@ class PromptQueue implements AsyncIterable<SDKUserMessage> {
 
   constructor(private readonly sessionId: string) {}
 
-  push(text: string) {
+  push(text: string, opts?: { clientComposed?: true }) {
     if (this.closed) throw new Error("The Claude session already ended")
     const uuid = randomUUID()
     this.items.push({
       type: "user",
       uuid,
+      ...(opts?.clientComposed ? { client_composed: true } : {}),
       message: { role: "user", content: [{ type: "text", text }] },
       parent_tool_use_id: null,
       session_id: this.sessionId,
@@ -649,6 +713,29 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!preparation) ctx!.clearHandoff()
 
     const queue = new EventQueue()
+    let terminalSlashCommands: string[] = []
+    let initSlashCommands: string[] = []
+    let initSkills: string[] = []
+    let availableCommands: AvailableCommand[] = normalizeClaudeCommands({})
+    const emitAvailableCommands = (commands: AvailableCommand[]) => {
+      availableCommands = commands
+      queue.chunk({
+        type: "data-available-commands",
+        id: "available-commands",
+        data: {
+          harness: "claude_code",
+          commands,
+          ...(terminalSlashCommands.length ? { terminalSlashCommands } : {}),
+        },
+      })
+    }
+    const knownSkillNames = () => {
+      const names = new Set<string>(initSkills)
+      for (const s of options.skills ?? []) names.add(s.name)
+      for (const s of options.profileSkills ?? []) names.add(s.name)
+      for (const s of options.repositorySkills ?? []) names.add(s)
+      return [...names]
+    }
     let prompts: Pick<PromptQueue, "push" | "close"> = new PromptQueue(sessionId)
     let closePrepared: (() => Promise<void>) | undefined
     let firstPromptId: string | undefined
@@ -928,6 +1015,54 @@ export class ClaudeAdapter implements AgentAdapter {
             runRuntimeTimings.agentAccepted(options.runId, 'claude_user_ack')
           if (message.type === "system" && message.subtype === "init" && typeof message.model === "string")
             runtimeModel = message.model || null
+          if (message.type === "system" && message.subtype === "init" && !ending) {
+            const initMsg = message as {
+              slash_commands?: unknown
+              terminal_slash_commands?: unknown
+              skills?: unknown
+            }
+            initSlashCommands = Array.isArray(initMsg.slash_commands)
+              ? initMsg.slash_commands.filter((v): v is string => typeof v === "string")
+              : []
+            terminalSlashCommands = Array.isArray(initMsg.terminal_slash_commands)
+              ? initMsg.terminal_slash_commands.filter((v): v is string => typeof v === "string")
+              : []
+            initSkills = Array.isArray(initMsg.skills)
+              ? initMsg.skills.filter((v): v is string => typeof v === "string")
+              : []
+            emitAvailableCommands(normalizeClaudeCommands({
+              initSlashCommands,
+              terminalSlashCommands,
+              initSkills,
+            }))
+            if (typeof session.supportedCommands === "function") {
+              void Promise.race([
+                session.supportedCommands(),
+                new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), 3_000).unref()),
+              ])
+                .then(supported => {
+                  if (!ending && Array.isArray(supported) && supported.length > 0) {
+                    emitAvailableCommands(normalizeClaudeCommands({
+                      initSlashCommands,
+                      supportedCommands: supported,
+                      terminalSlashCommands,
+                      initSkills,
+                    }))
+                  }
+                })
+                .catch(() => undefined)
+            }
+          }
+          if (message.type === "system" && message.subtype === "commands_changed" && !ending) {
+            const changed = message as { commands?: unknown }
+            if (Array.isArray(changed.commands)) {
+              emitAvailableCommands(normalizeClaudeCommands({
+                supportedCommands: changed.commands as Parameters<typeof normalizeClaudeCommands>[0]["supportedCommands"],
+                terminalSlashCommands,
+                initSkills,
+              }))
+            }
+          }
           if (message.type === "assistant" && message.parent_tool_use_id == null && typeof message.message.model === "string") {
             runtimeModel = message.message.model || null
             if (!message.error && runtimeModel) turnModel = runtimeModel
@@ -1065,16 +1200,70 @@ export class ClaudeAdapter implements AgentAdapter {
         offRevoke?.()
       }
     }
-    firstPromptId = prompts.push(firstMessage)
-    written++
+    const emitBlockedCommand = (command: string, originalText: string, reason: "dangerous_passthrough" | "terminal_only" | "host_owned") => {
+      queue.chunk({
+        type: "data-system-event",
+        data: {
+          kind: "command_blocked",
+          command,
+          originalText,
+          validCommands: availableCommands.map(c => c.name),
+          reason,
+        },
+      })
+    }
+    const assertSendAuth = async () => {
+      if (ending) throw new Error("The Claude session already ended")
+      if (externalAuth?.verify) {
+        try { await externalAuth.verify() } catch (error) { await end({ outcome: 'failed', error: SUBSCRIPTION_ERROR }); throw new Error(SUBSCRIPTION_ERROR, { cause: error }) }
+      }
+      if (externalAuth && !externalAuth.brokered && !externalAuth.automaticRefresh && Date.now() >= expiresAt) {
+        await end({ outcome: "failed", error: SUBSCRIPTION_ERROR })
+        throw new Error(SUBSCRIPTION_ERROR)
+      }
+    }
+
+    const followUpControl = mode === "continue" ? options.continueSession?.followUpControl : undefined
+    if (followUpControl?.kind === "compact") {
+      const raw = followUpControl.instructions?.trim() ? `/compact ${followUpControl.instructions.trim()}` : "/compact"
+      firstPromptId = prompts.push(raw)
+      written++
+    } else if (followUpControl?.kind === "slash") {
+      const blocked = isBlockedClaudeCommand(followUpControl.name, terminalSlashCommands)
+      if (blocked.blocked) {
+        emitBlockedCommand(blocked.canonical, firstMessage, blocked.reason)
+        checkingContinuation = false
+        await end({ outcome: "succeeded" })
+        return {
+          sessionId,
+          get runtimeModel() { return runtimeModel },
+          events: () => queue.drain(),
+          async send() { throw new Error("The Claude session already ended") },
+          async compact() { throw new Error("The Claude session already ended") },
+          async cancel() { await end({ outcome: "cancelled" }) },
+          async detach() { await end(null) },
+        }
+      }
+      const raw = `/${normalizeCommandName(followUpControl.name)}${followUpControl.args?.trim() ? ` ${followUpControl.args.trim()}` : ""}`
+      firstPromptId = prompts.push(raw)
+      written++
+    } else if (followUpControl?.kind === "client_composed") {
+      firstPromptId = prompts.push(firstMessage, { clientComposed: true })
+      written++
+    } else {
+      const resolvedFirst = resolveSkillMentionsForHarness("claude_code", firstMessage, knownSkillNames()).text
+      const startsWithSlash = parseLeadingSlashCommand(resolvedFirst) !== null
+      firstPromptId = prompts.push(resolvedFirst, startsWithSlash ? { clientComposed: true } : undefined)
+      written++
+    }
     if (mode === "continue" && !(await untilSpoken(spoken))) {
       if (providerFailure) {
         await end(null)
         throw Object.assign(new ProviderFailureError(providerFailure), { failureDetails })
       }
-      if (options.requireSessionResume || externalAuth) {
+      if (options.requireSessionResume || externalAuth || followUpControl?.kind === "compact") {
         await end(null)
-        throw new Error(externalAuth ? SUBSCRIPTION_ERROR : 'Original Claude question session is unavailable; refusing a fresh session')
+        throw new Error(externalAuth ? SUBSCRIPTION_ERROR : followUpControl?.kind === "compact" ? 'Original Claude session is unavailable for compaction' : 'Original Claude question session is unavailable; refusing a fresh session')
       }
       log.info(
         { stderr: redactDiagnostic(stderrTail(), secrets) },
@@ -1092,18 +1281,52 @@ export class ClaudeAdapter implements AgentAdapter {
       sessionId,
       get runtimeModel() { return runtimeModel },
       events: () => queue.drain(),
-      async send(text) {
-        if (ending) throw new Error("The Claude session already ended")
-        if (externalAuth?.verify) {
-          try { await externalAuth.verify() } catch (error) { await end({ outcome: 'failed', error: SUBSCRIPTION_ERROR }); throw new Error(SUBSCRIPTION_ERROR, { cause: error }) }
+      async send(text, modeOrOptions) {
+        await assertSendAuth()
+        const sendOpts = normalizeSendOptions(modeOrOptions)
+        if (sendOpts.clientComposed) {
+          sensitiveText.push(text)
+          written++
+          prompts.push(text, { clientComposed: true })
+          return
         }
-        if (externalAuth && !externalAuth.brokered && !externalAuth.automaticRefresh && Date.now() >= expiresAt) {
-          await end({ outcome: "failed", error: SUBSCRIPTION_ERROR })
-          throw new Error(SUBSCRIPTION_ERROR)
+        if (sendOpts.slashCommand) {
+          const blocked = isBlockedClaudeCommand(sendOpts.slashCommand.name, terminalSlashCommands)
+          if (blocked.blocked) {
+            emitBlockedCommand(blocked.canonical, text, blocked.reason)
+            return
+          }
+          const raw = `/${normalizeCommandName(sendOpts.slashCommand.name)}${sendOpts.slashCommand.args?.trim() ? ` ${sendOpts.slashCommand.args.trim()}` : ""}`
+          sensitiveText.push(raw)
+          written++
+          prompts.push(raw)
+          return
         }
-        sensitiveText.push(text)
+        const parsedLeading = parseLeadingSlashCommand(text)
+        if (parsedLeading) {
+          const blocked = isBlockedClaudeCommand(parsedLeading.name, terminalSlashCommands)
+          if (blocked.blocked) {
+            emitBlockedCommand(blocked.canonical, text, blocked.reason)
+            return
+          }
+          // Ordinary messages that happen to start with `/` never pass through as CLI commands.
+          sensitiveText.push(text)
+          written++
+          prompts.push(text, { clientComposed: true })
+          return
+        }
+        const resolved = resolveSkillMentionsForHarness("claude_code", text, knownSkillNames()).text
+        sensitiveText.push(resolved)
         written++
-        prompts.push(text)
+        prompts.push(resolved)
+      },
+      async compact(instructions) {
+        await assertSendAuth()
+        const raw = instructions?.trim() ? `/compact ${instructions.trim()}` : "/compact"
+        sensitiveText.push(raw)
+        written++
+        // Real /compact on Claude Code: raw user turn with no JSON wrapper and no client_composed (#3333 Bug 2).
+        prompts.push(raw)
       },
       async cancel() {
         await end({ outcome: "cancelled" })

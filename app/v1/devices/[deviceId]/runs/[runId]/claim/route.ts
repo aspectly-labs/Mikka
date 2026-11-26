@@ -573,7 +573,12 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ? await (await import('@/lib/coding-workspace/diff/feedback-brief')).reviewBatchFollowUp(pool, run)
     : continuationFollowUp(run.prompt) : null
   const threadContinuation = earlier && run.continuesRunId
-    ? { continuesRunId: run.continuesRunId, ...(followUp ? { followUp } : {}), ...(earlier.sessionId && earlier.deviceId === deviceId && earlierHarness === harness && profileNativeSessionMatches(earlier.agentDefinition, run.agentDefinition) ? { resumeSessionId: earlier.sessionId } : {}) }
+    ? {
+      continuesRunId: run.continuesRunId,
+      ...(followUp ? { followUp } : {}),
+      ...(run.agentDefinition?.followUpControl ? { followUpControl: run.agentDefinition.followUpControl } : {}),
+      ...(earlier.sessionId && earlier.deviceId === deviceId && earlierHarness === harness && profileNativeSessionMatches(earlier.agentDefinition, run.agentDefinition) ? { resumeSessionId: earlier.sessionId } : {}),
+    }
     : {}
   const settings = repo.remoteUrl ? await readRepositorySettings(caller.userId, repo.remoteUrl) : null
   const verifyCommand = settings ? settings.verifyCommand : device.kind === 'cloud' ? repo.verifyCommand : null

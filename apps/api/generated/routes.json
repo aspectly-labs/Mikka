@@ -432,6 +432,16 @@
       "sourceHash": "30f4b878904b6ef684aabedd67121056644f89a70dc359ed1158845401b585a2"
     },
     {
+      "path": "/mikka/api/chat/dictation",
+      "template": "/api/chat/dictation",
+      "source": "app/api/chat/dictation/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 120,
+      "sourceHash": "2cd80c5b35335bf930a20a8248fb57ca06dfdb0495668d2de6b6c8f02a5ea40b"
+    },
+    {
       "path": "/mikka/api/cloud/callback",
       "template": "/api/cloud/callback",
       "source": "app/api/cloud/callback/route.ts",
@@ -2174,7 +2184,7 @@
         "GET",
         "POST"
       ],
-      "sourceHash": "849a8158bc3da8894d5871ab14ba04810ba19b4c1825055c1b45389fd011999f"
+      "sourceHash": "a30917a7ce40998e5b01ecee396c241feba15690d3e2c535c3f536c98d84aa42"
     },
     {
       "path": "/mikka/api/mobile/threads/[id]/artifacts",
@@ -3170,7 +3180,7 @@
         "POST"
       ],
       "maxDuration": 120,
-      "sourceHash": "2db052dd899e71eac8b2314f8a1c27f7e7421baa9dcbde032db61c3716758535"
+      "sourceHash": "2c15f78c3cdf8e72699b838f5bdee06e974ee50a22e7dc5eabff8e06fb0db3cf"
     },
     {
       "path": "/mikka/api/tasks/[taskId]/attachments",
@@ -3375,7 +3385,7 @@
         "PATCH"
       ],
       "maxDuration": 60,
-      "sourceHash": "00c09b044f21730be12d694fbb343969adadc8e4531cc88c14f478aab3b48633"
+      "sourceHash": "8a79922c0884c93a5d4ed52103a2e8eebd8b2c462a42bd025a5b6ce665120ffb"
     },
     {
       "path": "/mikka/api/threads/[runId]/automation",
@@ -4131,7 +4141,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "30e176d139d385b833c802455ce05cb5f9b41398b265bd008e9913fb726e245d"
+      "sourceHash": "5244c5c15bd94b0e4cfbdd3c39f8405a0bb104855ff7a5f07d66e5e6a0256651"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/commands/ack",
@@ -4230,7 +4240,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "e1be4c0976f525a81671af8b9063a2dd4f67b62eeedc084bbd8cc3bb0204e0d0"
+      "sourceHash": "a99c4393e574d8cab17774e747d5eea4e22555806f9e8fe60084af1b9e11d3e6"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

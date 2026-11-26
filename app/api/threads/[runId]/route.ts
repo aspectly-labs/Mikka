@@ -8,6 +8,7 @@ export const maxDuration = 60
 const patchSchema = z.object({
   taskId: z.uuid().nullable().optional(),
   tags: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
+  folder: z.string().trim().max(60).nullable().optional(),
 }).strict()
 
 const spec = {

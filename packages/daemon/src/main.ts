@@ -1214,9 +1214,34 @@ export class Daemon {
         }
         continue
       }
+      if (command.kind === "compact") {
+        if (this.stopping.has(command.runId) || this.unacked.has(command.messageId)) continue
+        try {
+          await this.supervisor.compact(command.runId, command.instructions)
+          this.unacked.add(command.messageId)
+          acted = true
+          this.log.info(
+            { run_id: command.runId, message_id: command.messageId },
+            "compact handed to the agent"
+          )
+        } catch (error) {
+          if (!(error instanceof RunNotFoundError))
+            this.log.warn(
+              { run_id: command.runId, err: error },
+              "could not compact the agent session"
+            )
+        }
+        continue
+      }
       if (this.unacked.has(command.messageId)) continue
       try {
-        await this.supervisor.send(command.runId, command.text)
+        const sendOptions = command.clientComposed || command.slashCommand
+          ? {
+              ...(command.clientComposed ? { clientComposed: true as const } : {}),
+              ...(command.slashCommand ? { slashCommand: command.slashCommand } : {}),
+            }
+          : undefined
+        await this.supervisor.send(command.runId, command.text, sendOptions)
         this.unacked.add(command.messageId)
         acted = true
         this.log.info(

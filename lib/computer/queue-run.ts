@@ -18,7 +18,7 @@ import { hasE2BRuntimeCredential } from '../secrets/e2b-owner-sql'
 import { RunModelMissingError } from './run-model'
 import { runCredentialSource, type RunApiKey } from '@/lib/run-credential-source'
 import { cloudTaskTarget } from './cloud-task-target'
-import { provisionableMachineSize } from '../cloud-computer/machine-pricing'
+import { isMachineSize, provisionableMachineSize } from '../cloud-computer/machine-pricing'
 import { hostedTaskEnabled, verifiedMachineQuota } from '../cloud-computer/sponsored-task'
 import { selectTaskProvider, taskComputeSku, taskMachinePlanLimit, TaskProviderAdmissionUnavailable } from '../cloud-computer/task-provider-admission'
 import { runListChanged } from '@/lib/live/lists'
@@ -69,6 +69,8 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
   /** Internal host placement grant, never a model/tool argument. The current owner source can only narrow it. */
   allowLocalRecovery?: true
   sourceEventId?: string
+  /** Optional control directive for a continuation run's followUp (compact, allowed slash command, or literal client_composed, #3333). */
+  followUpControl?: import('@mikka/protocol/device').RunAssignment['followUpControl']
   /** Evidence-only entry provenance (lib/run-origin.ts). A host continuation
    * copies its source run's. Every production caller passes it explicitly;
    * lib/run-origin-writes.test.ts enumerates the call sites. */
@@ -124,7 +126,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     const allowLocalRecovery = input.allowLocalRecovery === true && request && request.destination == null ? true as const : undefined
     // Absent stays byte-compatible with historical fingerprints; a replay
     // cannot upgrade an old cloud-only run to a newly inferred permission.
-    const selectionFingerprint = createHash('sha256').update(JSON.stringify([input.subscriptionBindingId ?? null, model, input.apiKeyId ?? null, input.apiKey ?? null, ...(allowLocalRecovery ? [{ allowLocalRecovery }] : []), ...(sponsored ? [{ cloudflareRequest:input.sourceEventId }] : []), ...(input.modelDispatch ? [{ modelDispatch: input.modelDispatch }] : []), ...(input.agentProfile ? [{ agentProfile: input.agentProfile }] : []), ...(input.policyCeiling ? [{ policyCeiling: input.policyCeiling }] : []), ...(settings.visibility ? [{ visibility: settings.visibility }] : [])])).digest('hex')
+    const selectionFingerprint = createHash('sha256').update(JSON.stringify([input.subscriptionBindingId ?? null, model, input.apiKeyId ?? null, input.apiKey ?? null, ...(allowLocalRecovery ? [{ allowLocalRecovery }] : []), ...(sponsored ? [{ cloudflareRequest:input.sourceEventId }] : []), ...(input.modelDispatch ? [{ modelDispatch: input.modelDispatch }] : []), ...(input.agentProfile ? [{ agentProfile: input.agentProfile }] : []), ...(input.policyCeiling ? [{ policyCeiling: input.policyCeiling }] : []), ...(settings.visibility ? [{ visibility: settings.visibility }] : []), ...(input.followUpControl ? [{ followUpControl: input.followUpControl }] : [])])).digest('hex')
     const target = await cloudTaskTarget(client, actor, input)
     if (!target) throw new ComputerError(409, 'Bot computer task is unavailable')
     const { rows: [repository] } = await client.query<{ repoPath: string; remoteUrl: string | null }>('SELECT "repoPath","remoteUrl" FROM device_repos WHERE id=$1 AND "userId"=$2 AND "deviceId"=$3 FOR SHARE', [input.deviceRepoId, actor.userId, target.deviceId])
@@ -161,6 +163,7 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     // The hosted runner starts a subscription run only on that subscription's own model: a different one is refused here, not at startup.
     if (subscription && subscription.modelId !== model) throw new ComputerError(409, 'Bot subscription unavailable')
     const frozen = freezeWorkerDefinition({ harness:target.harness,instructions,prompt,parent:input.execution?.snapshot ?? null,executionId:input.execution?.id ?? null,subscription,apiKey,credits,model,modelDispatch:input.modelDispatch,agentProfile:input.agentProfile,policyCeiling:input.policyCeiling,allowLocalRecovery,mailboxEnabled:personalMailboxEnabled(),mailboxScope:{botId:runBotId,workspaceId:actor.workspaceId},readOnly:input.readOnly })
+    if (input.followUpControl) frozen.followUpControl = input.followUpControl
     const sourceId = input.frozenSourceRunId ?? input.threadRunId
     const prior = sourceId ? (await client.query('select "agentDefinition","baseBranch" from agent_runs where id=$1 and "userId"=$2 and "workspaceId"=$3 and "issueId"=$4 FOR SHARE', [sourceId, actor.userId, actor.workspaceId, input.issueId])).rows[0] : undefined
     if (sourceId && !prior) throw new ComputerError(409, 'Original task execution is unavailable')
@@ -174,15 +177,19 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
       assertFrozenProjectExecution(effectiveExecution, projectExecution)
       frozen.projectExecution = structuredClone(effectiveExecution)
     }
+    const threadPreferredSize = typeof prior?.agentDefinition?.preferredMachineSize === 'string' && isMachineSize(prior.agentDefinition.preferredMachineSize)
+      ? prior.agentDefinition.preferredMachineSize
+      : undefined
+    if (threadPreferredSize) frozen.preferredMachineSize = threadPreferredSize
     const effectiveBaseBranch = effectiveExecution ? effectiveExecution.baseBranch : retainSource ? prior.baseBranch : projectExecution.baseBranch
     const earlierPlacement = prior?.agentDefinition?.taskMachine
     if (repository.remoteUrl) {
       const { provider, source } = await selectTaskProvider(actor, sponsored, earlierPlacement ? 'cloudflare' : undefined)
       if (source === 'remote') delete frozen.allowLocalRecovery
-      const requestedSize = settings.machineSize ?? effectiveExecution?.environment?.defaultMachineSize
+      const requestedSize = threadPreferredSize ?? settings.machineSize ?? effectiveExecution?.environment?.defaultMachineSize
       const planLimit = await taskMachinePlanLimit(actor.workspaceId)
       const compute = taskComputeSku(provider, {
-        cloudflare: requestedSize, e2b: effectiveExecution?.environment?.e2bMachineSize ?? undefined,
+        cloudflare: requestedSize, e2b: threadPreferredSize ? undefined : effectiveExecution?.environment?.e2bMachineSize ?? undefined,
       }, verifiedMachineQuota(), planLimit)
       if (!compute) throw new ComputerError(409, 'Task machine size is unavailable on this workspace plan.')
       frozen.taskCompute = compute

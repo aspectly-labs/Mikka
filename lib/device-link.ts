@@ -187,7 +187,7 @@ export async function tokenActsAsDevice(caller: Pick<DeviceCaller, 'userId' | 't
  * statement also returns the oldest pending device command outside that list:
  * only its id and kind, which the report hands over too.
  */
-export async function deviceMayHaveWork(deviceId: string, skip: readonly string[], options: { activeTurnSteer?: boolean; mailboxNotices?: boolean; queued?: boolean; skipDeviceCommands?: readonly string[] } = {}): Promise<{ work: boolean; deviceCommand: { id: string; kind: DeviceCommandKind } | null }> {
+export async function deviceMayHaveWork(deviceId: string, skip: readonly string[], options: { activeTurnSteer?: boolean; runControlCommands?: boolean; mailboxNotices?: boolean; queued?: boolean; skipDeviceCommands?: readonly string[] } = {}): Promise<{ work: boolean; deviceCommand: { id: string; kind: DeviceCommandKind } | null }> {
   const uuid = (id: string) => z.uuid().safeParse(id).success
   const { readUnderDeviceAuthority } = await import('@/lib/db')
   const [work, deviceCommand] = await readUnderDeviceAuthority<[boolean, { id: string; kind: DeviceCommandKind } | null]>(`json_build_array(EXISTS (SELECT 1 FROM agent_runs r WHERE r."deviceId"=$1 AND NOT (r.id = ANY($3::uuid[]))
@@ -195,10 +195,11 @@ export async function deviceMayHaveWork(deviceId: string, skip: readonly string[
     AND (r."stopRequestedAt" IS NOT NULL OR ${takenBackSql('r')} OR ($4 AND r.status='queued')
       OR ($5 AND r.status IN ('preparing','running','waiting_input'))
       OR EXISTS (SELECT 1 FROM run_messages m WHERE m."runId"=r.id AND m."deliveredAt" IS NULL AND m.failure IS NULL
-        AND ($8 OR NOT EXISTS (SELECT 1 FROM coordinator_events e WHERE e.id=m.id AND e."userId"=m."userId" AND e.payload#>>'{threadSubmission,delivery}'='steer'))))),
+        AND ($8 OR NOT EXISTS (SELECT 1 FROM coordinator_events e WHERE e.id=m.id AND e."userId"=m."userId" AND e.payload#>>'{threadSubmission,delivery}'='steer'))
+        AND ($9 OR NOT EXISTS (SELECT 1 FROM coordinator_events e WHERE e.id=m.id AND e."userId"=m."userId" AND e.payload#>>'{threadSubmission,control,kind}'='compact'))))),
     CASE WHEN $6 THEN (SELECT json_build_object('id', c.id, 'kind', c.kind) FROM device_management_commands c
       WHERE c."deviceId"=$1 AND c."completedAt" IS NULL AND NOT (c.id = ANY($7::uuid[])) ORDER BY c."createdAt" LIMIT 1) END)`,
-  [deviceId, [...LIVE_RUN_STATUSES], skip.filter(uuid), Boolean(options.queued), Boolean(options.mailboxNotices), Boolean(options.skipDeviceCommands), (options.skipDeviceCommands ?? []).filter(uuid), Boolean(options.activeTurnSteer)])
+  [deviceId, [...LIVE_RUN_STATUSES], skip.filter(uuid), Boolean(options.queued), Boolean(options.mailboxNotices), Boolean(options.skipDeviceCommands), (options.skipDeviceCommands ?? []).filter(uuid), Boolean(options.activeTurnSteer), Boolean(options.runControlCommands)])
   return { work, deviceCommand }
 }
 
@@ -209,7 +210,7 @@ export async function deviceMayHaveWork(deviceId: string, skip: readonly string[
  * - `queuedRuns`: runs waiting for it to claim them (only with `queued`).
  * Runs in `skip` (already handed over) are left out.
  */
-export async function deviceWork(deviceId: string, skip: readonly string[], options: { activeTurnSteer?: boolean; mailboxNotices?: boolean; queued?: boolean } = {}): Promise<{ commands: RunCommand[]; queuedRuns: string[] }> {
+export async function deviceWork(deviceId: string, skip: readonly string[], options: { activeTurnSteer?: boolean; runControlCommands?: boolean; mailboxNotices?: boolean; queued?: boolean } = {}): Promise<{ commands: RunCommand[]; queuedRuns: string[] }> {
   const skipUuids = skip.filter(id => z.uuid().safeParse(id).success)
   const takenBackExpr = takenBackSql('"agent_runs"')
   const rows = await db
@@ -238,14 +239,44 @@ export async function deviceWork(deviceId: string, skip: readonly string[], opti
   if (live.length === 0) return { commands: takenBack.slice(0, 500), queuedRuns }
   const messages = await db
     .select({ id: runMessages.id, runId: runMessages.runId, text: runMessages.text, origin: runMessages.origin,
-      steer: sql<boolean>`EXISTS (SELECT 1 FROM coordinator_events e WHERE e.id=${runMessages.id} AND e."userId"=${runMessages.userId} AND e.payload#>>'{threadSubmission,delivery}'='steer')` })
+      steer: sql<boolean>`EXISTS (SELECT 1 FROM coordinator_events e WHERE e.id=${runMessages.id} AND e."userId"=${runMessages.userId} AND e.payload#>>'{threadSubmission,delivery}'='steer')`,
+      control: sql<Record<string, unknown> | null>`(SELECT e.payload->'threadSubmission'->'control' FROM coordinator_events e WHERE e.id=${runMessages.id} AND e."userId"=${runMessages.userId} LIMIT 1)` })
     .from(runMessages)
     .where(and(isNull(runMessages.deliveredAt), sql`failure IS NULL`, inArray(runMessages.runId, live.map(run => run.id))))
     .orderBy(asc(runMessages.createdAt))
     .limit(500)
   // The runId filter above excludes mailbox messages, whose runId is null.
   const references = await deliveredReferences(messages)
-  const inputs: RunCommand[] = messages.flatMap(({ id, runId, text, origin, steer }) => runId && (!steer || options.activeTurnSteer) ? [{ kind: steer ? 'steer' as const : 'input' as const, runId, messageId: id, text: runMessagePrompt({ id, runId, origin, text }, references.get(id)) }] : [])
+  const inputs: RunCommand[] = messages.flatMap(({ id, runId, text, origin, steer, control }): RunCommand[] => {
+    if (!runId) return []
+    const controlKind = typeof control?.kind === 'string' ? control.kind : null
+    if (controlKind === 'compact') {
+      if (!options.runControlCommands) return []
+      const instructions = typeof control?.instructions === 'string' && control.instructions.trim() ? control.instructions.trim() : undefined
+      return [{ kind: 'compact' as const, runId, messageId: id, ...(instructions ? { instructions } : {}) }]
+    }
+    if (controlKind === 'client_composed') {
+      return [{
+        kind: 'input' as const,
+        runId,
+        messageId: id,
+        text: options.runControlCommands ? text : runMessagePrompt({ id, runId, origin, text }, references.get(id)),
+        ...(options.runControlCommands ? { clientComposed: true as const } : {}),
+      }]
+    }
+    if (controlKind === 'slash' && typeof control?.name === 'string' && control.name.trim()) {
+      const args = typeof control.args === 'string' && control.args.trim() ? control.args.trim() : undefined
+      return [{
+        kind: 'input' as const,
+        runId,
+        messageId: id,
+        text,
+        ...(options.runControlCommands ? { slashCommand: { name: control.name.trim(), ...(args ? { args } : {}) } } : {}),
+      }]
+    }
+    if (steer && !options.activeTurnSteer) return []
+    return [{ kind: steer ? 'steer' as const : 'input' as const, runId, messageId: id, text: runMessagePrompt({ id, runId, origin, text }, references.get(id)) }]
+  })
   const stops: RunCommand[] = live.filter(run => run.stopRequestedAt).map(run => ({ kind: 'stop', runId: run.id }))
   const notices = options.mailboxNotices ? await pendingMailboxNotices(deviceId, live.filter(run => !run.stopRequestedAt).map(run => run.id)) : []
   return { commands: [...stops, ...takenBack, ...notices, ...inputs].slice(0, 500), queuedRuns }

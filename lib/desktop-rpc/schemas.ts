@@ -15,6 +15,7 @@ import { taskPresentationsInput } from '@/lib/task-presentation-input'
 import { MAX_TURN_REFS } from '@/lib/turn-usage-limits'
 import { MAX_TURN_REF_LENGTH } from '@/lib/usage-turn-ref'
 import { z } from 'zod'
+import { structuredMentionsSchema } from '@mikka/protocol/slash-commands'
 import { threadHistoryInput, threadHistoryPosition } from '@/lib/thread-history'
 import { projectInput, projectPatch } from '@/lib/project-input'
 import { assigneeSchema, delegateSchema, blockFlagSchema, labelSchema, pullRequestSchema } from '@/lib/issue-metadata'
@@ -220,7 +221,7 @@ export const desktopActionSchemas = {
   'agents.getThreadGitTurnDiff': tuple(uuid.nullable(), uuid, object({ turnRunId: uuid.optional(), live: bool.optional(), cursor: text(256).optional(), limit: z.number().int().min(1).max(50).optional() })),
   'agents.getThreadTurnChanges': tuple(uuid.nullable(), uuid, uuid),
   'agents.getThreadInstructions': tuple(uuid.nullable(), uuid),
-  'agents.sendIssueThreadReply': tuple(object({ expectedOwnerId: text(256).optional(), expectedWorkspaceId: uuid.optional(), issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), requestId: uuid.optional(), retryOriginalSession: z.literal(true).optional(), questionWakeGeneration: uuid.optional(), modelChoice: threadModelChoice.optional(), delivery: z.enum(['queue','steer','interrupt']).optional(), references: z.array(object({ type: z.enum(['file','task','pr','thread','bot']), id: text(2048).min(1), offset: z.number().int().min(0).optional() })).max(20).optional() })),
+  'agents.sendIssueThreadReply': tuple(object({ expectedOwnerId: text(256).optional(), expectedWorkspaceId: uuid.optional(), issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), requestId: uuid.optional(), retryOriginalSession: z.literal(true).optional(), questionWakeGeneration: uuid.optional(), modelChoice: threadModelChoice.optional(), delivery: z.enum(['queue','steer','interrupt']).optional(), references: z.array(object({ type: z.enum(['file','task','pr','thread','bot']), id: text(2048).min(1), offset: z.number().int().min(0).optional() })).max(20).optional(), mentions: structuredMentionsSchema.optional(), sendAsText: bool.optional() })),
   'agents.createThreadReplyVersion': tuple(object({issueId:uuid.nullable(),runId:uuid,change:z.discriminatedUnion('operation',[
     object({operation:z.literal('edit'),anchorRunId:uuid,anchorKey:uuid,requestId:uuid,text:text(10_000).min(1)}),
     object({operation:z.literal('rerun'),anchorRunId:uuid,anchorKey:text(320).min(1),requestId:uuid})])})),
@@ -332,6 +333,9 @@ export const desktopActionSchemas = {
   'coordinator.coordinatorTurnVersions': tuple(bot),
   'coordinator.sendSuggestion': oneId,
   'coordinator.issueCreationAvailable': none,
+  'coordinator.compactBotChat': tuple(bot.optional()),
+  'coordinator.clearBotChat': tuple(bot.optional()),
+  'coordinator.getBotCommands': tuple(bot.optional()),
   'desktop-notifications.chooseDesktopNotifications': tuple(candidatesSchema),
   'execution-settings.getBotModelMenu': tuple(bot, workspace),
   'execution-settings.refreshBotModelMenuAction': tuple(bot),
@@ -480,7 +484,11 @@ export const desktopActionSchemas = {
   'task-runs.pollTaskRuns': none,
   'task-runs.pollThreads': tuple(version.optional(), listPositions(200).optional()),
   'task-runs.syncThreadList': tuple(version.optional(), listPositions(200).optional()),
-  'task-runs.findThreadReferences': z.union([tuple(uuid, text(120)), tuple(uuid, text(120), z.enum(['task', 'thread', 'pr', 'bot']))]),
+  'task-runs.findThreadReferences': z.union([
+    tuple(uuid, text(120)),
+    tuple(uuid, text(120), z.enum(['task', 'thread', 'pr', 'bot', 'device', 'subagent', 'plugin']).optional()),
+    tuple(uuid, text(120), z.enum(['task', 'thread', 'pr', 'bot', 'device', 'subagent', 'plugin']).optional(), uuid.optional()),
+  ]),
   'task-runs.listConversations': tuple(directoryInput),
   'list-views.listPullPins': oneId,
   'list-views.setPullPins': tuple(uuid, z.array(text(500)).min(1).max(100), bool),
@@ -493,7 +501,7 @@ export const desktopActionSchemas = {
   'task-runs.shareThread': oneId,
   'task-runs.revokeThreadShare': oneId,
   'task-runs.forkThread': z.union([oneId, tuple(uuid, z.enum(['full', 'summary']))]),
-  'task-runs.updateThread': tuple(uuid, object({ taskId: uuid.nullable().optional(), tags: z.array(text(60)).optional() })),
+  'task-runs.updateThread': tuple(uuid, object({ taskId: uuid.nullable().optional(), tags: z.array(text(60)).optional(), folder: text(60).nullable().optional() })),
   'task-runs.deleteThread': oneId,
   'task-runs.restoreThread': oneId,
   'task-runs.threadAutomation': tuple(uuid, z.record(z.string(), z.unknown())),
@@ -509,6 +517,9 @@ export const desktopActionSchemas = {
   'task-runs.removeThread': tuple(uuid),
   'task-runs.undoRemoveThread': tuple(uuid),
   'task-runs.threadTags': z.union([tuple(uuid), tuple(uuid, z.array(text(64)).max(20))]),
+  'task-runs.threadFolder': z.union([tuple(uuid), tuple(uuid, text(64).nullable())]),
+  'task-runs.listThreadFolders': none,
+  'task-runs.listComposerSlackChannels': z.union([none, tuple(uuid.optional())]),
   'task-runs.threadAutomationSeed': tuple(uuid),
   'task-runs.forkThreadFrom': tuple(object({ runId: uuid, itemId: text(200).min(1).nullable().optional(), mode: z.enum(['full', 'summary']), text: text(4000), requestId: uuid })),
   'team-relations.getIssueTeam': oneId,
@@ -554,9 +565,12 @@ export const desktopActionSchemas = {
   'workspace-settings.takeOverArchivedBot': tuple(uuid, workspace),
   'workspace.createWorkspace': tuple(z.union([text(120).trim().min(1), object({ name: text(120).trim().min(1), slug })])),
   'agents.getReferencePreview': tuple(object({ issueId: uuid.nullable(), runId: uuid, references: z.array(object({ type: z.enum(['file','task','pr','thread','bot']), id: text(2048).min(1), offset: z.number().int().min(0).optional() })).max(20) })),
-  'agents.btwIssueThreadMessage': tuple(object({ issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1) })),
+  'agents.btwIssueThreadMessage': tuple(object({ issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), fromMessageId: uuid.nullable().optional() })),
   'agents.getThreadContextStats': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
-  'agents.compactThread': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
+  'agents.compactThread': tuple(object({ issueId: uuid.nullable(), runId: uuid, instructions: text(4_000).optional() })),
+  'agents.getThreadCommands': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
+  'agents.getThreadMachineOptions': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
+  'agents.setThreadMachineSize': tuple(object({ issueId: uuid.nullable(), runId: uuid, machineSize: text(32).min(1) })),
   'agents.listThreadEnvVars': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
   'agents.setThreadEnvVar': tuple(object({ issueId: uuid.nullable(), runId: uuid, name: text(256).min(1), value: text(8192).min(1) })),
   'agents.deleteThreadEnvVar': tuple(object({ issueId: uuid.nullable(), runId: uuid, name: text(256).min(1) })),

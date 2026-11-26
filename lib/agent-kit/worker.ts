@@ -74,6 +74,10 @@ export interface WorkerDefinitionSnapshot {
   taskCompute?: import('../cloud-computer/machine-pricing').MachineSku & { requireVerifiedHardware?: true }
   /** Project/Repository/Environment configuration frozen at admission; never backfilled on old runs. */
   projectExecution?: ProjectExecutionSnapshot
+  /** Optional control directive for a continuation run's followUp (compact, allowed slash command, or literal client_composed, #3333). */
+  followUpControl?: import('@mikka/protocol/device').RunAssignment['followUpControl']
+  /** Optional preferred cloud machine size chosen for this thread's next run via /machine (#3333). */
+  preferredMachineSize?: import('../cloud-computer/machine-pricing').MachineSize
   /** Copied only from the host's authorized parent execution; legacy workers gain nothing. */
   customMcp?: McpAuthority
   schemaVersion: 1
