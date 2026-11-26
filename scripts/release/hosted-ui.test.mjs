@@ -1,10 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, writeFile, readFile, rm, stat, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { recordOverlay, productionOverlay, assertNoSourceMaps, desktopOverlayEvidence } from './hosted-ui.mjs'
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
@@ -103,7 +104,9 @@ test('official jobs keep private code out of public artifacts and pin desktop to
   const copyVerifier = signing.find(step => step.name === 'Copy the trusted release verifier outside the build workspace')
   const productCheckout = signing.find(step => step.uses?.startsWith('actions/checkout@') && step.with?.ref === '${{ needs.preflight.outputs.product }}')
   assert.equal(stageVerifier?.with?.ref, '${{ github.sha }}')
+  assert.equal(stageVerifier?.with?.path, '.release-verifier-checkout')
   assert.equal(stageVerifier?.with?.['persist-credentials'], false)
+  assert.equal(productCheckout?.with?.path, undefined)
   assert.ok(copyVerifier && productCheckout)
   assert.ok(signing.indexOf(stageVerifier) < signing.indexOf(copyVerifier))
   assert.ok(signing.indexOf(copyVerifier) < signing.indexOf(productCheckout))
@@ -121,7 +124,16 @@ test('official jobs keep private code out of public artifacts and pin desktop to
   // Verify the sparse-checked-out verifier tree imports cleanly outside the repo workspace.
   const isolated = await mkdtemp(join(tmpdir(), 'release-verifier-'))
   try {
-    execFileSync('bash', ['-e', '-c', copyVerifier.run], { cwd: new URL('../../', import.meta.url), env: { ...process.env, RUNNER_TEMP: isolated }, stdio: 'pipe' })
+    const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
+    const workspace = join(isolated, 'workspace')
+    const checkoutDir = join(workspace, stageVerifier.with.path)
+    for (const rel of stageVerifier.with['sparse-checkout'].split('\n').map(line => line.trim()).filter(Boolean)) {
+      const target = join(checkoutDir, rel)
+      await mkdir(dirname(target), { recursive: true })
+      await cp(join(repoRoot, rel), target, { recursive: true })
+    }
+    execFileSync('bash', ['-e', '-c', copyVerifier.run], { cwd: workspace, env: { ...process.env, RUNNER_TEMP: isolated }, stdio: 'pipe' })
+    await assert.rejects(stat(checkoutDir))
     execFileSync(process.execPath, ['--input-type=module', '-e', `import { verifyDesktopPromotedWeb } from ${JSON.stringify(join(isolated, 'release-verifier/scripts/release/cloudflare-promoted-web.mjs'))}; if (typeof verifyDesktopPromotedWeb !== 'function') throw Error('missing')`], { cwd: isolated, stdio: 'pipe' })
   } finally {
     await rm(isolated, { force: true, recursive: true })
