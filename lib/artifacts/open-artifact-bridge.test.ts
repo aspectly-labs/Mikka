@@ -190,6 +190,55 @@ test('HTTP bridge verifier enforces configured secret, body cap, HMAC signature,
   )
   assert.deepEqual(tooLarge, { ok: false, status: 413, error: 'payloadTooLarge' })
 
+  // Unsigned request rejects with 401 before touching the body stream
+  let streamPulled = false
+  const unreadStream = new ReadableStream(
+    {
+      pull(controller) {
+        streamPulled = true
+        controller.enqueue(new Uint8Array(1024))
+        controller.close()
+      },
+    },
+    { highWaterMark: 0 },
+  )
+  const unsignedReq = new Request('https://mikka.example/mikka/api/artifacts/open-artifact/bridge', {
+    method: 'POST',
+    body: unreadStream,
+    duplex: 'half',
+  } as RequestInit)
+  const unsignedChunked = await verifyOpenArtifactBridgeHttpRequest(unsignedReq, { env, nowSeconds: now })
+  assert.deepEqual(unsignedChunked, { ok: false, status: 401, error: 'invalidBridgeSignature' })
+  assert.equal(unsignedReq.bodyUsed, false)
+  assert.equal(streamPulled, false)
+
+  // Chunked stream without Content-Length cancels incrementally once > 256 KiB
+  let chunksProduced = 0
+  const hugeStream = new ReadableStream({
+    pull(controller) {
+      chunksProduced += 1
+      if (chunksProduced > 100) {
+        controller.close()
+        return
+      }
+      controller.enqueue(new Uint8Array(64 * 1024))
+    },
+  })
+  const chunkedTooLarge = await verifyOpenArtifactBridgeHttpRequest(
+    new Request('https://mikka.example/mikka/api/artifacts/open-artifact/bridge', {
+      method: 'POST',
+      headers: {
+        [OPEN_ARTIFACT_BRIDGE_TIMESTAMP_HEADER]: timestamp,
+        [OPEN_ARTIFACT_BRIDGE_SIGNATURE_HEADER]: signature,
+      },
+      body: hugeStream,
+      duplex: 'half',
+    } as RequestInit),
+    { env, nowSeconds: now },
+  )
+  assert.deepEqual(chunkedTooLarge, { ok: false, status: 413, error: 'payloadTooLarge' })
+  assert.ok(chunksProduced <= 6, `expected incremental stream abort, got ${chunksProduced} chunks`)
+
   // Bad signature returns 401.
   const badSig = await verifyOpenArtifactBridgeHttpRequest(
     makeReq(body, {
@@ -201,8 +250,39 @@ test('HTTP bridge verifier enforces configured secret, body cap, HMAC signature,
   assert.deepEqual(badSig, { ok: false, status: 401, error: 'invalidBridgeSignature' })
 })
 
-test('authenticateOpenArtifact fails closed without credentials or on session failure', async () => {
+test('authenticateOpenArtifact fails closed without credentials, on PATs, or on session failure', async () => {
   assert.deepEqual(await authenticateOpenArtifact({ action: 'authenticate' }, makeDeps()), { ok: false })
+
+  // Explicit PAT bearer token is refused before session lookup so workspace limits can never be dropped.
+  let calledForPat = false
+  assert.deepEqual(
+    await authenticateOpenArtifact(
+      { action: 'authenticate', authorizationHeader: 'Bearer mkp_abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG' },
+      makeDeps({
+        getSession: async () => {
+          calledForPat = true
+          return { user: { id: 'owner-user' } }
+        },
+      }),
+    ),
+    { ok: false },
+  )
+  assert.equal(calledForPat, false)
+
+  // Session carrying a PAT workspace pin is also refused fail-closed.
+  assert.deepEqual(
+    await authenticateOpenArtifact(
+      { action: 'authenticate', cookieHeader: 'x=1' },
+      makeDeps({
+        getSession: async () => ({
+          user: { id: 'owner-user', email: 'a@example.com', name: 'Alice', image: null },
+          tokenWorkspaceId: WORKSPACE_ID,
+          tokenId: 'pat-1',
+        }),
+      }),
+    ),
+    { ok: false },
+  )
 
   let seenCookie: string | null = null
   const ok = await authenticateOpenArtifact(
@@ -449,6 +529,15 @@ test('wake classification and delivery strictly fence collaborator/system/spoofe
   })
   assert.equal(recorded[0].kind, 'user_message')
   assert.equal(recorded[0].payload.classification, 'owner_turn')
+  const ownerPrompt = eventPrompt({
+    kind: recorded[0].kind,
+    issueId: recorded[0].issueId,
+    runId: recorded[0].runId,
+    payload: recorded[0].payload,
+  })
+  assert.match(ownerPrompt, new RegExp(`\\[\\[artifact:${ARTIFACT_ID}\\]\\]`))
+  assert.match(ownerPrompt, /Q4 Launch Plan/)
+  assert.match(ownerPrompt, /Update slide 4 metrics to Q4 actuals\./)
 
   // 2. Collaborator comment is NEVER elevated to user_message; strips fence breakouts
   const collabRes = await deliverOpenArtifactWake(

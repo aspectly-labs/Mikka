@@ -118,8 +118,16 @@ export function eventPrompt(event: { kind: CoordinatorEventKind; issueId: string
   const payload = event.payload
   const note = event.tier === 'attention' ? 'Triage: this needs the person; tell them.' : event.tier === 'background' ? 'Triage: background; mention it only if it matters to what you are doing.' : null
   switch (event.kind) {
-    case 'user_message':
-      return [event.issueId ? 'This chat is linked to issue ' + event.issueId + '.' : null, String(payload.text ?? '')].filter(Boolean).join('\n\n')
+    case 'user_message': {
+      const artifactContext = payload.source === 'open_artifact_wake' && typeof payload.artifactId === 'string'
+        ? `[Artifact${typeof payload.artifactTitle === 'string' && payload.artifactTitle ? ` "${payload.artifactTitle}"` : ''} ([[artifact:${payload.artifactId}]], ${typeof payload.reason === 'string' ? payload.reason : 'request'})]`
+        : null
+      return [
+        event.issueId ? 'This chat is linked to issue ' + event.issueId + '.' : null,
+        artifactContext,
+        String(payload.text ?? ''),
+      ].filter(Boolean).join('\n\n')
+    }
     case 'run_finished':
       return [
         `[Event] Run ${event.runId} ended with status ${payload.status} (${payload.stopReason}).`,

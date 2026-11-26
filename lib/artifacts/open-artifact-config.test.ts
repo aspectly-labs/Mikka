@@ -72,21 +72,23 @@ test('open-artifact config parses valid HTTPS/loopback origins, types, and never
   assert.equal('bridgeSecret' in pub, false)
 })
 
-test('openArtifactEmbedUrl computes URL only for enabled open_artifact rows with valid externalId', () => {
+test('openArtifactEmbedUrl computes URL only for enabled open_artifact rows with valid externalId and enabled artifactType', () => {
   const env = {
     OPEN_ARTIFACT_HOST_ORIGIN: 'https://artifacts.mikka.dev',
     OPEN_ARTIFACT_BRIDGE_SECRET: VALID_SECRET,
+    OPEN_ARTIFACT_ENABLED_TYPES: 'slides,docs',
   }
   assert.equal(openArtifactEmbedUrl('native', 'art_1', { env }), null)
   assert.equal(openArtifactEmbedUrl('open_artifact', null, { env }), null)
   assert.equal(openArtifactEmbedUrl('open_artifact', '../escape', { env }), null)
   assert.equal(openArtifactEmbedUrl('open_artifact', 'art_1', { env: {} }), null)
+  assert.equal(openArtifactEmbedUrl('open_artifact', 'art_1', { env, artifactType: 'whiteboard' }), null)
   assert.equal(
-    openArtifactEmbedUrl('open_artifact', 'art_1', { env }),
+    openArtifactEmbedUrl('open_artifact', 'art_1', { env, artifactType: 'slides' }),
     'https://artifacts.mikka.dev/a/art_1?embed=1',
   )
   assert.equal(
-    openArtifactEmbedUrl('open_artifact', 'art_1', { env, shareToken: 'mks_token123' }),
+    openArtifactEmbedUrl('open_artifact', 'art_1', { env, artifactType: 'docs', shareToken: 'mks_token123' }),
     'https://artifacts.mikka.dev/a/art_1?embed=1&share=mks_token123',
   )
 })

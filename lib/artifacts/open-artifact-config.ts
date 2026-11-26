@@ -8,16 +8,19 @@ import {
   type OpenArtifactConfigResponse,
   type RichArtifactType,
 } from '@mikka/protocol/open-artifact'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 /**
  * Typed runtime configuration for the Cloudflare-hosted Open Artifact rich
- * engine (`aspectly-labs/Mikka#3343`, aligned with `#3342` typed config).
+ * engine (`aspectly-labs/Mikka#3343`, reading through `@/lib/env/server` per `#3342`).
  *
  * Fail-closed invariants:
  * - Never hardcode production origins or secrets.
  * - Require BOTH a valid HTTPS (or loopback HTTP) `OPEN_ARTIFACT_HOST_ORIGIN`
  *   AND a sufficiently strong `OPEN_ARTIFACT_BRIDGE_SECRET` (>= 16 chars) before
  *   reporting `enabled: true`.
+ * - Enforce `OPEN_ARTIFACT_ENABLED_TYPES` in both config advertisement and
+ *   embed URL / catalog admission checks.
  * - Never expose `bridgeSecret` through public/client config views.
  */
 
@@ -59,9 +62,7 @@ function parseBridgeSecret(raw: string | undefined): string | null {
   return trimmed.length >= OPEN_ARTIFACT_BRIDGE_SECRET_MIN_LENGTH ? trimmed : null
 }
 
-export function readOpenArtifactConfig(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): OpenArtifactServerConfig {
+export function readOpenArtifactConfig(env: EnvMap = runtimeEnv()): OpenArtifactServerConfig {
   const hostOrigin = normalizeOpenArtifactOrigin(env.OPEN_ARTIFACT_HOST_ORIGIN)
   const bridgeSecret = parseBridgeSecret(env.OPEN_ARTIFACT_BRIDGE_SECRET)
   const enabled = Boolean(hostOrigin && bridgeSecret)
@@ -76,9 +77,7 @@ export function readOpenArtifactConfig(
   }
 }
 
-export function readPublicOpenArtifactConfig(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): OpenArtifactConfigResponse {
+export function readPublicOpenArtifactConfig(env: EnvMap = runtimeEnv()): OpenArtifactConfigResponse {
   const config = readOpenArtifactConfig(env)
   return {
     enabled: config.enabled,
@@ -87,14 +86,34 @@ export function readPublicOpenArtifactConfig(
   }
 }
 
+export function isOpenArtifactTypeEnabled(
+  artifactType: RichArtifactType | string | null | undefined,
+  env: EnvMap = runtimeEnv(),
+): boolean {
+  if (!isRichArtifactType(artifactType)) return false
+  const config = readOpenArtifactConfig(env)
+  return config.enabled && config.enabledTypes.includes(artifactType)
+}
+
 export function openArtifactEmbedUrl(
   engine: ArtifactEngine | string | null | undefined,
   externalId: string | null | undefined,
-  options: { shareToken?: string | null; env?: Readonly<Record<string, string | undefined>> } = {},
+  options: {
+    artifactType?: RichArtifactType | string | null
+    shareToken?: string | null
+    env?: EnvMap
+  } = {},
 ): string | null {
   if (engine !== 'open_artifact' || !externalId) return null
   const config = readOpenArtifactConfig(options.env)
   if (!config.enabled || !config.hostOrigin) return null
+  if (
+    options.artifactType !== undefined
+    && options.artifactType !== null
+    && (!isRichArtifactType(options.artifactType) || !config.enabledTypes.includes(options.artifactType))
+  ) {
+    return null
+  }
   return buildOpenArtifactEmbedUrl(config.hostOrigin, externalId, {
     embed: true,
     shareToken: options.shareToken,

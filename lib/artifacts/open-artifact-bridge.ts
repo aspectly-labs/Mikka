@@ -22,7 +22,9 @@ import { db } from '@/lib/db'
 import { agentRuns, artifactShares, artifacts, type ArtifactKind } from '@/lib/db/schema'
 import { cleanTitle } from '@/lib/artifacts/limits'
 import { submissionWorkspace } from '@/lib/artifacts/access'
-import { readOpenArtifactConfig } from '@/lib/artifacts/open-artifact-config'
+import { isOpenArtifactTypeEnabled, readOpenArtifactConfig } from '@/lib/artifacts/open-artifact-config'
+import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
+import { tokenWorkspace } from '@/lib/tokens/principal'
 import { artifactChanged } from '@/lib/live/artifacts'
 import { taskActivityChanged } from '@/lib/factory/activity-live'
 import { activeTaskWorkspaces, activeWorkspaceShareIssuer, withTaskWorkspace } from '@/lib/task-workspace'
@@ -35,6 +37,7 @@ export const OPEN_ARTIFACT_BRIDGE_MAX_BODY_BYTES = 262_144
 export const OPEN_ARTIFACT_WAKE_TEXT_MAX = 4000
 
 const SHARE_PREFIX = 'mks_'
+const PAT_BEARER_PATTERN = /^Bearer\s+mkp_/i
 const TIMESTAMP_PATTERN = /^\d{9,12}$/
 const SIGNATURE_HEX_PATTERN = /^[0-9a-f]{64}$/i
 
@@ -120,9 +123,51 @@ export function verifyOpenArtifactBridgeSignature(input: {
 async function readBoundedText(request: Request, maxBytes: number): Promise<string | null> {
   const declared = Number(request.headers.get('content-length') ?? '')
   if (Number.isFinite(declared) && declared > maxBytes) return null
-  const buffer = await request.arrayBuffer()
-  if (buffer.byteLength > maxBytes) return null
-  return new TextDecoder().decode(buffer)
+  if (!request.body) return ''
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        return null
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(merged)
+}
+
+function precheckBridgeHeaders(input: {
+  timestampHeader: string | null | undefined
+  signatureHeader: string | null | undefined
+  nowSeconds?: number
+  maxSkewSeconds?: number
+}): boolean {
+  const timestampRaw = input.timestampHeader?.trim() ?? ''
+  const signatureRaw = input.signatureHeader?.trim() ?? ''
+  if (!timestampRaw || !signatureRaw) return false
+  if (!TIMESTAMP_PATTERN.test(timestampRaw)) return false
+  const timestamp = Number(timestampRaw)
+  if (!Number.isSafeInteger(timestamp) || timestamp <= 0) return false
+  const now = input.nowSeconds ?? Math.floor(Date.now() / 1000)
+  const maxSkew = input.maxSkewSeconds ?? OPEN_ARTIFACT_BRIDGE_MAX_SKEW_SECONDS
+  if (Math.abs(now - timestamp) > maxSkew) return false
+  if (!signatureRaw.startsWith(OPEN_ARTIFACT_BRIDGE_SIGNATURE_PREFIX)) return false
+  return SIGNATURE_HEX_PATTERN.test(signatureRaw.slice(OPEN_ARTIFACT_BRIDGE_SIGNATURE_PREFIX.length))
 }
 
 export async function verifyOpenArtifactBridgeHttpRequest(
@@ -137,14 +182,27 @@ export async function verifyOpenArtifactBridgeHttpRequest(
   if (!config.bridgeSecret) {
     return { ok: false, status: 503, error: 'openArtifactBridgeNotConfigured' }
   }
+  const timestampHeader = request.headers.get(OPEN_ARTIFACT_BRIDGE_TIMESTAMP_HEADER)
+  const signatureHeader = request.headers.get(OPEN_ARTIFACT_BRIDGE_SIGNATURE_HEADER)
+  // Reject unsigned, malformed, or expired requests before reading any body bytes.
+  if (
+    !precheckBridgeHeaders({
+      timestampHeader,
+      signatureHeader,
+      nowSeconds: options.nowSeconds,
+      maxSkewSeconds: options.maxSkewSeconds,
+    })
+  ) {
+    return { ok: false, status: 401, error: 'invalidBridgeSignature' }
+  }
   const rawBody = await readBoundedText(request, OPEN_ARTIFACT_BRIDGE_MAX_BODY_BYTES)
   if (rawBody === null) {
     return { ok: false, status: 413, error: 'payloadTooLarge' }
   }
   const verified = verifyOpenArtifactBridgeSignature({
     rawBody,
-    timestampHeader: request.headers.get(OPEN_ARTIFACT_BRIDGE_TIMESTAMP_HEADER),
-    signatureHeader: request.headers.get(OPEN_ARTIFACT_BRIDGE_SIGNATURE_HEADER),
+    timestampHeader,
+    signatureHeader,
     secret: config.bridgeSecret,
     nowSeconds: options.nowSeconds,
     maxSkewSeconds: options.maxSkewSeconds,
@@ -260,7 +318,16 @@ export interface LiveArtifactShareRow {
 
 export interface OpenArtifactBridgeDeps {
   getSession: (headers: Headers) => Promise<{
-    user: { id: string; email?: string | null; name?: string | null; image?: string | null }
+    user: {
+      id: string
+      email?: string | null
+      name?: string | null
+      image?: string | null
+      [tokenWorkspace]?: string
+      [enterprisePrincipal]?: EnterprisePrincipal
+    }
+    tokenWorkspaceId?: string
+    tokenId?: string
   } | null>
   findArtifactByExternalId: (externalId: string) => Promise<IndexedOpenArtifactRow | null>
   activeWorkspaceIdsForUser: (userId: string, workspaceId?: string) => Promise<string[]>
@@ -391,6 +458,9 @@ export async function authenticateOpenArtifact(
 ): Promise<AuthenticateBridgeResult> {
   const cookie = input.cookieHeader?.trim()
   const authorization = input.authorizationHeader?.trim()
+  // Personal Access Tokens are pinned to a single workspace; never admit them
+  // into the browser-session Open Artifact host where the pin would be dropped.
+  if (authorization && PAT_BEARER_PATTERN.test(authorization)) return { ok: false }
   if (!cookie && !authorization) return { ok: false }
 
   const headers = new Headers()
@@ -401,6 +471,14 @@ export async function authenticateOpenArtifact(
   try {
     const session = await getSession(headers)
     if (!session?.user?.id) return { ok: false }
+    if (
+      session.tokenId
+      || session.tokenWorkspaceId
+      || session.user[tokenWorkspace]
+      || (session.user[enterprisePrincipal] && session.user[enterprisePrincipal].kind !== 'session')
+    ) {
+      return { ok: false }
+    }
     return {
       ok: true,
       identity: {
@@ -680,13 +758,23 @@ export async function syncOpenArtifactCatalog(
     return { ok: false, status: 403, error: 'artifactOwnershipMismatch' }
   }
 
+  const candidateType: RichArtifactType = input.artifactType ?? existing?.artifactType ?? 'docs'
+  if (!existing && !isOpenArtifactTypeEnabled(candidateType)) {
+    return { ok: false, status: 403, error: 'artifactTypeDisabled' }
+  }
+
   let workspaceId: string | null = existing?.workspaceId ?? input.workspaceId ?? null
-  if (!workspaceId && (input.runId || input.issueId)) {
-    workspaceId = await submissionWorkspace({
+  if (input.runId || input.issueId) {
+    const validatedWorkspaceId = await submissionWorkspace({
       userId: subject,
-      runId: input.runId ?? null,
-      issueId: input.issueId ?? null,
+      workspaceId: workspaceId ?? undefined,
+      runId: input.runId ?? existing?.runId ?? null,
+      issueId: input.issueId ?? existing?.issueId ?? null,
     })
+    if (workspaceId && validatedWorkspaceId !== workspaceId) {
+      return { ok: false, status: 403, error: 'workspaceAccessDenied' }
+    }
+    workspaceId = validatedWorkspaceId
   }
   if (!workspaceId) {
     workspaceId = await personalWorkspaceId(subject)
@@ -697,33 +785,58 @@ export async function syncOpenArtifactCatalog(
     return { ok: false, status: 403, error: 'workspaceAccessDenied' }
   }
 
-  const artifactType: RichArtifactType = input.artifactType ?? existing?.artifactType ?? 'docs'
-  const title = cleanTitle(input.title ?? existing?.title ?? input.externalId) || input.externalId.slice(0, 200)
-  const resolvedRunId = input.runId ?? existing?.runId ?? null
-  const resolvedIssueId = input.issueId ?? existing?.issueId ?? null
-
   const result = await withTaskWorkspace({ id: subject }, workspaceId, () =>
     db.transaction(async tx => {
       await tx.execute(sql`select mikka_account_assert_writable(${subject})`)
-      if (existing) {
-        const nextVersion = Math.max(existing.latestVersion, input.version ?? existing.latestVersion)
+      // Re-read and row-lock inside the transaction so concurrent syncs never regress versions.
+      const [locked] = await tx
+        .select({
+          id: artifacts.id,
+          userId: artifacts.userId,
+          workspaceId: artifacts.workspaceId,
+          title: artifacts.title,
+          artifactType: artifacts.artifactType,
+          latestVersion: artifacts.latestVersion,
+          runId: artifacts.runId,
+          issueId: artifacts.issueId,
+        })
+        .from(artifacts)
+        .where(and(eq(artifacts.engine, 'open_artifact'), eq(artifacts.externalId, input.externalId)))
+        .for('update')
+        .limit(1)
+
+      if (locked) {
+        if (locked.userId !== subject || locked.workspaceId !== workspaceId) {
+          return { ok: false as const, status: 403 as const, error: 'artifactOwnershipMismatch' }
+        }
+        const artifactType: RichArtifactType = input.artifactType ?? locked.artifactType ?? 'docs'
+        const title = cleanTitle(input.title ?? locked.title) || input.externalId.slice(0, 200)
+        const nextVersion = Math.max(locked.latestVersion, input.version ?? locked.latestVersion)
+        const resolvedRunId = input.runId ?? locked.runId ?? null
+        const resolvedIssueId = input.issueId ?? locked.issueId ?? null
         await tx
           .update(artifacts)
           .set({
             title,
             artifactType,
             kind: fallbackNativeKind(artifactType),
-            latestVersion: nextVersion,
+            runId: resolvedRunId,
+            issueId: resolvedIssueId,
+            latestVersion: sql`GREATEST(${artifacts.latestVersion}, ${nextVersion})`,
             updatedAt: new Date(),
           })
-          .where(and(eq(artifacts.id, existing.id), eq(artifacts.userId, subject)))
-        await artifactChanged(tx, subject, existing.id)
+          .where(and(eq(artifacts.id, locked.id), eq(artifacts.userId, subject)))
+        await artifactChanged(tx, subject, locked.id)
         if (resolvedRunId) taskActivityChanged(tx, resolvedRunId)
-        return { artifactId: existing.id, version: nextVersion }
+        return { ok: true as const, artifactId: locked.id, version: nextVersion }
       }
 
       const artifactId = crypto.randomUUID()
       const version = input.version ?? 1
+      const artifactType: RichArtifactType = candidateType
+      const title = cleanTitle(input.title ?? input.externalId) || input.externalId.slice(0, 200)
+      const resolvedRunId = input.runId ?? null
+      const resolvedIssueId = input.issueId ?? null
       await tx.insert(artifacts).values({
         id: artifactId,
         userId: subject,
@@ -760,9 +873,13 @@ export async function syncOpenArtifactCatalog(
         taskActivityChanged(tx, resolvedRunId)
       }
       await artifactChanged(tx, subject, artifactId)
-      return { artifactId, version }
+      return { ok: true as const, artifactId, version }
     }),
   )
+
+  if (!result.ok) {
+    return result
+  }
 
   return {
     ok: true,

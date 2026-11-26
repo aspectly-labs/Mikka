@@ -1260,8 +1260,8 @@ export const artifacts = pgTable('artifacts', {
 }, table => [
   index('artifacts_user_idx').on(table.userId, table.updatedAt),
   index('artifacts_run_idx').on(table.runId),
-  uniqueIndex('artifacts_workspace_external_id_uidx')
-    .on(table.workspaceId, table.externalId)
+  uniqueIndex('artifacts_open_artifact_external_id_uidx')
+    .on(table.externalId)
     .where(sql`${table.engine} = 'open_artifact' AND ${table.externalId} IS NOT NULL`),
 ])
 

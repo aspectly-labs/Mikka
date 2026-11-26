@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3346 additive engine/externalId/artifactType columns with default 'native' and partial unique index, modifies zero existing rows
 -- target: MIKKA_DATABASE_URL
 
 -- #3343: Unified artifact catalog metadata for Open Artifact rich-engine documents.
@@ -39,8 +40,8 @@ DO $$ BEGIN
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS artifacts_workspace_external_id_uidx
-  ON artifacts ("workspaceId", "externalId")
+CREATE UNIQUE INDEX IF NOT EXISTS artifacts_open_artifact_external_id_uidx
+  ON artifacts ("externalId")
   WHERE "engine" = 'open_artifact' AND "externalId" IS NOT NULL;
 
 COMMIT;

@@ -71,9 +71,10 @@ export async function submitArtifact(submitter: ArtifactSubmitter, input: { titl
     let artifactId = input.artifactId
     let version = 1
     if (artifactId) {
-      const [existing] = await tx.select({ kind: artifacts.kind, latestVersion: artifacts.latestVersion }).from(artifacts)
+      const [existing] = await tx.select({ kind: artifacts.kind, engine: artifacts.engine, latestVersion: artifacts.latestVersion }).from(artifacts)
         .where(and(eq(artifacts.id, artifactId), eq(artifacts.userId, submitter.userId), eq(artifacts.workspaceId, workspaceId))).for('update')
       if (!existing) return { error: 'not_found' as const, message: 'No artifact with that id for this person.' }
+      if (existing.engine !== 'native') return { error: 'kind_mismatch' as const, message: 'That artifact is managed by Open Artifact and cannot be updated as a native artifact.' }
       if (existing.kind !== input.kind) return { error: 'kind_mismatch' as const, message: `That artifact is ${existing.kind}; send the same kind or start a new artifact.` }
       version = existing.latestVersion + 1
       await tx.update(artifacts).set({ title, latestVersion: version, updatedAt: new Date() }).where(eq(artifacts.id, artifactId))
@@ -109,7 +110,7 @@ export async function artifactSummaries(reader: ArtifactReader, ids: readonly st
     artifactType: artifacts.artifactType, title: artifacts.title, latestVersion: artifacts.latestVersion, acceptanceTaskId: acceptanceTask,
   })
     .from(artifacts).where(and(await artifactAccess(reader), inArray(artifacts.id, [...new Set(ids)])))
-  return Object.fromEntries(rows.map(row => [row.id, { ...row, embedUrl: openArtifactEmbedUrl(row.engine, row.externalId) }]))
+  return Object.fromEntries(rows.map(row => [row.id, { ...row, embedUrl: openArtifactEmbedUrl(row.engine, row.externalId, { artifactType: row.artifactType }) }]))
 }
 
 async function detail(where: ReturnType<typeof and>, options: { shareToken?: string } = {}): Promise<ArtifactDetail | null> {
@@ -134,7 +135,7 @@ async function detail(where: ReturnType<typeof and>, options: { shareToken?: str
   const { userId: _owner, workspaceId: _workspace, ...summary } = row
   return {
     ...summary,
-    embedUrl: openArtifactEmbedUrl(row.engine, row.externalId, { shareToken: options.shareToken }),
+    embedUrl: openArtifactEmbedUrl(row.engine, row.externalId, { artifactType: row.artifactType, shareToken: options.shareToken }),
     versions: versions.map(version => {
       if (agent?.wrote(version.authorName)) return { ...version, authorName: agent.name, createdAt: version.createdAt.toISOString(), authorColor: null, authorShape: null, authorHarness: agent.harness }
       const bot = look(version.authorName)
@@ -212,7 +213,7 @@ async function withIssueKeys(reader: ArtifactReader, rows: (Omit<ArtifactListIte
   return rows.map(({ updatedAt, ...row }) => {
     const number = row.issueId ? numbers.get(row.issueId) ?? null : null
     const issueKey = row.issueId && numbers.has(row.issueId) ? identifiers.get(row.issueId) ?? (number === null ? null : `#${number}`) : null
-    return { ...row, embedUrl: openArtifactEmbedUrl(row.engine, row.externalId), issueKey, updatedAt: updatedAt.toISOString() }
+    return { ...row, embedUrl: openArtifactEmbedUrl(row.engine, row.externalId, { artifactType: row.artifactType }), issueKey, updatedAt: updatedAt.toISOString() }
   })
 }
 
