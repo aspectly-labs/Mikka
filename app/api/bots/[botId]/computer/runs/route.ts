@@ -115,7 +115,14 @@ export const POST = defineRoute<'session', 'none', { botId: string }>(
     // #3082: the Eve route's machine opens lazily with its first role turn;
     // only the native thread machine needs an explicit start here.
     if (eveDrive) await eveDrive()
-    else if ('runId' in result && result.thread !== 'message') await (await import('@/lib/run-leases')).startThreadMachine({ userId: session.user.id, workspaceId: context.workspace.id }, result.runId)
+    else if ('runId' in result && result.thread !== 'message') {
+      const started = await (await import('@/lib/run-leases')).startThreadMachine({ userId: session.user.id, workspaceId: context.workspace.id }, result.runId)
+      if (started?.state === 'unavailable' && started.reason === 'provider_unavailable') {
+        const { taskProviderUnavailableMessage } = await import('@/lib/cloud-computer/task-provider-admission')
+        return Response.json({ error: taskProviderUnavailableMessage(started.provider), code: 'task_provider_unavailable',
+          provider: started.provider, runId: result.runId, retryable: true }, { status: 503, headers })
+      }
+    }
     return Response.json(result, { status: 202, headers })
   } catch (error) {
     if (error instanceof AgentNoModelError) {

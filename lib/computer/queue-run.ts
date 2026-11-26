@@ -14,11 +14,13 @@ import { freezeWorkerDefinition, type WorkerModelDispatch } from '@/lib/agent-ki
 import { captureTraceContext } from '@/lib/tracing/context'
 import type { AgentExecution } from '@/lib/agent-kit/store'
 import { ComputerError } from './store'
+import { ownE2BKeySql } from '../secrets/e2b-owner-sql'
 import { RunModelMissingError } from './run-model'
 import { runCredentialSource, type RunApiKey } from '@/lib/run-credential-source'
 import { cloudTaskTarget } from './cloud-task-target'
 import { provisionableMachineSize } from '../cloud-computer/machine-pricing'
-import { verifiedMachineQuota } from '../cloud-computer/sponsored-task'
+import { hostedTaskEnabled, verifiedMachineQuota } from '../cloud-computer/sponsored-task'
+import { selectTaskProvider, taskComputeSku, taskProviderUnavailableMessage } from '../cloud-computer/task-provider-admission'
 import { runListChanged } from '@/lib/live/lists'
 import { runChanged } from '@/lib/live/panels'
 import { resolveRunOrigin, type RunOrigin, type RunOriginRef } from '@/lib/run-origin'
@@ -170,18 +172,31 @@ export async function queueCloudRun(pool: Pool, actor: { userId: string; workspa
     }
     const effectiveBaseBranch = effectiveExecution ? effectiveExecution.baseBranch : retainSource ? prior.baseBranch : projectExecution.baseBranch
     const earlierPlacement = prior?.agentDefinition?.taskMachine
-    if (earlierPlacement || sponsored) {
-      if (input.withoutBot || !repository.remoteUrl || !effectiveExecution?.repositoryKey || !subscription || !['codex','claude_code'].includes(target.harness) ||
-          (prior && !earlierPlacement) || (earlierPlacement && (earlierPlacement.ownerId!==actor.userId || earlierPlacement.workspaceId!==actor.workspaceId ||
-             earlierPlacement.taskId!==input.issueId || earlierPlacement.botId!==input.botId || earlierPlacement.repositoryKey!==effectiveExecution.repositoryKey)))
-        throw new ComputerError(409,'Cloudflare coding task unavailable')
-      // The quota gate (#3080): the frozen placement records what actually starts
-      // and is billed, with an over-limit request and its reason alongside.
-      const requestedSize = settings.machineSize ?? effectiveExecution.environment?.defaultMachineSize
-      const provision = requestedSize ? provisionableMachineSize(requestedSize, verifiedMachineQuota()) : null
-      frozen.taskMachine=earlierPlacement ?? {provider:'cloudflare',payer:'mikka',ownerId:actor.userId,workspaceId:actor.workspaceId,
-        taskId:input.issueId,botId:input.botId,repositoryKey:effectiveExecution.repositoryKey,requestEventId:input.sourceEventId!,
-        ...(provision ? { size: provision.size, ...(provision.adjusted ? { requestedSize: provision.requested, sizeReason: provision.adjusted } : {}) } : {})}
+    if (repository.remoteUrl) {
+      const { provider, source } = await selectTaskProvider(actor, sponsored, earlierPlacement ? 'cloudflare' : undefined)
+      if (source === 'remote') delete frozen.allowLocalRecovery
+      const requestedSize = settings.machineSize ?? effectiveExecution?.environment?.defaultMachineSize
+      frozen.taskCompute = taskComputeSku(provider, {
+        cloudflare: requestedSize, e2b: effectiveExecution?.environment?.e2bMachineSize ?? undefined,
+      }, verifiedMachineQuota())
+      if (frozen.taskCompute.provider === 'cloudflare') {
+        if (!hostedTaskEnabled(actor.workspaceId) || !effectiveExecution?.repositoryKey ||
+            !['codex','claude_code'].includes(target.harness)) {
+          throw new ComputerError(503, taskProviderUnavailableMessage('cloudflare'))
+        }
+        const provision = requestedSize ? provisionableMachineSize(requestedSize, verifiedMachineQuota()) : null
+        frozen.taskMachine = { provider: 'cloudflare', payer: 'mikka', ownerId: actor.userId, workspaceId: actor.workspaceId,
+          taskId: input.issueId, botId: input.botId, repositoryKey: effectiveExecution.repositoryKey,
+          requestEventId: sponsored ? input.sourceEventId! : source === 'previous' ? earlierPlacement?.requestEventId ?? null : null,
+          size: frozen.taskCompute.size,
+          ...(provision?.adjusted ? { requestedSize: provision.requested, sizeReason: provision.adjusted } : {}) }
+      } else {
+        const { rows: [availability] } = await client.query<{ configured: boolean }>(
+          `SELECT ${ownE2BKeySql('$1::text')} AS configured`, [actor.userId])
+        if (!availability?.configured) throw new ComputerError(503, taskProviderUnavailableMessage('e2b'))
+      }
+    } else if (sponsored) {
+      throw new ComputerError(409, 'Cloudflare coding task requires a repository.')
     }
     frozen.definitionDigest = workerDefinitionDigest(frozen)
     frozen.executionIdentity = await freezeExecutionIdentity(client, { userId: actor.userId, botId: runBotId, deviceId: target.deviceId, agentDefinition: frozen }, undefined, actor.workspaceId)

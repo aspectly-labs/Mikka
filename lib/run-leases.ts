@@ -1,4 +1,5 @@
 import { runChanged } from './live/panels'
+import { taskProviderUnavailableMessage } from './cloud-computer/task-provider-admission'
 import { scheduleThreadTitle } from '@/lib/thread-title-schedule'
 import 'server-only'
 import { runListChanged } from './live/lists'
@@ -283,13 +284,15 @@ async function reclaimAuthorizedLostRun(run: Run, outcome: Extract<ReturnType<ty
       agentDefinition: retryWorkerDefinition(target ? await rebindExecutionDevice(pool, run, target.deviceId) : run.agentDefinition, recovery.prompt),
       deviceId: target?.deviceId ?? run.deviceId, deviceRepoId: target?.deviceRepoId ?? run.deviceRepoId, status: 'queued', kind: run.kind, baseBranch: run.baseBranch,
       prompt: recovery.prompt, promptTaskStart: recovery.promptTaskStart, promptTaskLength: recovery.promptTaskLength, attempt: outcome.attempt, retryOf: run.id,
+      ...(bound && run.workspaceId ? { workspaceId: run.workspaceId } : {}),
     })
     await runListChanged(tx, retryId)
     await runChanged(tx, retryId)
     if (bound) {
       // Same thread, new sandbox: the retry gets its own thread machine, built from the workspace snapshot.
       await tx.execute(sql`insert into computer_run_bindings ("runId","botId","workspaceId","ownerId") select ${retryId},"botId","workspaceId","ownerId" from computer_run_bindings where "runId"=${run.id} and "ownerId"=${run.userId}`)
-      await tx.execute(sql`insert into thread_machines ("runId","workspaceId","ownerId","botId","snapshotId","operationId",state) select ${retryId},"workspaceId","ownerId","botId",'pending',${crypto.randomUUID()},'starting' from computer_run_bindings where "runId"=${run.id} and "ownerId"=${run.userId} on conflict do nothing`)
+      const sponsored = run.agentDefinition?.taskCompute?.provider === 'cloudflare' || run.agentDefinition?.taskMachine?.provider === 'cloudflare'
+      await tx.execute(sql`insert into thread_machines ("runId","workspaceId","ownerId","botId","snapshotId","operationId",state,"issueId") select ${retryId},"workspaceId","ownerId","botId",${sponsored ? 'cloudflare-task-v1' : 'pending'},${crypto.randomUUID()},'starting',${sponsored ? run.issueId : null} from computer_run_bindings where "runId"=${run.id} and "ownerId"=${run.userId} on conflict do nothing`)
     }
     await recordCoordinatorEvent(tx, runRetriedEvent(run, { runId: retryId, attempt: outcome.attempt, maxAttempts: MAX_RUN_ATTEMPTS,
       movedToDeviceId: target?.deviceId ?? null, movedTo: bound ? { kind: 'cloud' } : target ? { kind: 'device', deviceId: target.deviceId } : null }))
@@ -410,6 +413,11 @@ export async function startThreadMachine(actor: { userId: string; workspaceId: s
             AND previous.status IN ('succeeded','failed','stopped','cancelled'))`, [runId,actor.userId,actor.workspaceId])
     if (retained.rowCount) return { state: 'unavailable' as const, reason: 'retained_runtime' as const }
     await failUnclaimedCloudStart(actor, runId, error)
+    const [failed] = await db.select({ definition: agentRuns.agentDefinition, status: agentRuns.status, error: agentRuns.error }).from(agentRuns)
+      .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, actor.userId), eq(agentRuns.workspaceId, actor.workspaceId))).limit(1)
+    const provider = failed?.definition?.taskCompute?.provider
+    if (provider && failed.status === 'failed' && failed.error === taskProviderUnavailableMessage(provider))
+      return { state: 'unavailable' as const, reason: 'provider_unavailable' as const, provider }
   }
 }
 
@@ -449,7 +457,10 @@ export async function failUnclaimedCloudStart(actor: { userId: string; workspace
             AND previous.status IN ('succeeded','failed','stopped','cancelled'))`)
     if (retained.rowCount) return null
     const [ended] = await tx.update(agentRuns).set({ status: 'failed', pauseReason: null, resumeStatus: null,
-      stopReason: 'device_lost', failureDetails: serverRunFailure(runId, now), error: run.error ?? DEVICE_STAYED_OFFLINE, finishedAt: now, updatedAt: now })
+      stopReason: 'device_lost', failureDetails: serverRunFailure(runId, now),
+      error: run.error ?? (run.agentDefinition?.taskCompute
+        ? taskProviderUnavailableMessage(run.agentDefinition.taskCompute.provider)
+        : DEVICE_STAYED_OFFLINE), finishedAt: now, updatedAt: now })
       .where(eq(agentRuns.id, runId)).returning()
     const event = runFinishedEvent({ ...ended, stopReason: 'device_lost', report: null })
     await recordTerminalEvent(tx, { ...event, payload: { ...event.payload, noMachine } })

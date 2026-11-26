@@ -71,6 +71,7 @@ export interface WorkerDefinitionSnapshot {
   executionIdentity?: ExecutionIdentity
   /** An explicitly sponsored coding task. Old and ordinary cloud runs keep the owner's E2B account. */
   taskMachine?: import('../cloud-computer/sponsored-task').SponsoredTaskPlacement
+  taskCompute?: import('../cloud-computer/machine-pricing').MachineSku
   /** Project/Repository/Environment configuration frozen at admission; never backfilled on old runs. */
   projectExecution?: ProjectExecutionSnapshot
   /** Copied only from the host's authorized parent execution; legacy workers gain nothing. */

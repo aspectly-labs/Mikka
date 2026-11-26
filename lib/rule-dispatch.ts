@@ -24,7 +24,7 @@ export async function cloudReady(
   if (!cloudComputerRunsEnabled()) return false;
   if (purpose === 'cloudflare_task') {
     const { hostedTaskEnabled } = await import('./cloud-computer/sponsored-task')
-    return hostedTaskEnabled(scope.workspaceId)
+    if (hostedTaskEnabled(scope.workspaceId)) return true
   }
   const { rowCount } = await query.query(
     `SELECT 1 WHERE ${ownE2BKeySql('$3::text')}

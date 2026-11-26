@@ -14,7 +14,7 @@ export type SponsoredTaskPlacement = Readonly<{
   taskId: string
   botId: string
   repositoryKey: string
-  requestEventId: string
+  requestEventId: string | null
   /** The size the machine is billed at: the run's provisionable request after the quota
    * gate (#3080), else its Environment's default; absent is Mikka's default. */
   size?: import('./machine-pricing').MachineSize
@@ -64,27 +64,30 @@ export function verifiedMachineQuota(env: NodeJS.ProcessEnv = process.env) {
 export async function verifySponsoredChoice(query: Query, placement: SponsoredTaskPlacement) {
   if (!hostedTaskEnabled(placement.workspaceId)) throw denied()
   const result = await query.query(
-    `SELECT 1 FROM coordinator_events e JOIN issues i ON i.id=$3
-    JOIN bots b ON b.id=e."botId" AND b."ownerId"=e."userId" AND b."workspaceId"=i."workspaceId"
-    WHERE e.id=$1 AND e."botId"=$5 AND e."userId"=$2 AND e."issueId"=i.id AND i."workspaceId"=$4 AND i."userId"=$2
-      AND e.kind='user_message' AND e."deliveredAt" IS NOT NULL AND b."archivedAt" IS NULL
-      AND i."ownershipState"='bound' AND e.payload->'taskDestination'='{"kind":"cloud","provider":"cloudflare"}'::jsonb`,
+    `SELECT 1 FROM issues i JOIN bots b ON b.id=$5 AND b."ownerId"=$2 AND b."workspaceId"=i."workspaceId"
+    WHERE i.id=$3 AND i."workspaceId"=$4 AND i."userId"=$2 AND i."ownershipState"='bound' AND b."archivedAt" IS NULL
+      AND ($1::uuid IS NULL OR EXISTS (SELECT 1 FROM coordinator_events e WHERE e.id=$1 AND e."botId"=b.id
+        AND e."userId"=$2 AND e."issueId"=i.id AND e.kind='user_message' AND e."deliveredAt" IS NOT NULL
+        AND e.payload->'taskDestination'='{"kind":"cloud","provider":"cloudflare"}'::jsonb))`,
     [placement.requestEventId, placement.ownerId, placement.taskId, placement.workspaceId, placement.botId],
   )
   if (result.rowCount !== 1) throw denied()
 }
 
-const bindingSql = `SELECT r.id,r."userId",r."workspaceId",r."issueId",r."botId",r."agentId",r."deviceId",
+const strictSponsoredUntil = `(m.lifecycle->>'sponsoredUntil')::timestamptz`
+const sponsoredDeadline = `CASE WHEN r."agentDefinition"#>>'{taskCompute,provider}'='cloudflare' THEN ${strictSponsoredUntil}
+  ELSE COALESCE(${strictSponsoredUntil}+CASE WHEN ${jsonbFlagIsTrueSql('m.lifecycle', 'sponsoredUnfunded')} THEN interval '0' ELSE interval '10 minutes' END,m."workerLeaseUntil") END`
+const bindingSql = `SELECT r.id,r."userId",r."workspaceId",r."issueId",b."botId",r."agentId",r."deviceId",
       r."deviceRepoId",r."baseBranch",r."agentDefinition",m."operationId",m.lifecycle->'sponsoredRestore' AS "requiredCheckpoint",
       m.lifecycle->>'sponsoredSize' AS "sponsoredSize",
-      COALESCE((m.lifecycle->>'sponsoredUntil')::timestamptz+CASE WHEN ${jsonbFlagIsTrueSql('m.lifecycle', 'sponsoredUnfunded')} THEN interval '0' ELSE interval '10 minutes' END,m."workerLeaseUntil") AS until,repo."repoPath",repo."remoteUrl"
+      ${sponsoredDeadline} AS until,repo."repoPath",repo."remoteUrl"
     FROM agent_runs r
-    JOIN computer_run_bindings b ON b."runId"=r.id AND b."ownerId"=r."userId" AND b."workspaceId"=r."workspaceId" AND b."botId"=r."botId"
+    JOIN computer_run_bindings b ON b."runId"=r.id AND b."ownerId"=r."userId" AND b."workspaceId"=r."workspaceId" AND (r."botId" IS NULL OR b."botId"=r."botId")
     JOIN thread_machines m ON m."runId"=r.id AND m."ownerId"=b."ownerId" AND m."workspaceId"=b."workspaceId" AND m."botId"=b."botId" AND m."issueId"=r."issueId"
     JOIN device_repos repo ON repo.id=r."deviceRepoId" AND repo."userId"=r."userId" AND repo."deviceId"=r."deviceId"
     WHERE r.id=$1 AND r."userId"=$2 AND r."workspaceId"=$3 AND m."snapshotId"=$4`
 const activeSql = ` AND m.state IN ('starting','running')
-    AND COALESCE((m.lifecycle->>'sponsoredUntil')::timestamptz+CASE WHEN ${jsonbFlagIsTrueSql('m.lifecycle', 'sponsoredUnfunded')} THEN interval '0' ELSE interval '10 minutes' END,m."workerLeaseUntil")>clock_timestamp()
+    AND ${sponsoredDeadline}>clock_timestamp()
     AND r.status IN ('queued','preparing','running','waiting_input') AND r."stopRequestedAt" IS NULL
     AND (r.status='queued' OR r."leaseExpiresAt">clock_timestamp())`
 
@@ -117,6 +120,7 @@ function frozenGrant(run: BoundRun | undefined, actor: TaskMachineActor): TaskMa
     runId: run.id,
     operationId: run.operationId,
     expiresAt: run.until?.getTime() ?? 0,
+    ...(run.agentDefinition.taskCompute?.provider === 'cloudflare' ? { metered: true as const } : {}),
     ...(size ? { size } : {}),
     ...(run.requiredCheckpoint ? { requiredCheckpoint:run.requiredCheckpoint } : {}),
   }
