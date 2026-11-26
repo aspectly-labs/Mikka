@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3320 Install the account-deletion insert guard and add a false default for existing snapshot receipts.
 -- target: DATABASE_URL
 ALTER TABLE environment_snapshots ADD COLUMN IF NOT EXISTS "allocationAttempted" boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS environment_snapshots_requester ON environment_snapshots ("requestedBy",id);

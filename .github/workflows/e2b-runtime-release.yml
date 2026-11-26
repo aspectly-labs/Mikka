@@ -16,6 +16,7 @@ on:
 permissions:
   contents: read
 env:
+  MIKKA_E2B_CONFIRMED_MEMORY_GIB: ${{ vars.MIKKA_E2B_CONFIRMED_MEMORY_GIB }}
   MIKKA_RUNTIME_SOURCE: ${{ inputs.source_sha }}
 jobs:
   recheck:

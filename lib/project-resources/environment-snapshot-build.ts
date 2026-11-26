@@ -166,6 +166,7 @@ export async function buildEnvironmentSnapshot(
       if (row.sandboxId) await Sandbox.kill(row.sandboxId, options(row.providerScope))
       return row
     }
+    if (row.expiresAt <= new Date()) return row
     // Different revisions or worker releases can build concurrently. Serialize
     // publication per owner and harness so an older workflow cannot retain two
     // ready images, or retire a later build that finished first.

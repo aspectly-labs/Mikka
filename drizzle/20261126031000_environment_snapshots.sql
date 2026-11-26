@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3320 Create the environment snapshot receipt table and indexes, modifying zero existing rows.
 -- target: DATABASE_URL
 -- Provider images belong to an installation. Keep the receipt even
 -- after an environment is removed so its durable expiry job can delete it.
