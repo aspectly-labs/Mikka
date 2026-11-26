@@ -33,3 +33,19 @@ export function isUltrafastServiceTier(serviceTier: string): boolean {
 export function isSponsoredComputeProvider(destination: { readonly provider: string }): boolean {
   return destination.provider === 'cloudflare'
 }
+
+const cfg: Record<string, number> = { openai: 5000, anthropic: 8000 }
+const allowedTargets = ['openai', 'internal']
+
+export function readCallerTimeout(cfg: Record<string, number>, provider: string): number {
+  return cfg[provider] ?? 10_000
+}
+
+export function hasLocalTarget(provider: string, dynamicTargets: readonly string[]): boolean {
+  const allowedTargets = dynamicTargets
+  return allowedTargets.includes(provider)
+}
+
+export function getDefaultTimeoutCount(): number {
+  return Object.keys(cfg).length + allowedTargets.length
+}
