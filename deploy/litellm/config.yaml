@@ -65,10 +65,39 @@ model_list:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   pass_through_endpoints:
+    - path: /v1/mikka/subscription/chat
+      target: os.environ/MIKKA_SUBSCRIPTION_CPA_CHAT_URL
+      methods: ["POST"]
+      forward_headers: false
+      headers:
+        Content-Type: application/json
+      auth: true
+      timeout: 290
     - path: /v1/mikka/catalog
       target: https://ai-gateway.vercel.sh/v1/models
       methods: ["GET"]
       forward_headers: false
+      auth: true
+    - path: /v1/mikka/subscription/claude/messages
+      target: https://api.anthropic.com/v1/messages?beta=true
+      methods: ["POST"]
+      forward_headers: true
+      headers:
+        x-litellm-api-key: ""
+      auth: true
+    - path: /v1/mikka/subscription/claude/count_tokens
+      target: https://api.anthropic.com/v1/messages/count_tokens?beta=true
+      methods: ["POST"]
+      forward_headers: true
+      headers:
+        x-litellm-api-key: ""
+      auth: true
+    - path: /v1/mikka/subscription/codex/responses
+      target: https://chatgpt.com/backend-api/codex/responses
+      methods: ["POST"]
+      forward_headers: true
+      headers:
+        x-litellm-api-key: ""
       auth: true
 litellm_settings:
   include_cost_in_streaming_usage: true

@@ -54,7 +54,7 @@ S3 配置优先于 R2。配置其中一部分却缺少必要字段时会拒绝�
 
 旧 `MIKKA_DEFAULT_MODEL_*`、`ZEROCAT_*`、应用内 Workers AI 配置、`DECISIONS_URL`、`DECISIONS_API_KEY`、`OPENAI_DECISIONS_API_KEY` 和 `DECISION_MODEL` 不再提供独立模型路径。把实际模型、端点和上游凭据迁到 LiteLLM 配置后，再升级应用；只设置旧变量无法启用默认模型。Decisions 使用 LiteLLM 的原生 `/v1/decisions` 协议，别名是 `mikka-decision`。
 
-官方 Claude Code / Codex 订阅 OAuth 保留独立连接路径，仍需完成下文部署的订阅后端。这是 [LiteLLM 决策](design/decisions/2026-11-20-0530-litellm-only-model-egress.md) 中等待兼容性验证和 Alex 决定的明确例外。未配置 LiteLLM 时，订阅连接本身不代表服务器的默认模型可用。
+官方 Claude Code 和 Codex 的订阅推理也经过 LiteLLM。登录、续期和额度查询继续使用订阅账户端点。Compose 为 LiteLLM 配置了内网聊天回调 `http://app:3000/mikka/api/internal/subscription/chat`。自行部署 LiteLLM 时，在该服务上将 `MIKKA_SUBSCRIPTION_CPA_CHAT_URL` 指向同一应用的内网回调，应用与 LiteLLM 使用同一 LiteLLM 服务密钥，应用的 `BETTER_AUTH_SECRET` 使用单独的值。订阅账户仍需按下文配置。 [订阅推理决定](design/decisions/2026-11-26-0300-subscription-inference-through-litellm.md)
 
 ## PostHog 与功能缺省值
 
@@ -94,6 +94,7 @@ S3 配置优先于 R2。配置其中一部分却缺少必要字段时会拒绝�
 | `mikka-email-sign-in-off` | `false` | 邮箱登录可用 |
 | `mikka-computer-tab-off` | `false` | 电脑 tab 可用 |
 | `mikka-proactive-profile` / `mikka-proactive-research` | `false` | 不打开实验能力 |
+| `mikka-track-owner-clicks` | `false` | 不上报控件点击（owner-click 分析） |
 | 四个 `mikka-upcoming-*` | `false` | 不显示尚未实现的功能 |
 | 未知 flag | `false` | 不凭未知 key 打开能力 |
 | `mikka-linear-sync` | 关闭 | 保留 Alex 关闭的全局 Linear 同步；连接自己的 Linear 账号是另一条路径 |

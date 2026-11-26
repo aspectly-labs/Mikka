@@ -2460,6 +2460,12 @@
       "baseUrlPlaceholder": "https://api.example.com/v1"
     },
     "environments": {
+      "snapshotBuild": "Build snapshot",
+      "snapshotBuilding": "Building",
+      "snapshotReady": "Ready",
+      "snapshotFailed": "Build failed",
+      "snapshotOutdated": "Outdated",
+      "snapshotMaintenance": "Maintenance command",
       "machineSize": "Default machine size",
       "version": "Version {revision}",
       "title": "Cloud environments",
@@ -4200,7 +4206,7 @@
       "label": "Model: {name}",
       "noCreditsOrConnections": "No Mikka credits or usable model connections",
       "route": {
-        "via": "Runs through {label}",
+        "via": "Runs on {label}",
         "favorites": "Favorites",
         "free": "Free",
         "usedUntil": "Used up until {time}",
@@ -5207,22 +5213,24 @@
       "loading": "Loading…",
       "noEnvironment": "No environment",
       "shapes": {
-        "fantome": "Ghost",
-        "ecran": "Screen",
-        "capsule": "Capsule",
-        "coeur": "Heart",
-        "etoile": "Star",
-        "squircle": "Squircle",
-        "galet": "Pebble",
-        "cercle": "Circle",
-        "feuille": "Leaf",
-        "hexagone": "Hexagon",
-        "goutte": "Drop",
-        "champignon": "Mushroom",
-        "chat": "Cat",
-        "fleur": "Flower",
+        "clover": "Clover",
+        "flower": "Flower",
         "triangle": "Triangle",
-        "nuage": "Cloud"
+        "square": "Square",
+        "blob": "Blob",
+        "ghost": "Ghost",
+        "circle": "Circle",
+        "drop": "Drop",
+        "star": "Star",
+        "droid": "Droid",
+        "mech": "Mech",
+        "alien": "Alien",
+        "hexagon": "Hexagon",
+        "cat": "Cat",
+        "cloud": "Cloud",
+        "pill": "Pill",
+        "pebble": "Pebble",
+        "puddle": "Puddle"
       },
       "efforts": {
         "xhigh": "Extra high",
@@ -5265,8 +5273,43 @@
       "accessShared": "Workspace",
       "effort": "Effort",
       "noRepository": "No repository",
-      "namePlaceholder": "Name",
-      "color": "Colour"
+      "namePlaceholder": "Name your bot",
+      "color": "Colour",
+      "looks": {
+        "colors": {
+          "none": "Own colour",
+          "red": "Red",
+          "orange": "Orange",
+          "amber": "Amber",
+          "green": "Green",
+          "teal": "Teal",
+          "sky": "Sky",
+          "blue": "Blue",
+          "violet": "Violet",
+          "pink": "Pink",
+          "custom": "Custom colour"
+        },
+        "hat": "Hat",
+        "hats": {
+          "none": "None",
+          "beret": "Beret",
+          "beanie": "Beanie",
+          "party": "Party hat",
+          "crown": "Crown"
+        },
+        "glasses": "Glasses",
+        "glassesKinds": {
+          "none": "None",
+          "round": "Round",
+          "square": "Square",
+          "shades": "Shades"
+        },
+        "details": "Details",
+        "mouth": "Mouth",
+        "headphones": "Headphones",
+        "bowTie": "Bow tie",
+        "reset": "Reset to default"
+      }
     },
     "newGroup": {
       "reviewGroups": "View group chats",
@@ -11067,6 +11110,8 @@
       "emptyPersonal": "No personal connections yet",
       "emptyWorkspace": "No shared workspace connections yet",
       "effortLabel": "Effort",
+      "faster": "Faster",
+      "smarter": "Smarter",
       "effortFaster": "Faster",
       "effortSmarter": "Smarter",
       "effort": {

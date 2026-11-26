@@ -238,7 +238,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "86332497510daa8a8e98beceee3ebeeabe4fe0804a54cb6f19bb298283f95a48"
+      "sourceHash": "16391fe123f48ce3187f5b295e58644447848a50ae46f5df2d2e2d66ab66a7db"
     },
     {
       "path": "/mikka/api/bots/[botId]/computer/runtimes",
@@ -1769,6 +1769,16 @@
       "sourceHash": "bfd9b4563ceb37c4e35e10f74fd5bf9ff0c515b71347526b2d9b7b80e1e58cfc"
     },
     {
+      "path": "/mikka/api/internal/subscription/chat",
+      "template": "/api/internal/subscription/chat",
+      "source": "app/api/internal/subscription/chat/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "maxDuration": 300,
+      "sourceHash": "a7c8877c0ac8459734a0549b3b38c0cdad15741f7242ad93c47c52300b435b42"
+    },
+    {
       "path": "/mikka/api/invitations/[token]",
       "template": "/api/invitations/[token]",
       "source": "app/api/invitations/[token]/route.ts",
@@ -1898,7 +1908,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "a75f36b4bcf69807da9e3c27d3a6c733329e3dd0ba7c1c1bdd00481556b469ad"
+      "sourceHash": "fd0cbbc01745215367c832b2da17a547452af34cf1601d138b9f74ed9d1f4f6e"
     },
     {
       "path": "/mikka/api/mobile/bots/[id]",
@@ -3453,7 +3463,7 @@
         "POST"
       ],
       "maxDuration": 60,
-      "sourceHash": "db7b3355512beff986fb773ac718e1256cc2c2563563e4a22b93fd685449aa92"
+      "sourceHash": "6b848762de47dda9d077deabfcdba95868922af40dba198c9526148bf874ed10"
     },
     {
       "path": "/mikka/api/threads/[runId]/machine",
@@ -3524,7 +3534,7 @@
         "POST"
       ],
       "maxDuration": 60,
-      "sourceHash": "e52a84c1bd64884c8f4cfef66aadc53ea1ce62b34c71129b4929ed242ae8cae3"
+      "sourceHash": "1d5fde0da3edb619fb02be140d62b6c1a9276593fcd255983ba41f9b2c259465"
     },
     {
       "path": "/mikka/api/threads/[runId]/slack-bind",
@@ -4230,7 +4240,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "8ce117e036789ef12325f740c5d85caa745d65a7c336fc4f2aaa170f338ef812"
+      "sourceHash": "a99c4393e574d8cab17774e747d5eea4e22555806f9e8fe60084af1b9e11d3e6"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",
@@ -4268,7 +4278,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "319bfd103da3a0341cd442c0a88fb1441ad4765dbe0fe5cb58b10a0bdc11bc5f"
+      "sourceHash": "a2c3140416feb70aa92e881b2b8379b27bc20bda55afc24ad24a3ed49c59501d"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/workspace/requests/[requestId]",
@@ -4304,7 +4314,7 @@
       "methods": [
         "PATCH"
       ],
-      "sourceHash": "c70b4fbbca5de88ef15a821a4e78084d64871b4493485b2e282794c0e7928837"
+      "sourceHash": "173deaa3f4d418ee63c76e5489973ae6619936c2bf6a2f9647025ef144040284"
     },
     {
       "path": "/mikka/v1/runs/[runId]/captures",

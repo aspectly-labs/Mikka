@@ -5,7 +5,8 @@ import type { SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import type { PoolClient } from 'pg'
 import {defaultRunPolicy} from '@mikka/protocol/agent-policy'
-import {REPO_ORIGIN_HEADER, CUSTOM_TASK_BRANCH_HEADER} from '@mikka/protocol/device'
+import {REPO_ORIGIN_HEADER, CUSTOM_TASK_BRANCH_HEADER, RUN_CREDENTIALS_HEADER} from '@mikka/protocol/device'
+import {SUBSCRIPTION_GATEWAY_HEADER} from '@mikka/protocol/subscription'
 import {freezeWorkerDefinition, retryWorkerDefinition} from './worker'
 import {runPrompt} from '../run-prompt'
 import {DEFAULT_AGENT_DEFINITION} from './builtin'
@@ -233,7 +234,7 @@ stub('../github/repository-installation.ts',{linkedGitHubAccountId:async()=>gith
 // Keep the current machine boundary isolated from real auth/cloud providers;
 // native token issuance is covered by the GitHub credential suites.
 const githubConfigured=mock.fn(async(userId:string)=>{assert.equal(userId,owner);return Boolean(githubAccount)})
-const githubCredential=mock.fn(async()=>{throw Error('Legacy claim fixture must not read native GitHub credentials')})
+const githubCredential=mock.fn(async()=>({token:'synthetic-github-credential',expiresAt:new Date('2030-01-01T00:00:00.000Z')}))
 stub('../github/machine-credential.ts',{githubMachineConfigured:githubConfigured,githubMachineCredential:githubCredential})
 stub('../computer/local-authority.ts',{localComputerAuthority:async()=>({botId,ownerId:owner,workspaceId:workspace,policyVersion:3,permission:'allow'})})
 stub('../computer/claim.ts',{claimLocalRun:claimed,claimCloudRun:cloudClaimed})
@@ -248,7 +249,11 @@ stub('../self-improvement/server.ts',{
  skillAssignments:{preflight:async()=>undefined,recordClaim:async()=>undefined},
  claimBenchmarkAssignment:async()=>undefined,
 })
-stub('../subscription-runtime.ts',{subscriptionRuntime:()=>({repository:{binding:bindingById,nativeBinding:latestBinding}})})
+stub('../subscription-runtime.ts',{subscriptionRuntime:()=>({
+ repository:{binding:bindingById,nativeBinding:latestBinding},
+ nativeRun:async()=>({}),nativeContext:async()=>({accountId:'synthetic-account',route:'codex_cli',revision:1,modelId:binding.modelId,expiresAt:'2030-01-01T00:00:00.000Z'}),
+})})
+stub('../model-gateway/token.ts',{mintGatewayToken:async()=>({token:'mkg_'+'a'.repeat(43)})})
 let claim: typeof import('../../app/v1/devices/[deviceId]/runs/[runId]/claim/route').POST
 let queue: typeof import('../computer/queue-run').queueCloudRun
 before(async()=>{
@@ -262,8 +267,8 @@ before(async()=>{
  claim=(await import('../../app/v1/devices/[deviceId]/runs/[runId]/claim/route')).POST
  queue=(await import('../computer/queue-run')).queueCloudRun
 })
-beforeEach(()=>{definition=frozen();subscription={...binding};missing=false;cloud=false;localCapable=false;cliReadOnly=false;cliPolicy.permissions.git_push='deny';publicationPolicy.permissions.git_push='allow';computerPermission='ask';mismatch=undefined;protocolVersion=3;selectIndex=0;stopDuringToken=false;githubAccount=null;revokeDuringToken=false;memberActive=true;memberLease=false;repositoryDenied=false;resourceReads.length=0;lockOrder.length=0;process.env.MIKKA_BYOS_ENABLED='1';process.env.MIKKA_AGENT_KIT='1';process.env.MIKKA_CLOUD_COMPUTER_TASKS='1';for(const fn of [modelAdmissionCheck,bindingById,latestBinding,scopedBinding,claimed,cloudClaimed,prepared,completed,githubConfigured,githubCredential])fn.mock.resetCalls()})
-const request=(headers:Record<string,string>={})=>{requestedRunId=randomUUID();return claim(new Request('https://example.test/v1/devices/'+deviceId+'/runs/'+requestedRunId+'/claim',{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',...headers}}),{params:Promise.resolve({deviceId,runId:requestedRunId})})}
+beforeEach(()=>{definition=frozen();subscription={...binding};missing=false;cloud=false;localCapable=false;cliReadOnly=false;cliPolicy.permissions.git_push='deny';publicationPolicy.permissions.git_push='allow';computerPermission='ask';mismatch=undefined;protocolVersion=3;selectIndex=0;stopDuringToken=false;githubAccount=null;revokeDuringToken=false;memberActive=true;memberLease=false;repositoryDenied=false;resourceReads.length=0;lockOrder.length=0;process.env.MIKKA_BYOS_ENABLED='1';process.env.MIKKA_LITELLM_URL='http://litellm.invalid';process.env.MIKKA_LITELLM_MASTER_KEY='synthetic-only';process.env.MIKKA_AGENT_KIT='1';process.env.MIKKA_CLOUD_COMPUTER_TASKS='1';for(const fn of [modelAdmissionCheck,bindingById,latestBinding,scopedBinding,claimed,cloudClaimed,prepared,completed,githubConfigured,githubCredential])fn.mock.resetCalls()})
+const request=(headers:Record<string,string>={})=>{requestedRunId=randomUUID();return claim(new Request('https://example.test/v1/devices/'+deviceId+'/runs/'+requestedRunId+'/claim',{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[RUN_CREDENTIALS_HEADER]:'1',[SUBSCRIPTION_GATEWAY_HEADER]:'1',...headers}}),{params:Promise.resolve({deviceId,runId:requestedRunId})})}
 const assertCliPolicy=(body:{policy:ReturnType<typeof defaultRunPolicy>;policyRevision:string})=>{assert.equal(body.policy.permissions.network,'deny');assert.equal(body.policy.permissions.install_dependency,'deny');assert.deepEqual(body.policy.networkAllow,['cli-policy.invalid']);assert.equal(body.policyRevision,'a'.repeat(64))}
 // A non-GitHub repository keeps these queue cases focused on frozen worker
 // selection. GitHub publication admission is covered by the claim cases below.
@@ -383,8 +388,8 @@ test('local claim uses frozen harness and exact subscription despite Agent edits
  assert.equal(run.userId,owner);assert.equal(run.issueId,issueId);assert.equal(run.baseBranch,null);assert.equal(remoteUrl,'https://github.com/example/repo.git')
  assert.equal(body.pushBranch,publicationAssignment.pushBranch);assertCliPolicy(body);assert.equal(completed.mock.callCount(),0)
 })
-test('auto model is omitted from a subscription assignment; historical snapshots retain their saved binding model',async()=>{
- let response=await request();assert.equal(response.status,200);assert.equal(Object.hasOwn(await response.json(),'model'),false)
+test('auto and historical subscription claims use the broker’s frozen gateway model',async()=>{
+ let response=await request();assert.equal(response.status,200);assert.equal((await response.json()).model,binding.modelId)
  definition=frozen();delete definition.cliModelSelection;selectIndex=0
  response=await request();assert.equal(response.status,200);assert.equal((await response.json()).model,'frozen-model')
 })
@@ -551,14 +556,14 @@ test('a cloud run admitted with the GitHub App grant gets its publication and al
 })
 
 test('a configured prefix preserves old native push delivery and is advertised to capable daemons', async () => {
- githubAccount='123';cliPolicy.permissions.git_push='allow'
+ githubAccount='123';cliPolicy.permissions.git_push='allow';definition={...frozen(),subscription:undefined};subscription=null
  publicationAssignment.pushBranch='team/changes/mik-42'
  overrideDeploymentSwitch('personalMailbox', false)
  try {
   for(const supportsCustom of [false,true]) {
    selectIndex=0
-   const response=await request(supportsCustom?{[CUSTOM_TASK_BRANCH_HEADER]:'1'}:{})
-   assert.equal(response.status,200)
+   const response=await request({[RUN_CREDENTIALS_HEADER]:'0',...(supportsCustom?{[CUSTOM_TASK_BRANCH_HEADER]:'1'}:{})})
+   assert.equal(response.status,200,await response.clone().text())
    const body=await response.json()
    assert.equal(body.pushBranch,'team/changes/mik-42')
    assert.equal(body.github?.repository,'example/repo')
@@ -576,7 +581,7 @@ test('a configured prefix preserves old native push delivery and is advertised t
   }
   publicationAssignment.defaultDraft=true
   selectIndex=0
-  const draft=await request({[CUSTOM_TASK_BRANCH_HEADER]:'1'})
+  const draft=await request({[CUSTOM_TASK_BRANCH_HEADER]:'1',[RUN_CREDENTIALS_HEADER]:'0'})
   assert.equal(draft.status,200)
   const draftBody=await draft.json()
   assert.equal(draftBody.pushBranch,'team/changes/mik-42')
@@ -598,6 +603,6 @@ test('a read-only local run gets no push branch and a read-only policy, but the 
   const connected=await (await request()).json()
   assert.ok(connected.mcp,'the run token is issued')
   assert.equal(connected.github?.repository,'example/repo');assert.equal(connected.github?.branch,undefined)
-  assert.equal(githubConfigured.mock.callCount(),2);assert.equal(githubCredential.mock.callCount(),0)
+  assert.equal(githubConfigured.mock.callCount(),2);assert.equal(githubCredential.mock.callCount(),1)
  } finally { githubAccount=null;overrideDeploymentSwitch('personalMailbox', undefined) }
 })

@@ -80,7 +80,7 @@ const standingIdentity = (identity: ExecutionIdentity) => ({ requester: identity
  * newly admitted model, credential, placement and repository receipt. */
 export function providerContinuationDefinition(source: WorkerDefinitionSnapshot, admitted: WorkerDefinitionSnapshot, prompt: string, policyCeiling?: RunPolicy): WorkerDefinitionSnapshot {
   const { apiKey: _key, subscription: _subscription, executionIdentity: _identity, repositoryAdmission: _admission,
-    allowLocalRecovery: _local, profileOriginRunId: _profileOrigin, ...standing } = structuredClone(source)
+    allowLocalRecovery: _local, profileOriginRunId: _profileOrigin, taskCompute: _compute, taskMachine: _placement, ...standing } = structuredClone(source)
   const { routing: _previousRouting, serviceTier: _previousTier, effort: _previousEffort, pro: _previousPro, ...dispatch } = source.modelDispatch!
   const definition: WorkerDefinitionSnapshot = { ...standing, harness: admitted.harness, model: admitted.model,
     modelSource: admitted.modelSource, cliModelSelection: 'explicit', promptDigest: digest(prompt),
@@ -93,6 +93,8 @@ export function providerContinuationDefinition(source: WorkerDefinitionSnapshot,
       ...(admitted.modelDispatch?.routing ? { routing: structuredClone(admitted.modelDispatch.routing) } : {}) },
     ...(admitted.apiKey ? { apiKey: admitted.apiKey } : {}), ...(admitted.subscription ? { subscription: admitted.subscription } : {}),
     ...(admitted.repositoryAdmission ? { repositoryAdmission: admitted.repositoryAdmission } : {}),
+    ...(admitted.taskCompute ? { taskCompute: admitted.taskCompute } : {}),
+    ...(admitted.taskMachine ? { taskMachine: admitted.taskMachine } : {}),
     ...(source.allowLocalRecovery && admitted.allowLocalRecovery ? { allowLocalRecovery: true } : {}) }
   definition.definitionDigest = workerDefinitionDigest(definition)
   return definition

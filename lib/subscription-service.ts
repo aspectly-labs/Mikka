@@ -1,8 +1,10 @@
 import { captureRunFailure, type RunFailureContext } from '@mikka/protocol/run-failure'
+import { trace } from '@opentelemetry/api'
 import { WorkflowRunFailureError } from './workflow-run-failure'
 import { APP_BUILD } from './app-build'
 import { workerSubscriptionMatches } from './agent-kit/worker'
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
+import { createLiteLLMSubscriptionModel, sendLiteLLMSubscriptionChat } from './model-gateway/litellm-client'
+import { signSubscriptionChat, SUBSCRIPTION_CHAT_MAX_BYTES } from './subscription-chat-ticket'
 import { quotaSnapshotSchema, type QuotaSnapshot } from '@mikka/protocol'
 import { authorizeSubscriptionUse, subscriptionQuotaState, SubscriptionRefusal, type SubscriptionAccess, type SubscriptionRoute, type SubscriptionUse } from '@mikka/protocol/subscription'
 import { WorkerRefusal, type SubscriptionWorkerClient, type WorkerMetadata } from '../packages/daemon/src/subscription-worker-client'
@@ -10,18 +12,20 @@ import { readSubscriptionQuota } from '../packages/daemon/src/subscription-quota
 import { SubscriptionRepository } from './subscription-repository'
 import { runMayUseCredentialSql } from './personal-policy'
 import { resolveSubscriptionModel } from './subscription-model'
-import { nativeBrokerContextSchema, nativeLeaseSchema, type NativeBrokerRequest } from '@mikka/protocol/subscription'
+import { nativeBrokerContextSchema, type NativeBrokerRequest } from '@mikka/protocol/subscription'
 import { accountLabel, failedUsage, parseSubscriptionUsage, type SubscriptionUsage, type WorkerUsage } from './subscription-usage'
 import { BACKEND_FAILURES, GENERATION_FAILURES, PRIVATE_FAILURES, generationFailureDetails } from './subscription-generation-diagnostics'
 import { stepIdentity } from './model-call-timing'
 import { CLEANUP_DUE_SQL, expireSubscriptionAcquisitions } from './subscription-acquire-expiry'
 import { ownerSettingsChanged } from './live/lists'
 import { measureSubscriptionNative } from './subscription-native-timing'
+import { withRunSpan } from './tracing/context'
+import { linkSubscriptionChatGatewayCall } from './model-gateway/ledger'
 import { claudeFastSupport, codexPrioritySupport, codexUltrafastSupport, subscriptionModelRequestPolicySchema, type CodexPrioritySupport, type SubscriptionCatalogueModel, type SubscriptionModelRequestPolicy } from './subscription-service-tier'
 
 // Matches modelRequestMaxBytes in the Go worker. The conversation's 100k
 // compaction estimate excludes the system prompt and tool schemas.
-const MODEL_REQUEST_MAX_BYTES = 1_048_576
+const MODEL_REQUEST_MAX_BYTES = SUBSCRIPTION_CHAT_MAX_BYTES
 // Used only to preserve the public refusal of inputs still over budget.
 const LEGACY_HOST_CODE_UNIT_LIMIT = 262144
 
@@ -33,6 +37,29 @@ export interface SubscriptionCapabilities {
   ready(route: SubscriptionRoute, ownerId: string): boolean | Promise<boolean>
   nativeIsolation: 'verified_runtime' | 'none'
   oauth?: Partial<Record<'codex' | 'claude', boolean>>
+}
+
+export type SubscriptionChatTransport = (use: SubscriptionUse, modelId: string, payload: string, signal?: AbortSignal) => Promise<Response>
+
+const sendSubscriptionChat: SubscriptionChatTransport = async (use, model, payload, signal) => {
+  const { body, callId } = await signSubscriptionChat(use, model, payload)
+  return withRunSpan('model.subscription.litellm', { 'mikka.model.call_id': callId }, async () => {
+    const { response, generationId } = await sendLiteLLMSubscriptionChat(body, callId, signal)
+    if (generationId) {
+      trace.getActiveSpan()?.setAttribute('mikka.litellm.call_id', generationId)
+      try { await linkSubscriptionChatGatewayCall((await import('./db')).db, callId, generationId) }
+      catch (error) { await response.body?.cancel(); throw error }
+    }
+    return response
+  })
+}
+
+function subscriptionWireError(error: unknown) {
+  if (!error || typeof error !== 'object' || !('type' in error) || error.type !== 'mikka_subscription_failure'
+    || !('code' in error) || typeof error.code !== 'string') return error
+  if (GENERATION_FAILURES.has(error.code) || BACKEND_FAILURES.has(error.code) || PRIVATE_FAILURES.has(error.code))
+    return new WorkerRefusal(error.code)
+  return error
 }
 
 export class SubscriptionService {
@@ -48,7 +75,8 @@ export class SubscriptionService {
     },
     /** Active membership in the workspace database; a teammate's shared subscription needs it for both people. */
     readonly member: (userId: string, workspaceId: string, borrowerId?: string) => Promise<void> = async () => { throw new SubscriptionRefusal('account_unavailable', { detail: 'membership_hook_absent' }) },
-    modelRequestPolicy?: SubscriptionModelRequestPolicy) {
+    modelRequestPolicy?: SubscriptionModelRequestPolicy,
+    readonly chatTransport: SubscriptionChatTransport = sendSubscriptionChat) {
     this.modelRequestPolicy = modelRequestPolicy === undefined ? undefined : subscriptionModelRequestPolicySchema.parse(modelRequestPolicy)
   }
 
@@ -90,56 +118,53 @@ export class SubscriptionService {
   async model(use: SubscriptionUse, signal?: AbortSignal) {
     const binding = await this.repository.binding(use.ownerId, use.bindingId)
     const admit = async (callSignal = signal) => {
-      await this.admitModel({ workspaceId: binding.workspaceId, ownerId: use.ownerId }, binding.modelId, binding.route, callSignal)
+      await this.admitModel({ workspaceId: binding.workspaceId, ownerId: use.ownerId, runId: use.runId }, binding.modelId, binding.route, callSignal, false)
     }
     await admit()
     return resolveSubscriptionModel(use, binding.modelId, {
       access: () => this.access(use, signal),
       model: async (modelId, { connection }) => {
-        // This call's access check already read and verified the custody scope.
-        // Each later model/HTTP call still runs its own fresh authorization.
-        const client = this.worker({ ownerId: connection.ownerId, workspaceId: connection.workspaceId, connectionId: connection.id, provider: connection.provider === 'openai' ? 'codex' : 'claude' }).forUse(use)
-        const provider = createOpenAICompatible({ name: 'mikka-subscription', baseURL: 'https://mikka.invalid/v1', apiKey: 'private-worker-placeholder',
-          fetch: async (_url, init) => {
-            if (typeof init?.body !== 'string') {
-              await logRequestFailure('body_invalid', null)
-              throw new SubscriptionRefusal('backend_unavailable', { detail: 'request_body_not_string' })
-            }
-            const bytes = Buffer.byteLength(init.body, 'utf8')
-            if (bytes > MODEL_REQUEST_MAX_BYTES) {
-              await logRequestFailure('payload_too_large', bytes)
-              // Keep the old public mapping; the UTF-16 threshold is not the
-              // new transport budget and does not decide whether to admit it.
-              throw init.body.length > LEGACY_HOST_CODE_UNIT_LIMIT
-                ? new SubscriptionRefusal('backend_unavailable', { detail: 'payload_over_transport_limit' })
-                : new Error('subscription_generation_failed (payload_over_legacy_limit)')
-            }
-            const payload = JSON.parse(init.body)
-            if (payload.model !== binding.modelId || payload.stream !== true) throw new SubscriptionRefusal('binding_mismatch', { detail: 'stream_request_mismatch' })
-            const codexTierIntent = binding.route === 'codex_cpa' ? this.modelRequestPolicy?.codexServiceTier : undefined
-            const claudeFastIntent = binding.route === 'claude_cpa' && this.modelRequestPolicy?.claudeSpeed === 'fast'
-            const checkSpeedSupport = Boolean(codexTierIntent || claudeFastIntent)
-            const authorized = await this.check(use, signal, undefined, checkSpeedSupport)
-            await admit(init.signal ?? signal ?? undefined)
-            // Provider options are not an opt-in to a paid service tier. Only
-            // the internal server policy and this fresh epoch's catalogue
-            // can request it. Unknown/unsupported uses the same single call.
-            if (binding.route === 'codex_cpa') {
-              delete payload.service_tier
-              if (codexTierIntent === 'ultrafast' && authorized.codexUltrafastSupport === 'supported') payload.service_tier = 'ultrafast'
-              else if (codexTierIntent === 'priority' && authorized.codexPrioritySupport === 'supported') payload.service_tier = 'priority'
-              if (codexTierIntent) {
-                const capability = codexTierIntent === 'ultrafast' ? (authorized.codexUltrafastSupport ?? 'unknown') : (authorized.codexPrioritySupport ?? 'unknown')
-                try { console.info(JSON.stringify({ level: 'info', msg: 'subscription_service_tier_policy', intent: codexTierIntent, capability, requested: payload.service_tier === 'priority' || payload.service_tier === 'ultrafast' ? payload.service_tier : 'omitted', ...await stepIdentity() })) } catch { /* diagnostics cannot change authorization or the request */ }
-              }
-            } else if (binding.route === 'claude_cpa') {
-              delete payload.speed
-              if (claudeFastIntent && authorized.claudeFastSupport === 'supported') payload.speed = 'fast'
-            }
-            return new Response(client.stream(binding.connectionRevision, modelId, payload, init.signal ?? signal ?? undefined), { headers: { 'content-type': 'text/event-stream' } })
+        const model = createLiteLLMSubscriptionModel(modelId, async init => {
+          if (typeof init?.body !== 'string') {
+            await logRequestFailure('body_invalid', null)
+            throw new SubscriptionRefusal('backend_unavailable', { detail: 'request_body_not_string' })
           }
+          const bytes = Buffer.byteLength(init.body, 'utf8')
+          if (bytes > MODEL_REQUEST_MAX_BYTES) {
+            await logRequestFailure('payload_too_large', bytes)
+            // Keep the old public mapping; the UTF-16 threshold is not the
+            // new transport budget and does not decide whether to admit it.
+            throw init.body.length > LEGACY_HOST_CODE_UNIT_LIMIT
+              ? new SubscriptionRefusal('backend_unavailable', { detail: 'payload_over_transport_limit' })
+              : new Error('subscription_generation_failed (payload_over_legacy_limit)')
+          }
+          const payload = JSON.parse(init.body)
+          if (payload.model !== binding.modelId || payload.stream !== true) throw new SubscriptionRefusal('binding_mismatch', { detail: 'stream_request_mismatch' })
+          const codexTierIntent = binding.route === 'codex_cpa' ? this.modelRequestPolicy?.codexServiceTier : undefined
+          const claudeFastIntent = binding.route === 'claude_cpa' && this.modelRequestPolicy?.claudeSpeed === 'fast'
+          const checkSpeedSupport = Boolean(codexTierIntent || claudeFastIntent)
+          const authorized = await this.check(use, signal, undefined, checkSpeedSupport)
+          await admit(init.signal ?? signal ?? undefined)
+          // Provider options are not an opt-in to a paid service tier. Only
+          // the internal server policy and this fresh epoch's catalogue
+          // can request it. Unknown/unsupported uses the same single call.
+          if (binding.route === 'codex_cpa') {
+            delete payload.service_tier
+            if (codexTierIntent === 'ultrafast' && authorized.codexUltrafastSupport === 'supported') payload.service_tier = 'ultrafast'
+            else if (codexTierIntent === 'priority' && authorized.codexPrioritySupport === 'supported') payload.service_tier = 'priority'
+            if (codexTierIntent) {
+              const capability = codexTierIntent === 'ultrafast' ? (authorized.codexUltrafastSupport ?? 'unknown') : (authorized.codexPrioritySupport ?? 'unknown')
+              try { console.info(JSON.stringify({ level: 'info', msg: 'subscription_service_tier_policy', intent: codexTierIntent, capability, requested: payload.service_tier === 'priority' || payload.service_tier === 'ultrafast' ? payload.service_tier : 'omitted', ...await stepIdentity() })) } catch { /* diagnostics cannot change authorization or the request */ }
+            }
+          } else if (binding.route === 'claude_cpa') {
+            delete payload.speed
+            if (claudeFastIntent && authorized.claudeFastSupport === 'supported') payload.speed = 'fast'
+          }
+          const prepared = JSON.stringify(payload)
+          if (Buffer.byteLength(prepared, 'utf8') > MODEL_REQUEST_MAX_BYTES)
+            throw new SubscriptionRefusal('backend_unavailable', { detail: 'payload_over_transport_limit' })
+          return this.chatTransport(use, modelId, prepared, init.signal ?? signal ?? undefined)
         })
-        const model = provider(modelId)
         const doStream = model.doStream.bind(model)
         model.doStream = async options => {
           const failureContext: RunFailureContext = { credential: 'subscription', provider: connection.provider === 'openai' ? 'codex' : 'claude_code', appVersion: APP_BUILD, requestBodyValues: { prompt: options.prompt, tools: options.tools, providerOptions: options.providerOptions, headers: options.headers } }
@@ -154,15 +179,18 @@ export class SubscriptionService {
                   if (closed) return
                   if (done) { closed = true; reader.releaseLock(); controller.close(); return }
                   if (value.type === 'error') {
-                    const cancelled = requestedCancellation(value.error, options.abortSignal, signal)
+                    const error = subscriptionWireError(value.error)
+                    const cancelled = requestedCancellation(error, options.abortSignal, signal)
                     if (cancelled) {
                       closed = true; controller.error(cancelled)
                       try { await reader.cancel(cancelled) } finally { reader.releaseLock() }
                       return
                     }
-                    await logGenerationFailure('stream_part', value.error)
+                    await logGenerationFailure('stream_part', error)
+                    controller.enqueue({ type: 'error', error: subscriptionGenerationError(error, failureContext) })
+                  } else {
+                    controller.enqueue(value)
                   }
-                  controller.enqueue(value.type === 'error' ? { type: 'error', error: subscriptionGenerationError(value.error, failureContext) } : value)
                 } catch (error) {
                   if (closed) return
                   const cancelled = requestedCancellation(error, options.abortSignal, signal)
@@ -184,6 +212,16 @@ export class SubscriptionService {
         return model
       }
     })
+  }
+  /** The signed LiteLLM callback revalidates live custody before it starts CPA. */
+  async openLiteLLMChat(use: SubscriptionUse, modelId: string, payload: unknown, signal?: AbortSignal) {
+    const binding = await this.repository.binding(use.ownerId, use.bindingId)
+    if (use.execution !== 'model' || binding.modelId !== modelId) throw new SubscriptionRefusal('binding_mismatch')
+    const { connection } = await this.check(use, signal)
+    await this.admitModel({ workspaceId: binding.workspaceId, ownerId: use.ownerId, runId: use.runId }, modelId, binding.route, signal)
+    const client = this.worker({ ownerId: connection.ownerId, workspaceId: connection.workspaceId,
+      connectionId: connection.id, provider: connection.provider === 'openai' ? 'codex' : 'claude' }).forUse(use)
+    return { start: () => client.stream(binding.connectionRevision, modelId, payload, signal) }
   }
   async check(use: SubscriptionUse, signal?: AbortSignal, modelOverride?: string | null, includePrioritySupport = false) {
     const access = await this.access(use, signal, modelOverride, includePrioritySupport)
@@ -233,39 +271,9 @@ export class SubscriptionService {
       const client=this.worker(this.repository.scope(row)).forUse(use)
       await timing.measure('prepare', () => client.call('prepare',{revision:authorized.binding.connectionRevision},signal))
       const info=await timing.measure('context', () => client.call<{accountId:string;plan?:string;expiresAt:string}>('nativeContext',{revision:authorized.binding.connectionRevision},signal))
-      return nativeBrokerContextSchema.parse({...info,route:binding.route,modelId:binding.modelId,revision:authorized.binding.connectionRevision})
-    })
-  }
-  /** Prepare a device's direct-provider credential once. nativeAuth performs
-   * the custody refresh itself and returns the expiry with the access token;
-   * separate prepare/context child processes would repeat that same work. */
-  async nativeLease(use: SubscriptionUse, signal?: AbortSignal, includeModelCatalogue = false) {
-    return measureSubscriptionNative('lease', use.runId, async timing => {
-      const binding = await timing.measure('binding', () => this.repository.binding(use.ownerId, use.bindingId))
-      const selected = await timing.measure('selection', () => this.nativeRunSelection(use, binding.modelId))
-      const model = selected.modelId ?? binding.modelId
-      const scope = { ownerId: selected.executionOwnerId, workspaceId: binding.workspaceId, runId: use.runId }
-      await timing.measure('admit_before', () => this.admitModel(scope, model, binding.route, signal, false))
-      const authorized = await timing.measure('access', () => this.check(use, signal, model ?? null))
-      await timing.measure('admit_after', () => this.admitModel(scope, model, binding.route, signal, false))
-      const row = await timing.measure('connection', () => this.repository.connection(use.ownerId, binding.connectionId))
-      // This is evidence for the prepared model, not another authorization
-      // round trip. Reuse the exact connection/epoch already read for custody.
-      // Older strict lease clients retain their original response shape.
-      const catalogue = row.modelCatalog
-      const modelCatalogueVerified = includeModelCatalogue && binding.route === 'claude_code_cli'
-        && row.id === binding.connectionId && String(row.ownerId) === use.ownerId
-        && row.state === 'connected' && !row.paused
-        && Number(row.epoch) === authorized.binding.connectionRevision
-        && catalogue != null && Number(catalogue.revision) === Number(row.epoch)
-        && Array.isArray(catalogue.models) && catalogue.models.includes(model)
-      const lease = await timing.measure('native_auth', () => this.worker(this.repository.scope(row)).forUse(use)
-        .call<{ accessToken?: unknown; expiresAt?: unknown; accountId?: unknown; chatgptAccountId?: unknown; chatgptPlanType?: unknown }>('nativeAuth', { revision: authorized.binding.connectionRevision }, signal))
-      return nativeLeaseSchema.parse({ route: binding.route, modelId: model, revision: authorized.binding.connectionRevision,
-        ...(modelCatalogueVerified ? { modelCatalogueVerified: true } : {}),
-        accountId: binding.route === 'codex_cli' ? lease.chatgptAccountId : lease.accountId,
-        ...(typeof lease.chatgptPlanType === 'string' ? { plan: lease.chatgptPlanType } : {}),
-        accessToken: lease.accessToken, expiresAt: typeof lease.expiresAt === 'string' ? new Date(lease.expiresAt).toISOString() : lease.expiresAt })
+      return nativeBrokerContextSchema.parse({ accountId: info.accountId, ...(info.plan ? { plan: info.plan } : {}),
+        expiresAt: typeof info.expiresAt === 'string' ? new Date(info.expiresAt).toISOString() : info.expiresAt,
+        route: binding.route, modelId: selected.modelId ?? binding.modelId, revision: authorized.binding.connectionRevision })
     })
   }
   async nativeRequest(use: SubscriptionUse, request: NativeBrokerRequest, signal?: AbortSignal) {
@@ -274,7 +282,7 @@ export class SubscriptionService {
       if(!request.body || typeof request.body!=='object' || Array.isArray(request.body) || !('model' in request.body) || typeof request.body.model!=='string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(request.body.model))throw new SubscriptionRefusal('binding_mismatch', { detail: 'model_field_invalid' })
       const selected = await timing.measure('selection', () => this.nativeRunSelection(use, binding.modelId))
       if (selected.modelId !== undefined && request.body.model!==selected.modelId) throw new SubscriptionRefusal('binding_mismatch', { detail: 'model_not_selected' })
-      if(binding.route==='codex_cli'?request.path!=='/responses':binding.route!=='claude_code_cli'||!['/v1/messages','/v1/messages?beta=true'].includes(request.path))throw new SubscriptionRefusal('backend_unavailable', { detail: 'route_not_allowed_for_binding' })
+      if(binding.route==='codex_cli'?request.path!=='/responses':binding.route!=='claude_code_cli'||!['/v1/messages','/v1/messages?beta=true','/v1/messages/count_tokens'].includes(request.path))throw new SubscriptionRefusal('backend_unavailable', { detail: 'route_not_allowed_for_binding' })
       const scope = { ownerId: selected.executionOwnerId, workspaceId: binding.workspaceId, runId: use.runId }
       const model = request.body.model
       await timing.measure('admit_before', () => this.admitModel(scope, model, binding.route, signal))
@@ -298,24 +306,6 @@ export class SubscriptionService {
       if (row.agentDefinition?.cliModelSelection==='explicit') selectedModel=row.agentDefinition.model
     }
     return { modelId: selectedModel, executionOwnerId }
-  }
-  /**
-   * In-process native launch, used only by the BYOS custody test
-   * (tests/byos-application.test.mjs) to drive synthetic CLIs through
-   * disconnect and reconnect. No production path calls it: a device run gets
-   * native credentials through `nativeRun`, which needs a runId and checks
-   * `runMayUseCredentialSql` and membership on both sides.
-   */
-  async launchNative<T>(ownerId: string, consumerId: string, bindingId: string, run: (context: { use: SubscriptionUse; modelId: string; worker: Pick<SubscriptionWorkerClient, 'call'>; access(): Promise<SubscriptionAccess> }) => Promise<T>) {
-    const binding = await this.repository.binding(ownerId, bindingId)
-    // This legacy in-process launcher hands credentials to its adapter. It is
-    // not the task-bound HTTP broker and cannot claim controlled model routing.
-    const { assertUnmanagedModelTransport } = await import('./model-admission/runtime')
-    await assertUnmanagedModelTransport({ ownerId, workspaceId: binding.workspaceId }, binding.modelId)
-    const use: SubscriptionUse = { ownerId, consumerId, bindingId, workspaceId: binding.workspaceId, execution: 'native' }
-    await this.check(use)
-    const row = await this.repository.connection(ownerId, binding.connectionId)
-    return run({ use, modelId: binding.modelId, access: () => this.access(use), worker: this.worker(this.repository.scope(row)).forUse(use) })
   }
   /** Fresh allowance for model admission, under the same owner custody as Usage.
    * Settings-only account/profile reads and account writes stay in usage(). */

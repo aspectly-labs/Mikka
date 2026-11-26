@@ -26,7 +26,8 @@ test('admitted Cloud tasks park their real binding before normal local recovery'
   let appPool: Pool | undefined, workspacePool: Pool | undefined
   let machines: Awaited<ReturnType<typeof fakeThreadMachines>> | undefined
   const scoped = { MIKKA_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(),
-    MIKKA_DATABASE_URL_UNPOOLED: target.toString(), DATABASE_URL_UNPOOLED: target.toString(), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') }
+    MIKKA_DATABASE_URL_UNPOOLED: target.toString(), DATABASE_URL_UNPOOLED: target.toString(),
+    WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), E2B_API_KEY: 'synthetic-cloud-handoff-e2b-key' }
   const previous = Object.fromEntries(Object.keys(scoped).map(name => [name, process.env[name]]))
   Object.assign(process.env, scoped)
   try {

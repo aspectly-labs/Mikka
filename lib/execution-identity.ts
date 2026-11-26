@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { WorkerDefinitionSnapshot } from './agent-kit/worker'
 import { organizationResourceAllowed, assertOrganizationModelProvider } from './governance/resource-access'
 import { McpValidationError, PluginError } from './plugins/contracts'
+import { hasE2BRuntimeCredential } from './secrets/e2b-owner-sql'
 
 /** Authority is host data, never a Decision/model argument. References only: no credentials. */
 const resource = z.object({
@@ -95,13 +96,13 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
   } else if (!definition.credits && device.kind === 'cloud') return denied()
   const placement=definition.taskMachine
   if (placement) {
-    if (device.kind!=='cloud'||placement.provider!=='cloudflare'||placement.payer!=='mikka'||placement.ownerId!==run.userId||placement.botId!==run.botId||placement.workspaceId!==workspaceId||
-        !definition.subscription||!['codex','claude_code'].includes(definition.harness)||definition.projectExecution?.repositoryKey!==placement.repositoryKey) return denied()
+    if (device.kind!=='cloud'||placement.provider!=='cloudflare'||placement.payer!=='mikka'||placement.ownerId!==run.userId||(run.botId!==null&&placement.botId!==run.botId)||placement.workspaceId!==workspaceId||
+        (definition.taskCompute ? definition.taskCompute.provider!=='cloudflare' : !placement.requestEventId)||
+        !['codex','claude_code'].includes(definition.harness)||definition.projectExecution?.repositoryKey!==placement.repositoryKey) return denied()
     await (await import('./cloud-computer/sponsored-task')).verifySponsoredChoice(query,placement)
     resourceBindings.push({kind:'cloudflare_sponsored',id:workspaceId!,ownerId:'mikka-hosted',access:'workspace_share',workspaceId:workspaceId!})
   } else if (device.kind === 'cloud') {
-    const { rows: [key] } = await query.query(`SELECT 1 FROM user_e2b_keys WHERE "userId"=$1 UNION ALL SELECT 1 FROM workspace_e2b_keys WHERE "createdBy"=$1 LIMIT 1`, [run.userId])
-    if (!key) return denied()
+    if (!await hasE2BRuntimeCredential(query, run.userId)) return denied()
     resourceBindings.push({ kind: 'e2b', id: run.userId, ownerId: run.userId, access: 'owner' })
   }
   return { version: 1, requester: run.userId, botId: run.botId, botOwner: bot?.ownerId ?? null,

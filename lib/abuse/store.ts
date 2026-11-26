@@ -13,8 +13,12 @@ import {
   PaidResourceError,
 } from './policy'
 
-const abandonedHold = `"settledAt" IS NULL AND "createdAt" < now() - interval '10 minutes'
-  AND (state='pending' OR (state='unknown' AND "generationId" IS NULL))`
+const expiredMachineHold = `state='unknown' AND COALESCE("machineCompute"->>'source'='cloudflare_cgroup_list',false)
+  AND "createdAt" < now() - interval '24 hours'`
+const abandonedHold = `"settledAt" IS NULL AND (("createdAt" < now() - interval '10 minutes'
+  AND (state='pending' OR (state='unknown' AND "generationId" IS NULL))) OR (${expiredMachineHold}))`
+const releaseMachineHold = `"machineCompute"="machineCompute"||'{"outcome":"measurement_expired"}'::jsonb,
+  "machineComputeReviewAt"=NULL`
 type Query = Pick<PoolClient, 'query'>
 export type HostedQuotaLease = { limit: number; close(): Promise<void>;
   billingAccount?: { workspaceId: string; organizationId: string | null } }
@@ -62,7 +66,9 @@ export class HostedUsageStore {
    */
   private async releaseAbandoned(tx: Query, workspaceId: string) {
     const reaped = await tx.query<{ reservedFree: string }>(
-      `UPDATE hosted_usage SET state='failed',"settledAt"=now()
+      `UPDATE hosted_usage SET state='failed',"settledAt"=now(),
+        "machineCompute"=CASE WHEN ${expiredMachineHold} THEN "machineCompute"||'{"outcome":"measurement_expired"}'::jsonb ELSE "machineCompute" END,
+        "machineComputeReviewAt"=CASE WHEN ${expiredMachineHold} THEN NULL ELSE "machineComputeReviewAt" END
        WHERE "workspaceId"=$1 AND (${abandonedHold})
        RETURNING "reservedFree"`,
       [workspaceId],
@@ -184,6 +190,7 @@ export class HostedUsageStore {
     id: string,
     env: Record<string, string | undefined> = process.env,
     estimate = HOSTED_CALL_HOLD_MICRO_USD,
+    prepaid: boolean | { machineMeter: Record<string, unknown> } = false,
   ) {
     if (!this.metered) return { id, workspaceId }
     if (!Number.isSafeInteger(estimate) || estimate <= 0) throw new Error('invalid_usage_hold')
@@ -224,7 +231,9 @@ export class HostedUsageStore {
       const available = balance.free + balance.plan + balance.purchased
       if (available <= 0) throw new PaidResourceError('points_exhausted')
       const flight = await this.inFlight(tx, workspaceId)
-      if (flight.calls >= (quota?.limit ?? HOSTED_MAX_IN_FLIGHT_PER_WORKSPACE))
+      if (prepaid && balance.plan + balance.purchased - flight.held < estimate)
+        throw new PaidResourceError('points_exhausted')
+      if (!prepaid && flight.calls >= (quota?.limit ?? HOSTED_MAX_IN_FLIGHT_PER_WORKSPACE))
         throw new PaidResourceError('usage_concurrency_limit')
       // Concurrent calls must fit the balance together. A lone call is admitted
       // on any positive balance, as before, so the last cents stay usable.
@@ -248,6 +257,9 @@ export class HostedUsageStore {
           attribution.actorId ?? attribution.ownerId ?? null, attribution.projectId ?? null, attribution.threadId ?? null, attribution.runId ?? null, attribution.attributionComplete ?? false, attribution.billingSource ?? null,
           isUsageTurnRef(attribution.turnRef) ? attribution.turnRef : null],
       )
+      if (prepaid === true) await this.settleLocked(tx, id, estimate, 0, 0, undefined, undefined, undefined, true)
+      else if (prepaid) await tx.query(`UPDATE hosted_usage SET state='unknown',"generationId"=$2,"machineCompute"=$3::jsonb,"machineComputeReviewAt"=now()+interval '5 minutes' WHERE id=$1`,
+        [id, 'cf-cgroup:' + id, JSON.stringify(prepaid.machineMeter)])
       return { id, workspaceId }
     }) } finally { await quota?.close() }
   }
@@ -284,108 +296,142 @@ export class HostedUsageStore {
       await tx.query(
         "SELECT pg_advisory_xact_lock(hashtextextended('hosted-free-budget',0))",
       )
-      const row = (
-        await tx.query('SELECT * FROM hosted_usage WHERE id=$1 FOR UPDATE', [
-          id,
-        ])
-      ).rows[0]
-      if (!row || row.state === 'settled' || row.state === 'failed') return
-      await this.lock(tx, row.workspaceId)
-      if (generationId && row.generationId && generationId !== row.generationId)
-        throw new Error('usage_generation_mismatch')
-      if (messageId) {
-        await tx.query('UPDATE hosted_usage SET "usageMessageId"=COALESCE("usageMessageId",$2) WHERE id=$1', [id, messageId])
-      }
-      const cacheValue = (value: number | null) =>
-        typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
-      const cacheColumns = [cacheValue(cache?.read ?? null), cacheValue(cache?.write ?? null)]
-      // Unknown cost never means free. Retain the receipt record and keep its hold
-      // until the receipt is reconciled using this same method.
-      if (cost === null) {
-        await tx.query(
-          `UPDATE hosted_usage SET state='unknown',"generationId"=COALESCE($2,"generationId"),
-           "inputTokens"=GREATEST("inputTokens",$3),"outputTokens"=GREATEST("outputTokens",$4),
-           "cacheReadTokens"=COALESCE($5,"cacheReadTokens"),"cacheWriteTokens"=COALESCE($6,"cacheWriteTokens") WHERE id=$1`,
-          [id, generationId ?? null, inputTokens, outputTokens, ...cacheColumns],
-        )
-        return
-      }
-      if (!Number.isSafeInteger(cost) || cost < 0)
-        throw new Error('invalid_usage_cost')
-      // Never invent cache figures. Only finite nonnegative integers reach the
-      // ledger; anything else is "not collected" and stays NULL.
-      // A call admitted just before the period ended keeps access to that paid
-      // period's remaining grant; it never consumes a future period's allowance.
-      const available = await this.balance(row.workspaceId, tx, row.createdAt)
-      const legacyRow = Number(row.reservedFree) > 0 || Number(row.reservedPurchased) > 0 || Number(row.reservedUnpaid) > 0
-      // Who funded the cost is written once, here, as "platformMicroUsd" (#2934): the part the platform paid.
-      // The workspace was charged the rest: plan allowance, purchased credit and any overrun debt it owes.
-      // Free credit (a hosted_allowances grant) and a free-message turn are the platform's, never a charge.
-      // A free-message turn (no card, nothing bought): the platform pays, as unpaid spend under its daily cap,
-      // never as a debt the workspace's allowance would repay once a card is verified.
-      if (!legacyRow && !available.verified && available.purchased <= 0) {
-        await tx.query(
-          `UPDATE hosted_usage SET state='settled',"costMicroUsd"=$2,"freeMicroUsd"=0,"purchasedMicroUsd"=0,"inputTokens"=$3,"outputTokens"=$4,"generationId"=COALESCE($5,"generationId"),"unpaidMicroUsd"=$2,"platformMicroUsd"=$2,"cacheReadTokens"=$6,"cacheWriteTokens"=$7,"settledAt"=now() WHERE id=$1`,
-          [id, cost, inputTokens, outputTokens, generationId ?? null, ...cacheColumns],
-        )
-        return
-      }
-      // Old rows may already have debited free credit or frozen purchased points.
-      // Settle those exact rows without charging their prepaid money twice.
-      const legacy = Number(row.reservedFree) > 0 || Number(row.reservedPurchased) > 0 || Number(row.reservedUnpaid) > 0
-      const spent = Number((await tx.query(`SELECT COALESCE(sum("unpaidMicroUsd"+CASE WHEN state IN ('pending','unknown') THEN "reservedUnpaid" ELSE 0 END),0) AS n FROM hosted_usage WHERE "createdAt">now()-interval '24 hours'`)).rows[0].n)
-      const useFree = legacy ? Number(row.reservedFree) > 0 : spent < abuseLimits().dailyMicroUsd
-      const free =
-        useFree
-          ? Math.min(cost, Number(row.reservedFree) + available.free)
-          : 0
-      let remainingPlan = Math.min(cost - free, available.plan)
-      const plan = remainingPlan
-      const allocations: Record<string, number> = {}
-      if (remainingPlan > 0) {
-        const grants = await tx.query<{ id: string; remaining: number }>(`SELECT g.id,GREATEST(0,(g.points::bigint+COALESCE((SELECT sum(r.points) FROM workspace_credit_grants r WHERE r."parentGrantId"=g.id),0))*$2::bigint-COALESCE((SELECT sum(${jsonbSafeBigIntExprSql('u."planAllocations"->>g.id::text')}) FROM hosted_usage u WHERE u."workspaceId"=$1),0))::float8 AS remaining
-          FROM workspace_credit_grants g WHERE g."workspaceId"=$1 AND g.bucket='plan' AND g."parentGrantId" IS NULL AND g.points>0 AND (g."periodStart" IS NULL OR g."periodStart"<=$3) AND (g."expiresAt" IS NULL OR g."expiresAt">$3)
-          ORDER BY g."expiresAt" ASC NULLS LAST,g.id`, [row.workspaceId, MICRO_USD_PER_POINT, row.createdAt])
-        for (const grant of grants.rows) {
-          const amount = Math.min(remainingPlan, grant.remaining)
-          if (amount > 0) allocations[grant.id] = amount
-          remainingPlan -= amount
-          if (remainingPlan === 0) break
-        }
-        if (remainingPlan !== 0) throw new Error('billing_plan_allocation_changed')
-      }
-      const purchased = cost - free - plan
-      const unpaid =
-        useFree
-          ? free +
-            Math.max(
-              0,
-              purchased - available.purchased - Number(row.reservedPurchased),
-            )
-          : 0 // Any one-call overrun stays as debt; never erase it.
-      // "unpaidMicroUsd" counts free credit and debt together for the platform's daily cap, so it cannot
-      // say who paid. The platform funded `free` alone; plan, purchased and debt are charged.
-      await tx.query(
-        'UPDATE hosted_allowances SET remaining=remaining+$2-$3 WHERE "workspaceId"=$1',
-        [row.workspaceId, Number(row.reservedFree), free],
-      )
-      await tx.query(
-        `UPDATE hosted_usage SET state='settled',"costMicroUsd"=$2,"freeMicroUsd"=$3,"purchasedMicroUsd"=$4,"inputTokens"=$5,"outputTokens"=$6,"generationId"=COALESCE($7,"generationId"),"unpaidMicroUsd"=$8,"planMicroUsd"=$9,"planAllocations"=$10,"cacheReadTokens"=$11,"cacheWriteTokens"=$12,"platformMicroUsd"=$3,"settledAt"=now() WHERE id=$1`,
-        [
-          id,
-          cost,
-          free,
-          purchased,
-          inputTokens,
-          outputTokens,
-          generationId ?? null,
-          unpaid,
-          plan,
-          JSON.stringify(allocations),
-          ...cacheColumns,
-        ],
-      )
+      await this.settleLocked(tx, id, cost, inputTokens, outputTokens, generationId, cache, messageId)
     })
+  }
+
+  async settleMeasuredMachine(id: string, cost: number, usage: Record<string, unknown>) {
+    if (!this.metered) return
+    return this.transaction(async tx => {
+      await tx.query("SELECT pg_advisory_xact_lock(hashtextextended('hosted-free-budget',0))")
+      const held = await tx.query(`UPDATE hosted_usage SET "machineCompute"="machineCompute"||$2::jsonb,"machineComputeReviewAt"=NULL
+        WHERE id=$1 AND state='unknown' AND "generationId"=$3 AND "holdMicroUsd">=$4 RETURNING id`,
+      [id, JSON.stringify(usage), 'cf-cgroup:' + id, cost])
+      if (held.rowCount) await this.settleLocked(tx, id, cost, 0, 0, undefined, undefined, undefined, true)
+    })
+  }
+
+  /** A lost provider receipt cannot authorize an estimate or retain credits indefinitely. */
+  async expireMeasuredMachine(id: string) {
+    if (!this.metered) return false
+    const expired = await this.pool.query(`UPDATE hosted_usage SET state='failed',"settledAt"=now(),${releaseMachineHold}
+      WHERE id=$1 AND (${expiredMachineHold})`, [id])
+    return Boolean(expired.rowCount)
+  }
+
+  private async settleLocked(
+    tx: Query,
+    id: string,
+    cost: number | null,
+    inputTokens: number,
+    outputTokens: number,
+    generationId?: string,
+    cache?: { read: number | null; write: number | null } | null,
+    messageId?: string | null,
+    prepaid = false,
+  ) {
+    const row = (
+      await tx.query('SELECT * FROM hosted_usage WHERE id=$1 FOR UPDATE', [
+        id,
+      ])
+    ).rows[0]
+    if (!row || row.state === 'settled' || row.state === 'failed') return
+    await this.lock(tx, row.workspaceId)
+    if (generationId && row.generationId && generationId !== row.generationId)
+      throw new Error('usage_generation_mismatch')
+    if (messageId) {
+      await tx.query('UPDATE hosted_usage SET "usageMessageId"=COALESCE("usageMessageId",$2) WHERE id=$1', [id, messageId])
+    }
+    const cacheValue = (value: number | null) =>
+      typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
+    const cacheColumns = [cacheValue(cache?.read ?? null), cacheValue(cache?.write ?? null)]
+    // Unknown cost never means free. Retain the receipt record and keep its hold
+    // until the receipt is reconciled using this same method.
+    if (cost === null) {
+      await tx.query(
+        `UPDATE hosted_usage SET state='unknown',"generationId"=COALESCE($2,"generationId"),
+         "inputTokens"=GREATEST("inputTokens",$3),"outputTokens"=GREATEST("outputTokens",$4),
+         "cacheReadTokens"=COALESCE($5,"cacheReadTokens"),"cacheWriteTokens"=COALESCE($6,"cacheWriteTokens") WHERE id=$1`,
+        [id, generationId ?? null, inputTokens, outputTokens, ...cacheColumns],
+      )
+      return
+    }
+    if (!Number.isSafeInteger(cost) || cost < 0)
+      throw new Error('invalid_usage_cost')
+    // Never invent cache figures. Only finite nonnegative integers reach the
+    // ledger; anything else is "not collected" and stays NULL.
+    // A call admitted just before the period ended keeps access to that paid
+    // period's remaining grant; it never consumes a future period's allowance.
+    const available = await this.balance(row.workspaceId, tx, row.createdAt)
+    const legacyRow = Number(row.reservedFree) > 0 || Number(row.reservedPurchased) > 0 || Number(row.reservedUnpaid) > 0
+    // Who funded the cost is written once, here, as "platformMicroUsd" (#2934): the part the platform paid.
+    // The workspace was charged the rest: plan allowance, purchased credit and any overrun debt it owes.
+    // Free credit (a hosted_allowances grant) and a free-message turn are the platform's, never a charge.
+    // A free-message turn (no card, nothing bought): the platform pays, as unpaid spend under its daily cap,
+    // never as a debt the workspace's allowance would repay once a card is verified.
+    if (prepaid && available.plan + available.purchased < cost) throw new PaidResourceError('points_exhausted')
+    if (!prepaid && !legacyRow && !available.verified && available.purchased <= 0) {
+      await tx.query(
+        `UPDATE hosted_usage SET state='settled',"costMicroUsd"=$2,"freeMicroUsd"=0,"purchasedMicroUsd"=0,"inputTokens"=$3,"outputTokens"=$4,"generationId"=COALESCE($5,"generationId"),"unpaidMicroUsd"=$2,"platformMicroUsd"=$2,"cacheReadTokens"=$6,"cacheWriteTokens"=$7,"settledAt"=now() WHERE id=$1`,
+        [id, cost, inputTokens, outputTokens, generationId ?? null, ...cacheColumns],
+      )
+      return
+    }
+    // Old rows may already have debited free credit or frozen purchased points.
+    // Settle those exact rows without charging their prepaid money twice.
+    const legacy = Number(row.reservedFree) > 0 || Number(row.reservedPurchased) > 0 || Number(row.reservedUnpaid) > 0
+    const spent = Number((await tx.query(`SELECT COALESCE(sum("unpaidMicroUsd"+CASE WHEN state IN ('pending','unknown') THEN "reservedUnpaid" ELSE 0 END),0) AS n FROM hosted_usage WHERE "createdAt">now()-interval '24 hours'`)).rows[0].n)
+    const useFree = prepaid ? false : legacy ? Number(row.reservedFree) > 0 : spent < abuseLimits().dailyMicroUsd
+    const free =
+      useFree
+        ? Math.min(cost, Number(row.reservedFree) + available.free)
+        : 0
+    let remainingPlan = Math.min(cost - free, available.plan)
+    const plan = remainingPlan
+    const allocations: Record<string, number> = {}
+    if (remainingPlan > 0) {
+      const grants = await tx.query<{ id: string; remaining: number }>(`SELECT g.id,GREATEST(0,(g.points::bigint+COALESCE((SELECT sum(r.points) FROM workspace_credit_grants r WHERE r."parentGrantId"=g.id),0))*$2::bigint-COALESCE((SELECT sum(${jsonbSafeBigIntExprSql('u."planAllocations"->>g.id::text')}) FROM hosted_usage u WHERE u."workspaceId"=$1),0))::float8 AS remaining
+        FROM workspace_credit_grants g WHERE g."workspaceId"=$1 AND g.bucket='plan' AND g."parentGrantId" IS NULL AND g.points>0 AND (g."periodStart" IS NULL OR g."periodStart"<=$3) AND (g."expiresAt" IS NULL OR g."expiresAt">$3)
+        ORDER BY g."expiresAt" ASC NULLS LAST,g.id`, [row.workspaceId, MICRO_USD_PER_POINT, row.createdAt])
+      for (const grant of grants.rows) {
+        const amount = Math.min(remainingPlan, grant.remaining)
+        if (amount > 0) allocations[grant.id] = amount
+        remainingPlan -= amount
+        if (remainingPlan === 0) break
+      }
+      if (remainingPlan !== 0) throw new Error('billing_plan_allocation_changed')
+    }
+    const purchased = cost - free - plan
+    const unpaid =
+      useFree
+        ? free +
+          Math.max(
+            0,
+            purchased - available.purchased - Number(row.reservedPurchased),
+          )
+        : 0 // Any one-call overrun stays as debt; never erase it.
+    // "unpaidMicroUsd" counts free credit and debt together for the platform's daily cap, so it cannot
+    // say who paid. The platform funded `free` alone; plan, purchased and debt are charged.
+    await tx.query(
+      'UPDATE hosted_allowances SET remaining=remaining+$2-$3 WHERE "workspaceId"=$1',
+      [row.workspaceId, Number(row.reservedFree), free],
+    )
+    await tx.query(
+      `UPDATE hosted_usage SET state='settled',"costMicroUsd"=$2,"freeMicroUsd"=$3,"purchasedMicroUsd"=$4,"inputTokens"=$5,"outputTokens"=$6,"generationId"=COALESCE($7,"generationId"),"unpaidMicroUsd"=$8,"planMicroUsd"=$9,"planAllocations"=$10,"cacheReadTokens"=$11,"cacheWriteTokens"=$12,"platformMicroUsd"=$3,"settledAt"=now() WHERE id=$1`,
+      [
+        id,
+        cost,
+        free,
+        purchased,
+        inputTokens,
+        outputTokens,
+        generationId ?? null,
+        unpaid,
+        plan,
+        JSON.stringify(allocations),
+        ...cacheColumns,
+      ],
+    )
   }
   async status(
     workspaceId: string,

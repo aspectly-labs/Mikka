@@ -5,6 +5,7 @@ import { SubscriptionService } from './subscription-service'
 import { SubscriptionWorkflowModel } from './subscription-workflow-model'
 import { ExecutionSettings } from './execution-settings'
 import { subscriptionFixture } from '../tests/fixtures/subscription'
+import { fixtureSubscriptionChat } from '../tests/fixtures/subscription-chat'
 
 const priority = { codexServiceTier: 'priority' as const }
 const catalogue = (supported: boolean) => ({ revision: '1', models: ['fixture-model'], priorityVersion: 1, prioritySupport: { 'fixture-model': supported } })
@@ -33,7 +34,7 @@ function modelService(route: 'codex_cpa' | 'claude_cpa', catalog: unknown, polic
       } })
     },
   }
-  const service = new SubscriptionService(repository, () => worker as never, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => { counts.memberships++ }, async () => { counts.admissions++ }, undefined, policy)
+  const service = new SubscriptionService(repository, () => worker as never, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => { counts.memberships++ }, async () => { counts.admissions++ }, undefined, policy, fixtureSubscriptionChat(worker))
   return { service, use, row, counts, payloads }
 }
 async function request(f: ReturnType<typeof modelService>, providerOptions?: Record<string, Record<string, string>>) {

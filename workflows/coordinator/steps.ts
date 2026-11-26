@@ -401,16 +401,17 @@ async function dispatchRunBody(userId: string, input: { issueId: string; profile
   // A new thread runs in the repository named; the thread's next run only ever in the thread's own (never the one the model passed).
   // A new thread runs on the Agent the dispatch names; nothing picks one (decision 2026-11-17-1800).
   // The thread's next run keeps the thread's own Agent, never the other one.
-  const byRules = (note: string | undefined, place: import('@/lib/dispatch-target').DispatchTarget | undefined, named: string | null | undefined, previous?: { id: string; harness: string | null }) => {
+  const byRules = (note: string | undefined, place: import('@/lib/dispatch-target').DispatchTarget | undefined, named: string | null | undefined,
+    previous?: Pick<import('@/lib/thread-dispatch').TaskThreadRun, 'id' | 'harness' | 'readOnly'>, recovery?: BillingLocalRecovery) => {
     if (!named?.trim()) return Promise.resolve({ error: 'repositoryRequired' as const, issueId: request.issueId })
     const own: { harness: 'claude_code' | 'codex' } | undefined = previous?.harness === 'claude_code' || previous?.harness === 'codex' ? { harness: previous.harness } : undefined
     // A new thread falls back on the Bot's defaults for what the task left open; a thread's next run keeps its own (never a move).
     const asked = previous
-      ? { place, model: request.model ?? own, profileId: request.profileId, agentId: request.agentId }
+      ? { place, model: recovery && own ? { ...own, model: recovery.model } : request.model ?? own, profileId: request.profileId, agentId: request.agentId }
       : withBotDispatchDefaults({ place, model: request.model, profileId: request.profileId, agentId: request.agentId }, botDefaults)
     if (!asked.model && !asked.agentId) return Promise.resolve({ error: 'agentRequired' as const, issueId: request.issueId })
     const sponsoredDefault = 'sponsored' in asked && asked.sponsored === true
-    return withResolvedRepository(userId, request.issueId, named, repo => dispatchByRules(userId, { ...request, ...(asked.model ? { model: asked.model } : {}), ...(asked.profileId ? { profileId: asked.profileId } : {}), ...(asked.agentId ? { agentId: asked.agentId } : {}), repo, note, threadRunId: previous?.id,
+    return withResolvedRepository(userId, request.issueId, named, repo => dispatchByRules(userId, { ...request, ...(asked.model ? { model: asked.model } : {}), ...(asked.profileId ? { profileId: asked.profileId } : {}), ...(asked.agentId ? { agentId: asked.agentId } : {}), repo, note, threadRunId: previous?.id, recovery, readOnly: Boolean(request.readOnly || previous?.readOnly),
       ...(sponsoredDefault ? { sponsoredDefault: true as const } : {}) }, scope, botId, execution, requestEventId, asked.place))
   }
   // The thread's repository is not the one named: a different one, or a name that is not one repository yet (its card comes from the new thread's lookup).
@@ -438,7 +439,7 @@ async function dispatchRunBody(userId: string, input: { issueId: string; profile
       const customProfile = threadModel?.agentProfile && threadModel.agentProfile.source !== 'default'
       if (request.model && (request.model.harness !== previous.harness || (customProfile && request.model.model && request.model.model !== threadModel?.model))) return { error: 'threadProfileMismatch' as const, issueId: request.issueId, threadRunId: previous.id }
       if (previous?.cloud && (previous.harness === 'codex' || previous.harness === 'claude_code')) {
-        const named = request.model?.model && !customProfile ? await chooseCloudRunModel(pool, { ownerId: userId, workspaceId: previous.cloud.workspaceId, botId: previous.cloud.botId }, previous.agentId, previous.harness, request.model.model) : null
+        const named = request.model?.model && !customProfile ? await chooseCloudRunModel(pool, { ownerId: userId, workspaceId: previous.cloud.workspaceId, botId: previous.cloud.botId }, previous.agentId, previous.harness, request.model.model, previous.remoteUrl ? 'repository_admission' : 'desktop') : null
         const runModel = named && !('error' in named) && named.modelDispatch?.entry
           ? { ...named, agentProfile: namedThreadProfile(threadModel, named, previous.harness, { ownerId: userId, workspaceId: previous.cloud.workspaceId }) }
           : named ?? threadModel
@@ -446,6 +447,11 @@ async function dispatchRunBody(userId: string, input: { issueId: string; profile
         const cloud = await dispatchComputerTask(userId, { botId: previous.cloud.botId, factoryBotId: botId, sourceEventId: requestEventId, issueId: request.issueId, harness: previous.harness, note, ...runModel, threadRunId: previous.id, ...(previous.remoteUrl ? { repo: previous.remoteUrl } : {}), ...(request.readOnly || previous.readOnly ? { readOnly: true } : {}), ...(request.origin ? { origin: request.origin } : {}), ...(request.originRef ? { originRef: request.originRef } : {}) }, `thread:${previous.id}:${request.requestKey ?? requestEventId ?? crypto.randomUUID()}`, scope, execution, target === undefined && previous.allowLocalRecovery === true ? true : undefined)
         if (!('error' in cloud)) return cloud
         if (cloud.error !== 'cloudComputerUnavailable') return { ...cloud, issueId: request.issueId }
+        if ('billingRefusal' in cloud && cloud.billingRefusal && cloud.failedRunId) {
+          const receipt = { billingRefusal: cloud.billingRefusal, failedRunId: cloud.failedRunId, model: runModel.model }
+          if (customProfile || target !== undefined) return { error: receipt.billingRefusal, issueId: request.issueId, failedRunId: receipt.failedRunId }
+          return byRules(note, undefined, previous.remoteUrl, previous, receipt)
+        }
       } else if (previous?.remoteUrl) {
         // A server or computer thread keeps its own model too; with none left the person is told, never the CLI's pick.
         const device = request.model?.model && !customProfile ? (await pool.query<{ deviceId: string; harness: 'codex' | 'claude_code'; workspaceId: string }>('SELECT a."deviceId",a.harness FROM agents a WHERE a.id=$1 AND a."userId"=$2', [previous.agentId, userId])).rows[0] : undefined
@@ -488,7 +494,9 @@ async function namedDeviceAgent(userId: string, deviceId: string, agentId: strin
   return (await import('@/lib/dispatch-target')).chooseDeviceAgent(rows, installed, agentId, harness)
 }
 
-async function dispatchByRules(userId: string, { followed, sponsoredDefault, ...input }: { threadRunId?: string; issueId: string; profileId?: string; agentId?: string; repo: string; note?: string; requestKey?:string; readOnly?: boolean; needsSpec?: boolean; origin?: RunOrigin; originRef?: RunOriginRef | null; model?: { harness: 'claude_code' | 'codex'; model?: string }; followed?: true; /** The Bot's default is the Cloudflare coding machine and the task named no place. */ sponsoredDefault?: true }, scope: NativeToolScope | undefined, botId: string, execution?: AgentExecution, requestEventId?: string, place?: import('@/lib/dispatch-target').DispatchTarget) {
+type BillingLocalRecovery = { billingRefusal: import('@/lib/abuse/policy').PaidResourceCode; failedRunId: string; model: string }
+
+async function dispatchByRules(userId: string, { followed, sponsoredDefault, recovery, ...input }: { recovery?: BillingLocalRecovery; threadRunId?: string; issueId: string; profileId?: string; agentId?: string; repo: string; note?: string; requestKey?:string; readOnly?: boolean; needsSpec?: boolean; origin?: RunOrigin; originRef?: RunOriginRef | null; model?: { harness: 'claude_code' | 'codex'; model?: string }; followed?: true; /** The Bot's default is the Cloudflare coding machine and the task named no place. */ sponsoredDefault?: true }, scope: NativeToolScope | undefined, botId: string, execution?: AgentExecution, requestEventId?: string, place?: import('@/lib/dispatch-target').DispatchTarget) {
   if (!input.threadRunId) input = { ...input, needsSpec: await (await import('@/lib/factory/task-dispatch')).factoryTaskNeedsSpec(pool, userId, { issueId: input.issueId, botId, needsSpec: input.needsSpec }) }
   const stage = input.needsSpec ? 'spec' : 'execute'
   // A computer the person named: theirs, not removed, online; otherwise refused or the card at once, never another computer.
@@ -545,8 +553,11 @@ async function dispatchByRules(userId: string, { followed, sponsoredDefault, ...
         sponsored = destination.data.provider === 'cloudflare'
       }
     }
-    const { target, agentProfile, selectionMode } = await timedPhase('resolveModelDispatch', () => resolveAgentProfileDispatch(pool, { ownerId: userId, workspaceId, botId }, { issueId: input.issueId, stage, note: input.note, profileId: input.profileId, asked: input.model, location: place === 'cloud' ? 'cloud' : undefined, ...(sponsored ? {cloudPurpose:'cloudflare_task' as const}:{}), agentId: input.agentId, defaultOnly: Boolean(input.threadRunId) }))
+    const { taskProviderSelectionConfigured } = await import('@/lib/cloud-computer/task-provider-admission')
+    const cloudPurpose = sponsored || taskProviderSelectionConfigured(workspaceId) ? 'repository_admission' as const : undefined
+    const { target, agentProfile, selectionMode } = await timedPhase('resolveModelDispatch', () => resolveAgentProfileDispatch(pool, { ownerId: userId, workspaceId, botId }, { issueId: input.issueId, stage, note: input.note, profileId: input.profileId, asked: input.model, location: place === 'cloud' ? 'cloud' : undefined, cloudPurpose, withoutCloud: recovery ? true : undefined, agentId: input.agentId, defaultOnly: Boolean(input.threadRunId) }))
     if (target.kind === 'none') {
+      if (recovery) return { error: recovery.billingRefusal, issueId: input.issueId, failedRunId: recovery.failedRunId }
       if (target.reason === 'cloudNotConfigured' && !sponsored) {
         const { cloudDispatchFailureReason } = await import('@/lib/cloud-dispatch-failure')
         const { modelUnavailableCard } = await import('@/lib/model-dispatch')
@@ -564,7 +575,10 @@ async function dispatchByRules(userId: string, { followed, sponsoredDefault, ...
       const result = await queueTaskRun(userId, { ...input, threadRunId, agentId: device.agentId, model: device.model, modelDispatch, agentProfile: selectedProfile, ...(device.subscriptionBindingId ? { subscriptionBindingId: device.subscriptionBindingId } : {}), ...(device.entry.source.kind === 'api_key' ? { apiKeyId: device.entry.source.keyId } : {}) }, botId, execution, requestEventId, { origin: input.origin ?? 'web', originRef: input.originRef ?? null })
       return { ...result, status: 'queued' as const }
     }
-    if (target.kind === 'device') return onDevice(target)
+    if (target.kind === 'device') return recovery
+      ? { ...await onDevice(target, recovery.failedRunId), fallback: 'cloudUnavailable' as const }
+      : onDevice(target)
+    if (recovery) return { error: recovery.billingRefusal, issueId: input.issueId, failedRunId: recovery.failedRunId }
     // The bot's own runtime, created on first use; the Coordinator's is its bot row's like any bot's.
     // An API-key model binds no subscription to it; a subscription model binds the entry's own account.
     const autoRuntime=await import('@/lib/computer/auto-runtime')
@@ -588,6 +602,8 @@ async function dispatchByRules(userId: string, { followed, sponsoredDefault, ...
       // Its server-confirmed failed run supplies ancestry for the normal retry.
       if (fallback.kind === 'device') return { ...await onDevice(fallback, 'failedRunId' in cloud ? cloud.failedRunId : input.threadRunId), fallback: 'cloudUnavailable' as const }
     }
+    if ('billingRefusal' in cloud && cloud.billingRefusal)
+      return { error: cloud.billingRefusal, issueId: input.issueId, failedRunId: cloud.failedRunId }
     if (sponsored) {
       const { modelUnavailableCard } = await import('@/lib/model-dispatch')
       return { error:'machineUnavailable' as const, issueId:input.issueId, reason:'cloudTemporarilyUnavailable' as const,
@@ -684,7 +700,7 @@ export async function dispatchComputerThread(userId: string, input: { brief?: st
           const runtime = (await pool.query<{ agentId: string }>(`SELECT "agentId" FROM bot_cloud_runtimes
             WHERE "botId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND harness=$4`, [request.botId, userId, bot.workspaceId, harness])).rows[0]
           if (!runtime) return { error: 'cloudComputerUnavailable' as const }
-          const selected = await chooseCloudRunModel(pool, { ownerId: userId, workspaceId: bot.workspaceId, botId: request.botId }, runtime.agentId, harness, asked)
+          const selected = await chooseCloudRunModel(pool, { ownerId: userId, workspaceId: bot.workspaceId, botId: request.botId }, runtime.agentId, harness, asked, previous.remoteUrl ? 'repository_admission' : 'desktop')
           if ('error' in selected) return { ...selected, issueId: request.issueId }
           runModel = { ...selected, ...(selected.modelDispatch?.entry ? { agentProfile: namedThreadProfile(kept, selected, previous.harness, { ownerId: userId, workspaceId: bot.workspaceId }) } : {}) }
         } else {
@@ -765,13 +781,35 @@ export async function dispatchComputerTask(userId: string, input: { sourceEventI
     if (error instanceof AgentProfileError || error instanceof AgentProfileAdmissionError) return asToolResult(() => Promise.reject(error))
     const { FactoryError } = await import('@/lib/factory/contract')
     if (error instanceof FactoryError) return { error: error.code }
-    const { ComputerError } = await import('@/lib/computer/store')
+    const { ComputerError, TaskWorkspaceArchiveUnavailable } = await import('@/lib/computer/store')
     console.warn('cloud task dispatch refused', { error: error instanceof Error ? error.constructor.name : typeof error, code: error instanceof ComputerError ? error.status : undefined })
     if (input.threadRunId && error instanceof ComputerError && error.message === 'Bot subscription unavailable') return { error: 'threadModelUnavailable' as const, threadRunId: input.threadRunId }
+    const { TaskProviderAdmissionUnavailable, taskProviderUnavailableMessage } = await import('@/lib/cloud-computer/task-provider-admission')
+    if (error instanceof TaskProviderAdmissionUnavailable && !error.allowLocalRecovery) {
+      return { error: 'taskProviderUnavailable' as const, provider: error.provider, retryable: true as const,
+        message: taskProviderUnavailableMessage(error.provider) }
+    }
     // A machine startup failure is not an Owner stop. Finalize only a still
     // unclaimed run, before cleanup can reconcile it as a cancelled task.
     if (queuedRunId) {
       const failed = await (await import('@/lib/run-leases')).failUnclaimedCloudStart({ userId, workspaceId: target.workspaceId }, queuedRunId, error)
+      if (failed) {
+        if (error instanceof TaskWorkspaceArchiveUnavailable) return { error: TaskWorkspaceArchiveUnavailable.code, failedRunId: queuedRunId }
+        const { PaidResourceError } = await import('@/lib/abuse/policy')
+        const { TaskComputeUnavailable } = await import('@/lib/cloud-computer/thread-machines')
+        const { rows: [receipt] } = await pool.query<{ allowLocalRecovery: boolean; provider: string | null }>(`SELECT
+          "agentDefinition"->'allowLocalRecovery' = 'true'::jsonb AS "allowLocalRecovery",
+          "agentDefinition"#>>'{taskCompute,provider}' AS provider FROM agent_runs
+          WHERE id=$1 AND "userId"=$2 AND "workspaceId"=$3`, [queuedRunId, userId, target.workspaceId])
+        if (error instanceof PaidResourceError) return receipt?.allowLocalRecovery
+          ? { error: 'cloudComputerUnavailable' as const, billingRefusal: error.code, failedRunId: queuedRunId }
+          : { error: error.code, failedRunId: queuedRunId }
+        if (receipt?.provider && !receipt.allowLocalRecovery) {
+          if (error instanceof TaskComputeUnavailable) return { error: 'taskProviderUnavailable' as const, provider: error.provider,
+            retryable: true as const, message: taskProviderUnavailableMessage(error.provider), failedRunId: queuedRunId }
+          return { error: 'cloudComputerUnavailable' as const, recoveryBlocked: true as const }
+        }
+      }
       // A claim, newer provisioning lease or Owner stop may have won. None
       // permits this failed caller to start another placement of the task.
       return failed ? { error: 'cloudComputerUnavailable' as const, failedRunId: queuedRunId }

@@ -109,6 +109,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/github/publication-webhook.ts', file: 'lib/github/publication-webhook.db.test.ts', script: 'test:run-publication-db' },
   { marker: 'lib/github/publication-webhook-actions.ts', file: 'tests/github-webhook-statements.db.test.ts', script: 'test:run-publication-db' },
   { marker: 'lib/cloud-computer/browser-authority.ts', file: 'lib/cloud-computer/unattended.db.test.ts', script: 'test:cloud-backend-db' },
+  { marker: 'lib/cloud-computer/task-compute-provider.ts', file: 'tests/portable-compute-provider-flow.db.test.ts', script: 'test:cloud-backend-db' },
   { marker: 'lib/credentials/store.ts', file: 'lib/credentials/store.db.test.ts', script: 'test:credentials-db' },
   { marker: 'lib/cloud-computer/subagents.ts', file: 'lib/cloud-computer/backend.db.test.ts', script: 'test:cloud-backend-db' },
   { marker: 'lib/factory/approval.ts', file: 'lib/factory/public-consumers.db.test.ts', script: 'test:factory-approval-db' },

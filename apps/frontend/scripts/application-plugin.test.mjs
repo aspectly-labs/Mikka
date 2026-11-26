@@ -81,6 +81,19 @@ test('Vite uses the same existing Lightning CSS color space and neutral mixing a
     if (rule.selector !== ':root' && rule.selector !== '.dark') return
     for (const node of rule.nodes) if (node.type === 'decl') declarations.set(`${rule.selector}/${node.prop}`, node.value)
   })
+  // The checkout's globals name Mikka's colour primitives (`var(--mk-blue-600)`), which its styles/tokens.css spells:
+  // each one is compiled through the same plugins, so the assertion still reads Lightning CSS's own colour output.
+  const tokensFile = resolve(officialUi.dir, 'styles/tokens.css')
+  const tokens = (await readFile(tokensFile, 'utf8').catch(() => '')).replace(/\/\*[\s\S]*?\*\//g, '')
+  const spelled = new Map([...tokens.matchAll(/^\s*(--mk-[\w-]+):\s*([^;{}]+);/gm)].map(([, name, value]) => [name, value.trim()]))
+  for (const [key, value] of declarations) {
+    const primitive = /^var\((--mk-[\w-]+)\)$/.exec(value)?.[1]
+    if (!primitive || !spelled.has(primitive)) continue
+    const probe = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(`:root { --probe: ${spelled.get(primitive)}; }`, { from: tokensFile })
+    let compiled
+    probe.root.walkDecls('--probe', node => { compiled = node.value })
+    declarations.set(key, compiled)
+  }
   assert.equal(declarations.get(':root/--sidebar-primary'), 'lab(44.0605% 29.0279 -86.0352)')
   assert.equal(declarations.get(':root/--sidebar'), 'lab(98.26% 0 0)')
   assert.equal(declarations.get('.dark/--sidebar-primary'), 'lab(36.9089% 35.0961 -85.6872)')

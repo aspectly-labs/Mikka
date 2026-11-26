@@ -16,13 +16,14 @@ import { runRuntimeTimings } from '../src/run-runtime-timing'
 import { cleanupTempDirs, makeRepo, tempDir, waitFor } from './helpers'
 
 afterEach(cleanupTempDirs)
+const gatewayToken = 'mkg_' + 'g'.repeat(43)
 async function fixture(harness: 'codex' | 'claude_code' = 'claude_code', collectCliTiming?: boolean) {
   const root = tempDir('machine-direct-'), stateDir = join(root, 'adapters'), home = join(root, 'home')
   mkdirSync(stateDir); mkdirSync(home)
   const runId = randomUUID(), deviceId = randomUUID(), cwd = await makeRepo()
   const never = vi.fn(async () => { throw Error('No operation may contact Mikka for credentials or proxying') })
   const link = Object.assign(new MemoryServer(deviceId).link(), {
-    nativeLease: never, nativeContext: never, nativeRequest: never, githubLease: never,
+    nativeContext: never, githubLease: never,
   })
   const fixtureName = harness === 'codex' ? 'fake-codex-subscription.mjs' : 'fake-claude-subscription.mjs'
   const binary = join(root, fixtureName)
@@ -33,12 +34,14 @@ async function fixture(harness: 'codex' | 'claude_code' = 'claude_code', collect
     taskEnv: { FIXTURE_MACHINE_AUTH: '1', FIXTURE_MACHINE_VALUE: 'ordinary-machine-environment' },
     subscriptionBinding: { bindingId: randomUUID(), ownerId: 'fixture-owner', workspaceId: randomUUID(), consumerId: randomUUID(),
       route: harness === 'codex' ? 'codex_cli' : 'claude_code_cli' },
-    subscriptionLease: { route: harness === 'codex' ? 'codex_cli' : 'claude_code_cli', accountId: 'fixture-account', revision: 2,
-      modelId: 'fixture-model', accessToken: 'fixture-access', expiresAt: new Date(Date.now() + 3_600_000).toISOString() },
+    subscriptionContext: { route: harness === 'codex' ? 'codex_cli' : 'claude_code_cli', accountId: 'fixture-account', revision: 2,
+      modelId: 'fixture-model', expiresAt: new Date(Date.now() + 3_600_000).toISOString() },
   }
+  assignment.modelCredential = { kind: 'provider', protocol: harness === 'codex' ? 'openai' : 'anthropic', key: gatewayToken,
+    baseUrl: 'https://mikka.test/api/model-gateway/' + (harness === 'codex' ? 'openai/v1' : 'anthropic') }
   const gate = new ToolApprovalGate(runId, { isLive: () => true })
   const options = { runId, toolApproval: gate, cwd, prompt: 'hello', model: 'fixture-model',
-    env: { PATH: process.env.PATH!, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), GH_CONFIG_DIR: join(home, '.config', 'gh') }, log: createLogger({ level: 'silent' }) }
+    env: { PATH: process.env.PATH!, HOME: home, CODEX_HOME: join(home, '.codex'), XDG_CONFIG_HOME: join(home, '.config'), GH_CONFIG_DIR: join(home, '.config', 'gh') }, log: createLogger({ level: 'silent' }) }
   const config = join(home, harness === 'codex' ? '.codex' : '.claude')
   const runner = await createHostedBotRunner({ stateDir, link, binaries: { [harness]: binary }, collectCliTiming })
   return { root, stateDir, home, cwd, config, link, never, binary, assignment, options, gate, runner }
@@ -46,45 +49,6 @@ async function fixture(harness: 'codex' | 'claude_code' = 'claude_code', collect
 const collect = async (session: Awaited<ReturnType<Awaited<ReturnType<typeof createHostedBotRunner>>['start']>>) => {
   const events = []; for await (const event of session.events()) events.push(event); return events
 }
-
-it('prepares the hosted Claude with its initial claim lease before checkout, then uses the final normal HOME and cwd with zero credential RPC', async () => {
-  const f = await fixture(), cwd = join(f.root, 'future-checkout')
-  const options = { ...f.options, cwd, prompt: 'PROBE_MACHINE' }
-  const prepared = f.runner.prepare(f.assignment, options, new AbortController().signal)
-  try {
-    await prepared.ready
-    expect(existsSync(cwd)).toBe(false)
-    expect(JSON.parse(readFileSync(join(f.config, 'fixture-process.json'), 'utf8')).prompts).toBe(0)
-    mkdirSync(cwd); execFileSync('git', ['init', '-q'], { cwd })
-    expect((await collect(await prepared.start(options))).at(-1)).toMatchObject({ type: 'exit', outcome: 'succeeded' })
-    expect(JSON.parse(readFileSync(join(f.config, 'fixture-machine.json'), 'utf8'))).toEqual({ home: f.home,
-      cwd: realpathSync(cwd), value: 'ordinary-machine-environment', git: realpathSync(join(cwd, '.git')) })
-    expect(f.never).not.toHaveBeenCalled()
-  } finally { await prepared.cancel() }
-})
-
-it('cancels an actually parked hosted Claude before any final options exist', async () => {
-  const f = await fixture(), abort = new AbortController()
-  const prepared = f.runner.prepare(f.assignment, { ...f.options, cwd: join(f.root, 'missing-checkout') }, abort.signal)
-  await prepared.ready
-  const receipt = JSON.parse(readFileSync(join(f.config, 'fixture-process.json'), 'utf8'))
-  abort.abort(); await prepared.cancel()
-  expect(receipt.prompts).toBe(0)
-  expect(() => process.kill(receipt.pid, 0)).toThrow()
-  await expect(prepared.start(f.options)).rejects.toThrow('closed')
-  expect(f.never).not.toHaveBeenCalled()
-})
-
-it('retains the hosted account-source refusal after a successful prewarm claim with no prompt or fallback', async () => {
-  const f = await fixture(); f.assignment.subscriptionLease!.accessToken = 'fixture-paid'
-  const prepared = f.runner.prepare(f.assignment, f.options, new AbortController().signal)
-  try {
-    await prepared.ready
-    await expect(prepared.start(f.options)).rejects.toThrow()
-    expect(JSON.parse(readFileSync(join(f.config, 'fixture-process.json'), 'utf8')).prompts).toBe(0)
-    expect(f.never).not.toHaveBeenCalled()
-  } finally { await prepared.cancel() }
-})
 
 for (const harness of ['codex', 'claude_code'] as const) {
   it.each(['default', 'acceptance_host', 'repository'] as const)(`${harness} collects CLI timing only for an explicit diagnostic opt-in (%s)`, async source => {
@@ -126,14 +90,14 @@ it.each([true, false])('Codex clears inherited compression only with timing enab
   expect(f.never).not.toHaveBeenCalled()
 })
 
-it.each(['codex', 'claude_code'] as const)('%s consumes claim credentials and uses ordinary HOME/env/Git without any Mikka auth or proxy request', async harness => {
+it.each(['codex', 'claude_code'] as const)('%s consumes claim credentials and uses ordinary HOME/env/Git without a separate credential lease', async harness => {
   const f = await fixture(harness)
   const session = await f.runner.start(f.assignment, { ...f.options, prompt: 'PROBE_MACHINE' })
   const events = await collect(session)
   expect(events.at(-1)).toMatchObject({ type: 'exit', outcome: 'succeeded' })
   expect(f.never).not.toHaveBeenCalled()
   expect(JSON.parse(readFileSync(join(f.config, 'fixture-auth.json'), 'utf8')))
-    .toEqual({ tokenSha: createHash('sha256').update('fixture-access').digest('hex') })
+    .toEqual({ tokenSha: createHash('sha256').update(gatewayToken).digest('hex'), baseUrl: (f.assignment.modelCredential as {baseUrl: string}).baseUrl })
   expect(JSON.parse(readFileSync(join(f.config, 'fixture-machine.json'), 'utf8')))
     .toEqual({ home: f.home, cwd: realpathSync(f.cwd), value: 'ordinary-machine-environment', git: realpathSync(join(f.cwd, '.git')) })
   expect(execFileSync('git', ['config', 'mikka.machineProbe'], { cwd: f.cwd, encoding: 'utf8' }).trim()).toBe('actual-directory')
@@ -142,7 +106,7 @@ it.each(['codex', 'claude_code'] as const)('%s consumes claim credentials and us
   expect(existsSync(join(f.stateDir, 'native-brokers'))).toBe(false)
   const ledger = readFileSync(join(f.stateDir, 'native-ledgers', f.assignment.runId + '.json'), 'utf8')
   expect(JSON.parse(ledger)).toMatchObject({ scope: { ownerId: 'fixture-owner', accountId: 'fixture-account' }, sessionId: session.sessionId })
-  expect(ledger + JSON.stringify(events)).not.toContain('fixture-access')
+  expect(ledger + JSON.stringify(events)).not.toContain(gatewayToken)
   const checked = await f.runner.command(f.cwd, 'git config mikka.verifyProbe actual-directory && printf ready > verify-probe', false, 10_000)
   expect(checked).toMatchObject({ exitCode: 0, timedOut: false, timing: { createMs: 0 } })
   expect(execFileSync('git', ['config', 'mikka.verifyProbe'], { cwd: f.cwd, encoding: 'utf8' }).trim()).toBe('actual-directory')
@@ -166,7 +130,7 @@ it.each(['codex', 'claude_code'] as const)('%s uses a delivered GitHub credentia
 
 it.each(['codex', 'claude_code'] as const)('%s passes the actual model key and provider address directly to its CLI', async harness => {
   const f = await fixture(harness), key = 'fixture-direct-provider-key'
-  delete f.assignment.subscriptionBinding; delete f.assignment.subscriptionLease
+  delete f.assignment.subscriptionBinding; delete f.assignment.subscriptionContext
   f.assignment.modelCredential = { kind: 'provider', protocol: harness === 'codex' ? 'openai' : 'anthropic', baseUrl: 'https://provider.example/v1', key }
   expect((await collect(await f.runner.start(f.assignment, f.options))).at(-1)).toMatchObject({ type: 'exit', outcome: 'succeeded' })
   expect(JSON.parse(readFileSync(join(f.config, 'fixture-auth.json'), 'utf8')))
@@ -185,7 +149,7 @@ it.each([
   f.assignment.policy = { ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, computer_use: 'allow' } }
   f.assignment.computer = { botId: randomUUID(), ownerId: 'task-owner', display: ':2' }
   if (source === 'api_key') {
-    delete f.assignment.subscriptionBinding; delete f.assignment.subscriptionLease
+    delete f.assignment.subscriptionBinding; delete f.assignment.subscriptionContext
     f.assignment.modelCredential = { kind: 'provider', protocol: harness === 'codex' ? 'openai' : 'anthropic',
       baseUrl: 'https://provider.example/v1', key: 'fixture-direct-provider-key' }
   }
@@ -213,7 +177,7 @@ it.each([
       } })
     } else expect(existsSync(ledger)).toBe(false)
     expect(JSON.parse(readFileSync(join(f.config, 'fixture-auth.json'), 'utf8'))).toMatchObject({
-      tokenSha: createHash('sha256').update(source === 'subscription' ? 'fixture-access' : 'fixture-direct-provider-key').digest('hex'),
+      tokenSha: createHash('sha256').update(source === 'subscription' ? gatewayToken : 'fixture-direct-provider-key').digest('hex'),
     })
     expect(f.assignment).toEqual(before)
     expect(f.never).not.toHaveBeenCalled()
@@ -246,22 +210,23 @@ it.each(['codex', 'claude_code'] as const)('%s stops its actual CLI immediately 
   await expect(session.send('must never be delivered')).rejects.toThrow()
 })
 
-it.each(['route', 'model', 'expired', 'stopped'] as const)('refuses %s before any CLI receives the prompt', async reason => {
+it.each(['route', 'model', 'missing-context', 'stopped'] as const)('refuses %s before any CLI receives the prompt', async reason => {
   // The trusted diagnostic switch must not weaken the ordinary run gates.
   const f = await fixture('claude_code', true)
-  if (reason === 'route') f.assignment.subscriptionLease!.route = 'codex_cli'
+  if (reason === 'route') f.assignment.subscriptionContext!.route = 'codex_cli'
   if (reason === 'model') f.assignment.model = 'wrong-model'
-  if (reason === 'expired') f.assignment.subscriptionLease!.expiresAt = new Date(0).toISOString()
+  if (reason === 'missing-context') delete f.assignment.subscriptionContext
   if (reason === 'stopped') f.gate.revoke()
   await expect(f.runner.start(f.assignment, f.options)).rejects.toThrow()
   expect(existsSync(join(f.config, 'fixture-process.json'))).toBe(false)
   expect(f.never).not.toHaveBeenCalled()
 })
 
-it('does not send a prompt when the real native account guard refuses API-key mode', async () => {
-  const f = await fixture(); f.assignment.subscriptionLease!.accessToken = 'fixture-paid'
+it('rejects a direct provider key for subscriptions before starting the CLI', async () => {
+  const f = await fixture()
+  f.assignment.modelCredential!.key = 'fixture-direct-provider-key'
   await expect(f.runner.start(f.assignment, f.options)).rejects.toThrow()
-  expect(JSON.parse(readFileSync(join(f.config, 'fixture-process.json'), 'utf8')).prompts).toBe(0)
+  expect(existsSync(join(f.config, 'fixture-process.json'))).toBe(false)
   expect(f.never).not.toHaveBeenCalled()
 })
 
@@ -278,7 +243,7 @@ it.each(['missing', 'shortcuts', 'failed'] as const)('Claude admits its exact pr
   const f = await fixture()
   const model = 'claude-haiku-5-5'
   f.assignment.model = model
-  Object.assign(f.assignment.subscriptionLease!, { modelId: model, modelCatalogueVerified: true })
+  Object.assign(f.assignment.subscriptionContext!, { modelId: model })
   const runner = await createHostedBotRunner({ stateDir: f.stateDir, link: f.link, binaries: { claude_code: f.binary },
     reportedModels: async () => {
       if (reportKind === 'failed') throw Error('fixture probe failed')
@@ -293,7 +258,6 @@ it.each(['missing', 'shortcuts', 'failed'] as const)('Claude admits its exact pr
 
 it.each(['codex', 'claude_code'] as const)('the %s runner still refuses a model different from its prepared credential lease', async harness => {
   const f = await fixture(harness)
-  f.assignment.subscriptionLease!.modelCatalogueVerified = true
   const runner = await createHostedBotRunner({ stateDir: f.stateDir, link: f.link, binaries: { [harness]: f.binary },
     reportedModels: async () => ({ models: [] }),
   })

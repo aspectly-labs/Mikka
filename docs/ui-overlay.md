@@ -19,6 +19,7 @@ Paid component source (BoardUI Pro, affectUI, beUI Pro) lives only in `mikka-hos
 | `mikka:platform` | not available | `core/renderer/platform.tsx` (desktop), `core/renderer/web/platform.tsx` (web) |
 | stylesheet | none | `core/app/globals.css` and `core/renderer/styles.css` |
 | `@hosted/*` | does not resolve | the checkout's own files |
+| Vite plugin from the checkout | none | `scripts/track-owner/vite-plugin.mjs` (`data-track-owner`), loaded and run when present |
 
 `lib/ui-overlay.mjs` decides this once (`OVERLAY_APPLICATION` lists the files an official checkout must carry) and
 `apps/frontend/scripts/application-plugin.mjs` applies it to both Web and Desktop. `apps/frontend/src/index.ts`
@@ -30,6 +31,13 @@ The checkout's `core/` holds the interface that used to live here at the same re
 `core/hooks/`, `core/app/globals.css` and `core/app/fonts/`, the React pieces of the client runtime under
 `core/lib/`, and the client application under `core/renderer/`. It imports this repository's runtime, API clients
 and contracts through `@/`; nothing here imports it, except the build glue and its tests.
+
+The official build also **runs** one file from the checkout: `apps/frontend/vite.config.mjs` loads
+`scripts/track-owner/vite-plugin.mjs` as a Vite plugin (`trackOwnerPlugins`). The plugin adds a
+`data-track-owner` attribute to the checkout's interactive JSX while Vite transforms it in memory and writes
+nothing back, so the checkout stays read-only; a build without the checkout, or a checkout without that file, loads
+no plugin. Its switch, `MIKKA_TRACK_OWNER`, lives inside the plugin: `1` turns it on and `0` off; unset, it is off for
+a production build and on for the dev server, so production ships no owners unless the deployment asks for them.
 
 A build without the checkout only has to compile. Its server answers a browser with the headless page; the official
 clients connect to it. A dev-flavour desktop build without the checkout shows the same page so the native shell can

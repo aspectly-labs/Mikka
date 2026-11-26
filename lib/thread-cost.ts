@@ -1,5 +1,5 @@
 import { readRunChain, type RunChainQueryable } from './run-chain'
-import { isMachineSize, machineHourlyMicroUsd, type MachineSize } from './cloud-computer/machine-pricing'
+import { CLOUDFLARE_LEGACY_PRICE_VERSION, machineHourlyMicroUsd, machineSkuGeometry, machineSkuListPrice, parseMachineLedgerLabel, parseMachineSku, type MachineProvider, type MachineSku, type MachineListPrice } from './cloud-computer/machine-pricing'
 import { THREAD_COST_GROUPINGS, type ThreadCostGrouping } from './thread-cost-grouping'
 
 export { THREAD_COST_GROUPINGS, type ThreadCostGrouping }
@@ -8,7 +8,7 @@ export { THREAD_COST_GROUPINGS, type ThreadCostGrouping }
  * A thread's cost (#2934 item 4): every model receipt and machine charge of the
  * runs in one run chain, read from hosted_usage and thread_machine_sessions.
  * Nothing here is a price list: model cost is what settlement recorded, and a
- * machine's metered cost uses the same per-GiB-hour rate as its prepaid chunks.
+ * machine's estimate uses the rate associated with its prepaid chunks.
  *
  * What counts as charged (#2934, as Capy: free usage is never shown as a charge).
  * Settlement (HostedUsageStore.settle) splits a Mikka 额度 receipt's cost and records
@@ -62,10 +62,17 @@ export interface ThreadModelCost {
  * when the run's cloud machine has no Mikka charge at all (no prepaid chunk).
  */
 export interface ThreadMachineCost {
-  size: MachineSize | null
+  provider: MachineProvider | null
+  size: MachineSku['size'] | null
+  vcpu: number | null
+  ramGib: number | null
+  pricingSource: 'cloudflare_legacy_memory' | 'cloudflare_cgroup_list' | 'e2b_provisioned_list' | null
+  pricingVersion: string | null
+  catalogueListPrice: MachineListPrice | null
   billing: 'metered' | 'unknown_size' | 'unbilled'
   /** Running time recorded per interval in thread_machine_sessions, to the second; an open interval counts up to now. */
   seconds: number
+  activeVcpuMs?: number
   /** seconds × the size's hourly rate; null unless `billing` is `metered`. */
   meteredMicroUsd: number | null
   /** What the workspace was charged for its 5-minute prepaid chunks from Mikka 额度 (decision 2026-11-15-1900). */
@@ -101,7 +108,6 @@ export interface ThreadCost {
   machines?: ThreadMachineCost[]
 }
 
-const MACHINE_PREFIX = 'machine/cloudflare-'
 const amount = (): ThreadCostAmount => ({ microUsd: 0, unpricedReceipts: 0 })
 const add = (target: ThreadCostAmount, cost: number | null) => {
   if (cost === null) target.unpricedReceipts++
@@ -145,9 +151,15 @@ export async function readThreadCost(
 
   // Failed receipts were released and charged nothing; every other state is real usage.
   const { rows: receipts } = await q.query(
-    `SELECT id,model,"billingSource" AS source,state,"costMicroUsd" AS cost,"platformMicroUsd" AS platform,"inputTokens" AS input,"outputTokens" AS output,"usageRunId"::text AS "runId"
-      FROM hosted_usage WHERE "usageRunId"=ANY($1::uuid[]) AND state<>'failed'`,
-    [runIds],
+    `SELECT u.id,u.model,u."billingSource" AS source,u.state,u."costMicroUsd" AS cost,u."platformMicroUsd" AS platform,
+        u."inputTokens" AS input,u."outputTokens" AS output,u."usageRunId"::text AS "runId",e."hourlyMicroUsd",e."pricingVersion",
+        CASE WHEN $2::boolean THEN u."machineCompute"-'grant' END AS "machineCompute"
+      FROM hosted_usage u
+      LEFT JOIN e2b_compute_leases e ON $2::boolean AND e."operationId"=CASE
+        WHEN u.id ~ '^machine:e2b:[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}:[0-9]+$' THEN split_part(u.id,':',3)::uuid END
+        AND e."workspaceId"=u."usageWorkspaceId" AND e."ownerId"=u."executionOwnerId" AND u.model='machine/e2b-'||e.size
+      WHERE u."usageRunId"=ANY($1::uuid[]) AND u.state<>'failed'`,
+    [runIds, input.groupBy === 'machine'],
   )
   // Intervals are read in the thread's own owner and workspace; time recorded after a
   // scope_changed hand-off belongs to the new scope, not to this thread's cost. Only the
@@ -167,16 +179,20 @@ export async function readThreadCost(
   const fundingUnknown = funded()
   const models = new Map<string, ThreadModelCost>()
   const machines = new Map<string, ThreadMachineCost>()
-  const machine = (size: MachineSize | null, billing: ThreadMachineCost['billing']) => {
-    const key = billing === 'metered' ? `size:${size}` : billing
+  const machine = (provider: MachineProvider | null, sku: MachineSku | null, pricingVersion: string | null, billing: ThreadMachineCost['billing'], measuredCloudflare = false) => {
+    const key = billing === 'metered' ? `${provider}:${sku?.size}:${pricingVersion ?? ''}` : `${billing}:${provider ?? ''}`
+    const geometry = sku && machineSkuGeometry(sku)
     let row = machines.get(key)
-    if (!row) machines.set(key, row = { size: billing === 'metered' ? size : null, billing, seconds: 0,
-      meteredMicroUsd: billing === 'metered' ? 0 : null, chargedMicroUsd: 0, coveredMicroUsd: 0, fundingUnknownMicroUsd: 0, unpricedReceipts: 0 })
+    if (!row) machines.set(key, row = {
+      provider, size: sku?.size ?? null, vcpu: geometry?.vcpu ?? null, ramGib: geometry?.ramGib ?? null,
+      pricingSource: measuredCloudflare ? 'cloudflare_cgroup_list' : sku?.provider === 'cloudflare' ? 'cloudflare_legacy_memory' : sku ? 'e2b_provisioned_list' : null,
+      pricingVersion, catalogueListPrice: sku ? machineSkuListPrice(sku) : null, billing, seconds: 0, meteredMicroUsd: billing === 'metered' ? 0 : null,
+      chargedMicroUsd: 0, coveredMicroUsd: 0, fundingUnknownMicroUsd: 0, unpricedReceipts: 0,
+    })
     return row
   }
-  // The sizes each run's prepaid chunks name. One recognised size meters the run's time at its rate;
-  // several sizes or an unrecognised one leave the rate unknown rather than guessed.
-  const runSizes = new Map<string, Set<string>>()
+  type RatedMachine = { provider: MachineProvider; sku: MachineSku | null; rate: number | null; version: string | null; measuredCloudflare: boolean }
+  const runSizes = new Map<string, Map<string, RatedMachine>>()
 
   for (const receipt of receipts) {
     const settled = receipt.state === 'settled' && receipt.cost !== null
@@ -193,11 +209,32 @@ export async function readThreadCost(
     const model = String(receipt.model)
     // A prepayment is known by machineChunkId's receipt id, never by its label alone:
     // a custom API-key provider can name a model anything, including a machine label.
-    if (String(receipt.id).startsWith('machine:') && source === 'credits' && model.startsWith(MACHINE_PREFIX)) {
-      const size = model.slice(MACHINE_PREFIX.length)
+    const identity = parseMachineLedgerLabel(model)
+    const id = String(receipt.id)
+    if (identity && source === 'credits' && id.startsWith('machine:') && (identity.provider === 'e2b') === id.startsWith('machine:e2b:')) {
+      const sku = parseMachineSku(identity.provider, identity.size)
+      const recordedRate = Number(receipt.hourlyMicroUsd)
+      const measurement = receipt.machineCompute as {
+        source?: string; price?: { version?: string }; activeVcpuMs?: number; provisionedMs?: number; measuredCost?: number
+      } | null
+      const measuredCloudflare = sku?.provider === 'cloudflare' && measurement?.source === 'cloudflare_cgroup_list'
+      const rate = sku?.provider === 'cloudflare' && !measuredCloudflare ? machineHourlyMicroUsd(sku.size)
+        : sku && Number.isSafeInteger(recordedRate) && recordedRate > 0 ? recordedRate : null
+      const version = measuredCloudflare ? measurement.price?.version ?? null
+        : sku?.provider === 'cloudflare' ? CLOUDFLARE_LEGACY_PRICE_VERSION
+          : sku && typeof receipt.pricingVersion === 'string' ? receipt.pricingVersion : null
       const run = String(receipt.runId)
-      runSizes.set(run, (runSizes.get(run) ?? new Set()).add(size))
-      const row = isMachineSize(size) ? machine(size, 'metered') : machine(null, 'unknown_size')
+      const sizes = runSizes.get(run) ?? new Map()
+      sizes.set(`${model}:${rate}:${version ?? ''}`, { provider: identity.provider, sku, rate, version, measuredCloudflare })
+      runSizes.set(run, sizes)
+      const row = rate !== null || measuredCloudflare ? machine(identity.provider, sku, version, 'metered', measuredCloudflare)
+        : machine(identity.provider, null, null, 'unknown_size')
+      if (measuredCloudflare && settled && measurement.activeVcpuMs !== undefined &&
+          measurement.provisionedMs !== undefined && measurement.measuredCost !== undefined) {
+        row.activeVcpuMs = (row.activeVcpuMs ?? 0) + measurement.activeVcpuMs
+        row.seconds += measurement.provisionedMs / 1_000
+        row.meteredMicroUsd = (row.meteredMicroUsd ?? 0) + measurement.measuredCost
+      }
       if (funding?.kind === 'known') { row.chargedMicroUsd += funding.charged; row.coveredMicroUsd += funding.covered }
       else if (funding?.kind === 'unknown') row.fundingUnknownMicroUsd += funding.cost
       else row.unpricedReceipts++
@@ -216,13 +253,18 @@ export async function readThreadCost(
     else add(row.bySource[source], cost)
   }
   for (const session of sessions) {
-    const sizes = [...runSizes.get(String(session.runId)) ?? []]
+    const sizes = [...runSizes.get(String(session.runId))?.values() ?? []]
     const [only] = sizes
-    const row = !sizes.length ? machine(null, 'unbilled')
-      : sizes.length === 1 && isMachineSize(only) ? machine(only, 'metered') : machine(null, 'unknown_size')
+    if (sizes.length === 1 && only.measuredCloudflare) continue
+    const known = sizes.length === 1 && only.rate !== null
+    const providers = new Set(sizes.map(size => size.provider))
+    const row = !only ? machine(null, null, null, 'unbilled')
+      : known ? machine(only.provider, only.sku, only.version, 'metered')
+        : machine(providers.size === 1 ? only.provider : null, null, null, 'unknown_size')
     const seconds = Math.max(0, Math.floor(Number(session.seconds)))
     row.seconds += seconds
-    if (row.size && row.meteredMicroUsd !== null) row.meteredMicroUsd += Math.round(seconds * machineHourlyMicroUsd(row.size) / 3600)
+    if (known && row.meteredMicroUsd !== null) row.meteredMicroUsd += Math.round(seconds * only.rate! / 3600)
+
   }
 
   const result: ThreadCost = { threadId: chain.rootRunId, groupBy: input.groupBy, totals: { credits, included, covered, fundingUnknown } }

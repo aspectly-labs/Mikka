@@ -16,6 +16,9 @@ import { projectRepositoryKey, type EnvironmentConfiguration, type EnvironmentNe
 import { runAction } from '@/lib/action-error'
 import type { z } from 'zod'
 import { isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
+import { e2bMachineOptions, type E2BComputeSpec } from '@/lib/cloud-computer/e2b-template-pricing'
+import { isCloudEdition } from '@/lib/edition'
+import type { CloudTemplateKind } from '@/lib/cloud-template-models'
 import type { SecretDelivery } from '@/lib/secrets/delivery'
 
 export type EnvironmentView = { id: string; name: string; revision: number; configuration: EnvironmentConfiguration & { networkAccess: EnvironmentNetworkAccess }; instructions?: string; archived: boolean; defaultMachineSize: MachineSize | null
@@ -51,6 +54,7 @@ export type EnvironmentsView = {
   canCreatePersonal: boolean
   availableRepositories: EnvironmentAvailableRepository[]
   availableSecrets: EnvironmentAvailableSecret[]
+  e2bMachineOptions?: (E2BComputeSpec & { kind: CloudTemplateKind })[]
 }
 
 function repositoryLabel(key: string): string {
@@ -162,6 +166,7 @@ export async function listEnvironments(workspaceId?: string): Promise<Environmen
       canCreatePersonal: Boolean(member),
       availableRepositories,
       availableSecrets,
+      ...(isCloudEdition() ? { e2bMachineOptions: e2bMachineOptions() } : {}),
     }
   })
 }
@@ -176,4 +181,19 @@ export async function setTaskEnvironment(input: z.input<typeof taskEnvironmentIn
 export async function listTaskEnvironments(input: z.input<typeof taskEnvironmentsInput>) {
   const { readTaskEnvironments } = await import('@/lib/project-resources/task-environment')
   return runAction(async () => ({ tasks: await readTaskEnvironments(await requireUser(), input) }))
+}
+
+export async function getEnvironmentSnapshot(input: import('@/lib/project-resources/environment-snapshot-contract').SnapshotInput) {
+  const { readEnvironmentSnapshot } = await import('@/lib/project-resources/environment-snapshots')
+  return runAction(async () => {
+    const user = await requireUser()
+    const { selectTaskProvider } = await import('@/lib/cloud-computer/task-provider-admission')
+    const provider = input.provider ?? (await selectTaskProvider({ userId: user.id, workspaceId: input.workspaceId }, false)).provider
+    return readEnvironmentSnapshot(user, { ...input, provider })
+  })
+}
+
+export async function buildEnvironmentSnapshot(input: import('@/lib/project-resources/environment-snapshot-contract').SnapshotInput) {
+  const { requestEnvironmentSnapshot } = await import('@/lib/project-resources/environment-snapshots')
+  return runAction(async () => requestEnvironmentSnapshot(await requireUser(), input))
 }

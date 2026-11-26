@@ -12,7 +12,17 @@ export async function listProjectResources(workspaceId: string, projectId?: stri
   return store.listProjectResources(user, context.workspace.id, projectId ? z.uuid().parse(projectId) : undefined)
 }
 export async function saveEnvironment(input: z.input<typeof saveEnvironmentInput>) {
-  return runAction(async () => store.saveEnvironment(await requireUser(), input))
+  return runAction(async () => {
+    const user = await requireUser()
+    const saved = await store.saveEnvironment(user, input)
+    if (!input.archived) {
+      const { buildSnapshotsOnSave } = await import('@/lib/project-resources/environment-snapshots')
+      // The settings revision already committed. An enqueue failure is retryable
+      // via buildSnapshot and must not misreport the save as a conflict.
+      await buildSnapshotsOnSave(user, input.workspaceId, saved.id).catch(() => console.warn('Environment snapshot enqueue failed'))
+    }
+    return saved
+  })
 }
 /** A personal environment becomes visible to and usable by the whole workspace. */
 export async function shareEnvironment(input: z.input<typeof environmentShareInput>) {
