@@ -8,6 +8,8 @@ import type { SubscriptionPreflightFailure } from '@mikka/protocol/harness'
 import { cloudReady } from './rule-dispatch'
 import { credentialStates, creditsModelSpeedModes, dispatchOrder, orderCandidates, selectedOrderCandidates, poolDevices, readOrder, type OrderScope, type RefreshOrderQuota } from './model-order'
 import { entryKey, planDispatch, whyNoDevice, type NoDeviceWhy, type NothingReason, type OrderEntry, type RunLocation, type SkippedEntry } from './model-order-plan'
+import { modelRouteRejection, type ModelRouteRejection } from './model-route-rejection'
+import { PRO_MODELS, modelKeyOf } from './model-capabilities'
 import { supportedModelEfforts, type ModelRoutingEffort, type ModelSpeedMode } from './model-routing'
 export { workerModelDispatchFromTarget } from './agent-kit/worker'
 
@@ -28,8 +30,8 @@ export { workerModelDispatchFromTarget } from './agent-kit/worker'
 /** Why nothing runs: the list's reasons, or the model the thread named (decision 2026-11-02-1400). */
 export type DispatchNothingReason = NothingReason | 'cloudTemporarilyUnavailable' | 'notOffered' | 'namedDevice' | 'pickedNoDevice' | 'pickedUnavailable'
 export type ModelDispatch =
-  | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; subscriptionBindingId?: string; quotaCheckPending?: true }
-  | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; quotaCheckPending?: true }
+  | { kind: 'device'; deviceId: string; agentId: string; model: string; entry: OrderEntry; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; pro?: true; subscriptionBindingId?: string; quotaCheckPending?: true }
+  | { kind: 'cloud'; harness: OrderEntry['harness']; model: string; entry: OrderEntry; apiKey: boolean; effort?: ModelRoutingEffort; serviceTier?: ModelSpeedMode; pro?: true; quotaCheckPending?: true }
   | { kind: 'none'; reason: DispatchNothingReason; card: ReturnType<typeof modelUnavailableCard>; skipped?: SkippedEntry[] }
 
 /**
@@ -132,19 +134,34 @@ export async function resolveModelDispatch(pool: Pool, scope: OrderScope & { bot
   }
   if (plan.kind === 'none' && named && plan.reason !== 'cloudNotConfigured' && plan.reason !== 'checking' && plan.reason !== 'cloudModelsUnknown' && plan.reason !== 'cloudModelNotReported') {
     const reason = plan.reason === 'noDevice' ? 'pickedNoDevice' : 'pickedUnavailable'
-    return { kind: 'none', reason, card: modelUnavailableCard(reason, { ...named, ...(plan.reason === 'noDevice' && chosen ? { device: whyNoDevice(devices, chosen) } : {}) }) }
+    const block = plan.skipped[0]?.block
+    const rejection = block && modelRouteRejection(block.reason, 'resetsAt' in block ? block.resetsAt : null)
+    return { kind: 'none', reason, card: modelUnavailableCard(reason, { ...named, ...(plan.reason === 'noDevice' && chosen ? { device: whyNoDevice(devices, chosen) } : {}) }, { rejection }) }
   }
   if (plan.kind === 'none') return { kind: 'none', reason: plan.reason, card: modelUnavailableCard(plan.reason), skipped: plan.skipped }
   const quotaCheckPending = deferStaleQuota && states.get(plan.entry.id)?.quotaCheckPending ? { quotaCheckPending: true as const } : {}
+  // A chat preference applies only to the exact route and model a task follows. Recheck the
+  // actual key provider before the run gets its immutable gateway grant.
+  let pro = false
+  if (plan.entry.harness === 'codex' && plan.entry.source.kind !== 'subscription' &&
+    PRO_MODELS.has(modelKeyOf(plan.model, plan.entry.source.kind === 'credits' ? 'mikka' : 'openai'))) {
+    const keyId = plan.entry.source.kind === 'api_key' ? plan.entry.source.keyId : null
+    const { rows } = await pool.query(`SELECT 1 FROM bot_model_choices c
+      LEFT JOIN model_api_keys k ON k.id=c."apiKeyId"
+      WHERE c."ownerId"=$1 AND c."workspaceId"=$2 AND c."botKey"=$3 AND c.pro
+        AND (($4::uuid IS NULL AND c."creditsModel"=$5) OR (k.id=$4 AND k.provider='openai' AND k."responsesApi" AND c."apiKeyModel"=$5))`,
+      [scope.ownerId, scope.workspaceId, scope.botId ?? 'coordinator', keyId, plan.model])
+    pro = rows.length > 0
+  }
   const resolvedSpeedModes = plan.entry.source.kind === 'credits'
     ? (stored.defaultServiceTier !== 'standard' ? await creditsModelSpeedModes(plan.model) : [])
     : (candidates.find(candidate => entryKey(candidate) === entryKey(plan.entry))?.speedModes ?? [])
-  const serviceTier = stored.defaultServiceTier !== 'standard' && resolvedSpeedModes.includes(stored.defaultServiceTier)
+  const serviceTier = pro ? { pro: true as const } : stored.defaultServiceTier !== 'standard' && resolvedSpeedModes.includes(stored.defaultServiceTier)
     ? { serviceTier: stored.defaultServiceTier as ModelSpeedMode }
     : {}
   const bareModel = plan.model.includes('/') ? plan.model.split('/').pop()! : plan.model
   const effortModelId = /^claude-(?:fable|opus|sonnet|haiku)-\d+\.\d+$/.test(bareModel) ? bareModel.replace('.', '-') : bareModel
-  const effort = stored.defaultEffort !== 'medium' && supportedModelEfforts(effortModelId, plan.entry.harness).includes(stored.defaultEffort)
+  const effort = !pro && stored.defaultEffort !== 'medium' && supportedModelEfforts(effortModelId, plan.entry.harness).includes(stored.defaultEffort)
     ? { effort: stored.defaultEffort }
     : {}
   if (plan.kind === 'cloud') return { kind: 'cloud', harness: plan.entry.harness, model: plan.model, entry: plan.entry, apiKey: plan.entry.source.kind === 'api_key', ...effort, ...serviceTier, ...quotaCheckPending }
@@ -204,7 +221,7 @@ async function e2bKeyWouldFix(query: Pick<Pool, 'query'>, ownerId: string) {
 const HARNESS_NAMES: Record<OrderEntry['harness'], string> = { claude_code: 'Claude Code', codex: 'Codex' }
 
 /** 没有能跑这个任务的模型: the reason, and the rows that fix it. A model or computer the thread named is named in it. */
-export function modelUnavailableCard(reason: DispatchNothingReason, named?: { agent: string; model: string; installed?: boolean; device?: NoDeviceWhy; detail?: SubscriptionPreflightFailure }, place: { /** 云端 without a cloud that runs: an E2B key would also fix it. */ offerE2B?: boolean } = {}) {
+export function modelUnavailableCard(reason: DispatchNothingReason, named?: { agent: string; model: string; installed?: boolean; device?: NoDeviceWhy; detail?: SubscriptionPreflightFailure }, place: { /** 云端 without a cloud that runs: an E2B key would also fix it. */ offerE2B?: boolean; rejection?: ModelRouteRejection } = {}) {
   const copy = defaultAgentCopy
   const line = {
     noModels: copy.needsModelNoModels, cloudNotConfigured: copy.needsModelCloud, cloudModelsUnknown: copy.needsModelCloudModelsUnknown, cloudModelNotReported: copy.needsModelCloudModelNotReported, cloudTemporarilyUnavailable: copy.needsModelCloudUnavailable, noDevice: noDeviceLine(named?.device), checking: copy.needsModelChecking, unavailable: copy.needsModelUnavailable,
@@ -223,7 +240,7 @@ export function modelUnavailableCard(reason: DispatchNothingReason, named?: { ag
         ...(place.offerE2B ? [{ value: 'e2b', label: copy.needsMachineE2B, action: 'e2bKey' as const }] : []),
         { value: 'models', label: copy.needsModelSettings, action: 'modelSettings' as const }]
       : [{ value: 'models', label: copy.needsModelSettings, action: 'modelSettings' as const }]
-  return { title: copy.needsModelTitle, description, options }
+  return { title: copy.needsModelTitle, description, options, ...place.rejection }
 }
 
 /** 优先使用的模型都没有电脑能跑, or what the one computer closest to running it lacks. */

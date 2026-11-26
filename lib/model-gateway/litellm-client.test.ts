@@ -121,3 +121,17 @@ test('proxy cost is rounded up to microdollars and malformed receipts are unknow
   assert.equal(liteLLMResponseCost({ 'x-litellm-response-cost': '-0.0000001' }), null)
   assert.equal(liteLLMResponseCost(undefined), null)
 })
+
+test('a Pro chat calls Responses with only the frozen reasoning mode', async t => {
+  await atProxy(t, async (input, init) => {
+    assert.equal(String(input), 'https://proxy.example/v1/responses')
+    const body = JSON.parse(String(init?.body))
+    assert.deepEqual(body.reasoning, { mode: 'pro' })
+    assert.equal(body.service_tier, undefined)
+    return Response.json({ id: 'test-response', object: 'response', status: 'completed', created_at: 1,
+      model: 'gpt-6.2-astra', output: [], usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 } })
+  }, async () => {
+    await createLiteLLMModel('openai/gpt-6.2-astra', { pro: true }).doGenerate({ prompt: structuredClone(prompt) })
+    assert.throws(() => createLiteLLMModel('anthropic/claude-fixture', { pro: true }), /model_pro_unavailable/)
+  })
+})

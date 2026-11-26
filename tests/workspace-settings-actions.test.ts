@@ -121,7 +121,11 @@ before(async () => {
   } })
   mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async () => ({ user: { id: actor.userId, email: actor.email, name: actor.name }, session: { id: 'workspace-fixture-session' } }) } } } })
   // Keep the Bot's fake writes on the same observed transaction as its live registration.
-  mock.module('@/lib/db', { namedExports: { pool: { query: () => { throw Error('unexpected query') } },
+  mock.module('@/lib/db', { namedExports: { pool: { query: async (sql: string, params: unknown[]) => {
+    assert.match(sql, /FROM model_order_settings WHERE "ownerId"=\$1 AND "workspaceId"=\$2/)
+    assert.deepEqual(params, [actor.userId, actor.workspaceId])
+    return { rows: [] }
+  } },
     db: { ...database,
       // Keep the shared fixture's BEGIN/COMMIT/rollback semantics while also
       // serving the P3 reads: execute() for workspace_setting_values and the

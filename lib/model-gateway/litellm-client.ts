@@ -4,6 +4,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import { wrapLanguageModel } from 'ai'
 import { gatewayLiteLlm, managedLiteLlmModel } from './config'
+import { modelKeyOf, PRO_MODELS } from '../model-capabilities'
 import { decodeHostedCallId } from './hosted-call-id.mjs'
 
 type Credential = {
@@ -62,30 +63,34 @@ function providerFields(credential: Credential) {
   }
 }
 
-export function createLiteLLMModel(modelId: string, options: { user?: string; credential?: Credential; callId?: string } = {}) {
+export function createLiteLLMModel(modelId: string, options: { user?: string; credential?: Credential; callId?: string; pro?: boolean } = {}) {
   if (options.callId !== undefined && !decodeHostedCallId(options.callId)) throw new Error('hosted_call_identity_invalid')
   const config = connection()
-  const provider = createOpenAICompatible({
-    ...config,
-    name: 'litellm',
-    includeUsage: true,
-    supportsStructuredOutputs: true,
-    supportedUrls: () => ({ 'image/*': [/^https?:\/\//] }),
-    async fetch(input, init) {
-      const headers = new Headers(init?.headers)
-      // Auth and routing come from the server, even when an SDK caller supplies headers.
-      headers.set('authorization', 'Bearer ' + config.apiKey)
-      headers.delete('x-litellm-api-key')
-      if (options.callId) headers.set('x-litellm-call-id', options.callId)
-      else headers.delete('x-litellm-call-id')
-      const fields = options.credential ? providerFields(options.credential) : {}
-      const body = JSON.stringify({ ...JSON.parse(String(init?.body)), ...(options.user && { user: options.user }), ...fields })
-      // Add the person's key beyond the SDK's request-body recording boundary.
-      return fetch(input, { ...init, headers, body, redirect: 'error' })
-    },
-  })
+  if (options.pro && !PRO_MODELS.has(modelKeyOf(modelId, options.credential?.provider ?? 'mikka'))) throw new Error('model_pro_unavailable')
+  const transport: typeof fetch = async (input, init) => {
+    const headers = new Headers(init?.headers)
+    // Auth and routing come from the server, even when an SDK caller supplies headers.
+    headers.set('authorization', 'Bearer ' + config.apiKey)
+    headers.delete('x-litellm-api-key')
+    if (options.callId) headers.set('x-litellm-call-id', options.callId)
+    else headers.delete('x-litellm-call-id')
+    const fields = options.credential ? providerFields(options.credential) : {}
+    const payload = JSON.parse(String(init?.body))
+    if (options.pro) {
+      payload.reasoning = { mode: 'pro' }
+      delete payload.service_tier
+    }
+    const body = JSON.stringify({ ...payload, ...(options.user && { user: options.user }), ...fields })
+    // Add the person's key beyond the SDK's request-body recording boundary.
+    return fetch(input, { ...init, headers, body, redirect: 'error' })
+  }
+  const target = options.credential ? modelId : managedLiteLlmModel(modelId)
+  const model = options.pro
+    ? createOpenAI({ ...config, fetch: transport }).responses(target)
+    : createOpenAICompatible({ ...config, name: 'litellm', includeUsage: true, supportsStructuredOutputs: true,
+        supportedUrls: () => ({ 'image/*': [/^https?:\/\//] }), fetch: transport }).chatModel(target)
   return wrapLanguageModel({
-    model: provider.chatModel(options.credential ? modelId : managedLiteLlmModel(modelId)),
+    model,
     middleware: {
       specificationVersion: 'v4',
       async wrapGenerate({ doGenerate }) {
@@ -102,8 +107,8 @@ export function createLiteLLMModel(modelId: string, options: { user?: string; cr
           stream: result.stream.pipeThrough(new TransformStream({
             transform(part, controller) {
               if (part.type === 'raw') {
-                const event = part.rawValue as { usage?: { cost?: unknown } } | null
-                streamCost = toMicros(event?.usage?.cost) ?? streamCost
+                const event = part.rawValue as { usage?: { cost?: unknown }; response?: { usage?: { cost?: unknown } } } | null
+                streamCost = toMicros(event?.usage?.cost ?? event?.response?.usage?.cost) ?? streamCost
                 return
               }
               const costMicros = streamCost ?? (liteLLM.costMicros || undefined)
