@@ -177,6 +177,13 @@ export const documentChanged = (executor: object, issueId: string) => {
   armDueTimerAfterCommit(executor, 'run-recovery')
   return changed(executor, 'issue_document', issueId)
 }
+/**
+ * A task's comment reactions changed. They ride the document's own key (its
+ * audience, its gateway kind): an open task page re-reads its discussion, and
+ * a document poll with an unchanged version costs no body. No new wire kind,
+ * so no gateway release has to precede this one.
+ */
+export const taskCommentsChanged = (executor: object, issueId: string) => changed(executor, 'issue_document', issueId)
 /** An issue's thread list changed (for example, a thread was linked, moved or unlinked). */
 export const issueThreadsChanged = (executor: object, issueId: string) => changed(executor, 'issue_threads', issueId)
 /** A semantic run write also wakes the already mounted immediate parent of a new continuation,
