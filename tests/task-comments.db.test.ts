@@ -132,6 +132,29 @@ test('task comments: author-only edit, author-or-admin delete with tombstones, u
     assert.equal(joined.reactions.length, 20)
   })
 
+  await t.test('desktop RPC dispatch validates and applies the registered comment operations', async () => {
+    const { dispatchRpc } = await import('../lib/desktop-rpc/handler')
+    const { desktopActions } = await import('../lib/desktop-rpc/registry')
+    const { encode, decode, DESKTOP_RPC_VERSION } = await import('../lib/desktop-rpc/wire')
+    const rpc = (method: string, args: unknown[]) => dispatchRpc({
+      actions: desktopActions, scope: (actor: string, run) => as(actor, run),
+    }, new Request('http://localhost/api/desktop/rpc', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: DESKTOP_RPC_VERSION, action: 'task-comments.' + method, args: encode(args) }) }), owner)
+    async function result(method: string, ...args: unknown[]) {
+      const response = await rpc(method, args)
+      assert.equal(response.status, 200)
+      return decode((await response.json()).result)
+    }
+    const ref = { taskId: task, threadId: 'rpc-thread', messageId: 'rpc-thread-1' }
+    const at = new Date().toISOString()
+    await write(owner, doc => addThread(doc, { id: ref.threadId, createdAt: at, author: '', messages: [{ author: '', at, body: 'Before' }] }, 'test'))
+    assert.equal((await rpc('editTaskComment', [{}])).status, 400)
+    assert.ok((await result('editTaskComment', { ...ref, body: 'After' }) as { comment?: unknown }).comment)
+    assert.ok((await result('setTaskCommentReaction', { ...ref, emoji: '👍', reacted: true }) as { reactions: unknown[] }).reactions.length)
+    assert.equal((await result('getTaskCommentState', task) as { viewerId: string }).viewerId, owner)
+    assert.deepEqual(await result('deleteTaskComment', ref), { deleted: 'removed', threadRemoved: true })
+  })
+
   await t.test('identical message ids in different threads have independent reactions', async () => {
     const copies = ['copy-left', 'copy-right']
     const at = new Date().toISOString()
