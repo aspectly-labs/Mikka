@@ -30,6 +30,12 @@ test('the API accepts every body and every old id, and nothing else', () => {
   assert.equal(botShapeOf({ shape: 'heart' }), 'clover')
   const id = '00000000-0000-4000-8000-000000000003'
   assert.equal(botShapeOf({ id, shape: 'heart' }), botShapeOf({ id, shape: 'cercle' }), 'an unknown value with an id gets the id\'s body')
+  // The column is free text: prototype keys are unknown values too, never a function or Object.prototype.
+  for (const shape of ['toString', 'constructor', '__proto__', 'valueOf', 'hasOwnProperty']) {
+    assert.ok(BOT_SHAPES.includes(botShapeOf({ shape })), shape)
+    assert.equal(botShapeOf({ id, shape }), botShapeOf({ id, shape: 'cercle' }), shape)
+    assert.equal(ACCEPTED_BOT_SHAPES.includes(shape), false, shape)
+  }
 })
 
 import { BOT_GLASSES, BOT_HATS, BOT_LOOK_COLORS, botLookHex, formatBotLook, isStoredBotColor, parseBotLook } from '../lib/bot-shapes.ts'

@@ -36,7 +36,7 @@ function hash(value: string) {
 /** The body a bot draws as, from what is stored (a body, an old bloub id, or nothing). */
 export function botShapeOf({ id, shape }: { id?: string | null; shape?: string | null }): BotShape {
   if ((BOT_SHAPES as readonly string[]).includes(shape ?? '')) return shape as BotShape
-  const legacy = shape === 'cercle' ? undefined : (LEGACY_BOT_SHAPES as Record<string, BotShape>)[shape ?? '']
+  const legacy = shape && shape !== 'cercle' && Object.hasOwn(LEGACY_BOT_SHAPES, shape) ? (LEGACY_BOT_SHAPES as Record<string, BotShape>)[shape] : undefined
   if (legacy) return legacy
   // The old default circle, nothing stored, or a value no client sends: a steady body from the id.
   if (id) return BOT_SHAPES[hash(id) % BOT_SHAPES.length]
