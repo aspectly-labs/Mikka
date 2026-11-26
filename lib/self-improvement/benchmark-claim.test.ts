@@ -18,6 +18,7 @@ import { serverRunFailure } from '../run-failure-details'
 import { ModelAdmissionError } from '../model-admission/contract'
 import { ActionFailureError } from '../action-error'
 import { PublicationError } from '../run-publication-result'
+import * as startupRepositories from '../project-resources/startup-repositories'
 import * as startupTracing from '../computer/startup-tracing'
 import * as startupDiagnostics from '../computer/startup-diagnostics'
 import * as questionDeliveryContext from '../factory/questions/continuation-delivery-context'
@@ -61,9 +62,10 @@ async function routeFixture(unavailable=false,stopped=false,modelDenied=false,is
     // Repository/Environment admission has real PostgreSQL coverage. This
     // benchmark fixture authorizes only its exact legacy, no-Environment
     // placement, and keeps that boundary held through the final response.
+    '@/lib/project-resources/startup-repositories':startupRepositories,
     '@/lib/project-resources/run-lease':{withRunProjectExecution:async(input:Record<string,unknown>,frozen:unknown,operation:()=>Promise<unknown>)=>{
       projectLease.guards++
-      assert.deepEqual({...input},{userId:'owner',workspaceId:'task-workspace',issueId:'issue',repositoryKey:repo.repoPath,baseBranch:'frozen-sha',runtime:options.cloud?'cloud':'local',harness:'codex'})
+      assert.deepEqual({...input},{userId:'owner',botId:undefined,workspaceId:'task-workspace',issueId:'issue',repositoryKey:repo.repoPath,baseBranch:'frozen-sha',runtime:options.cloud?'cloud':'local',harness:'codex'})
       assert.equal(frozen,undefined,'this benchmark fixture cannot silently authorize a Project or Environment snapshot')
       if(projectDenied)throw new ActionFailureError('projectRepositoryDenied')
       assert.equal(projectLease.active,false)

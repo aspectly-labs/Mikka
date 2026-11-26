@@ -41,7 +41,7 @@ mock.module(new URL('./settings/work-creation.ts', import.meta.url).href, { name
 } })
 mock.module(new URL('./project-resources/store.ts', import.meta.url).href, { namedExports: {
   withProjectExecution: async (input: ProjectExecutionInput, operation: (snapshot: ProjectExecutionSnapshot) => Promise<unknown>, requireExisting: boolean) => {
-    assert.deepEqual(input, { userId: owner, workspaceId, issueId, repositoryKey: null, baseBranch: 'main', runtime: 'cloud', harness: 'codex' })
+    assert.deepEqual(input, { userId: owner, botId, workspaceId, issueId, repositoryKey: null, baseBranch: 'main', runtime: 'cloud', harness: 'codex' })
     assert.equal(requireExisting, false)
     assert.equal(projectLeaseActive, false)
     if (projectDenied) throw new ActionFailureError('projectRepositoryDenied')
@@ -184,7 +184,7 @@ test('actual cloud producer pins the existing host-authorized Bot/workspace with
     assert.equal(projectLeaseActive, false)
     assert.ok(sql.startsWith('SELECT repo."repoPath",repo."remoteUrl",a.harness,'))
     assert.ok(sql.includes('i."workspaceId"=$5') && sql.includes('i."ownershipState"=\'bound\'') && sql.includes('repo."userId"=$3'))
-    assert.deepEqual(params, [repoId, agentId, owner, issueId, workspaceId, null])
+    assert.deepEqual(params, [repoId, agentId, owner, issueId, workspaceId, null, false])
     return { rows: [{ ...cloudRepository, harness: 'codex' }] }
   } } as unknown as Parameters<typeof queueCloudRun>[0]
   observeCommitEffects(client as unknown as PoolClient, queuePool)

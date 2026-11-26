@@ -4,7 +4,7 @@ import { requireUser } from '@/lib/issue-access'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { ActionFailureError, runAction } from '@/lib/action-error'
 import * as store from '@/lib/project-resources/store'
-import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
+import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, environmentShareInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
 
 export async function listProjectResources(workspaceId: string, projectId?: string) {
   const user = await requireUser()
@@ -14,11 +14,28 @@ export async function listProjectResources(workspaceId: string, projectId?: stri
 export async function saveEnvironment(input: z.input<typeof saveEnvironmentInput>) {
   return runAction(async () => store.saveEnvironment(await requireUser(), input))
 }
-export async function saveProjectResources(input: z.input<typeof projectResourcesInput>) {
-  return runAction(async () => store.saveProjectResources(await requireUser(), input))
+/** A personal environment becomes visible to and usable by the whole workspace. */
+export async function shareEnvironment(input: z.input<typeof environmentShareInput>) {
+  return runAction(async () => store.setEnvironmentScope(await requireUser(), input, 'workspace'))
 }
-export async function setProjectDefaultEnvironment(input: z.input<typeof projectDefaultEnvironmentInput>) {
-  return runAction(async () => store.setProjectDefaultEnvironment(await requireUser(), input))
+/** A shared environment goes back to 「仅我」 for its owner. */
+export async function unshareEnvironment(input: z.input<typeof environmentShareInput>) {
+  return runAction(async () => store.setEnvironmentScope(await requireUser(), input, 'personal'))
+}
+/** Retired with the Project -> repository -> environment bindings (decision 2026-11-26-0110 rule 5). Kept for one
+ * release so an older client gets a coded refusal; a task's 「环境」 is set with setTaskEnvironment. */
+export async function saveProjectResources(_input: z.input<typeof projectResourcesInput>) {
+  return runAction(async () => {
+    await requireUser()
+    throw new ActionFailureError('projectBindingsRetired')
+  })
+}
+/** Retired; see saveProjectResources. */
+export async function setProjectDefaultEnvironment(_input: z.input<typeof projectDefaultEnvironmentInput>) {
+  return runAction(async () => {
+    await requireUser()
+    throw new ActionFailureError('projectBindingsRetired')
+  })
 }
 export async function saveWorkspaceRepositoryPolicy(input: z.input<typeof workspaceRepositoryPolicyInput>) {
   return runAction(async () => store.saveWorkspaceRepositoryPolicy(await requireUser(), input))

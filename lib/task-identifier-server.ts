@@ -134,5 +134,5 @@ export async function issueView<T extends { id: string; userId: string; workspac
   view.metadata.project = project?.project ?? null
   const [verified] = issue.linearSyncPolicy === 'explicit' ? await executor.select({ id: linearIssueLinks.id }).from(linearIssueLinks)
     .where(and(eq(linearIssueLinks.issueId, issue.id), eq(linearIssueLinks.ownerId, issue.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1) : []
-  return { ...view, issuedIdentifier: identifier, identifier, projectId: project?.projectId ?? null, linearTargetVerified: Boolean(verified) }
+  return { ...view, issuedIdentifier: identifier, identifier, projectId: project?.projectId ?? null, ...(project?.environmentId ? { environmentId: project.environmentId } : {}), linearTargetVerified: Boolean(verified) }
 }

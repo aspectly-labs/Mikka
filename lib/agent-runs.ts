@@ -123,6 +123,7 @@ type LocalDispatchInput = { issueId: string; agentId: string; repo: string; note
   policyCeiling?: RunModel['policyCeiling']
   /** The run this one continues, named when the model is missing. */
   threadRunId?: string
+  refreshTaskEnvironment?: true
   pinnedDeviceId?: string; readOnly?: boolean
   /** The API key the 优先使用的模型 entry names; the run uses it only when it may (lib/run-credential-source.ts). */
   apiKeyId?: string
@@ -312,7 +313,7 @@ async function queueAdmittedRun(userId: string, input: Omit<LocalDispatchInput, 
       .catch(error => { if (error instanceof ExecutionIdentityError) throw new ActionFailureError('executionAccountUnavailable'); throw error })
   }
   return (await import('@/lib/run-admission-store')).acceptLocalRun({ id: runId, userId, botId, issueId: issue.id, agentId: agent.id, deviceId: agent.deviceId,
-    deviceRepoId: repo.id, prompt, promptTaskLength, source: dispatch.source, origin: dispatch.origin, originRef: dispatch.originRef, definition: agentDefinition!, profileSourceRunId: input.threadRunId, factoryContext: internal?.factoryContext, ...(requestEventId ? { requestEventId } : {}), ...(parsed.data.requestKey ? { dispatch: { issueId: issue.id, agentId: agent.id, deviceRepoId: repo.id, note: parsed.data.note, requestKey: parsed.data.requestKey, ...(parsed.data.subscriptionBindingId ? { subscriptionBindingId: parsed.data.subscriptionBindingId } : {}) } } : {}), ...(internal ? { continuation: true, sourceRunId: internal.sourceRunId, frozenSourceRunId: internal.frozenSourceRunId } : {}), ...(input.delegation ? { delegation: input.delegation, continuation: true } : {}) }, internal?.client)
+    deviceRepoId: repo.id, prompt, promptTaskLength, source: dispatch.source, origin: dispatch.origin, originRef: dispatch.originRef, definition: agentDefinition!, profileSourceRunId: input.threadRunId, refreshTaskEnvironment: input.refreshTaskEnvironment, factoryContext: internal?.factoryContext, ...(requestEventId ? { requestEventId } : {}), ...(parsed.data.requestKey ? { dispatch: { issueId: issue.id, agentId: agent.id, deviceRepoId: repo.id, note: parsed.data.note, requestKey: parsed.data.requestKey, ...(parsed.data.subscriptionBindingId ? { subscriptionBindingId: parsed.data.subscriptionBindingId } : {}) } } : {}), ...(internal ? { continuation: true, sourceRunId: internal.sourceRunId, frozenSourceRunId: internal.frozenSourceRunId } : {}), ...(input.delegation ? { delegation: input.delegation, continuation: true } : {}) }, internal?.client)
 }
 
 /** A live run's own delegation surface (docs/factory/3089-run-delegation.md, #3089):
