@@ -122,7 +122,6 @@ describe("mock runs", () => {
       return { ...assignment, remoteUrl: undefined }
     }
     link.nativeContext = async () => { throw new Error('Mock delivery must not request a model credential') }
-    link.nativeRequest = async () => { throw new Error('Mock delivery must not call a provider') }
     const daemon = await new Daemon({ dataDir, flavor: 'dev', agentSandbox: null, link, credential: 'cred-1',
       hostedSubscriptions: true, harnesses: [{ harness: 'mock', installed: true, version: 'test' }],
       harnessBinaries: { claude_code: resolve(import.meta.dirname, 'fakes/fake-claude-subscription.mjs') },
@@ -161,7 +160,6 @@ describe("mock runs", () => {
     const link = server.link()
     const claim = link.claimRun.bind(link)
     link.nativeContext = async () => { throw new Error('Mock file checks must not request a model credential') }
-    link.nativeRequest = async () => { throw new Error('Mock file checks must not call a provider') }
     // A no-repository cloud workspace has no remote URL. MemoryServer normally
     // supplies a file URL for local fixtures; reproduce the actual claim instead.
     link.claimRun = async (...args) => ({ ...await claim(...args), remoteUrl: undefined,

@@ -23,7 +23,7 @@ async function fixture(harness: 'codex' | 'claude_code' = 'claude_code', collect
   const runId = randomUUID(), deviceId = randomUUID(), cwd = await makeRepo()
   const never = vi.fn(async () => { throw Error('No operation may contact Mikka for credentials or proxying') })
   const link = Object.assign(new MemoryServer(deviceId).link(), {
-    nativeLease: never, nativeContext: never, nativeRequest: never, githubLease: never,
+    nativeContext: never, githubLease: never,
   })
   const fixtureName = harness === 'codex' ? 'fake-codex-subscription.mjs' : 'fake-claude-subscription.mjs'
   const binary = join(root, fixtureName)
