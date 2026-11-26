@@ -1,4 +1,5 @@
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 
 /**
  * Which subscription routes run for a subscription's owner, decided per person
@@ -20,7 +21,7 @@ const NATIVE_ROUTES = ['claude_code_cli', 'codex_cli']
 export async function subscriptionRouteReady(
   route: string,
   ownerId: string,
-  env: Record<string, string | undefined> = process.env,
+  env: Record<string, string | undefined> = runtimeEnv(),
   flag: (key: string, userId: string) => Promise<boolean> = async (key, userId) => (await import('./posthog-server')).serverFlagEnabled(key, userId),
 ): Promise<boolean> {
   const chat = CHAT_ROUTES.includes(route)

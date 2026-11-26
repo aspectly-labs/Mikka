@@ -25,6 +25,7 @@ import { withBasePath } from '@/lib/base-path'
 import { ensureLegacyVerification } from '@/lib/abuse/runtime'
 import { withBillingAuthority } from './authority'
 import type { BillingManagementOperation, BillingManagementView, BillingScope } from './management-contract'
+import { runtimeEnv } from '@/lib/env/server'
 
 export const billingScopeSchema = z.object({ kind: z.enum(['workspace', 'organization']), id: z.uuid() })
 
@@ -110,7 +111,7 @@ export async function billingManagementView(actorId: string, target: BillingScop
     const payerFilter = `($3::boolean and "workspaceId"=$4::uuid or not $3::boolean and coalesce("usageWorkspaceId","workspaceId")=any($5::uuid[]))`
     const usageParams = [start, end, target.kind === 'organization', accountId, usageIds]
     const [billing, credits, budgets, totals, external, policies, memberModels] = await Promise.all([
-      accountId ? readBillingAccount(accountId, process.env, memberCount) : null,
+      accountId ? readBillingAccount(accountId, runtimeEnv(), memberCount) : null,
       accountId ? readCreditBillingAccount(accountId) : null,
       budgetWorkspaceId ? readResourceBudgets(pool, [budgetWorkspaceId]) : [],
       pool.query<{ id: string | null; day: string | null; cost: number; held: number; unknown: number }>(`select "actorId" id,
@@ -191,7 +192,7 @@ export async function mutateBillingManagement(actorId: string, target: BillingSc
   const accountId = current.account.workspaceId
   return withBillingAuthority(actorId, accountId, async () => {
     if (value.action === 'topup') return pointsPurchaseUrl(actorId, accountId, value.amount, value.locale)
-    const origin = resolveAppOrigin(process.env)
+    const origin = resolveAppOrigin(runtimeEnv())
     if (!origin) throw new WorkspaceError('billingNotConfigured')
     const back = new URL(withBasePath('/settings'), origin)
     back.searchParams.set('section', 'billing'); back.searchParams.set('workspace', accountId); back.searchParams.set('billing_return', '1')

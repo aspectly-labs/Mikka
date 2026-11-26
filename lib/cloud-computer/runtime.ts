@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Sandbox } from 'e2b'
 import { connectComputer } from '@/lib/computer/e2b-provider'
+import { SANDBOX_RUNTIME_VERSION_URL } from '@/lib/env/hosts'
 
 export type BrowserBinding = { id: string; ownerId: string; workspaceId: string; botId: string; epoch: number; display?: number }
 async function runtimeSources() {
@@ -14,7 +15,7 @@ async function runtimeSources() {
 export async function verifyGatewayVersion(sandbox: Pick<Sandbox, 'commands'>) {
   const files = await runtimeSources()
   const expected = createHash('sha256').update(files[0]).update(files[1]).digest('hex')
-  const result = await sandbox.commands.run('curl -fsS --max-time 2 http://127.0.0.1:6082/version', { user: 'root', timeoutMs: 5_000 })
+  const result = await sandbox.commands.run(`curl -fsS --max-time 2 ${SANDBOX_RUNTIME_VERSION_URL}`, { user: 'root', timeoutMs: 5_000 })
   if (result.stdout.trim() !== expected) throw new Error('Browser runtime version mismatch')
 }
 export async function installSubagentRuntime(sandbox: Sandbox, ownerId: string) {
@@ -31,7 +32,7 @@ export async function installSubagentRuntime(sandbox: Sandbox, ownerId: string) 
     await sandbox.files.write(`/opt/mikka/computer/${name}`, await readFile(join(process.cwd(), 'scripts/e2b', name), 'utf8'), { user: 'root' })
   }
   await sandbox.commands.run('flock -n /run/mikka-subagents/gateway.lock /usr/bin/python3 /opt/mikka/computer/subagent-gateway.py', { user: 'root', background: true, timeoutMs: 0 })
-  await sandbox.commands.run('for i in $(seq 1 30); do curl -fsS --max-time 1 http://127.0.0.1:6082/version >/dev/null && exit 0; sleep .2; done; exit 1', { user: 'root', timeoutMs: 10_000 })
+  await sandbox.commands.run(`for i in $(seq 1 30); do curl -fsS --max-time 1 ${SANDBOX_RUNTIME_VERSION_URL} >/dev/null && exit 0; sleep .2; done; exit 1`, { user: 'root', timeoutMs: 10_000 })
   await verifyGatewayVersion(sandbox)
 }
 export type CredentialContinuation = { actionId: string; operation: 'submit' | 'clear'; targetId: string; origin: string; loaderId: string; inputs: { backendNodeId: number; credentialRole: 'username' | 'password' }[] }

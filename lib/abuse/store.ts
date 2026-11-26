@@ -12,6 +12,7 @@ import {
   MICRO_USD_PER_POINT,
   PaidResourceError,
 } from './policy'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 const abandonedHold = `"settledAt" IS NULL AND "createdAt" < now() - interval '10 minutes'
   AND (state='pending' OR (state='unknown' AND "generationId" IS NULL))`
@@ -182,7 +183,7 @@ export class HostedUsageStore {
     workspaceId: string,
     model: string,
     id: string,
-    env: Record<string, string | undefined> = process.env,
+    env: EnvMap = runtimeEnv(),
     estimate = HOSTED_CALL_HOLD_MICRO_USD,
   ) {
     if (!this.metered) return { id, workspaceId }
@@ -389,7 +390,7 @@ export class HostedUsageStore {
   }
   async status(
     workspaceId: string,
-    env: Record<string, string | undefined> = process.env,
+    env: EnvMap = runtimeEnv(),
   ) {
     const balance = await this.balance(workspaceId)
     if (!this.metered) return { state: 'ready', balance }

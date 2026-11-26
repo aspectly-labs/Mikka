@@ -46,12 +46,15 @@ export const RULE_ALLOWLISTS = Object.freeze({
     'tests/**',
     '**/test/**',
     '**/tests/**',
+    '**/fixtures/**',
     '**/*.test.*',
     '**/*.db.test.*',
     '**/*.spec.*',
     '**/*.fixture.*',
     '**/*.bench.*',
     '**/testing/**',
+    'cloudflare/api/start.mjs',
+    'services/credential-broker/server.mjs',
     'playwright*.config.*',
     'next.config.*',
     'drizzle.config.*',
@@ -103,6 +106,7 @@ export const RULE_ALLOWLISTS = Object.freeze({
     '**/testing/**',
     'apps/desktop/scripts/**',
     'apps/api/scripts/**',
+    'cloudflare/api/ops-alert-forwarder.mjs',
     'playwright*.config.*',
   ]),
 })
@@ -292,6 +296,23 @@ function unwrapExpr(node) {
     ) {
       current = current.expression
       continue
+    }
+    if (
+      current.type === 'CallExpression'
+      && (current.arguments?.length ?? 0) === 1
+      && current.arguments[0]?.type !== 'SpreadElement'
+    ) {
+      const callee = unwrapExpr(current.callee)
+      if (
+        callee?.type === 'MemberExpression'
+        && getStaticPropertyName(callee) === 'freeze'
+      ) {
+        const obj = unwrapExpr(callee.object)
+        if (obj?.type === 'Identifier' && obj.name === 'Object') {
+          current = current.arguments[0]
+          continue
+        }
+      }
     }
     break
   }
@@ -571,6 +592,7 @@ const noPlanNameBranchingRule = createRatchetedRule({
     const editionArrayVars = new Set()
     const editionSetVars = new Set()
     const editionObjectVars = new Set()
+    const deferredIdentifierChecks = []
 
     return {
       VariableDeclarator(node) {
@@ -623,43 +645,67 @@ const noPlanNameBranchingRule = createRatchetedRule({
         const target = unwrapExpr(callee.object)
 
         if (isPlanReference(arg)) {
-          if (
-            method === 'includes'
-            && (arrayContainsLiteralInSet(target, PLAN_LITERAL_SET) || (target?.type === 'Identifier' && planArrayVars.has(target.name)))
-          ) {
-            record(
-              node,
-              'Do not branch on plan name arrays with .includes(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
-            )
-          } else if (
-            method === 'has'
-            && (isLiteralSetExpression(target, PLAN_LITERAL_SET) || (target?.type === 'Identifier' && planSetVars.has(target.name)))
-          ) {
-            record(
-              node,
-              'Do not branch on plan name sets with .has(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
-            )
+          if (method === 'includes') {
+            if (arrayContainsLiteralInSet(target, PLAN_LITERAL_SET)) {
+              record(
+                node,
+                'Do not branch on plan name arrays with .includes(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
+              )
+            } else if (target?.type === 'Identifier') {
+              deferredIdentifierChecks.push({
+                kind: 'planArray',
+                name: target.name,
+                node,
+                message: 'Do not branch on plan name arrays with .includes(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
+              })
+            }
+          } else if (method === 'has') {
+            if (isLiteralSetExpression(target, PLAN_LITERAL_SET)) {
+              record(
+                node,
+                'Do not branch on plan name sets with .has(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
+              )
+            } else if (target?.type === 'Identifier') {
+              deferredIdentifierChecks.push({
+                kind: 'planSet',
+                name: target.name,
+                node,
+                message: 'Do not branch on plan name sets with .has(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
+              })
+            }
           }
           return
         }
 
         if (isEditionReference(arg)) {
-          if (
-            method === 'includes'
-            && (arrayContainsLiteralInSet(target, PLAN_EDITION_LITERAL_SET) || (target?.type === 'Identifier' && editionArrayVars.has(target.name)))
-          ) {
-            record(
-              node,
-              'Do not branch on plan-derived edition arrays with .includes(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
-            )
-          } else if (
-            method === 'has'
-            && (isLiteralSetExpression(target, PLAN_EDITION_LITERAL_SET) || (target?.type === 'Identifier' && editionSetVars.has(target.name)))
-          ) {
-            record(
-              node,
-              'Do not branch on plan-derived edition sets with .has(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
-            )
+          if (method === 'includes') {
+            if (arrayContainsLiteralInSet(target, PLAN_EDITION_LITERAL_SET)) {
+              record(
+                node,
+                'Do not branch on plan-derived edition arrays with .includes(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
+              )
+            } else if (target?.type === 'Identifier') {
+              deferredIdentifierChecks.push({
+                kind: 'editionArray',
+                name: target.name,
+                node,
+                message: 'Do not branch on plan-derived edition arrays with .includes(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
+              })
+            }
+          } else if (method === 'has') {
+            if (isLiteralSetExpression(target, PLAN_EDITION_LITERAL_SET)) {
+              record(
+                node,
+                'Do not branch on plan-derived edition sets with .has(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
+              )
+            } else if (target?.type === 'Identifier') {
+              deferredIdentifierChecks.push({
+                kind: 'editionSet',
+                name: target.name,
+                node,
+                message: 'Do not branch on plan-derived edition sets with .has(); check explicit workspace capabilities from lib/governance/capabilities.ts instead.',
+              })
+            }
           }
         }
       },
@@ -692,25 +738,48 @@ const noPlanNameBranchingRule = createRatchetedRule({
       MemberExpression(node) {
         if (!node.computed) return
         const target = unwrapExpr(node.object)
-        if (
-          isPlanReference(node.property)
-          && (isObjectWithMinKeys(target, PLAN_LITERAL_SET, 2) || (target?.type === 'Identifier' && planObjectVars.has(target.name)))
-        ) {
-          record(
-            node,
-            'Do not branch via plan-keyed object lookup; read explicit limits or capabilities from lib/governance/capabilities.ts instead.',
-          )
+        if (isPlanReference(node.property)) {
+          if (isObjectWithMinKeys(target, PLAN_LITERAL_SET, 2)) {
+            record(
+              node,
+              'Do not branch via plan-keyed object lookup; read explicit limits or capabilities from lib/governance/capabilities.ts instead.',
+            )
+          } else if (target?.type === 'Identifier') {
+            deferredIdentifierChecks.push({
+              kind: 'planObject',
+              name: target.name,
+              node,
+              message: 'Do not branch via plan-keyed object lookup; read explicit limits or capabilities from lib/governance/capabilities.ts instead.',
+            })
+          }
           return
         }
 
-        if (
-          isEditionReference(node.property)
-          && (isObjectWithMinKeys(target, PLAN_EDITION_LITERAL_SET, 2) || (target?.type === 'Identifier' && editionObjectVars.has(target.name)))
-        ) {
-          record(
-            node,
-            'Do not branch via plan-derived edition object lookup; read explicit limits or capabilities from lib/governance/capabilities.ts instead.',
-          )
+        if (isEditionReference(node.property)) {
+          if (isObjectWithMinKeys(target, PLAN_EDITION_LITERAL_SET, 2)) {
+            record(
+              node,
+              'Do not branch via plan-derived edition object lookup; read explicit limits or capabilities from lib/governance/capabilities.ts instead.',
+            )
+          } else if (target?.type === 'Identifier') {
+            deferredIdentifierChecks.push({
+              kind: 'editionObject',
+              name: target.name,
+              node,
+              message: 'Do not branch via plan-derived edition object lookup; read explicit limits or capabilities from lib/governance/capabilities.ts instead.',
+            })
+          }
+        }
+      },
+      'Program:exit'() {
+        for (const check of deferredIdentifierChecks) {
+          const matched = (check.kind === 'planArray' && planArrayVars.has(check.name))
+            || (check.kind === 'planSet' && planSetVars.has(check.name))
+            || (check.kind === 'planObject' && planObjectVars.has(check.name))
+            || (check.kind === 'editionArray' && editionArrayVars.has(check.name))
+            || (check.kind === 'editionSet' && editionSetVars.has(check.name))
+            || (check.kind === 'editionObject' && editionObjectVars.has(check.name))
+          if (matched) record(check.node, check.message)
         }
       },
     }

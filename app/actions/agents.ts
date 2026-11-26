@@ -56,6 +56,7 @@ import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { actAs, requireUser } from '@/lib/acting-user'
+import { runtimeEnv } from '@/lib/env/server'
 
 const getUserId = async () => (await requireUser()).id
 
@@ -123,7 +124,7 @@ export async function pollDevices() {
   const userId = await getUserId()
   const { devices: items, observedAt, presenceDevices } = await readDevices(userId)
   const { ownerListRead } = await import('@/lib/live/list-read-server')
-  const live = withDevicePresence(await ownerListRead(userId, [], observedAt), presenceDevices, process.env, observedAt)
+  const live = withDevicePresence(await ownerListRead(userId, [], observedAt), presenceDevices, runtimeEnv(), observedAt)
   return { devices: items, live, presenceFallback: false }
 }
 

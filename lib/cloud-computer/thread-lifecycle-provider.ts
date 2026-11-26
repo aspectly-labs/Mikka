@@ -1,10 +1,11 @@
 import 'server-only'
 import { NotFoundError, Sandbox, SandboxNotFoundError } from 'e2b'
 import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { readEnv, runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 const options = async (ownerId: string) => ({
   apiKey: await e2bApiKey(ownerId, 'Cloud runtime unavailable'),
-  proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
+  proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy'),
   requestTimeoutMs: 15_000,
 })
 
@@ -14,7 +15,7 @@ export type ThreadSnapshotInfo = { snapshotId: string; names: string[] }
 
 /** A kill switch, not a feature flag branch: snapshots become reachable only
  * when the operator opts in, because E2B documents no price or retention. */
-export function threadSnapshotsEnabled(env: Record<string, string | undefined> = process.env): boolean {
+export function threadSnapshotsEnabled(env: EnvMap = runtimeEnv()): boolean {
   return env.MIKKA_THREAD_SNAPSHOTS === '1'
 }
 

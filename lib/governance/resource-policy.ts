@@ -12,6 +12,7 @@ import { GovernanceError } from './errors'
 import { deploymentMode } from './edition'
 import { ORGANIZATION_MODEL_PROVIDERS, resolveEntitlements } from './policy'
 import { armDueTimerAfterCommit } from '@/lib/due-timer'
+import { getRuntimeConfig } from '@/lib/runtime-config'
 
 export const organizationResourcePolicyInput = z.object({
   modelCredentialSharing: z.enum(['allow', 'approval_required', 'deny']), mcpSharing: z.enum(['allow', 'approval_required', 'deny']),
@@ -33,7 +34,12 @@ export async function configureOrganizationResourcePolicy(organizationId: string
   await workspaceDb.transaction(async tx => {
     await requireOrganizationAdmin(tx, organizationId, userId)
     const [grant] = await tx.select().from(organizationEntitlements).where(eq(organizationEntitlements.organizationId, organizationId))
-    if (resolveEntitlements({ mode: deploymentMode(), kind: 'team', grant }).plan !== 'enterprise') throw new GovernanceError('feature_unavailable')
+    if (!resolveEntitlements({
+      mode: deploymentMode(),
+      kind: 'team',
+      grant,
+      capabilityOverrides: getRuntimeConfig('planEntitlementOverrides'),
+    }).capabilities.canUseResourcePolicy) throw new GovernanceError('feature_unavailable')
     const [previous] = await tx.select().from(organizationResourcePolicies).where(eq(organizationResourcePolicies.organizationId, organizationId))
     const revision = (previous?.revision ?? 0) + 1
     await tx.insert(organizationResourcePolicies).values({ organizationId, ...value, revision }).onConflictDoUpdate({ target: organizationResourcePolicies.organizationId, set: { ...value, revision, updatedAt: new Date() } })

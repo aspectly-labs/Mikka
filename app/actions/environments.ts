@@ -15,6 +15,7 @@ import { listProjectResources } from '@/lib/project-resources/store'
 import { projectRepositoryKey, type EnvironmentConfiguration, type EnvironmentNetworkAccess } from '@/lib/project-resources/contracts'
 import { isMachineSize, type MachineSize } from '@/lib/cloud-computer/machine-pricing'
 import type { SecretDelivery } from '@/lib/secrets/delivery'
+import { runtimeEnv } from '@/lib/env/server'
 
 export type EnvironmentView = { id: string; name: string; revision: number; configuration: EnvironmentConfiguration & { networkAccess: EnvironmentNetworkAccess }; instructions?: string; archived: boolean; defaultMachineSize: MachineSize | null }
 export type EnvironmentProject = { id: string; name: string; revision: number; environmentId: string | null; canEditProperties: boolean }
@@ -86,7 +87,7 @@ export async function listEnvironments(workspaceId?: string): Promise<Environmen
     const member = memberRows[0]
     const policyKeys = Array.isArray(resources.policy.repositoryKeys) ? resources.policy.repositoryKeys : []
     const restrictedAllowlist = resources.policy.mode === 'restricted' ? new Set(policyKeys) : null
-    const normalizeOptions = { allowFile: daemonTestMode(process.env) }
+    const normalizeOptions = { allowFile: daemonTestMode(runtimeEnv()) }
     const deviceRepoKeys = deviceRepoRows.flatMap(row => {
       if (row.repoPath.startsWith('v2/')) return [row.repoPath]
       if (!row.remoteUrl) return []

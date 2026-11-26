@@ -73,6 +73,7 @@ import { ActionFailureError } from '@/lib/action-error'
 import { deviceSessionHeld } from '@/lib/device-session'
 
 import { daemonTooOld, daemonVersions } from '@/lib/daemon-release'
+import { runtimeEnv } from '@/lib/env/server'
 
 
 /**
@@ -136,7 +137,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     return RouteResponse.json({ error: 'Run is missing its agent, repository or issue.' }, { status: 409 })
   }
   if (run.userId !== caller.userId || agent.userId !== caller.userId || repo.userId !== caller.userId || repo.deviceId !== deviceId) return RouteResponse.json({ error: 'Run owner mismatch.' }, { status: 409 })
-  if (device.kind === 'local' && !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(process.env) })) return RouteResponse.json({ error: 'Repository identity must be confirmed before scheduling a new thread.' }, { status: 409 })
+  if (device.kind === 'local' && !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(runtimeEnv()) })) return RouteResponse.json({ error: 'Repository identity must be confirmed before scheduling a new thread.' }, { status: 409 })
   if (repo.remoteUrl && request.headers.get(REPO_ORIGIN_HEADER) !== '1') return RouteResponse.json({ error: 'Device update required for repository verification.' }, { status: 409 })
   const issueId = run.issueId
   const claimAuthorizedProject = async () => {
@@ -226,7 +227,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const frozenCredits = run.agentDefinition?.credits
   const requestUrl = new URL(request.url)
   const loopbackGateway = requestUrl.protocol === 'http:' && isLoopbackHost(requestUrl.hostname)
-    && device.kind === 'local' && requestUrl.origin === resolveAppOrigin(process.env)
+    && device.kind === 'local' && requestUrl.origin === resolveAppOrigin(runtimeEnv())
   if ((frozenKey || frozenCredits) && (subscription || pinned)) return RouteResponse.json({ error: 'Run credential unavailable.' }, { status: 409 })
   if ((frozenKey || frozenCredits) && (request.headers.get(MODEL_CREDENTIAL_HEADER) !== '1'
     || loopbackGateway && request.headers.get(MODEL_GATEWAY_LOOPBACK_HEADER) !== '1')) return RouteResponse.json({ error: 'Upgrade the Mikka daemon before starting this thread.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
@@ -324,9 +325,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   let taskInjection: TaskSecretInjection
   const threadScopeRunId = (await readRunChain(pool, run.userId, run.id))?.rootRunId ?? run.id
   try {
+    const env = runtimeEnv()
     taskInjection = projectEnvironment
-      ? await environmentSecretInjection(taskWorkspaceId!, taskRepository, projectEnvironment, process.env, run.userId, threadScopeRunId)
-      : await taskSecretInjection(taskWorkspaceId, taskRepository, process.env, undefined, run.userId, threadScopeRunId)
+      ? await environmentSecretInjection(taskWorkspaceId!, taskRepository, projectEnvironment, env, run.userId, threadScopeRunId)
+      : await taskSecretInjection(taskWorkspaceId, taskRepository, env, undefined, run.userId, threadScopeRunId)
     taskEnv = taskInjection.env
     taskSecretNames = taskInjection.secretNames
   } catch { return RouteResponse.json({ code: 'task_secret_unavailable', detail: 'configuration' }, { status: 409 }) }

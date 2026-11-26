@@ -1,8 +1,0 @@
-{
-  "files": {
-    "lib/coordinator/decision.ts": 1,
-    "lib/eve/factory/providers.ts": 4,
-    "lib/model-routing.ts": 24,
-    "lib/operations/write-planning-model.ts": 1
-  }
-}

@@ -3,6 +3,7 @@ import type { Pool } from 'pg'
 import { z } from 'zod'
 import { StripeRequestError, stripeConfig, stripeGet, type StripeConfig } from '@/lib/billing/stripe'
 import type { AccountCleanupReport } from './cleanup-result'
+import { runtimeEnv } from '@/lib/env/server'
 
 /**
  * Cancel the paid plan of a workspace the account deletion removes.
@@ -73,7 +74,7 @@ export async function cleanupAccountBilling(database: Pick<Pool, 'query'>, deps:
     FROM workspace_billing WHERE "workspaceId" = ANY($1::uuid[]) AND "stripeCustomerId" IS NOT NULL`, [workspaceIds])
   // No customer means nothing can be charged: this path never calls the provider.
   if (!rows.length) return { blockedReasons: [], warnings: [] }
-  const config = stripeConfig(deps.env ?? process.env)
+  const config = stripeConfig(deps.env ?? runtimeEnv())
   // Same rule as composio_not_configured: hold the account, keep the data, and
   // retry once the provider that can stop the charge is configured again.
   if (!config) return { blockedReasons: ['billing_provider_not_configured'], warnings: [] }

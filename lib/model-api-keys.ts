@@ -1,5 +1,6 @@
 import { modelEnabled, type ModelSettings } from './enabled-models-policy'
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 import { extractProviderSpeedModes, type ModelSpeedMode } from './model-routing'
 import { executionMembersActive, revalidateExecutionIdentity, ExecutionIdentityError } from './execution-identity'
 import type { WorkerDefinitionSnapshot } from './agent-kit/worker'
@@ -75,7 +76,7 @@ const keyAad = (id: string, ownerId: string) => ['model_api_key', id.toLowerCase
  * allowed only for the browser tests' local provider (MIKKA_MODEL_KEY_LOOPBACK,
  * set by playwright.config.ts), never on Vercel.
  */
-export async function checkBaseUrl(raw: string, env: Env = process.env, resolve: (host: string) => Promise<string[]> = defaultResolve): Promise<string> {
+export async function checkBaseUrl(raw: string, env: Env = runtimeEnv(), resolve: (host: string) => Promise<string[]> = defaultResolve): Promise<string> {
   let url: URL
   try { url = new URL(raw) } catch (error) { throw new WorkspaceError('apiKeyBaseUrlInvalid', { cause: error }) }
   if (url.username || url.password || url.search || url.hash) throw new WorkspaceError('apiKeyBaseUrlInvalid')
@@ -187,7 +188,7 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   shareWorkspace?: { id: string; kind: 'personal' | 'team' }
 } = {}): Promise<ApiKeyView> {
   const parsed = addApiKeyInput.parse(input)
-  const env = options.env ?? process.env
+  const env = options.env ?? runtimeEnv()
   const custom = parsed.provider === 'custom' ? parsed : null
   const baseUrl = custom ? await checkBaseUrl(custom.baseUrl, env, options.resolve) : null
   // A preset's own protocols are its endpoints (apiKeyProtocols); the column keeps its first, for older readers.
@@ -272,7 +273,7 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
 export async function updateApiKey(query: Query, ownerId: string, id: string, input: unknown, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
   z.uuid().parse(id)
   const parsed = updateApiKeyInput.parse(input)
-  const env = options.env ?? process.env
+  const env = options.env ?? runtimeEnv()
   const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`, [id, ownerId])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
   const isCustom = row.provider === 'custom'
@@ -344,7 +345,7 @@ export async function refreshApiKeyModels(query: Query, ownerId: string, id: str
   z.uuid().parse(id)
   const { rowCount } = await query.query('SELECT 1 FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [id, ownerId])
   if (!rowCount) throw new WorkspaceError('apiKeyNotFound')
-  const env = options.env ?? process.env
+  const env = options.env ?? runtimeEnv()
   const { row, apiKey } = await openKey(query, id, env)
   // A custom provider's host is checked again on every refetch: its name may now point at a private address (DNS rebinding).
   const reachable = row.provider !== 'custom' || await checkBaseUrl(row.baseUrl!, env, options.resolve).then(() => true, () => false)
@@ -459,7 +460,7 @@ async function openKey(query: Query, keyId: string, env: Env) {
  * 2026-11-15-2000): the run that may use it was checked at claim
  * (`validateRunApiKey`) and is checked again by its gateway token.
  */
-export async function openGatewayApiKey(query: Query, keyId: string, env: Env = process.env) {
+export async function openGatewayApiKey(query: Query, keyId: string, env: Env = runtimeEnv()) {
   z.uuid().parse(keyId)
   const { row, apiKey } = await openKey(query, keyId, env)
   return { key: view(row), apiKey, features: parseGatewayFeatures(row.features) }
@@ -510,7 +511,7 @@ export async function setBotApiKeyChoice(query: Query, scope: { ownerId: string;
  * Checked on every call, so a withdrawn share or a deleted key stops the
  * chat instead of switching (§ 2). Throws WorkspaceError('apiKeyNotFound').
  */
-export async function openApiKeyForChat(query: Query, userId: string, workspaceId: string, keyId: string, env: Env = process.env): Promise<{ apiKey: string; baseUrl: string; keyOwnerId: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol; modelSpeedModes?: Record<string, readonly ModelSpeedMode[]> }> {
+export async function openApiKeyForChat(query: Query, userId: string, workspaceId: string, keyId: string, env: Env = runtimeEnv()): Promise<{ apiKey: string; baseUrl: string; keyOwnerId: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol; modelSpeedModes?: Record<string, readonly ModelSpeedMode[]> }> {
   await assertOrganizationModelProvider(workspaceId, 'api-key')
   const usable = (await usableApiKeys(query, userId, workspaceId)).find(key => key.id === keyId)
   const baseUrl = usable && apiKeyChatBaseUrl(usable)

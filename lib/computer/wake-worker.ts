@@ -4,11 +4,12 @@ import { startCloudWorker } from './cloud-worker'
 import { connectComputer } from './e2b-provider'
 import { ensureBotRuntime } from './bot-runtime'
 import { CloudWorkerError } from './worker-error'
+import { readEnv } from '@/lib/env/server'
 
 /** Called only after the desktop transaction has committed. */
 export async function ensureCloudBotWorker(pool: Pool, actor: { userId: string; workspaceId: string }, botId: string) {
-  const origin = process.env.MIKKA_CLOUD_WORKER_URL
-  const sha = process.env.MIKKA_CLOUD_WORKER_SHA
+  const origin = readEnv('MIKKA_CLOUD_WORKER_URL')
+  const sha = readEnv('MIKKA_CLOUD_WORKER_SHA')
   if (!origin || !sha) throw new CloudWorkerError('worker_unconfigured')
   const machine = (await pool.query(`SELECT m."sandboxId" FROM cloud_machines m
     JOIN bot_desktops d ON d."workspaceId"=m."workspaceId" AND d."ownerId"=m."ownerId"

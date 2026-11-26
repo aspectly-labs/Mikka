@@ -28,6 +28,7 @@ import { reconcileFactoryCheck } from "./reconcile-check";
 import { appendMonitorEvidence } from "./monitor-evidence";
 import type { FactoryAuthorize } from "./store";
 import { configuredMonitorProbes } from "./monitor-probe";
+import { runtimeEnv } from '@/lib/env/server';
 import { monitorWorkspacePartition } from "./monitor-fingerprint";
 import { createFactoryMonitorIssueLinks } from "./monitor-issue-links";
 
@@ -113,7 +114,7 @@ export const factoryMonitor = createFactoryMonitor(
   authorize,
   factoryMonitorWorkspaceKey,
   appendMonitorEvidence,
-  configuredMonitorProbes(process.env),
+  configuredMonitorProbes(runtimeEnv()),
   null,
   backgroundWorkspace,
 );

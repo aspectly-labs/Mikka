@@ -8,6 +8,7 @@ import 'server-only'
  * (`billingActiveOffer`), time bounds, plan alignment, prior-subscription
  * history, and abuse/platform-pause eligibility.
  */
+import { sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import { z } from 'zod'
 import { abuseLimits } from '@/lib/abuse/policy'
@@ -31,7 +32,7 @@ import {
   type CreditConversionMetadata,
   type MachineSkuCatalogEntry,
 } from './catalog-client'
-import { POINTS_PER_USD } from './hosted-usage'
+import { pointsToCreditCents } from './hosted-usage'
 import { resourcePrice } from './resource-plan'
 import { stripeConfig, stripeGet, StripeRequestError, type StripeConfig } from './stripe'
 
@@ -65,8 +66,8 @@ export function clearBillingCatalogCache(): void {
 }
 
 const DEFAULT_PLAN_DISPLAY_NAMES: Readonly<Record<'pro' | 'enterprise', string>> = {
-  pro: 'Pro',
-  enterprise: 'Enterprise',
+  pro: 'Mikka Pro',
+  enterprise: 'Mikka Enterprise',
 }
 
 function defaultPlanDisplayName(plan: 'pro' | 'enterprise'): string {
@@ -78,7 +79,7 @@ function toPlanCatalogEntry(rawPrice: unknown, configuredPriceId: string): Billi
   const rawNickname = typeof (rawPrice as { nickname?: unknown } | null)?.nickname === 'string'
     ? (rawPrice as { nickname: string }).nickname.trim()
     : ''
-  const includedCreditCents = Math.floor((approved.monthlyPoints * 100) / POINTS_PER_USD)
+  const includedCreditCents = pointsToCreditCents(approved.monthlyPoints)
   return billingPlanCatalogEntrySchema.parse({
     id: approved.plan,
     plan: approved.plan,
@@ -145,10 +146,19 @@ interface OfferEligibilityRow {
   unpaid24hMicroUsd: number
 }
 
+export interface DrizzleExecuteLike {
+  execute: (query: ReturnType<typeof sql>) => Promise<{ rows: unknown[] }>
+}
+
 export interface WorkspaceOfferEligibilityOptions {
   env?: EnvMap
   queryPool?: Pick<Pool, 'query'>
+  queryTx?: DrizzleExecuteLike
   workspacePool?: Pick<Pool, 'query'>
+  /** Skip workspacePool org-scope read when caller already holds `withBillingAuthority(..., { ownPlatformAccount: true })`. */
+  skipOrgScopeCheck?: boolean
+  /** Open unexpired Checkout sessions created for this exact offer ID remain consistent with catalog display. */
+  matchingOfferId?: string | null
 }
 
 /**
@@ -159,9 +169,9 @@ export interface WorkspaceOfferEligibilityOptions {
  * 2. Workspace is not bound to an archived organization or an organization with
  *    a different designated billing account (per `lib/billing/authority.ts`);
  * 3. No prior or current Stripe subscription history on `workspace_billing`,
- *    no prior plan or intro grant in `workspace_credit_grants`, and no in-flight
- *    or past checkout requests in `billing_checkout_requests` on the effective
- *    billing account workspace;
+ *    no prior plan or intro grant in `workspace_credit_grants`, and no open
+ *    unexpired non-matching checkout request in `billing_checkout_requests` on
+ *    the effective billing account workspace;
  * 4. No cross-workspace card fingerprint reuse signal and platform not paused
  *    under the 24-hour unpaid spend abuse ceiling.
  */
@@ -172,57 +182,105 @@ export async function checkWorkspaceOfferEligibility(
   if (!z.uuid().safeParse(workspaceId).success) return false
   const env = options.env ?? runtimeEnv()
   try {
-    const targetWorkspacePool = options.workspacePool ?? (await import('@/lib/workspace-db')).workspacePool
-    const { rows: [orgScope] } = await targetWorkspacePool.query<OrganizationBillingScopeRow>(
-      `SELECT
-        (o.id IS NULL OR o."archivedAt" IS NOT NULL) AS "organizationArchived",
-        oba."workspaceId" AS "accountWorkspaceId"
-      FROM mikka_organization_workspaces ow
-      LEFT JOIN mikka_organizations o ON o.id = ow."organizationId"
-      LEFT JOIN mikka_organization_billing_accounts oba ON oba."organizationId" = ow."organizationId"
-      WHERE ow."workspaceId" = $1
-      LIMIT 1`,
-      [workspaceId],
-    )
-    if (orgScope?.organizationArchived) return false
-    const accountWorkspaceId = orgScope?.accountWorkspaceId ?? null
-    if (accountWorkspaceId !== null && accountWorkspaceId !== workspaceId) return false
-    const billingWorkspaceId = accountWorkspaceId ?? workspaceId
+    let billingWorkspaceId = workspaceId
+    if (!options.skipOrgScopeCheck) {
+      const targetWorkspacePool = options.workspacePool ?? (await import('@/lib/workspace-db')).workspacePool
+      const { rows: [orgScope] } = await targetWorkspacePool.query<OrganizationBillingScopeRow>(
+        `SELECT
+          (o.id IS NULL OR o."archivedAt" IS NOT NULL) AS "organizationArchived",
+          oba."workspaceId" AS "accountWorkspaceId"
+        FROM mikka_organization_workspaces ow
+        LEFT JOIN mikka_organizations o ON o.id = ow."organizationId"
+        LEFT JOIN mikka_organization_billing_accounts oba ON oba."organizationId" = ow."organizationId"
+        WHERE ow."workspaceId" = $1
+        LIMIT 1`,
+        [workspaceId],
+      )
+      if (orgScope?.organizationArchived) return false
+      const accountWorkspaceId = orgScope?.accountWorkspaceId ?? null
+      if (accountWorkspaceId !== null && accountWorkspaceId !== workspaceId) return false
+      billingWorkspaceId = accountWorkspaceId ?? workspaceId
+    }
 
-    const targetPool = options.queryPool ?? (await import('@/lib/db')).pool
-    const { rows: [row] } = await targetPool.query<OfferEligibilityRow>(
-      `SELECT
-        EXISTS(
-          SELECT 1 FROM workspace_billing
-          WHERE "workspaceId"=$1
-            AND ("stripeSubscriptionId" IS NOT NULL
-              OR "billingInvoiceId" IS NOT NULL
-              OR "billingRevision">0
-              OR COALESCE(status,'')<>'')
-        ) AS "hasPriorSubscription",
-        EXISTS(
-          SELECT 1 FROM workspace_credit_grants
-          WHERE "workspaceId"=$1
-            AND (bucket='plan' OR reason IN ('subscription','intro_offer','intro_period'))
-        ) AS "hasPriorGrant",
-        EXISTS(
-          SELECT 1 FROM billing_checkout_requests
-          WHERE "workspaceId"=$1
-        ) AS "hasCheckoutRequest",
-        EXISTS(
-          SELECT 1 FROM hosted_verifications v
-          JOIN hosted_card_claims c ON c.fingerprint=v.fingerprint
-          WHERE v."workspaceId"=$1
-            AND v.fingerprint IS NOT NULL
-            AND c."workspaceId"<>$1
-        ) AS "cardClaimedElsewhere",
-        COALESCE((
-          SELECT sum("unpaidMicroUsd"+CASE WHEN state IN ('pending','unknown') THEN "reservedUnpaid" ELSE 0 END)
-          FROM hosted_usage
-          WHERE "createdAt">now()-interval '24 hours'
-        ),0)::float8 AS "unpaid24hMicroUsd"`,
-      [billingWorkspaceId],
-    )
+    const matchingOfferId = options.matchingOfferId ?? null
+    let row: OfferEligibilityRow | undefined
+    if (options.queryTx) {
+      const result = await options.queryTx.execute(sql`
+        SELECT
+          EXISTS(
+            SELECT 1 FROM workspace_billing
+            WHERE "workspaceId"=${billingWorkspaceId}
+              AND ("stripeSubscriptionId" IS NOT NULL
+                OR "billingInvoiceId" IS NOT NULL
+                OR "billingRevision">0
+                OR COALESCE(status,'')<>'')
+          ) AS "hasPriorSubscription",
+          EXISTS(
+            SELECT 1 FROM workspace_credit_grants
+            WHERE "workspaceId"=${billingWorkspaceId}
+              AND (bucket='plan' OR reason IN ('subscription','intro_offer','intro_period'))
+          ) AS "hasPriorGrant",
+          EXISTS(
+            SELECT 1 FROM billing_checkout_requests
+            WHERE "workspaceId"=${billingWorkspaceId}
+              AND "closedAt" IS NULL
+              AND "expiresAt" > now()
+              AND (${matchingOfferId}::text IS NULL OR COALESCE(params->'metadata'->>'mikka_offer_id', '') <> ${matchingOfferId})
+          ) AS "hasCheckoutRequest",
+          EXISTS(
+            SELECT 1 FROM hosted_verifications v
+            JOIN hosted_card_claims c ON c.fingerprint=v.fingerprint
+            WHERE v."workspaceId"=${billingWorkspaceId}
+              AND v.fingerprint IS NOT NULL
+              AND c."workspaceId"<>${billingWorkspaceId}
+          ) AS "cardClaimedElsewhere",
+          COALESCE((
+            SELECT sum("unpaidMicroUsd"+CASE WHEN state IN ('pending','unknown') THEN "reservedUnpaid" ELSE 0 END)
+            FROM hosted_usage
+            WHERE "createdAt">now()-interval '24 hours'
+          ),0)::float8 AS "unpaid24hMicroUsd"
+      `)
+      row = result.rows[0] as OfferEligibilityRow | undefined
+    } else {
+      const targetPool = options.queryPool ?? (await import('@/lib/db')).pool
+      const { rows } = await targetPool.query<OfferEligibilityRow>(
+        `SELECT
+          EXISTS(
+            SELECT 1 FROM workspace_billing
+            WHERE "workspaceId"=$1
+              AND ("stripeSubscriptionId" IS NOT NULL
+                OR "billingInvoiceId" IS NOT NULL
+                OR "billingRevision">0
+                OR COALESCE(status,'')<>'')
+          ) AS "hasPriorSubscription",
+          EXISTS(
+            SELECT 1 FROM workspace_credit_grants
+            WHERE "workspaceId"=$1
+              AND (bucket='plan' OR reason IN ('subscription','intro_offer','intro_period'))
+          ) AS "hasPriorGrant",
+          EXISTS(
+            SELECT 1 FROM billing_checkout_requests
+            WHERE "workspaceId"=$1
+              AND "closedAt" IS NULL
+              AND "expiresAt" > now()
+              AND ($2::text IS NULL OR COALESCE(params->'metadata'->>'mikka_offer_id', '') <> $2)
+          ) AS "hasCheckoutRequest",
+          EXISTS(
+            SELECT 1 FROM hosted_verifications v
+            JOIN hosted_card_claims c ON c.fingerprint=v.fingerprint
+            WHERE v."workspaceId"=$1
+              AND v.fingerprint IS NOT NULL
+              AND c."workspaceId"<>$1
+          ) AS "cardClaimedElsewhere",
+          COALESCE((
+            SELECT sum("unpaidMicroUsd"+CASE WHEN state IN ('pending','unknown') THEN "reservedUnpaid" ELSE 0 END)
+            FROM hosted_usage
+            WHERE "createdAt">now()-interval '24 hours'
+          ),0)::float8 AS "unpaid24hMicroUsd"`,
+        [billingWorkspaceId, matchingOfferId],
+      )
+      row = rows[0]
+    }
     if (!row) return false
     if (
       row.hasPriorSubscription
@@ -249,6 +307,15 @@ function offerMatchesActivePlan(
     plan => plan.active && (plan.id === offer.planId || plan.plan === offer.planId),
   )
   if (!matchedPlan) return false
+  // Coupon-only Checkout on a recurring resourcePriceId can only fulfill
+  // intro_period / discount offers whose billing cadence matches the plan's
+  // recurring interval (no separate intro price or trial_period_days yet).
+  if (offer.kind === 'trial') return false
+  if (offer.stripeIntroPriceId) return false
+  if (offer.introInterval !== matchedPlan.interval) return false
+  // Discounted intro offers are advertised only when Stripe Checkout can honor
+  // them via a configured coupon ID (prevents catalog/checkout price mismatch).
+  if (offer.introAmountCents < matchedPlan.amountCents && !offer.stripeCouponId) return false
   return (
     offer.regularAmountCents === matchedPlan.amountCents
     && offer.regularInterval === matchedPlan.interval
@@ -266,6 +333,66 @@ function isOfferWindowActive(offer: BillingActiveOfferPayload, nowMs: number): b
     if (Number.isNaN(startMs) || startMs >= endMs || nowMs < startMs) return false
   }
   return true
+}
+
+export interface CheckoutOfferTerms {
+  readonly id: string
+  readonly introCreditCents: number
+  readonly stripeCouponId?: string
+}
+
+/**
+ * Resolves server-verified promotional offer terms for an active Checkout
+ * creation using the exact same validation and eligibility rules as
+ * `resolveBillingCatalog`. Must be called inside `resourcePlanCheckout`'s
+ * `pg_advisory_xact_lock` transaction (`queryTx`) so eligibility and Checkout
+ * creation are serialized atomically.
+ */
+export async function resolveEligibleCheckoutOffer(input: {
+  workspaceId: string
+  plan: BillingPlanCatalogEntry
+  env?: EnvMap
+  now?: Date | number
+  queryTx?: DrizzleExecuteLike
+  skipOrgScopeCheck?: boolean
+  activeOfferOverride?: BillingActiveOfferPayload | null
+  checkOfferEligibility?: (workspaceId: string) => Promise<boolean> | boolean
+}): Promise<CheckoutOfferTerms | null> {
+  const env = input.env ?? runtimeEnv()
+  const nowMs = input.now instanceof Date ? input.now.getTime() : (input.now ?? Date.now())
+  const rawCandidate = input.activeOfferOverride !== undefined
+    ? input.activeOfferOverride
+    : getRuntimeConfig('billingActiveOffer', { env, now: nowMs })
+  if (rawCandidate === null || rawCandidate === undefined) return null
+  const parsedOffer = billingActiveOfferPayloadSchema.safeParse(rawCandidate)
+  if (
+    !parsedOffer.success
+    || !isOfferWindowActive(parsedOffer.data, nowMs)
+    || !offerMatchesActivePlan(parsedOffer.data, [input.plan])
+  ) {
+    return null
+  }
+  const eligibilityCheck = input.checkOfferEligibility
+    ?? ((id: string) => checkWorkspaceOfferEligibility(id, {
+      env,
+      queryTx: input.queryTx,
+      skipOrgScopeCheck: input.skipOrgScopeCheck,
+    }))
+  let eligible = false
+  try {
+    eligible = Boolean(await eligibilityCheck(input.workspaceId))
+  } catch (error) {
+    console.error('[billing] offer eligibility callback failed', {
+      name: error instanceof Error ? error.name : 'UnknownError',
+    })
+    eligible = false
+  }
+  if (!eligible) return null
+  return {
+    id: parsedOffer.data.id,
+    introCreditCents: parsedOffer.data.introCreditCents,
+    ...(parsedOffer.data.stripeCouponId ? { stripeCouponId: parsedOffer.data.stripeCouponId } : {}),
+  }
 }
 
 export interface ResolveBillingCatalogOptions {
@@ -316,7 +443,10 @@ export async function resolveBillingCatalog(
       && offerMatchesActivePlan(parsedOffer.data, plans)
     ) {
       const eligibilityCheck = options.checkOfferEligibility
-        ?? ((id: string) => checkWorkspaceOfferEligibility(id, { env }))
+        ?? ((id: string) => checkWorkspaceOfferEligibility(id, {
+          env,
+          matchingOfferId: parsedOffer.data.id,
+        }))
       let eligible = false
       try {
         eligible = Boolean(await eligibilityCheck(options.workspaceId))

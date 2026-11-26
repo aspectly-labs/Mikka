@@ -1,8 +1,7 @@
 import type { HostedRuntimeSnapshot } from '@/lib/subscription-model-snapshot'
+import { LEGACY_WRITE_PLANNING_SNAPSHOT } from '@/lib/model-catalog-metadata'
 
 export const WRITE_PLANNING_MODEL = 'mikka-planning'
-// Already-issued snapshots retain their signed runtime identifier.
-const LEGACY_WRITE_PLANNING_SNAPSHOT = 'openai/gpt-6-luna'
 
 /** The managed planner is configured for both image input and tool use.
  * This is a capability admission check, not evidence that any image was sent

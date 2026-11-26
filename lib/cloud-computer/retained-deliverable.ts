@@ -11,6 +11,7 @@ import { snapshotMatchesScope } from '../factory/deliverable-snapshot'
 import type { FactoryTask } from '../factory/store'
 import { retainedDeliverableProbeCommand } from './retained-deliverable-probe.mjs'
 import { recordThreadMaintenanceSession } from './thread-machine-sessions'
+import { readEnv } from '@/lib/env/server'
 
 type Budget = (maximumMs: number) => number
 type ProbeOptions = { user: 'user'; timeoutMs: number; requestTimeoutMs: number; signal: AbortSignal }
@@ -30,7 +31,7 @@ const requestOptions = (budget: Budget, maximumMs: number) => {
 }
 async function ownerOptions(scope: RetainedDeliverableScope) {
   const { e2bApiKey } = await import('../secrets/e2b-runtime')
-  return { apiKey: await e2bApiKey(scope.ownerId, 'Cloud runtime unavailable'), proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+  return { apiKey: await e2bApiKey(scope.ownerId, 'Cloud runtime unavailable'), proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') }
 }
 const defaultRuntime: RetainedDeliverableRuntime = {
   async state(scope, budget) {

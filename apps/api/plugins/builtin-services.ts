@@ -4,6 +4,7 @@ import { builtinGateway } from '../../../lib/builtin-gateway/runtime'
 import { startBuiltinScheduler } from '../../../lib/builtin-gateway/scheduler'
 import { schedulerConfig } from '../../../lib/builtin-gateway/scheduler'
 import { PostgresGatewayBus } from '../../../lib/builtin-gateway/postgres'
+import { readEnv } from '../../../lib/env/server'
 
 export default definePlugin(application => {
   const runtime = builtinGateway()
@@ -20,7 +21,7 @@ export default definePlugin(application => {
   }
   // A self-hoster may keep their own Worker and still need local scheduling.
   if (!runtime && !schedulerConfig()) return
-  const bus = runtime?.bus ?? new PostgresGatewayBus({ connectionString: process.env.MIKKA_DATABASE_URL_UNPOOLED || process.env.MIKKA_DATABASE_URL })
+  const bus = runtime?.bus ?? new PostgresGatewayBus({ connectionString: readEnv('MIKKA_DATABASE_URL_UNPOOLED') || readEnv('MIKKA_DATABASE_URL') })
   const scheduler = startBuiltinScheduler({
     fetch: (input, init) => Promise.resolve(application.fetch(new Request(input, init))),
     leader: () => bus.isSchedulerLeader(),

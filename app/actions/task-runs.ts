@@ -34,6 +34,7 @@ import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { joinThreadRead, threadUnread } from '@/lib/thread-reads'
 import { issueVisibility } from '@/lib/issue-visibility'
+import { runtimeEnv } from '@/lib/env/server'
 
 /** The newest run on each issue, for the right column's 我的任务 groups (MIK-38). */
 export interface TaskRun {
@@ -195,7 +196,7 @@ async function readThreads(known?: string, previous?: ListPosition[]) {
     const signature = await queryVersionWithExpiry(snapshot, sql`min(snapshot."createdAt")+${runHistoryWindow}`)
     const version = createHash('sha256').update(JSON.stringify([session.user.id, context.workspace.id, signature.version])).digest('hex').slice(0, 32)
     const visible = snapshot.as('thread_list_expiry')
-    const live = withDevicePresence(await ownerListRead(session.user.id, [signature.expiresAt], observedAt, begun), presenceDevices, process.env, observedAt)
+    const live = withDevicePresence(await ownerListRead(session.user.id, [signature.expiresAt], observedAt, begun), presenceDevices, runtimeEnv(), observedAt)
     // Device presence has its own bounded watcher prerequisite. Until that
     // route is ready, queued local work retains the shared slow fallback.
     // A session change pushes thread_list (lib/device-session.ts): no fallback read.

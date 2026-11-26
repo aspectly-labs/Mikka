@@ -1,6 +1,7 @@
 import { runChanged } from './live/panels'
 import { scheduleThreadTitle } from '@/lib/thread-title-schedule'
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 import { runListChanged } from './live/lists'
 import { rebindExecutionDevice } from './execution-identity'
 import { cloudComputerRunsEnabled } from '@/lib/cloud-computer-flag'
@@ -142,7 +143,7 @@ async function takeoverTarget(run: { id: string; userId: string; agentId: string
   if (!run.deviceRepoId) return null
   const [repo] = await db.select({ remoteUrl: deviceRepos.remoteUrl, repoPath: deviceRepos.repoPath }).from(deviceRepos).where(eq(deviceRepos.id, run.deviceRepoId)).limit(1)
   const [agent] = await db.select({ harness: agents.harness }).from(agents).where(eq(agents.id, run.agentId)).limit(1)
-  if (!repo?.remoteUrl || !agent || !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(process.env) })) return null
+  if (!repo?.remoteUrl || !agent || !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(runtimeEnv()) })) return null
   const bound = await db.execute(sql`select 1 from computer_run_bindings where "runId"=${run.id} and "ownerId"=${run.userId}`)
   // A repository-only cloud task can use normal local admission after its
   // exact old sandbox is parked. Desktop work still needs a cloud runtime.
@@ -197,8 +198,8 @@ export async function latestCheckpoint(retryOf: string): Promise<RunCheckpoint |
     source = origin
     if (row.userId !== origin.userId || row.workspaceId !== origin.workspaceId || row.issueId !== origin.issueId || row.botId !== origin.botId) break
     if (row.deviceRepoId !== origin.deviceRepoId && !(row.repoPath && origin.repoPath && row.repoPath === origin.repoPath &&
-      repositoryBindingMatches(row.repoPath, row.remoteUrl, { allowFile: daemonTestMode(process.env) }) &&
-      repositoryBindingMatches(origin.repoPath, origin.remoteUrl, { allowFile: daemonTestMode(process.env) }))) break
+      repositoryBindingMatches(row.repoPath, row.remoteUrl, { allowFile: daemonTestMode(runtimeEnv()) }) &&
+      repositoryBindingMatches(origin.repoPath, origin.remoteUrl, { allowFile: daemonTestMode(runtimeEnv()) }))) break
     if (row.stopReason === 'provider_failure') {
       if (++providerAttempts > maxProviderAttempts) break
       // A failed final upload invalidates any older tree, even when reached

@@ -23,6 +23,7 @@ import { autoRechargePolicy } from './auto-recharge'
 import { authTrustedOrigins } from '@/lib/auth-config'
 import { resourcePlanCheckout } from './plan-checkout'
 import { withBillingAuthority } from './authority'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -50,13 +51,13 @@ async function activeMembers(workspaceId: string) {
 }
 
 /** Admins only. */
-export async function workspaceBillingView(actorId: string, workspaceId: string, env: Env = process.env): Promise<BillingView> {
+export async function workspaceBillingView(actorId: string, workspaceId: string, env: Env = runtimeEnv()): Promise<BillingView> {
   await requireAdmin(actorId, workspaceId)
   return readBillingAccount(workspaceId, env)
 }
 
 /** Organization admins receive billing metadata without acquiring private workspace content access. */
-export async function organizationBillingView(actorId: string, organizationId: string, env: Env = process.env) {
+export async function organizationBillingView(actorId: string, organizationId: string, env: Env = runtimeEnv()) {
   const account = await workspaceDb.transaction(async tx => {
     await requireOrganizationAdmin(tx, organizationId, actorId)
     const [row] = await tx.select().from(organizationBillingAccounts).where(eq(organizationBillingAccounts.organizationId, organizationId)).limit(1)
@@ -116,7 +117,7 @@ function requireConfig(env: Env): StripeConfig {
 }
 
 /** 管理付款方式 / 更改方案 / 发票: a Customer Portal session URL. Admins only. */
-export async function billingPortalUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = process.env): Promise<{ url: string }> {
+export async function billingPortalUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = runtimeEnv()): Promise<{ url: string }> {
   const config = requireConfig(env)
   return withBillingAuthority(actorId, workspaceId, async () => {
     const [billing] = await db.select({ customer: workspaceBilling.stripeCustomerId }).from(workspaceBilling).where(eq(workspaceBilling.workspaceId, workspaceId)).limit(1)
@@ -129,7 +130,7 @@ export async function billingPortalUrl(actorId: string, workspaceId: string, bac
 }
 
 /** A capacity plan is one verified resource price, regardless of human membership. */
-export async function planCheckoutUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = process.env): Promise<{ url: string }> {
+export async function planCheckoutUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = runtimeEnv()): Promise<{ url: string }> {
   const config = requireConfig(env)
   return withBillingAuthority(actorId, workspaceId, async () => {
     if (!config.webhookSecret) throw new WorkspaceError('billingNotConfigured')
@@ -139,7 +140,36 @@ export async function planCheckoutUrl(actorId: string, workspaceId: string, back
     const configuredPrice = await provider(() => stripeGet<unknown>(config, `prices/${config.resourcePriceId}`, fetchImpl))
     try { price = resourcePrice(configuredPrice, config.resourcePriceId) }
     catch (error) { throw new WorkspaceError('billingResourcePlanUnavailable', { cause: error }) }
-    return provider(() => resourcePlanCheckout(actorId, workspaceId, back_, price, config, fetchImpl))
+    const { resolveEligibleCheckoutOffer } = await import('./catalog')
+    const { pointsToCreditCents } = await import('./hosted-usage')
+    const planEntry = {
+      id: price.plan,
+      plan: price.plan,
+      name: price.plan,
+      stripePriceId: price.id,
+      amountCents: price.amountCents,
+      currency: price.currency,
+      interval: 'month' as const,
+      includedCreditCents: pointsToCreditCents(price.monthlyPoints),
+      includedPoints: price.monthlyPoints,
+      seatModel: 'per_workspace' as const,
+      active: true,
+    }
+    return provider(() => resourcePlanCheckout(
+      actorId,
+      workspaceId,
+      back_,
+      price,
+      config,
+      fetchImpl,
+      tx => resolveEligibleCheckoutOffer({
+        workspaceId,
+        plan: planEntry,
+        env,
+        queryTx: tx,
+        skipOrgScopeCheck: true,
+      }),
+    ))
   }, { ownPlatformAccount: true })
 }
 

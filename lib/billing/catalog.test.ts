@@ -13,6 +13,7 @@ import {
   checkWorkspaceOfferEligibility,
   clearBillingCatalogCache,
   resolveBillingCatalog,
+  resolveEligibleCheckoutOffer,
 } from './catalog'
 import {
   BillingCatalogError,
@@ -54,11 +55,11 @@ const STRIPE_RESOURCE_PRICE = {
 }
 
 const SAMPLE_OFFER: BillingActiveOfferPayload = {
-  id: 'intro-week-1',
+  id: 'intro-month-1',
   kind: 'intro_period',
   planId: 'pro',
-  introAmountCents: 100,
-  introInterval: 'week',
+  introAmountCents: 500,
+  introInterval: 'month',
   regularAmountCents: 2000,
   regularInterval: 'month',
   introCreditCents: 500,
@@ -256,11 +257,11 @@ test('resolveBillingCatalog evaluates activeOffer strictly server-side (eligible
       checkOfferEligibility: id => id === WORKSPACE_ID,
     })
     assert.deepEqual(eligible.activeOffer, {
-      id: 'intro-week-1',
+      id: 'intro-month-1',
       kind: 'intro_period',
       planId: 'pro',
-      introAmountCents: 100,
-      introInterval: 'week',
+      introAmountCents: 500,
+      introInterval: 'month',
       regularAmountCents: 2000,
       regularInterval: 'month',
       introCreditCents: 500,
@@ -415,7 +416,9 @@ test('checkWorkspaceOfferEligibility enforces org billing scope, checkout histor
   assert.match(standaloneWsPool.calls[0].sql, /mikka_organization_billing_accounts/)
   assert.equal(cleanAppPool.calls.length, 1)
   assert.match(cleanAppPool.calls[0].sql, /billing_checkout_requests/)
-  assert.deepEqual(cleanAppPool.calls[0].params, [WORKSPACE_ID])
+  assert.match(cleanAppPool.calls[0].sql, /"closedAt" IS NULL/)
+  assert.match(cleanAppPool.calls[0].sql, /mikka_offer_id/)
+  assert.deepEqual(cleanAppPool.calls[0].params, [WORKSPACE_ID, null])
 
   // Designated org billing account itself remains eligible when clean.
   assert.equal(
@@ -676,5 +679,160 @@ test('subscription webhook enforces intro credit cap on subscription_create and 
       subscriptionMetadata: { mikka_intro_credit_cents: 'not-a-number' },
     }),
     /billing_intro_credit_cap_invalid/,
+  )
+})
+
+test('resolveBillingCatalog and resolveEligibleCheckoutOffer require stripeCouponId for discounted intro offers and honor eligibility', async () => {
+  clearBillingCatalogCache()
+  const { fetchImpl } = makeStripeFetch()
+  const now = new Date('2026-11-15T12:00:00Z')
+  const plan = {
+    id: 'pro',
+    plan: 'pro' as const,
+    name: 'Pro Plan',
+    stripePriceId: 'price_resource_pro',
+    amountCents: 2000,
+    currency: 'usd',
+    interval: 'month' as const,
+    includedCreditCents: 2000,
+    includedPoints: 2000,
+    seatModel: 'per_workspace' as const,
+    active: true,
+  }
+
+  // Discounted offer missing stripeCouponId must fail closed in both catalog and checkout.
+  const { stripeCouponId: _omitted, ...discountedWithoutCoupon } = SAMPLE_OFFER
+  const catalogWithoutCoupon = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: TEST_ENV,
+    fetchImpl,
+    now,
+    activeOfferOverride: discountedWithoutCoupon,
+    checkOfferEligibility: () => true,
+  })
+  assert.equal(catalogWithoutCoupon.activeOffer, null)
+  assert.equal(
+    await resolveEligibleCheckoutOffer({
+      workspaceId: WORKSPACE_ID,
+      plan,
+      env: TEST_ENV,
+      now,
+      activeOfferOverride: discountedWithoutCoupon,
+      checkOfferEligibility: () => true,
+    }),
+    null,
+  )
+
+  // Valid discounted offer with stripeCouponId returns full checkout terms when eligible.
+  const eligibleTerms = await resolveEligibleCheckoutOffer({
+    workspaceId: WORKSPACE_ID,
+    plan,
+    env: TEST_ENV,
+    now,
+    activeOfferOverride: SAMPLE_OFFER,
+    checkOfferEligibility: () => true,
+  })
+  assert.deepEqual(eligibleTerms, {
+    id: 'intro-month-1',
+    introCreditCents: 500,
+    stripeCouponId: 'coupon_internal_secret',
+  })
+
+  // Unfulfillable offer cadence/kind/introPrice must fail closed in both catalog and checkout.
+  const unfulfillableOffers: BillingActiveOfferPayload[] = [
+    { ...SAMPLE_OFFER, id: 'weekly-on-monthly', introInterval: 'week' },
+    { ...SAMPLE_OFFER, id: 'unsupported-trial', kind: 'trial' },
+    { ...SAMPLE_OFFER, id: 'unsupported-intro-price', stripeIntroPriceId: 'price_intro_unsupported' },
+  ]
+  for (const badOffer of unfulfillableOffers) {
+    const catalogBad = await resolveBillingCatalog({
+      workspaceId: WORKSPACE_ID,
+      env: TEST_ENV,
+      fetchImpl,
+      now,
+      activeOfferOverride: badOffer,
+      checkOfferEligibility: () => true,
+    })
+    assert.equal(catalogBad.activeOffer, null, `expected catalog activeOffer=null for ${badOffer.id}`)
+    assert.equal(
+      await resolveEligibleCheckoutOffer({
+        workspaceId: WORKSPACE_ID,
+        plan,
+        env: TEST_ENV,
+        now,
+        activeOfferOverride: badOffer,
+        checkOfferEligibility: () => true,
+      }),
+      null,
+      `expected checkout offer=null for ${badOffer.id}`,
+    )
+  }
+
+  // queryTx + skipOrgScopeCheck runs inside caller's advisory-locked Drizzle tx without hitting workspacePool.
+  let txExecutions = 0
+  const lockedTerms = await resolveEligibleCheckoutOffer({
+    workspaceId: WORKSPACE_ID,
+    plan,
+    env: TEST_ENV,
+    now,
+    activeOfferOverride: SAMPLE_OFFER,
+    skipOrgScopeCheck: true,
+    queryTx: {
+      execute: async () => {
+        txExecutions += 1
+        return {
+          rows: [{
+            hasPriorSubscription: false,
+            hasPriorGrant: false,
+            hasCheckoutRequest: false,
+            cardClaimedElsewhere: false,
+            unpaid24hMicroUsd: 0,
+          }],
+        }
+      },
+    },
+  })
+  assert.equal(txExecutions, 1)
+  assert.deepEqual(lockedTerms, {
+    id: 'intro-month-1',
+    introCreditCents: 500,
+    stripeCouponId: 'coupon_internal_secret',
+  })
+
+  // matchingOfferId is passed cleanly to open-checkout SQL so catalog parity holds for an open Checkout.
+  const parityPool = makeMockPool({})
+  assert.equal(
+    await checkWorkspaceOfferEligibility(WORKSPACE_ID, {
+      env: TEST_ENV,
+      workspacePool: makeMockWorkspacePool(),
+      queryPool: parityPool,
+      matchingOfferId: 'intro-month-1',
+    }),
+    true,
+  )
+  assert.deepEqual(parityPool.calls[0].params, [WORKSPACE_ID, 'intro-month-1'])
+
+  // Ineligible workspace or expired offer returns null.
+  assert.equal(
+    await resolveEligibleCheckoutOffer({
+      workspaceId: WORKSPACE_ID,
+      plan,
+      env: TEST_ENV,
+      now,
+      activeOfferOverride: SAMPLE_OFFER,
+      checkOfferEligibility: () => false,
+    }),
+    null,
+  )
+  assert.equal(
+    await resolveEligibleCheckoutOffer({
+      workspaceId: WORKSPACE_ID,
+      plan,
+      env: TEST_ENV,
+      now: new Date('2026-12-02T00:00:00Z'),
+      activeOfferOverride: SAMPLE_OFFER,
+      checkOfferEligibility: () => true,
+    }),
+    null,
   )
 })

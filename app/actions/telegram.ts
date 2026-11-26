@@ -6,9 +6,10 @@ import { db } from '@/lib/db'
 import { telegramConversations, telegramLinkTokens, telegramLinks } from '@/lib/db/schema'
 import { readTelegramIntegrationStatus } from '@/lib/telegram/connection-status'
 import { requireUser } from '@/lib/issue-access'
+import { readEnv } from '@/lib/env/server'
 
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex')
-const botUsername = () => process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, '')
+const botUsername = () => readEnv('TELEGRAM_BOT_USERNAME')?.replace(/^@/, '')
 
 export async function getTelegramIntegrationStatus() {
   return readTelegramIntegrationStatus((await requireUser()).id)
@@ -17,7 +18,7 @@ export async function getTelegramIntegrationStatus() {
 export async function createTelegramConnectLink() {
   const user = await requireUser()
   const username = botUsername()
-  if (!username || !process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN) return { error: 'notConfigured' as const }
+  if (!username || !readEnv('TELEGRAM_BOT_TOKEN') || !readEnv('TELEGRAM_WEBHOOK_SECRET_TOKEN')) return { error: 'notConfigured' as const }
   const token = randomBytes(32).toString('hex')
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
   await db.insert(telegramLinkTokens).values({

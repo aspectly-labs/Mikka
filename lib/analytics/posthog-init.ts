@@ -5,6 +5,7 @@ import { posthogConfig } from '@/lib/posthog-config'
 import { redactReplayRequest, sanitizeAnalyticsEvent } from '@/lib/analytics-policy'
 import { setLiveTelemetrySink } from '@/lib/live/telemetry'
 import { acceptanceReplayOptIn, installReplayReadiness } from '@/lib/replay-readiness'
+import { getNodeEnv } from '@/lib/env/public'
 
 if (posthogConfig.token) {
   const replayReadiness = installReplayReadiness(window)
@@ -60,7 +61,7 @@ if (posthogConfig.token) {
   },
     loaded: client => {
       replayReadiness.bind(client)
-      client.register({ app: 'mikka', environment: process.env.NODE_ENV, runtime: window.mikka?.app?.runtime === 'electron' ? 'electron' : 'browser' })
+      client.register({ app: 'mikka', environment: getNodeEnv(), runtime: window.mikka?.app?.runtime === 'electron' ? 'electron' : 'browser' })
       setLiveTelemetrySink((event, properties) => { client.capture(event, properties) })
     },
   })

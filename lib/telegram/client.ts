@@ -4,14 +4,15 @@ import { Chat } from 'chat'
 import { createPostgresState } from '@chat-adapter/state-pg'
 import { createTelegramAdapter } from '@chat-adapter/telegram'
 import { pool } from '@/lib/db'
+import { readEnv } from '@/lib/env/server'
 import { createTelegramLogger } from './logger'
 
 let bot: Chat | undefined
 
 function configuration() {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN
-  const secretToken = process.env.TELEGRAM_WEBHOOK_SECRET_TOKEN
-  const userName = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, '')
+  const botToken = readEnv('TELEGRAM_BOT_TOKEN')
+  const secretToken = readEnv('TELEGRAM_WEBHOOK_SECRET_TOKEN')
+  const userName = readEnv('TELEGRAM_BOT_USERNAME')?.replace(/^@/, '')
   if (!botToken || !secretToken || !userName || !/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(userName)) return null
   return { botToken, secretToken, userName }
 }

@@ -19,6 +19,7 @@ import { readHomeScopeProof } from '@/lib/live/home-scope-proof'
 import { liveGatewayConfig } from '@/lib/live/scope'
 import type { ListLiveRead } from '@/lib/live/list-read'
 import type { PresenceDevice } from '@/lib/live/presence'
+import { runtimeEnv } from '@/lib/env/server'
 
 export { mobileThreadStatus, type MobileThreadStatus } from '@/lib/mobile-thread-status'
 import { mobileThreadStatus, type MobileThreadStatus } from '@/lib/mobile-thread-status'
@@ -123,7 +124,7 @@ export async function mobileThreads(userId: string, limit = 60, homeScopeToken?:
   const presence = deviceOnlineStates(machines)
   // The ticket already resolved the actual personal home in the workspace DB.
   // Verify it after this fresh owned-device read; expiry cannot be renewed by a slow read.
-  const config = liveGatewayConfig(process.env), issuedAt = Date.now()
+  const config = liveGatewayConfig(runtimeEnv()), issuedAt = Date.now()
   const scope = config && homeScopeToken ? readHomeScopeProof(homeScopeToken, userId, config.secret, issuedAt) : null
   const live: ListLiveRead = { ownerId: userId, workspaceId: scope?.workspaceId ?? null }
   if (machines.length) {

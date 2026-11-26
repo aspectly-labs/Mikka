@@ -1,3 +1,4 @@
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 import { readGitHubWebhookBody } from '@/lib/github/webhook-dispatch'
 import { validSlackSignature } from './webhook'
 
@@ -11,7 +12,7 @@ const noStore = { 'Cache-Control': 'no-store' }
  */
 export async function verifySlackAutomations(
   request: Request,
-  env: NodeJS.ProcessEnv = process.env,
+  env: EnvMap = runtimeEnv(),
 ): Promise<{ ok: true; payload: unknown } | Response> {
   const secret = env.SLACK_SIGNING_SECRET, app = env.SLACK_APP_ID
   if (!secret || !app) return Response.json({ error: 'Slack is not configured' }, { status: 503, headers: noStore })
@@ -26,7 +27,7 @@ export async function verifySlackAutomations(
 
 export async function dispatchSlackAutomations(
   payload: unknown,
-  env: NodeJS.ProcessEnv = process.env,
+  env: EnvMap = runtimeEnv(),
 ): Promise<Response> {
   const app = env.SLACK_APP_ID
   if (!app || !payload || typeof payload !== 'object' || Array.isArray(payload) || (payload as { api_app_id?: unknown }).api_app_id !== app) {
@@ -37,7 +38,7 @@ export async function dispatchSlackAutomations(
   catch { return Response.json({ error: 'Could not queue automations' }, { status: 503, headers: noStore }) }
 }
 
-export async function handleSlackAutomations(request: Request, env: NodeJS.ProcessEnv = process.env): Promise<Response> {
+export async function handleSlackAutomations(request: Request, env: EnvMap = runtimeEnv()): Promise<Response> {
   const verified = await verifySlackAutomations(request, env)
   if (verified instanceof Response) return verified
   return dispatchSlackAutomations(verified.payload, env)

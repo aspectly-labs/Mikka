@@ -2,6 +2,7 @@
 // No DB or server-only imports so it can be shared with UI code and unit tests.
 import { isIP } from 'node:net'
 import { z } from 'zod'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 import { AUDIT_CATEGORIES, type AuditCategory } from './categories'
 export { AUDIT_CATEGORIES, type AuditCategory }
@@ -146,7 +147,7 @@ export const AUDIT_METADATA = {
   'workspace.ownership_transferred': none,
   'workspace.entitlements_changed': z.object({ fromPlan: z.enum(['free', 'pro', 'enterprise']), toPlan: z.enum(['free', 'pro', 'enterprise']), source: z.enum(['cloud', 'license']), seatLimit: z.number().int().min(1).max(100_000).nullable(), expiresAt: z.iso.datetime({ offset: true }).nullable(), reason: z.enum(['evaluation', 'licensed', 'downgrade', 'correction']) }).strict(),
   'billing.card_verified': z.object({ allowanceGranted:z.boolean() }).strict(),
-  'billing.checkout_started': z.object({ amountCents: cents, currency }).partial().strict(),
+  'billing.checkout_started': z.object({ amountCents: cents, currency, offerId: label }).partial().strict(),
   'billing.credits_purchased': z.object({ amountCents: cents, currency, credits: z.number().int().min(0) }).partial().strict(),
   'billing.auto_recharge_changed': z.object({ enabled: z.boolean(), thresholdCents: cents.nullable(), amountCents: cents.nullable(), monthlyCapCents: cents.nullable(), revision: z.number().int().nonnegative() }).partial().strict(),
   'billing.limits_changed': z.object({ fromCents: cents.nullable(), toCents: cents.nullable() }).partial().strict(),
@@ -302,7 +303,7 @@ const regionCode = (value: string | null | undefined) => { const v = value?.trim
  * them, so ip AND geo are both null there rather than recording attacker-chosen values.
  * x-real-ip is deliberately not read.
  */
-export function auditRequestContext(headers: Pick<Headers, 'get'>, env: Readonly<Record<string, string | undefined>> = process.env as Readonly<Record<string, string | undefined>>): { ip: string | null; geoCity: string | null; geoCountry: string | null; geoRegion: string | null } {
+export function auditRequestContext(headers: Pick<Headers, 'get'>, env: EnvMap = runtimeEnv()): { ip: string | null; geoCity: string | null; geoCountry: string | null; geoRegion: string | null } {
   if (env.MIKKA_API_INGRESS === 'cloudflare') {
     // Only the private release ingress sets this header; it first removes any
     // caller-supplied value. A non-IP or missing edge observation stays unknown.

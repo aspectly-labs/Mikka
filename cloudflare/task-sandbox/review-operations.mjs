@@ -1,5 +1,6 @@
 import { machineGrant } from './grant.mjs'
 import { aliasInstance, guestControl, previewAlias, previewRequest, previewSuffix, reviewScope } from './review-access.mjs'
+import { DEFAULT_LOCAL_SYNTHETIC_ORIGIN } from '../../lib/env/hosts-constants.mjs'
 
 const notFound = () => new Response(null, {status:404})
 const leaseKey = id => 'review-lease:' + id
@@ -61,7 +62,7 @@ export async function review(machine, identity, operation, openScoped) {
     if (!['GET','POST'].includes(method) || typeof operation.ticket !== 'string' || operation.ticket.length > 8192 ||
         typeof operation.body !== 'string' || operation.body.length > 8192) throw Error('Invalid task review scope')
     const headers = {authorization:'Bearer '+operation.ticket, ...(method === 'GET' ? {accept:'text/event-stream'} : {'content-type':'application/json'})}
-    return machine.ctx.container.getTcpPort(6084).fetch(new Request('http://localhost/' + operation.action,
+    return machine.ctx.container.getTcpPort(6084).fetch(new Request(`${DEFAULT_LOCAL_SYNTHETIC_ORIGIN}/${operation.action}`,
       {method, redirect:'manual', headers, ...(method === 'POST' ? {body:operation.body} : {})}))
   })
 }

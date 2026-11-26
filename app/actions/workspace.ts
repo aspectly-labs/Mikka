@@ -25,6 +25,7 @@ import { acceptHumanInvitation, updateHumanMembership } from '@/lib/governance/m
 import { drainMemberLifecycleOutbox } from '@/lib/governance/member-outbox'
 import { planInvitations } from '@/lib/batch-outcome'
 import { GovernanceError } from '@/lib/governance/errors'
+import { envExact } from '@/lib/env/server'
 
 const roleSchema = z.enum(['admin', 'member'])
 const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -61,7 +62,7 @@ async function ensurePersonalFirst(user: { id: string; email: string; name: stri
 
 async function rememberWorkspace(workspaceId: string) {
   const cookieStore = await cookies()
-  const options = { httpOnly: true, sameSite: process.env.NODE_ENV === 'development' ? 'none' as const : 'lax' as const, secure: true, path: '/', maxAge: 31536000 }
+  const options = { httpOnly: true, sameSite: envExact('NODE_ENV', 'development') ? 'none' as const : 'lax' as const, secure: true, path: '/', maxAge: 31536000 }
   cookieStore.set('mikka-workspace', workspaceId, options)
   cookieStore.set('mikka-workspace', workspaceId, options)
 }

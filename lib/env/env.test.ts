@@ -21,6 +21,8 @@ import {
   getPublicPosthogHost,
   getPublicPosthogKey,
   getPublicTurnstileSiteKey,
+  getPublicUiOverlaySha,
+  getTestBuildSha,
   isProductionEnv,
   readPublicEnv,
 } from './public'
@@ -130,6 +132,10 @@ test('public env boundary validates public settings and preserves legacy NEXT_PU
   assert.equal(getPublicPosthogHost({ POSTHOG_HOST: 'javascript:alert(1)' }), DEFAULT_POSTHOG_API_HOST)
   assert.equal(getPublicPosthogHost({ POSTHOG_HOST: 'not a valid url' }), DEFAULT_POSTHOG_API_HOST)
   assert.equal(getPublicTurnstileSiteKey(env), 'turnstile_legacy')
+  assert.equal(getPublicUiOverlaySha({ MIKKA_UI_OVERLAY_SHA: 'abc1234' }), 'abc1234')
+  assert.equal(getPublicUiOverlaySha({}), '')
+  assert.equal(getTestBuildSha({ MIKKA_TEST_BUILD_SHA: 'def5678' }), 'def5678')
+  assert.equal(getTestBuildSha({}), '')
   assert.equal(isProductionEnv(env), true)
   assert.equal(isProductionEnv({ NODE_ENV: 'development' }), false)
 })

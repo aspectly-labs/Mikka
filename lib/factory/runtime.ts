@@ -28,6 +28,7 @@ import { appendMonitorEvidence } from './monitor-evidence';
 import { factoryMonitorWorkspaceKey,questionSkillAssignments } from './server';
 import { createFactoryQuestions } from './questions/store';
 import { bindFactoryStoreWorkspace, bindFactoryQuestionsWorkspace, factoryBackgroundReference, factoryTaskWorkspaceBoundary, withFactoryBackgroundWorkspace } from './background-workspace';
+import { runtimeEnv } from '@/lib/env/server';
 
 export function factoryLifecycleEnabled() {
   return deploymentSwitch('factoryRouting') && deploymentSwitch('factoryLifecycle');
@@ -63,7 +64,7 @@ export function factoryRuntimeForBot(botId: string | null, lifecycle: FactoryLif
     (userId,result)=>wakeCloudQuestionContinuation(pool,userId,result),
     (userId,scope)=>prepareCloudQuestionRecovery(pool,userId,scope)),botId);
   const workspace = factoryTaskWorkspaceBoundary(pool,botId);
-  const monitor = createFactoryMonitor(pool,store,factoryAuthorize,factoryMonitorWorkspaceKey,appendMonitorEvidence,configuredMonitorProbes(process.env),botId,workspace);
+  const monitor = createFactoryMonitor(pool,store,factoryAuthorize,factoryMonitorWorkspaceKey,appendMonitorEvidence,configuredMonitorProbes(runtimeEnv()),botId,workspace);
   const observedDispatch = observeFactoryCheckDispatch(store,dispatch);
   const recoverCheck = createFactoryCheckRecovery(pool,store,recovery);
   const claim = createFactoryClaim(store,questions,validate);

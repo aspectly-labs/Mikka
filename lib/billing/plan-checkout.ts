@@ -85,8 +85,12 @@ async function recoverSession(request: Request, get: (path: string) => Promise<u
  * parameters and one Stripe idempotency key through concurrent clicks and lost
  * responses. A later request is admitted only after canonical expiry/completion.
  */
+export type CheckoutOfferResolver = (
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+) => Promise<{ readonly id: string; readonly introCreditCents: number; readonly stripeCouponId?: string } | null>
+
 export async function resourcePlanCheckout(actorId: string, workspaceId: string, back: string, price: Price,
-  config: StripeConfig, fetchImpl: typeof fetch) {
+  config: StripeConfig, fetchImpl: typeof fetch, resolveOffer?: CheckoutOfferResolver) {
   const customerId = await ensureBillingCustomer(workspaceId, config, fetchImpl)
   const get = (path: string) => stripeGet<unknown>(config, path, fetchImpl)
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -98,17 +102,37 @@ export async function resourcePlanCheckout(actorId: string, workspaceId: string,
       const [prior] = await tx.select().from(billingCheckoutRequests)
         .where(and(eq(billingCheckoutRequests.workspaceId, workspaceId), isNull(billingCheckoutRequests.closedAt))).limit(1)
       if (prior) return prior
+      const offer = resolveOffer ? await resolveOffer(tx) : null
       const requestId = randomUUID(), now = new Date(), expiresAt = new Date((Math.floor(now.getTime() / 1000) + 7200) * 1000)
-      const metadata = { workspaceId, billingModel: price.version, checkoutRequestId: requestId }
-      const params = { mode: 'subscription', managed_payments: { enabled: true }, customer: customerId,
-        line_items: [{ price: price.id, quantity: 1 }], client_reference_id: workspaceId,
-        subscription_data: { metadata: { ...metadata, plan: price.plan } }, metadata,
-        success_url: back, cancel_url: back, expires_at: Math.floor(expiresAt.getTime() / 1000) }
+      const metadata = {
+        workspaceId,
+        billingModel: price.version,
+        checkoutRequestId: requestId,
+        ...(offer ? { mikka_offer_id: offer.id } : {}),
+      }
+      const subscriptionMetadata = {
+        ...metadata,
+        plan: price.plan,
+        ...(offer ? { mikka_intro_credit_cents: String(offer.introCreditCents) } : {}),
+      }
+      const params = {
+        mode: 'subscription',
+        managed_payments: { enabled: true },
+        customer: customerId,
+        line_items: [{ price: price.id, quantity: 1 }],
+        ...(offer?.stripeCouponId ? { discounts: [{ coupon: offer.stripeCouponId }] } : {}),
+        client_reference_id: workspaceId,
+        subscription_data: { metadata: subscriptionMetadata },
+        metadata,
+        success_url: back,
+        cancel_url: back,
+        expires_at: Math.floor(expiresAt.getTime() / 1000),
+      }
       const [created] = await tx.insert(billingCheckoutRequests).values({ id: requestId, workspaceId, actorId, customerId,
         priceId: price.id, params, createdAt: now, expiresAt }).returning()
       await recordAudit(tx, { workspaceId, actor: { type: 'user', id: actorId, name: actorId },
         action: 'billing.checkout_started', target: { type: 'billing_checkout', id: requestId },
-        metadata: { amountCents: price.amountCents, currency: price.currency.toUpperCase() } })
+        metadata: { amountCents: price.amountCents, currency: price.currency.toUpperCase(), ...(offer ? { offerId: offer.id } : {}) } })
       return created
     })
     if (request.customerId !== customerId) throw new Error('billing_customer_scope_mismatch')

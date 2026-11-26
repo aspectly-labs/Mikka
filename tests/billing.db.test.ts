@@ -339,4 +339,65 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
       assert.equal((await billing.workspaceBillingView(admin, target.id, env)).entitlementPlan, index === 0 ? 'pro' : 'free')
     }
   })
+
+  await t.test('locked intro-offer Checkout applies coupon/cap metadata and stays consistent with catalog while open or after expiry', async () => {
+    const { overrideRuntimeConfig, clearRuntimeConfigOverrides, resetRuntimeConfig } = await import('../lib/runtime-config')
+    const { resolveBillingCatalog, clearBillingCatalogCache } = await import('../lib/billing/catalog')
+    const target = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }])
+    const offerEnv = { ...env, NODE_ENV: 'test' }
+    const startAt = new Date(Date.now() - 60_000).toISOString()
+    const endAt = new Date(Date.now() + 3_600_000).toISOString()
+    const offer = {
+      id: 'pg17-intro-month',
+      kind: 'intro_period' as const,
+      planId: 'pro',
+      introAmountCents: 500,
+      introInterval: 'month' as const,
+      regularAmountCents: 2000,
+      regularInterval: 'month' as const,
+      introCreditCents: 500,
+      stripeCouponId: 'coupon_pg17_intro',
+      startAt,
+      endAt,
+    }
+    try {
+      clearBillingCatalogCache()
+      overrideRuntimeConfig('billingActiveOffer', offer, offerEnv)
+      const beforeCatalog = await resolveBillingCatalog({ workspaceId: target.id, env: offerEnv, fetchImpl: fake, bypassCache: true })
+      assert.equal(beforeCatalog.activeOffer?.id, offer.id)
+
+      const beforeLen = requests.length
+      await billing.planCheckoutUrl(admin, target.id, back, fake, offerEnv)
+      const checkoutReq = requests.slice(beforeLen).find(row => row.url.endsWith('/checkout/sessions') && row.method === 'POST')!
+      const body = new URLSearchParams(checkoutReq.body)
+      assert.equal(body.get('discounts[0][coupon]'), 'coupon_pg17_intro')
+      assert.equal(body.get('metadata[mikka_offer_id]'), offer.id)
+      assert.equal(body.get('subscription_data[metadata][mikka_intro_credit_cents]'), '500')
+
+      // While that Checkout is open, catalog still surfaces the exact matching offer, but hides a different offer ID.
+      const openCatalog = await resolveBillingCatalog({ workspaceId: target.id, env: offerEnv, fetchImpl: fake })
+      assert.equal(openCatalog.activeOffer?.id, offer.id)
+      const differentOfferCatalog = await resolveBillingCatalog({
+        workspaceId: target.id,
+        env: offerEnv,
+        fetchImpl: fake,
+        activeOfferOverride: { ...offer, id: 'pg17-different-offer' },
+      })
+      assert.equal(differentOfferCatalog.activeOffer, null)
+
+      // Once an unpaid Checkout closes without subscription/grant, workspace remains eligible.
+      await pool.query('update billing_checkout_requests set "closedAt"=now() where "workspaceId"=$1', [target.id])
+      const afterCloseCatalog = await resolveBillingCatalog({
+        workspaceId: target.id,
+        env: offerEnv,
+        fetchImpl: fake,
+        activeOfferOverride: { ...offer, id: 'pg17-different-offer' },
+      })
+      assert.equal(afterCloseCatalog.activeOffer?.id, 'pg17-different-offer')
+    } finally {
+      clearRuntimeConfigOverrides(offerEnv)
+      resetRuntimeConfig()
+      clearBillingCatalogCache()
+    }
+  })
 })

@@ -2,6 +2,7 @@ import 'server-only'
 import { RouteRequest, RouteResponse } from '@/lib/server-runtime/server'
 import { logCodedError } from '@mikka/protocol/coded-error'
 import { resolveAppOrigin } from '@/lib/auth-config'
+import { runtimeEnv } from '@/lib/env/server'
 import { isServerAdmin } from '@/lib/server-admin'
 import { noteLogUser } from '@/lib/request-log'
 import { GitHubAppSetupError, type GitHubAppConfig, type GitHubAppCredentials, type GitHubAppQuery } from './app-config'
@@ -44,7 +45,7 @@ function failed(error: unknown, viewerId?: string, admin?: boolean): Response {
 }
 
 /** Shared by the production routes and the real PostgreSQL acceptance suite. */
-export function githubManifestHandlers({ query, session, config, save, template, env = process.env, fetcher = fetch }: Dependencies) {
+export function githubManifestHandlers({ query, session, config, save, template, env = runtimeEnv(), fetcher = fetch }: Dependencies) {
   async function viewer(request: Request) {
     const current = await session(request.headers)
     noteLogUser(current?.user.id)

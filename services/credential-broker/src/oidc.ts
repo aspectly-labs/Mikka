@@ -4,12 +4,13 @@ import { assumeVercelRole, awsKms, open } from '../../../lib/credentials/kms'
 import { z } from 'zod'
 import { credentialFailure, privateHeaders } from '../../../lib/credentials/http'
 import { CredentialError } from '../../../lib/credentials/contracts'
+import { readEnv } from '../../../lib/env/server'
 
 /** Protected Preview-only identity acceptance. Never returns JWTs or STS keys. */
 export default async function handler(request: IncomingMessage, response: ServerResponse) {
   let result: Response
   try {
-    if (process.env.VERCEL_ENV !== 'preview' || request.method !== 'POST') throw new CredentialError('credential_denied', 404)
+    if (readEnv('VERCEL_ENV') !== 'preview' || request.method !== 'POST') throw new CredentialError('credential_denied', 404)
     const token = request.headers.authorization?.match(/^Bearer (\S+)$/)?.[1]
     if (!token) throw new CredentialError('credential_denied', 403)
     await verifyAppOidc(token)

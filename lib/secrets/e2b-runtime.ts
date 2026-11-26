@@ -1,13 +1,14 @@
 import 'server-only'
 // Every sandbox runs on its owner's own E2B key (orchestration § 2): never a teammate's, never the platform's.
 import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError } from 'e2b'
+import { runtimeEnv } from '@/lib/env/server'
 import { E2BKeyError, type E2BKeyErrorCode } from './flag'
 import { cloudTemplateModels, type CloudTemplateKind } from '../cloud-template-models'
 
-type Env = Record<string, string | undefined>
+type Env = Readonly<Record<string, string | undefined>>
 
 /** The sandbox owner's own key; the unused argument keeps the existing caller signature. */
-export async function e2bApiKey(ownerId: string, _platformMissing: string, env: Env = process.env): Promise<string> {
+export async function e2bApiKey(ownerId: string, _platformMissing: string, env: Env = runtimeEnv()): Promise<string> {
   return (await import('./e2b')).getUserE2BApiKey(ownerId, env)
 }
 
@@ -32,7 +33,7 @@ function selectedTemplate(kind: CloudTemplateKind, variable: string, env: Env): 
 }
 
 /** New Bot computers use the verified additive official-desktop release. */
-export function computerTemplate(env: Env = process.env): string {
+export function computerTemplate(env: Env = runtimeEnv()): string {
   return selectedTemplate('desktop', 'E2B_BYO_COMPUTER_TEMPLATE', env)
 }
 
@@ -40,7 +41,7 @@ export function computerTemplate(env: Env = process.env): string {
 const TASK_TEMPLATE_ENV = { claude_code: 'E2B_CLAUDE_TEMPLATE', codex: 'E2B_CODEX_TEMPLATE' } as const
 
 /** New repository tasks use their harness's verified additive image. */
-export function taskTemplate(harness: string, env: Env = process.env): string {
+export function taskTemplate(harness: string, env: Env = runtimeEnv()): string {
   const key = Object.hasOwn(TASK_TEMPLATE_ENV, harness) ? TASK_TEMPLATE_ENV[harness as keyof typeof TASK_TEMPLATE_ENV] : undefined
   if (!key) throw new E2BKeyError('e2b_template_unavailable', 'Official task template required')
   const official = harness === 'codex' ? 'codex' : 'claude'
@@ -69,7 +70,7 @@ const CARD_CODE = { e2b_key_invalid: 'invalid', e2b_limit_reached: 'rate_limited
  * failure on the settings card (lastErrorCode). Never logs the key or the response body.
  * Unclassified failures are rethrown.
  */
-export async function withE2BErrors<T>(ownerId: string, creating: boolean, run: () => Promise<T>, _env: Env = process.env): Promise<T> {
+export async function withE2BErrors<T>(ownerId: string, creating: boolean, run: () => Promise<T>, _env: Env = runtimeEnv()): Promise<T> {
   try { return await run() } catch (error) {
     if (error instanceof E2BKeyError) throw error
     const code = classifyE2BError(error, creating)

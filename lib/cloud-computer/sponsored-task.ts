@@ -5,6 +5,7 @@ import type { WorkerDefinitionSnapshot } from '@/lib/agent-kit/worker'
 import type { TaskMachineGrant } from '@/lib/eve/cloudflare-task-connection'
 import { isMachineSize, provisionableMachineSize } from './machine-pricing'
 import { jsonbFlagIsTrueSql } from '../primitives/jsonb-predicates'
+import { readEnv, runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 export type SponsoredTaskPlacement = Readonly<{
   provider: 'cloudflare'
@@ -48,7 +49,7 @@ const denied = () => new Error('Cloudflare task machine unavailable')
  * kill switch.
  */
 export function hostedTaskEnabled(_workspaceId: string) {
-  return Boolean(process.env.MIKKA_TASK_MACHINE_BRIDGE_TOKEN) && process.env.MIKKA_CLOUDFLARE_TASKS_DISABLED !== '1'
+  return Boolean(readEnv('MIKKA_TASK_MACHINE_BRIDGE_TOKEN')) && readEnv('MIKKA_CLOUDFLARE_TASKS_DISABLED') !== '1'
 }
 
 /**
@@ -57,7 +58,7 @@ export function hostedTaskEnabled(_workspaceId: string) {
  * Cloudflare confirms the quota increase and the matching instance type in
  * writing; that confirmation is an operations record, not product state.
  */
-export function verifiedMachineQuota(env: NodeJS.ProcessEnv = process.env) {
+export function verifiedMachineQuota(env: EnvMap = runtimeEnv()) {
   return env.MIKKA_TASK_MACHINE_16GIB_QUOTA === '1'
 }
 
