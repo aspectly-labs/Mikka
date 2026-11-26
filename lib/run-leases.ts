@@ -394,7 +394,7 @@ export async function startThreadMachine(actor: { userId: string; workspaceId: s
     if (error instanceof RetainedTaskMachineUnavailable) return { state: 'unavailable' as const, reason: 'retained_runtime' as const }
     // A concurrent durable handoff owns this run's provisioning lease. Its
     // first VM is not a failed attempt, and only that lease may finish/clean it.
-    const { ComputerError } = await import('@/lib/computer/store')
+    const { ComputerError, TaskWorkspaceArchiveUnavailable } = await import('@/lib/computer/store')
     if (error instanceof ComputerError && error.status === 409 && error.message === 'Thread provisioning in progress')
       return { state: 'unavailable' as const, reason: 'provisioning' as const }
     // A question continuation cannot replace its original native session VM.
@@ -421,6 +421,9 @@ export async function startThreadMachine(actor: { userId: string; workspaceId: s
     const provider = failed?.definition?.taskCompute?.provider
     if (provider && failed.status === 'failed' && failed.error === taskProviderUnavailableMessage(provider))
       return { state: 'unavailable' as const, reason: 'provider_unavailable' as const, provider }
+    if (failed?.status === 'failed' && failed.error === TaskWorkspaceArchiveUnavailable.code)
+      return { state: 'unavailable' as const, reason: 'archive_unavailable' as const }
+    if (settled) return { state: 'unavailable' as const, reason: 'startup_failed' as const }
   }
 }
 
@@ -428,7 +431,7 @@ export async function startThreadMachine(actor: { userId: string; workspaceId: s
  * that distinction before machine cleanup invokes the Factory end hook. */
 export async function failUnclaimedCloudStart(actor: { userId: string; workspaceId: string }, runId: string, error: unknown): Promise<boolean> {
   const { RetainedTaskMachineUnavailable, TaskComputeUnavailable, threadMachineAction, threadMachineStartFailure } = await import('@/lib/cloud-computer/thread-machines')
-  const { ComputerError } = await import('@/lib/computer/store')
+  const { ComputerError, TaskWorkspaceArchiveUnavailable } = await import('@/lib/computer/store')
   if (error instanceof RetainedTaskMachineUnavailable ||
     (error instanceof ComputerError && error.status === 409 && error.message === 'Thread provisioning in progress')) return false
   const provisionFailure = threadMachineStartFailure(error)
@@ -463,6 +466,7 @@ export async function failUnclaimedCloudStart(actor: { userId: string; workspace
     const [ended] = await tx.update(agentRuns).set({ status: 'failed', pauseReason: null, resumeStatus: null,
       stopReason: 'device_lost', failureDetails: serverRunFailure(runId, now),
       error: run.error ?? (error instanceof PaidResourceError ? error.code
+        : error instanceof TaskWorkspaceArchiveUnavailable ? TaskWorkspaceArchiveUnavailable.code
         : error instanceof TaskComputeUnavailable && run.agentDefinition?.taskCompute?.provider === error.provider
           ? taskProviderUnavailableMessage(error.provider) : DEVICE_STAYED_OFFLINE), finishedAt: now, updatedAt: now })
       .where(eq(agentRuns.id, runId)).returning()

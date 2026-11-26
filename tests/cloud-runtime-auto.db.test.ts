@@ -480,8 +480,8 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
       const fixture = await person('legacy-cloudflare-billing', false)
       process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES = fixture.workspaceId
       const event = randomUUID()
-      await pool.query(`INSERT INTO coordinator_events (id,"userId","botId","issueId",kind,payload,"deliveredAt")
-        VALUES ($1,$2,$3,$4,'user_message','{"text":"Run this repository task."}',now())`,
+      await pool.query(`INSERT INTO coordinator_events (id,"userId","botId","issueId",kind,"dedupeKey",payload,"deliveredAt")
+        VALUES ($1,$2,$3,$4,'user_message',$1::uuid::text,'{"text":"Run this repository task."}',now())`,
       [event, fixture.id, fixture.botId, fixture.issueId])
       const server = randomUUID()
       if (withServer) {

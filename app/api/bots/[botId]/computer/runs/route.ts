@@ -13,7 +13,7 @@ import { WorkspaceError } from '@/lib/workspace-error'
 import { sameOriginMutationAllowed, workspaceErrorStatus } from '@/lib/http-security'
 import { defineRoute } from '@/lib/primitives/define-route'
 import { FactoryError } from '@/lib/factory/contract'
-import { ComputerError } from '@/lib/computer/store'
+import { ComputerError, TaskWorkspaceArchiveUnavailable } from '@/lib/computer/store'
 import { TaskProviderAdmissionUnavailable } from '@/lib/cloud-computer/task-provider-admission'
 import { latestThreadRunModel } from '@/lib/computer/run-model'
 import { queueFactoryCloudRun } from '@/lib/factory/queue-cloud'
@@ -126,6 +126,13 @@ export const POST = defineRoute<'session', 'none', { botId: string }>(
         const { taskProviderUnavailableMessage } = await import('@/lib/cloud-computer/task-provider-admission')
         return Response.json({ error: taskProviderUnavailableMessage(started.provider), code: 'task_provider_unavailable',
           provider: started.provider, runId: result.runId, retryable: true }, { status: 503, headers })
+      }
+      if (started?.state === 'unavailable' && started.reason === 'archive_unavailable') {
+        return Response.json({ error: new TaskWorkspaceArchiveUnavailable().message, code: TaskWorkspaceArchiveUnavailable.code,
+          runId: result.runId, retryable: true }, { status: 503, headers })
+      }
+      if (started?.state === 'unavailable' && started.reason === 'startup_failed') {
+        return Response.json({ error: 'Cloud computer task unavailable', code: 'task_startup_failed', runId: result.runId }, { status: 503, headers })
       }
     }
     return Response.json(result, { status: 202, headers })

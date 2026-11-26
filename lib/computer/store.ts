@@ -19,6 +19,10 @@ import { initializeWorkVisibility } from '@/lib/settings/work-creation'
 export class ComputerError extends Error {
   constructor(public status: number, message: string) { super(message) }
 }
+export class TaskWorkspaceArchiveUnavailable extends ComputerError {
+  static readonly code = 'task_workspace_archive_unavailable'
+  constructor() { super(503, 'Task workspace archive unavailable. Retry the run.') }
+}
 type Actor = { userId: string; workspaceId: string }
 type Bot = { id: string; name: string; ownerId: string; workspaceId: string }
 type Machine = { workspaceId: string; ownerId: string; sandboxId: string | null; operationId: string; state: string; errorCode: string | null; runtimeReady: boolean }

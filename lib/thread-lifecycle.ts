@@ -13,7 +13,7 @@ import { rebindExecutionDevice, ExecutionIdentityError } from '@/lib/execution-i
 import { schedules } from '@/lib/schedules/runtime'
 import type { RequestWorkspaceUser } from '@/lib/request-workspace'
 import type { Pool, PoolClient } from 'pg'
-import { ComputerError } from './computer/store'
+import { ComputerError, TaskWorkspaceArchiveUnavailable } from './computer/store'
 import { taskProviderUnavailableMessage } from './cloud-computer/task-provider-admission'
 import { workerDefinitionDigest } from './agent-kit/worker-digest'
 
@@ -265,6 +265,7 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
     const provider = run.agentDefinition?.taskCompute?.provider
     if (provider && run.status === 'failed' && run.error === taskProviderUnavailableMessage(provider))
       throw new ComputerError(503, run.error)
+    if (run.status === 'failed' && run.error === TaskWorkspaceArchiveUnavailable.code) throw new TaskWorkspaceArchiveUnavailable()
     return run
   }
   // Wake the child's execution: a device run pings its device; a cloud run gets a machine claim.
@@ -274,6 +275,10 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
     if (started?.state === 'unavailable' && started.reason === 'provider_unavailable') {
       throw new ComputerError(503, taskProviderUnavailableMessage(started.provider))
     }
+    if (started?.state === 'unavailable' && started.reason === 'archive_unavailable') throw new TaskWorkspaceArchiveUnavailable()
+    if (started?.state === 'unavailable' && started.reason === 'startup_failed') throw new ComputerError(503, 'Cloud computer task unavailable')
+    if (started?.state === 'unavailable' && started.reason === 'billing_refused')
+      throw new ComputerError(started.code === 'points_exhausted' ? 402 : 409, started.code)
   } else if (run.deviceId) notifyDeviceWork(String(run.deviceId))
   await runListChanged(pool, String(run.id)); await runChanged(pool, String(run.id))
   return run

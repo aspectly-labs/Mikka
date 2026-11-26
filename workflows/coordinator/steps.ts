@@ -781,7 +781,7 @@ export async function dispatchComputerTask(userId: string, input: { sourceEventI
     if (error instanceof AgentProfileError || error instanceof AgentProfileAdmissionError) return asToolResult(() => Promise.reject(error))
     const { FactoryError } = await import('@/lib/factory/contract')
     if (error instanceof FactoryError) return { error: error.code }
-    const { ComputerError } = await import('@/lib/computer/store')
+    const { ComputerError, TaskWorkspaceArchiveUnavailable } = await import('@/lib/computer/store')
     console.warn('cloud task dispatch refused', { error: error instanceof Error ? error.constructor.name : typeof error, code: error instanceof ComputerError ? error.status : undefined })
     if (input.threadRunId && error instanceof ComputerError && error.message === 'Bot subscription unavailable') return { error: 'threadModelUnavailable' as const, threadRunId: input.threadRunId }
     const { TaskProviderAdmissionUnavailable, taskProviderUnavailableMessage } = await import('@/lib/cloud-computer/task-provider-admission')
@@ -794,6 +794,7 @@ export async function dispatchComputerTask(userId: string, input: { sourceEventI
     if (queuedRunId) {
       const failed = await (await import('@/lib/run-leases')).failUnclaimedCloudStart({ userId, workspaceId: target.workspaceId }, queuedRunId, error)
       if (failed) {
+        if (error instanceof TaskWorkspaceArchiveUnavailable) return { error: TaskWorkspaceArchiveUnavailable.code, failedRunId: queuedRunId }
         const { PaidResourceError } = await import('@/lib/abuse/policy')
         const { TaskComputeUnavailable } = await import('@/lib/cloud-computer/thread-machines')
         const { rows: [receipt] } = await pool.query<{ allowLocalRecovery: boolean; provider: string | null }>(`SELECT
