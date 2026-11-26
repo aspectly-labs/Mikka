@@ -30,6 +30,8 @@ export const ALLOWLIST = Object.freeze([
   'lib/governance/provisioning.ts',
   'lib/enterprise/provisioning.ts',
   'lib/billing/**',
+  'packages/protocol/src/subscription.ts',
+  'apps/desktop/src/main/bundled-auth.ts',
   'tests/**',
   '**/test/**',
   '**/tests/**',
@@ -221,11 +223,14 @@ function arrayContainsLiteralInSet(node, set) {
   return expr.elements.some(el => !ts.isSpreadElement(el) && getLiteralInSet(el, set) !== null)
 }
 
-function arrayHasOnlyLiteralsInSet(node, set) {
-  const expr = unwrapExpr(node)
-  if (!expr || !ts.isArrayLiteralExpression(expr) || expr.elements.length === 0) return false
-  return expr.elements.every(el => !ts.isSpreadElement(el) && getLiteralInSet(el, set) !== null)
-}
+const EMPTY_BINDING = Object.freeze({
+  providerArray: false,
+  providerSet: false,
+  providerObject: false,
+  tierArray: false,
+  tierSet: false,
+  tierObject: false,
+})
 
 function isLiteralSetExpression(node, set) {
   const expr = unwrapExpr(node)
@@ -248,6 +253,103 @@ function isObjectWithMinKeys(node, set, minKeys = 2) {
   return matched.size >= minKeys
 }
 
+function classifyInitializer(init) {
+  if (!init) return EMPTY_BINDING
+  const providerArray = arrayContainsLiteralInSet(init, PROVIDER_LITERAL_SET)
+  const providerSet = isLiteralSetExpression(init, PROVIDER_LITERAL_SET)
+  const providerObject = isObjectWithMinKeys(init, PROVIDER_LITERAL_SET, 2)
+  const tierArray = arrayContainsLiteralInSet(init, PLAN_TIER_LITERAL_SET)
+  const tierSet = isLiteralSetExpression(init, PLAN_TIER_LITERAL_SET)
+  const tierObject = isObjectWithMinKeys(init, PLAN_TIER_LITERAL_SET, 2)
+  if (!providerArray && !providerSet && !providerObject && !tierArray && !tierSet && !tierObject) {
+    return EMPTY_BINDING
+  }
+  return { providerArray, providerSet, providerObject, tierArray, tierSet, tierObject }
+}
+
+function collectBindingNames(nameNode, out = []) {
+  if (!nameNode) return out
+  if (ts.isIdentifier(nameNode)) {
+    out.push(nameNode.text)
+  } else if (ts.isObjectBindingPattern(nameNode) || ts.isArrayBindingPattern(nameNode)) {
+    for (const el of nameNode.elements) {
+      if (ts.isBindingElement(el)) collectBindingNames(el.name, out)
+    }
+  }
+  return out
+}
+
+function isFunctionLikeNode(node) {
+  return (
+    ts.isFunctionDeclaration(node)
+    || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node)
+    || ts.isMethodDeclaration(node)
+    || ts.isGetAccessorDeclaration(node)
+    || ts.isSetAccessorDeclaration(node)
+    || ts.isConstructorDeclaration(node)
+  )
+}
+
+function isBlockScopedVarList(declList) {
+  return Boolean(declList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using))
+}
+
+function recordDeclarationList(declList, scope) {
+  for (const decl of declList.declarations) {
+    if (ts.isIdentifier(decl.name)) {
+      scope.set(decl.name.text, classifyInitializer(decl.initializer))
+    } else {
+      for (const name of collectBindingNames(decl.name)) {
+        scope.set(name, EMPTY_BINDING)
+      }
+    }
+  }
+}
+
+function populateHoistedVars(rootNode, targetScope) {
+  const walk = node => {
+    if (node !== rootNode && isFunctionLikeNode(node)) return
+    if (ts.isVariableDeclarationList(node) && !isBlockScopedVarList(node)) {
+      recordDeclarationList(node, targetScope)
+    }
+    ts.forEachChild(node, walk)
+  }
+  walk(rootNode)
+}
+
+function populateStatementScope(statements, scope) {
+  for (const stmt of statements) {
+    if (ts.isVariableStatement(stmt)) {
+      if (isBlockScopedVarList(stmt.declarationList)) {
+        recordDeclarationList(stmt.declarationList, scope)
+      }
+    } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
+      scope.set(stmt.name.text, EMPTY_BINDING)
+    } else if (ts.isClassDeclaration(stmt) && stmt.name) {
+      scope.set(stmt.name.text, EMPTY_BINDING)
+    } else if (ts.isImportDeclaration(stmt) && stmt.importClause && !stmt.importClause.isTypeOnly) {
+      const clause = stmt.importClause
+      if (clause.name) scope.set(clause.name.text, EMPTY_BINDING)
+      const nb = clause.namedBindings
+      if (nb && ts.isNamespaceImport(nb)) {
+        scope.set(nb.name.text, EMPTY_BINDING)
+      } else if (nb && ts.isNamedImports(nb)) {
+        for (const el of nb.elements) {
+          if (!el.isTypeOnly) scope.set(el.name.text, EMPTY_BINDING)
+        }
+      }
+    }
+  }
+}
+
+function resolveBinding(scopeStack, name) {
+  for (let i = scopeStack.length - 1; i >= 0; i -= 1) {
+    if (scopeStack[i].has(name)) return scopeStack[i].get(name)
+  }
+  return EMPTY_BINDING
+}
+
 export const noProviderOrPlanSpecialCasingRule = Object.freeze({
   name: RULE_NAME,
   description:
@@ -258,25 +360,22 @@ export const noProviderOrPlanSpecialCasingRule = Object.freeze({
   },
   check(ctx) {
     const sf = ctx.getSourceFile()
-    const providerArrayVars = new Set()
-    const providerSetVars = new Set()
-    const providerObjectVars = new Set()
-    const tierArrayVars = new Set()
-    const tierSetVars = new Set()
-    const tierObjectVars = new Set()
-    const deferredChecks = []
+    const scopeStack = []
 
-    const visit = node => {
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-        if (arrayHasOnlyLiteralsInSet(node.initializer, PROVIDER_LITERAL_SET)) providerArrayVars.add(node.name.text)
-        if (isLiteralSetExpression(node.initializer, PROVIDER_LITERAL_SET)) providerSetVars.add(node.name.text)
-        if (isObjectWithMinKeys(node.initializer, PROVIDER_LITERAL_SET, 2)) providerObjectVars.add(node.name.text)
+    const visitChildren = node => {
+      ts.forEachChild(node, visit)
+    }
 
-        if (arrayHasOnlyLiteralsInSet(node.initializer, PLAN_TIER_LITERAL_SET)) tierArrayVars.add(node.name.text)
-        if (isLiteralSetExpression(node.initializer, PLAN_TIER_LITERAL_SET)) tierSetVars.add(node.name.text)
-        if (isObjectWithMinKeys(node.initializer, PLAN_TIER_LITERAL_SET, 2)) tierObjectVars.add(node.name.text)
+    const withScope = (scope, fn) => {
+      scopeStack.push(scope)
+      try {
+        fn()
+      } finally {
+        scopeStack.pop()
       }
+    }
 
+    const inspectNode = node => {
       // 1. Binary equality comparisons: provider === 'openai', tier === 'pro'
       if (ts.isBinaryExpression(node) && EQUALITY_OPERATORS.has(node.operatorToken.kind)) {
         const leftIsProvider = isProviderReference(node.left)
@@ -349,66 +448,46 @@ export const noProviderOrPlanSpecialCasingRule = Object.freeze({
 
         if (isProviderReference(arg)) {
           if (method === 'includes') {
-            if (arrayContainsLiteralInSet(target, PROVIDER_LITERAL_SET)) {
+            const isMatch =
+              arrayContainsLiteralInSet(target, PROVIDER_LITERAL_SET)
+              || (target && ts.isIdentifier(target) && resolveBinding(scopeStack, target.text).providerArray)
+            if (isMatch) {
               ctx.report(
                 node,
                 'Avoid branching on provider arrays with .includes(); encapsulate provider capabilities inside a provider adapter or model catalog.',
               )
-            } else if (target && ts.isIdentifier(target)) {
-              deferredChecks.push({
-                kind: 'providerArray',
-                name: target.text,
-                node,
-                message:
-                  'Avoid branching on provider arrays with .includes(); encapsulate provider capabilities inside a provider adapter or model catalog.',
-              })
             }
           } else if (method === 'has') {
-            if (isLiteralSetExpression(target, PROVIDER_LITERAL_SET)) {
+            const isMatch =
+              isLiteralSetExpression(target, PROVIDER_LITERAL_SET)
+              || (target && ts.isIdentifier(target) && resolveBinding(scopeStack, target.text).providerSet)
+            if (isMatch) {
               ctx.report(
                 node,
                 'Avoid branching on provider sets with .has(); encapsulate provider capabilities inside a provider adapter or model catalog.',
               )
-            } else if (target && ts.isIdentifier(target)) {
-              deferredChecks.push({
-                kind: 'providerSet',
-                name: target.text,
-                node,
-                message:
-                  'Avoid branching on provider sets with .has(); encapsulate provider capabilities inside a provider adapter or model catalog.',
-              })
             }
           }
         } else if (isPlanTierReference(arg)) {
           if (method === 'includes') {
-            if (arrayContainsLiteralInSet(target, PLAN_TIER_LITERAL_SET)) {
+            const isMatch =
+              arrayContainsLiteralInSet(target, PLAN_TIER_LITERAL_SET)
+              || (target && ts.isIdentifier(target) && resolveBinding(scopeStack, target.text).tierArray)
+            if (isMatch) {
               ctx.report(
                 node,
                 'Avoid branching on plan-tier arrays with .includes(); check declarative workspace capabilities from lib/governance/capabilities.ts instead.',
               )
-            } else if (target && ts.isIdentifier(target)) {
-              deferredChecks.push({
-                kind: 'tierArray',
-                name: target.text,
-                node,
-                message:
-                  'Avoid branching on plan-tier arrays with .includes(); check declarative workspace capabilities from lib/governance/capabilities.ts instead.',
-              })
             }
           } else if (method === 'has') {
-            if (isLiteralSetExpression(target, PLAN_TIER_LITERAL_SET)) {
+            const isMatch =
+              isLiteralSetExpression(target, PLAN_TIER_LITERAL_SET)
+              || (target && ts.isIdentifier(target) && resolveBinding(scopeStack, target.text).tierSet)
+            if (isMatch) {
               ctx.report(
                 node,
                 'Avoid branching on plan-tier sets with .has(); check declarative workspace capabilities from lib/governance/capabilities.ts instead.',
               )
-            } else if (target && ts.isIdentifier(target)) {
-              deferredChecks.push({
-                kind: 'tierSet',
-                name: target.text,
-                node,
-                message:
-                  'Avoid branching on plan-tier sets with .has(); check declarative workspace capabilities from lib/governance/capabilities.ts instead.',
-              })
             }
           }
         }
@@ -419,53 +498,111 @@ export const noProviderOrPlanSpecialCasingRule = Object.freeze({
         const target = unwrapExpr(node.expression)
         const keyExpr = node.argumentExpression
         if (isProviderReference(keyExpr)) {
-          if (isObjectWithMinKeys(target, PROVIDER_LITERAL_SET, 2)) {
+          const isMatch =
+            isObjectWithMinKeys(target, PROVIDER_LITERAL_SET, 2)
+            || (target && ts.isIdentifier(target) && resolveBinding(scopeStack, target.text).providerObject)
+          if (isMatch) {
             ctx.report(
               node,
               'Avoid provider-keyed object lookup outside adapters; read provider configuration from a dedicated adapter or model catalog.',
             )
-          } else if (target && ts.isIdentifier(target)) {
-            deferredChecks.push({
-              kind: 'providerObject',
-              name: target.text,
-              node,
-              message:
-                'Avoid provider-keyed object lookup outside adapters; read provider configuration from a dedicated adapter or model catalog.',
-            })
           }
         } else if (isPlanTierReference(keyExpr)) {
-          if (isObjectWithMinKeys(target, PLAN_TIER_LITERAL_SET, 2)) {
+          const isMatch =
+            isObjectWithMinKeys(target, PLAN_TIER_LITERAL_SET, 2)
+            || (target && ts.isIdentifier(target) && resolveBinding(scopeStack, target.text).tierObject)
+          if (isMatch) {
             ctx.report(
               node,
               'Avoid plan-tier-keyed object lookup; read explicit limits or capabilities from lib/governance/capabilities.ts instead.',
             )
-          } else if (target && ts.isIdentifier(target)) {
-            deferredChecks.push({
-              kind: 'tierObject',
-              name: target.text,
-              node,
-              message:
-                'Avoid plan-tier-keyed object lookup; read explicit limits or capabilities from lib/governance/capabilities.ts instead.',
-            })
           }
         }
       }
+    }
 
-      ts.forEachChild(node, visit)
+    const visit = node => {
+      if (ts.isSourceFile(node)) {
+        const scope = new Map()
+        populateHoistedVars(node, scope)
+        populateStatementScope(node.statements, scope)
+        withScope(scope, () => visitChildren(node))
+        return
+      }
+
+      if (isFunctionLikeNode(node)) {
+        const scope = new Map()
+        if (ts.isFunctionExpression(node) && node.name) {
+          scope.set(node.name.text, EMPTY_BINDING)
+        }
+        for (const param of node.parameters) {
+          for (const name of collectBindingNames(param.name)) {
+            scope.set(name, EMPTY_BINDING)
+          }
+        }
+        if (node.body) {
+          populateHoistedVars(node.body, scope)
+        }
+        withScope(scope, () => {
+          inspectNode(node)
+          visitChildren(node)
+        })
+        return
+      }
+
+      if (ts.isBlock(node) || ts.isModuleBlock(node)) {
+        const scope = new Map()
+        populateStatementScope(node.statements, scope)
+        withScope(scope, () => {
+          inspectNode(node)
+          visitChildren(node)
+        })
+        return
+      }
+
+      if (ts.isCaseBlock(node)) {
+        const scope = new Map()
+        for (const clause of node.clauses) {
+          populateStatementScope(clause.statements, scope)
+        }
+        withScope(scope, () => {
+          inspectNode(node)
+          visitChildren(node)
+        })
+        return
+      }
+
+      if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+        const scope = new Map()
+        if (node.initializer && ts.isVariableDeclarationList(node.initializer) && isBlockScopedVarList(node.initializer)) {
+          recordDeclarationList(node.initializer, scope)
+        }
+        withScope(scope, () => {
+          inspectNode(node)
+          visitChildren(node)
+        })
+        return
+      }
+
+      if (ts.isCatchClause(node)) {
+        const scope = new Map()
+        if (node.variableDeclaration) {
+          for (const name of collectBindingNames(node.variableDeclaration.name)) {
+            scope.set(name, EMPTY_BINDING)
+          }
+        }
+        withScope(scope, () => {
+          inspectNode(node)
+          visitChildren(node)
+        })
+        return
+      }
+
+      inspectNode(node)
+      visitChildren(node)
     }
 
     visit(sf)
-
-    for (const check of deferredChecks) {
-      const matched =
-        (check.kind === 'providerArray' && providerArrayVars.has(check.name))
-        || (check.kind === 'providerSet' && providerSetVars.has(check.name))
-        || (check.kind === 'providerObject' && providerObjectVars.has(check.name))
-        || (check.kind === 'tierArray' && tierArrayVars.has(check.name))
-        || (check.kind === 'tierSet' && tierSetVars.has(check.name))
-        || (check.kind === 'tierObject' && tierObjectVars.has(check.name))
-      if (matched) ctx.report(check.node, check.message)
-    }
   },
 })
 

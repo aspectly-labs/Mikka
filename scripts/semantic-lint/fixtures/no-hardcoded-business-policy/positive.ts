@@ -15,7 +15,11 @@ export const INLINE_OFFER_POLICY = {
   trialDays: 14,
   discountRate: 0.25,
   offerEndAt: '2026-12-31',
+  monthlyPrice: '$20/mo',
 }
+
+export const annualPrice = 200
+export const MONTHLY_PRICE = 2000
 
 export class LegacyBillingDefaults {
   static readonly GRACE_PERIOD_DAYS = 7

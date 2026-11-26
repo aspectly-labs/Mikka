@@ -37,9 +37,12 @@ Supported flags:
 Default repository scan roots (`.ts`, `.tsx`, `.mts`, `.js`, `.mjs`):
 - `app/`
 - `apps/api/`
+- `apps/desktop/`
+- `apps/eve/`
 - `apps/frontend/src/`
 - `cloudflare/`
 - `lib/`
+- `packages/`
 - `services/`
 - `tests/`
 - `workflows/`
@@ -53,27 +56,27 @@ Excluded directories and paths:
 
 1. **Zero-network AST execution with sound prefiltering:** Each file is read once after per-rule path allowlist checks. Each rule exposes a mathematically sound `mightMatch(source)` prefilter (100% recall for every AST pattern that `check(ctx)` can emit) so `ts.createSourceFile(..., setParentNodes=false)` runs lazily only when at least one active rule can plausibly match.
 2. **Fixture verification:** Positive (must flag) and negative (must pass with 0 findings) fixtures live under `scripts/semantic-lint/fixtures/<rule-name>/` and are verified automatically by `node --test scripts/semantic-lint/semantic-lint.test.mjs`.
-3. **Live repository sweep:** Ran `node scripts/semantic-lint/index.mjs --mode=warn --json` against the full `Mikka` repository (including `tests/`) and audited every finding individually to separate false positives, legitimate architectural adapter boundaries, and genuine anti-hardcoding debt.
+3. **Live repository sweep:** Ran `node scripts/semantic-lint/index.mjs --mode=warn --json` against the full `Mikka` repository (including `apps/desktop/`, `apps/eve/`, `packages/`, and `tests/`) and audited every finding individually to separate false positives, legitimate architectural adapter boundaries, and genuine anti-hardcoding debt.
 
 ## Live repository calibration counts
 
 Measured on branch `feat/3342-wave3-semantic-gate-and-docs` (after Wave 2 PR #3348 merged into `main`):
 
-- **Default repository scan (including `tests/`):** **3,866 files scanned** with 100%-recall prefilters across all 4 rules, **0 findings** in enforcing `--mode=error`.
-- **End-to-end runtime:** **~4.7–5.7 seconds** across all 3,866 files (zero network calls; AST-backed directive parser).
-- **Initial calibration breakdown (pre-`tests/` merge baseline: 3,573 scanned + 284 `tests/` files):**
+- **Default repository scan (all workspaces including `apps/desktop/`, `apps/eve/`, `packages/`, and `tests/`):** **4,475 files scanned** with 100%-recall prefilters across all 4 rules, **0 findings** in enforcing `--mode=error`.
+- **End-to-end runtime:** **~6.0–7.0 seconds** across all 4,475 files (zero network calls; AST-backed directive parser, within `< 10s` budget).
+- **Initial calibration breakdown (pre-`tests/`/`packages/`/`apps/desktop/`/`apps/eve/` merge baseline: 3,573 scanned + 902 workspace/test files):**
 
 | Rule | Eligible files | Allowlisted files | AST-parsed files | Initial live findings | Post-calibration findings |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `no-hardcoded-business-policy` | 2,420 | 1,165 | 8 | 1 | 0 |
 | `no-mode-flags` | 2,437 | 1,148 | 47 | 0 | 0 |
-| `no-provider-or-plan-special-casing` | 2,285 | 1,300 | 28 | 2 | 0 |
+| `no-provider-or-plan-special-casing` | 2,285 | 1,300 | 28 | 5 | 0 |
 | `no-constant-stub-tests` | 1,117 | 0 | 154 | 0 | 0 |
-| **Total** | **3,573 scanned** | — | **237 rule-parses** | **3** | **0** |
+| **Total** | **3,573 initial / 4,475 full** | — | **237+ rule-parses** | **6** | **0** |
 
 ## Audit of initial live findings
 
-Every single finding returned on the initial uncalibrated scan was audited directly in source:
+Every single finding returned on the initial uncalibrated scan (including expanded workspace roots) was audited directly in source:
 
 ### 1. `apps/api/scripts/dev.mjs:237` — `no-hardcoded-business-policy` (False positive -> heuristic refined)
 
@@ -98,10 +101,24 @@ Every single finding returned on the initial uncalibrated scan was audited direc
 - **Resolution:** Added `lib/chat-attachments/transcribe.ts` to the explicit provider-adapter allowlist in `no-provider-or-plan-special-casing`.
 - **Optional follow-up:** Exposing a capability predicate (for example `supportsAudioTranscription(key)`) from `lib/model-api-key-providers.ts` would allow removing this file's carve-out in a future refactor.
 
-### 4. Prefilter calibration in `no-constant-stub-tests` (Precision & performance improvement)
+### 4. `packages/protocol/src/subscription.ts:201` — `no-provider-or-plan-special-casing` (Legitimate adapter boundary -> allowlisted)
+
+- **Code:** `SUBSCRIPTION_ROUTES[route].provider === "openai" ? "codex" : "claude_code"`
+- **Classification:** Legitimate BYOS subscription protocol adapter boundary (shared protocol counterpart to `lib/subscription-*.ts`).
+- **Root cause:** `packages/protocol/src/subscription.ts` defines the canonical subscription route-to-daemon quota vendor mapping (`openai` -> `codex`, `anthropic` -> `claude_code`).
+- **Resolution:** Added `packages/protocol/src/subscription.ts` to the explicit provider-adapter allowlist in `no-provider-or-plan-special-casing`.
+
+### 5. `apps/desktop/src/main/bundled-auth.ts:307,401` — `no-provider-or-plan-special-casing` (Legitimate OAuth adapter boundary -> allowlisted)
+
+- **Code:** `['google', 'github'].includes(value.provider)` and `if (provider !== 'google' && provider !== 'github')`
+- **Classification:** Legitimate desktop OAuth identity provider validation (desktop counterpart to `lib/auth*.ts` and `lib/google-link.ts`).
+- **Root cause:** `apps/desktop/src/main/bundled-auth.ts` validates OAuth sign-in and account-linking providers (`google`, `github`), not AI model providers.
+- **Resolution:** Added `apps/desktop/src/main/bundled-auth.ts` to the explicit provider-adapter allowlist in `no-provider-or-plan-special-casing`.
+
+### 6. Prefilter calibration in `no-constant-stub-tests` (Precision & performance improvement)
 
 - **Observation:** Initial price-literal regex `/\$\d+/` matched PostgreSQL bind parameters (`$1`, `$2`, `$3`) in `.db.test.ts` files, causing unnecessary AST parsing of ~220 database integration tests and pushing full-repo wall time above 5s.
-- **Resolution:** Tightened `BUSINESS_STRING_VALUE_RE` and `PREFILTER_BUSINESS_LITERAL_RE` to match genuine currency strings (`$20`, `$19.99`, `$20/mo`, `$200/yr`, `$15/seat`) and model IDs (`claude-*`, `gpt-*`, `gemini-*`) without matching SQL `$1` placeholders, cutting full-repo runtime from ~6.3s down to **~2.9–3.5s** with zero loss in rule recall.
+- **Resolution:** Tightened `BUSINESS_STRING_VALUE_RE` and `PREFILTER_BUSINESS_LITERAL_RE` to match genuine currency strings (`$20`, `$19.99`, `$20/mo`, `$200/yr`, `$15/seat`) and model IDs (`claude-*`, `gpt-*`, `gemini-*`) without matching SQL `$1` placeholders, cutting full-repo runtime while preserving 100% recall.
 
 ## Explicit per-rule allowlist carve-outs
 
@@ -138,9 +155,9 @@ Every allowlist entry must correspond to a documented Tier-2/Tier-3/Tier-4 owner
 | `lib/model-gateway/**` | Model gateway protocol translation (`anthropic` Messages / `openai` Responses / LiteLLM upstream) |
 | `lib/model-api-key*.ts`, `lib/model-routing.ts`, `lib/model-order.ts`, `lib/run-credential-source.ts` | API-key provider presets, model routing, ordering, and catalog-vendor credential matching |
 | `lib/chat-attachments/transcribe.ts` | Audio transcription provider adapter selecting OpenAI transcription keys for LiteLLM |
-| `lib/subscription-*.ts` | BYOS subscription provider adapters and quota decoders |
+| `lib/subscription-*.ts`, `packages/protocol/src/subscription.ts` | BYOS subscription provider adapters, protocol route-to-vendor mapping, and quota decoders |
 | `lib/credentials/**`, `lib/plugins/**`, `lib/operations/**` | Credential brokers, plugin/integration adapters, and workspace operation adapters |
-| `lib/auth*.ts`, `lib/google-link.ts` | OAuth identity provider adapters |
+| `lib/auth*.ts`, `lib/google-link.ts`, `apps/desktop/src/main/bundled-auth.ts` | Web and desktop OAuth identity provider adapters |
 | `lib/eve/factory/providers.ts` | Factory provider registry adapter |
 | `lib/governance/policy.ts`, `lib/governance/capabilities.ts`, `lib/governance/provisioning.ts`, `lib/enterprise/provisioning.ts`, `lib/billing/**` | Tier-3 governance capability resolvers, operator plan provisioning, and billing catalog boundary |
 | Test globs (`tests/**`, `**/*.test.*`, etc.) | Test suites and fixtures |

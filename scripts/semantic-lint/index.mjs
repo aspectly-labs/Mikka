@@ -25,6 +25,7 @@ import noProviderOrPlanSpecialCasingRule from './rules/no-provider-or-plan-speci
 import noConstantStubTestsRule from './rules/no-constant-stub-tests.mjs'
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
+const FIXTURES_ROOT = path.resolve(REPO_ROOT, 'scripts/semantic-lint/fixtures')
 
 export const RULES = Object.freeze([
   noHardcodedBusinessPolicyRule,
@@ -38,9 +39,12 @@ export const RULE_MAP = Object.freeze(Object.fromEntries(RULES.map(rule => [rule
 export const DEFAULT_SCAN_ROOTS = Object.freeze([
   'app',
   'apps/api',
+  'apps/desktop',
+  'apps/eve',
   'apps/frontend/src',
   'cloudflare',
   'lib',
+  'packages',
   'services',
   'tests',
   'workflows',
@@ -284,11 +288,19 @@ function isExcludedRelPath(relPath) {
   return false
 }
 
+function isPathInside(targetPath, basePath) {
+  const rel = path.relative(basePath, targetPath)
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+}
+
 /**
  * Discover candidate `.ts`, `.tsx`, `.mts`, `.js`, `.mjs` files to scan.
  * When scanning `REPO_ROOT` (the default), restricts traversal to
- * `DEFAULT_SCAN_ROOTS`. When `--root <dir>` points to an alternate directory,
- * traverses `<dir>` directly while still honoring excluded directories.
+ * `DEFAULT_SCAN_ROOTS`. When `--root <path>` points to a subdirectory or file
+ * inside the repository (outside `scripts/semantic-lint/fixtures`), keeps
+ * repository-relative policy paths so architectural allowlists remain intact.
+ * For external directories and fixture trees, computes paths relative to the
+ * supplied target directory (or parent directory for a single external file).
  */
 export function collectTargetFiles(rootDir = REPO_ROOT, options = {}) {
   const resolvedRoot = path.resolve(rootDir)
@@ -296,12 +308,12 @@ export function collectTargetFiles(rootDir = REPO_ROOT, options = {}) {
   const scanRoots = options.scanRoots ?? DEFAULT_SCAN_ROOTS
   const files = []
 
-  const walk = absDir => {
+  const walk = (absDir, pathBaseDir, ignoreMissingDir) => {
     let entries
     try {
       entries = fs.readdirSync(absDir, { withFileTypes: true })
     } catch (error) {
-      if (error && error.code === 'ENOENT') return
+      if (ignoreMissingDir && error && error.code === 'ENOENT') return
       throw new Error(`Failed to read directory ${absDir}`, { cause: error })
     }
 
@@ -309,11 +321,11 @@ export function collectTargetFiles(rootDir = REPO_ROOT, options = {}) {
 
     for (const entry of entries) {
       const absChild = path.join(absDir, entry.name)
-      const relChild = normalizeRepoPath(absChild, resolvedRoot)
+      const relChild = normalizeRepoPath(absChild, pathBaseDir)
       if (entry.isDirectory()) {
         if (EXCLUDED_DIR_NAMES.has(entry.name)) continue
         if (isExcludedRelPath(relChild)) continue
-        walk(absChild)
+        walk(absChild, pathBaseDir, false)
       } else if (entry.isFile()) {
         if (isExcludedRelPath(relChild)) continue
         const ext = path.extname(entry.name).toLowerCase()
@@ -325,23 +337,33 @@ export function collectTargetFiles(rootDir = REPO_ROOT, options = {}) {
 
   if (useDefaultRoots) {
     for (const relRoot of scanRoots) {
-      walk(path.join(resolvedRoot, relRoot))
+      walk(path.join(resolvedRoot, relRoot), resolvedRoot, true)
     }
   } else {
     let stat
     try {
       stat = fs.statSync(resolvedRoot)
     } catch (error) {
-      if (error && error.code === 'ENOENT') return files
       throw new Error(`Failed to stat target ${resolvedRoot}`, { cause: error })
     }
+    const useRepoPolicyBase =
+      isPathInside(resolvedRoot, REPO_ROOT) && !isPathInside(resolvedRoot, FIXTURES_ROOT)
+    const pathBaseDir = useRepoPolicyBase
+      ? REPO_ROOT
+      : stat.isFile()
+        ? path.dirname(resolvedRoot)
+        : resolvedRoot
+
     if (stat.isFile()) {
       const ext = path.extname(resolvedRoot).toLowerCase()
       if (SUPPORTED_EXTENSIONS.has(ext)) {
-        files.push({ absPath: resolvedRoot, relPath: path.basename(resolvedRoot) })
+        files.push({
+          absPath: resolvedRoot,
+          relPath: normalizeRepoPath(resolvedRoot, pathBaseDir),
+        })
       }
     } else {
-      walk(resolvedRoot)
+      walk(resolvedRoot, pathBaseDir, false)
     }
   }
 
@@ -581,12 +603,14 @@ function main(argv = process.argv.slice(2)) {
     opts = parseArgs(argv)
   } catch (error) {
     console.error(`semantic-lint: ${error.message}`)
-    process.exit(2)
+    process.exitCode = 2
+    return
   }
 
   if (opts.help) {
     printHelp()
-    process.exit(0)
+    process.exitCode = 0
+    return
   }
 
   let report
@@ -598,7 +622,8 @@ function main(argv = process.argv.slice(2)) {
     })
   } catch (error) {
     console.error(`semantic-lint: ${error.message}`)
-    process.exit(2)
+    process.exitCode = 2
+    return
   }
 
   if (opts.json) {
@@ -607,10 +632,7 @@ function main(argv = process.argv.slice(2)) {
     console.log(formatHumanReport(report))
   }
 
-  if (report.mode === 'error' && report.totalFindings > 0) {
-    process.exit(1)
-  }
-  process.exit(0)
+  process.exitCode = report.mode === 'error' && report.totalFindings > 0 ? 1 : 0
 }
 
 const isDirectExecution =
