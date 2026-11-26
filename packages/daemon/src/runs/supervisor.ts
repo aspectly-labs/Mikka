@@ -1418,7 +1418,8 @@ export class RunSupervisor {
         if (assignment.portableTaskWorkspace) {
           portableCheckoutBase = await this.deps.worktrees.portableWorktreeBase(repo.path, requestedStart, assignment.portableTaskWorkspace.headSha)
           if (portableCheckoutBase !== assignment.portableTaskWorkspace.headSha)
-            log.info({ runId }, 'Restoring archived task files on the current authorized checkout')
+            log.info({ runId, archivedHead: assignment.portableTaskWorkspace.headSha, checkoutHead: portableCheckoutBase },
+              'Restoring archived task files on the current authorized checkout')
         }
         const start = portableCheckoutBase ?? requestedStart
         if (assignment.projectEnvironment?.fromSnapshot && !runPolicy(assignment.policy).readOnly &&
