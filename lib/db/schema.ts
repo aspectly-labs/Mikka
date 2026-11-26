@@ -223,7 +223,7 @@ export const bots = pgTable('bots', {
   publicRole: text('publicRole').notNull().default(''),
   /** Private standing instructions for this Bot (≤2000 chars); never exposed to group participants or mixed with agents.instructions. */
   instructions: text('instructions').notNull().default(''),
-  /** A bloub colour id, see components/nav/bot-avatar.tsx. */
+  /** An old bloub colour id, no longer drawn; `shape` is a bot-avatars body or an old bloub id (lib/bot-shapes.ts botShapeOf). */
   color: text('color').notNull().default('encre'),
   shape: text('shape').notNull().default('cercle'),
   /** Model family a new bot starts with ('mikka' | 'codex' | 'claude'); copied from workspace_settings. */

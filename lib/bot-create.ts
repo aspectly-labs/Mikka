@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { ActionFailureError } from '@/lib/action-error'
 import { db, pool, withDatabaseTransaction } from '@/lib/db'
 import { bots, WORKSPACE_BOT_MODELS } from '@/lib/db/schema'
-import { BOT_COLORS, BOT_SHAPES } from '@/lib/bot-shapes'
+import { ACCEPTED_BOT_SHAPES, BOT_COLORS, DEFAULT_BOT_COLOR } from '@/lib/bot-shapes'
 import { defaultBotEnvironment } from '@/lib/bot-environment'
 import type { BotSettingsInput } from '@/lib/bot-settings'
 import { aliasConflict, assertBotSettings, botSettingsColumns, parseBotSettings } from '@/lib/bot-settings-store'
@@ -14,7 +14,7 @@ import { initializeWorkVisibility, readWorkCreationPolicy, workCreationVisibilit
 
 export interface CreateBotInput extends BotSettingsInput {
   name: string
-  color: string
+  color?: string
   shape: string
   model?: string | null
   /** An older client's 仓库 choice: the Bot binds the Environment that lists it. Never stored on the Bot. */
@@ -37,7 +37,7 @@ export interface CreateBotInput extends BotSettingsInput {
 export async function createOwnedBot(owner: { ownerId: string; workspaceId: string }, input: CreateBotInput) {
   const { name, color, shape, model: requestedModel, repository: requestedRepository, visibility, subscribers, ...rest } = input
   const parsed = z.object({
-    name: z.string().trim().min(1).max(60), color: z.enum(BOT_COLORS), shape: z.enum(BOT_SHAPES),
+    name: z.string().trim().min(1).max(60), color: z.enum(BOT_COLORS).default(DEFAULT_BOT_COLOR), shape: z.enum(ACCEPTED_BOT_SHAPES),
     model: z.enum(WORKSPACE_BOT_MODELS).nullable().optional(), repository: z.string().trim().min(1).max(300).nullable().optional(),
     visibility: z.enum(['shared', 'private']).optional(),
   }).safeParse({ name, color, shape, model: requestedModel, repository: requestedRepository, visibility })
