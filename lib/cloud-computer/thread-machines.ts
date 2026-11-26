@@ -60,12 +60,15 @@ async function options(ownerId: string, sandboxId: string) {
   return { apiKey: (await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
 }
 /** Register only while this provisioning lease still owns a non-ended row. */
-export async function recordThreadSandbox(pool: Pick<Pool, 'query'>, runId: string, sandboxId: string, leaseId: string) {
+export async function recordThreadSandbox(pool: Pick<Pool, 'query'>, runId: string, sandboxId: string, leaseId: string, stagePortableWorkspace = false) {
   // The history INSERT checks its run FK. Acquire that parent lock before the
   // machine, matching park/ensure even when this is one autocommitted query.
   const recorded = Boolean((await pool.query(`WITH parent AS MATERIALIZED (SELECT id FROM agent_runs WHERE id=$1 FOR KEY SHARE)
-    UPDATE thread_machines m SET "sandboxId"=$2,"runningSince"=COALESCE(m."runningSince",clock_timestamp()),"restoreStartedAt"=NULL
-    FROM parent WHERE m."runId"=parent.id AND m."workerLeaseId"=$3 AND m.state<>'ended' RETURNING m."runId"`, [runId, sandboxId, leaseId])).rowCount)
+    UPDATE thread_machines m SET "sandboxId"=$2,"runningSince"=COALESCE(m."runningSince",clock_timestamp()),"restoreStartedAt"=NULL,
+      lifecycle=CASE WHEN $4::boolean THEN (m.lifecycle-'portableWorkspaceRestore')||'{"portableWorkspaceRestorePending":true}'::jsonb
+        WHEN m."sandboxId" IS DISTINCT FROM $2 THEN m.lifecycle-'portableWorkspaceRestore'-'portableWorkspaceRestorePending'
+        ELSE m.lifecycle END
+    FROM parent WHERE m."runId"=parent.id AND m."workerLeaseId"=$3 AND m.state<>'ended' RETURNING m."runId"`, [runId, sandboxId, leaseId, stagePortableWorkspace])).rowCount)
   if (recorded) taskActivityChanged(pool, runId)
   return recorded
 }
@@ -495,6 +498,7 @@ async function adoptTaskMachine(client: PoolClient, actor: Actor, runId: string,
       AND (m.state='paused' OR (m.state='running' AND m.lifecycle->>'phase'='handoff' AND m.lifecycle->>'handoffRunId'=$4::text
         AND (r."leaseExpiresAt" IS NULL OR r."leaseExpiresAt"<=now())
         AND COALESCE(${jsonbSafeDoubleSql('m.lifecycle', 'reconcileUntil')},0)<=extract(epoch FROM clock_timestamp())*1000))
+      AND NOT (m.lifecycle ? 'portableWorkspaceRestorePending')
       AND (m."workerLeaseUntil" IS NULL OR m."workerLeaseUntil"<=now()) AND m."sandboxId" IS NOT NULL AND m."deviceId" IS NOT NULL
       AND r.status IN ('succeeded','failed','stopped','cancelled')
       AND NOT ${unconfirmedNativeExitSql}
@@ -659,7 +663,7 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
       armDueTimerAfterCommit(client, 'run-recovery')
       if (!existing) {
         let archiveScope: TaskWorkspaceArchiveScope | undefined
-        if (machine.snapshotId !== hostedSnapshot && machine.workspaceReady
+        if (machine.snapshotId !== hostedSnapshot && machine.workspaceReady && !machine.lifecycle?.portableWorkspaceRestorePending
           && machine.issueId && machine.repoId && machine.lifecycle?.portableWorkspaceCapture !== 'ready' && portableTaskArchiveEnabled()) {
           if (Number(machine.lifecycle?.portableWorkspaceCaptureUntil) > Date.now()) {
             intent = undefined
@@ -1208,7 +1212,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     // The provider lost this task's VM. Prefer its own filesystem snapshot over
     // the official template; the restore helper re-fences the same task, owner,
     // workspace, repository and template kind before any provider I/O.
-    if (!connected && !refreshRuntime && !exactQuestionMachine && !run.retryOf && !run.questionContinuation && repositoryTask && run.issueId
+    const pendingPortableRestore = machine.lifecycle?.portableWorkspaceRestorePending === true
+    if ((!connected || pendingPortableRestore) && !refreshRuntime && !exactQuestionMachine && !run.retryOf && !run.questionContinuation && repositoryTask && run.issueId
       && !run.agentDefinition?.readOnly && portableTaskArchiveEnabled()) {
       const { rows: [last] } = await client.query<{ state: string; runId: string; epoch: string | null; operationId: string | null }>(`
         SELECT m.lifecycle->>'portableWorkspaceCapture' AS state, m."runId",
@@ -1228,6 +1233,8 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
         throw new ComputerError(409, 'Latest task workspace archive is unavailable')
     }
     const portableWorkspace = portableTransfer.archive
+    if (pendingPortableRestore && !portableWorkspace)
+      throw new ComputerError(409, 'Pending task workspace restore is unavailable')
     const restoreCandidate = !portableWorkspace && machine.snapshotId !== hostedSnapshot && !refreshRuntime && !exactQuestionMachine && threadSnapshotsEnabled() &&
       machine.snapshotState === 'ready' && Boolean(machine.filesystemSnapshotId) &&
       (machine.sandboxId ? !connected : ['restore', 'error'].includes(machine.state))
@@ -1298,7 +1305,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     const sandbox = started
     connected = null
     refreshPhase = timings.next('record_sandbox')
-    const recorded = await recordThreadSandbox(pool, runId, sandbox.sandboxId, leaseId)
+    const recorded = await recordThreadSandbox(pool, runId, sandbox.sandboxId, leaseId, Boolean(portableWorkspace))
     if (!recorded) {
       // An end can win while Sandbox.create is in flight. The just-created
       // sandbox is not in the row end observed, so this worker must clean it up.
@@ -1348,7 +1355,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
     await client.query('COMMIT')
     if (portableWorkspace) {
       const receipt = await stageE2BTaskWorkspace(sandbox, runId, portableWorkspace, AbortSignal.timeout(120_000))
-      const staged = await client.query(`UPDATE thread_machines SET lifecycle=lifecycle||jsonb_build_object('portableWorkspaceRestore',$5::jsonb)
+      const staged = await client.query(`UPDATE thread_machines SET lifecycle=(lifecycle-'portableWorkspaceRestorePending')||jsonb_build_object('portableWorkspaceRestore',$5::jsonb)
         WHERE "runId"=$1 AND "workerLeaseId"=$2 AND "operationId"=$3 AND "sandboxId"=$4 AND state<>'ended'`,
       [runId, leaseId, machine.operationId, sandbox.sandboxId, JSON.stringify(receipt)])
       if (!staged.rowCount) throw new ComputerError(409, 'Portable task workspace provisioning changed')
