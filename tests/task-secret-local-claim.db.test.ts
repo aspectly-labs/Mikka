@@ -489,6 +489,59 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
     assert.equal(after.error, null)
     await complete(claimed)
   })
+  // A claim refused by its final authorization must never stay `preparing`: the claim lookup only
+  // takes queued runs and an open device session keeps extending the lease. Drive the real claim
+  // route through B's real link, and change state right before the claim's response transaction.
+  const duringClaimResponse = (t: { mock: { method: typeof mock.method } }, runId: string, change: () => Promise<unknown>) => {
+    let changed = false
+    const wrapped = new WeakSet<PoolClient>()
+    const observe = (client: PoolClient) => {
+      if (wrapped.has(client)) return
+      wrapped.add(client)
+      t.mock.method(client, 'query', new Proxy(client.query, { apply(query, self, args) {
+        const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text
+        // The response transaction locks the task first, after the claim leased the run.
+        if (!changed && sql?.includes('from "issues"') && sql.includes('for update')) {
+          return pool.query<{ status: string }>('SELECT status FROM agent_runs WHERE id=$1', [runId]).then(async ({ rows: [run] }) => {
+            if (run?.status === 'preparing' && !changed) { changed = true; await change() }
+            return Reflect.apply(query, self, args)
+          })
+        }
+        return Reflect.apply(query, self, args)
+      } }))
+    }
+    appPool.on('acquire', observe)
+    return { done: () => { appPool.off('acquire', observe); return changed } }
+  }
+  await t.test('a repository changed during the claim requeues the run, and the same device claims it again', async t => {
+    const { runId } = await freshQueuedRun()
+    const { rows: [bound] } = await pool.query<{ repoId: string; remoteUrl: string }>(
+      'SELECT d.id AS "repoId",d."remoteUrl" FROM agent_runs r JOIN device_repos d ON d.id=r."deviceRepoId" WHERE r.id=$1', [runId])
+    const watch = duringClaimResponse(t, runId, () => pool.query('UPDATE device_repos SET "remoteUrl"=$2 WHERE id=$1', [bound.repoId, 'https://github.com/synthetic-other/repository.git']))
+    try { await assert.rejects(b.link.claimRun(b.id, runId)) } finally { assert.equal(watch.done(), true) }
+    const { rows: [queued] } = await pool.query('SELECT status,"leaseExpiresAt","startedAt","deviceTokenId","stopReason",error FROM agent_runs WHERE id=$1', [runId])
+    assert.deepEqual(queued, { status: 'queued', leaseExpiresAt: null, startedAt: null, deviceTokenId: null, stopReason: null, error: null })
+    const { rows: [tokens] } = await pool.query<{ live: number }>('SELECT count(*)::int AS live FROM run_tokens WHERE "runId"=$1 AND "revokedAt" IS NULL', [runId])
+    assert.equal(tokens.live, 0, 'the refused claim\'s run token is revoked')
+    // The device's repository is back as it was; the same device claims the same run again.
+    await pool.query('UPDATE device_repos SET "remoteUrl"=$2 WHERE id=$1', [bound.repoId, bound.remoteUrl])
+    const again = await b.link.claimRun(b.id, runId)
+    assert.equal(again.runId, runId)
+    const { rows: [claimed] } = await pool.query('SELECT status,"deviceId" FROM agent_runs WHERE id=$1', [runId])
+    assert.deepEqual(claimed, { status: 'preparing', deviceId: b.id })
+    await complete(again)
+  })
+  await t.test('a task deleted during the claim ends the claim\'s lease with a reason instead of stranding it', async t => {
+    const { runId } = await freshQueuedRun()
+    const { rows: [run] } = await pool.query<{ issueId: string }>('SELECT "issueId" FROM agent_runs WHERE id=$1', [runId])
+    const watch = duringClaimResponse(t, runId, () => pool.query(`UPDATE issues SET content=jsonb_set(content,'{attrs,mikka,deletedAt}',to_jsonb($2::text)) WHERE id=$1`, [run.issueId, new Date().toISOString()]))
+    try { await assert.rejects(b.link.claimRun(b.id, runId)) } finally { assert.equal(watch.done(), true) }
+    const { rows: [ended] } = await pool.query('SELECT status,"stopReason","failureDetails"->>\'code\' AS code,"finishedAt" FROM agent_runs WHERE id=$1', [runId])
+    assert.equal(ended.status, 'failed')
+    assert.equal(ended.stopReason, 'blocked')
+    assert.equal(ended.code, 'run_access_denied')
+    assert.ok(ended.finishedAt)
+  })
   const assertJournalWithheld = async (claimed: RunAssignment, values: string[]) => {
     const path = join(directory, `runs-${claimed.runId}.json`), journal = new RunJournal(path)
     journal.put({ assignment: claimed, state: 'running', sessionId: null, worktree: null, lastSeq: 0, error: null, updatedAt: new Date().toISOString() })

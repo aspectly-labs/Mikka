@@ -13,6 +13,31 @@ import { advanceTaskAfterRunStart } from '@/lib/task-status-run-start'
 import { taskActivityChanged } from '@/lib/factory/activity-live'
 import { freeDeviceSlots } from '@/lib/device-capacity'
 
+/**
+ * Returns this claim's own still-preparing lease to the queue, for a claim whose final fence found
+ * that something it read during preparation changed (secrets, repository, environment) while the
+ * run can still go ahead. The claim lookup only takes `queued` runs and a connected device keeps
+ * extending a lease, so a refused claim must not stay `preparing`. Undoes only what a local claim
+ * wrote for this lease: its status and lease, its subscription pin and its skill receipt; the run's
+ * tokens are revoked by the caller. A stop, a retry or another claim (another lease) is untouched.
+ */
+export async function requeueLocalClaim(pool: Pool, claim: { runId: string; userId: string; deviceId: string; leaseExpiresAt: string }): Promise<boolean> {
+  const client = await connectForCommitEffects(pool)
+  try {
+    await client.query('BEGIN')
+    const { rowCount } = await client.query(`UPDATE agent_runs SET status='queued',"startedAt"=NULL,"leaseExpiresAt"=NULL,"deviceTokenId"=NULL,"updatedAt"=now()
+      WHERE id=$1 AND "userId"=$2 AND "deviceId"=$3 AND status='preparing' AND "leaseExpiresAt"=$4 AND "stopRequestedAt" IS NULL`,
+      [claim.runId, claim.userId, claim.deviceId, new Date(claim.leaseExpiresAt)])
+    if (!rowCount) { await client.query('ROLLBACK'); return false }
+    await client.query('DELETE FROM byos_native_runs WHERE "runId"=$1', [claim.runId])
+    await client.query(`DELETE FROM improvement_skill_receipts WHERE "runId"=$1 AND receipt->>'leaseExpiresAt'=$2`, [claim.runId, claim.leaseExpiresAt])
+    await runListChanged(client, claim.runId)
+    await runChanged(client, claim.runId)
+    await client.query('COMMIT')
+    return true
+  } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+}
+
 async function lockDeviceCapacity(tx: PoolClient, deviceId: string) {
   await tx.query("SELECT pg_advisory_xact_lock(hashtextextended('device-capacity:' || $1::uuid::text,0))", [deviceId])
 }

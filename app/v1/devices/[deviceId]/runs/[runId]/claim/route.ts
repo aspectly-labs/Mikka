@@ -35,7 +35,8 @@ import { withBasePath } from '@/lib/base-path'
 import { resolveAppOrigin } from '@/lib/auth-config'
 import { isLoopbackHost } from '@/lib/loopback'
 import { mcpResourceURL } from '@/lib/mcp/resource'
-import { issueRunToken } from '@/lib/mcp/worker'
+import { issueRunToken, revokeRunTokens } from '@/lib/mcp/worker'
+import { notifyDeviceWork } from '@/lib/device-gateway-notify'
 import { RUN_DECISION_CATALOGUE } from '@/lib/project-map/mcp-tool'
 import { issueForUser } from '@/lib/issue-access'
 import { failRunForDaemonUpgrade, failQueuedSubscriptionRuntime, latestCheckpoint } from '@/lib/run-leases'
@@ -566,6 +567,11 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const githubConnected = receivesRunCredentials ? Boolean(githubCredential)
     : repo.repoPath.startsWith('v2/github.com/') && await githubMachineConfigured(caller.userId)
   timings.next('response_fence')
+  // Why the final authorization refused this claim's run: 'requeue' when a fresh claim can still go
+  // ahead (secrets, repository or environment changed during preparation, scheduling paused);
+  // 'revoked' when access itself changed.
+  let refusal: 'requeue' | 'revoked' | undefined
+  const refuse = (kind: 'requeue' | 'revoked') => { refusal = kind; return false }
   const response = await authorizedClaimResponse(caller.userId, run, leaseExpiresAt, current => {
     const taskSecrets = issueTaskSecretAccess({ injection: taskInjection,
       endpoint: new URL(withBasePath(`/v1/task-secrets/${runId}`), request.url).toString(), leaseExpiresAt,
@@ -637,15 +643,16 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...(distribution ? {policySnapshotRequired:distribution.required,policySnapshot:issuePolicySnapshot(distribution,assignmentPolicy)} : {}),
     }, { headers: { 'cache-control': 'private, no-store' } })
   }, async (current, tx) => {
+    refusal = undefined
     const currentEnvironment = current.agentDefinition?.projectExecution?.environment
     const workspaceId = current.workspaceId
     if (!workspaceId || workspaceId !== taskWorkspaceId || current.deviceTokenId !== caller.tokenId || current.attempt !== run.attempt
       || current.agentDefinition?.executionIdentity?.workspaceId !== run.agentDefinition?.executionIdentity?.workspaceId
       || current.agentDefinition?.executionIdentity !== undefined && current.agentDefinition.executionIdentity?.workspaceId !== workspaceId
-      || caller.scopeWorkspaceId && caller.scopeWorkspaceId !== workspaceId) return false
+      || caller.scopeWorkspaceId && caller.scopeWorkspaceId !== workspaceId) return refuse('revoked')
     if (Boolean(currentEnvironment) !== Boolean(projectEnvironment) || currentEnvironment &&
       (currentEnvironment.id !== projectEnvironment?.id || currentEnvironment.revision !== projectEnvironment?.revision
-        || current.agentDefinition?.projectExecution?.workspaceId !== workspaceId)) return false
+        || current.agentDefinition?.projectExecution?.workspaceId !== workspaceId)) return refuse('requeue')
     if (mcpAuthority?.servers.length) {
       try {
         const [{ lockNativeMcpAuthority }, { withLockedToolSwitches }] = await Promise.all([import('@/lib/plugins/workspace-mcp'), import('@/lib/plugins/native-mcp')])
@@ -654,24 +661,24 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         if (mcp?.servers) mcp.servers = withLockedToolSwitches(mcp.servers, locked, mcpToolFilters)
       } catch (error) {
         if (!(error instanceof PluginError)) throw new McpValidationError('connection_lock', error)
-        if (error.code !== 'mcpUnavailable') return false
+        if (error.code !== 'mcpUnavailable') return refuse('revoked')
         throw error
       }
     }
     if (taskInjection.snapshot === undefined) return true
-    if (workspaceId && !current.agentDefinition?.executionIdentity && !await executionMembersActive(workspaceId, [current.userId])) return false
+    if (workspaceId && !current.agentDefinition?.executionIdentity && !await executionMembersActive(workspaceId, [current.userId])) return refuse('revoked')
     const [currentRepo] = await tx.select({ remoteUrl: deviceRepos.remoteUrl }).from(deviceRepos).where(eq(deviceRepos.id, repo.id)).limit(1)
-    if (!currentRepo || remoteRepositoryRef(currentRepo.remoteUrl) !== taskRepository) return false
+    if (!currentRepo || remoteRepositoryRef(currentRepo.remoteUrl) !== taskRepository) return refuse('requeue')
     try {
       const snapshot = currentEnvironment && workspaceId
         ? await environmentSecretSnapshot(workspaceId, taskRepository, currentEnvironment, current.userId, tx, threadScopeRunId)
         : await taskSecretSnapshot(workspaceId, taskRepository, current.userId, tx, undefined, undefined, threadScopeRunId)
-      return snapshot === taskInjection.snapshot
+      return snapshot === taskInjection.snapshot || refuse('requeue')
     } catch (error) {
-      if (error instanceof CodedError && error.code === 'task_secret_unavailable') return false
+      if (error instanceof CodedError && error.code === 'task_secret_unavailable') return refuse('requeue')
       throw error
     }
-  }).catch((error: unknown) => {
+  }, kind => { refusal = kind }).catch((error: unknown) => {
     if (error instanceof McpValidationError || error instanceof ExecutionMcpAuthorityError || error instanceof PluginError && error.code === 'mcpUnavailable') {
       const failure = new CodedError('mcpUnavailable', { cause: error })
       logCodedError(failure, { runId, detail: error instanceof McpValidationError ? error.stage : undefined })
@@ -680,7 +687,19 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     }
     throw error
   })
-  return response ?? RouteResponse.json({ error: 'Run access changed before claim response.' }, { status: 409 })
+  if (response) return response
+  // The final fence refused this claim after it leased the run. The claim lookup only takes queued
+  // runs and an open device session keeps extending the lease, so never leave it `preparing`.
+  if (refusal === 'requeue' && device.kind !== 'cloud' && !Object.keys(factoryClaim).length) {
+    const { requeueLocalClaim } = await import('@/lib/computer/claim')
+    if (await requeueLocalClaim(pool, { runId, userId: caller.userId, deviceId, leaseExpiresAt })) {
+      await revokeRunTokens(runId)
+      notifyDeviceWork(deviceId)
+      return RouteResponse.json({ error: 'Run changed before claim response.', code: 'runRequeued' }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
+    }
+  }
+  if (refusal) return failPreparingClaim(new CodedError('run_access_denied'), 'Run access changed before claim response.')
+  return RouteResponse.json({ error: 'Run access changed before claim response.' }, { status: 409 })
   }
   if (!run.workspaceId) {
     return RouteResponse.json({ error: 'Run ownership unavailable.' }, { status: 409, headers: { 'cache-control': 'private, no-store' } })

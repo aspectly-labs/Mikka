@@ -391,11 +391,12 @@ test('a tool switched during the claim is delivered as the fence read it, on the
     ;(probe as typeof probe & { lockedSwitches?: Record<string, string[]> }).lockedSwitches = { [server.id]: [...locked] }
     const response = await claim(probe)
     assert.equal(response.status, 200)
-    // The fence received the exact authority the assignment returned, and its lists reach the daemon.
-    const seen = probe as typeof probe & { mcpAssigned?: unknown; fenceAuthorities?: unknown[] }
+    // The fence checked the authority the assignment returned (compared by value: its servers and
+    // grants), and the lists the fence read under lock, not the export's, reach the daemon.
+    const seen = probe as typeof probe & { mcpAssigned?: { servers: typeof server[] }; fenceAuthorities?: { servers: typeof server[] }[] }
     assert.ok(seen.mcpAssigned)
-    assert.equal(seen.fenceAuthorities?.length, 1)
-    assert.equal(seen.fenceAuthorities?.[0], seen.mcpAssigned)
+    assert.deepEqual(seen.fenceAuthorities, [seen.mcpAssigned])
+    assert.deepEqual(seen.fenceAuthorities?.[0].servers, [server])
     assert.deepEqual((await response.json()).mcp.servers, [{ ...probe.nativeMcpServers[0], disabledTools: [...locked] }])
     assert.equal(probe.run.status, 'preparing')
     assert.equal(probe.run.stopReason, null)
@@ -1078,6 +1079,22 @@ test('final response authorization rejects changed secret metadata, repository, 
     assert.deepEqual(probe.locks, ['workspaces', 'workspace_members', 'issues', 'agent_runs'])
     assert.deepEqual(probe.credentialOwners, ['member'])
     assert.equal(probe.secretSnapshotReads.length, change === 'revision' ? 1 : 0)
+    // The refused claim is never left `preparing`: the claim lookup only takes queued runs, and an
+    // open session keeps extending the lease. A changed read is requeued for the same device's next
+    // claim; a changed attempt or device token ends this lease.
+    const settled = probe as typeof probe & { requeued?: unknown[]; revokedTokens?: string[] }
+    if (change === 'revision' || change === 'repository') {
+      assert.equal(JSON.parse(wire).code, 'runRequeued', change)
+      assert.equal(probe.run.status, 'queued', change)
+      assert.equal(probe.run.leaseExpiresAt, null, change)
+      assert.equal(settled.requeued?.length, 1, change)
+      assert.deepEqual(settled.revokedTokens, ['run'], change)
+    } else {
+      assert.equal(probe.run.status, 'failed', change)
+      assert.equal(probe.run.stopReason, 'blocked', change)
+      assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_access_denied', change)
+      assert.equal(settled.requeued, undefined, change)
+    }
   }
 })
 
@@ -1096,7 +1113,12 @@ test('a changed valid frozen workspace identity cannot release a grant prepared 
     const wire = await response.text()
     assert.equal(wire.includes(canary), false)
     assert.deepEqual(probe.membershipReads, [[changed ? '53100000-0000-4000-8000-000000000099' : workspaceId, ['member']]], 'real execution identity revalidation reaches the valid workspace before the secret fence')
-    if (changed) assert.equal(wire.includes('mikka-egress-v1.'), false)
+    if (changed) {
+      assert.equal(wire.includes('mikka-egress-v1.'), false)
+      // Access itself changed: this claim's lease ends with a reason instead of staying leased.
+      assert.equal(probe.run.status, 'failed')
+      assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_access_denied')
+    }
     else assert.equal(openEgressCapability(JSON.parse(wire).taskSecrets.grants[0].capability).workspaceId, workspaceId)
     assert.deepEqual(probe.secretReads.map(args => args[0]), [workspaceId])
   }
@@ -1213,6 +1235,10 @@ test('the final Environment fence refuses changed metadata, removed references a
     for (const value of [canary, 'mikka-egress-v1.', probe.run.prompt, 'TASK_MODE']) assert.equal(wire.includes(value), false, change)
     assert.deepEqual(probe.secretReads, [])
     assert.equal(probe.environmentSnapshotReads.length, change === 'configuration-revision' ? 0 : 1)
+    // A fresh claim can still go ahead with the current Environment: the same device gets it back.
+    assert.equal(JSON.parse(wire).code, 'runRequeued', change)
+    assert.equal(probe.run.status, 'queued', change)
+    assert.equal(probe.run.leaseExpiresAt, null, change)
   }
 })
 
@@ -1254,6 +1280,8 @@ test('removing a frozen identity cannot release a grant prepared under its works
   assert.deepEqual(probe.secretSnapshotReads, [])
   assert.deepEqual(probe.membershipReads, [])
   assert.deepEqual(probe.locks, ['workspaces', 'workspace_members', 'issues', 'agent_runs'])
+  assert.equal(probe.run.status, 'failed')
+  assert.equal((probe.run as { failureDetails?: { code: string } }).failureDetails?.code, 'run_access_denied')
 })
 
 test('claim delivers resolved gitIdentity from cliPolicy and omits it when unset', async () => {
