@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3398 adds agent_runs."claimRequeues" integer NOT NULL DEFAULT 0 (every existing run reads 0); additive, no row is rewritten or deleted
 -- target: MIKKA_DATABASE_URL
 
 -- How many times a claim handed this run back to the queue because something it read
