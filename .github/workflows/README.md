@@ -159,12 +159,16 @@ product regression. Main pushes and merge groups continue normal full coverage.
   pull requests only, selected by trusted dependencies or their existing path filters; each can still be run
   by hand (`workflow_dispatch`). Production Web is promoted through the
   Cloudflare deployment workflow; Vercel publication was removed on 2026-11-17.
-- `publish-daemon.yml` uses daemon/package-input path filters.
+- `publish-daemon.yml` uses daemon/package-input path filters. A push publishes to the npm `next` dist-tag only; `latest` moves only when a promoter dispatches it with a successful `staged_run` whose daemon inputs match main.
   `desktop-release.yml` also watches the shared frontend, UI and API inputs.
   On a push it builds nothing and leaves a note in the run summary. The
-  installer is built when the Cloudflare deployment workflow's serving-release
-  observation shows current main, or from a dispatch carrying
-  `cloudflare_receipt`. A Markdown file under a
+  installer is built by itself only after an automatic `pipeline-production`
+  promotion that serves current main, or from a dispatch carrying
+  `cloudflare_receipt` (an owner `gateway-observe` or `pipeline-promote`
+  dispatch never starts it). While production promotion
+  is paused (private `deploy-pipeline.json` `autoProduction: false`), a promoter
+  (`config/release-promoters.json`) promotes with a `pipeline-promote` dispatch and then dispatches Desktop by
+  hand ([promotion switch](../../docs/operations/build-source-of-truth.md#production-promotion-switch)). A Markdown file under a
   watched directory still matches those release filters. Read the exact
   workflow paths before predicting release work.
 - The run-dispatch and Controlled Skill improvement suites run in the CI
@@ -197,6 +201,11 @@ product regression. Main pushes and merge groups continue normal full coverage.
   channel→branch mapping before publishing explicitly to that dedicated branch (never `production`), keeps
   private logs in `$RUNNER_TEMP`, and reports only public-safe update metadata (update group ID, runtime
   version, channel, branch, and resolved `mikka-hosted-ui` SHA).
+  It has three phases: `stage` (default) publishes only to the `next-staging` branch and uploads a stage
+  receipt; `publish` (a promoter) goes straight to `next` and needs private `mobileProduction: true`; `promote` lets a
+  promoter republish a promoter's successful stage run's update group to `next`. While mobile OTA is paused
+  (`mobileProduction: false`), only `stage` then a promoter's `promote` reach users
+  ([promotion switch](../../docs/operations/build-source-of-truth.md#mobile-ota-while-paused)).
 
 ## Cloud worker template release
 

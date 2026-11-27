@@ -7,8 +7,13 @@ export function releaseVersion(runNumber) {
   return `0.0.${Number(runNumber) + 1}`
 }
 
-export async function releasePlan({ packageName, version, sha, fetchRegistry = fetch }) {
+/** An automatic main push publishes to the `next` dist-tag only; installed daemons follow `latest`, which
+ * moves only when a promoter dispatches publish-daemon.yml for a staged build (scripts/release/daemon-promotion.mjs). */
+export const releaseChannel = value => value === 'latest' ? 'latest' : 'next'
+
+export async function releasePlan({ packageName, version, sha, channel = 'next', fetchRegistry = fetch }) {
   if (!/^[a-f0-9]{40}$/.test(sha ?? '')) throw new Error('Invalid release commit')
+  if (!['next', 'latest'].includes(channel)) throw new Error('Invalid release channel')
   const registry = `https://registry.npmjs.org/${encodeURIComponent(packageName)}`
   const read = async suffix => {
     const response = await fetchRegistry(`${registry}/${suffix}`, { signal: AbortSignal.timeout(10_000) })
@@ -21,10 +26,13 @@ export async function releasePlan({ packageName, version, sha, fetchRegistry = f
     if (existing.gitHead !== sha) throw new Error(`Published ${version} does not match release commit`)
     return { published: true, tag: '' }
   }
-  const latest = await read('latest')
+  const current = await read(channel)
   // shortcut: automated releases use 0.0.N; choose a new version line before changing that scheme.
-  if (latest && !/^0\.0\.(0|[1-9]\d*)$/.test(latest.version)) throw new Error('Unexpected npm latest version; review automatic version scheme')
-  return { published: false, tag: latest && Number(latest.version.split('.')[2]) > Number(version.split('.')[2]) ? `build-${version}` : 'latest' }
+  if (current && !/^0\.0\.(0|[1-9]\d*)$/.test(current.version)) throw new Error(`Unexpected npm ${channel} version; review automatic version scheme`)
+  const newer = current && Number(current.version.split('.')[2]) > Number(version.split('.')[2])
+  // A promotion never moves latest backwards; an older automatic build keeps its own tag.
+  if (newer && channel === 'latest') throw new Error('npm latest is newer than this promotion; refusing to downgrade')
+  return { published: false, tag: newer ? `build-${version}` : channel }
 }
 
 export async function verifyRelease(options, wait = delay) {
@@ -39,7 +47,8 @@ export async function verifyRelease(options, wait = delay) {
 
 if (process.argv[1] && await realpath(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const version = releaseVersion(process.env.GITHUB_RUN_NUMBER)
-  const options = { packageName: process.env.MIKKA_DAEMON_PACKAGE_NAME, version, sha: process.env.GITHUB_SHA }
+  const options = { packageName: process.env.MIKKA_DAEMON_PACKAGE_NAME, version, sha: process.env.GITHUB_SHA,
+    channel: releaseChannel(process.env.MIKKA_DAEMON_CHANNEL) }
   const plan = await (process.argv.includes('--verify') ? verifyRelease(options) : releasePlan(options))
   const manifestPath = new URL('../package.json', import.meta.url)
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
