@@ -13,6 +13,43 @@ import { advanceTaskAfterRunStart } from '@/lib/task-status-run-start'
 import { taskActivityChanged } from '@/lib/factory/activity-live'
 import { freeDeviceSlots } from '@/lib/device-capacity'
 
+/** A run whose claim keeps changing under it is ended after this many requeues, so a refused
+ * claim cannot cycle requeue → device wake → claim forever. */
+export const CLAIM_REQUEUE_LIMIT = 3
+
+/**
+ * Returns this claim's own still-preparing lease to the queue, for a claim whose final fence found
+ * that something it read during preparation changed (secrets, repository, environment) while the
+ * run can still go ahead. The claim lookup only takes `queued` runs and a connected device keeps
+ * extending a lease, so a refused claim must not stay `preparing`. Undoes only what a local claim
+ * wrote for this lease: its status and lease and its subscription pin; the run's tokens are
+ * revoked by the caller. A stop, a retry or another claim (another lease) is untouched
+ * ('unavailable'). It changes nothing and answers 'limit' after CLAIM_REQUEUE_LIMIT requeues, and
+ * 'receipted' for a run whose skill receipt (append-only, bound to this lease) already exists.
+ */
+export async function requeueLocalClaim(pool: Pool, claim: { runId: string; userId: string; deviceId: string; leaseExpiresAt: string }): Promise<'requeued' | 'limit' | 'receipted' | 'unavailable'> {
+  const client = await connectForCommitEffects(pool)
+  try {
+    await client.query('BEGIN')
+    const { rows: [run] } = await client.query<{ claimRequeues: number }>(`SELECT "claimRequeues" FROM agent_runs
+      WHERE id=$1 AND "userId"=$2 AND "deviceId"=$3 AND status='preparing' AND "leaseExpiresAt"=$4 AND "stopRequestedAt" IS NULL FOR UPDATE`,
+      [claim.runId, claim.userId, claim.deviceId, new Date(claim.leaseExpiresAt)])
+    if (!run || run.claimRequeues >= CLAIM_REQUEUE_LIMIT) { await client.query('ROLLBACK'); return run ? 'limit' : 'unavailable' }
+    // A skill receipt is append-only provenance bound to this claim's lease (one per run): a later
+    // claim could never record its own, so a run that has one cannot be requeued.
+    if ((await client.query('SELECT 1 FROM improvement_skill_receipts WHERE "runId"=$1', [claim.runId])).rowCount) { await client.query('ROLLBACK'); return 'receipted' }
+    await client.query(`UPDATE agent_runs SET status='queued',"startedAt"=NULL,"leaseExpiresAt"=NULL,"deviceTokenId"=NULL,
+      "claimRequeues"="claimRequeues"+1,"updatedAt"=now() WHERE id=$1`, [claim.runId])
+    // A later claim pins the subscription again; the pin is keyed by the run, so a kept row would
+    // refuse every later claim with a duplicate key.
+    await client.query('DELETE FROM byos_native_runs WHERE "runId"=$1', [claim.runId])
+    await runListChanged(client, claim.runId)
+    await runChanged(client, claim.runId)
+    await client.query('COMMIT')
+    return 'requeued'
+  } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+}
+
 async function lockDeviceCapacity(tx: PoolClient, deviceId: string) {
   await tx.query("SELECT pg_advisory_xact_lock(hashtextextended('device-capacity:' || $1::uuid::text,0))", [deviceId])
 }

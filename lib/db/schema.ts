@@ -578,6 +578,8 @@ export const agentRuns = pgTable('agent_runs', {
   leaseExpiresAt: timestamp('leaseExpiresAt', { withTimezone: true }),
   /** 1 for the first run; a retry after the device went offline counts up (lib/run-retry.ts). */
   attempt: integer('attempt').notNull().default(1),
+  /** Times a claim gave this run back to the queue because something it read changed before the claim response (lib/computer/claim.ts requeueLocalClaim). */
+  claimRequeues: integer('claimRequeues').notNull().default(0),
   /** The run this one retries, when its device went offline. */
   retryOf: uuid('retryOf').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
   /** The run of the same thread this one goes on from: a dispatch to a task whose thread had ended (lib/thread-dispatch.ts). */

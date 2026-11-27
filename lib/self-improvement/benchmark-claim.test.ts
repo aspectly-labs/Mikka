@@ -134,7 +134,8 @@ async function routeFixture(unavailable=false,stopped=false,modelDenied=false,is
     '@/lib/base-path':{withBasePath:(path:string)=>path},'@/lib/mcp/resource':{},
     // These HTTPS benchmark runs carry no API-key or credits model source.
     '@/lib/model-gateway/litellm-client':{},'@/lib/auth-config':{},'@/lib/loopback':{},
-    '@/lib/mcp/worker':{issueRunToken:async()=>{assert.equal(projectLease.active,true);calls.push('token');return {token:'synthetic-test-token'}}},
+    '@/lib/mcp/worker':{issueRunToken:async()=>{assert.equal(projectLease.active,true);calls.push('token');return {token:'synthetic-test-token'}},revokeRunTokens:async()=>{calls.push('revoke')}},
+    '@/lib/device-gateway-notify':{notifyDeviceWork:async()=>{}},
     // This fixture has no connected apps; retain the actual canonical MCP metadata.
     '@/lib/app-tools-server':{runAppToolkits:async()=>[]},
     '@/lib/run-leases':{failRunForDaemonUpgrade:async()=>{throw Error('The fixture advertises its supported claim protocol')},failQueuedSubscriptionRuntime:async()=>{throw Error('A benchmark without subscriptions must not fail a subscription runtime')}},'@/lib/daemon-release':{daemonTooOld:()=>false},'@/lib/run-retry':{},
