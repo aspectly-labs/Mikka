@@ -188,6 +188,50 @@ test('an exception message never carries a token or a path back to the user', ()
   assert.equal(message(undefined), 'Error')
 })
 
+test('an exception\'s message, frame file and function name carry a share or invitation path only as placeholders', () => {
+  const artifact = 'mks_Ab3dEf9hIjKlMnOpQrStUvWxYz012345'
+  const event = sanitizeAnalyticsEvent({ event: '$exception', properties: { $exception_list: [{
+    type: 'Error', value: `failed /a/${artifact} and https://app.aspectlylabs.com/mikka/en/threads/shared/mkt_${'Q1'.repeat(16)}?x=1 then GET /api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/ops`,
+    stacktrace: { frames: [
+      { in_app: true, filename: `https://app.aspectlylabs.com/mikka/a/${artifact}`, function: `load(/invite/${'ab'.repeat(32)})`, lineno: 1, colno: 2 },
+      { in_app: true, filename: 'https://app.aspectlylabs.com/mikka/assets/index-B3x9qZ1a.js', function: 'render', lineno: 10, colno: 20 },
+      { in_app: true, filename: `mikka://app/mikka/A/${artifact}`, function: 'f', lineno: 3, colno: 4 },
+    ] },
+  }] } })
+  const [entry] = event.properties.$exception_list
+  assert.equal(entry.value, 'failed /a/:token and https://app.aspectlylabs.com/mikka/en/threads/shared/:token then GET /api/workspaces/:id/ops')
+  assert.deepEqual(entry.stacktrace.frames.map(frame => [frame.filename, frame.function]), [
+    ['https://app.aspectlylabs.com/mikka/a/:token', 'load(/invite/:token)'],
+    ['https://app.aspectlylabs.com/mikka/assets/index-B3x9qZ1a.js', 'render'],
+    ['mikka://app/mikka/:token/:token', 'f'],
+  ])
+  assert.equal(JSON.stringify(event).includes(artifact), false)
+})
+
+test('a share page\'s word matches in any case, replay keeps the desktop origin, and a landing page is never a dynamic path', () => {
+  assert.equal(analyticsPath('/A/abcdefghij'), '/:token/:token')
+  assert.equal(analyticsPath('/Threads/Shared/abcdefghij'), '/:token/:token/:token')
+  assert.equal(analyticsPath('/en/INVITE/abcdefghij'), '/en/:token/:token')
+  assert.equal(redactReplayRequest({ name: 'mikka://app/mikka/a/mks_x?q=1' }).name, 'mikka://app/mikka/a/:token')
+  for (const path of ['/pricing', '/docs/getting-started']) assert.equal(safeLanding(path), path)
+  for (const path of ['/blog/post-2026', '/tasks/abc123', '/users/alice@example.com']) assert.equal(safeLanding(path), '/', path)
+})
+
+test('a megabyte route, URL or message is sanitized in bounded time', () => {
+  const huge = `/a/${'x'.repeat(1 << 20)}`
+  const deep = '/s'.repeat(1 << 19)
+  const started = performance.now()
+  for (const route of [huge, deep, `${'/settings'.repeat(100_000)}`]) {
+    const rum = sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route, lcp_ms: 1, flush_reason: 'pagehide' } })
+    assert.ok(rum.properties.route.length <= 160)
+    sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `https://app.aspectlylabs.com${route}` } })
+    sanitizeAnalyticsEvent({ event: '$exception', properties: { $exception_list: [{ type: 'Error', value: route, stacktrace: { frames: [{ in_app: true, filename: `https://x.test${route}`, function: route }] } }] } })
+    redactReplayRequest({ name: `https://app.aspectlylabs.com${route}` })
+  }
+  const elapsed = performance.now() - started
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`)
+})
+
 test('masked replay keeps only its transport payload and cannot mutate a person', () => {
   const payload = [{ type: 2, data: { node: { textContent: '***' } } }]
   const event = sanitizeAnalyticsEvent({ event: '$snapshot', properties: { $snapshot_data: payload, $snapshot_bytes: 10, $session_id: 'session', distinct_id: 'person', prompt: 'private', $current_url: 'https://example.com/?token=private' } })

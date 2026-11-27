@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DesktopTelemetry, type TelemetryConfig } from './telemetry'
+import { DesktopTelemetry, RENDERER_EVENT_BYTES, rendererEventWithinLimit, type TelemetryConfig } from './telemetry'
 import { bundledProtocol } from './bundled-protocol'
 import { RENDERER_URL } from './bundled-policy'
 
@@ -136,6 +136,27 @@ test('a shared artifact, shared thread or invitation page never sends its token'
   assert.deepEqual(events().filter(event => event.event === '$pageview').map(event => event.properties.$pathname), ['/mikka/a/:token', '/mikka/en/threads/shared/:token', '/mikka/organization-invite/:token', '/mikka/en/invite/:token'])
   assert.deepEqual(events().filter(event => event.event === 'frontend_web_vitals').map(event => event.properties.route), ['/mikka/a/:token', '/mikka/en/threads/shared/:token', '/mikka/organization-invite/:token', '/mikka/en/invite/:token'])
   for (const token of tokens) assert.equal(JSON.stringify(events()).includes(token), false)
+})
+
+test('a renderer event larger than the bridge allows is never read, and a megabyte route sanitizes in bounded time', async t => {
+  const route = `/a/${'x'.repeat(1 << 20)}`
+  assert.equal(rendererEventWithinLimit('frontend_web_vitals', { route, lcp_ms: 1 }), false)
+  assert.equal(rendererEventWithinLimit('frontend_web_vitals', { route: '/mikka', lcp_ms: 1 }), true)
+  assert.equal(rendererEventWithinLimit('$pageview', { pad: 'x'.repeat(RENDERER_EVENT_BYTES) }), false)
+  assert.equal(rendererEventWithinLimit('x'.repeat(101), {}), false)
+  const cyclic: Record<string, unknown> = {}
+  cyclic.self = cyclic
+  assert.equal(rendererEventWithinLimit('$pageview', cyclic), false)
+  // Main's own pass stays bounded even for what the bridge would refuse.
+  const { make, events } = await harness(t)
+  const telemetry = make()
+  const started = performance.now()
+  telemetry.capture('frontend_web_vitals', { route, lcp_ms: 1, flush_reason: 'pagehide' })
+  telemetry.capture('$pageview', { $current_url: `mikka://app${route}` })
+  await settle()
+  assert.ok(performance.now() - started < 1000, `took ${Math.round(performance.now() - started)} ms`)
+  await telemetry.flush()
+  assert.deepEqual(events().map(event => event.event === '$pageview' ? event.properties.$pathname : event.properties.route), ['/a/:token', '/a/:token'])
 })
 
 test('a path the renderer already sanitized comes out of main unchanged', async t => {

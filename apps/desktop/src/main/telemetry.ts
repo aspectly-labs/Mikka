@@ -48,6 +48,20 @@ const REPORT_LIMIT = 200
  * Counted apart from main's reports, so it cannot crowd them out. */
 const RENDERER_EVENT_LIMIT = 500
 const REPORT_LIMIT_WINDOW_MS = 60 * 60_000
+/** The largest renderer event main reads at all: a real one (an exception with
+ * its frames) is a few kilobytes. Anything larger is dropped before any parsing
+ * or sanitizing, so a hostile page cannot stall main with a huge payload. */
+export const RENDERER_EVENT_BYTES = 64 * 1024
+
+/** Whether a renderer event is small enough to look at: a short name and properties that serialize within RENDERER_EVENT_BYTES. */
+export function rendererEventWithinLimit(event: unknown, properties: unknown): boolean {
+  if (typeof event !== 'string' || event.length > 100) return false
+  if (properties === undefined) return true
+  try {
+    const serialized = JSON.stringify(properties)
+    return serialized === undefined || serialized.length <= RENDERER_EVENT_BYTES
+  } catch { return false }
+}
 
 /**
  * Desktop error reports carry the error's class, never its message (the

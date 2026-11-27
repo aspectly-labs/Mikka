@@ -4,7 +4,7 @@ import type { BundledAuth } from './bundled-auth'
 import type { BundledLive } from './bundled-live'
 import type { BundledViewer } from './bundled-viewer'
 import type { BundledServers } from './bundled-servers'
-import type { DesktopTelemetry } from './telemetry'
+import { rendererEventWithinLimit, type DesktopTelemetry } from './telemetry'
 import { RENDERER_URL } from './bundled-policy'
 import { trustedIpcSender } from './security'
 
@@ -49,7 +49,8 @@ export function registerBundledBridge(auth: BundledAuth, live: BundledLive, view
     handle(BUNDLED_IPC.telemetrySet, (_owner, enabled) => telemetry.setEnabled(enabled as boolean))
     // One-way: nothing about the send comes back to the page.
     ipcMain.on(BUNDLED_IPC.telemetryCapture, (event, name: unknown, properties: unknown) => {
-      if (trustedIpcSender(event.senderFrame, RENDERER_URL)) telemetry.capture(name, properties)
+      // The size is checked before anything reads the event (telemetry.ts).
+      if (trustedIpcSender(event.senderFrame, RENDERER_URL) && rendererEventWithinLimit(name, properties)) telemetry.capture(name, properties)
     })
   }
   if (!servers) return
