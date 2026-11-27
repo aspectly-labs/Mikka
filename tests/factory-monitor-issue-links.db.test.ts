@@ -193,17 +193,8 @@ test('monitor mappings use actual owner/scope authorization, GitHub readback and
     const workspaceId=await seedFixtureWorkspace(pool,owner,'team')
     const {rows:[team]}=await pool.query('INSERT INTO linear_team_syncs(id,"ownerId","linearTeamId","linearTeamKey","linearTeamName","workspaceId") VALUES($1,$2,$3,\'MAP\',\'Monitor fixture\',$4) RETURNING *',[teamSyncId,owner,linearTeamId,workspaceId])
     await pool.query('INSERT INTO linear_connections("userId","linearUserId","organizationId","organizationName","accessToken","refreshToken","expiresAt") VALUES($1,\'fixture\',\'fixture\',\'Fixture\',$2,$3,now()+interval \'1 day\')',[owner,seal(randomUUID()),seal(randomUUID())])
-    const {createAppIssueFromLinear}=await import('../lib/linear-sync/issue-sync')
-    const {withDatabaseClient}=await import('../lib/db')
-    let localIssueId:string
-    const tx=await pool.connect()
-    try{
-      const imported=await withDatabaseClient(tx,()=>createAppIssueFromLinear(team,{id:remoteId,identifier:'MAP-195',title:'Monitored bug',description:'',dueDate:null,priority:0,url:'https://linear.app/fixture/issue/MAP-195',updatedAt:new Date().toISOString(),state:null,team:{id:linearTeamId,key:'MAP',name:'Fixture'},assignee:null,labels:[]}))
-      assert.ok(imported)
-      localIssueId=imported.id
-      assert.notEqual(localIssueId,remoteId,'provider IDs remain distinct from local issue IDs')
-      assert.equal(imported.workspaceId,workspaceId)
-    }finally{tx.release()}
+    const { historicalLinearTask } = await import('./helpers/historical-linear-task')
+    const { id: localIssueId } = await historicalLinearTask(pool, owner, workspaceId, team.id, remoteId, 'MAP-195', 'Monitored bug')
     const f=await seed(false,{id:localIssueId!,workspaceKey:`linear-team:${teamSyncId}`,workspaceId})
     const response=await call(f.incidentId,'POST',{url:urlFor(9)})
     assert.equal(response.status,200)

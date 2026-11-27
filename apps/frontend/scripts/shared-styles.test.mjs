@@ -51,8 +51,12 @@ test('the shipped stylesheet keeps its color and type tokens', { skip: needsOffi
   }
 })
 
+// The checkout's colours are spelled once, in its styles/tokens.css (core/renderer/styles.css imports it right after
+// core/app/globals.css, whose values name them); the shipped colours are the two together.
+const tokensCss = () => readFile(join(officialUi.dir, 'styles/tokens.css'), 'utf8').catch(() => '')
+
 test('the shipped stylesheet guards its lab() colors behind a support query', { skip: needsOfficialUi }, async () => {
-  const output = await compileThroughSharedStyles(await css())
+  const output = await compileThroughSharedStyles(`${await css()}\n${await tokensCss()}`)
   assert.ok(
     output.includes('@supports (color:lab(0% 0 0))'),
     'lab() colors only apply where the browser supports them',

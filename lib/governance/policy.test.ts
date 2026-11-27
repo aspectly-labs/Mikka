@@ -14,6 +14,7 @@ import {
   WORKSPACE_CAPABILITY_OWNERS,
   csvCell,
   resolveEntitlements,
+  resolvePlanFromGrants,
   resolveWorkspaceCapabilities,
   seatAdmissionAllowed,
   workspaceCapabilitiesSchema,
@@ -72,6 +73,10 @@ test('Stripe projection combines with operator grants, expires independently, an
   assert.equal(resolveEntitlements({ mode: 'cloud', kind: 'team', grant: billing, now: future }).hostedMaxInFlight, 8)
   assert.equal(resolveEntitlements({ mode: 'selfhost', kind: 'team', grant: billing, now }).hostedMaxInFlight, 8)
   assert.equal(resolveEntitlements({ mode: 'cloud', kind: 'personal', grant: billing, now }).hostedMaxInFlight, 8)
+  assert.equal(resolvePlanFromGrants({ mode: 'cloud', grant: billing, now }), 'pro')
+  assert.equal(resolvePlanFromGrants({ mode: 'cloud', grant: { ...billing, billingExpiresAt: null }, now }), 'free')
+  assert.equal(resolvePlanFromGrants({ mode: 'cloud', grant: billing, now: future }), 'free')
+  assert.equal(resolvePlanFromGrants({ mode: 'selfhost', grant: billing, now }), 'free')
   assert.equal(resolveEntitlements({ mode: 'cloud', kind: 'team', grants: [billing, { ...billing, plan: 'enterprise', billingPlan: 'free' }], now }).hostedMaxInFlight, 128)
 })
 
@@ -307,4 +312,3 @@ test('readGovernanceLease applies active planEntitlementOverrides from runtime-c
     else process.env.NODE_ENV = previousNodeEnv
   }
 })
-

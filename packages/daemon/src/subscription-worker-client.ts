@@ -30,8 +30,8 @@ export interface WorkerConfiguration {
   retainEnrollmentSources?: boolean
   use?: { bindingId: string; consumerId: string; runId?: string }
   executionOnly?: boolean
-  /** The worker may export one live run's access lease (never the refresh grant) for a device runner. */
-  exportAccessLease?: boolean
+  nativeLiteLlmUrl?: string
+  nativeLiteLlmKey?: string
   enableCodexOAuth?: boolean
   enableRuntime?: boolean
   enablePlainModels?: boolean
@@ -64,6 +64,8 @@ const REQUEST_FAILURE = new RegExp('^subscription_request_failure (claude|codex|
   `stream (stream_unavailable|chunk_too_large) ${REQUEST_BYTES} (0|65536))$`)
 const safeCode = (value: unknown) => typeof value === "string" && /^[a-z_]{1,64}$/.test(value) ? value : "subscription_worker_unavailable"
 
+type NativeResponseHead = { contentType: string; generationId?: string }
+
 type WorkerIdentity = { workloadToken?: string; accessToken?: string; accessSnapshot?: WorkerConfiguration['accessSnapshot'] }
 type StreamIdentity = { accessSnapshot: NonNullable<WorkerConfiguration['accessSnapshot']> }
 type StreamIdentityResolver = (signal?: AbortSignal, use?: WorkerConfiguration['use'], revision?: unknown) => Promise<StreamIdentity | null>
@@ -74,7 +76,7 @@ export class SubscriptionWorkerClient {
     return new SubscriptionWorkerClient(this.launch, { ...this.config, use: { bindingId: use.bindingId, consumerId: use.consumerId, ...(use.runId ? {runId:use.runId} : {}) } }, this.resolveIdentity, this.resolveStreamIdentity)
   }
 
-  private start(request: Record<string, unknown>, signal?: AbortSignal, chunk?: (value: string) => void, head?: (value: { contentType: string }) => void, binary?: (value: Uint8Array) => void, streamIdentity?: StreamIdentity) {
+  private start(request: Record<string, unknown>, signal?: AbortSignal, chunk?: (value: string) => void, head?: (value: NativeResponseHead) => void, binary?: (value: Uint8Array) => void, streamIdentity?: StreamIdentity) {
     if (signal?.aborted) throw new WorkerRefusal("subscription_cancelled")
     const id = randomUUID()
     const timing = currentSubscriptionTiming()?.startWorker(request.method)
@@ -122,7 +124,12 @@ export class SubscriptionWorkerClient {
         try {
           const frame = JSON.parse(line)
           if (frame.id !== id) return finish(new WorkerRefusal())
-          if (frame.head && head && (frame.head.contentType === 'text/event-stream' || frame.head.contentType === 'application/json')) head(frame.head)
+          if (frame.head && head && (frame.head.contentType === 'text/event-stream' || frame.head.contentType === 'application/json')) {
+            const generationId = typeof frame.head.generationId === 'string'
+              && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(frame.head.generationId)
+              ? frame.head.generationId : undefined
+            head({ contentType: frame.head.contentType, generationId })
+          }
           else if (typeof frame.binaryChunk === 'string' && binary) {
             const value = Buffer.from(frame.binaryChunk, 'base64')
             if (value.toString('base64') !== frame.binaryChunk) throw new WorkerRefusal()
@@ -174,11 +181,11 @@ export class SubscriptionWorkerClient {
   async call<T>(method: "status" | "oauthStart" | "oauthResume" | "oauthComplete" | "oauthPoll" | "oauthHandoff" | "refresh" | "recover" | "disconnect" | "clone" | "nativeAuth" | "nativeContext" | "prepare" | "prepareStream" | "quota" | "usage" | "allowance" | "models" | "cleanup", input: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
     return await this.start({ ...input, method }, signal).result as T
   }
-  async nativeRequest(revision: number, payload: {path: string; headers: Record<string, string>; body: unknown}, signal?: AbortSignal): Promise<{contentType: string; body: ReadableStream<Uint8Array>}> {
+  async nativeRequest(revision: number, payload: {path: string; headers: Record<string, string>; body: unknown}, signal?: AbortSignal): Promise<NativeResponseHead & {body: ReadableStream<Uint8Array>}> {
     await this.call('prepare', { revision }, signal)
-    let resolveHead!: (head: {contentType: string}) => void
+    let resolveHead!: (head: NativeResponseHead) => void
     let rejectHead!: (error: Error) => void
-    const ready = new Promise<{contentType: string}>((resolve, reject) => { resolveHead = resolve; rejectHead = reject })
+    const ready = new Promise<NativeResponseHead>((resolve, reject) => { resolveHead = resolve; rejectHead = reject })
     let closed = false
     let receivedHead = false
     let stop: (() => void) | undefined

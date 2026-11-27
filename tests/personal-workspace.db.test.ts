@@ -31,7 +31,7 @@ test('personal workspaces', { skip: !dbUrl }, async t => {
     const scoped = new Pool({ connectionString: dbUrl, options: `-c search_path=${schema}`, max: 1 })
     try {
       // The tables as they were before the migration, with existing rows.
-      await scoped.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, "userId" text NOT NULL, name varchar(120) NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
+      await scoped.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, "userId" text NOT NULL, name varchar(120) NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now(), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
         CREATE TABLE mikka_workspace_members ("workspaceId" uuid NOT NULL, "userId" text NOT NULL, status text NOT NULL DEFAULT 'active', PRIMARY KEY ("workspaceId","userId"));
         CREATE TABLE mikka_workspace_invitations (id uuid PRIMARY KEY, "workspaceId" uuid NOT NULL, status text NOT NULL)`)
       const seed = async (user: string, id: string, members: Array<[string, string]>, invite = false) => {

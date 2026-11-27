@@ -50,14 +50,14 @@ test('tool arguments and cancellation signal reach the authorized product servic
   assert.equal(response.headers.get('cache-control'), 'private, no-store')
 })
 
-test('approval review and native resumption use separate strict host operations', async () => {
+test('review and execution use separate strict host operations; an older responder field is accepted and ignored', async () => {
   const responder = { authenticator: 'mikka', principalType: 'user', principalId: scope.ownerId,
     attributes: { botId: scope.botId, workspaceId: scope.workspaceId, surface: scope.surface } }
   const seen: unknown[] = []
   const services: EveProductGatewayServices = { authorize: async () => scope, assertSession: async () => {}, run: async (_scope, input, _signal, request) => {
     assert.equal(request.headers.get('authorization'), 'Bearer trusted-service-fixture')
     seen.push(input)
-    return input.operation === 'approval' ? { status: 'user-approval' } : { output: 'sent' }
+    return input.operation === 'approval' ? { status: 'not-applicable' } : { output: 'sent' }
   } }
   for (const value of [{ ...body, operation: 'approval' }, { ...body, approvalResponder: responder }]) {
     const req = request(value)

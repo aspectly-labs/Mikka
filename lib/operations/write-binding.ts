@@ -11,6 +11,8 @@ export const sourceSlotSchema = z.object({
 export const writeBindingSchema = z.object({
   accountId: z.string().min(1), version: z.string().min(1), provider: z.string().min(1),
   payloadDigest: hash, contextDigest: hash, source: sourceSlotSchema.optional(),
+  // `decision: 'ask'` and `approvalDefault` only parse receipts stored before
+  // ADR 2026-11-27-1615; every new receipt is a direct `allow`.
   run: z.object({ runId: z.uuid(), botId: z.uuid().nullable(), workspaceId: z.uuid().nullable(), policyVersion: writePolicyVersion, decision: z.enum(['allow', 'ask']), approvalDefault: z.enum(['allow', 'ask']).optional() }).strict().optional(),
 }).strict().refine(({ source, ...binding }) => !source || source.slotDigest === snapshotDigest(binding), 'host slot selection changed')
 

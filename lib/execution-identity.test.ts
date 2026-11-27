@@ -145,11 +145,26 @@ test('handoff reauthorizes a same-owner destination without refreshing withdrawn
   await assert.rejects(() => rebindExecutionDevice(f.query, f.run, id(5), f.query), ExecutionIdentityError)
 })
 
-test('E2B billing remains the requester\'s own external account and deletion denies execution', async () => {
+test('a self-hosted E2B run keeps the requester\'s account and deletion denies execution', async t => {
+  const saved = { edition: process.env.MIKKA_EDITION, key: process.env.E2B_API_KEY }
+  process.env.MIKKA_EDITION = 'community'
+  delete process.env.E2B_API_KEY
+  t.after(() => {
+    if (saved.edition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = saved.edition
+    if (saved.key === undefined) delete process.env.E2B_API_KEY
+    else process.env.E2B_API_KEY = saved.key
+  })
   const f = fixture(); f.state.kind = 'cloud'; const identity = await f.freeze()
   assert.deepEqual(identity.billingAccount.runtime, { kind: 'e2b', ownerId: 'requester', resourceId: 'requester', amount: 'provider_unknown' })
   f.state.e2b = false
   await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError)
+  process.env.MIKKA_EDITION = 'cloud'
+  f.state.e2b = true
+  await assert.rejects(() => f.freeze(), ExecutionIdentityError, 'a personal key cannot authorize hosted E2B')
+  f.state.e2b = false
+  process.env.E2B_API_KEY = 'synthetic-managed-e2b-key'
+  assert.equal((await f.freeze()).billingAccount.runtime.kind, 'e2b')
 })
 
 test('historical runs remain unattributed instead of fabricating current owners as past payers', async () => {

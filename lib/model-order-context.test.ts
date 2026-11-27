@@ -70,6 +70,8 @@ function fixture(allowed: boolean, ownerId = 'owner-a') {
         if (state.failCount) throw failure
         return { rows: [{ id: connectionId }] }
       }
+      // Settings › Models adapts each candidate's level and speed controls (lib/model-capabilities-server.ts).
+      if (sql.startsWith('SELECT id::text AS id, epoch::text AS epoch, "modelCatalog"->>\'revision\'')) return { rows: [] }
       throw new Error(`unexpected fixture query: ${sql}`)
     },
   }
@@ -78,19 +80,26 @@ function fixture(allowed: boolean, ownerId = 'owner-a') {
 
 const devices: PoolDevice[] = []
 let orderView: typeof import('./model-order').orderView
+let personalRunDefaults: typeof import('./model-order').personalRunDefaults
 before(async () => {
   mock.method(globalThis, 'fetch', unused)
-  ;({ orderView } = await import('./model-order'))
+  ;({ orderView, personalRunDefaults } = await import('./model-order'))
 })
 const queryType = (query: FixtureQuery) => query as unknown as Parameters<typeof orderView>[0]
 // The old implementation accepts and ignores a fourth JS argument, so this
 // regression demonstrates the real redundant reads before the overload exists.
 const context = (query: FixtureQuery) => Reflect.apply(orderView, undefined, [queryType(query), query.scope, async () => devices, 'context']) as Promise<Partial<OrderView>>
-const fields = (view: Partial<OrderView>) => ({ location: view.location, preferredHarness: view.preferredHarness, entries: view.entries, candidates: view.candidates, cloudReady: view.cloudReady, cloudModels: view.cloudModels })
+// Settings' per-model controls (capabilities) are not part of the prompt's projection.
+const fields = (view: Partial<OrderView>) => ({ location: view.location, preferredHarness: view.preferredHarness, entries: view.entries, candidates: view.candidates?.map(({ capabilities: _controls, ...candidate }) => candidate), cloudReady: view.cloudReady, cloudModels: view.cloudModels })
 
 for (const allowed of [false, true]) test(`prompt projection skips only unused credential counts when sharing is ${allowed}`, async t => {
   const fullQuery = fixture(allowed), promptQuery = fixture(allowed)
   const full = await orderView(queryType(fullQuery), fullQuery.scope, async () => devices)
+  // The capability read serves Settings' controls only; the prompt never needs it.
+  const capabilityRead = (row: { sql: string }) => row.sql.includes('"effortSupport"')
+  assert.equal(fullQuery.trace.filter(capabilityRead).length, 1)
+  assert.equal(promptQuery.trace.some(capabilityRead), false)
+  fullQuery.trace.splice(0, fullQuery.trace.length, ...fullQuery.trace.filter(row => !capabilityRead(row)))
   const prompt = await context(promptQuery)
   // The full view counts connected subscriptions and the usable key rows (the
   // person's own and the workspace's, one read since decision 2026-11-27-1740).
@@ -129,4 +138,21 @@ test('new prompt reads observe paused credentials and keep concurrent owners sep
   const next = await context(alice)
   assert.equal(one.entries?.find(row => row.source.kind === 'subscription')?.block?.reason, 'noDevice')
   assert.equal(next.entries?.find(row => row.source.kind === 'subscription')?.block?.reason, 'paused')
+})
+
+test('a new Bot starts from the person\'s own run location and effort in this workspace', async () => {
+  const scope = { ownerId: 'owner-defaults', workspaceId: 'workspace-defaults' }
+  const reads: unknown[][] = []
+  const settings = (row: Record<string, unknown> | undefined) => ({ async query(sql: string, args: unknown[] = []) {
+    assert.match(sql, /FROM model_order_settings WHERE "ownerId"=\$1 AND "workspaceId"=\$2/)
+    reads.push(args)
+    return { rows: row ? [row] : [] }
+  } })
+  const stored = { location: 'local', customized: true, preferredHarness: 'codex', autoModelRouting: false, defaultEffort: 'high', defaultServiceTier: 'fast' }
+  assert.deepEqual(await personalRunDefaults(settings(stored) as never, scope), { location: 'local', effort: 'high' })
+  // No settings row yet: the dispatcher's defaults, never an empty 「默认」.
+  assert.deepEqual(await personalRunDefaults(settings(undefined) as never, scope), { location: 'cloud', effort: 'medium' })
+  // A stored effort the dispatcher does not know reads as medium.
+  assert.deepEqual(await personalRunDefaults(settings({ ...stored, defaultEffort: 'ludicrous' }) as never, scope), { location: 'local', effort: 'medium' })
+  assert.deepEqual(reads, [[scope.ownerId, scope.workspaceId], [scope.ownerId, scope.workspaceId], [scope.ownerId, scope.workspaceId]])
 })

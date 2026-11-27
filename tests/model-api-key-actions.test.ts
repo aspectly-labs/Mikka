@@ -22,6 +22,7 @@ mock.module('@/lib/model-api-keys', { namedExports: {
   updateApiKey: async (_pool: unknown, owner: unknown) => { calls.push({ name: 'update', owner }) },
   removeApiKey: async (_pool: unknown, owner: unknown) => { calls.push({ name: 'remove', owner }); return { removed: true } },
   refreshApiKeyModels: async (_pool: unknown, owner: unknown) => { calls.push({ name: 'refresh', owner }) },
+  refreshApiKeyDaybreak: async (_pool: unknown, owner: unknown) => { calls.push({ name: 'daybreak', owner }); return { access: { granted: [] }, key: {} } },
   setApiKeyFeatures: async (_pool: unknown, owner: unknown) => { calls.push({ name: 'features', owner }) },
   setApiKeyAfterQuota: async () => {},
   apiKeyOwnerOf: async (_pool: unknown, id: string) => id === workspaceKeyId ? { ownerId: null, workspaceId: team.id } : id === ownKeyId ? { ownerId: 'alice', workspaceId: null } : null,

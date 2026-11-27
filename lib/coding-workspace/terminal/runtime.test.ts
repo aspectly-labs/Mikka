@@ -49,7 +49,19 @@ const state = {
   },
 }
 
+// This control-plane fixture uses its own E2B key. Hosted reservations use
+// the split-pool billing fixture.
+process.env.MIKKA_EDITION = 'community'
+
+mock.module('../../secrets/e2b-resource', { namedExports: {
+  e2bResourceAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+  e2bCreateAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+  bindE2BResource: async () => {},
+} })
 mock.module('../../secrets/e2b-runtime', { namedExports: {
+  environmentSnapshotScope: () => 'team:test',
+  computerTemplate: () => 'desktop',
+  sandboxKeyOwner: async () => 'fixture-owner',
   e2bApiKey: async () => LOCAL_E2B_KEY,
   withE2BErrors: async (_owner: string, _creating: boolean, run: () => Promise<unknown>) => run(),
 } })
@@ -153,7 +165,7 @@ test('initial preparation installs one immutable root gateway using a derived ke
   const f = await fixture(); state.present = false
   const prepared = await prepareTerminal(f.scope)
   assert.equal(prepared.boot, state.boot)
-  assert.equal(state.connects, 1)
+  assert.equal(state.connects, 0)
   assert.equal(state.writes.length, 2)
   assert.match(state.writes[0]!.path, /gateway-[a-f0-9]{64}\.py$/)
   assert.equal(state.writes[1]!.path, '/run/mikka-terminal/key')
@@ -170,7 +182,7 @@ test('a forged health/version receipt cannot authorize a user-owned listener', a
   const f = await fixture(); state.validProof = false
   await assert.rejects(existingTerminal(f.scope), (error: unknown) => error instanceof TerminalError && error.code === 'terminal_ended')
   await assert.rejects(prepareTerminal(f.scope), (error: unknown) => error instanceof TerminalError && error.code === 'terminal_unsupported')
-  assert.equal(state.connects, 1)
+  assert.equal(state.connects, 0)
 })
 
 test('local devices, active Agents, destroyed machines and old gateway versions fail closed', async () => {
@@ -186,7 +198,7 @@ test('local devices, active Agents, destroyed machines and old gateway versions 
   const upgraded = await prepareTerminal(f.scope)
   assert.equal(upgraded.boot, state.boot)
   assert.ok(state.commands.some(command => command.startsWith('pkill -f ')))
-  assert.equal(state.connects, 1)
+  assert.equal(state.connects, 0)
 })
 
 test('revocation never wakes a paused VM and only acknowledges a proven expired or destroyed machine', async () => {

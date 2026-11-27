@@ -82,7 +82,7 @@ export const cliPolicyValuesSchema = z.strictObject({ permissions: storedPermiss
 export const cliPolicyLayerSchema = cliPolicyValuesSchema.extend({ defaults: cliPolicyValuesSchema.optional() })
 type CliPolicyValues = z.infer<typeof cliPolicyValuesSchema>
 // Defaults replace scalar/list fields; permission choices inherit per action.
-const mergeCliPolicyValues = (base: CliPolicyValues, next: CliPolicyValues): CliPolicyValues => ({ ...base, ...next, ...(next.permissions ? { permissions: { ...base.permissions, ...next.permissions } } : {}) })
+export const mergeCliPolicyValues = (base: CliPolicyValues, next: CliPolicyValues): CliPolicyValues => ({ ...base, ...next, ...(next.permissions ? { permissions: { ...base.permissions, ...next.permissions } } : {}) })
 const rank = { deny: 0, ask: 1, allow: 2 } as const
 /** Caller identity is authenticated by the host. Workspace membership is
  * separately pinned by cliAgentPolicyGuard through transaction commit. */

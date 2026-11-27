@@ -13,9 +13,8 @@ export const THREAD_MACHINE_LIFETIME_MS = 12 * 60 * 60_000
  * at the machine's next real deadline, not every 30 s (#1212). The Workflow
  * clock is durable event time, so the cap survives replays.
  */
-export async function maintainUntilCap(actor: { userId: string; workspaceId: string }, runId: string, stillOwns?: () => Promise<boolean>) {
+export async function maintainUntilCap(actor: { userId: string; workspaceId: string }, runId: string, stillOwns?: () => Promise<boolean>, until = workflowWakes(wakeTokens.threadMachine(runId))) {
   const capAt = Date.now() + THREAD_MACHINE_LIFETIME_MS
-  const until = workflowWakes(wakeTokens.threadMachine(runId))
   while (Date.now() < capAt) {
     if (stillOwns && !await stillOwns()) return
     const next = await maintainThreadMachine(actor, runId)

@@ -86,6 +86,8 @@ function fixture() {
       kind = 'key_state'; rows = keys.filter(row => (params[0] as string[]).includes(row.id) && (params[1] as string[]).includes(row.ownerId ?? row.workspaceId!) && mayUseKey(row))
     } else if (sql.includes('WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid)')) {
       kind = 'usable_keys'; rows = keys.filter(row => (row.ownerId === params[0] || row.workspaceId === params[1]) && (params.length === 2 || row.id === params[2]))
+    } else if (sql.includes('FROM bot_model_choices c')) {
+      kind = 'daybreak_choice'; rows = []
     } else assert.fail(`Unrecognized query: ${sql}`)
     calls.push({ kind, params: structuredClone(params), rows: rows.length })
     return { rows, rowCount: rows.length }

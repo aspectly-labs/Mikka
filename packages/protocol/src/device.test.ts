@@ -133,6 +133,19 @@ describe("device link schemas", () => {
     expect(runAssignmentSchema.safeParse({ ...base, subscriptionBinding, modelCredential: provider }).success).toBe(false)
   })
 
+  it("accepts a run-bound gateway credential with matching subscription metadata", () => {
+    const subscriptionBinding = { bindingId: "00000000-0000-4000-8000-000000000001", ownerId: "o", workspaceId: "00000000-0000-4000-8000-000000000002", consumerId: "00000000-0000-4000-8000-000000000003", route: "claude_code_cli" }
+    const subscriptionContext = { route: "claude_code_cli", modelId: "m", revision: 1, accountId: "fixture", expiresAt: "2030-01-01T00:00:00.000Z" }
+    const modelCredential = { kind: "provider", protocol: "anthropic", baseUrl: "https://mikka.test/api/model-gateway/anthropic", key: "mkg_" + "g".repeat(43) }
+    const base = { runId: "r1", issueId: "i1", deviceId: "d1", repoId: "repo", harness: "claude_code", prompt: "p", subscriptionBinding, subscriptionContext }
+    expect(runAssignmentSchema.parse({ ...base, modelCredential }).modelCredential).toEqual(modelCredential)
+    expect(runAssignmentSchema.safeParse(base).success).toBe(false)
+    expect(runAssignmentSchema.safeParse({ ...base, modelCredential, subscriptionContext: undefined }).success).toBe(false)
+    expect(runAssignmentSchema.safeParse({ ...base, modelCredential: { ...modelCredential, key: "provider-credential" } }).success).toBe(false)
+    expect(runAssignmentSchema.safeParse({ ...base, modelCredential: { ...modelCredential, baseUrl: "https://mikka.test/v1" } }).success).toBe(false)
+    expect(runAssignmentSchema.safeParse({ ...base, modelCredential, subscriptionLease: { ...subscriptionContext, accessToken: "legacy" } }).success).toBe(false)
+  })
+
   it("accepts a prepared subscription lease only with its matching native harness and binding", () => {
     const subscriptionBinding = { bindingId: "00000000-0000-4000-8000-000000000001", ownerId: "o", workspaceId: "00000000-0000-4000-8000-000000000002", consumerId: "00000000-0000-4000-8000-000000000003", route: "claude_code_cli" }
     const subscriptionLease = { route: "claude_code_cli", modelId: "claude-haiku-5-5", revision: 1, accountId: "fixture", expiresAt: "2026-11-06T21:00:00.000Z", accessToken: "fixture-access" }

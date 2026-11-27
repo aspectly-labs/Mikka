@@ -110,7 +110,7 @@
 - 用户任务：把任务交给（或改交给/取消交给）某个 Agent、Bot 或 Profile
 - 命令：`updateIssueMetadata({delegate})`
 - 分类：`missing-affordance` · 层：`both`
-- 承诺入口：任务页 “Handed to / 委派给” 行（components/workspace/task-detail-frame.tsx:260）；R-60 要求把任务交给 bot 后在负责人下方单独一行显示（docs/design/rules.md:214-216）；.hosted-ui/evidence/2212-action-coverage/task-project.json:746-754 的 CD17 声称有 “Agent delegate picker”
+- 承诺入口：任务页 “Handed to / 委派给” 行（components/workspace/task-detail-frame.tsx:260）；R-60 要求把任务交给 bot 后在负责人下方单独一行显示（mikka-hosted-ui/docs/design/rules.md:214-216）；.hosted-ui/evidence/2212-action-coverage/task-project.json:746-754 的 CD17 声称有 “Agent delegate picker”
 - 实际路径：该行只有 value，没有 menu/onClick，hosted 渲染为静态 span（.hosted-ui/slots/task-detail.tsx:628-632）；负责人选择器只列 active members（components/workspace/issue-assignee-menu.tsx:37-40；app/actions/issue-metadata.ts:26 注释 “R-60 keeps the UI human-only”）；全仓没有任何组件调用 persist({delegate})。delegate 只在派发时由 lib/dispatch-delegate.ts:49 自动写入一次。
 - 建议修复：在任务页增加 delegate 选择器（Bot/Profile/Agent，数据可由 getIssuePropertyOptions 扩展），或在现有 “Handed to” 行上挂菜单，调用 updateIssueMetadata({delegate}) 并支持 null 清除；否则删除该只读行与 CD17 的 picker 声明。
 

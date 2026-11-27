@@ -50,6 +50,7 @@ const handleGET = defineRoute(
       }
       if (due.pushReceipts) counts.pushReceiptCounts = await (await import('@/lib/mobile-push-delivery')).recoverPhonePushReceipts()
       if (due.workspaceEphemera) counts.workspaceCleanup = await (await import('@/lib/coding-workspace/retention')).cleanupWorkspaceEphemera(pool)
+      if (due.writeReceipts) counts.writeReceipts = await (await import('@/lib/operations/write-receipt-sweep')).sweepWriteReceipts(pool)
       return Response.json(counts, { headers })
     }
     catch { return Response.json({ error: 'reconcileFailed' }, { status: 502, headers }) }

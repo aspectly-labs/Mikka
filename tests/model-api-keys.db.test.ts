@@ -36,7 +36,7 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
       CREATE TABLE byos_connections (id uuid PRIMARY KEY, "ownerId" text, "workspaceId" text, "removedAt" timestamptz, "modelCatalog" jsonb);
       CREATE TABLE byos_bindings ("connectionId" uuid, "modelId" text);
       CREATE TABLE bots (id uuid PRIMARY KEY, "workspaceId" uuid NOT NULL, "ownerId" text);
-      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,kind text NOT NULL CHECK (kind IN ('personal','team')));
+      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,kind text NOT NULL CHECK (kind IN ('personal','team')), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,status text);
       CREATE TABLE bot_model_choices ("ownerId" text NOT NULL, "workspaceId" uuid NOT NULL, "botKey" text NOT NULL, "bindingId" uuid, PRIMARY KEY ("ownerId","workspaceId","botKey"));
       CREATE TABLE agent_runs (id uuid PRIMARY KEY, "userId" text NOT NULL, "botId" uuid, "workspaceId" uuid, "deviceId" uuid, "agentDefinition" jsonb, status text NOT NULL, "stopRequestedAt" timestamptz, "leaseExpiresAt" timestamptz, "updatedAt" timestamptz)`)
@@ -65,6 +65,9 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
     const gatewayMigration = await readFile(new URL('../drizzle/20261115204738_model_gateway_tokens.sql', import.meta.url), 'utf8')
     await pool.query(gatewayMigration)
     await pool.query(gatewayMigration)
+    const daybreakMigration = await readFile(new URL('../drizzle/20261126165656_daybreak_access_and_choice.sql', import.meta.url), 'utf8')
+    await pool.query(daybreakMigration)
+    await pool.query(daybreakMigration)
     // Decision 2026-11-23: multiple API keys per preset provider + persisted defaultEffort; replays cleanly.
     await pool.query('CREATE TABLE IF NOT EXISTS model_order_settings ("ownerId" text NOT NULL, "workspaceId" uuid NOT NULL, PRIMARY KEY ("ownerId","workspaceId"))')
     const multiKeyMigration = await readFile(new URL('../drizzle/20261124010135_multi_api_keys_and_default_effort.sql', import.meta.url), 'utf8')
@@ -384,6 +387,129 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
 
     await store.setApiKeyAfterQuota(pool, 'alice', false)
     assert.equal((await store.listApiKeys(pool, 'alice', personal)).apiKeyAfterQuota, false)
+
+    // #3315 Daybreak refresh: catalogue metadata + Responses capability probe + failure preservation + key rotation reset.
+    const openaiSecret = fakeKey('openai-daybreak')
+    const openaiKey = await store.addApiKey(pool, 'alice', { provider: 'openai', apiKey: openaiSecret }, { env, fetch: async () => models(['gpt-6-cyber', 'gpt-6.1-sol']) })
+    assert.equal(openaiKey.daybreak, undefined)
+
+    // 1. Explicit catalogue metadata (`available_access_programs`) grants without calling /responses.
+    const catalogueCalls: string[] = []
+    const catalogueRefreshed = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
+      env,
+      now: new Date('2026-11-26T12:00:00.000Z'),
+      fetch: (async (input: RequestInfo | URL) => {
+        catalogueCalls.push(String(input))
+        return Response.json({
+          data: [
+            { id: 'gpt-6-cyber', available_access_programs: { cyber: ['daybreak_blue', 'daybreak_red'] } },
+            { id: 'gpt-6.1-sol', available_access_programs: { cyber: ['daybreak_blue'] } },
+            { id: 'gpt-5', available_access_programs: { cyber: ['daybreak_blue'], daybreak_availability: 'unavailable' } },
+          ],
+        })
+      }) as typeof fetch,
+    })
+    assert.deepEqual(catalogueCalls, ['https://api.openai.com/v1/models'])
+    assert.equal(catalogueRefreshed.failure, undefined)
+    assert.deepEqual(catalogueRefreshed.access, {
+      granted: ['gpt-6-cyber', 'gpt-6.1-sol'],
+      tiers: ['blue', 'red'],
+      grants: [
+        { tier: 'blue', granted: ['gpt-6-cyber', 'gpt-6.1-sol'] },
+        { tier: 'red', granted: ['gpt-6-cyber'] },
+      ],
+      checkedAt: '2026-11-26T12:00:00.000Z',
+    })
+    assert.deepEqual((await store.openApiKeyForChat(pool, 'alice', team.id, openaiKey.id, env)).daybreak, catalogueRefreshed.access)
+
+    // 2. Transient 503 preserves prior Daybreak grant without wiping stored access.
+    const transient = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
+      env,
+      fetch: (async () => new Response('down', { status: 503 })) as typeof fetch,
+    })
+    assert.equal(transient.failure, 'unavailable')
+    assert.deepEqual(transient.access, catalogueRefreshed.access)
+
+    // 3. When /v1/models omits available_access_programs, bounded /v1/responses probes classify blue vs red.
+    const probedBodies: Record<string, unknown>[] = []
+    const probed = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
+      env,
+      now: new Date('2026-11-26T12:05:00.000Z'),
+      probeModels: ['gpt-6.1-sol'],
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith('/models')) return models(['gpt-6.1-sol'])
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+        probedBodies.push(body)
+        const cyber = (body.access_programs as { cyber?: string } | undefined)?.cyber
+        return cyber === 'daybreak_blue' ? Response.json({ id: 'resp_ok' }) : new Response('forbidden', { status: 403 })
+      }) as typeof fetch,
+    })
+    assert.equal(probedBodies.length, 2)
+    assert.deepEqual(probed.access, {
+      granted: ['gpt-6.1-sol'],
+      tiers: ['blue'],
+      grants: [{ tier: 'blue', granted: ['gpt-6.1-sol'] }],
+      checkedAt: '2026-11-26T12:05:00.000Z',
+    })
+
+    // 4. Explicit denials (`enrollment_required`, `unavailable_for_model`, `unavailable`) override cyber tier lists
+    // and `*-cyber` model-name fallback; mixed catalogues only probe models without explicit metadata.
+    const mixedProbes: string[] = []
+    const deniedRefreshed = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
+      env,
+      now: new Date('2026-11-26T12:10:00.000Z'),
+      probeModels: ['gpt-6-cyber', 'gpt-6.1-sol'],
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith('/models')) {
+          return Response.json({
+            data: [
+              { id: 'gpt-6-cyber', available_access_programs: { cyber: ['daybreak_red'], daybreak_availability: 'enrollment_required' } },
+              { id: 'gpt-6-cyber-beta', available_access_programs: { cyber: ['daybreak_blue'], daybreak_availability: 'unavailable_for_model' } },
+              { id: 'gpt-6-cyber-off', available_access_programs: { cyber: ['daybreak_red'], daybreak_availability: 'unavailable' } },
+              { id: 'gpt-6.1-sol' },
+            ],
+          })
+        }
+        const body = JSON.parse(String(init?.body)) as { model?: string; access_programs?: { cyber?: string } }
+        mixedProbes.push(`${body.model}:${body.access_programs?.cyber}`)
+        return body.access_programs?.cyber === 'daybreak_blue' ? Response.json({ id: 'resp_mixed' }) : new Response('forbidden', { status: 403 })
+      }) as typeof fetch,
+    })
+    assert.deepEqual(mixedProbes, ['gpt-6.1-sol:daybreak_blue', 'gpt-6.1-sol:daybreak_red'], 'explicitly denied cyber models are never probed')
+    assert.deepEqual(deniedRefreshed.access, {
+      granted: ['gpt-6.1-sol'],
+      tiers: ['blue'],
+      grants: [{ tier: 'blue', granted: ['gpt-6.1-sol'] }],
+      checkedAt: '2026-11-26T12:10:00.000Z',
+    })
+
+    // 5. 401 returns invalid failure without mutating stored access.
+    const invalid = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
+      env,
+      fetch: (async () => new Response('unauthorized', { status: 401 })) as typeof fetch,
+    })
+    assert.equal(invalid.failure, 'invalid')
+
+    // 6. Rotating the secret key clears stored Daybreak entitlement so the new key cannot inherit old grants.
+    const rotated = await store.updateApiKey(pool, 'alice', openaiKey.id, { apiKey: fakeKey('openai-rotated') }, { env, fetch: async () => models(['gpt-6.1-sol']) })
+    assert.equal(rotated.daybreak, undefined)
+    assert.equal((await store.openApiKeyForChat(pool, 'alice', team.id, openaiKey.id, env)).daybreak, undefined)
+
+    // 7. Concurrent key rotation during refreshApiKeyDaybreak fences the stale write so the rotated key stays clean.
+    const staleRefresh = await store.refreshApiKeyDaybreak(pool, 'alice', openaiKey.id, {
+      env,
+      now: new Date('2026-11-26T12:15:00.000Z'),
+      fetch: (async () => {
+        await store.updateApiKey(pool, 'alice', openaiKey.id, { apiKey: fakeKey('openai-rotated-mid-refresh') }, { env, fetch: async () => models(['gpt-6-cyber']) })
+        return Response.json({
+          data: [{ id: 'gpt-6-cyber', available_access_programs: { cyber: ['daybreak_red'] } }],
+        })
+      }) as typeof fetch,
+    })
+    assert.deepEqual(staleRefresh.access, { granted: [] }, 'stale refresh must discard grants when key rotated concurrently')
+    assert.equal(staleRefresh.key.daybreak, undefined)
+    assert.equal((await store.openApiKeyForChat(pool, 'alice', team.id, openaiKey.id, env)).daybreak, undefined)
+    await store.removeApiKey(pool, 'alice', openaiKey.id)
   } finally {
     Object.assign(workspacePool.options, previousWorkspace)
     await workspacePool.end()

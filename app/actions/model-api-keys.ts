@@ -4,7 +4,7 @@ import { withFreshSession } from '@/lib/fresh-session'
 import { pool } from '@/lib/db'
 import { requireUser } from '@/lib/issue-access'
 import type { ApiKeyView } from '@/lib/model-api-key-providers'
-import { addApiKey, apiKeyOwnerOf, listApiKeys, refreshApiKeyModels, removeApiKey, setApiKeyAfterQuota, setApiKeyFeatures, updateApiKey as updateStoredApiKey, usableApiKeys, type ApiKeyOwner, type ApiKeysPage, type UsableApiKey } from '@/lib/model-api-keys'
+import { addApiKey, apiKeyOwnerOf, listApiKeys, refreshApiKeyDaybreak, refreshApiKeyModels, removeApiKey, setApiKeyAfterQuota, setApiKeyFeatures, updateApiKey as updateStoredApiKey, usableApiKeys, type ApiKeyDaybreakRefreshResult, type ApiKeyOwner, type ApiKeysPage, type UsableApiKey } from '@/lib/model-api-keys'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { WorkspaceError } from '@/lib/workspace-error'
 import { settingsWorkspaceAction, type SettingsActionResult } from '@/lib/workspace-admin/settings-action'
@@ -89,6 +89,16 @@ async function refetchApiKeyModelsBody(id: string, workspaceId?: string): Promis
     const current = await actor(workspaceId)
     await refreshApiKeyModels(pool, await ownerForKey(current, id), id)
     return readApiKeysPage(current)
+  })
+}
+
+/** Refreshes OpenAI Trusted Access for Cyber (Daybreak) grants for one of the person's own API keys (#3315). */
+export async function refreshApiKeyDaybreakAction(id: string, workspaceId?: string): Promise<SettingsActionResult<ApiKeyDaybreakRefreshResult & { page: ApiKeysPage }>> {
+  return settingsWorkspaceAction(async () => {
+    const current = await actor(workspaceId)
+    const refreshed = await refreshApiKeyDaybreak(pool, current.userId, id)
+    const page = await readApiKeysPage(current)
+    return { ...refreshed, page }
   })
 }
 

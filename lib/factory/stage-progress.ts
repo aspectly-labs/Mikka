@@ -2,7 +2,7 @@ import chineseMessages from '@/messages/zh-CN.json';
 import englishMessages from '@/messages/en.json';
 import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
-import { loadIssueDocument, encodedIssueDocument, upsertLinearComment } from '../linear-sync/document';
+import { loadIssueDocument, encodedIssueDocument, upsertThreadMessage } from '../task-comments/issue-document';
 import { documentChanged } from '../live/panels';
 import { withBasePath } from '../base-path';
 import { workspaceLink } from '@/lib/workspace-navigation';
@@ -69,7 +69,7 @@ export async function syncFactoryPresentation(tx: PoolClient, task: FactoryTask)
   const commentId = prior?.commentId ?? factoryEventId(`stage-comment:${flow.stage}`,task.id);
   const at = prior?.createdAt ? new Date(prior.createdAt).toISOString() : new Date().toISOString();
   try {
-    upsertLinearComment(doc,{ threadId: task.id, messageId: commentId, author: bot.name, body, at });
+    upsertThreadMessage(doc,{ threadId: task.id, messageId: commentId, author: bot.name, body, at });
     await tx.query(`INSERT INTO issue_documents ("issueId","userId",state,"updatedAt") VALUES ($1,$2,$3,now())
       ON CONFLICT ("issueId") DO UPDATE SET state=excluded.state,"updatedAt"=now()`,[task.issueId,issue.userId,encodedIssueDocument(doc)]);
     await tx.query(`INSERT INTO factory_stage_updates ("taskId",stage,"commentId","bodyHash") VALUES ($1,$2,$3,$4)

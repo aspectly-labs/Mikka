@@ -32,31 +32,36 @@ test('模型订阅在集成页：额度、quota、ChatGPT、Claude、Codex、订
   for (const query of ['额度', 'quota', 'Claude']) assert.equal(settingsItemVisible({ ...other, query }), false, query)
 })
 
-test('MCP Servers / Custom MCP / 自定义 MCP / MCP 服务器 search matches unified Plugins (connections) without a second sidebar entry', () => {
+test('sidebar search distinguishes Integrations from Connectors and MCP in zh-CN', () => {
   const visible = visibleSettingsSections({ admin: true })
-  assert.equal(visible.some(s => s.id === 'mcp'), false)
-  const pluginsSection = visible.find(s => s.id === 'connections')
-  assert.ok(pluginsSection)
-  const zhPlugins = {
-    groupTitle: 'Agent & Compute',
-    groupLabel: zh.groups.agent,
-    itemTitle: pluginsSection.title,
-    label: zh.sections.connections.title,
-    keywords: zh.sections.connections.keywords,
-    section: 'connections',
+  assert.equal(visible.some(section => section.id === 'mcp'), false)
+  const connectors = visible.find(section => section.id === 'connections')
+  const integrations = visible.find(section => section.id === 'integrations')
+  assert.ok(connectors)
+  assert.ok(integrations)
+
+  const searchItem = (section, messages) => ({
+    groupTitle: 'Connections & compute',
+    groupLabel: messages.groups[section.group],
+    itemTitle: section.title,
+    label: messages.sections[section.id].nav ?? messages.sections[section.id].title,
+    keywords: messages.sections[section.id].keywords,
+    section: section.id,
+  })
+  const zhConnectors = searchItem(connectors, zh)
+  const zhIntegrations = searchItem(integrations, zh)
+  assert.equal(settingsItemVisible({ ...zhIntegrations, query: '集成' }), true)
+  assert.equal(settingsItemVisible({ ...zhConnectors, query: '集成' }), false)
+  for (const query of ['MCP 服务器', '自定义 MCP', '插件']) {
+    assert.equal(settingsItemVisible({ ...zhConnectors, query }), true, `zh connectors: ${query}`)
+    assert.equal(settingsItemVisible({ ...zhIntegrations, query }), false, `zh integrations: ${query}`)
   }
-  const enPlugins = {
-    groupTitle: 'Agent & Compute',
-    groupLabel: en.groups.agent,
-    itemTitle: pluginsSection.title,
-    label: en.sections.connections.title,
-    keywords: en.sections.connections.keywords,
-    section: 'connections',
-  }
-  for (const query of ['MCP Servers', 'Custom MCP', 'MCP 服务器', '自定义 MCP', 'Plugins', '插件', 'Integrations', '集成']) {
-    assert.equal(settingsItemVisible({ ...zhPlugins, query }), true, `zh: ${query}`)
-  }
-  for (const query of ['MCP Servers', 'Custom MCP', 'Plugins', 'Integrations', 'mcp']) {
-    assert.equal(settingsItemVisible({ ...enPlugins, query }), true, `en: ${query}`)
+
+  for (const messages of [zh, en]) {
+    const connectorItem = searchItem(connectors, messages)
+    for (const query of ['MCP Servers', 'Custom MCP', 'Plugins', 'Integrations', 'mcp']) {
+      assert.equal(settingsItemVisible({ ...connectorItem, query }), true, `${connectorItem.label}: ${query}`)
+    }
+    assert.equal(settingsItemVisible({ ...searchItem(integrations, messages), query: 'Integrations' }), true)
   }
 })

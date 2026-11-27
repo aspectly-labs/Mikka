@@ -109,7 +109,7 @@ export const queueEveFactoryStageRun: FactoryQueue = async (tx, userId, input, _
   // restricted workspaces, project bindings and Environment eligibility are
   // frozen into the snapshot the task-machine grant later demands.
   const projectExecution = await (await import('../../project-resources/store')).withProjectExecution(
-    { userId, workspaceId: actor.workspaceId, issueId: task.issueId, repositoryKey: repo.repoPath, baseBranch: repo.baseBranch, runtime: 'cloud', harness: target.harness },
+    { userId, botId: task.botId, workspaceId: actor.workspaceId, issueId: task.issueId, repositoryKey: repo.repoPath, baseBranch: repo.baseBranch, runtime: 'cloud', harness: target.harness },
     snapshot => Promise.resolve(snapshot),
   )
 

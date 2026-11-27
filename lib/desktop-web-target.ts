@@ -23,7 +23,10 @@ export function desktopWebTarget(value: string | null): string | null {
   const workspace = url.searchParams.get('workspace')
   if (workspace !== null && !uuid.test(workspace)) return null
   let accepted = false
-  if (path === '/') {
+  if (path === '/api/integrations/linear/connect') {
+    const account = url.searchParams.get('account') ?? ''
+    accepted = !locale && only(['account']) && /^[a-zA-Z0-9_-]{1,128}$/.test(account)
+  } else if (path === '/') {
     accepted = (section === 'plugins' && appAllowed && only(['section', 'app'])) ||
       ((settings === 'account' || settings === 'integrations') && (app === null || settings === 'integrations') && appAllowed && only(['settings', 'app']))
   } else if (path === '/settings') {

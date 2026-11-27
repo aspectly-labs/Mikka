@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ActionFailureError } from '@/lib/action-error'
 import type { ApiSession } from '@/lib/api-auth'
-import { TASK_FILE_MAX_BYTES } from '@/lib/task-attachments/contract'
+import { TASK_FILE_MAX_BYTES, TASK_FILE_PLACEMENTS, type TaskFilePlacement } from '@/lib/task-attachments/contract'
 import { listTaskFiles, readTaskFile, removeTaskFile, requireTaskFileDownload, saveTaskFile, TaskFileError } from '@/lib/task-attachments/store'
 import { resolveTaskIdentifierAlias } from '@/lib/task-identity-store'
 import { loadWorkspaceContext, WorkspaceError } from '@/lib/workspace-access'
@@ -16,9 +16,14 @@ async function attachments(request: Request, context: Context, session: ApiSessi
   const params = new URL(request.url).searchParams
   const id = params.get('id')
   const readUrl = request.method === 'GET' && params.get('format') === 'url'
+  // `placement=inline` uploads a file for the description or a comment; `disposition=inline` shows an image in an <img>.
+  const placement = params.get('placement') ?? 'task'
+  const disposition = params.get('disposition') ?? 'attachment'
   const taskId = z.uuid().safeParse(reference)
   if ((!taskId.success && (!readUrl || reference.length > 256)) || (id !== null && !z.uuid().safeParse(id).success)) return failure('notFound', 404)
   if (readUrl && (!id || (params.has('fresh') && params.get('fresh') !== '1'))) return failure('invalid', 400)
+  if (!(TASK_FILE_PLACEMENTS as readonly string[]).includes(placement) || (placement !== 'task' && request.method !== 'POST')
+    || !['attachment', 'inline'].includes(disposition) || (disposition !== 'attachment' && request.method !== 'GET')) return failure('invalid', 400)
   try {
     const { workspace } = await loadWorkspaceContext(session.tokenWorkspaceId, session.user)
     let resolvedId = taskId.data
@@ -39,9 +44,11 @@ async function attachments(request: Request, context: Context, session: ApiSessi
     if (!id) return failure('invalid', 400)
     if (request.method === 'GET') {
       const file = await readTaskFile(actor, id, request.signal)
+      // Only bytes recognised as a raster image are ever shown inline; anything else still downloads.
+      const shown = disposition === 'inline' && file.mediaType ? file.mediaType : null
       return new Response(file.body, { headers: {
-        ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': String(file.size),
-        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g, char => '%' + char.charCodeAt(0).toString(16))}`,
+        ...headers, 'Content-Type': shown ?? 'application/octet-stream', 'Content-Length': String(file.size),
+        'Content-Disposition': `${shown ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g, char => '%' + char.charCodeAt(0).toString(16))}`,
         'Content-Security-Policy': "default-src 'none'; sandbox",
       } })
     }
@@ -69,7 +76,7 @@ async function attachments(request: Request, context: Context, session: ApiSessi
     if (!name || name.length > 255 || /[\\/]/.test(name) || [...name].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127))
       return failure('invalid', 400)
     const bytes = new Uint8Array(await file.arrayBuffer())
-    return Response.json(await saveTaskFile(actor, { id, name, size }, bytes), { headers })
+    return Response.json(await saveTaskFile(actor, { id, name, size }, bytes, placement as TaskFilePlacement), { headers })
   } catch (error) {
     if (error instanceof ActionFailureError || error instanceof WorkspaceError) return failure('notFound', 404)
     if (error instanceof TaskFileError) return failure(error.code, error.code === 'notFound' ? 404 : error.code === 'storage' ? 503 : 409)

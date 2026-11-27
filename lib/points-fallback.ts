@@ -4,7 +4,7 @@ import type { ModelCandidateSnapshot } from './model-order'
 import { PaidResourceError } from './abuse/policy'
 
 /** The refusals that mean the workspace has no points to spend, not an outage. */
-const NO_POINTS = new Set(['verification_required', 'free_allowance_used', 'points_exhausted'])
+const NO_POINTS = new Set(['verification_required', 'free_allowance_used', 'points_exhausted', 'usage_budget_exhausted'])
 
 /**
  * Whether Mikka 默认 would be refused for points in this workspace right now:

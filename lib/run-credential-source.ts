@@ -18,10 +18,12 @@ interface Binding { id: string; ownerId: string; connectionId: string; connectio
  * switch allows them, then the workspace's own keys (decision 2026-11-27-1740);
  * with no workspace at all, the owner's own keys only.
  */
-type RunKey = Pick<ApiKeyView, 'id' | 'provider' | 'protocol' | 'responsesApi' | 'models' | 'baseUrl'>
+type RunKey = Pick<ApiKeyView, 'id' | 'provider' | 'protocol' | 'responsesApi' | 'models' | 'baseUrl' | 'modelsError'>
 async function runKeys(query: Query, ownerId: string, workspaceId: string | null): Promise<RunKey[]> {
-  if (workspaceId) return usableApiKeys(query, ownerId, workspaceId)
-  return (await query.query<RunKey>('SELECT id,provider,protocol,"responsesApi",models,"baseUrl" FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id', [ownerId])).rows
+  const keys = workspaceId ? await usableApiKeys(query, ownerId, workspaceId)
+    : (await query.query<RunKey>(`SELECT id,provider,protocol,"responsesApi",models,"baseUrl",to_jsonb(k)->>'modelsError' AS "modelsError"
+      FROM model_api_keys k WHERE "ownerId"=$1 ORDER BY "createdAt",id`, [ownerId])).rows
+  return keys.filter(key => key.modelsError !== 'invalid')
 }
 
 /**

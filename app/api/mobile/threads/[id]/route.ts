@@ -58,7 +58,14 @@ export const GET = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }
     const messages = detail.run.agentId ? await readRunMessages(user.id, runIds, { limit: null }) : []
     const allItems = await threadItems(
       detail.run.agentId ? chunks : [],
-      messages.map(message => ({ id: message.id, text: message.text, author: user.name, mine: true, at: message.createdAt })),
+      messages.map(message => ({
+        id: message.id,
+        text: message.text,
+        author: user.name,
+        mine: true,
+        at: message.createdAt,
+        ...(message.systemEvent ? { systemEvent: message.systemEvent } : {}),
+      })),
     )
     const paged = sliceThreadItemsPage(allItems, page)
     const items = paged.items

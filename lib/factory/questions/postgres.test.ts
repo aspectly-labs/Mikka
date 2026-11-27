@@ -20,6 +20,7 @@ import { factoryEventId } from "../event-id";
 import { questionFingerprint } from "./contract";
 import { ActionFailureError } from "../../action-error";
 import { createFactoryStore } from "../store";
+import { createRequestDatabaseScope } from '../../db';
 import { observePoolCommits } from "../../db/commit-effects";
 import { createFactoryDispatch } from "../dispatch";
 import { createFactoryClaim } from "../claim";
@@ -83,6 +84,10 @@ test(
     t.after(() => { coordinatorWakeTransport.wake = previousWake; });
     const fixtureURL = await isolatedPostgresURL(dbURL!);
     const schema = `questions_${randomUUID().replaceAll("-", "")}`;
+    const applicationURL = new URL(fixtureURL);
+    applicationURL.searchParams.set('options', `-c search_path=${schema}`);
+    const application = createRequestDatabaseScope(applicationURL.toString());
+    t.after(() => application.close());
     const admin = new Pool({ connectionString: fixtureURL, max: 1 });
     await admin.query(`CREATE SCHEMA "${schema}"`);
     const pool = new Pool({
@@ -417,8 +422,8 @@ test(
             // An old source's absent snapshot is deliberate fixture history.
             // New sources freeze the actual Project configuration before any edit.
             let configured: Awaited<ReturnType<typeof seedRunProjectResources>>;
-            const configure=()=>seedRunProjectResources(pool,{ownerId:userId,workspaceId:f.workspaceId,issueId:f.issueId,
-              repositoryKey:target.repoPath,runtime:'cloud',harness:'codex',environment:mutation!=='legacy-branch'});
+            const configure=()=>application.run(()=>seedRunProjectResources(pool,{ownerId:userId,workspaceId:f.workspaceId,issueId:f.issueId,
+              repositoryKey:target.repoPath,runtime:'cloud',harness:'codex',environment:mutation!=='legacy-branch'}));
             if(!legacy){
               configured=await configure();
               const {withProjectExecution}=await import('../../project-resources/store');
@@ -438,8 +443,12 @@ test(
               recovery={requestId:randomUUID(),...q.recoverReference!};
             }
             if(legacy) configured=await configure();
-            if(mutation==='legacy-branch') await configured!.refuse('branch');
-            else if(mutation!=='legacy-environment') await configured!.refuse(mutation);
+            if(mutation==='legacy-branch') {
+              await pool.query(`INSERT INTO workspace_task_legacy_repository_branches ("workspaceId","issueId","repositoryKey","baseBranch")
+                VALUES ($1,$2,$3,'changed-after-start')`,[f.workspaceId,f.issueId,target.repoPath]);
+            } else if(mutation!=='legacy-environment') {
+              await application.run(()=>configured!.refuse(mutation));
+            }
             const before=await resourceState(f);
             const expected=mutation==='repository'||mutation==='branch'||mutation==='legacy-branch'?'projectRepositoryDenied'
               :mutation==='project-archive'?'projectArchived':'projectEnvironmentUnavailable';

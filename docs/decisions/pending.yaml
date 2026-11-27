@@ -16,15 +16,6 @@
   asked_on: 2026-11-26
   owner: alexj11324
   link: https://github.com/aspectly-labs/Mikka/blob/main/docs/design/mobile.md
-- id: comma-mobile-tab-bar-tradeoff
-  question: Should iOS keep hiding the tab bar inside pushed detail pages?
-  options:
-    - Keep the current pushed-detail behavior.
-    - Rework detail navigation to preserve the tab bar.
-  recommendation: Keep the current behavior while the Comma redesign is being redrawn.
-  asked_on: 2026-11-26
-  owner: alexj11324
-  link: https://github.com/aspectly-labs/Mikka/blob/main/docs/design/mobile-comma-redesign.md
 - id: daemon-connection-review-frames
   question: Which daemon connection dialog and code confirmation frames are accepted?
   options:
@@ -34,12 +25,3 @@
   asked_on: 2026-11-26
   owner: alexj11324
   link: https://github.com/aspectly-labs/Mikka/blob/main/docs/design/daemon-connection.md
-- id: settings-version-review-rows
-  question: Which settings and thread design rows in the Figma versions inventory are accepted?
-  options:
-    - Accept the rows as drawn.
-    - Keep selected rows in design review.
-  recommendation: Resolve each remaining row in the design review before implementation.
-  asked_on: 2026-11-26
-  owner: alexj11324
-  link: https://github.com/aspectly-labs/Mikka/blob/main/docs/design/versions.md

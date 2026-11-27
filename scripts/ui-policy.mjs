@@ -16,7 +16,7 @@ export function exemptFrameworkShims(file, diagnostics, policy) {
   return roots.some(root => file === root || (root.endsWith('/') && file.startsWith(root))) ? diagnostics.filter(d => !FRAMEWORK_SHIM_RULES.has(d.rule)) : diagnostics
 }
 
-// From docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md (superseded by 2026-11-27-1409): files under
+// From mikka-hosted-ui/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md (superseded by 2026-11-27-1409): files under
 // ui-policy.json asShipped.public, which is empty, drop only these two rules.
 const AS_SHIPPED_RULES = new Set(['style/semantic-colors', 'typography/preset-only'])
 export function exemptAsShipped(file, diagnostics, policy) {
@@ -444,10 +444,10 @@ export function auditCss(file, text, policy) {
       const permitted = { '--font-sans': 'var(--font-inter), "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif', '--font-mono': 'var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace', '--font-heading': 'var(--font-sans)' }
       if (node.prop in permitted && permitted[node.prop] !== node.value) add(node, 'typography/font-token', `${node.prop} 不在批准的字体 token 映射中。`)
     }
-    if (!node.prop.startsWith('--') && !/^(?::root|\.dark|\*|body|html)$/.test(node.parent.selector ?? '')) add(node, 'style/no-custom-css', '业务样式不通过 CSS 选择器绕过组件预设。')
+    if (!node.prop.startsWith('--') && !/^(?::root|\.dark|:root,\s*\.dark|\*|body|html)$/.test(node.parent.selector ?? '')) add(node, 'style/no-custom-css', '业务样式不通过 CSS 选择器绕过组件预设。')
   })
   root.walkRules(node => {
-    if (![':root', '.dark', '*', 'body', 'html'].includes(node.selector)) add(node, 'style/no-custom-css', `不允许自绘样式选择器 ${node.selector}。`)
+    if (![':root', '.dark', ':root, .dark', '*', 'body', 'html'].includes(node.selector)) add(node, 'style/no-custom-css', `不允许自绘样式选择器 ${node.selector}。`)
   })
   root.walkAtRules(node => {
     if (node.name === 'apply') {

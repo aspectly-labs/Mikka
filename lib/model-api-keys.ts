@@ -21,6 +21,7 @@ import {
   API_KEY_PRESET_ENDPOINTS, API_KEY_PRESETS, apiKeyChatBaseUrl, apiKeyProtocols, customModelsUrl, gatewayKeyHarnesses,
   type ApiKeyHarness, type ApiKeyProtocol, type ApiKeyProvider, type ApiKeyView,
 } from '@/lib/model-api-key-providers'
+import { cyberAccessProgram, DAYBREAK_TIERS, parseDaybreakAccess, type DaybreakAccess, type DaybreakTier } from '@/lib/model-capabilities'
 
 /**
  * 「模型与订阅」 API keys and custom providers (orchestration.md § 1, § 2, § 6;
@@ -142,10 +143,16 @@ export async function verifyApiKey(target: { modelsUrl: string; auth: ApiKeyProt
   } catch { return { ok: false, code: 'unavailable' } }
 }
 
-interface Row { id: string; ownerId: string | null; workspaceId: string | null; provider: ApiKeyProvider; name: string | null; baseUrl: string | null; protocol: ApiKeyProtocol; last4: string; models: string[]; modelsError: ApiKeyView['modelsError']; responsesApi: boolean; modelSettings?: ModelSettings | null; features?: unknown }
+interface Row { id: string; ownerId: string | null; workspaceId: string | null; provider: ApiKeyProvider; name: string | null; baseUrl: string | null; protocol: ApiKeyProtocol; last4: string; models: string[]; modelsError: ApiKeyView['modelsError']; responsesApi: boolean; modelSettings?: ModelSettings | null; features?: unknown; daybreak?: unknown }
 const COLUMNS = 'id,"ownerId","workspaceId"::text AS "workspaceId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features'
-const view = (row: Row): ApiKeyView => ({ id: row.id, provider: row.provider, name: row.name, baseUrl: row.baseUrl, protocol: row.protocol, last4: row.last4, models: row.models, modelsError: row.modelsError ?? null, responsesApi: row.responsesApi,
-  ...(row.features ? { features: parseGatewayFeatures(row.features) } : {}) })
+const view = (row: Row): ApiKeyView => {
+  const daybreak = parseDaybreakAccess(row.daybreak)
+  return {
+    id: row.id, provider: row.provider, name: row.name, baseUrl: row.baseUrl, protocol: row.protocol, last4: row.last4, models: row.models, modelsError: row.modelsError ?? null, responsesApi: row.responsesApi,
+    ...(row.features ? { features: parseGatewayFeatures(row.features) } : {}),
+    ...(daybreak ? { daybreak } : {}),
+  }
+}
 /** Where a key's models are listed: the preset's list, or the custom provider's by its protocol. */
 function modelsTarget(row: Pick<Row, 'provider' | 'baseUrl' | 'protocol'>): { modelsUrl: string; auth: ApiKeyProtocol } {
   if (row.provider === 'custom') return { modelsUrl: customModelsUrl(row.baseUrl!, row.protocol), auth: row.protocol }
@@ -178,8 +185,8 @@ export interface ApiKeysPage {
 export async function listApiKeys(query: Query, ownerId: string, workspace: { id: string; kind: 'personal' | 'team' }, options: { admin?: boolean } = {}): Promise<ApiKeysPage> {
   const manages = workspace.kind === 'team' && options.admin === true
   const [keys, workspaceKeys, fallback] = await Promise.all([
-    query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`, [ownerId]),
-    manages ? query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE "workspaceId"=$1 ORDER BY "createdAt",id`, [z.uuid().parse(workspace.id)]) : Promise.resolve({ rows: [] as Row[] }),
+    query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`, [ownerId]),
+    manages ? query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE "workspaceId"=$1 ORDER BY "createdAt",id`, [z.uuid().parse(workspace.id)]) : Promise.resolve({ rows: [] as Row[] }),
     apiKeyAfterQuota(query, ownerId),
   ])
   return {
@@ -262,9 +269,9 @@ export async function addApiKey(query: Query, ownerInput: string | ApiKeyOwner, 
   // The conflict target is the row id; the WHERE keeps a rotation inside the same owner.
   const { rows: [row] } = await query.query<Row>(`INSERT INTO model_api_keys (id,"ownerId","workspaceId","addedBy",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi","modelSettings")
     VALUES ($1,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15::jsonb)
-    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=${SURGICAL_SPEED_MODES_SQL('$16', 'model_api_keys.')},"updatedAt"=now()
+    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=${SURGICAL_SPEED_MODES_SQL('$16', 'model_api_keys.')},daybreak=NULL,"updatedAt"=now()
     WHERE model_api_keys."ownerId" IS NOT DISTINCT FROM EXCLUDED."ownerId" AND model_api_keys."workspaceId" IS NOT DISTINCT FROM EXCLUDED."workspaceId"
-    RETURNING ${COLUMNS}`,
+    RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
   [id, personal ? owner.userId : null, personal ? null : owner.workspaceId, personal ? null : options.addedBy ?? null, parsed.provider, name, baseUrl, protocol,
     sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi, initialSettings, speedJson])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
@@ -285,7 +292,7 @@ export async function updateApiKey(query: Query, ownerInput: string | ApiKeyOwne
   const where = ownedBy(asOwner(ownerInput))
   const parsed = updateApiKeyInput.parse(input)
   const env = options.env ?? runtimeEnv()
-  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE id=$1 AND ${where.column}=$2`, [id, where.value])
+  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE id=$1 AND ${where.column}=$2`, [id, where.value])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
   const isCustom = row.provider === 'custom'
   if (!isCustom && (parsed.baseUrl !== undefined || parsed.protocol !== undefined || parsed.models !== undefined)) {
@@ -321,8 +328,8 @@ export async function updateApiKey(query: Query, ownerInput: string | ApiKeyOwne
       throw error
     }
     const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
-      SET name=$3,"baseUrl"=$4,protocol=$5,ciphertext=$6,iv=$7,"keyVersion"=$8,last4=$9,models=$10::jsonb,"modelsError"=$11,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$12')},"updatedAt"=now()
-      WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+      SET name=$3,"baseUrl"=$4,protocol=$5,ciphertext=$6,iv=$7,"keyVersion"=$8,last4=$9,models=$10::jsonb,"modelsError"=$11,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$12')},daybreak=NULL,"updatedAt"=now()
+      WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
     [id, where.value, nextName, nextBaseUrl, nextProtocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(nextModels), nextModelsError, speedJson])
     if (!saved) throw new WorkspaceError('apiKeyNotFound')
     return view(saved)
@@ -330,14 +337,14 @@ export async function updateApiKey(query: Query, ownerInput: string | ApiKeyOwne
   if (needsVerify) {
     const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
       SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$8')},"updatedAt"=now()
-      WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+      WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
     [id, where.value, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError, speedJson])
     if (!saved) throw new WorkspaceError('apiKeyNotFound')
     return view(saved)
   }
   const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
     SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"updatedAt"=now()
-    WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+    WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
   [id, where.value, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError])
   if (!saved) throw new WorkspaceError('apiKeyNotFound')
   return view(saved)
@@ -364,15 +371,186 @@ export async function refreshApiKeyModels(query: Query, ownerInput: string | Api
   const responsesApi = result.ok ? true : row.responsesApi
   if (result.ok) {
     const speedJson = speedModesJson(result.speedModes)
-    const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=NULL,"responsesApi"=$4,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$5')},"updatedAt"=now() WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+    const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=NULL,"responsesApi"=$4,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$5')},"updatedAt"=now() WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
       [id, where.value, JSON.stringify(models), responsesApi, speedJson])
     if (!saved) throw new WorkspaceError('apiKeyNotFound')
     return view(saved)
   }
-  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=$4,"responsesApi"=$5,"updatedAt"=now() WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=$4,"responsesApi"=$5,"updatedAt"=now() WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
     [id, where.value, JSON.stringify(models), result.code, responsesApi])
   if (!saved) throw new WorkspaceError('apiKeyNotFound')
   return view(saved)
+}
+
+export interface ApiKeyDaybreakRefreshResult {
+  access: DaybreakAccess
+  failure?: 'invalid' | 'unavailable'
+  key: ApiKeyView
+}
+
+const DAYBREAK_CYBER_MODEL_PATTERN = /(?:^|\/)gpt-[a-z0-9.-]+-cyber$/i
+const DAYBREAK_REPORTED_GPT_PATTERN = /^gpt-[5-9](?:\.\d+)?(?:-[a-z0-9.-]+)?$/i
+const DAYBREAK_NON_CHAT_SUFFIX = /(?:audio|realtime|image|tts|transcribe|search|embedding|moderation|instruct)/i
+
+const DAYBREAK_DENIED_AVAILABILITIES = new Set(['unavailable', 'enrollment_required', 'unavailable_for_model'])
+
+function extractCatalogueDaybreakTiers(item: unknown, id: string): { tiers: DaybreakTier[]; explicit: boolean; denied: boolean } {
+  const tiers = new Set<DaybreakTier>()
+  let explicit = false
+  if (item && typeof item === 'object') {
+    const raw = (item as { available_access_programs?: unknown }).available_access_programs
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      explicit = true
+      const programs = raw as { cyber?: unknown; daybreak_availability?: unknown }
+      if (typeof programs.daybreak_availability === 'string' && DAYBREAK_DENIED_AVAILABILITIES.has(programs.daybreak_availability)) {
+        return { tiers: [], explicit: true, denied: true }
+      }
+      if (Array.isArray(programs.cyber)) {
+        for (const entry of programs.cyber) {
+          if (entry === 'daybreak_blue') tiers.add('blue')
+          else if (entry === 'daybreak_red') tiers.add('red')
+        }
+      }
+    }
+  }
+  if (!explicit && DAYBREAK_CYBER_MODEL_PATTERN.test(id)) tiers.add('red')
+  return { tiers: DAYBREAK_TIERS.filter(tier => tiers.has(tier)), explicit, denied: false }
+}
+
+/**
+ * Checks an owned OpenAI API key's Trusted Access for Cyber (Daybreak) grants
+ * and persists the verified `DaybreakAccess` metadata on `model_api_keys.daybreak`
+ * (#3315, matching Capy's per-credential Daybreak refresh).
+ * Never logs or exposes the API key; non-OpenAI keys always have no Daybreak access.
+ */
+export async function refreshApiKeyDaybreak(
+  query: Query,
+  ownerId: string,
+  id: string,
+  options: { env?: Env; fetch?: typeof fetch; probeResponses?: boolean; probeModels?: readonly string[]; now?: Date } = {},
+): Promise<ApiKeyDaybreakRefreshResult> {
+  z.uuid().parse(id)
+  const { rowCount } = await query.query('SELECT 1 FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [id, ownerId])
+  if (!rowCount) throw new WorkspaceError('apiKeyNotFound')
+  const env = options.env ?? runtimeEnv()
+  const now = options.now ?? new Date()
+  const fetchImpl = options.fetch ?? fetch
+  const { row, apiKey } = await openKey(query, id, env)
+  const priorAccess = parseDaybreakAccess(row.daybreak) ?? { granted: [] }
+  if (row.provider !== 'openai') {
+    const access: DaybreakAccess = { granted: [], checkedAt: now.toISOString() }
+    return { access, key: view(row) }
+  }
+  const preset = API_KEY_PRESET_ENDPOINTS.openai
+  const headers = { authorization: `Bearer ${apiKey}`, accept: 'application/json' }
+  let modelsBody: { data?: unknown }
+  try {
+    const response = await fetchImpl(preset.modelsUrl, { headers, redirect: 'manual', signal: AbortSignal.timeout(10_000), cache: 'no-store' })
+    if (response.status === 401 || response.status === 403) {
+      void response.body?.cancel().catch(() => {})
+      return { access: priorAccess, failure: 'invalid', key: view(row) }
+    }
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {})
+      return { access: priorAccess, failure: 'unavailable', key: view(row) }
+    }
+    const text = await response.text()
+    if (text.length > MAX_BODY) return { access: priorAccess, failure: 'unavailable', key: view(row) }
+    modelsBody = JSON.parse(text) as { data?: unknown }
+    if (!Array.isArray(modelsBody.data)) return { access: priorAccess, failure: 'unavailable', key: view(row) }
+  } catch {
+    return { access: priorAccess, failure: 'unavailable', key: view(row) }
+  }
+
+  const blue = new Set<string>()
+  const red = new Set<string>()
+  const listedIds = new Set<string>()
+  const explicitModels = new Set<string>()
+  for (const item of modelsBody.data) {
+    const rawId = item && typeof item === 'object' ? (item as { id?: unknown }).id : undefined
+    if (typeof rawId !== 'string' || !modelId.safeParse(rawId).success) continue
+    const trimmed = rawId.trim()
+    listedIds.add(trimmed)
+    const extracted = extractCatalogueDaybreakTiers(item, trimmed)
+    if (extracted.explicit) explicitModels.add(trimmed)
+    if (extracted.denied) {
+      blue.delete(trimmed)
+      red.delete(trimmed)
+      continue
+    }
+    if (extracted.tiers.includes('blue')) blue.add(trimmed)
+    if (extracted.tiers.includes('red')) red.add(trimmed)
+  }
+
+  // For listed candidate models where OpenAI /v1/models omitted `available_access_programs`,
+  // run bounded Responses capability checks for blue and red tiers.
+  if (options.probeResponses !== false) {
+    const responsesUrl = preset.chatBaseUrl.replace(/\/+$/, '') + '/responses'
+    const reportedCandidates = [...listedIds].filter(model =>
+      !explicitModels.has(model) && DAYBREAK_REPORTED_GPT_PATTERN.test(model) && !DAYBREAK_NON_CHAT_SUFFIX.test(model))
+    const candidates = (options.probeModels?.length
+      ? options.probeModels.filter(model => listedIds.has(model) && !explicitModels.has(model))
+      : reportedCandidates).slice(0, 8)
+    for (const model of candidates) {
+      for (const tier of DAYBREAK_TIERS) {
+        try {
+          const response = await fetchImpl(responsesUrl, {
+            method: 'POST',
+            headers: { ...headers, 'content-type': 'application/json' },
+            body: JSON.stringify({
+              model,
+              input: '',
+              max_output_tokens: 16,
+              store: false,
+              access_programs: { cyber: cyberAccessProgram(tier) },
+            }),
+            redirect: 'manual',
+            signal: AbortSignal.timeout(10_000),
+            cache: 'no-store',
+          })
+          void response.body?.cancel().catch(() => {})
+          if (response.status === 401) return { access: priorAccess, failure: 'invalid', key: view(row) }
+          if (response.ok) {
+            if (tier === 'blue') blue.add(model)
+            else red.add(model)
+          } else if (response.status >= 500 || response.status === 429) {
+            return { access: priorAccess, failure: 'unavailable', key: view(row) }
+          }
+        } catch {
+          return { access: priorAccess, failure: 'unavailable', key: view(row) }
+        }
+      }
+    }
+  }
+
+  const grants: { tier: DaybreakTier; granted: string[] }[] = []
+  if (blue.size) grants.push({ tier: 'blue', granted: [...blue] })
+  if (red.size) grants.push({ tier: 'red', granted: [...red] })
+  const tiers = grants.map(grant => grant.tier)
+  const granted = [...new Set([...blue, ...red])]
+  const access: DaybreakAccess = {
+    granted,
+    ...(tiers.length ? { tiers } : {}),
+    ...(grants.length ? { grants } : {}),
+    checkedAt: now.toISOString(),
+  }
+  // Fence the write to the exact sealed credential read before provider IO so a concurrent
+  // key rotation can never be overwritten with stale grants from the previous key.
+  const { rows: [saved] } = await query.query<Row>(
+    `UPDATE model_api_keys SET daybreak=$3::jsonb,"updatedAt"=now()
+     WHERE id=$1 AND "ownerId"=$2 AND ciphertext=$4 AND iv=$5 AND "keyVersion"=$6
+     RETURNING ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak`,
+    [id, ownerId, JSON.stringify(access), row.ciphertext, row.iv, row.keyVersion],
+  )
+  if (!saved) {
+    const { rows: [current] } = await query.query<Row>(
+      `SELECT ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`,
+      [id, ownerId],
+    )
+    if (!current) throw new WorkspaceError('apiKeyNotFound')
+    return { access: parseDaybreakAccess(current.daybreak) ?? { granted: [] }, key: view(current) }
+  }
+  return { access, key: view(saved) }
 }
 
 /** The owner removes their key (a workspace's, through its admin). Runs on it stop first. */
@@ -424,7 +602,7 @@ export interface UsableApiKey extends ApiKeyView {
  * reads this.
  */
 export async function usableApiKeys(query: Query, userId: string, workspaceId: string, selectedKeyId?: string): Promise<UsableApiKey[]> {
-  const found = (await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys
+  const found = (await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys
     WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid)${selectedKeyId ? ' AND id=$3' : ''} ORDER BY ("ownerId" IS NULL),"createdAt",id`,
   [userId, uuidOrNull(workspaceId), ...(selectedKeyId ? [selectedKeyId] : [])])).rows
   // One after the other: a dispatch reads this on its transaction's client. Only a person's own key needs the switch.
@@ -441,9 +619,10 @@ export async function usableApiKeys(query: Query, userId: string, workspaceId: s
   })
 }
 
-async function openKey(query: Query, keyId: string, env: Env) {
-  const { rows: [row] } = await query.query<Row & { ciphertext: string; iv: string; keyVersion: number }>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",ciphertext,iv,"keyVersion" FROM model_api_keys WHERE id=$1`, [keyId])
+async function openKey(query: Query, keyId: string, env: Env, forRun = false) {
+  const { rows: [row] } = await query.query<Row & { ciphertext: string; iv: string; keyVersion: number }>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",to_jsonb(model_api_keys)->'daybreak' AS daybreak,ciphertext,iv,"keyVersion" FROM model_api_keys WHERE id=$1`, [keyId])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
+  if (forRun && row.modelsError === 'invalid') throw new WorkspaceError('apiKeyInvalid')
   try { return { row, apiKey: openSecret(row, keyAad(row.id, row), env) } } catch (error) {
     if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     console.error(`[model-api-keys] open_failed id=${row.id}`)
@@ -458,7 +637,7 @@ async function openKey(query: Query, keyId: string, env: Env) {
  */
 export async function openGatewayApiKey(query: Query, keyId: string, env: Env = runtimeEnv()) {
   z.uuid().parse(keyId)
-  const { row, apiKey } = await openKey(query, keyId, env)
+  const { row, apiKey } = await openKey(query, keyId, env, true)
   return { key: view(row), apiKey, features: parseGatewayFeatures(row.features) }
 }
 
@@ -497,6 +676,10 @@ export async function setBotApiKeyChoice(query: Query, scope: { ownerId: string;
   }
   const key = (await usableApiKeys(query, scope.ownerId, scope.workspaceId)).find(item => item.id === keyId)
   if (!key || !apiKeyChatBaseUrl(key) || !key.models.includes(modelName)) throw new WorkspaceError('executionModelUnknown')
+  if (key.modelsError === 'invalid') {
+    if (!key.mine && !await executionMembersActive(scope.workspaceId, [scope.ownerId, key.ownerId])) throw new WorkspaceError('executionModelUnknown')
+    throw new WorkspaceError('apiKeyInvalid')
+  }
   await query.query(`INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","bindingId","apiKeyId","apiKeyModel") VALUES ($1,$2,$3,NULL,$4,$5)
     ON CONFLICT ("ownerId","workspaceId","botKey") DO UPDATE SET "bindingId"=NULL,"apiKeyId"=EXCLUDED."apiKeyId","apiKeyModel"=EXCLUDED."apiKeyModel","creditsModel"=NULL`,
   [scope.ownerId, scope.workspaceId, botId ?? 'coordinator', keyId, modelName])
@@ -508,7 +691,7 @@ export async function setBotApiKeyChoice(query: Query, scope: { ownerId: string;
  * Checked on every call, so a deleted key, or leaving the workspace whose key it
  * is, stops the chat instead of switching (§ 2). Throws WorkspaceError('apiKeyNotFound').
  */
-export async function openApiKeyForChat(query: Query, userId: string, workspaceId: string, keyId: string, env: Env = runtimeEnv()): Promise<{ apiKey: string; baseUrl: string; keyOwnerId: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol; modelSpeedModes?: Record<string, readonly ModelSpeedMode[]> }> {
+export async function openApiKeyForChat(query: Query, userId: string, workspaceId: string, keyId: string, env: Env = runtimeEnv()): Promise<{ apiKey: string; baseUrl: string; keyOwnerId: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol; modelSpeedModes?: Record<string, readonly ModelSpeedMode[]>; daybreak?: DaybreakAccess }> {
   await assertOrganizationModelProvider(workspaceId, 'api-key')
   z.uuid().parse(keyId)
   const [usable] = await usableApiKeys(query, userId, workspaceId, keyId)
@@ -516,9 +699,10 @@ export async function openApiKeyForChat(query: Query, userId: string, workspaceI
   if (!usable || !baseUrl) throw new WorkspaceError('apiKeyNotFound')
   // A workspace's key serves its active members only.
   if (usable.workspace && !await executionMembersActive(workspaceId, [userId])) throw new WorkspaceError('apiKeyNotFound')
-  const { row, apiKey } = await openKey(query, keyId, env)
+  const { row, apiKey } = await openKey(query, keyId, env, true)
   const modelSpeedModes = parseStoredSpeedModes(row.modelSettings)
-  return { apiKey, baseUrl, keyOwnerId: row.ownerId ?? row.workspaceId!, provider: row.provider, protocol: row.protocol, ...(modelSpeedModes ? { modelSpeedModes } : {}) }
+  const daybreak = parseDaybreakAccess(row.daybreak)
+  return { apiKey, baseUrl, keyOwnerId: row.ownerId ?? row.workspaceId!, provider: row.provider, protocol: row.protocol, ...(modelSpeedModes ? { modelSpeedModes } : {}), ...(daybreak ? { daybreak } : {}) }
 }
 
 const ACTIVE_RUN = ['queued', 'preparing', 'running', 'paused', 'waiting_input', 'finishing']
@@ -544,6 +728,8 @@ export async function validateRunApiKey(query: Query, runId: string, keyId: stri
   const workspaceKey = Boolean(key?.workspaceId && run.workspaceId && key.workspaceId === run.workspaceId && run.agentDefinition?.apiKey
     && await executionMembersActive(run.workspaceId, [run.userId]))
   if (!key || (!own && !workspaceKey)) throw new WorkspaceError('apiKeyNotFound')
+  const { rows: [state] } = await query.query<{ modelsError: ApiKeyView['modelsError'] }>(`SELECT to_jsonb(k)->>'modelsError' AS "modelsError" FROM model_api_keys k WHERE id=$1`, [keyId])
+  if (state?.modelsError === 'invalid') throw new WorkspaceError('apiKeyInvalid')
   // Recorded so removing the key stops this run (stopRunsUsingApiKeys).
   await query.query(`INSERT INTO model_api_key_runs ("runId","keyId","workspaceId") VALUES ($1,$2,$3)
     ON CONFLICT ("runId") DO UPDATE SET "keyId"=EXCLUDED."keyId","workspaceId"=EXCLUDED."workspaceId"`, [runId, keyId, run.workspaceId])

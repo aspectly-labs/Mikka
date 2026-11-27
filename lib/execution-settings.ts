@@ -150,6 +150,11 @@ export class ExecutionSettings {
           ...(codexUltrafast && Object.keys(codexUltrafast).length ? { ultrafastSupport: codexUltrafast } : {}),
         } : {}),
         ...(claudeFast && Object.keys(claudeFast).length ? { fastSupport: claudeFast } : {}),
+        // Each model's reasoning levels as the account's catalogue lists them (lib/model-capabilities.ts reads them).
+        ...(unique.some(model => model.efforts) ? { effortSupport: Object.fromEntries(unique.filter(model => model.efforts).map(model => [model.id, model.efforts])) } : {}),
+        ...(unique.some(model => model.defaultEffort) ? { defaultEffort: Object.fromEntries(unique.filter(model => model.defaultEffort).map(model => [model.id, model.defaultEffort])) } : {}),
+        // The seat's Daybreak access: each model's tiers its catalogue offers (Capy's per-seat `DaybreakAccess`).
+        ...(unique.some(model => model.daybreak?.length) ? { daybreakSupport: Object.fromEntries(unique.filter(model => model.daybreak?.length).map(model => [model.id, model.daybreak])) } : {}),
       };
       await client.query(`UPDATE byos_connections SET "modelCatalog"=$2::jsonb,"modelSettings"=$3::jsonb WHERE id=$1`, [connectionId, JSON.stringify(catalogPayload), JSON.stringify({ ...reconcileSubscriptionModels(unique.map(model => model.id), current.rows[0].modelSettings as ModelSettings | null), refreshedAt: new Date().toISOString() })]);
       await client.query('COMMIT');

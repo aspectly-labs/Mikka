@@ -11,7 +11,13 @@ if (process.env.REQUIRE_DB === '1' && !databaseURL) throw new Error('Computer da
 class Gone extends Error {}
 const CURRENT = 'a'.repeat(40), OLD = 'b'.repeat(40)
 
-test('real PostgreSQL: a gone or out-of-date machine is replaced, unless a run lives on it', { skip: !databaseURL }, async () => {
+test('real PostgreSQL: a gone or out-of-date machine is replaced, unless a run lives on it', { skip: !databaseURL }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+  })
   assert.ok(['127.0.0.1', 'localhost'].includes(new URL(databaseURL!).hostname))
   const schema = `provision_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: databaseURL })
@@ -90,6 +96,17 @@ test('real PostgreSQL: a gone or out-of-date machine is replaced, unless a run l
     assert.equal(gone.calls.installed, 1)
     assert.equal((await machine(goneActor)).sandboxId, replaced?.sandboxId)
     assert.equal((await machine(goneActor)).state, 'running')
+
+    const stalePaused = await setup('stale-paused-box')
+    await pool.query(`UPDATE cloud_machines SET state='sleeping' WHERE "workspaceId"=$1`, [stalePaused.workspaceId])
+    const observedStale = runtime({ 'stale-paused-box': 'old' })
+    await ensureCloudMachine(pool, stalePaused, {
+      ...observedStale.provider,
+      observeComputerWorker: async () => 'stale',
+      connectComputer: async () => assert.fail('The stale desktop must not resume before replacement'),
+    } as never)
+    assert.deepEqual(observedStale.calls.killed, ['stale-paused-box'])
+    assert.equal(observedStale.calls.created.length, 1)
 
     // Built from an older worker and idle: killed, then rebuilt on the current template.
     const staleActor = await setup('old-box')
