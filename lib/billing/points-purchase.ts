@@ -63,7 +63,7 @@ export async function pointsPurchase(actorId: string, workspaceId: string, amoun
       back.searchParams.set('topup', 'cancelled')
       const common = {
         mode: 'payment', managed_payments: { enabled: true }, customer, client_reference_id: workspaceId,
-        line_items: [{ price_data: { currency: 'usd', unit_amount: amount * 100, product_data: { name: 'Mikka points', tax_code: POINTS_TAX_CODE } }, quantity: 1 }],
+        line_items: [{ price_data: { currency: 'usd', unit_amount: amount * 100, product_data: { name: 'Mikka credits', tax_code: POINTS_TAX_CODE } }, quantity: 1 }],
         metadata, payment_intent_data: { metadata },
       }
       if (embedded) {

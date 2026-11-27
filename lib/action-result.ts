@@ -273,6 +273,7 @@ export const ACTION_ERROR_CODES = [
   'billingProviderFailed',
   'billingResourcePlanUnavailable',
   'billingAutoRechargeUnavailable',
+  'billingOverageCapRequired',
   'billingPolicyChanged',
   'billingCheckoutPending',
   'savedLoginNotFound',

@@ -40,6 +40,7 @@ export type BillingManagementOperation = (
   | { action: 'budget'; workspaceId: string; budget: BillingBudgetInput }
   | { action: 'account'; workspaceId: string | null }
   | { action: 'recharge'; policy: { enabled: false; expectedRevision: number; thresholdPoints: number; amountPoints: 1000 | 2500 | 5000; monthlyCapPoints: number } }
+  | { action: 'overage'; policy: { enabled: boolean; monthlyCapPoints: number | null; expectedRevision: number } }
   | { action: 'checkout' | 'portal' }
   | { action: 'topup'; amount: number; locale: string }
 ) & { accountWorkspaceId?: string }

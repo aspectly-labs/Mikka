@@ -30,6 +30,7 @@ import { gatewayFeaturesSchema } from '@/lib/model-gateway/features'
 import { setAppPolicyInput } from '@/lib/app-policy/apps'
 import { POINTS_PURCHASE_AMOUNTS } from '@/lib/billing/hosted-usage'
 import { autoRechargeInputSchema } from '@/lib/billing/auto-recharge-schema'
+import { overageInputSchema } from '@/lib/billing/overage-schema'
 import {
   deleteDeviceRepositoryInput,
   patchDeviceRepositoryInput,
@@ -255,6 +256,7 @@ export const desktopActionSchemas = {
   'billing.startCardVerification': inWorkspace,
   'billing.getBillingSettings': inWorkspace,
   'billing.saveAutoRechargePolicy': tuple(autoRechargeInputSchema, workspace),
+  'billing.saveOveragePolicy': tuple(overageInputSchema, workspace),
   'devices.getPolicy': tuple(uuid, workspace),
   'devices.updatePolicy': tuple(uuid, updateDevicePolicyInput, workspace),
   'devices.listRepositories': oneId,

@@ -136,7 +136,7 @@ function toPlanCatalogEntry(rawPrice: unknown, configuredPriceId: string): Billi
     interval: 'month',
     includedCreditCents,
     includedPoints: approved.monthlyPoints,
-    seatModel: 'per_workspace',
+    seatModel: approved.seatModel,
     active: true,
   })
 }
