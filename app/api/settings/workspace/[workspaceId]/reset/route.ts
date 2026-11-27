@@ -15,7 +15,6 @@ export const POST = defineRoute<'session', 'pat-scoped', { workspaceId: string }
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => params.workspaceId,
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
 )

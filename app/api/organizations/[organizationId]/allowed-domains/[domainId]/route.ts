@@ -19,7 +19,6 @@ export const DELETE = defineRoute<'public', 'none', { organizationId: string; do
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => DELETEBody(request, { params: Promise.resolve(params) }),
 )

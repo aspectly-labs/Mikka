@@ -52,7 +52,6 @@ export const GET = defineRoute(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request }) => unguardedGET(request),
 )
@@ -63,7 +62,6 @@ export const PATCH = defineRoute(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request }) => unguardedPATCH(request),
 )

@@ -3,11 +3,11 @@ import { handleInbox } from '@/lib/inbox/http'
 import { defineRoute } from '@/lib/primitives/define-route'
 
 export const GET = defineRoute<'session', 'none'>(
-  { route: '/api/inbox', auth: 'session', origin: 'any', workspace: 'none', desktop: true },
+  { route: '/api/inbox', auth: 'session', origin: 'any', workspace: 'none' },
   async ({ request, user }) => handleInbox(request, user, inbox()),
 )
 
 export const POST = defineRoute<'session', 'none'>(
-  { route: '/api/inbox', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true, desktop: true },
+  { route: '/api/inbox', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true },
   async ({ request, user }) => handleInbox(request, user, inbox()),
 )

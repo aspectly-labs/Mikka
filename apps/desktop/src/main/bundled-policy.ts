@@ -1,5 +1,5 @@
 import { resolve, sep } from 'node:path'
-import generated from '../../../api/generated/desktop-routes.json'
+import generated from '../../../api/generated/routes.json'
 
 export const RENDERER_ORIGIN = 'mikka://app'
 export const RENDERER_URL = `${RENDERER_ORIGIN}/mikka`
@@ -16,18 +16,10 @@ const DRIVE_VOLUME_ID = 'vol_[0-9A-HJKMNP-TV-Z]{26}'
 /** The protocol streams this route's body instead of buffering it (bundled-protocol.ts). */
 export const DRIVE_BLOB_UPLOAD = new RegExp(`^/api/drive/volumes/${DRIVE_VOLUME_ID}/blobs$`)
 
-type DesktopMethods = Readonly<Record<string, true | readonly string[]>>
-type DesktopRoute = { template: string; desktop?: DesktopMethods }
-
-/**
- * One path segment a route parameter may hold: an opaque id, token or name.
- * normalizedRendererPath has already refused traversal, encoded separators
- * and controls; the handler validates the value itself.
- */
-const SEGMENT = '[A-Za-z0-9_.~-]{1,128}'
+type ServerRoute = { template: string }
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-/** The server's matcher for a route template (apps/api/src/routes.ts), so a path resolves to the route that would serve it. */
+/** The server's matcher for a route template (apps/api/src/routes.ts), in its matching order. */
 function serverPattern(template: string): RegExp {
   const pattern = template.split('/').map(segment => {
     if (/^\[\[\.\.\.[^\]]+\]\]$/.test(segment)) return '(.*)'
@@ -38,27 +30,10 @@ function serverPattern(template: string): RegExp {
   return new RegExp(`^${pattern.replace('/(.*)', '(?:/(.*))?')}$`)
 }
 
-/** What the desktop may send: each template segment literal, or one safe segment per parameter. */
-function desktopPattern(template: string): RegExp {
-  return new RegExp(`^${template.split('/').map(segment => (/^\[[^\]]+\]$/.test(segment) ? SEGMENT : escape(segment))).join('/')}$`)
-}
-
-/**
- * The API routes and methods the bundled renderer may reach, generated from the
- * `desktop` field of each route's `defineRoute` spec
- * (apps/api/scripts/generate-routes.mjs). There is deliberately no generic
- * /api/* forwarding and no hand-written list to drift from the server.
- */
-const DESKTOP_ROUTES = (generated.routes as readonly DesktopRoute[]).map(route => ({
-  template: route.template,
-  server: serverPattern(route.template),
-  methods: Object.fromEntries(Object.entries(route.desktop ?? {}).map(([method, value]) => [
-    method, value === true ? [desktopPattern(route.template)] : value.map(desktopPattern),
-  ])) as Record<string, RegExp[]>,
-}))
-
-/** Viewer and takeover grants are capabilities: the renderer obtains them only through owner-bound IPC. */
-const CAPABILITY_GRANTS = /^\/api\/bots\/[^/]+\/(?:computer\/(?:viewer|takeover)|subagents\/[^/]+\/viewer)$/
+/** Every API route the server has, only so a report can name a template instead of a path with ids. */
+const SERVER_ROUTES = (generated.routes as readonly ServerRoute[])
+  .filter(route => route.template.startsWith('/api/'))
+  .map(route => ({ template: route.template, pattern: serverPattern(route.template) }))
 
 /** Check before URL construction: WHATWG URL normalization must not erase traversal evidence. */
 export function normalizedRendererPath(value: string): string | null {
@@ -73,20 +48,18 @@ export function normalizedRendererPath(value: string): string | null {
 }
 
 /**
- * Whether main forwards this renderer request: the route that would serve the
- * path declares the method for the desktop (HEAD reads as GET, as the server
- * answers it), and every parameter is one plain segment.
+ * Whether main may forward this already-normalized renderer path to the
+ * current account's server: an API path, no empty segment, bounded. There is no
+ * per-route list; the server authorizes the person, workspace and permission
+ * (bundled-auth.ts only ever addresses the account's own server origin).
  */
-export function allowedApiPath(path: string, method: string): boolean {
-  if (!path.startsWith('/api/') || CAPABILITY_GRANTS.test(path)) return false
-  const route = DESKTOP_ROUTES.find(candidate => candidate.server.test(path))
-  const allowed = route?.methods[method === 'HEAD' ? 'GET' : method]
-  return Boolean(allowed?.some(pattern => pattern.test(path)))
+export function forwardableApiPath(path: string): boolean {
+  return path.startsWith('/api/') && path.length <= 4096 && !path.includes('//') && !path.endsWith('/')
 }
 
 /** The template of the route that would serve this path, for reports that must not carry its ids. */
 export function desktopRouteTemplate(path: string): string | null {
-  return DESKTOP_ROUTES.find(candidate => candidate.server.test(path))?.template ?? null
+  return SERVER_ROUTES.find(route => route.pattern.test(path))?.template ?? null
 }
 
 export function rendererAssetPath(root: string, urlPath: string): string | null {

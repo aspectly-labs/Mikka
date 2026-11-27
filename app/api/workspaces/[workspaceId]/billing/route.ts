@@ -11,7 +11,6 @@ export const GET = defineRoute<'session', 'pat-scoped', Params>(
     workspace: 'pat-scoped',
     freshSession: true,
     workspaceId: ({ params }) => params.workspaceId,
-    desktop: true,
   },
   ({ request, params, session }) =>
     billingManagementResponse(request, { kind: 'workspace', id: params.workspaceId }, session),
@@ -25,7 +24,6 @@ export const POST = defineRoute<'session', 'pat-scoped', Params>(
     workspace: 'pat-scoped',
     freshSession: true,
     workspaceId: ({ params }) => params.workspaceId,
-    desktop: true,
   },
   ({ request, params, session }) =>
     billingManagementResponse(request, { kind: 'workspace', id: params.workspaceId }, session),

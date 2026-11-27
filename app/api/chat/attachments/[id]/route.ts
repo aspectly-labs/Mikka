@@ -19,7 +19,7 @@ function fileErrorResponse(error: unknown) {
 type P = { id: string }
 
 export const GET = defineRoute<'mobile-or-session', 'pat-scoped', P>(
-  { auth: 'mobile-or-session', origin: 'any', workspace: 'pat-scoped', desktop: true },
+  { auth: 'mobile-or-session', origin: 'any', workspace: 'pat-scoped' },
   async ({ request, params, session, user }) => {
     const parsed = z.uuid().safeParse(params.id)
     if (!parsed.success) return Response.json({ error: 'notFound' }, { status: 404, headers })
@@ -55,7 +55,6 @@ export const DELETE = defineRoute<'mobile-or-session', 'pat-scoped', P>(
     workspace: 'pat-scoped',
     write: true,
     onOriginFailure: () => Response.json({ error: 'originNotAllowed' }, { status: 403, headers }),
-    desktop: true,
   },
   async ({ params, session, user }) => {
     const parsed = z.uuid().safeParse(params.id)

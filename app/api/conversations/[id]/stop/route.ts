@@ -9,7 +9,6 @@ export const POST = defineRoute<'session', 'pat-scoped', { id: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     write: true,
-    desktop: true,
   },
   ({ request, params }) => respondGroup(request, 'stop', params.id),
 )

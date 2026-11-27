@@ -14,7 +14,6 @@ export const GET = defineRoute(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   async ({ session }) => {
     const viewerId = session.user.id

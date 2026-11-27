@@ -36,7 +36,6 @@ export const GET = defineRoute<'public','none',{ taskId: string; captureId: stri
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
 )

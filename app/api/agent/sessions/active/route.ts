@@ -9,7 +9,6 @@ export const GET = defineRoute<'session', 'pat-scoped'>(
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
-    desktop: true,
   },
   ({ request, session, user }) => activeAgentsResponse(request, user.id, userId => listActiveAgents(db, userId, undefined, session.tokenWorkspaceId), {
     pleaseSignIn: agentCopy.pleaseSignInFirst,

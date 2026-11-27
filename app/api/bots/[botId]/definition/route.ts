@@ -25,10 +25,10 @@ const handler=createAgentDefinitionHandler({
 })
 
 export const GET = defineRoute<'session', 'pat-scoped', { botId: string }>(
-  { auth: 'session', origin: 'any', workspace: 'pat-scoped', freshSession: true, desktop: true },
+  { auth: 'session', origin: 'any', workspace: 'pat-scoped', freshSession: true },
   ({ request, params }) => handler(request, params.botId),
 )
 export const POST = defineRoute<'session', 'pat-scoped', { botId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'pat-scoped', freshSession: true, write: true, desktop: true },
+  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'pat-scoped', freshSession: true, write: true },
   ({ request, params }) => handler(request, params.botId),
 )

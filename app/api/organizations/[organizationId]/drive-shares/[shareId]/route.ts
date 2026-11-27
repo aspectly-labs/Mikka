@@ -16,7 +16,6 @@ export const PATCH = defineRoute<'public', 'none', { organizationId: string; sha
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => manage(request, { params: Promise.resolve(params) }),
 )
@@ -28,7 +27,6 @@ export const DELETE = defineRoute<'public', 'none', { organizationId: string; sh
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => manage(request, { params: Promise.resolve(params) }),
 )

@@ -135,6 +135,20 @@ export class BundledAuth {
     }
     await this.persist()
   }
+  /**
+   * The credentials main holds for any signed-in account: bearer tokens and
+   * signed session caches. The protocol checks that no response it hands the
+   * renderer carries one (bundled-protocol.ts). Main-only; never crosses IPC.
+   */
+  credentials(): string[] {
+    const values = new Set<string>()
+    for (const account of [this.current, ...this.saved.values()]) {
+      if (account?.token) values.add(account.token)
+      if (account?.sessionCache) values.add(account.sessionCache)
+    }
+    return [...values].filter(value => value.length >= 16)
+  }
+
   session(): BundledSession | null { return this.current ? structuredClone(this.current.identity) : null }
   /** Main-only authorization scope; neither token nor workspace selector crosses IPC. */
   scope(): string | null { return this.current ? JSON.stringify([this.serverOf(this.current), this.current.identity.user.id, this.current.identity.session.id, this.current.workspace ?? null]) : null }

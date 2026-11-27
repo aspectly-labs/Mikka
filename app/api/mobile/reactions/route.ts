@@ -38,7 +38,6 @@ export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
     auth: 'mobile-or-session',
     origin: 'any',
     workspace: 'pat-scoped',
-    desktop: true,
   },
   async ({ request, user }) => handleGET(request, user),
 )
@@ -49,7 +48,6 @@ export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
     auth: 'mobile-or-session',
     origin: 'native-mobile-allowed',
     workspace: 'pat-scoped', write: true,
-    desktop: true,
   },
   async ({ request, user }) => handlePOST(request, user),
 )

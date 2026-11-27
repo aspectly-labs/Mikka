@@ -11,7 +11,7 @@ import { defineRoute } from '@/lib/primitives/define-route'
  * documents it handed over. Only the run's owner reads it (R-62).
  */
 export const GET = defineRoute<'session', 'pat-scoped', { runId: string }>(
-  { auth: 'session', origin: 'any', workspace: 'pat-scoped', desktop: true },
+  { auth: 'session', origin: 'any', workspace: 'pat-scoped' },
   async ({ request, params, user }) => {
     const headers = { 'cache-control': 'private, no-store' }
     const found = z.uuid().safeParse(params.runId).success && !await runOutsideToken(user, params.runId)

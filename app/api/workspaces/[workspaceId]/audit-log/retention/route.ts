@@ -42,7 +42,6 @@ export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string }>
     origin: 'any',
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => z.uuid().safeParse(params.workspaceId).success ? params.workspaceId : undefined,
-    desktop: true,
   },
   ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
 )
@@ -56,7 +55,6 @@ const PUTBody = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => z.uuid().safeParse(params.workspaceId).success ? params.workspaceId : undefined,
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => PUTHandler(request, { params: Promise.resolve(params) }),
 )

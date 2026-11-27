@@ -36,7 +36,6 @@ export const GET = defineRoute<'public', 'none', { organizationId: string }>(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
 )
@@ -48,7 +47,6 @@ export const PUT = defineRoute<'public', 'none', { organizationId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => PUTBody(request, { params: Promise.resolve(params) }),
 )
@@ -60,7 +58,6 @@ export const PATCH = defineRoute<'public', 'none', { organizationId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => PATCHBody(request, { params: Promise.resolve(params) }),
 )
@@ -72,7 +69,6 @@ export const DELETE = defineRoute<'public', 'none', { organizationId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => DELETEBody(request, { params: Promise.resolve(params) }),
 )

@@ -76,7 +76,6 @@ export const POST = defineRoute(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request }) => unguardedPOST(request),
 )

@@ -258,11 +258,15 @@ and confirm **Check for Updates…** finds the published version.
 - Permissions are denied except clipboard writes; system notifications come
   from main, not the renderer.
 - No auth token, device credential or arbitrary path crosses the bridge.
-- API requests: main forwards only routes whose `defineRoute` spec declares
-  `desktop` (`apps/api/generated/desktop-routes.json`); everything else is
-  answered `403 desktop_route_denied` locally. Add the declaration and run
-  `node apps/api/scripts/generate-routes.mjs` when the shared UI calls a new
-  route; `src/main/bundled-routes.test.ts` fails until it is there.
+- API requests: main forwards any normalized `/mikka/api/…` path from the
+  app's own main frame to the current account's server, and nowhere else; the
+  server's authorization (person, workspace, permission) decides, as on the
+  web. There is no client-side route list. Traversal, encoded separators,
+  absolute and protocol-relative targets, other origins (artifact and browser
+  frames) and non-API paths never reach the server, and a response that echoes
+  a session credential is cut off before the renderer sees it.
+- `scripts/ui-api-routes.test.mjs` checks that every route the official UI
+  requests exists on the server with its method (web and desktop builds).
 - A 401 from one route is re-checked against the session endpoint; main signs
   out only when that also says the session is gone.
 - Telemetry and error reports go through main to the web's PostHog project,

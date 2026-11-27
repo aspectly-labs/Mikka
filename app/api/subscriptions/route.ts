@@ -17,7 +17,6 @@ const POSTBody = defineRoute(
     route: '/api/subscriptions',
     onOriginFailure: subscriptionOriginRefused,
     onAuthFailure: subscriptionAuthRequired,
-    desktop: true,
   },
   ({ request, session }) => subscriptionHTTP({
     ...subscriptionHTTPDependencies,
@@ -31,7 +30,6 @@ export const GET = defineRoute(
     workspace: 'none',
     route: '/api/subscriptions',
     onAuthFailure: subscriptionAuthRequired,
-    desktop: true,
   },
   ({ request, session }) => subscriptionList(request, {
     ...subscriptionHTTPDependencies,

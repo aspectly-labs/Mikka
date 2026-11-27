@@ -25,16 +25,11 @@ const handleGET = withBasePathURL(async request => await handleGitHubConnectCall
 ))
 const handlePOST = withBasePathURL(handler)
 
-// The desktop signs in and out in the system browser and its main process; its
-// renderer reaches only these account settings and the device approval page.
 export const GET = defineRoute(
-  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/auth/[...all]', desktop: ['/api/auth/device'] },
+  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/auth/[...all]' },
   ({ request }) => handleGET(request),
 )
 export const POST = defineRoute(
-  {
-    auth: 'public', origin: 'any', workspace: 'none', route: '/api/auth/[...all]',
-    desktop: ['/api/auth/device/approve', '/api/auth/device/deny', '/api/auth/two-factor/[action]', '/api/auth/unlink-account'],
-  },
+  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/auth/[...all]' },
   ({ request }) => handlePOST(request),
 )

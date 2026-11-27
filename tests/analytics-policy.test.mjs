@@ -660,10 +660,10 @@ test('frontend_web_vitals keeps bounded CWV timings, drops empty/invalid payload
 test('desktop reports keep only a route template, method, status and code, with the build tags', () => {
   const base = { token: 'public-project-token', distinct_id: 'user-id', platform: 'desktop', app_version: '2026.10000.1940', public_sha: 'a'.repeat(40), overlay_sha: 'b'.repeat(40) }
   const denied = sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: {
-    ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'desktop_route_denied',
+    ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'untrusted_origin',
     path: '/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels/label_1', body: '{"name":"private"}', message: 'private',
   } })
-  assert.deepEqual(denied.properties, { ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'desktop_route_denied' })
+  assert.deepEqual(denied.properties, { ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'untrusted_origin' })
   // A concrete path, an unknown method or a missing status is not a report.
   for (const properties of [
     { route: '/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels', method: 'GET', status: 403 },

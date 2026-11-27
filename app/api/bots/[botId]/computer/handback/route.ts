@@ -8,7 +8,6 @@ export const POST = defineRoute<'session', 'pat-scoped', { botId: string }>(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
-    desktop: true,
   },
   ({ request, params }) => computerRoute(request, params.botId, 'handback'),
 )

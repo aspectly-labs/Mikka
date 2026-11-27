@@ -8,7 +8,6 @@ export const POST = defineRoute<'session', 'pat-scoped', { runId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     write: true,
-    desktop: true,
   },
   ({ request, params }) => threadCredentialRoute(request, params.runId, 'login'),
 )

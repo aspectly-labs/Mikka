@@ -8,7 +8,6 @@ export const GET = defineRoute<'session', 'pat-scoped', { id: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
-    desktop: true,
   },
   ({ request, params }) => respondGroup(request, 'links', params.id),
 )

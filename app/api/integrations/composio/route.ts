@@ -45,7 +45,6 @@ export const GET = defineRoute(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   async ({ session }) => {
     if (isPatSession(session)) return RouteResponse.json({ error: 'sessionRequired' }, { status: 403 })
@@ -82,7 +81,6 @@ export const POST = defineRoute(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none',
-    desktop: true,
   },
   async ({ request, session }) => {
     if (isPatSession(session)) return RouteResponse.json({ error: 'sessionRequired' }, { status: 403 })
@@ -122,7 +120,6 @@ export const DELETE = defineRoute(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none',
-    desktop: true,
   },
   async ({ request, session }) => {
     if (isPatSession(session)) return RouteResponse.json({ error: 'sessionRequired' }, { status: 403 })
@@ -149,7 +146,6 @@ export const PATCH = defineRoute(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none',
-    desktop: true,
   },
   async ({ request, session }) => {
     if (isPatSession(session)) return RouteResponse.json({ error: 'sessionRequired' }, { status: 403 })

@@ -30,7 +30,6 @@ export const PATCH = defineRoute<'mobile-or-session', 'pat-scoped', { id: string
     auth: 'mobile-or-session',
     origin: 'native-mobile-allowed',
     workspace: 'pat-scoped', write: true,
-    desktop: true,
   },
   async ({ request, user, params }) => handlePATCH(request, user, { params: Promise.resolve(params) }),
 )

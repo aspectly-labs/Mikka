@@ -19,7 +19,6 @@ export const PATCH = defineRoute<'public', 'none', { organizationId: string; key
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => PATCHBody(request, { params: Promise.resolve(params) }),
 )

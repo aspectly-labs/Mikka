@@ -41,7 +41,6 @@ export const POST = defineRoute<'public','none',{ questionId: string }>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   ({ request, params }) => unguardedPOST(request, { params: Promise.resolve(params) }),
 )

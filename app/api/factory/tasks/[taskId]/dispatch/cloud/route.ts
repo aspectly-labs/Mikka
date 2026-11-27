@@ -12,7 +12,6 @@ export const POST = defineRoute<'human-session-only', 'none', { taskId: string }
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   async ({ request, session, params }) => {
     if (!factoryLifecycleEnabled()) return RouteResponse.json({ error: 'factoryLifecycleUnavailable' }, { status: 404 })

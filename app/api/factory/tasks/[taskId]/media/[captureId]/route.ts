@@ -9,7 +9,6 @@ export const GET = defineRoute(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => serveFactoryTaskMedia(request, params.taskId, params.captureId),
 )

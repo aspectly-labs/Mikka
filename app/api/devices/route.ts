@@ -10,7 +10,6 @@ export const GET = defineRoute(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   async ({ request, session }) => {
     if (request.headers.get('sec-fetch-site') === 'cross-site') return Response.json({ items: [] }, { status: 401, headers })

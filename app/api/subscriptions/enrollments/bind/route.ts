@@ -12,7 +12,7 @@ import { readEnv } from '@/lib/env/server'
 
 export const maxDuration = 120
 export const GET = defineRoute(
-  { auth: 'public', origin: 'any', workspace: 'none', desktop: true },
+  { auth: 'public', origin: 'any', workspace: 'none' },
   () => byosEnrollmentEnabled() ? enrollmentBindingPage() : new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } }),
 )
 
@@ -47,7 +47,7 @@ const enrollmentOriginRefused = () => Response.json(
 )
 
 const POSTBody = defineRoute(
-  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', onOriginFailure: enrollmentOriginRefused, desktop: true },
+  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', onOriginFailure: enrollmentOriginRefused },
   ({ request }) => handleBind(request),
 )
 

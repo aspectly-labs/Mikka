@@ -30,7 +30,6 @@ export const GET = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }
     auth: 'mobile-or-session',
     origin: 'native-mobile-allowed',
     workspace: 'pat-scoped',
-    desktop: true,
   },
   async ({ request, params, user }) => {
     const page = parseThreadPageParams(new URL(request.url).searchParams)

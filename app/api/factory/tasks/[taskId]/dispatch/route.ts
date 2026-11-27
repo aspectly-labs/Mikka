@@ -23,7 +23,6 @@ export const GET = defineRoute<'public','none',{ taskId: string }>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
 )

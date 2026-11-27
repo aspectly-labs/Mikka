@@ -12,7 +12,6 @@ export const GET = defineRoute<'session', 'none', { botId: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   async ({ session, params }) => {
     if (!cloudComputerTasksEnabled()) return Response.json({ error: 'Cloud computer task unavailable' }, { status: 503, headers })

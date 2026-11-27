@@ -8,7 +8,6 @@ export const GET = defineRoute<'session', 'pat-scoped', { botId: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
-    desktop: true,
   },
   ({ request, params }) => computerRoute(request, params.botId),
 )

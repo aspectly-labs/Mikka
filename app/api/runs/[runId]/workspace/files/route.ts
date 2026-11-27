@@ -20,7 +20,6 @@ export const GET = defineRoute<'session', 'pat-scoped', { runId: string }>(
     workspaceId: ({ request }) => new URL(request.url).searchParams.get('workspaceId'),
     freshSession: true,
     onWorkspaceError: () => Response.json({ ok: false, code: 'workspace_not_found' }, { status: 404, headers }),
-    desktop: true,
   },
   async ({ request, params, session, user }) => {
     try {

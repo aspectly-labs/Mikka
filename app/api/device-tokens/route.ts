@@ -8,7 +8,7 @@ import { z } from 'zod'
  * and recover its recorded device associations without returning credentials.
  * Tombstones remain linked so a later owner read can identify prior cleanup. */
 export const GET = defineRoute(
-  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, desktop: true },
+  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true },
   async ({ request, session }) => {
     if (hasPatAuthorizationHeader(request) || isPatSession(session)) return RouteResponse.json({ error: 'authRequired' }, { status: 401 })
     const cursors = new URL(request.url).searchParams.getAll('cursor')

@@ -43,7 +43,6 @@ export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string; e
     origin: 'any',
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => params.workspaceId,
-    desktop: true,
   },
   ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
 )
@@ -55,7 +54,6 @@ export const PATCH = defineRoute<'session', 'pat-scoped', { workspaceId: string;
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => params.workspaceId,
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => PATCHBody(request, { params: Promise.resolve(params) }),
 )

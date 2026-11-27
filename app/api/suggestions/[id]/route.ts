@@ -20,7 +20,6 @@ export const DELETE = defineRoute<'session', 'none', { id: string }>(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none', write: true,
-    desktop: true,
   },
   async ({ request, user, params }) => handleDELETE(request, user, { params: Promise.resolve(params) }),
 )

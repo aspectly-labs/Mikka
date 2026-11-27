@@ -53,18 +53,18 @@ test('events pass the web allowlist and carry the platform, version and both sou
   assert.equal(JSON.stringify(events()).includes('private'), false)
 })
 
-test('a refused renderer route is reported by its template, once per window', async t => {
+test('a refused or failed renderer request is reported by its route template, once per window', async t => {
   const { make, events, advance } = await harness(t)
   const telemetry = make()
   const serve = bundledProtocol('/nonexistent', { request: async () => new Response('{}', { status: 500 }) }, failure => telemetry.apiFailure(failure))
   const workspace = '84c182d1-661c-461b-bca2-10410cb646d4'
-  // A method the route does not declare for the desktop, twice: one report.
-  for (let attempt = 0; attempt < 2; attempt++) assert.equal((await serve(new Request(`${RENDERER_URL}/api/workspaces/${workspace}/ops-metrics`, { method: 'DELETE' }))).status, 403)
+  // A frame from another origin borrowing main's session, twice: one report.
+  for (let attempt = 0; attempt < 2; attempt++) assert.equal((await serve(Object.assign(new Request(`${RENDERER_URL}/api/workspaces/${workspace}/ops-metrics`), { initiatorOrigin: 'https://evil.test' }))).status, 403)
   assert.equal((await serve(new Request(`${RENDERER_URL}/api/settings/issue-states`))).status, 500)
   await settle()
   await telemetry.flush()
   assert.deepEqual(events().map(event => [event.event, event.properties.route, event.properties.method, event.properties.status, event.properties.error_code]), [
-    ['desktop_api_error', '/api/workspaces/[workspaceId]/ops-metrics', 'DELETE', 403, 'desktop_route_denied'],
+    ['desktop_api_error', '/api/workspaces/[workspaceId]/ops-metrics', 'GET', 403, 'untrusted_origin'],
     ['desktop_api_error', '/api/settings/[read]', 'GET', 500, undefined],
   ])
   assert.equal(JSON.stringify(events()).includes(workspace), false, 'no id from the path')

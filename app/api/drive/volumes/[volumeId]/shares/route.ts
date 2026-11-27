@@ -7,7 +7,6 @@ export const GET = defineRoute<'session', 'none', { volumeId: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'none', freshSession: true,
-    desktop: true,
   },
   async ({ request, params, session }) => driveResponse(request, 'links', params, session),
 )
@@ -18,7 +17,6 @@ export const POST = defineRoute<'session', 'none', { volumeId: string }>(
     auth: 'session',
     origin: 'native-mobile-allowed',
     workspace: 'none', write: true, freshSession: true,
-    desktop: true,
   },
   async ({ request, params, session }) => driveResponse(request, 'links', params, session),
 )

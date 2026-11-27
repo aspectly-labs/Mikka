@@ -13,7 +13,6 @@ export const GET = defineRoute<'session', 'pat-scoped', { botId: string }>(
     origin: 'any',
     workspace: 'pat-scoped',
     workspaceId,
-    desktop: true,
   },
   ({ request, params }) => runInstructionRoute(request, async () =>
     getBotInstructions(params.botId, new URL(request.url).searchParams.get('workspaceId') ?? undefined)),
@@ -28,7 +27,6 @@ export const PATCH = defineRoute<'session', 'pat-scoped', { botId: string }>(
     workspaceId,
     freshSession: true,
     write: true,
-    desktop: true,
   },
   ({ request, params }) => runInstructionRoute(request, async () => {
     const queryWorkspaceId = new URL(request.url).searchParams.get('workspaceId') ?? undefined

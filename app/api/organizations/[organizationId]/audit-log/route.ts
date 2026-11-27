@@ -38,7 +38,6 @@ export const POST = defineRoute<'public', 'none', { organizationId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
 )
@@ -50,7 +49,6 @@ export const GET = defineRoute<'public', 'none', { organizationId: string }>(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
 )

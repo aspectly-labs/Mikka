@@ -22,7 +22,6 @@ export const POST = defineRoute<'human-session-only', 'none'>(
     write: true,
     onOriginFailure: unauthorized,
     onAuthFailure: unauthorized,
-    desktop: true,
   },
   async ({ request, user }) => {
     // Reject omitted Origin as well while preserving the established 401 unauthorized contract.

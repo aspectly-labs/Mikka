@@ -15,7 +15,7 @@ import { readEnv } from '@/lib/env/server'
  * (MIN_CLIENT_VERSION). Read before sign-in, so it needs no session.
  */
 export const GET = defineRoute(
-  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/version', desktop: true },
+  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/version' },
   ({ request }) => {
     // Released Web Workers require the original five-field document. New readers
     // opt into the additional metadata using the same compatibility header.

@@ -23,6 +23,6 @@ async function handleGET(request: Request, token: string) {
 /** Public links need their token; restricted links also admit the current viewer.
  * Only the existing ArtifactShared props leave this endpoint. */
 export const GET = defineRoute<'public', 'none', { token: string }>(
-  { route: '/api/artifacts/shared/[token]', auth: 'public', origin: 'any', workspace: 'none', desktop: true },
+  { route: '/api/artifacts/shared/[token]', auth: 'public', origin: 'any', workspace: 'none' },
   async ({ request, params }) => handleGET(request, params.token),
 )

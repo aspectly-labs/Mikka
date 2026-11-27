@@ -27,7 +27,6 @@ export const POST = defineRoute<'public', 'none', { organizationId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
 )
@@ -39,7 +38,6 @@ export const DELETE = defineRoute<'public', 'none', { organizationId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => DELETEBody(request, { params: Promise.resolve(params) }),
 )

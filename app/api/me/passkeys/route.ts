@@ -8,7 +8,7 @@ const passkeyUnauthorized = () => Response.json(
 )
 
 export const GET = freshSessionRoute(defineRoute(
-  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, onAuthFailure: passkeyUnauthorized, desktop: true },
+  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, onAuthFailure: passkeyUnauthorized },
   async ({ request }) => passkeyRouteResponse(async () => {
     const session = await passkeyAccountSession(request)
     return { passkeys: await listUserPasskeys(session.user.id) }

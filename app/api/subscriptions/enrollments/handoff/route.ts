@@ -14,11 +14,11 @@ const handoffOriginRefused = () => Response.json(
 )
 
 const POSTBody = defineRoute(
-  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', onOriginFailure: handoffOriginRefused, desktop: true },
+  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', onOriginFailure: handoffOriginRefused },
   ({ request }) => handleHandoff(request),
 )
 export const GET = defineRoute(
-  { auth: 'public', origin: 'any', workspace: 'none', desktop: true },
+  { auth: 'public', origin: 'any', workspace: 'none' },
   ({ request }) => enrollmentHandoffPage(request, enabled()),
 )
 

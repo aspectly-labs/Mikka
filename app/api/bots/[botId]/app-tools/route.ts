@@ -12,7 +12,6 @@ export const GET = defineRoute<'human-session-only', 'none', { botId: string }>(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   async ({ request, params, user }) => {
     try {

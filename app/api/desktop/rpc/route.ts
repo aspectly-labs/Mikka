@@ -36,6 +36,6 @@ const handleRpc = createDesktopRpc({
 
 // Desktop/Web RPC authenticates via its own desktop bearer + session rotation envelope inside createDesktopRpc.
 export const POST = defineRoute(
-  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/desktop/rpc', desktop: true },
+  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/desktop/rpc' },
   ({ request }) => handleRpc(request),
 )

@@ -11,7 +11,6 @@ export const GET = defineRoute<'public', 'none', { token: string }>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   async ({ params }) => {
     const thread = await sharedThread(params.token)

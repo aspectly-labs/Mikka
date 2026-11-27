@@ -9,7 +9,6 @@ export const GET = defineRoute<'session', 'none', { volumeId: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'none', freshSession: true,
-    desktop: true,
   },
   async ({ request, params, session }) => driveResponse(request, 'history', params, session),
 )

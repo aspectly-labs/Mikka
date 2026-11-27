@@ -5,7 +5,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate as nextTurn } from 'node:timers/promises'
-import { allowedApiPath, normalizedRendererPath, RENDERER_CSP, RENDERER_URL, rendererAssetPath, safeAppNext } from './bundled-policy'
+import { forwardableApiPath, normalizedRendererPath, RENDERER_CSP, RENDERER_URL, rendererAssetPath, safeAppNext } from './bundled-policy'
 import { isTrustedFrame, navigationDecision, originOf, trustedIpcSender } from './security'
 import { bundledProtocol } from './bundled-protocol'
 import { SessionVault, type EncryptedStorage, type StoredSession } from './session-vault'
@@ -47,93 +47,61 @@ test('custom origin is explicit; opaque, lookalike, embedded and resource frames
   assert.equal(isTrustedFrame('mikka://app/', RENDERER_URL), false)
 })
 
-test('Project checkout bookmarks forward only the three registered device/project methods', () => {
-  const id = '00000000-0000-4000-8000-000000000001'
-  const device = `/api/workspaces/${id}/devices/${id}/project-checkout`
-  const project = `/api/workspaces/${id}/projects/${id}/device-checkouts`
-  for (const path of [device, device + '/clear']) {
-    assert.equal(allowedApiPath(path, 'POST'), true)
-    for (const method of ['GET', 'PUT', 'DELETE']) assert.equal(allowedApiPath(path, method), false)
-  }
-  assert.equal(allowedApiPath(project, 'GET'), true)
-  assert.equal(allowedApiPath(project, 'POST'), false)
-  assert.equal(allowedApiPath(device + '/execute', 'POST'), false)
-})
-
-test('path policy rejects traversal, encoded delimiters, absolute targets and unknown API routes', () => {
+test('path policy rejects traversal, encoded delimiters and absolute targets', () => {
   for (const path of ['/mikka/../secret', '/mikka/%2e%2e/secret', '/mikka/%252e%252e/secret', '/mikka/%2fapi/auth/token', '/mikka/a\\b', '//evil.test/api', '/mikka/a%00b']) assert.equal(normalizedRendererPath(path), null, path)
   assert.equal(rendererAssetPath('/safe/root', '/mikka/assets/file.js'), '/safe/root/assets/file.js')
   assert.equal(normalizedRendererPath('/mikka'), '/')
-  assert.equal(allowedApiPath('/api/desktop/rpc', 'POST'), true)
-  for (const path of ['/api/auth/get-session', '/api/auth/token', '/api/auth/one-time-token/verify', '/api/live/ticket', '/api/devices/enrollment', '/api/desktop/exchange', '/api/cron/schedules', '/api/arbitrary']) assert.equal(allowedApiPath(path, 'GET'), false, path)
-  assert.equal(allowedApiPath('/api/desktop/rpc', 'GET'), false)
-  assert.equal(allowedApiPath('/api/settings/preferences', 'GET'), true)
-  assert.equal(allowedApiPath('/api/settings/preferences', 'POST'), false)
-  assert.equal(allowedApiPath('/api/settings/issue-prefix', 'GET'), true)
-  assert.equal(allowedApiPath('/api/settings/issue-prefix', 'HEAD'), true, 'HEAD reads as GET, as the server answers it')
-  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath('/api/settings/issue-prefix', method), false)
-  }
-  assert.equal(allowedApiPath('/api/settings/issue-prefix/extra', 'GET'), false)
-  assert.equal(allowedApiPath('/api/artifacts/shared/public-share-token', 'GET'), true)
-  assert.equal(allowedApiPath('/api/settings/personal', 'GET'), true)
-  // Saving a personal setting is the same route's declared write.
-  assert.equal(allowedApiPath('/api/settings/personal', 'PATCH'), true)
-  assert.equal(allowedApiPath('/api/settings/personal', 'DELETE'), false)
-  assert.equal(allowedApiPath('/api/artifacts/shared/public-share-token', 'POST'), false)
-  // 收件箱 reads its authorized page and writes its lifecycle commands; nothing
-  // else about it is reachable, and the count query rides the same GET.
-  assert.equal(allowedApiPath('/api/inbox', 'GET'), true)
-  assert.equal(allowedApiPath('/api/inbox', 'POST'), true)
-  assert.equal(allowedApiPath('/api/inbox', 'HEAD'), true, 'HEAD reads as GET')
-  for (const method of ['PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath('/api/inbox', method), false, method)
-  assert.equal(allowedApiPath('/api/inbox/extra', 'GET'), false)
-  assert.equal(allowedApiPath('/api/artifacts/shared/public-share-token/metadata', 'GET'), false)
-  assert.equal(allowedApiPath(`/api/bots/${identity.user.id}/computer/viewer`, 'POST'), false)
-  assert.equal(allowedApiPath(`/api/bots/${identity.user.id}/computer/takeover`, 'POST'), false)
   assert.equal(safeAppNext('//evil.test'), '/')
   assert.equal(safeAppNext('/\\evil.test'), '/')
 })
 
-test('private Drive forwarding has exact identifiers, paths and HTTP methods', () => {
-  const volume = 'vol_01ARZ3NDEKTSV4RRFFQ69G5FAV', version = 'vver_01ARZ3NDEKTSV4RRFFQ69G5FAW'
-  const routes: [string, string[]][] = [
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive-skills', ['GET']],
-    ['/api/drive/scopes', ['GET']],
-    ['/api/drive/shares', ['GET']],
-    ['/api/drive/shares/4bd6cdd3-9660-48ed-9db1-15f98f5bb844', ['GET']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive-shares/4bd6cdd3-9660-48ed-9db1-15f98f5bb844', ['PATCH', 'DELETE']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/archive', ['POST']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/unarchive', ['POST']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/restore', ['POST']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/versions', ['GET']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/versions/vver_01J00000000000000000000000', ['GET']],
-    [`/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/versions/vver_01J00000000000000000000000/files/${'a'.repeat(64)}`, ['GET']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/file-versions', ['GET']],
-    ['/api/drive/volumes', ['GET', 'POST']],
-    [`/api/drive/volumes/${volume}`, ['GET']],
-    [`/api/drive/volumes/${volume}/files`, ['GET']],
-    [`/api/drive/volumes/${volume}/versions`, ['GET']],
-    [`/api/drive/volumes/${volume}/versions/${version}`, ['GET']],
-    [`/api/drive/volumes/${volume}/shares`, ['GET', 'POST']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/shares', ['GET', 'POST']],
-    [`/api/drive/volumes/${volume}/shares/4bd6cdd3-9660-48ed-9db1-15f98f5bb844`, ['GET', 'PATCH', 'DELETE']],
-    [`/api/drive/volumes/${volume}/blobs`, ['POST']],
-    [`/api/drive/volumes/${volume}/entries`, ['PATCH']],
-    [`/api/drive/volumes/${volume}/restore`, ['POST']],
-    [`/api/drive/volumes/${volume}/archive`, ['POST']],
-    [`/api/drive/volumes/${volume}/unarchive`, ['POST']],
-  ]
-  for (const [path, methods] of routes) {
-    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) {
-      assert.equal(allowedApiPath(path, method), methods.includes(method === 'HEAD' ? 'GET' : method), `${method} ${path}`)
-    }
+test('the proxy forwards any API path to the account server only, and nothing else', async t => {
+  const root = await fixture(t)
+  const forwarded: string[] = []
+  const serve = bundledProtocol(root, { request: async (path, init) => { forwarded.push(`${init?.method ?? 'GET'} ${path}`); return Response.json({ ok: true }) } })
+  const trusted = (path: string, init: RequestInit = {}) => serve(Object.assign(new Request(`mikka://app${path}`, init), { initiatorOrigin: 'mikka://app' }))
+  // No per-route list: the server authorizes the person, workspace and permission.
+  for (const path of ['/mikka/api/settings/issue-states', '/mikka/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels', '/mikka/api/integrations/mcp/x/check']) {
+    assert.equal((await trusted(path, { method: path.endsWith('check') ? 'POST' : 'GET' })).status, 200, path)
   }
-  // Identifiers are the handlers' to validate; a value that is not one plain segment never reaches them.
-  for (const path of ['/api/drive/admin', '/api/drive/scopes/extra', `/api/drive/volumes/${volume}/files/extra`, `/api/drive/volumes/${volume}/delete`,
-    '/api/drive/volumes/not a volume', `/api/drive/volumes/${volume}/versions/version:1`, `/api/drive/volumes/${volume}/shares/${'a'.repeat(129)}`]) {
-    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
+  assert.deepEqual(forwarded, ['GET /api/settings/issue-states', 'GET /api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels', 'POST /api/integrations/mcp/x/check'])
+  forwarded.length = 0
+  // Traversal, encoded separators, absolute and protocol-relative targets, and non-API paths never reach the server.
+  for (const path of [
+    '/mikka/api/../../etc/passwd', '/mikka/api/%2e%2e/admin', '/mikka/api%2fsecret', '/mikka/api/a%2fb', '/mikka/api/a%5cb', '/mikka/api/%252e%252e',
+    '/mikka/api//evil.test/x', '/mikka/api/x/', '//evil.test/mikka/api/x', '/mikka/api/a\\b',
+  ]) {
+    const response = await trusted(path)
+    assert.ok([400, 404].includes(response.status), `${path} -> ${response.status}`)
   }
+  for (const href of ['https://evil.test/mikka/api/x', 'mikka://evil/mikka/api/x']) assert.equal((await serve(new Request(href))).status, 403, href)
+  // A path outside /mikka/api is a local asset, never a request: it is not forwarded.
+  assert.equal((await trusted('/mikka/apiary')).status, 404)
+  assert.equal((await trusted('/mikka/api/x', { method: 'OPTIONS' })).status, 405)
+  assert.equal(forwarded.length, 0)
+  assert.equal(forwardableApiPath('/api/x'), true)
+  for (const path of ['/api/', '/api//x', '/apix', '/assets/x', `/api/${'a'.repeat(5000)}`]) assert.equal(forwardableApiPath(path), false, path)
+})
+
+test('a response that echoes a session credential never reaches the renderer', async t => {
+  const root = await fixture(t)
+  const token = 'tok_' + 'x'.repeat(40)
+  const reports: string[] = []
+  const chunks = ['{"session":{"id":"s","token":"tok_', 'x'.repeat(40), '"}}']
+  const serve = bundledProtocol(root, {
+    credentials: () => [token],
+    request: async path => path === '/api/auth/get-session'
+      ? new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close() } }), { headers: { 'content-type': 'application/json' } })
+      : path === '/api/header'
+        ? new Response('{}', { headers: { 'content-type': 'application/json', 'content-disposition': `attachment; filename=${token}` } })
+        : new Response('{"ok":true,"tok_":"a prefix alone is fine"}', { headers: { 'content-type': 'application/json' } }),
+  }, failure => reports.push(`${failure.route} ${failure.code}`))
+  const trusted = (path: string) => serve(Object.assign(new Request(`mikka://app/mikka${path}`), { initiatorOrigin: 'mikka://app' }))
+  // Split across chunks, the token is still caught: the body is cut off before its last part leaves main.
+  await assert.rejects((await trusted('/api/auth/get-session')).text())
+  assert.equal((await trusted('/api/header')).status, 502)
+  assert.equal(await (await trusted('/api/inbox')).text(), '{"ok":true,"tok_":"a prefix alone is fine"}')
+  assert.deepEqual(reports, ['/api/auth/[...all] desktop_credential_withheld', 'unmatched desktop_credential_withheld'])
 })
 
 test('renderer CSP has no remote code, eval, inline scripts, external fetch, workers or object', () => {
@@ -142,165 +110,6 @@ test('renderer CSP has no remote code, eval, inline scripts, external fetch, wor
   assert.match(RENDERER_CSP, /connect-src 'self';/)
   assert.match(RENDERER_CSP, /object-src 'none'/)
   assert.match(RENDERER_CSP, /worker-src 'none'/)
-})
-
-test('Factory flow accepts one plain task segment and its two declared methods', () => {
-  const path = `/api/factory/tasks/${identity.user.id}/flow`
-  for (const method of ['GET', 'HEAD', 'POST']) assert.equal(allowedApiPath(path, method), true)
-  for (const method of ['PATCH', 'DELETE', 'PUT', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
-  for (const id of ['task 1', 'task:1', 'é']) {
-    for (const method of ['GET', 'POST']) assert.equal(allowedApiPath(`/api/factory/tasks/${id}/flow`, method), false)
-  }
-  assert.equal(allowedApiPath(`${path}/extra`, 'GET'), false)
-})
-
-test('Factory activity and its media are read-only under a strict task UUID', () => {
-  const task = identity.user.id
-  for (const path of [`/api/factory/tasks/${task}/activity`, `/api/factory/tasks/${task}/media/${task}`]) {
-    assert.equal(allowedApiPath(path, 'GET'), true, path)
-    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
-    assert.equal(allowedApiPath(`${path}/extra`, 'GET'), false)
-  }
-  assert.equal(allowedApiPath('/api/factory/tasks/task 1/activity', 'GET'), false)
-  assert.equal(allowedApiPath(`/api/factory/tasks/${task}/media/`, 'GET'), false)
-})
-
-test('service identity management forwards only its declared human-session methods and UUID paths', () => {
-  const workspace = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const identity = 'ebb7878e-6918-4b68-9300-d956761b5011'
-  const directory = `/api/workspaces/${workspace}/service-identities`
-  const item = `${directory}/${identity}`
-  const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-  const governance = `/api/workspaces/${workspace}/governance`
-  const read = (method: string) => method === 'GET' || method === 'HEAD'
-  for (const method of methods) assert.equal(allowedApiPath(governance, method), read(method), method)
-  for (const method of methods) assert.equal(allowedApiPath(governance + '/usage', method), read(method), `${method} ${governance}/usage`)
-  const routes = [[directory, 'POST'], [item, 'PATCH'], [item + '/projects', 'PUT'], [item + '/credential', 'POST']]
-  for (const [path, mutation] of routes) {
-    for (const method of methods) assert.equal(allowedApiPath(path, method), read(method) || method === mutation, `${method} ${path}`)
-  }
-  for (const path of [governance.replace(workspace, 'not a workspace'), directory.replace(workspace, 'x:y'), item + '/unknown',
-    item + '/credential/rotate', item + '/projects/', '/api/service-identity/projects']) {
-    for (const method of methods) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
-  }
-})
-
-test('organization lifecycle, workspace binding and service keys use their declared session routes', () => {
-  const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const key = 'ebb7878e-6918-4b68-9300-d956761b5011'
-  const overview = `/api/organizations/${org}`
-  const collection = overview + '/api-keys'
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath('/api/organizations', method), ['GET', 'HEAD', 'POST'].includes(method))
-    // The literal route wins over the organization id beside it, as on the server.
-    assert.equal(allowedApiPath('/api/organizations/deleted', method), ['GET', 'HEAD'].includes(method))
-    assert.equal(allowedApiPath('/api/organizations/deleted/extra', method), false)
-    assert.equal(allowedApiPath(overview, method), ['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(overview + '/workspaces', method), ['POST', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(collection, method), ['GET', 'HEAD'].includes(method))
-    assert.equal(allowedApiPath(collection + '/' + key, method), method === 'PATCH')
-    for (const path of [overview.replace(org, 'not an id'), overview + '/workspaces/extra', overview.replace(org, 'a:b') + '/workspaces', collection + '/' + key + '/revoke']) {
-      assert.equal(allowedApiPath(path, method), false)
-    }
-  }
-})
-
-test('organization audit permits only listing and named export requests for a single organization', () => {
-  const organization = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const path = `/api/organizations/${organization}/audit-log`
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(path, method), ['GET', 'HEAD', 'POST'].includes(method))
-    assert.equal(allowedApiPath(path.replace(organization, 'not an id'), method), false)
-    assert.equal(allowedApiPath(path + '/events', method), false)
-  }
-})
-
-test('resource policy and approval requests use only their own declared methods', () => {
-  const root = '/api/organizations/' + identity.user.id
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(root + '/policy', method), ['GET', 'HEAD', 'PATCH'].includes(method))
-    assert.equal(allowedApiPath(root + '/approvals', method), ['POST', 'PATCH'].includes(method))
-    assert.equal(allowedApiPath(root + '/approvals/all', method), false)
-    assert.equal(allowedApiPath('/api/organizations/not an id/policy', method), false)
-  }
-})
-
-test('Organization Files forwards only a signed directory read', () => {
-  const path = '/api/organizations/' + identity.user.id + '/drive-shares'
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(path, method), ['GET', 'HEAD'].includes(method))
-    assert.equal(allowedApiPath(path + '/all/extra', method), false)
-    assert.equal(allowedApiPath('/api/organizations/not an id/drive-shares', method), false)
-  }
-})
-
-test('Organization Drive catalogs allow GET for the exact Organization path', () => {
-  for (const resource of ['drive', 'drive-scopes']) {
-    const path = '/api/organizations/' + identity.user.id + '/' + resource
-    for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
-      assert.equal(allowedApiPath(path, method), method === 'GET')
-      assert.equal(allowedApiPath(path + '/all', method), false)
-    }
-  }
-})
-
-test('Organization domain discovery and admission forward only the declared routes and methods', () => {
-  const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const domain = 'ebb7878e-6918-4b68-9300-d956761b5011'
-  const base = `/api/organizations/${org}`
-  const collection = `${base}/allowed-domains`
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath('/api/me/joinable-organizations', method), ['GET', 'HEAD'].includes(method))
-    assert.equal(allowedApiPath('/api/me/invitations', method), ['GET', 'HEAD'].includes(method))
-    assert.equal(allowedApiPath(collection, method), ['GET', 'HEAD', 'POST'].includes(method))
-    assert.equal(allowedApiPath(`${collection}/${domain}`, method), method === 'DELETE')
-    assert.equal(allowedApiPath(`${base}/join-by-domain`, method), method === 'POST')
-    for (const path of [collection.replace(org, 'not an id'), `${collection}/${domain}/unknown`, `${base}/join-by-domain/extra`]) {
-      assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
-    }
-  }
-})
-
-test('billing metadata and commands have exact scoped routes and methods', () => {
-  for (const scope of ['workspaces', 'organizations']) {
-    const path = `/api/${scope}/${identity.user.id}/billing`
-    for (const method of ['GET', 'HEAD', 'POST']) assert.equal(allowedApiPath(path, method), true)
-    for (const method of ['PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
-    assert.equal(allowedApiPath(`${path}/credentials`, 'GET'), false)
-    assert.equal(allowedApiPath(`/api/${scope}/for ged/billing`, 'POST'), false)
-  }
-})
-
-test('organization membership exposes the directory and declared membership writes', () => {
-  const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const members = `/api/organizations/${org}/members`
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(members, method), ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(members.replace(org, 'not an id'), method), false)
-    assert.equal(allowedApiPath(members + '/roles', method), false)
-  }
-})
-
-test('installed Organization invitations expose only listing, issuing, revoking and accepting', () => {
-  const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const collection = `/api/organizations/${org}/invitations`
-  const accept = '/api/organization-invitations/accept'
-  const token = 'a'.repeat(64)
-  for (const method of ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(collection, method), ['GET', 'HEAD', 'POST', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(accept, method), method === 'POST')
-    // An invitation preview takes whatever token the link carries; the server answers an unknown one.
-    for (const preview of [token, 'Zy-9_tokenFromAnInvitationLink']) {
-      assert.equal(allowedApiPath(`/api/invitations/${preview}`, method), ['GET', 'HEAD'].includes(method))
-      assert.equal(allowedApiPath(`/api/organization-invitations/${preview}`, method), ['GET', 'HEAD'].includes(method))
-    }
-    for (const path of [
-      collection.replace(org, 'not an id'), `${collection}/accept`, `${collection}/${org}`, `${accept}/extra`,
-      '/api/invitations/not a token', `/api/invitations/${token}/extra`, `/api/organization-invitations/${token}/extra`,
-    ]) {
-      assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
-    }
-  }
 })
 
 test('local entry/assets load without backend; missing assets and symlink escape fail closed', async t => {
@@ -342,7 +151,7 @@ test('proxy strips credentials, cookies, redirects and remote policy; preserves 
   assert.equal(response.headers.get('x-eve-stream-version'), '27')
   assert.equal(response.headers.get('content-security-policy'), RENDERER_CSP)
   assert.match(await response.text(), /data: first/)
-  for (const request of [new Request(`${RENDERER_URL}/api/auth/token`), new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'https://evil.test' } }), new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'null' } }), new Request(`${RENDERER_URL}/api/workspace`, { headers: { 'sec-fetch-site': 'cross-site' } })]) assert.equal((await serve(request)).status, 403)
+  for (const request of [new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'https://evil.test' } }), new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'null' } }), new Request(`${RENDERER_URL}/api/workspace`, { headers: { 'sec-fetch-site': 'cross-site' } })]) assert.equal((await serve(request)).status, 403)
   // Electron removes Origin:null before dispatch, but retains this trusted
   // browser-provided field even for GETs that have no Origin or fetch metadata.
   for (const initiatorOrigin of ['null', 'https://evil.test', 'mikka://app.evil']) {
@@ -696,21 +505,6 @@ test('main binary viewer hides credentials, scopes ownership/workspace, and boun
 })
 
 
-test('eve permits native session operations and streams, with no operator or arbitrary agent routes', () => {
-  assert.equal(allowedApiPath('/api/agents/eve/v1/session', 'POST'), true)
-  assert.equal(allowedApiPath('/api/agents/eve/v1/session', 'GET'), false)
-  assert.equal(allowedApiPath('/api/agents/eve/v1/session/wrun_bot', 'POST'), true)
-  for (const operation of ['cancel', 'clear', 'compact', 'end', 'reset']) {
-    assert.equal(allowedApiPath(`/api/agents/eve/v1/session/wrun_bot/${operation}`, 'POST'), true)
-    assert.equal(allowedApiPath(`/api/agents/eve/v1/session/wrun_bot/${operation}`, 'GET'), false)
-  }
-  for (const operation of ['stream', 'descendants/stream']) {
-    assert.equal(allowedApiPath(`/api/agents/eve/v1/session/wrun_bot/${operation}`, 'GET'), true)
-    assert.equal(allowedApiPath(`/api/agents/eve/v1/session/wrun_bot/${operation}`, 'POST'), false)
-  }
-  for (const path of ['/api/agents/eve/v1/info', '/api/agents/eve/v1/cron/token', '/api/agents/eve/v1/dev/runtime-artifacts', '/api/agents/arbitrary', '/api/agents/eve/v1/session/wrun_bot/unknown']) assert.equal(allowedApiPath(path, 'POST'), false)
-})
-
 test('desktop forwards eve protocol headers and fences NDJSON bytes at account/workspace changes', async t => {
   const root = await fixture(t)
   let scope = 'owner-a:workspace-a', cancelled = false
@@ -741,12 +535,3 @@ test('desktop forwards eve protocol headers and fences NDJSON bytes at account/w
   assert.equal(cancelled, true)
 })
 
-test('run environment and thread title settings forwarding permits only exact read routes', () => {
-  for (const path of ['/api/settings/environments', '/api/settings/thread-titles']) {
-    assert.equal(allowedApiPath(path, 'GET'), true, path)
-    assert.equal(allowedApiPath(`${path}/extra`, 'GET'), false)
-    assert.equal(allowedApiPath(`${path}/`, 'GET'), false)
-    assert.equal(allowedApiPath(path, 'HEAD'), true)
-    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
-  }
-})

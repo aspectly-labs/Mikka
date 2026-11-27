@@ -7,7 +7,6 @@ export const GET = defineRoute<'session', 'none', { shareId: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'none', freshSession: true,
-    desktop: true,
   },
   async ({ request, params, session }) => driveResponse(request, 'shareView', params, session),
 )

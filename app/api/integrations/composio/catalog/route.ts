@@ -17,7 +17,6 @@ export const GET = defineRoute(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   ({ request }) => unguardedGET(request),
 )

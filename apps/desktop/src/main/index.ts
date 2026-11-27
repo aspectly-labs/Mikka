@@ -195,6 +195,9 @@ const notifications = new NotificationCenter(
 )
 
 function registerSession(): void {
+  // The launch gate, update and offline windows use the default session and need no permission; deny by default.
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  session.defaultSession.setPermissionCheckHandler(() => false)
   const appSession = session.fromPartition(PARTITION)
   appSession.setPermissionRequestHandler((contents, permission, callback) => {
     callback(permission === 'clipboard-sanitized-write' && contents !== null && isTrustedFrame(contents.getURL(), PAGE_URL))

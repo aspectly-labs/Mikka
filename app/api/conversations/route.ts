@@ -6,7 +6,6 @@ export const GET = defineRoute<'session', 'pat-scoped'>(
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
-    desktop: true,
   },
   ({ request }) => respondGroup(request, 'conversations'),
 )
@@ -17,7 +16,6 @@ export const POST = defineRoute<'session', 'pat-scoped'>(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     write: true,
-    desktop: true,
   },
   ({ request }) => respondGroup(request, 'conversations'),
 )

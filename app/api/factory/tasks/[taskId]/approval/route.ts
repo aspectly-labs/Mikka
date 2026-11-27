@@ -60,7 +60,6 @@ export const GET = defineRoute<'public','none',{ taskId: string }>(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => respond(request, { params: Promise.resolve(params) }),
 )
@@ -72,7 +71,6 @@ export const POST = defineRoute<'public','none',{ taskId: string }>(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => respond(request, { params: Promise.resolve(params) }),
 )

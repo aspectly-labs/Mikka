@@ -14,7 +14,6 @@ export const GET = defineRoute(
     origin: 'any',
     workspace: 'pat-scoped',
     freshSession: true,
-    desktop: true,
   },
   ({ request, session }) => pluginResponse(async () => {
     const userId = await pluginActor(request, {}, session)
@@ -35,7 +34,6 @@ const POSTBody = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     freshSession: true,
-    desktop: true,
   },
   ({ request, session }) => pluginResponse(async () => {
     const userId = await pluginActor(request, {}, session)
@@ -50,7 +48,6 @@ const PATCHBody = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     freshSession: true,
-    desktop: true,
   },
   ({ request, session }) => pluginResponse(async () => {
     const userId = await pluginActor(request, {}, session)
@@ -65,7 +62,6 @@ const DELETEBody = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     freshSession: true,
-    desktop: true,
   },
   ({ request, session }) => pluginResponse(async () => {
     const userId = await pluginActor(request, {}, session)

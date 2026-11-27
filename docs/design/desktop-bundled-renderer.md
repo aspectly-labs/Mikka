@@ -34,12 +34,13 @@ part of the route inventory rather than being silently dropped.
    Server implementation modules must not enter the browser dependency graph.
 2. A local standard, secure protocol serves only files inside the packaged
    renderer directory. The protocol supplies a restrictive CSP and routes
-   same-origin data requests through main. Main forwards an API request only when the route
-   that would serve it declares that method for the desktop: `desktop: true`
-   (or, on a catch-all route, its exact sub-paths) in the route's
-   `defineRoute` spec, generated into `apps/api/generated/desktop-routes.json`.
-   `apps/desktop/src/main/bundled-routes.test.ts` walks the renderer's module
-   graph and fails when it requests an undeclared route; the desktop release
+   same-origin data requests through main. Main keeps no per-route list
+   (owner decision, 2026-11-27, as VS Code, Slack, Notion and Linear desktop):
+   it forwards any normalized API path from the app's main frame to the current
+   account's server only, and the server's authorization decides. Main still
+   refuses traversal, other origins and non-API paths, and cuts off a response
+   that echoes a session credential. `scripts/ui-api-routes.test.mjs` checks
+   that every route the UI requests exists on the server; the desktop release
    and the official UI's CI run it with `MIKKA_REQUIRE_OFFICIAL_UI=1`, so a
    missing UI checkout fails instead of skipping.
 3. Main owns the encrypted session and PKCE exchange state. The renderer asks

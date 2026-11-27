@@ -27,7 +27,7 @@ const complete = z.object({ operation: z.literal('complete'), id: z.uuid() }).st
 const headers = { 'Cache-Control': 'private, no-store' }
 
 export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
-  { auth: 'mobile-or-session', origin: 'native-mobile-allowed', workspace: 'pat-scoped', write: true, desktop: true },
+  { auth: 'mobile-or-session', origin: 'native-mobile-allowed', workspace: 'pat-scoped', write: true },
   async ({ request, session, user }) => {
     if (!writeAllowed(request)) return Response.json({ error: 'originNotAllowed' }, { status: 403, headers })
     try {

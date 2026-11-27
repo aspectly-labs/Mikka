@@ -1,6 +1,6 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { extname, join, sep } from 'node:path'
-import { allowedApiPath, desktopRouteTemplate, DRIVE_BLOB_UPLOAD, normalizedRendererPath, RENDERER_CSP, RENDERER_ORIGIN, rendererAssetPath } from './bundled-policy'
+import { desktopRouteTemplate, DRIVE_BLOB_UPLOAD, forwardableApiPath, normalizedRendererPath, RENDERER_CSP, RENDERER_ORIGIN, rendererAssetPath } from './bundled-policy'
 import { DRIVE_MAX_FILE_BYTES } from '../../../../lib/drive/contract'
 import type { BundledAuth } from './bundled-auth'
 
@@ -51,6 +51,40 @@ async function boundedRequestBody(request: Request, driveUpload: boolean): Promi
   return result.buffer
 }
 
+const FORWARDED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'])
+
+/**
+ * The bearer token and signed session cache stay in main. Some server answers
+ * can echo them (Better Auth's session reads include `session.token`), so
+ * every body passes through this check: bytes go on as they arrive, except a
+ * tail that could still be the start of a credential, and a body that carries
+ * one is cut off. Nothing here depends on which route answered.
+ */
+export function withholdCredentials<T extends Uint8Array>(body: ReadableStream<T>, credentials: readonly string[], found: () => void): ReadableStream<T> {
+  const secrets = credentials.map(value => Buffer.from(value))
+  if (!secrets.length) return body
+  let held: Buffer = Buffer.alloc(0)
+  const pending = (data: Buffer) => {
+    let keep = 0
+    for (const secret of secrets) {
+      for (let length = Math.min(secret.length - 1, data.length); length > keep; length--) {
+        if (data.subarray(data.length - length).equals(secret.subarray(0, length))) { keep = length; break }
+      }
+    }
+    return keep
+  }
+  return body.pipeThrough(new TransformStream<T, T>({
+    transform(chunk, controller) {
+      const data = Buffer.concat([held, chunk])
+      if (secrets.some(secret => data.includes(secret))) { found(); controller.error(new Error('desktop_credential_withheld')); return }
+      const keep = pending(data)
+      if (data.length > keep) controller.enqueue(new Uint8Array(data.subarray(0, data.length - keep)) as T)
+      held = Buffer.from(data.subarray(data.length - keep))
+    },
+    flush(controller) { if (held.length) controller.enqueue(new Uint8Array(held) as T) },
+  }))
+}
+
 /** A renderer API call that failed, by route template and code; telemetry.ts reports it. */
 export type ApiFailure = { route: string; method: string; status: number; code?: string }
 /** Server answers worth a report: an outage, or a route or method the server does not have. */
@@ -58,7 +92,7 @@ const REPORTED_STATUS = (status: number) => status >= 500 || status === 403 || s
 
 /** Streaming response bodies remain streaming. Only known request/response headers
  * cross the boundary; cookies, auth, redirects and remote policy headers do not. */
-export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'> & Partial<Pick<BundledAuth, 'scope'>>, reportFailure: (failure: ApiFailure) => void = () => {}): (request: Request) => Promise<Response> {
+export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'> & Partial<Pick<BundledAuth, 'scope' | 'credentials'>>, reportFailure: (failure: ApiFailure) => void = () => {}): (request: Request) => Promise<Response> {
   return async request => {
     let url: URL
     try { url = new URL(request.url) } catch { return failure(400, 'invalid_url') }
@@ -69,6 +103,8 @@ export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'>
     const path = normalizedRendererPath(url.pathname)
     if (path === null) return failure(400, 'invalid_path')
     if (path.startsWith('/api/')) {
+      // Any API path, to the current account's own server and nowhere else
+      // (BundledAuth checks the target origin): the server authorizes the person.
       const route = desktopRouteTemplate(path) ?? 'unmatched'
       const refuse = (status: number, code: string) => {
         try { reportFailure({ route, method: request.method, status, code }) } catch { /* Reporting never changes the answer. */ }
@@ -79,7 +115,9 @@ export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'>
       // Origin header while constructing Request. Check both so sandboxed
       // artifact frames and external BrowserPane frames cannot borrow main auth.
       const initiator = (request as Request & { initiatorOrigin?: string }).initiatorOrigin
-      if ((initiator !== undefined && initiator !== RENDERER_ORIGIN) || (origin && origin !== RENDERER_ORIGIN) || request.headers.get('sec-fetch-site') === 'cross-site' || !allowedApiPath(path, request.method)) return refuse(403, 'desktop_route_denied')
+      if ((initiator !== undefined && initiator !== RENDERER_ORIGIN) || (origin && origin !== RENDERER_ORIGIN) || request.headers.get('sec-fetch-site') === 'cross-site') return refuse(403, 'untrusted_origin')
+      if (!forwardableApiPath(path)) return refuse(400, 'invalid_path')
+      if (!FORWARDED_METHODS.has(request.method)) return refuse(405, 'method_not_allowed')
       const driveUpload = DRIVE_BLOB_UPLOAD.test(path)
       try {
         const headers = new Headers()
@@ -92,8 +130,15 @@ export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'>
         if (REPORTED_STATUS(response.status)) {
           try { reportFailure({ route, method: request.method, status: response.status }) } catch { /* Reporting never changes the answer. */ }
         }
+        const credentials = auth.credentials?.() ?? []
         const output = localHeaders()
         response.headers.forEach((value, key) => { if (RESPONSE_HEADERS.has(key)) output.set(key, value) })
+        const forwardedValues: string[] = []
+        output.forEach(value => { forwardedValues.push(value) })
+        if (forwardedValues.some(value => credentials.some(credential => value.includes(credential)))) {
+          await response.body?.cancel().catch(() => {})
+          return refuse(502, 'desktop_credential_withheld')
+        }
         if (response.headers.get('content-type')?.includes('text/html')) {
           // Artifact HTML is an opaque sandbox, even if opened as a top-level page.
           output.set('content-security-policy', "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors mikka://app")
@@ -111,6 +156,11 @@ export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'>
               else controller.enqueue(item.value)
             },
             cancel: reason => reader.cancel(reason),
+          })
+        }
+        if (stream && credentials.length) {
+          stream = withholdCredentials(stream, credentials, () => {
+            try { reportFailure({ route, method: request.method, status: 502, code: 'desktop_credential_withheld' }) } catch { /* Reporting never changes the answer. */ }
           })
         }
         return new Response(request.method === 'HEAD' ? null : stream, { status: response.status, statusText: response.statusText, headers: output })

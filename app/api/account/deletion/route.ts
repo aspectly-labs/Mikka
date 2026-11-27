@@ -25,7 +25,6 @@ const POSTBody = defineRoute(
     onOriginFailure: originDenied,
     onAuthFailure: authRequired,
     onAuthError: deletionUnavailable,
-    desktop: true,
   },
   async ({ request, session: apiSession }) => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return originDenied()
@@ -51,7 +50,7 @@ const POSTBody = defineRoute(
 
 /** Receipt capability remains usable when the account and its sessions have already been deleted. */
 export const GET = defineRoute(
-  { auth: 'public', origin: 'any', workspace: 'none', desktop: true },
+  { auth: 'public', origin: 'any', workspace: 'none' },
   async ({ request }) => {
     const input = receipt.safeParse(request.headers.get('x-mikka-deletion-receipt'))
     if (!input.success) return Response.json({ error: 'accountDeletionUnavailable' }, { status: 404, headers })
@@ -68,7 +67,6 @@ const DELETEBody = defineRoute(
     freshSession: true,
     onOriginFailure: originDenied,
     onAuthFailure: authRequired,
-    desktop: true,
   },
   async ({ request, session }) => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return originDenied()

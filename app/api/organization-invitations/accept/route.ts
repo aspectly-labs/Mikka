@@ -18,7 +18,6 @@ export const POST = defineRoute<'public', 'none'>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request }) => POSTBody(request),
 )

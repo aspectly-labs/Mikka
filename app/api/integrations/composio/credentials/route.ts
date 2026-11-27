@@ -19,7 +19,6 @@ const POSTBody = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, session }) => pluginResponse(async () => {
     const userId = await pluginActor(request, {}, session)

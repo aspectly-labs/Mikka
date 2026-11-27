@@ -1,12 +1,12 @@
-// The API routes the desktop renderer requests, read from its source without
-// running it. bundled-routes.test.ts checks every one against the main process's
-// allowlist (src/main/bundled-policy.ts), and the official UI's CI runs the same
-// check against its own commit.
+// The API routes the official UI requests, read from its source without
+// running it. scripts/ui-api-routes.test.mjs checks that the server serves each
+// one (apps/api/generated/routes.json), for the web and desktop builds, and the
+// official UI's CI runs the same check against its own commit.
 //
-// The scan walks the renderer's module graph the way the desktop build resolves
-// it (apps/frontend/scripts/application-plugin.mjs): from the frontend entry,
+// The scan walks a renderer's module graph the way the build resolves it
+// (apps/frontend/scripts/application-plugin.mjs): from the frontend entry,
 // through `mikka:*`, `@/`, `@hosted/` and relative imports, with the desktop
-// aliases applied. In each module it records:
+// aliases applied for the desktop target. In each module it records:
 //
 // - a request whose URL is written at the call: `fetch('/api/x')`,
 //   `fetch(withBasePath(\`/api/x/${id}\`))`, or a request helper called with the
@@ -40,7 +40,7 @@ const slash = value => value.split(sep).join('/')
  * application-plugin.mjs (specifier → file under apps/desktop/src/renderer), and
  * `overlayAliases` its replacements inside the checkout.
  */
-function resolver(repository, overlay, aliases, overlayAliases) {
+function resolver(repository, overlay, aliases, overlayAliases, target) {
   const renderer = join(repository, 'apps/desktop/src/renderer')
   const file = candidate => {
     for (const extension of EXTENSIONS) {
@@ -51,8 +51,8 @@ function resolver(repository, overlay, aliases, overlayAliases) {
   }
   return (specifier, importer) => {
     if (specifier === 'mikka:application') return join(overlay, 'core/renderer/index.tsx')
-    if (specifier === 'mikka:platform') return join(overlay, 'core/renderer/platform.tsx')
-    if (specifier === 'mikka:frontend-runtime') return join(overlay, 'core/renderer/installed-startup.ts')
+    if (specifier === 'mikka:platform') return join(overlay, target === 'web' ? 'core/renderer/web/platform.tsx' : 'core/renderer/platform.tsx')
+    if (specifier === 'mikka:frontend-runtime') return target === 'web' ? join(repository, 'apps/frontend/src/web/runtime.ts') : join(overlay, 'core/renderer/installed-startup.ts')
     if (specifier.startsWith('mikka:')) return null
     const alias = aliases.get(specifier)
     if (alias && importer !== join(renderer, alias)) return join(renderer, alias)
@@ -65,8 +65,9 @@ function resolver(repository, overlay, aliases, overlayAliases) {
     else return null
     const found = file(candidate)
     if (!found) return null
-    // The build swaps the official UI's feature hook for the desktop's own.
-    if (found === join(overlay, 'web/hooks/use-feature-availability.ts') && importer !== join(renderer, 'feature-availability.ts')) return join(renderer, 'feature-availability.ts')
+    // The desktop build swaps the official UI's feature hook for its own, and the web its RPC transport.
+    if (target === 'desktop' && found === join(overlay, 'web/hooks/use-feature-availability.ts') && importer !== join(renderer, 'feature-availability.ts')) return join(renderer, 'feature-availability.ts')
+    if (target === 'web' && found === join(renderer, 'rpc.ts') && importer !== join(repository, 'apps/frontend/src/web/rpc.ts')) return join(repository, 'apps/frontend/src/web/rpc.ts')
     return found
   }
 }
@@ -87,11 +88,13 @@ function moduleSpecifiers(ast) {
 const parse = (path, source) => ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, /\.[jt]sx$/.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
 
 /**
- * Every module the desktop renderer bundles, as repository-relative paths,
- * parsed once. Server modules are left out: the build refuses them.
+ * Every module a target's renderer bundles (`desktop` or `web`), as
+ * repository-relative paths, parsed once. Server modules are left out: the
+ * build refuses them. The web build takes no desktop aliases.
  */
-export function rendererModules(repository, { overlay = join(repository, '.hosted-ui'), aliases, overlayAliases }) {
-  const resolveModule = resolver(repository, overlay, aliases, overlayAliases)
+export function rendererModules(repository, { overlay = join(repository, '.hosted-ui'), aliases, overlayAliases, target = 'desktop' }) {
+  if (target === 'web') { aliases = new Map(); overlayAliases = new Map() }
+  const resolveModule = resolver(repository, overlay, aliases, overlayAliases, target)
   const entries = [join(repository, 'apps/frontend/src/index.ts'), ...[...aliases.values()].map(name => join(repository, 'apps/desktop/src/renderer', name))]
   const modules = new Map()
   const pending = [...new Set(entries)]
@@ -121,22 +124,46 @@ function unwrap(node) {
   return node
 }
 
-/** The module's top-level and block-level `const x = …` initializers, by name (first one wins). */
+/**
+ * The module's `const x = …` initializers, resolved by scope: an identifier
+ * reads the declaration in the innermost block that encloses it, so two
+ * functions' own `const url` never mix.
+ */
 function constants(ast) {
-  const values = new Map()
+  const declarations = new Map()
   const visit = node => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isVariableDeclarationList(node.parent) && node.parent.flags & ts.NodeFlags.Const && !values.has(node.name.text)) values.set(node.name.text, node.initializer)
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isVariableDeclarationList(node.parent) && node.parent.flags & ts.NodeFlags.Const) {
+      const list = declarations.get(node.name.text) ?? []
+      list.push(node)
+      declarations.set(node.name.text, list)
+    }
     ts.forEachChild(node, visit)
   }
   visit(ast)
-  return values
+  const scope = node => {
+    let at = node.parent
+    while (at && !ts.isBlock(at) && !ts.isSourceFile(at) && !ts.isModuleBlock(at) && !ts.isCaseClause(at) && !ts.isFunctionLike(at)) at = at.parent
+    return at ?? ast
+  }
+  const depth = node => { let count = 0; for (let at = node; at; at = at.parent) count++; return count }
+  const resolve = identifier => {
+    let best, bestDepth = -1
+    for (const declaration of declarations.get(identifier.text) ?? []) {
+      const block = scope(declaration)
+      if (block.pos > identifier.pos || identifier.end > block.end) continue
+      const level = depth(block)
+      if (level > bestDepth) { best = declaration; bestDepth = level }
+    }
+    return best?.initializer
+  }
+  return { has: identifier => resolve(identifier) !== undefined, get: identifier => resolve(identifier) }
 }
 
 /** A query-string suffix such as `params.size ? \`?${params}\` : ''`: never part of the route. */
 function queryOnly(node, values, depth = 0) {
   node = unwrap(node)
   if (!node || depth > 4) return false
-  if (ts.isIdentifier(node)) return values.has(node.text) && queryOnly(values.get(node.text), values, depth + 1)
+  if (ts.isIdentifier(node)) return values.has(node) && queryOnly(values.get(node), values, depth + 1)
   if (ts.isStringLiteralLike(node)) return node.text === '' || node.text.startsWith('?')
   if (ts.isTemplateExpression(node)) return node.head.text.startsWith('?')
   if (ts.isConditionalExpression(node)) return queryOnly(node.whenTrue, values, depth + 1) && queryOnly(node.whenFalse, values, depth + 1)
@@ -154,7 +181,7 @@ function pathsOf(node, values, bind = new Map(), depth = 0) {
   if (!node || depth > 4) return []
   if (ts.isIdentifier(node)) {
     if (bind.has(node.text)) return [bind.get(node.text)]
-    return values.has(node.text) ? pathsOf(values.get(node.text), values, bind, depth + 1) : []
+    return values.has(node) ? pathsOf(values.get(node), values, bind, depth + 1) : []
   }
   if (ts.isConditionalExpression(node)) return [...pathsOf(node.whenTrue, values, bind, depth + 1), ...pathsOf(node.whenFalse, values, bind, depth + 1)]
   if (ts.isBinaryExpression(node) && (node.operatorToken.kind === ts.SyntaxKind.BarBarToken || node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)) return [...pathsOf(node.left, values, bind, depth + 1), ...pathsOf(node.right, values, bind, depth + 1)]
@@ -313,7 +340,7 @@ export function rendererRequests(modules) {
   const consume = (node, values, depth = 0) => {
     node = unwrap(node)
     if (!node || depth > 4) return
-    if (ts.isIdentifier(node)) { if (values.has(node.text)) consume(values.get(node.text), values, depth + 1) }
+    if (ts.isIdentifier(node)) { if (values.has(node)) consume(values.get(node), values, depth + 1) }
     else if (ts.isConditionalExpression(node)) { consume(node.whenTrue, values, depth + 1); consume(node.whenFalse, values, depth + 1) }
     else consumed.add(node)
   }

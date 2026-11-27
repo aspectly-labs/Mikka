@@ -19,7 +19,6 @@ export const GET = defineRoute<'session', 'none'>(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   async ({ session }) => handleGET(session),
 )

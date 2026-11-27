@@ -15,7 +15,7 @@ const change = z.union([
 ])
 
 export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
-  { auth: 'mobile-or-session', origin: 'native-mobile-allowed', workspace: 'pat-scoped', write: true, desktop: true },
+  { auth: 'mobile-or-session', origin: 'native-mobile-allowed', workspace: 'pat-scoped', write: true },
   async ({ request, user }) => {
     if (!writeAllowed(request)) return forbiddenOrigin()
     const parsed = change.safeParse(await request.json().catch(() => null))

@@ -24,7 +24,6 @@ export const GET = defineRoute<'public', 'none', { workspaceId: string; identity
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
 )
@@ -36,7 +35,6 @@ export const PATCH = defineRoute<'public', 'none', { workspaceId: string; identi
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request, params }) => PATCHBody(request, { params: Promise.resolve(params) }),
 )

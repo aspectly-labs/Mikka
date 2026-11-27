@@ -11,7 +11,7 @@ const governanceDenied = () => Response.json(
 )
 
 export const GET = freshSessionRoute(defineRoute(
-  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, onAuthFailure: governanceDenied, desktop: true },
+  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, onAuthFailure: governanceDenied },
   async ({ request }) => governanceResponse(async () => {
     const session = await organizationAccountSession(request)
     if (new URL(request.url).searchParams.size) throw new GovernanceError('invalid_request')

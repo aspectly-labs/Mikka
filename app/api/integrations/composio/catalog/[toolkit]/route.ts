@@ -19,7 +19,6 @@ export const GET = defineRoute<'session','none',{ toolkit: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
-    desktop: true,
   },
   ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
 )

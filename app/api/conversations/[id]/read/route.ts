@@ -24,12 +24,12 @@ async function respond(request: Request, id: string, method: ReadRequest['method
 
 /** `GET /api/conversations/:id/read`: where the person left off, and how many replies came after. */
 export const GET = defineRoute<'session', 'pat-scoped', { id: string }>(
-  { route: '/api/conversations/[id]/read', auth: 'session', origin: 'any', workspace: 'pat-scoped', desktop: true },
+  { route: '/api/conversations/[id]/read', auth: 'session', origin: 'any', workspace: 'pat-scoped' },
   ({ request, params, session }) => respond(request, params.id, 'GET', session),
 )
 
 /** `POST /api/conversations/:id/read` with `{ messageId }`: moves the read position forward (never back). */
 export const POST = defineRoute<'session', 'pat-scoped', { id: string }>(
-  { route: '/api/conversations/[id]/read', auth: 'session', origin: 'any', workspace: 'pat-scoped', desktop: true },
+  { route: '/api/conversations/[id]/read', auth: 'session', origin: 'any', workspace: 'pat-scoped' },
   ({ request, params, session }) => respond(request, params.id, 'POST', session),
 )

@@ -39,7 +39,6 @@ export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string }>
     origin: 'any',
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => params.workspaceId,
-    desktop: true,
   },
   async ({ request, session, params }) => handle(session)(request, params.workspaceId),
 )
@@ -51,7 +50,6 @@ const POSTBody = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => params.workspaceId,
     freshSession: true,
-    desktop: true,
   },
   async ({ request, session, params }) => handle(session, true)(request, params.workspaceId),
 )

@@ -17,7 +17,6 @@ export const PATCH = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   ({ request }) => unguardedPATCH(request),
 )

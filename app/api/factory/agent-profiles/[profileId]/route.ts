@@ -13,7 +13,6 @@ export const GET = defineRoute(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
-    desktop: true,
   },
   handle,
 )
@@ -25,7 +24,6 @@ export const PATCH = defineRoute(
     workspace: 'none',
     freshSession: true,
     onOriginFailure: originMismatch,
-    desktop: true,
   },
   handle,
 )
@@ -37,7 +35,6 @@ export const DELETE = defineRoute(
     workspace: 'none',
     freshSession: true,
     onOriginFailure: originMismatch,
-    desktop: true,
   },
   handle,
 )

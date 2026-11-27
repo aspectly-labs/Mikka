@@ -34,7 +34,6 @@ export const POST = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     onOriginFailure: () => RouteResponse.json({ error: 'originRejected' }, { status: 403, headers: { 'Cache-Control': 'private, no-store' } }),
-    desktop: true,
   },
   ({ request, session }) => unguardedPOST(request, session),
 )

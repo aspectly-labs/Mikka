@@ -66,21 +66,21 @@ async function handleDELETE(request: Request, session: ApiSession) {
 }
 
 export const GET = defineRoute<'session', 'none'>(
-  { route: '/api/skills', auth: 'session', origin: 'any', workspace: 'none', desktop: true },
+  { route: '/api/skills', auth: 'session', origin: 'any', workspace: 'none' },
   async ({ request, session }) => handleGET(request, session),
 )
 
 export const POST = defineRoute<'session', 'none'>(
-  { route: '/api/skills', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true, desktop: true },
+  { route: '/api/skills', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true },
   async ({ request, session }) => handlePOST(request, session),
 )
 
 export const PATCH = defineRoute<'session', 'none'>(
-  { route: '/api/skills', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true, desktop: true },
+  { route: '/api/skills', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true },
   async ({ request, session }) => handlePATCH(request, session),
 )
 
 export const DELETE = defineRoute<'session', 'none'>(
-  { route: '/api/skills', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true, desktop: true },
+  { route: '/api/skills', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true },
   async ({ request, session }) => handleDELETE(request, session),
 )

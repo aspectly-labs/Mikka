@@ -256,14 +256,14 @@ function sanitizeFrontendRumEvent<T extends { event: string; properties: Record<
 }
 
 const desktopEvents = new Set(['desktop_api_error', 'desktop_main_error', 'desktop_process_gone'])
-/** A route template from apps/api/generated/desktop-routes.json (`/api/workspaces/[workspaceId]/task-labels`): never a concrete id. */
+/** A route template from apps/api/generated/routes.json (`/api/workspaces/[workspaceId]/task-labels`): never a concrete id. */
 const ROUTE_TEMPLATE = /^\/api(?:\/(?:[A-Za-z0-9._~-]{1,64}|\[{1,2}(?:\.{3})?[A-Za-z][A-Za-z0-9_]{0,63}\]{1,2})){1,16}$/
 /** Its literal segments are route words, never an id, token or number that slipped in. */
 function routeTemplate(value: string) {
   return ROUTE_TEMPLATE.test(value) && value.split('/').every(segment => segment.startsWith('[') || !(UUID_SEGMENT.test(segment) || LONG_TOKEN_SEGMENT.test(segment) || NUMERIC_ID_SEGMENT.test(segment) || /^\d+$/.test(segment)))
 }
 const httpMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
-/** A short failure code such as `desktop_route_denied`; never a message. */
+/** A short failure code such as `desktop_backend_unavailable`; never a message. */
 const ERROR_CODE = /^[a-z][a-z0-9_]{0,63}$/
 const mainErrorSources = new Set(['uncaught_exception', 'unhandled_rejection'])
 const processTypes = new Set(['renderer', 'gpu', 'utility', 'zygote', 'sandbox-helper', 'pepper-plugin', 'unknown'])
