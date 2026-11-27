@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import test from 'node:test'
 import vm from 'node:vm'
 import { signInBundledAccount } from './bundled-sign-in.mjs'
+import { continueHref } from './browser-handoff.mjs'
 
 const contextLost = () => new Error('page.evaluate: Execution context was destroyed, most likely because of a navigation.')
 const publicSession = userId => ({ user: { id: userId }, session: { id: `public-session-${userId}` } })
@@ -59,6 +60,8 @@ function fixture({ delayedReply = false, registrationError, callbackError,
       return callback.promise.then(() => response)
     },
     async goto(url) { assert.equal(new URL(url).origin, 'http://localhost:3000'); events.push('browser-open') },
+    async waitForFunction() { return { jsonValue: async () => 'official' } },
+    async evaluate() { throw new Error('the official page is clicked, not navigated') },
     getByTestId(id) {
       assert.equal(id, 'desktop-continue')
       return { async click() {
@@ -157,4 +160,13 @@ test('browser callback failure is not replaced by an auth success or another sig
   assert.equal(state.inputs.length, 1)
   assert.equal(state.counts().closed, 1)
   assert.deepEqual(state.resources, [])
+})
+
+test('without the official web UI the handoff follows the link 「Continue as」 holds', () => {
+  const external = 'http://localhost:3000/mikka/en/sign-in?desktop=1&desktop_state=abcdefghijklmnop&desktop_callback=http%3A%2F%2F127.0.0.1%3A4567%2Fauth%2Fcallback&desktop_next=%2Fsettings'
+  // lib/desktop-auth.ts desktopAuthReturnPath(state, next, callback) under the /mikka base path.
+  assert.equal(continueHref(external), 'http://localhost:3000/mikka/api/desktop/return?state=abcdefghijklmnop&next=%2Fsettings&callback=http%3A%2F%2F127.0.0.1%3A4567%2Fauth%2Fcallback')
+  assert.equal(new URL(continueHref(external.replace('/en/sign-in', '/sign-in'))).pathname, '/mikka/api/desktop/return')
+  for (const broken of [external.replace('desktop=1', 'desktop=0'), external.replace(/&desktop_callback=[^&]+/, ''), external.replace('/sign-in', '/sign-up')])
+    assert.throws(() => continueHref(broken), /DESKTOP_HANDOFF_URL_INVALID/)
 })

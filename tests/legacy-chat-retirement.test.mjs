@@ -4,13 +4,15 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { sessionPreview } from '../lib/agent-history.ts'
 import { webUrlSchema } from '../lib/search/url-schema.ts'
+import { officialUiSkip } from '../scripts/official-ui-requirement.mjs'
 const source = path => readFile(new URL('../' + path, import.meta.url), 'utf8')
 
 test('Retired chat route exposes only the shared image GET, with no generation or credential/model imports', async t => {
   const route = await source('app/api/agent/route.ts')
   assert.match(route, /export \{ GET \} from '\.\/images\/route'/)
   assert.doesNotMatch(route, /POST|HEAD|streamText|OPENCODE|createAgentWebTools|beginAgentTurn/)
-  if (!existsSync(new URL('../.hosted-ui/web', import.meta.url))) { t.skip('.hosted-ui not checked out'); return }
+  const missing = officialUiSkip(existsSync(new URL('../.hosted-ui/web', import.meta.url)), '.hosted-ui')
+  if (missing) { t.skip(missing); return }
   const archive = await source('.hosted-ui/web/components/workspace/legacy-chat-archive.tsx')
   assert.doesNotMatch(archive, /useCompletion|complete\(|AgentComposer|onSubmit|method:\s*'POST'/)
   assert.match(archive, /continueFromAnswer: async \(\) => false/)
