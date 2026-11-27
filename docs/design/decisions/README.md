@@ -21,7 +21,7 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `314` dated decision records carry verified `Status:` headers (`222` Accepted, `26` Superseded, `66` Superseded in part).
+All `315` dated decision records carry verified `Status:` headers (`222` Accepted, `26` Superseded, `67` Superseded in part).
 
 ### Key active architectural decisions
 
@@ -41,7 +41,8 @@ All `314` dated decision records carry verified `Status:` headers (`222` Accepte
 | **One state-mark registry** | [2026-11-19-1630-one-mark-registry.md](2026-11-19-1630-one-mark-registry.md) | Accepted | [`docs/design/components.md`](../components.md) |
 | **Automatic UTC migration IDs** | [2026-11-11-1151-automatic-migration-ids.md](2026-11-11-1151-automatic-migration-ids.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
 | **Native MCP configuration & credential delivery** | [2026-11-11-0534-eve-and-native-mcp.md](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
-| **Top products are the authority; paid blocks are raw material** | [2026-11-27-1409-top-products-over-paid-blocks.md](2026-11-27-1409-top-products-over-paid-blocks.md) | Accepted | [`docs/design/design-system.md`](../design-system.md) |
+| **No permission approvals: agents run with full access** | [2026-11-27-1615-no-permission-approvals.md](2026-11-27-1615-no-permission-approvals.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`docs/design/rules.md`](../rules.md) |
+| **Top products are the authority; paid blocks are raw material** | [2026-11-27-1409-top-products-over-paid-blocks.md](2026-11-27-1409-top-products-over-paid-blocks.md) | Accepted ("approval/permission cards" superseded by 2026-11-27-1615) | [`docs/design/design-system.md`](../design-system.md) |
 | **One UI across Cloud & self-hosted** | [2026-11-08-2133-one-ui.md](2026-11-08-2133-one-ui.md) | Accepted | [`docs/operations/build-source-of-truth.md`](../../operations/build-source-of-truth.md) |
 | **Execution boundary vs. task Secret exposure** | [2026-11-06-1800-machine-is-the-execution-boundary.md](2026-11-06-1800-machine-is-the-execution-boundary.md), [2026-11-08-0240-credential-exposure-boundary.md](2026-11-08-0240-credential-exposure-boundary.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
 | **No new polling & keep error causes** | [2026-11-05-0200-no-new-polling.md](2026-11-05-0200-no-new-polling.md), [2026-11-05-0330-error-causes.md](2026-11-05-0330-error-causes.md) | Accepted | [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |

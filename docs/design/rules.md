@@ -1,7 +1,7 @@
 # Design rules
 
 These are decisions Alex has already made. Designs, specs and code follow
-them without asking again. Scope: these rules govern Mikka's UI. Top products are the authority: each surface matches the corresponding surface of ChatGPT / Codex and Claude / Claude Code (chat, composer, approval/permission cards, status, errors), Capy (right rail, tab bar, sidebar work tree, task detail) or Linear (issue/board semantics). Paid blocks and components (BoardUI Pro, affectUI, beUI Pro) in the hosted layer are raw material, edited in place to match the reference; their shipped look is never a reason to keep a difference ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). To change a rule, Alex decides, the change is
+them without asking again. Scope: these rules govern Mikka's UI. Top products are the authority: each surface matches the corresponding surface of ChatGPT / Codex and Claude / Claude Code (chat, composer, questions, status, errors; there are no permission cards — [2026-11-27-1615](decisions/2026-11-27-1615-no-permission-approvals.md)), Capy (right rail, tab bar, sidebar work tree, task detail) or Linear (issue/board semantics). Paid blocks and components (BoardUI Pro, affectUI, beUI Pro) in the hosted layer are raw material, edited in place to match the reference; their shipped look is never a reason to keep a difference ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). To change a rule, Alex decides, the change is
 recorded as a file in [`decisions/`](decisions/README.md), and this file is
 edited in the same PR. A new rule's id (`R-xx`) is assigned by the
 coordinator when the work is dispatched ([dev workflow](../dev-workflow.md)
@@ -61,7 +61,8 @@ source wins in a conflict is in [`README.md`](README.md).
   monitor — 独立审查/验证/观察) are strictly read-only for humans and never show
   a human composer or accept human messages (Alex, 2026-11-24; Agent↔Agent,
   Bot↔Subagent, Thread↔Subagent and Subagent↔Subagent messaging stay intact).
-  Blocking permissions, questions and logins take the single bottom slot
+  Blocking questions and logins take the single bottom slot (there are no
+  permission or write-approval cards: [2026-11-27-1615](decisions/2026-11-27-1615-no-permission-approvals.md))
   (`TakeoverCard`) with `Later` / `Esc` collapse (`design-system.md` §3.2);
   non-blocking quota, model and offline warnings sit above the intact composer
   as a 1-line `ChatStatusStrip`. Send follows the run's reply
@@ -555,14 +556,14 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
   default: a migration that turns a default on also rewrites rows that hold
   the old default. A feature stays off only for real per-use cost, an
   incident kill switch or a recorded Alex decision (`decisions.md`). Safety
-  and money defaults (approval requirements, auto-recharge) are not features;
+  and money defaults (auto-recharge) are not features;
   they change only with Alex's decision. Source: Alex, 2026-10-31.
 - **R-77** Enabled and authorized connections run their tools with the
   connected account's permissions. Mikka adds no per-call Decision API
   judgment and no Allow/Ask/Deny matrix for connected apps. Connection
   ownership, sharing, provider scopes and active run checks still apply.
-  Explicit approvals already created retain their exact account and action
-  binding. See [authorized MCP connections](decisions/2026-11-19-native-mcp-authorization.md).
+  There are no approvals and no remembered approvals
+  ([2026-11-27-1615](decisions/2026-11-27-1615-no-permission-approvals.md)). See [authorized MCP connections](decisions/2026-11-19-native-mcp-authorization.md).
 - **R-78** Threads and runs are executed by an Agent (Claude Code, Codex…)
   in an Agent 配置. Where an Agent stretch is drawn with a mark (the line where
   the Agent changes, a plan step, the execution identity), the main mark is
