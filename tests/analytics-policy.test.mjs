@@ -336,7 +336,7 @@ test('the active Vite web entry initializes PostHog and the shared application m
 
 test('the official interface never imports posthog-js statically and mounts the pageview tracker', { skip: needsOfficialUi }, () => {
   // The interface lives in the official UI checkout (core/ and web/, decision 2026-11-24-1000-all-ui-in-hosted).
-  for (const file of ['components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'hooks/use-approval-live.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
+  for (const file of ['components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
     const path = [file, `.hosted-ui/web/${file}`].find(uiExists)
     if (path) assert.doesNotMatch(readUi(path), /from 'posthog-js'/, file)
   }

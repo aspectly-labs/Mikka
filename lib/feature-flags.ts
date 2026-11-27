@@ -109,9 +109,6 @@ export const killSwitches = {
   computerTab: 'mikka-computer-tab-off',
 } as const
 
-/** The approval cache's hint to reread the server's personal-writes capability (use-approval-live); the server decides. */
-export const approvalWritesHint = 'mikka-personal-writes-off'
-
 /**
  * Every flag a client reads to decide what the UI shows. The web asks PostHog
  * for them in the browser; the desktop renderer, whose CSP has no PostHog
@@ -124,7 +121,6 @@ export const CLIENT_FLAG_KEYS: readonly string[] = [
   ...Object.values(upcomingFeatures).map(feature => feature.key),
   ...Object.values(gatedFeatures).map(feature => feature.key),
   ...Object.values(killSwitches),
-  approvalWritesHint,
 ]
 
 /** On only when PostHog says exactly true; unloaded, missing or multivariate values stay off. */
