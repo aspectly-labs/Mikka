@@ -13,10 +13,8 @@ target.searchParams.set('options', `-c search_path=${schema}`)
 const scope = createRequestDatabaseScope(target.toString())
 const run = <T>(fn: () => T) => scope.run(fn)
 before(async () => {
-  mock.module('@/lib/pending-action-store', { namedExports: { listPendingActions: async () => [] } })
   mock.module('@/lib/tokens/scope', { namedExports: {
     namedOutsideToken: async () => false,
-    pendingActionsOutsideToken: async () => new Set<string>(),
   } })
   mock.module('@/lib/factory/public-flow', { namedExports: { readFactoryFlowStates: async () => new Map() } })
   await admin.query(`CREATE SCHEMA ${schema}`)

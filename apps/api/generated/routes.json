@@ -784,7 +784,7 @@
         "GET"
       ],
       "maxDuration": 300,
-      "sourceHash": "92747da7b4694a141e41983db622dc46fe9851a756c416fec122cd28c36505fa"
+      "sourceHash": "3aac6dbd38ce5413de81d3f2568f9972536068329902d3f6ccff9710b186515a"
     },
     {
       "path": "/mikka/api/cron/run-recovery",
@@ -2028,7 +2028,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "ef44a580f40197a779816de5b84010bc593b0b7cabdde9a96d2e29b21f1a2d28"
+      "sourceHash": "d7e193d43011e0a209558eebc47cd476b5a2e445d987801e183b81d6c153086e"
     },
     {
       "path": "/mikka/api/mobile/preferences",
@@ -2615,7 +2615,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "a8428bc0ea2028b16169535405d18449fab66c775c4e612474d32479febf2ce2"
+      "sourceHash": "d31ec9be9ba87fb6507dca5eed7c789dc02a7725aaabe7bc90095f0964c8a5dd"
     },
     {
       "path": "/mikka/api/projects/[projectId]/decisions",

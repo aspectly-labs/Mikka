@@ -368,9 +368,9 @@ under `app/api/mobile/*` using the existing Bearer/Expo session auth,
     omitting both keeps legacy full-thread responses intact).
 - **Coordinator proactive cards:**
   - `GET /api/mobile/proactive-cards` (optional `tz`, `locale`, `readonly=1`)
-    returns today's `briefing` summary, token-scoped `pendingActions`, and
-    `suggestions` (`inProgress` + `items`). Pending action approval/decline
-    continues via `POST /api/mobile/pending-actions/:id`.
+    returns today's `briefing` summary, `pendingActions` (always empty: nothing
+    waits for approval, ADR 2026-11-27-1615; the field stays one release for
+    existing clients), and `suggestions` (`inProgress` + `items`).
   - `POST /api/mobile/suggestions/:id` with `{ action: 'send' | 'start' }`
     hands off a suggestion to the Coordinator (`lib/suggestions/handoff.ts`) or
     starts it on the Bot's cloud computer (`startSuggestion`) under mobile

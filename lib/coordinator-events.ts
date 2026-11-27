@@ -257,16 +257,3 @@ export function artifactSubmittedEvent(
     payload: { artifactId: artifact.artifactId, version: artifact.version, title: artifact.title, artifactKind: artifact.kind, authorName: submitter.authorName },
   }
 }
-
-/** The person approved or declined something an agent proposed in their accounts (lib/pending-actions.ts). */
-export function actionDecidedEvent(
-  action: { id: string; userId: string; action: string; input: Record<string, unknown> },
-  decision: { status: 'done' | 'failed' | 'declined' | 'running'; error: string | null; outcome: Record<string, string> },
-  chat: { botId: string | null } & ({ eventId: string; issueId: string | null } | { eventId?: undefined; issueId?: undefined }),
-): CoordinatorEventInput {
-  const task = chat.eventId !== undefined ? chat as { eventId: string; botId: string | null; issueId: string | null } : undefined
-  return {
-    userId: action.userId, botId: chat.botId, kind: 'action_decided', dedupeKey: `action_decided:${action.id}${task ? ':' + task.eventId : ''}`, issueId: task?.issueId ?? null, runId: null,
-    payload: { actionId: action.id, action: action.action, input: action.input, status: decision.status, ...(task ? { requestEventId: task.eventId } : {}), ...(decision.error ? { error: decision.error } : {}), outcome: decision.outcome },
-  }
-}

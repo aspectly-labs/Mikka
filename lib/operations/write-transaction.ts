@@ -5,7 +5,7 @@ import { cancelMailboxBackend } from '@/lib/mailbox-pg-cancel'
 import { waitForMailboxGuard, type MailboxTransactionGuard, type MailboxTransactionLease } from '@/lib/mailbox-transaction-guard'
 
 export interface WriteActor { userId: string; sessionId: string }
-export interface WriteRequestContext { signal?: AbortSignal; actor?: WriteActor; guard?: MailboxTransactionGuard; modelRun?: { ownerId: string; botId: string | null; workspaceId: string | null; runId: string }; /** Host-verified native approval for one exact prepared write. */ nativeWriteReview?: import('./native-write-review').NativeWriteReview; guardForRun?: (run: { ownerId: string; botId: string | null; workspaceId: string | null; runId: string }) => MailboxTransactionGuard | undefined }
+export interface WriteRequestContext { signal?: AbortSignal; actor?: WriteActor; guard?: MailboxTransactionGuard; modelRun?: { ownerId: string; botId: string | null; workspaceId: string | null; runId: string }; /** Host-verified review of one exact prepared write; it can only stop it. */ nativeWriteReview?: import('./native-write-review').NativeWriteReview }
 export interface WriteTransactionOptions<T = unknown> {
   signal?: AbortSignal
   /** Acquired only after work holds APP authorization locks; retained through COMMIT. */
