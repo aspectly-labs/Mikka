@@ -61,7 +61,7 @@ function fixture({ leak = false, mixed = false, strictScope = false, missingPers
     if (path === '/api/auth/get-session') return ok({ user: { id: owner, email: credentials.SMOKE_OWNER_EMAIL } })
     if (path === '/api/integrations/mcp/shares') {
       assert.equal(method, 'PATCH'); assert.deepEqual(body, {})
-      return ok({ error: 'invalidPluginInput' }, 400)
+      return ok({ error: 'mcpSharingRetired' }, 410)
     }
     if (path === '/api/workspace') {
       const chosen = url.searchParams.get('workspace') ?? workspace

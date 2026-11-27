@@ -34,7 +34,6 @@ stub('./runtime.ts', { mcpConnections: { check: async (actor: string, serverId: 
   deleteSkill: async (...args: unknown[]) => { calls.push(['deleteSkill', ...args]) },
 }, workspaceMcp: {
   list: async (userId: string, workspaceId: string) => { calls.push(['workspaceMcpList', userId, workspaceId]); return { workspaceId, servers: [], count: 0 } },
-  share: async (userId: string, input: unknown) => { assert.ok(sessionMustBeFresh(), 'sharing reads the normal session from the database'); calls.push(['workspaceMcpShare', userId, input]); return { servers: [], count: 0 } },
 } })
 stub('./skill-source.ts', { fetchSkillSource: async (input: unknown) => ({ ...input as object, body: '# Fixture' }) })
 stub('../composio.ts', { getComposio: () => ({}) })
@@ -119,24 +118,24 @@ test('an app page needs a signed-in person, not a connected account', async () =
   assert.equal((await response.json() as { tools: { read: unknown[] } }).tools.read.length, 1)
 })
 
-test('custom MCP sharing is a fresh owner HTTP action; workspace reads and mutations reject injected authority', async () => {
+test('retired MCP sharing answers 410 to a fresh owner session and touches no storage; workspace reads reject injected authority', async () => {
   const workspaceId = randomUUID(), serverId = randomUUID(), path = '/api/integrations/mcp/shares'
   const input = { workspaceId, serverId, shared: true }
   owner = null; calls.length = 0
   assert.equal((await mcpShares.PATCH(request(path, 'PATCH', input))).status, 401)
   owner = 'owner'
   assert.equal((await mcpShares.PATCH(request(path, 'PATCH', input, 'https://foreign.acme.dev'))).status, 403)
-  for (const injected of [{ ownerId: 'peer' }, { requester: 'peer' }, { grantId: randomUUID() }, { revision: 1 }])
-    assert.equal((await mcpShares.PATCH(request(path, 'PATCH', { ...input, ...injected }))).status, 400)
+  for (const body of [input, { ...input, shared: false }, { ...input, ownerId: 'peer' }, { ...input, grantId: randomUUID() }]) {
+    const response = await mcpShares.PATCH(request(path, 'PATCH', body))
+    assert.deepEqual({ status: response.status, body: await response.json() }, { status: 410, body: { error: 'mcpSharingRetired' } })
+  }
   assert.deepEqual(calls, [])
-  assert.equal((await mcpShares.PATCH(request(path, 'PATCH', input))).status, 200)
-  assert.deepEqual(calls.at(-1), ['workspaceMcpShare', 'owner', input])
   assert.equal((await mcp.GET(request(`/api/integrations/mcp?workspaceId=${workspaceId}`))).status, 200)
   assert.deepEqual(calls.at(-1), ['workspaceMcpList', 'owner', workspaceId])
   assert.equal((await mcp.GET(request('/api/integrations/mcp?workspaceId=invalid'))).status, 400)
 })
 
-test('MCP sharing rejects missing and delegated credentials before storage even when the session stub has an owner', async () => {
+test('retired MCP sharing still rejects missing and delegated credentials even when the session stub has an owner', async () => {
   owner = 'owner'; calls.length = 0
   const path = '/api/integrations/mcp/shares'
   const input = { workspaceId: randomUUID(), serverId: randomUUID(), shared: true }
@@ -152,8 +151,8 @@ test('MCP sharing rejects missing and delegated credentials before storage even 
   const native = request(path, 'PATCH', input)
   native.headers.delete('cookie')
   native.headers.set('authorization', `Bearer ${'n'.repeat(40)}`)
-  assert.equal((await mcpShares.PATCH(native)).status, 200)
-  assert.deepEqual(calls, [['workspaceMcpShare', 'owner', input]])
+  assert.equal((await mcpShares.PATCH(native)).status, 410)
+  assert.deepEqual(calls, [])
 })
 
 test('a key goes from the signed-in person to Composio and never back out, in a response or a log', async () => {

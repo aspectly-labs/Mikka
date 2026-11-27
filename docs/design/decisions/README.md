@@ -21,7 +21,7 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `213` dated decision records here carry verified `Status:` headers (`157` Accepted, `13` Superseded, `43` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
+All `216` dated decision records here carry verified `Status:` headers (`157` Accepted, `13` Superseded, `46` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
 
 ### Key active architectural decisions
 
@@ -38,6 +38,7 @@ All `213` dated decision records here carry verified `Status:` headers (`157` Ac
 | **One state-mark registry** | [2026-11-19-1630-one-mark-registry.md](2026-11-19-1630-one-mark-registry.md) | Accepted | [`mikka-hosted-ui/docs/design/components.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md) |
 | **Automatic UTC migration IDs** | [2026-11-11-1151-automatic-migration-ids.md](2026-11-11-1151-automatic-migration-ids.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
 | **Native MCP configuration & credential delivery** | [2026-11-11-0534-eve-and-native-mcp.md](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
+| **Personal MCP servers are not shareable; a thread uses its starter's own** | [2026-11-27-1700-personal-mcp-not-shareable.md](2026-11-27-1700-personal-mcp-not-shareable.md) (supersedes in part [2026-11-19](2026-11-19-native-mcp-authorization.md), [2026-11-11-0534](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-20-1852](2026-11-20-1852-mcp-connection-settings.md)) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
 | **No batch or integration PRs** | [2026-11-27-1930-no-batch-prs.md](2026-11-27-1930-no-batch-prs.md) (supersedes the batch allowance in [2026-11-20-1640](2026-11-20-1640-sdlc-delivery.md)) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md), [`AGENTS.md`](../../../AGENTS.md) |
 | **No permission approvals: agents run with full access** | [2026-11-27-1615-no-permission-approvals.md](2026-11-27-1615-no-permission-approvals.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`mikka-hosted-ui/docs/design/rules.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md) |
 | **One UI across Cloud & self-hosted** | [2026-11-08-2133-one-ui.md](2026-11-08-2133-one-ui.md) | Accepted | [`docs/operations/build-source-of-truth.md`](../../operations/build-source-of-truth.md) |
