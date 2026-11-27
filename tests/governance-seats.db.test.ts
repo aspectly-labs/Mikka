@@ -195,6 +195,7 @@ test('real PostgreSQL serializes seats across acceptance and restoration', { ski
       await pool.query(await readFile(new URL('../drizzle/20261122084255_hosted_usage_turn_ref.sql', import.meta.url), 'utf8'))
       await pool.query(await readFile(new URL('../drizzle/20261123210000_hosted_usage_platform_funded.sql', import.meta.url), 'utf8'))
       await pool.query(await readFile(new URL('../drizzle/20261126035203_cloudflare_compute_measurements.sql', import.meta.url), 'utf8'))
+      await pool.query(`ALTER TABLE hosted_usage ADD COLUMN IF NOT EXISTS "purchasedAllocations" jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof("purchasedAllocations") = 'object')`)
       const id = await workspace(1)
       await db.insert(workspaceEntitlements).values({ workspaceId: id, plan: 'pro', source: 'cloud', seatLimit: 20 })
       await pool.query('insert into hosted_verifications values($1)', [id])

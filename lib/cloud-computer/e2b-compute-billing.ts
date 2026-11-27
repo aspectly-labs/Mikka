@@ -264,7 +264,7 @@ export async function releaseInterruptedE2BCreation(ownerId: string, operationId
       AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id=$3 AND u."executionOwnerId"=$2
         AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')
       RETURNING l."workspaceId"
-    ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}'
+    ) UPDATE hosted_usage u SET state='failed',"costMicroUsd"=0,"purchasedMicroUsd"=0,"planMicroUsd"=0,"planAllocations"='{}',"purchasedAllocations"='{}'
     FROM interrupted WHERE u.id=$3 AND u."executionOwnerId"=$2 AND u."usageWorkspaceId"=interrupted."workspaceId"
       AND u.state='settled'`, [operationId, ownerId, id])
   return result.rowCount === 1
