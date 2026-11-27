@@ -209,6 +209,13 @@ test('SDK flag methods are caught through aliases, re-exports, element access, d
     'const { onFeatureFlags } = client': /destructuring onFeatureFlags/,
     'posthog.getFeatureFlag.call(posthog, key)': /using getFeatureFlag/,
     'const read = posthog.isFeatureEnabled.bind(posthog)': /using isFeatureEnabled/,
+    'const flags = await posthog.evaluateFlags(userId)': /using evaluateFlags/,
+    'import { evaluateFlags as evaluate } from \'@posthog/node-extra\'': /importing evaluateFlags/,
+    'import { useFeatureFlagResult } from \'posthog-js/react\'': /importing useFeatureFlagResult/,
+    'const result = useFeatureFlagResult(key)': /calling useFeatureFlagResult/,
+    'import { PostHogFeature } from \'posthog-js/react\'': /importing PostHogFeature/,
+    'export { PostHogFeature as Gate } from \'@posthog/react\'': /re-exporting PostHogFeature/,
+    'import { getFeatureFlag } from \'@posthog/core\'': /importing getFeatureFlag/,
   }
   for (const [source, expected] of Object.entries(cases)) {
     const problems = flagBypassProblems({ files: [{ file: 'lib/sneaky.ts', source }] })

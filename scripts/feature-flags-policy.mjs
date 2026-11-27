@@ -52,7 +52,8 @@ export const FLAG_READERS = new Set([
  */
 export const DIRECT_FLAG_METHODS = new Set([
   'getFeatureFlag', 'getFeatureFlagPayload', 'getFeatureFlagResult', 'isFeatureEnabled', 'getAllFlags', 'getAllFlagsAndPayloads',
-  'onFeatureFlags', 'useFeatureFlagEnabled', 'useFeatureFlagPayload', 'useFeatureFlagVariantKey', 'useActiveFeatureFlags',
+  'evaluateFlags', 'onFeatureFlags', 'useFeatureFlagEnabled', 'useFeatureFlagPayload', 'useFeatureFlagResult', 'useFeatureFlagVariantKey',
+  'useActiveFeatureFlags', 'PostHogFeature',
 ])
 
 /** Where the SDK's flag methods may be called, and why. */
@@ -72,7 +73,7 @@ const DAY_MS = 86_400_000
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/
 const SKIPPED_DIR = /(?:^|\/)(?:\.[^/]+|node_modules|\.next|\.artifacts|dist|dist-[a-z0-9-]+|out|build|coverage|__tests__|__mocks__|tests?|e2e)\//
 const TEST_FILE = /(?:\.|-)(?:test|spec|node-test|fixture|stories)\.[cm]?[jt]sx?$|\.test-d\.ts$/
-const QUICK = /postHogFlag|serverFlagEnabled|productionFlagDefault|FeatureFlag|isFeatureEnabled|getAllFlags|useActiveFeatureFlags|FlagKey|flags\[/
+const QUICK = /postHogFlag|serverFlagEnabled|productionFlagDefault|FeatureFlag|isFeatureEnabled|getAllFlags|evaluateFlags|PostHogFeature|useActiveFeatureFlags|FlagKey|flags\[/
 const POLICY_FILES = new Set(['scripts/feature-flags-policy.mjs'])
 
 const parse = (file, source) => ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true,
@@ -314,7 +315,8 @@ export function undeclaredFlagKeyProblems({ files = flagPolicyFiles(), declared 
  * Uses of the SDK's flag methods outside their owners, and `as FlagKey` casts,
  * with line numbers. A use is any reference, not only a call: `posthog.m(…)`,
  * `posthog?.['m']`, `posthog.m.call(…)` / `.bind(…)`, `const { m: g } = posthog`,
- * and importing or re-exporting `m` from a `posthog-*` package (aliases too).
+ * and importing or re-exporting `m` from a `posthog-*` or `@posthog/*` package
+ * (aliases too; for the `PostHogFeature` component the import is enough).
  */
 export function flagBypasses(file, source) {
   if (!QUICK.test(source)) return []
@@ -326,7 +328,7 @@ export function flagBypasses(file, source) {
   const fromPosthog = node => {
     const declaration = ts.isImportSpecifier(node) ? node.parent.parent.parent : node.parent.parent
     const module = declaration?.moduleSpecifier
-    return Boolean(module && ts.isStringLiteral(module) && module.text.startsWith('posthog-'))
+    return Boolean(module && ts.isStringLiteral(module) && (module.text.startsWith('posthog-') || module.text.startsWith('@posthog/')))
   }
   // Local names for the FlagKey type: itself and any `import type { FlagKey as K }`.
   const flagKeyNames = new Set(['FlagKey'])
