@@ -74,33 +74,45 @@ test('actual emitted CommonJS and ESM syntax themes retain their conditional exp
 })
 
 test('Vite uses the same existing Lightning CSS color space and neutral mixing as hosted CSS', { skip: needsOfficialUi }, async () => {
-  const filename = resolve(officialUi.dir, 'core/app/globals.css')
-  const css = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(await readFile(filename, 'utf8'), { from: filename })
-  const declarations = new Map()
-  css.root.walkRules(rule => {
-    if (rule.selector !== ':root' && rule.selector !== '.dark') return
-    for (const node of rule.nodes) if (node.type === 'decl') declarations.set(`${rule.selector}/${node.prop}`, node.value)
-  })
-  // The checkout's globals name Mikka's colour primitives (`var(--mk-blue-600)`), which its styles/tokens.css spells:
-  // each one is compiled through the same plugins, so the assertion still reads Lightning CSS's own colour output.
+  const globalsFile = resolve(officialUi.dir, 'core/app/globals.css')
   const tokensFile = resolve(officialUi.dir, 'styles/tokens.css')
-  const tokens = (await readFile(tokensFile, 'utf8').catch(() => '')).replace(/\/\*[\s\S]*?\*\//g, '')
-  const spelled = new Map([...tokens.matchAll(/^\s*(--mk-[\w-]+):\s*([^;{}]+);/gm)].map(([, name, value]) => [name, value.trim()]))
-  for (const [key, value] of declarations) {
-    const primitive = /^var\((--mk-[\w-]+)\)$/.exec(value)?.[1]
-    if (!primitive || !spelled.has(primitive)) continue
-    const probe = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(`:root { --probe: ${spelled.get(primitive)}; }`, { from: tokensFile })
+  const globalsCss = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(await readFile(globalsFile, 'utf8'), { from: globalsFile })
+  const tokensCss = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(await readFile(tokensFile, 'utf8'), { from: tokensFile })
+  const light = new Map()
+  const dark = new Map()
+  for (const root of [tokensCss.root, globalsCss.root]) {
+    root.walkRules(rule => {
+      const sels = rule.selectors.map(s => s.trim())
+      const isLight = sels.some(s => s === ':root' || s === ':root:not(.dark)')
+      const isDark = sels.some(s => s === '.dark' || s === ':root.dark' || s === ':root')
+      if (!isLight && !isDark) return
+      for (const node of rule.nodes) {
+        if (node.type !== 'decl') continue
+        if (isLight) light.set(node.prop, node.value)
+        if (isDark) dark.set(node.prop, node.value)
+      }
+    })
+  }
+  const resolveTheme = async (prop, map) => {
+    let val = map.get(prop)
+    for (let hop = 0; hop < 8 && val; hop++) {
+      const m = /^var\((--[\w-]+)\)$/.exec(val.trim())
+      if (!m) break
+      val = map.get(m[1])
+    }
+    assert.ok(val != null, `unresolved ${prop}`)
+    const probe = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(`:root { --probe: ${val}; }`, { from: tokensFile })
     let compiled
     probe.root.walkDecls('--probe', node => { compiled = node.value })
-    declarations.set(key, compiled)
+    return compiled
   }
-  assert.equal(declarations.get(':root/--sidebar-primary'), 'lab(44.0605% 29.0279 -86.0352)')
-  assert.equal(declarations.get(':root/--sidebar'), 'lab(98.26% 0 0)')
-  assert.equal(declarations.get('.dark/--sidebar-primary'), 'lab(36.9089% 35.0961 -85.6872)')
-  assert.equal(declarations.get('.dark/--sidebar'), 'lab(1.3738% 0 0)')
+  assert.equal(await resolveTheme('--sidebar-primary', light), '#0060e2')
+  assert.equal(await resolveTheme('--sidebar', light), '#f2f2f4')
+  assert.equal(await resolveTheme('--sidebar-primary', dark), '#5b9aff')
+  assert.equal(await resolveTheme('--sidebar', dark), '#0e0e10')
   // Cartesian mixing keeps the primary blue on the neutral sidebar ground.
-  assert.match(declarations.get(':root/--sidebar-primary-soft'), /color-mix\(in oklab,\s*var\(--sidebar-primary\)\s*15%,\s*var\(--sidebar\)\)/)
-  assert.match(declarations.get('.dark/--sidebar-primary-soft'), /color-mix\(in oklab,\s*var\(--sidebar-primary\)\s*40%,\s*var\(--sidebar\)\)/)
+  assert.match(await resolveTheme('--sidebar-primary-soft', light), /color-mix\(in oklab,\s*var\(--sidebar-primary\)\s*15%,\s*var\(--sidebar\)\)/)
+  assert.match(await resolveTheme('--sidebar-primary-soft', dark), /color-mix\(in oklab,\s*var\(--sidebar-primary\)\s*40%,\s*var\(--sidebar\)\)/)
 })
 
 test('the application is the checkout\'s core/renderer, every file of it is required, and without a checkout only the headless page builds', async t => {

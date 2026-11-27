@@ -50,11 +50,6 @@ const retry = (reason, hits) => ({ kind: "retry", reason, hits });
  * - tracking '#1212': a database poll still waiting to be replaced by push, through `replaceWith`.
  */
 export const pollingAllowlist = {
-  "components/device-authorization.tsx": {
-    kind: "ui-timer",
-    reason: "visible pairing-code countdown compares the existing expiry to the device clock until the code expires",
-    hits: 1,
-  },
   "apps/desktop/src/main/index.ts": external(
     "installed desktop checks the external release feed every four hours for C7 background updates",
     1,
