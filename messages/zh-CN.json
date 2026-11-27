@@ -4708,6 +4708,7 @@
     "artifactNotFound": "找不到这个成果。",
     "billingNoSubscription": "工作区还没有订阅。",
     "apiKeyNotFound": "这个 API Key 已不存在。",
+    "apiKeySharingRetired": "个人连接和工作区连接分开添加，密钥不能在两者之间移动。请在工作区连接中添加。",
     "botShareUnavailable": "个人工作区没有可以共享的成员。",
     "emailDeliveryFailed": "邮件没有发送成功。",
     "scheduleUserSourceRequired": "这个操作需要你本人发起。",
@@ -6419,6 +6420,8 @@
       "default": "服务商用量额度或余额已用尽，请查看用量。"
     },
     "run_failed": {
+      "claim_requeue_limit": "任务在电脑领取时反复发生变化，已在多次尝试后停止。请重新开始。",
+      "claim_receipt_bound": "任务在电脑领取时发生变化，且分配的技能已记录在那次领取上。请重新开始。",
       "default": "任务未能完成，请查看错误详情或重试。"
     },
     "desktop_rpc_action_unknown": {

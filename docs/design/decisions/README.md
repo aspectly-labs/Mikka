@@ -21,7 +21,7 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `217` dated decision records here carry verified `Status:` headers (`158` Accepted, `13` Superseded, `46` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
+All `218` dated decision records here carry verified `Status:` headers (`156` Accepted, `13` Superseded, `49` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
 
 ### Key active architectural decisions
 
@@ -39,6 +39,7 @@ All `217` dated decision records here carry verified `Status:` headers (`158` Ac
 | **Automatic UTC migration IDs** | [2026-11-11-1151-automatic-migration-ids.md](2026-11-11-1151-automatic-migration-ids.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
 | **Native MCP configuration & credential delivery** | [2026-11-11-0534-eve-and-native-mcp.md](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
 | **Personal MCP servers are not shareable; a thread uses its starter's own** | [2026-11-27-1700-personal-mcp-not-shareable.md](2026-11-27-1700-personal-mcp-not-shareable.md) (supersedes in part [2026-11-19](2026-11-19-native-mcp-authorization.md), [2026-11-11-0534](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-20-1852](2026-11-20-1852-mcp-connection-settings.md)) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
+| **Model API keys are a person's or a workspace's; a personal key is never shared** | [2026-11-27-1740-model-keys-personal-or-workspace.md](2026-11-27-1740-model-keys-personal-or-workspace.md) (supersedes in part [2026-10-31-2300](2026-10-31-2300-orchestration-spec.md), [2026-11-01-2240](2026-11-01-2240-own-credentials-always-usable.md), [2026-11-17-1400](2026-11-17-1400-subscriptions-owner-only.md)) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`docs/design/orchestration.md`](../orchestration.md) |
 | **Workspace MCP servers, as Capy's organization servers** | [2026-11-27-1705-workspace-mcp-servers-like-capy.md](2026-11-27-1705-workspace-mcp-servers-like-capy.md) | Accepted | [`docs/operations/cloud-execution-and-secrets.md`](../../operations/cloud-execution-and-secrets.md) |
 | **No batch or integration PRs** | [2026-11-27-1930-no-batch-prs.md](2026-11-27-1930-no-batch-prs.md) (supersedes the batch allowance in [2026-11-20-1640](2026-11-20-1640-sdlc-delivery.md)) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md), [`AGENTS.md`](../../../AGENTS.md) |
 | **No permission approvals: agents run with full access** | [2026-11-27-1615-no-permission-approvals.md](2026-11-27-1615-no-permission-approvals.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`mikka-hosted-ui/docs/design/rules.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md) |

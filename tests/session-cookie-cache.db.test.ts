@@ -88,7 +88,7 @@ test('the money, permission, credential and deletion entry points read the sessi
     'app/actions/workspace-settings.ts': ['updateWorkspace', 'transferWorkspace', 'deleteWorkspace', 'removeWorkspaceMember', 'takeOverArchivedBot'],
     'app/actions/workspace.ts': ['createWorkspaceInvitation', 'updateWorkspaceMember', 'revokeWorkspaceInvitation', 'acceptWorkspaceInvitation'],
     'app/actions/workspace-secrets.ts': ['createSecret', 'replaceSecret', 'deleteSecret', 'saveE2BKey', 'deleteE2BKey'],
-    'app/actions/model-api-keys.ts': ['createApiKey', 'deleteApiKey', 'updateApiKeyShare'],
+    'app/actions/model-api-keys.ts': ['createApiKey', 'updateApiKey', 'deleteApiKey', 'refetchApiKeyModels', 'updateApiKeyFeatures', 'updateApiKeyShare'],
     'app/actions/tokens.ts': ['createAccessToken', 'revokeAccessToken'],
     'app/actions/agents.ts': ['createDeviceToken'],
     'app/actions/account.ts': ['changePassword', 'setPassword', 'revokeSession', 'revokeOtherSessions', 'requestDataExport', 'deleteAccount'],

@@ -33,7 +33,7 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     await pool.query(`CREATE TABLE "user" (id text PRIMARY KEY); INSERT INTO "user" VALUES ('alice'),('bob');
       CREATE TABLE devices (id uuid PRIMARY KEY,"ownerId" text,kind text,"removedAt" timestamptz,"lastSeenAt" timestamptz,"sessionOpenedAt" timestamptz,"sessionClosedAt" timestamptz,enabled boolean,"deviceType" text,name text,harnesses jsonb,"createdAt" timestamptz DEFAULT now());
       CREATE TABLE bots (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid);
-      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,kind text NOT NULL DEFAULT 'team' CHECK (kind IN ('personal','team')), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
+      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,kind text NOT NULL DEFAULT 'team' CHECK (kind IN ('personal','team')),name text NOT NULL DEFAULT 'Team', "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,name text,status text);
       CREATE TABLE byos_connections (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,epoch bigint,state text,provider text,"accountLabel" text,quota jsonb,"removedAt" timestamptz,paused boolean NOT NULL DEFAULT false,"modelSettings" jsonb);
       CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,"modelId" text,route text,"createdAt" timestamptz DEFAULT now())`);
@@ -42,6 +42,10 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const daybreakSql = await readFile(new URL("../drizzle/20261126165656_daybreak_access_and_choice.sql", import.meta.url), "utf8");
     await pool.query(daybreakSql);
     await pool.query(daybreakSql);
+    // Decision 2026-11-27-1740: keys are a person's or a workspace's. The migration also reads these two tables.
+    await pool.query(`CREATE TABLE IF NOT EXISTS agent_runs (id uuid PRIMARY KEY,"userId" text,status text,"agentDefinition" jsonb,"stopRequestedAt" timestamptz,"leaseExpiresAt" timestamptz,"updatedAt" timestamptz);
+      CREATE TABLE IF NOT EXISTS model_order_entries (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid,"sourceKind" text,"sourceId" uuid)`);
+    await pool.query(await readFile(new URL("../drizzle/20261127173719_model_api_keys_personal_or_workspace.sql", import.meta.url), "utf8"));
     // Resource policy still runs against real non-Org rows in this isolated schema.
     await pool.query(await readFile(new URL("../drizzle/20261109035020_organization_governance.sql", import.meta.url), "utf8"));
 
@@ -137,8 +141,9 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
         assert.equal(empty.current.kind, "none");
         assert.deepEqual(empty.groups.map(group => group.kind), ["hosted"]);
         assert.equal(reads.filter(sql => sql.includes("WITH choices AS")).length, 1);
-        assert.equal(reads.filter(sql => /FROM model_api_keys WHERE/.test(sql)).length, 1);
-        assert.equal(reads.filter(sql => /FROM model_api_key_shares s/.test(sql)).length, 1);
+        // One read for the person's own keys and the workspace's own (decision 2026-11-27-1740); no share table.
+        assert.equal(reads.filter(sql => /FROM model_api_keys\s+WHERE/.test(sql)).length, 1);
+        assert.equal(reads.filter(sql => /model_api_key_shares/.test(sql)).length, 0);
         assert.equal(reads.filter(sql => /FROM model_order_settings/.test(sql)).length, 1);
       } finally { readFallback = async () => pointsChoice; }
     });
@@ -513,12 +518,13 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     assert.deepEqual([off.current.modelId, off.current.available, off.current.quota?.fallback], ["claude-opus-fixture", false, null]);
     const stays = await freezeBotModel({ ownerId: "alice", botId: botA, workspaceId: workspace }, dependencies);
     assert.equal(stays.modelSelection?.type, "subscription");
-    // A teammate's key is never spent this way: Alice shares hers with the team, Bob can pick it, but his bot on his
-    // exhausted subscription does not move to it.
+    // A workspace's key is never spent this way, and another member's personal key is never offered
+    // (decision 2026-11-27-1740): Bob sees the workspace's key, not Alice's; his exhausted subscription does not move to it.
     await pool.query(`UPDATE "user" SET "apiKeyAfterQuota"=true`);
-    const { setApiKeyShare, usableApiKeys } = await import("./model-api-keys");
-    await setApiKeyShare(pool, "alice", { id: workspace, kind: "team" }, key.id, true);
-    assert.ok((await usableApiKeys(pool, "bob", workspace)).some((row) => row.id === key.id && !row.mine));
+    const { usableApiKeys, removeApiKey } = await import("./model-api-keys");
+    const teamKey = await addApiKey(pool, { workspaceId: workspace }, { provider: "deepseek", name: "Team", apiKey: `test-team-${randomUUID()}` }, { env, fetch: listing, addedBy: "alice" });
+    assert.deepEqual((await usableApiKeys(pool, "bob", workspace)).filter((row) => !row.mine).map((row) => [row.id, row.workspace]), [[teamKey.id, true]]);
+    assert.ok(!(await usableApiKeys(pool, "bob", workspace)).some((row) => row.id === key.id), "Alice's own key is hers alone");
     await pool.query(`UPDATE byos_connections SET quota=$2::jsonb WHERE id=$1`, [bobs, quota(1, FUTURE)]);
     const bobsTurn = await freezeBotModel({ ownerId: "bob", botId: bobBot, workspaceId: workspace }, dependencies);
     assert.notEqual(bobsTurn.modelSelection?.type, "api_key");
@@ -526,14 +532,14 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     await pool.query(`UPDATE byos_connections SET quota=$2::jsonb WHERE id=$1`, [claude, quota(0.2, FUTURE)]);
     assert.equal((await freezeBotModel({ ownerId: "alice", botId: botA, workspaceId: workspace }, dependencies)).modelSelection?.type, "subscription");
 
-    // Shared keys identify both their owner and their masked key, then disappear on withdrawal.
+    // The workspace's key is labelled with the workspace's name and its masked key, then disappears when removed.
+    const teamOption = apiKeyOptionId(teamKey.id, "deepseek-v4-pro");
     const sharedMenu = await botModelMenu(pool, settings, { ownerId: "bob", workspaceId: workspace }, bobBot);
-    assert.equal(sharedMenu.groups.find(group => group.kind === "shared")?.owner, "Alice");
-    assert.equal(sharedMenu.groups.find(group => group.kind === "shared")?.credentialLabel, `····${key.last4}`);
-    await chooseBotModel(pool, settings, { ownerId: "bob", workspaceId: workspace }, bobBot, keyOption);
-    const pickedSharedKey = await botModelMenu(pool, settings, { ownerId: "bob", workspaceId: workspace }, bobBot);
-    assert.equal(pickedSharedKey.current.credentialLabel, `Alice · ····${key.last4}`, "the current shared credential identifies who pays");
-    await pool.query(`DELETE FROM model_api_key_shares WHERE "keyId"=$1 AND "workspaceId"=$2`, [key.id, workspace]);
+    assert.deepEqual(sharedMenu.groups.filter(group => group.kind === "shared").map(group => [group.owner, group.credentialLabel]), [["Team", `Team ····${teamKey.last4}`]]);
+    await chooseBotModel(pool, settings, { ownerId: "bob", workspaceId: workspace }, bobBot, teamOption);
+    const pickedTeamKey = await botModelMenu(pool, settings, { ownerId: "bob", workspaceId: workspace }, bobBot);
+    assert.equal(pickedTeamKey.current.credentialLabel, `Team · Team ····${teamKey.last4}`, "the current workspace credential identifies who pays");
+    await removeApiKey(pool, { workspaceId: workspace }, teamKey.id);
     assert.equal((await botModelMenu(pool, settings, { ownerId: "bob", workspaceId: workspace }, bobBot)).groups.some(group => group.kind === "shared"), false);
     // Same model from two keys remains two identifiable credentials.
     const secondKey = await addApiKey(pool, "alice", { provider: "kimi", apiKey: `test-second-${randomUUID()}` }, { env, fetch: listing });
@@ -558,6 +564,14 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     assert.ok(!bobMenu.groups.some(group => group.kind === "subscription" && group.options.some(option => option.id === luna)), "no teammate subscription is offered");
     await assert.rejects(chooseBotModel(pool, settings, bob, bobBot, luna), { code: "executionModelUnknown" });
 
+    // 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): Alice's own subscriptions are neither offered nor bound here.
+    await pool.query(`INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)
+      ON CONFLICT ("workspaceId") DO UPDATE SET subscriptions=false`, [workspace]);
+    assert.deepEqual(await settings.botModels(alice), [], "off: no own subscription is a candidate here");
+    assert.equal((await botModelMenu(pool, settings, alice, botA)).groups.some(group => group.kind === "subscription"), false);
+    assert.ok((await settings.botModels({ ownerId: "alice", workspaceId: elsewhere })).length > 0, "another workspace keeps them");
+    await pool.query('UPDATE workspace_personal_policies SET subscriptions=true WHERE "workspaceId"=$1', [workspace]);
+    assert.ok((await settings.botModels(alice)).length > 0, "on: her own subscriptions serve again");
     // #3315 Daybreak: Codex subscription & OpenAI BYOK only, never Mikka Credits; freezes cyberAccessProgram and resets when entitlement lapses.
     await t.test("Daybreak selection, persistence, freeze, and revocation on Codex subscription and OpenAI BYOK", async () => {
       const { setChatModelSettings } = await import("./bot-model-menu");

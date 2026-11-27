@@ -19,7 +19,8 @@ test('native execution re-reads the owner\'s own binding and never falls back', 
   try {
     await pool.query(`CREATE TABLE agents (id uuid PRIMARY KEY,"userId" text);
       CREATE TABLE byos_connections (id uuid PRIMARY KEY,"ownerId" text,provider text,state text,epoch bigint,paused boolean);
-      CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,route text,"modelId" text,"createdAt" timestamptz DEFAULT now())`)
+      CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,route text,"modelId" text,"createdAt" timestamptz DEFAULT now());
+      CREATE TABLE workspace_personal_policies ("workspaceId" uuid PRIMARY KEY,subscriptions boolean NOT NULL DEFAULT true)`)
     await pool.query(`INSERT INTO agents VALUES ($1,'owner')`, [agentId])
     await pool.query(`INSERT INTO byos_connections VALUES ($1,'owner','codex','connected',7,false)`, [connectionId])
     const reset = async () => {

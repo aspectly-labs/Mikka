@@ -55,11 +55,8 @@ function fixture(allowed: boolean, ownerId = 'owner-a') {
         assert.deepEqual(args, [scope.workspaceId]); return { rows: [{ subscriptions: allowed }] }
       }
       if (sql.startsWith('SELECT id::text AS id,"modelCatalog"')) return { rows: [{ id: connectionId, models: ['claude-haiku-5-5'] }] }
-      if (sql.includes('FROM model_api_keys WHERE "ownerId"=$1 ORDER BY')) {
-        assert.deepEqual(args, [scope.ownerId]); return { rows: [key] }
-      }
-      if (sql.includes('FROM model_api_key_shares s JOIN model_api_keys k')) {
-        assert.deepEqual(args, [scope.workspaceId, scope.ownerId]); return { rows: [] }
+      if (sql.includes('WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid)')) {
+        assert.equal(args[0], scope.ownerId); return { rows: [key] }
       }
       if (sql.includes('FROM model_order_settings')) return { rows: [{ location: 'local', customized: false, preferredHarness: 'claude_code', autoModelRouting: true }] }
       if (sql.startsWith('SELECT c.id::text AS id,c."ownerId"')) {
@@ -104,9 +101,9 @@ for (const allowed of [false, true]) test(`prompt projection skips only unused c
   assert.equal(promptQuery.trace.some(capabilityRead), false)
   fullQuery.trace.splice(0, fullQuery.trace.length, ...fullQuery.trace.filter(row => !capabilityRead(row)))
   const prompt = await context(promptQuery)
-  // The full view counts connected subscriptions and the own/shared key rows.
-  // Empty shared-key candidates no longer issue an unused policy read.
-  const saved = 3
+  // The full view counts connected subscriptions and the usable key rows (the
+  // person's own and the workspace's, one read since decision 2026-11-27-1740).
+  const saved = 2
   t.diagnostic(JSON.stringify({ kind: 'order_projection_query_budget', allowed, full: fullQuery.trace.length, context: promptQuery.trace.length, saved: fullQuery.trace.length - promptQuery.trace.length }))
   assert.equal(fullQuery.trace.length - promptQuery.trace.length, saved, 'prompt_unused_count_queries_remain')
   assert.deepEqual(prompt, fields(full), 'the prompt consumes the exact same model and credential-state projection')

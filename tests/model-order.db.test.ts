@@ -137,18 +137,22 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     const full = await order.orderView(tracked(fullStatements), scope, async () => [])
     const context = await order.orderView(tracked(contextStatements), scope, async () => [], 'context')
     const { location, preferredHarness, entries, candidates, cloudReady, cloudModels } = full
-    assert.ok(candidates.length > 0 && candidates.every(candidate => candidate.capabilities), 'Settings receives populated route capabilities')
+    assert.ok(candidates.every(candidate => candidate.capabilities), 'Settings receives populated route capabilities')
     const promptCandidates = candidates.map(({ capabilities: _capabilities, ...candidate }) => candidate)
     assert.deepEqual(context, { location, preferredHarness, entries, candidates: promptCandidates, cloudReady, cloudModels })
-    assert.equal(full.credentials, 2, 'the page still counts the subscription and key with sharing either allowed or denied')
+    // 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): the own key no longer serves here; the connected subscription is still counted.
+    assert.equal(full.credentials, allowed ? 2 : 1, 'the page counts the connected subscription and the keys usable here')
+    assert.equal(candidates.length > 0, allowed, 'off: no own subscription or key is a candidate here')
     assert.equal(Object.hasOwn(context, 'credentials'), false)
     const countStart = fullStatements.findIndex(row => row.sql.startsWith('SELECT id::text AS id FROM byos_connections WHERE'))
-    // No shared keys: only the connected-subscription and own/shared-key count reads.
+    // The connected-subscription count, the usable-key read and its switch read.
     const countReads = 3
     const capabilityRead = fullStatements.findIndex(row => row.sql.includes('AS "effortSupport"'))
     assert.ok(countStart >= 0)
-    assert.ok(capabilityRead >= countStart + countReads)
-    const saved = countReads + 1
+    // Capabilities are read for the candidates only; with the switch off there are none to read.
+    if (allowed) assert.ok(capabilityRead >= countStart + countReads)
+    else assert.equal(capabilityRead, -1, 'off: no candidate, so no capability read')
+    const saved = countReads + (allowed ? 1 : 0)
     assert.equal(fullStatements.length - contextStatements.length, saved)
     assert.deepEqual(contextStatements, fullStatements.filter((_, i) => (i < countStart || i >= countStart + countReads) && i !== capabilityRead),
       'every remaining SQL statement and scoped argument is unchanged')

@@ -75,10 +75,10 @@ export async function botModelMenu(
   // #2938 (2): LiteLLM list pricing rides every menu option, whichever route serves it.
   const pricingRead = import("./model-catalog-server").then(async ({ modelCatalog }) =>
     new Map((await modelCatalog()).map(model => [model.id, model.pricing] as const))).catch(() => new Map<string, never>());
-  const ownerNamesRead = keysRead.then(({ keys }) => {
-    const sharedOwners = [...new Set(keys.filter((key) => !key.mine).map((key) => key.ownerId))];
-    return sharedOwners.length ? memberNames(scope.workspaceId, sharedOwners) : new Map<string, string>();
-  });
+  // A workspace key (工作区连接) is labelled with the workspace's name; no member's key is ever listed but one's own.
+  const ownerNamesRead = keysRead.then(async ({ keys }) => keys.some((key) => key.workspace)
+    ? new Map([[scope.workspaceId, await workspaceName(scope.workspaceId)]])
+    : new Map<string, string>());
   const choiceRead = Promise.all([subscriptionsRead, keysRead, preferenceRead]).then(([{ allRows, rows }, { allKeys, keys }, preference]) =>
     resolveBotModelChoice(pool, settings, scope, botId, preference, { rows, keys, now, fallback: { rows: allRows, keys: allKeys } }));
   const [{ rows }, { keys }, { points }, enabled, preference, catalogue, ownerNames, choice, pricing] = await Promise.all([
@@ -117,7 +117,7 @@ export async function botModelMenu(
       } : {}),
     });
   }
-  // API keys and custom providers that reach bot chats (C22): the person's own, then teammates' shared ones.
+  // API keys and custom providers that reach bot chats (C22): the person's own, then the workspace's.
   const keyLabel = (key: (typeof keys)[number]) => [key.name, key.last4 ? `····${key.last4}` : null].filter(Boolean).join(" ") || key.provider;
   const keyOptions = (key: (typeof keys)[number]): BotModelMenuOption[] =>
     key.models.map((model) => ({ id: apiKeyOptionId(key.id, model), modelId: model, provider: key.provider, ...priceFor(model),
@@ -269,14 +269,13 @@ export async function setPreferredRoute(pool: Pool, settings: ExecutionSettings,
   return { ...menu, preferredRoutes: { [modelKey]: route.id } };
 }
 
-/** Active members' public names for shared API keys. Never the credential. */
-async function memberNames(workspaceId: string, userIds: string[]) {
-  const [{ workspaceDb }, { workspaceMembers }, { and, eq, inArray }] = await Promise.all([
+/** The workspace's name, for its own API keys in the menu. Never the credential. */
+async function workspaceName(workspaceId: string) {
+  const [{ workspaceDb }, { workspaces }, { eq }] = await Promise.all([
     import("./workspace-db"), import("./db/workspace-schema"), import("drizzle-orm"),
   ]);
-  const rows = await workspaceDb.select({ userId: workspaceMembers.userId, name: workspaceMembers.name }).from(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, workspaceId), inArray(workspaceMembers.userId, userIds), eq(workspaceMembers.status, "active")));
-  return new Map(rows.map((row) => [row.userId, row.name]));
+  const [row] = await workspaceDb.select({ name: workspaces.name }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+  return row?.name ?? "";
 }
 
 /**
@@ -298,7 +297,7 @@ export async function refreshBotModelMenu(
 ): Promise<BotModelMenu> {
   // Every connected subscription, not only those already listed: one never asked has no models to list yet.
   const connections = await settings.connectedSubscriptions(scope.ownerId);
-  // The person's own keys list their models again (the provider's free /models read, #2938); a teammate's shared key is its owner's to refresh.
+  // The person's own keys list their models again (the provider's free /models read, #2938); a workspace key is its admins' to refresh.
   const { rows: ownKeys } = await pool.query<{ id: string }>('SELECT id::text AS id FROM model_api_keys WHERE "ownerId"=$1', [scope.ownerId]);
   const timed = (work: Promise<unknown>) => Promise.race([work, new Promise((resolve) => setTimeout(resolve, timeoutMs).unref?.())]);
   await Promise.allSettled([

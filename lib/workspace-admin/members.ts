@@ -101,7 +101,6 @@ export async function releaseDepartingMember(workspaceId: string, userId: string
     await main.execute(sql`delete from workspace_mcp_oauth o using workspace_mcp_servers s where o.server_id=s.id and s.workspace_id=${workspaceId} and o.user_id=${userId}`)
     // Their credits stop paying for the team at once (lib/credit-shares.ts).
     await main.execute(sql`delete from workspace_credit_shares where "userId" = ${userId} and "workspaceId" = ${workspaceId}`)
-    await main.execute(sql`delete from model_api_key_shares s using model_api_keys k where k.id = s."keyId" and k."ownerId" = ${userId} and s."workspaceId" = ${workspaceId}`)
     const archived = await main.update(bots).set({ archivedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(bots.workspaceId, workspaceId), eq(bots.ownerId, userId), isNull(bots.archivedAt))).returning({ id: bots.id })
     for (const { id } of archived) await botListChanged(main, id)
@@ -110,6 +109,8 @@ export async function releaseDepartingMember(workspaceId: string, userId: string
   })
   // Runs there on their subscription stop now, including other members' bots they had shared it with.
   await stopRunsUsingSubscriptions(pool, { ownerId: userId, workspaceId })
+  // Their runs there on their own API keys stop. The workspace's own keys stay the workspace's,
+  // whoever added them (decision 2026-11-27-1740).
   await stopRunsUsingApiKeys(pool, { ownerId: userId, workspaceId })
   // Every run there that lost its authority (theirs, and others' on Bots handed over) stops now (decision 2026-11-17-2215).
   await (await import('@/lib/run-authority-stop')).stopRunsWithoutAuthority({ workspaceId })

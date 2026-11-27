@@ -47,6 +47,8 @@ const catalogReads: unknown[][] = []
 const query = { query: async (sql: string, args: unknown[]) => {
   if (sql.startsWith('SELECT 1 FROM byos_connections')) { catalogReads.push(args); return { rowCount: (args[0] === 'bob' ? sharedCatalogOffers : catalogOffers) ? 1 : 0, rows: [] } }
   if (sql.startsWith('SELECT state,paused,epoch,quota')) return { rows: [{ state: 'connected', paused: false, epoch: '1', quota }] }
+  // 团队权限 › 订阅与 API Key: no row means members' own keys serve (decision 2026-11-27-1740).
+  if (sql.startsWith('SELECT subscriptions FROM workspace_personal_policies')) return { rows: [], rowCount: 0 }
   throw new Error(`unexpected fixture query: ${sql}`)
 } } as unknown as Pick<Pool, 'query'>
 mock.module(new URL('./model-api-keys.ts', import.meta.url).href, { namedExports: {
@@ -210,10 +212,9 @@ function cloudQueueFixture() {
         assert.equal(args[0], id(23))
         return { rows: [{ ownerId: scope.ownerId, kind: 'cloud', enabled: true }], rowCount: 1 }
       }
-      if (sql.startsWith('SELECT k."ownerId"')) {
-        assert.equal(args[1], id(2))
+      if (sql.startsWith('SELECT "ownerId","workspaceId"::text AS "workspaceId" FROM model_api_keys WHERE id=$1')) {
         const selected = keys.find(key => key.id === args[0])
-        return { rows: selected ? [{ ownerId: selected.ownerId, shared: false }] : [], rowCount: Number(Boolean(selected)) }
+        return { rows: selected ? [{ ownerId: selected.workspace ? null : selected.ownerId, workspaceId: selected.workspace ? id(2) : null }] : [], rowCount: Number(Boolean(selected)) }
       }
       if (sql.startsWith('SELECT 1 FROM user_e2b_keys')) {
         assert.equal(args[0], scope.ownerId)

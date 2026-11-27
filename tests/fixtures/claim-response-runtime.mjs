@@ -276,7 +276,7 @@ const sources = new Map([
   ['/lib/run-publications.ts', 'export async function prepareRunPublication(){const p=globalThis.claimResponseProbe;p.preparation.push("publication");return structuredClone(p.publication)};export async function persistRunCompletion(_owner,_run,completion){const p=globalThis.claimResponseProbe;if(completion.stopReason==="error"&&completion.report.summary==="The task is no longer available to this thread."){p.preparation.push("issue-unavailable");return}if(!p.run.retryOf||completion.stopReason!=="blocked")throw new Error("unexpected publication failure");p.preparation.push("blocked-recovery");p.run.status="stopped";p.run.stopReason="blocked"}'],
   ['/lib/issue-team-access.ts', 'export async function issueTeamAccess(){return {allowed:globalThis.claimResponseProbe.memberAllowed}}'],
   ['/lib/issue-access.ts', 'export async function issueForUser(){const p=globalThis.claimResponseProbe;if(p.issueAccessError)throw p.issueAccessError;return p.memberAllowed&&!p.issue?.content?.attrs?.mikka?.deletedAt?p.issue:null}'],
-  ['/lib/mcp/worker.ts', 'export async function issueRunToken(){const p=globalThis.claimResponseProbe;p.preparation.push("token");await p.beforeToken?.();if(p.tokenError)throw Object.assign(new Error("synthetic token refusal"),{name:"FixtureRunTokenRefusal"});return {token:"synthetic-only"}}'],
+  ['/lib/mcp/worker.ts', 'export async function issueRunToken(){const p=globalThis.claimResponseProbe;p.preparation.push("token");await p.beforeToken?.();if(p.tokenError)throw Object.assign(new Error("synthetic token refusal"),{name:"FixtureRunTokenRefusal"});return {token:"synthetic-only"}};export async function revokeRunTokens(runId){(globalThis.claimResponseProbe.revokedTokens??=[]).push(runId)}'],
   // These claims have no frozen mailbox grant. Validate that fact through the
   // real capability contract instead of accidentally failing its module load.
   ['/lib/personal-mailbox-runtime.ts', `import assert from 'node:assert/strict'
@@ -291,6 +291,15 @@ const sources = new Map([
   ['/lib/cloud-computer/e2b-task-workspace-archive.ts', 'export function portableTaskArchiveEnabled(){return Boolean(globalThis.claimResponseProbe.portableMachine)}'],
   ['/lib/computer/claim.ts', `
     import assert from 'node:assert/strict'
+    // The same lease-scoped requeue as lib/computer/claim.ts: only this claim's still-preparing lease.
+    export const CLAIM_REQUEUE_LIMIT=3
+    export async function requeueLocalClaim(_pool,claim){
+      const p=globalThis.claimResponseProbe
+      if(claim.runId!==p.run.id||claim.userId!==p.run.userId||p.run.status!=='preparing'||p.run.stopRequestedAt||p.run.leaseExpiresAt?.toISOString()!==claim.leaseExpiresAt)return 'unavailable'
+      if((p.run.claimRequeues??0)>=CLAIM_REQUEUE_LIMIT)return 'limit'
+      if(p.skillReceiptRecorded)return 'receipted'
+      Object.assign(p.run,{status:'queued',startedAt:null,leaseExpiresAt:null,deviceTokenId:null,claimRequeues:(p.run.claimRequeues??0)+1});(p.requeued??=[]).push(claim);return 'requeued'
+    }
     function claimTransaction(){
       const p=globalThis.claimResponseProbe
       return {query(sql,args){
@@ -350,7 +359,7 @@ const sources = new Map([
   ['/lib/run-chain.ts', 'export async function readRunChain(){const p=globalThis.claimResponseProbe;return p.runChain??null}'],
   ['/lib/secrets/runtime.ts', secretSource],
   ['/lib/run-completion-effects.ts', 'export async function afterRunEnded(ownerId,runId){const p=globalThis.claimResponseProbe;(p.endedRuns??=[]).push({ownerId,runId})}'],
-  // The assignment hands the claim a fresh authority object; the fence must receive that exact object.
+  // The assignment hands the claim its authority; the tests check the fence gets the same authority by value.
   ['/lib/plugins/runtime.ts', 'export const personalPlugins = { async nativeMcpAssignment(_userId,authority) { const p = globalThis.claimResponseProbe; if (p.mcpAssignmentError) throw p.mcpAssignmentError; p.mcpAssigned = {...authority}; return {authority:p.mcpAssigned,servers:p.nativeMcpServers} } };'],
   ['/lib/plugins/workspace-mcp.ts', `import { PluginError } from ${JSON.stringify(new URL('../../lib/plugins/contracts.ts', import.meta.url).href)};
     function check(stage) { const p = globalThis.claimResponseProbe; p.mcpChecks.push(stage); const error = p.mcpErrors[stage].shift(); if (error) throw error; if (p.mcpRevoked) throw new PluginError('mcpUnavailable',403) }

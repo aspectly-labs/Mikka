@@ -217,7 +217,7 @@ stub('../device-link.ts',{authenticateDevice:async()=>({userId:owner,scopeDevice
 const modelAdmissionCheck=mock.fn(async(_scope:{workspaceId:string;ownerId:string},_model:string,_signal?:AbortSignal)=>undefined)
 stub('../model-admission/runtime.ts',{assertUnmanagedModelTransport:modelAdmissionCheck,assertSubscriptionModelTransport:modelAdmissionCheck,assertLiteLLMModelTransport:modelAdmissionCheck})
 stub('../agent-tool-approval/policy-store.ts',{readCliRunPolicy:async()=>({policy:{...cliPolicy,...(cliReadOnly?{readOnly:true}:{})},revision:'a'.repeat(64),workspaceIds:[workspace]})})
-stub('../mcp/worker.ts',{issueRunToken:async()=>{if(stopDuringToken)currentRun.stopRequestedAt=new Date();if(revokeDuringToken)memberActive=false;return {token:'synthetic-only'}}})
+stub('../mcp/worker.ts',{issueRunToken:async()=>{if(stopDuringToken)currentRun.stopRequestedAt=new Date();if(revokeDuringToken)memberActive=false;return {token:'synthetic-only'}},revokeRunTokens:async()=>{}})
 stub('../personal-mailbox-runtime.ts',{personalWorkerMailboxAdvertised:async()=>[]})
 stub('../app-tools-server.ts',{runAppToolkits:async()=>[]})
 // Task visibility is a separate boundary; do not initialize auth/MCP services
@@ -316,12 +316,10 @@ function cloudQueueFixture(instructions='Review',priorRun?:Record<string,unknown
    if(sql==='SELECT subscriptions FROM workspace_personal_policies WHERE "workspaceId"=$1'){
     assert.deepEqual(args,[workspace]);return fixtureRows([])
    }
-   const keyColumns='id,"ownerId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features'
-   if(sql===`SELECT ${keyColumns},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`){
-    assert.deepEqual(args,[owner]);return fixtureRows([])
-   }
-   if(sql===`SELECT ${keyColumns.split(',').map(column=>`k.${column}`).join(',')},to_jsonb(k)->'modelSettings' AS "modelSettings",to_jsonb(k)->'daybreak' AS daybreak FROM model_api_key_shares s JOIN model_api_keys k ON k.id=s."keyId" WHERE s."workspaceId"=$1 AND k."ownerId"<>$2 ORDER BY s."createdAt",k.id`){
-    assert.deepEqual(args,[workspace,owner]);return fixtureRows([])
+   // The person's own keys and the workspace's own keys, in one read (decision 2026-11-27-1740).
+   const keyColumns='id,"ownerId","workspaceId"::text AS "workspaceId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features'
+   if(sql===`SELECT ${keyColumns},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid) ORDER BY ("ownerId" IS NULL),"createdAt",id`){
+    assert.equal(args[0],owner);return fixtureRows([])
    }
    const identity=identityFixtureQuery(sql,args);if(identity)return identity
    if(sql==='SELECT 1 FROM device_repos WHERE id=$1 AND "userId"=$2 AND "repoPath" LIKE \'v2/github.com/%\''){
