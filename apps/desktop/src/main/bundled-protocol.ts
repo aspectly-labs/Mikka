@@ -1,6 +1,6 @@
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { extname, join, sep } from 'node:path'
-import { allowedApiPath, DRIVE_BLOB_UPLOAD, normalizedRendererPath, RENDERER_CSP, RENDERER_ORIGIN, rendererAssetPath } from './bundled-policy'
+import { allowedApiPath, desktopRouteTemplate, DRIVE_BLOB_UPLOAD, normalizedRendererPath, RENDERER_CSP, RENDERER_ORIGIN, rendererAssetPath } from './bundled-policy'
 import { DRIVE_MAX_FILE_BYTES } from '../../../../lib/drive/contract'
 import type { BundledAuth } from './bundled-auth'
 
@@ -51,9 +51,14 @@ async function boundedRequestBody(request: Request, driveUpload: boolean): Promi
   return result.buffer
 }
 
+/** A renderer API call that failed, by route template and code; telemetry.ts reports it. */
+export type ApiFailure = { route: string; method: string; status: number; code?: string }
+/** Server answers worth a report: an outage, or a route or method the server does not have. */
+const REPORTED_STATUS = (status: number) => status >= 500 || status === 403 || status === 404 || status === 405
+
 /** Streaming response bodies remain streaming. Only known request/response headers
  * cross the boundary; cookies, auth, redirects and remote policy headers do not. */
-export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'> & Partial<Pick<BundledAuth, 'scope'>>): (request: Request) => Promise<Response> {
+export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'> & Partial<Pick<BundledAuth, 'scope'>>, reportFailure: (failure: ApiFailure) => void = () => {}): (request: Request) => Promise<Response> {
   return async request => {
     let url: URL
     try { url = new URL(request.url) } catch { return failure(400, 'invalid_url') }
@@ -64,12 +69,17 @@ export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'>
     const path = normalizedRendererPath(url.pathname)
     if (path === null) return failure(400, 'invalid_path')
     if (path.startsWith('/api/')) {
+      const route = desktopRouteTemplate(path) ?? 'unmatched'
+      const refuse = (status: number, code: string) => {
+        try { reportFailure({ route, method: request.method, status, code }) } catch { /* Reporting never changes the answer. */ }
+        return failure(status, code)
+      }
       const origin = request.headers.get('origin')
       // Electron supplies the actual initiator separately and strips an opaque
       // Origin header while constructing Request. Check both so sandboxed
       // artifact frames and external BrowserPane frames cannot borrow main auth.
       const initiator = (request as Request & { initiatorOrigin?: string }).initiatorOrigin
-      if ((initiator !== undefined && initiator !== RENDERER_ORIGIN) || (origin && origin !== RENDERER_ORIGIN) || request.headers.get('sec-fetch-site') === 'cross-site' || !allowedApiPath(path, request.method)) return failure(403, 'desktop_route_denied')
+      if ((initiator !== undefined && initiator !== RENDERER_ORIGIN) || (origin && origin !== RENDERER_ORIGIN) || request.headers.get('sec-fetch-site') === 'cross-site' || !allowedApiPath(path, request.method)) return refuse(403, 'desktop_route_denied')
       const driveUpload = DRIVE_BLOB_UPLOAD.test(path)
       try {
         const headers = new Headers()
@@ -78,7 +88,10 @@ export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'>
         if (locale === 'en' || locale === 'zh-CN') headers.set('x-mikka-locale', locale)
         const body = await boundedRequestBody(request, driveUpload)
         const response = await auth.request(`${path}${url.search}`, { method: request.method, headers, body, signal: request.signal })
-        if (response.status >= 300 && response.status < 400 && response.status !== 304) return failure(502, 'desktop_redirect_denied')
+        if (response.status >= 300 && response.status < 400 && response.status !== 304) return refuse(502, 'desktop_redirect_denied')
+        if (REPORTED_STATUS(response.status)) {
+          try { reportFailure({ route, method: request.method, status: response.status }) } catch { /* Reporting never changes the answer. */ }
+        }
         const output = localHeaders()
         response.headers.forEach((value, key) => { if (RESPONSE_HEADERS.has(key)) output.set(key, value) })
         if (response.headers.get('content-type')?.includes('text/html')) {
@@ -103,9 +116,11 @@ export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'>
         return new Response(request.method === 'HEAD' ? null : stream, { status: response.status, statusText: response.statusText, headers: output })
       } catch (error) {
         if (error instanceof Error && error.message === 'upload_too_large') {
-          return failure(413, driveUpload ? 'drive_limit_exceeded' : 'desktop_backend_unavailable')
+          return refuse(413, driveUpload ? 'drive_limit_exceeded' : 'desktop_backend_unavailable')
         }
-        return failure(503, 'desktop_backend_unavailable')
+        // A request the renderer cancelled is not a failure.
+        if (request.signal.aborted) return failure(503, 'desktop_backend_unavailable')
+        return refuse(503, 'desktop_backend_unavailable')
       }
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') return failure(405, 'method_not_allowed')

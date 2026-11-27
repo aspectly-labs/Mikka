@@ -656,3 +656,29 @@ test('frontend_web_vitals keeps bounded CWV timings, drops empty/invalid payload
   })
   assert.deepEqual(pageview.properties, { distinct_id: 'opaque-user-id' })
 })
+
+test('desktop reports keep only a route template, method, status and code, with the build tags', () => {
+  const base = { token: 'public-project-token', distinct_id: 'user-id', platform: 'desktop', app_version: '2026.10000.1940', public_sha: 'a'.repeat(40), overlay_sha: 'b'.repeat(40) }
+  const denied = sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: {
+    ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'desktop_route_denied',
+    path: '/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels/label_1', body: '{"name":"private"}', message: 'private',
+  } })
+  assert.deepEqual(denied.properties, { ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'desktop_route_denied' })
+  // A concrete path, an unknown method or a missing status is not a report.
+  for (const properties of [
+    { route: '/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels', method: 'GET', status: 403 },
+    { route: '/api/inbox?email=private@example.com', method: 'GET', status: 500 },
+    { route: '/api/inbox', method: 'BREW', status: 500 },
+    { route: '/api/inbox', method: 'GET' },
+  ]) assert.equal(sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: { ...base, ...properties } }), null)
+  const odd = sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: { ...base, route: 'unmatched', method: 'GET', status: 502, error_code: 'Upstream said: secret' } })
+  assert.equal(odd.properties.error_code, undefined)
+  const main = sanitizeAnalyticsEvent({ event: 'desktop_main_error', properties: { ...base, error_name: 'TypeError', error_source: 'uncaught_exception', message: 'token=private', stack: '/Users/private/app.js' } })
+  assert.deepEqual(main.properties, { ...base, error_name: 'TypeError', error_source: 'uncaught_exception' })
+  assert.equal(sanitizeAnalyticsEvent({ event: 'desktop_main_error', properties: { ...base, error_name: 'TypeError' } }), null)
+  const gone = sanitizeAnalyticsEvent({ event: 'desktop_process_gone', properties: { ...base, reason: 'crashed', process_type: 'renderer', exitCode: 11 } })
+  assert.deepEqual(gone.properties, { ...base, reason: 'crashed', process_type: 'renderer' })
+  // Tags that are not a closed word, a version or a SHA never ride along.
+  const tagged = sanitizeAnalyticsEvent({ event: '$pageview', properties: { token: 't', distinct_id: 'd', platform: 'linux user@host', app_version: 'v1 private', public_sha: 'not-a-sha' } })
+  assert.deepEqual(tagged.properties, { token: 't', distinct_id: 'd' })
+})

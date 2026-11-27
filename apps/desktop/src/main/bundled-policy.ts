@@ -50,6 +50,7 @@ function desktopPattern(template: string): RegExp {
  * /api/* forwarding and no hand-written list to drift from the server.
  */
 const DESKTOP_ROUTES = (generated.routes as readonly DesktopRoute[]).map(route => ({
+  template: route.template,
   server: serverPattern(route.template),
   methods: Object.fromEntries(Object.entries(route.desktop ?? {}).map(([method, value]) => [
     method, value === true ? [desktopPattern(route.template)] : value.map(desktopPattern),
@@ -81,6 +82,11 @@ export function allowedApiPath(path: string, method: string): boolean {
   const route = DESKTOP_ROUTES.find(candidate => candidate.server.test(path))
   const allowed = route?.methods[method === 'HEAD' ? 'GET' : method]
   return Boolean(allowed?.some(pattern => pattern.test(path)))
+}
+
+/** The template of the route that would serve this path, for reports that must not carry its ids. */
+export function desktopRouteTemplate(path: string): string | null {
+  return DESKTOP_ROUTES.find(candidate => candidate.server.test(path))?.template ?? null
 }
 
 export function rendererAssetPath(root: string, urlPath: string): string | null {

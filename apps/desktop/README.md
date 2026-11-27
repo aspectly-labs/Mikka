@@ -22,6 +22,7 @@ desktop capability.
 | `notifications.system`, `notifications.badge` | yes: 等你/失败 notifications and the waiting-run Dock badge |
 | `quota.snapshot` | yes |
 | `bundled` session, browser sign-in and live transport | yes; public identity only, credentials stay in main |
+| `telemetry.share` (usage and error reports, its Settings switch) | yes; sent by main, off without a PostHog key or on a self-hosted server |
 | `device.pickRepo` | yes; native directory dialog, validated Git repository |
 | Additional authenticated app window | yes; File menu (Alt to show on Windows/Linux) / Ctrl+Shift+N (Cmd+Shift+N on macOS) |
 | Main-window saved tabs and per-tab back/forward history | yes |
@@ -257,6 +258,18 @@ and confirm **Check for Updates…** finds the published version.
 - Permissions are denied except clipboard writes; system notifications come
   from main, not the renderer.
 - No auth token, device credential or arbitrary path crosses the bridge.
+- API requests: main forwards only routes whose `defineRoute` spec declares
+  `desktop` (`apps/api/generated/desktop-routes.json`); everything else is
+  answered `403 desktop_route_denied` locally. Add the declaration and run
+  `node apps/api/scripts/generate-routes.mjs` when the shared UI calls a new
+  route; `src/main/bundled-routes.test.ts` fails until it is there.
+- A 401 from one route is re-checked against the session endpoint; main signs
+  out only when that also says the session is gone.
+- Telemetry and error reports go through main to the web's PostHog project,
+  through the web's allowlist, only on the built-in server and only while
+  Settings › 电脑 › 隐私 leaves sharing on
+  ([self-hosting](../../docs/self-hosting-byok.md)). Builds without a PostHog
+  key send nothing.
 
 ## Tests
 

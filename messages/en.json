@@ -11714,5 +11714,11 @@
     "notFoundBody": "This share link was revoked or the thread is no longer available.",
     "backHome": "Open Mikka",
     "emptyMessages": "No messages in this thread."
+  },
+  "DesktopTelemetry": {
+    "heading": "Privacy",
+    "share": "Share usage and error reports",
+    "description": "Pages you open and errors, never your content",
+    "failed": "That didn't work"
   }
 }

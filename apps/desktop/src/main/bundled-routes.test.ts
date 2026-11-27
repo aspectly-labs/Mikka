@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { allowedApiPath } from './bundled-policy'
+import { CLIENT_FLAG_KEYS } from '../../../../lib/feature-flags'
 // @ts-expect-error -- untyped build scripts
 import { desktopAliases, desktopOverlayAliases } from '../../../frontend/scripts/application-plugin.mjs'
 // @ts-expect-error -- untyped build scripts
@@ -87,11 +88,17 @@ const present = existsSync(join(overlay, 'core/renderer/index.tsx'))
 // MIKKA_REQUIRE_OFFICIAL_UI=1, so the guard can no longer pass by skipping.
 const skip = !present && !required && 'needs the official UI checkout at .hosted-ui (set MIKKA_REQUIRE_OFFICIAL_UI=1 to require it)'
 
-let scanned: Map<string, Site> | undefined
-function sites(): Map<string, Site> {
+type Module = { name: string; source: string }
+let graph: Map<string, Module> | undefined
+function modules(): Map<string, Module> {
   assert.ok(present, 'MIKKA_REQUIRE_OFFICIAL_UI=1 but .hosted-ui/core/renderer/index.tsx is missing: check out mikka-hosted-ui at .hosted-ui')
   const overlayAliases = new Map([...(desktopOverlayAliases as Map<string, string>)].map(([specifier, name]) => [specifier, ({ desktopAuthForm: 'core/renderer/auth-form.tsx' } as Record<string, string>)[name]!]))
-  scanned ??= rendererRequests(rendererModules(repository, { overlay, aliases: desktopAliases, overlayAliases })) as Map<string, Site>
+  graph ??= rendererModules(repository, { overlay, aliases: desktopAliases, overlayAliases }) as Map<string, Module>
+  return graph
+}
+let scanned: Map<string, Site> | undefined
+function sites(): Map<string, Site> {
+  scanned ??= rendererRequests(modules()) as Map<string, Site>
   return scanned
 }
 
@@ -130,6 +137,21 @@ test('the scan sees the panels whose routes drifted before, including calls thro
     '/api/workspaces/*/task-labels', '/api/workspaces/*/ops-metrics', '/api/threads/*/children', '/api/integrations/mcp/*/check',
   ]
   assert.deepEqual(expected.filter(path => !asked.has(path)), [], 'missing from the scan')
+})
+
+test('every flag the renderer reads is one the desktop bootstrap carries', { skip }, () => {
+  // The desktop renderer reads flags from its bootstrap snapshot (CLIENT_FLAG_KEYS); a flag missing there would
+  // silently read as not loaded on the desktop while the web follows PostHog.
+  const read = new Map<string, string>()
+  for (const module of modules().values()) {
+    const constants = new Map([...module.source.matchAll(/\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*['"]([^'"]+)['"]/g)].map(match => [match[1]!, match[2]!]))
+    for (const match of module.source.matchAll(/\bpostHogFlag\(\s*(?:['"]([^'"]+)['"]|([A-Z][A-Z0-9_]*)\s*\))/g)) {
+      const key = match[1] ?? constants.get(match[2]!)
+      if (key) read.set(key, module.name)
+    }
+  }
+  assert.ok(read.has('mikka-personal-writes-off'), 'the scan sees use-approval-live\'s flag read')
+  assert.deepEqual([...read].filter(([key]) => !CLIENT_FLAG_KEYS.includes(key)).map(([key, file]) => `${key} (${file})`), [], 'add these to CLIENT_FLAG_KEYS in lib/feature-flags.ts')
 })
 
 test('the generated desktop route list matches the route declarations', async () => {

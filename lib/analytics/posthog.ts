@@ -10,6 +10,31 @@ let client: PostHog | null = null
 let loading: Promise<PostHog> | null = null
 const readyListeners = new Set<(client: PostHog) => void>()
 
+/**
+ * A runtime without posthog-js can stand in for it. The desktop renderer's CSP
+ * has no PostHog origin, so apps/desktop/src/renderer/analytics.ts hands every
+ * capture to the main process, which applies the same allowlist
+ * (lib/analytics-policy.ts) before anything leaves the computer. The callers
+ * here and in the official UI keep one code path.
+ */
+export type AnalyticsTransport = Pick<PostHog, 'capture' | 'identify' | 'reset' | 'register' | 'get_distinct_id' | 'reloadFeatureFlags' | 'onFeatureFlags' | 'getFeatureFlag' | 'has_opted_out_capturing'>
+let transport: AnalyticsTransport | null = null
+
+/** Flags read from somewhere other than posthog-js: the desktop's owner-evaluated bootstrap snapshot. */
+export type FlagSource = { flag(key: string): boolean | string | undefined; subscribe(notify: () => void): () => void }
+let flagSource: FlagSource | null = null
+
+/** Installs the stand-in client; callers waiting in `withPostHog` run now. */
+export function setAnalyticsTransport(next: AnalyticsTransport) {
+  transport = next
+  for (const listener of readyListeners) listener(next as PostHog)
+  readyListeners.clear()
+}
+
+export function setFlagSource(next: FlagSource | null) {
+  flagSource = next
+}
+
 /** Imports and starts PostHog once; every later call returns the same promise. */
 export function loadPostHog(): Promise<PostHog> {
   loading ??= Promise.all([import('posthog-js'), import('./posthog-init')]).then(([module]) => {
@@ -29,12 +54,18 @@ export function loadPostHogAfterIdle(target: Window) {
 }
 
 /** The started client, or null while it has not loaded (or analytics is off). */
-export const postHogClient = (): PostHog | null => client
+export const postHogClient = (): PostHog | null => client ?? (transport as PostHog | null)
 
-/** Runs `use` with the client: now if it is loaded, else once it loads. Without a token, never. */
+/** Runs `use` with the client: now if it is loaded, else once it loads. Without a token or a transport, never. */
 export function withPostHog(use: (client: PostHog) => void) {
-  if (client) use(client)
-  else if (posthogConfig.token) readyListeners.add(use)
+  const ready = client ?? (transport as PostHog | null)
+  if (ready) use(ready)
+  else if (posthogConfig.token || desktopRenderer()) readyListeners.add(use)
+}
+
+/** The bundled desktop window, whose transport registers during startup. */
+function desktopRenderer() {
+  return typeof window !== 'undefined' && Boolean((window as { mikka?: { bundled?: { telemetry?: unknown } } }).mikka?.bundled?.telemetry)
 }
 
 /** `posthog.onFeatureFlags` for a client that may load later: it also notifies once on load. */
@@ -47,6 +78,7 @@ export function onPostHogFlags(notify: () => void): () => void {
     notify()
   }
   if (client) unsubscribe = client.onFeatureFlags(() => notify())
+  else if (flagSource) unsubscribe = flagSource.subscribe(notify)
   else if (posthogConfig.token) readyListeners.add(attach)
   return () => {
     active = false
@@ -55,5 +87,5 @@ export function onPostHogFlags(notify: () => void): () => void {
   }
 }
 
-/** A feature flag's value without sending an event; undefined until PostHog has loaded. */
-export const postHogFlag = (key: string) => client?.getFeatureFlag(key, { send_event: false })
+/** A feature flag's value without sending an event; undefined until PostHog (or the desktop's snapshot) has loaded. */
+export const postHogFlag = (key: string) => client ? client.getFeatureFlag(key, { send_event: false }) : flagSource?.flag(key)

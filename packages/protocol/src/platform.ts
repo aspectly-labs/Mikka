@@ -22,6 +22,7 @@ export const DESKTOP_CAPABILITIES = [
   "preview.scheme",
   "settings.local",
   "server.select",
+  "telemetry.share",
 ] as const
 export type DesktopCapability = (typeof DESKTOP_CAPABILITIES)[number]
 export type PlatformCapabilities = Readonly<Record<DesktopCapability, boolean>>
@@ -44,6 +45,7 @@ const NO_CAPABILITIES: PlatformCapabilities = Object.freeze({
   "preview.scheme": false,
   "settings.local": false,
   "server.select": false,
+  "telemetry.share": false,
 })
 
 /** The web client. Always safe: it grants no native ability. */
@@ -77,6 +79,7 @@ export function desktopPlatform(bridge: MikkaBridge): PlatformSnapshot {
       "preview.scheme": isFunction(bridge.preview?.html),
       "settings.local": isFunction(bridge.settings?.getAll),
       "server.select": isFunction(bridge.bundled?.server?.probe),
+      "telemetry.share": isFunction(bridge.bundled?.telemetry?.setEnabled),
     }),
   })
 }

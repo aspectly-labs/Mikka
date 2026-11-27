@@ -363,6 +363,19 @@ jobs:
           test -n "$xcode" || { echo "::error::No Xcode 26 on this runner; build/icon.icon needs actool 26+"; exit 1; }
           sudo xcode-select -s "$xcode"
           actool --version
+      # Desktop telemetry uses the web's PostHog project; its ingestion key is
+      # public (apps/desktop/src/main/telemetry.ts). A build without it sends nothing.
+      - name: Read the existing PostHog project ingestion key through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /vercel
+          secret-name: NEXT_PUBLIC_POSTHOG_KEY
+          include-imports: false
       - name: Stamp the release version
         working-directory: apps/desktop
         run: npm pkg set version="$RELEASE_VERSION"

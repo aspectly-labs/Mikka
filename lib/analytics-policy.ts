@@ -51,6 +51,22 @@ const EXCEPTION_FRAME_LIMIT = 32
  * keys, emails, IPs and home paths, but not a bare `Bearer …` or `sk-…`. */
 const CREDENTIAL = /(\b(?:authorization|bearer|token|secret|password|api[_-]?key|cookie)\b\s*[:=]?\s*["']?)[\w.~+/=-]{8,}|\b(?:sk|pk|rk|ghp|gho|ghs|ghu|phc|xox[abpsr])[-_][\w-]{8,}|\beyJ[\w-]{8,}\.[\w-]{8,}(?:\.[\w-]*)?/gi
 
+/** Which client and build sent an event: the desktop adds these in its main
+ * process (apps/desktop/src/main/telemetry.ts). Closed words, a version and
+ * two commit SHAs, never anything a person wrote. */
+const releaseTagPatterns: Record<string, RegExp> = {
+  platform: /^(?:desktop|web)$/,
+  app_version: /^\d{1,6}\.\d{1,8}\.\d{1,8}(?:[-+][0-9A-Za-z.-]{1,32})?$/,
+  public_sha: /^[0-9a-f]{7,40}$/,
+  overlay_sha: /^[0-9a-f]{7,40}$/,
+}
+function releaseTags(properties: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(releaseTagPatterns).flatMap(([key, pattern]) => {
+    const value = properties[key]
+    return typeof value === 'string' && pattern.test(value) ? [[key, value]] : []
+  }))
+}
+
 /** The SDK's bot classification, which is the only browser detail that stays:
  * its user agent, platform and screen never do. */
 function browserClassification(properties: Record<string, unknown>) {
@@ -64,7 +80,9 @@ function route(properties: Record<string, unknown>) {
   if (typeof properties.$current_url !== 'string') return {}
   try {
     const url = new URL(properties.$current_url)
-    return { $current_url: `${url.origin}${analyticsPath(url.pathname)}`, $pathname: analyticsPath(url.pathname) }
+    // The desktop's own scheme (mikka://app) has no WHATWG origin; its host still names the app, never a person.
+    const origin = url.origin === 'null' && url.protocol === 'mikka:' && url.host === 'app' ? 'mikka://app' : url.origin
+    return { $current_url: `${origin}${analyticsPath(url.pathname)}`, $pathname: analyticsPath(url.pathname) }
   } catch { return {} }
 }
 
@@ -95,7 +113,7 @@ function source(properties: Record<string, unknown>) {
 function narrow<T extends { event: string; properties: Record<string, unknown> }>(event: T, kept: Record<string, unknown> = {}): T {
   const properties = {
     ...Object.fromEntries(Object.entries(event.properties).filter(([key]) => allowedProperties.has(key))),
-    ...browserClassification(event.properties), ...route(event.properties), ...source(event.properties), ...kept,
+    ...browserClassification(event.properties), ...route(event.properties), ...source(event.properties), ...releaseTags(event.properties), ...kept,
   }
   const narrowed = { ...event, properties }
   for (const key of ['$set', '$set_once', '$unset']) Reflect.deleteProperty(narrowed, key)
@@ -237,10 +255,51 @@ function sanitizeFrontendRumEvent<T extends { event: string; properties: Record<
   return narrow(event, kept)
 }
 
+const desktopEvents = new Set(['desktop_api_error', 'desktop_main_error', 'desktop_process_gone'])
+/** A route template from apps/api/generated/desktop-routes.json (`/api/workspaces/[workspaceId]/task-labels`): never a concrete id. */
+const ROUTE_TEMPLATE = /^\/api(?:\/(?:[A-Za-z0-9._~-]{1,64}|\[{1,2}(?:\.{3})?[A-Za-z][A-Za-z0-9_]{0,63}\]{1,2})){1,16}$/
+/** Its literal segments are route words, never an id, token or number that slipped in. */
+function routeTemplate(value: string) {
+  return ROUTE_TEMPLATE.test(value) && value.split('/').every(segment => segment.startsWith('[') || !(UUID_SEGMENT.test(segment) || LONG_TOKEN_SEGMENT.test(segment) || NUMERIC_ID_SEGMENT.test(segment) || /^\d+$/.test(segment)))
+}
+const httpMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
+/** A short failure code such as `desktop_route_denied`; never a message. */
+const ERROR_CODE = /^[a-z][a-z0-9_]{0,63}$/
+const mainErrorSources = new Set(['uncaught_exception', 'unhandled_rejection'])
+const processTypes = new Set(['renderer', 'gpu', 'utility', 'zygote', 'sandbox-helper', 'pepper-plugin', 'unknown'])
+const processGoneReasons = new Set(['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom', 'launch-failed', 'integrity-failure', 'memory-eviction'])
+
+/** The desktop main process's own reports: a refused or failed API call by
+ * route template, method, status and code; a main-process error's class; a
+ * child process that went away and why. Anything else they carry is dropped. */
+function sanitizeDesktopEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T): T | null {
+  const props = event.properties
+  const kept: Record<string, unknown> = {}
+  if (event.event === 'desktop_api_error') {
+    if (typeof props.route !== 'string' || !(props.route === 'unmatched' || routeTemplate(props.route))) return null
+    if (typeof props.method !== 'string' || !httpMethods.has(props.method)) return null
+    if (!Number.isInteger(props.status) || (props.status as number) < 100 || (props.status as number) > 599) return null
+    Object.assign(kept, { route: props.route, method: props.method, status: props.status })
+    if (typeof props.error_code === 'string' && ERROR_CODE.test(props.error_code)) kept.error_code = props.error_code
+    return narrow(event, kept)
+  }
+  if (event.event === 'desktop_main_error') {
+    if (typeof props.error_source !== 'string' || !mainErrorSources.has(props.error_source)) return null
+    kept.error_source = props.error_source
+    kept.error_name = typeof props.error_name === 'string' && EXCEPTION_TYPE.test(props.error_name) ? props.error_name : 'Error'
+    return narrow(event, kept)
+  }
+  if (typeof props.reason !== 'string' || !processGoneReasons.has(props.reason)) return null
+  kept.reason = props.reason
+  kept.process_type = typeof props.process_type === 'string' && processTypes.has(props.process_type) ? props.process_type : 'unknown'
+  return narrow(event, kept)
+}
+
 export function sanitizeAnalyticsEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T | null): T | null {
   if (!event) return null
   if (event.event === '$exception') return sanitizeExceptionEvent(event)
   if (frontendRumEvents.has(event.event)) return sanitizeFrontendRumEvent(event)
+  if (desktopEvents.has(event.event)) return sanitizeDesktopEvent(event)
   if (event.event !== '$snapshot' && !allowedEvents.has(event.event)) return null
   // rrweb masks the DOM before serialization (instrumentation-client.ts).
   // Its transport needs the opaque snapshot payload and session identifiers;
