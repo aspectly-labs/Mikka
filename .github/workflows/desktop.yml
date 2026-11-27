@@ -4,8 +4,9 @@ name: Desktop shell
 # build here runs the page a build without the official UI shows (apps/frontend/src/headless.ts).
 # Developer ID signing, notarization and publication stay on release runners.
 
-# Pull requests only: the same suite already passed on the PR, and main's
-# CI workflow (ui-policy.yml) still verifies every merged commit.
+# CI (ui-policy.yml, job desktop-checks) calls this when its trusted selector
+# reports `desktop`: on ready pull requests, merge-queue candidates and the daily
+# full run. Main pushes rely on the merge-queue run of the same commit.
 on:
   workflow_call:
     inputs:
@@ -19,8 +20,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A CI call shares its parent run's lifetime (the parent cancels superseded PR
+  # runs); a manual dispatch never cancels a CI-called run or the reverse.
+  group: desktop-${{ inputs.selected && format('ci-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !inputs.selected }}
 
 env:
   MIKKA_EDITION: cloud

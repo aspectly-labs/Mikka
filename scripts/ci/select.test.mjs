@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import yaml from 'js-yaml'
-import { select, diffRange } from './select.mjs'
+import { select, diffRange, emit } from './select.mjs'
 import { buildGraph, dbId, sourceId, strictCommand } from './graph.mjs'
 import { selectScripts, shardScripts } from '../run-db-tests.mjs'
 
@@ -247,8 +247,9 @@ test('the actual required gate scripts reject drafts, unselected failures and se
       else assert(!run({DB_RESULT:result}))
     }
     if (job === 'ui-policy') {
-      assert(!/\b(?:EXPECT_)?DESKTOP\b/.test(script), 'the automatic gate has no Desktop consumer')
-      for (const retired of ['DESKTOP', 'IMAGE']) {
+      // Desktop is a selected lane again (desktop-checks calls desktop.yml); the image lane stays retired.
+      assert(names.includes('DESKTOP'), 'the automatic gate requires the selected Desktop suite')
+      for (const retired of ['IMAGE']) {
         assert(!new RegExp(`\\b(?:EXPECT_)?${retired}\\b`).test(script), retired)
         for (const result of ['success', 'skipped', 'failure', 'cancelled', 'timed_out', ''])
           assert(run({ ['EXPECT_' + retired]: 'true', [retired]: result }), `a retired ${retired} result does not affect the automatic gate`)
@@ -321,4 +322,38 @@ test('filesystem-based i18n and generated catalog policies cannot disappear from
       assert(result.units.includes(`ci-${key}`), `${file}: ${command}`)
     }
   }
+})
+
+// Dry run of the Desktop route: the selector's real GitHub outputs feed the real `desktop-checks` condition in CI.
+test('desktop paths route CI to desktop.yml; web-only and docs-only changes do not', async () => {
+  const ci = yaml.load(readFileSync('.github/workflows/ui-policy.yml', 'utf8'))
+  const job = ci.jobs['desktop-checks']
+  assert.equal(job.uses, './.github/workflows/desktop.yml')
+  assert.deepEqual(job.with, { selected: true })
+  const evaluate = (expression, context) => runInNewContext(expression.replace(/\.([\w-]+)/g, '[$1]').replace(/\[([\w-]+)\]/g, '["$1"]'), context)
+  const directory = mkdtempSync(join(tmpdir(), 'desktop-route-'))
+  const outputsFor = async files => {
+    const output = join(directory, `output-${Math.random().toString(36).slice(2)}`)
+    writeFileSync(output, '')
+    const log = console.log
+    console.log = () => {}
+    try { emit(await select(plan, files.map(file => change(file))), { GITHUB_OUTPUT: output }) } finally { console.log = log }
+    return Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]))
+  }
+  const routed = async (files, event = 'pull_request', draft = false) => evaluate(job.if, {
+    needs: { changes: { result: 'success', outputs: await outputsFor(files) } },
+    github: { event_name: event, event: { pull_request: { draft } } },
+  })
+  try {
+    for (const file of ['apps/desktop/src/main/index.ts', 'apps/desktop/scripts/build.mjs']) {
+      assert.equal((await outputsFor([file])).desktop, 'true', file)
+      for (const event of ['pull_request', 'merge_group', 'schedule', 'workflow_dispatch']) assert.equal(await routed([file], event), true, `${file} on ${event}`)
+      assert.equal(await routed([file], 'pull_request', true), false, 'a draft defers Desktop like every runner-heavy lane')
+      assert.equal(await routed([file], 'push'), false, 'main pushes rely on the merge-queue run of the same commit')
+    }
+    for (const file of ['apps/frontend/src/headless.ts', 'docs/ci/incremental.md']) {
+      assert.equal(await routed([file]), false, file)
+      assert.equal(await routed([file], 'merge_group'), false, file)
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }) }
 })

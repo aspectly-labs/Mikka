@@ -105,11 +105,15 @@ clones, template-bound serial lane, bootstrap, target binding, no skips/todos an
 TAP summary reconciliation remain intact. The first selected shard retains local
 runtime identity and thread privacy integration tests.
 
-Required status names remain `UI policy (strict)`, `Production build and browser
-interactions`, `Browser tests (before merge)` and external GitGuardian. Gates
-check each selected lane must succeed and each unselected lane must be skipped;
-failure, timeout, cancellation, missing output or unexpected skip cannot pass.
-Selected Analytics runs as a reusable CI job, and its conclusion feeds `UI policy (strict)`. Desktop keeps its separate acceptance workflow. No workflow-level path filter is added to required workflows. Main concurrency,
+`CI OK` (job `ci-ok`) is the single aggregate: it needs every CI job, and each
+job's own `if:` is its expectation (`scripts/ci/ci-ok.mjs`). Until branch
+protection requires it, the required status names remain `UI policy (strict)`,
+`Production build and browser interactions`, `Browser tests (before merge)` and
+external GitGuardian. Gates check each selected lane must succeed and each
+unselected lane must be skipped; failure, timeout, cancellation, missing output
+or unexpected skip cannot pass. Selected Analytics and Desktop run as reusable CI
+jobs (`analytics-ssr.yml`, `desktop.yml`), and their conclusions feed `UI policy
+(strict)` and `CI OK`. No workflow-level path filter is added to required workflows. Main concurrency,
 OIDC, daemon/Desktop exact-source CI gates, E2B release pairs and publication
 checks are unchanged. Existing browser-gate remains a compatibility status only;
 this change adds no browser tests.
@@ -144,8 +148,9 @@ The timing summary labels partial runner consumption while other gates/jobs are
 still running; API failures explicitly leave timing unavailable, without
 replacing enforcement. Job/step timestamps
 are available through the timing collector; [#1699's evidence](1699-results.md)
-separates waiting from runner consumption. `workflow_dispatch` and Monday 03:23
-UTC run the full CI even without source changes.
+separates waiting from runner consumption. `workflow_dispatch` and the daily
+03:23 UTC schedule run the full CI even without source changes; the schedule
+also runs the offline browser journeys (`nightly-journey.yml`).
 
 Rollback is a revert PR restoring the former full workflow and removing the
 selector consumers. No schema, production settings or protected-check changes
