@@ -66,7 +66,6 @@ test('view rejects owner/session/action mismatch, ambiguous intents, tampering a
   await assert.rejects(tampered.service.view(actor, id), /operationBindingConflict/)
   const legacy = fixture(); Reflect.deleteProperty(legacy.row.operationBinding, 'contextDigest')
   await assert.rejects(legacy.service.view(actor, id), /operationBindingConflict/)
-  await assert.rejects(legacy.service.decide(actor, id, true), /operationBindingConflict/)
   const wrongLedger = fixture(); wrongLedger.execute('succeeded').binding.accountId = 'other'
   await assert.rejects(wrongLedger.service.view(actor, id), /operationBindingConflict/)
   const inconsistent = fixture(); inconsistent.row.status = 'done'

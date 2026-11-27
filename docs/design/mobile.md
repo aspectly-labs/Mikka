@@ -288,9 +288,9 @@ linked in Where it lives. An accepted frame alone is not runtime evidence.
   「在网页上打开」, which opens the same chat on the web signed in
   (`app/api/mobile/open`, a one-minute single-use token). The browser first
   shows the target account and requires a same-origin, browser-bound confirmation;
-  following the link alone never changes its signed-in account. Proposals from
-  `/api/pending-actions` sit at the end of every chat with 不要 and
-  发送/保存到日历 (`POST /api/mobile/pending-actions/:id`).
+  following the link alone never changes its signed-in account. There are no
+  approval cards: connected-account writes run directly
+  ([ADR 2026-11-27-1615](decisions/2026-11-27-1615-no-permission-approvals.md)).
 - **Navigation:** tab roots are under `app/(tabs)`, with task detail at
   `/task/:id` and its conversation at `/task/:id/conversation`. An `attempt`
   parameter selects that section. Bot chats use `/bots/:id`, groups

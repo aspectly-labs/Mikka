@@ -20,15 +20,14 @@ function deps(overrides: Partial<AppToolDeps> = {}) {
     execute: async call => { calls.push(`execute:${call.tool}:${call.version}`); return { successful: true, data: { id: 'c1' } } },
     recordStart: async call => { calls.push(`record:${call.tool}`); return 'rec_1' },
     recordEnd: async (_id, outcome) => { calls.push(`end:${outcome.status}`) },
-    propose: async call => { calls.push(`card:${call.tool}`); return { status: 'awaiting_approval', actionId: 'card_1' } },
     ...overrides,
   }
   return { deps: value, calls }
 }
 const call = (tool: string, toolkit = 'hubspot') => ({ toolkit, tool, arguments: { email: 'a@acme.dev' } })
 
-test('native review retains the exact account, tool version and input before dispatch', async () => {
-  for (const choice of ['allow', 'ask', 'deny'] as const) {
+test('native review retains the exact account, tool version and input before dispatch, and can only stop it', async () => {
+  for (const choice of ['allow', 'deny'] as const) {
     const current = deps()
     const result = await callAppTool(current.deps, call('SLACK_SEND_MESSAGE', 'slack'), {
       ownerId: 'owner', botId: null,
@@ -39,8 +38,8 @@ test('native review retains the exact account, tool version and input before dis
       },
     })
     if (choice === 'allow') assert.equal((result as { status: string }).status, 'done')
-    else if (choice === 'ask') assert.deepEqual(result, { status: 'awaiting_approval', actionId: 'card_1' })
     else assert.deepEqual(result, { error: 'integrationActionDenied' })
+    assert.equal(current.calls.some(value => value.startsWith('card:')), false, 'there is no approval card')
     assert.equal(current.calls.some(value => value.startsWith('execute:')), choice === 'allow')
   }
 })

@@ -95,7 +95,7 @@ for (const transport of ['generic', 'slack'] as const) test(`${transport}: ten c
   } finally { await f.close() }
 })
 
-for (const transport of ['generic', 'slack'] as const) test(`${transport}: an authorized human can read back an effect after its worker dies and execution fails`, { timeout: 30_000 }, async () => {
+for (const transport of ['generic', 'slack'] as const) test(`${transport}: after its worker dies, the same run reads the effect back and never resends it`, { timeout: 30_000 }, async () => {
   const f = await fixture()
   let worker: ChildProcess | undefined
   try {
@@ -112,27 +112,28 @@ for (const transport of ['generic', 'slack'] as const) test(`${transport}: an au
     worker = child('worker', { OPERATION_RECOVERY_SCHEMA: f.schema, OPERATION_RECOVERY_ORIGIN: f.origin, OPERATION_RECOVERY_RUN: run, OPERATION_RECOVERY_PAGE: page, OPERATION_RECOVERY_INTENT: intentKey, OPERATION_RECOVERY_PROVIDER: transport })
     await message(worker, 'effect-applied')
     await stop(worker)
-    await f.pool.query("UPDATE agent_kit_executions SET status='failed' WHERE id=$1", [run])
     const before = (await f.pool.query('SELECT * FROM operation_ledger')).rows[0]
     assert.equal(before.status, 'executing')
     assert.ok(before.invokedAt)
-    const proposal = (await f.pool.query('SELECT id FROM pending_actions')).rows[0]
+    // The receipt was written running, with no approval decision, before dispatch.
+    const proposal = (await f.pool.query('SELECT id,status,"decidedAt" FROM pending_actions')).rows[0]
+    assert.equal(proposal.status, 'running'); assert.equal(proposal.decidedAt, null)
     let lookups = 0
     const provider = transport === 'slack' ? await recoverySlackProvider(f.origin) : recoveryHttpProvider(f.origin)
-    const notices: { proposal: string; status: string; outcome?: { id: string } }[] = []
-    const service = createApprovedWrites(f.pool, { ...provider, lookup: async input => { lookups++; return provider.lookup(input) } }, action, {}, async (p, result) => {
-      notices.push({ proposal: p.id, status: result.status, ...(result.outcome ? { outcome: result.outcome } : {}) })
-    })
-    await assert.rejects(service.decide({ ...actor, userId: 'other' }, proposal.id, true))
-    await f.pool.query('UPDATE "session" SET "expiresAt"=now()-interval \'1 second\' WHERE id=$1', [actor.sessionId])
-    await assert.rejects(service.decide(actor, proposal.id, true), /operationSessionUnavailable/)
-    await f.pool.query('UPDATE "session" SET "expiresAt"=now()+interval \'1 hour\' WHERE id=$1', [actor.sessionId])
+    const counted = { ...provider, lookup: async (input: Parameters<typeof provider.lookup>[0]) => { lookups++; return provider.lookup(input) } }
+    const reader = createApprovedWrites(f.pool, counted, action, {})
+    assert.equal((await reader.view(actor, proposal.id)).status, 'running')
+    await assert.rejects(reader.view({ ...actor, userId: 'other' }, proposal.id))
     assert.equal(lookups, 0)
     let guardedLookups = 0
     const guarded = createOperationLedger(f.pool, async () => {}, { guard: async () => { throw Error('fixtureMembershipRevoked') } })
     await assert.rejects(guarded.reconcile({ operationId: before.operationId, ownerId, workspaceId: `personal:${ownerId}` }, async () => { guardedLookups++; return null }), /fixtureMembershipRevoked/)
     assert.equal(guardedLookups, 0, 'membership lease must precede remote readback')
-    const result = await service.decide(actor, proposal.id, true)
+    const newRun = randomUUID()
+    const retry = createApprovedWrites(f.pool, counted, action, { modelRun: { ownerId, botId: null, workspaceId: null, runId: newRun } })
+    await assert.rejects(retry.writeFromRun(payload, intentKey), /operationBindingConflict/)
+    const replay = createApprovedWrites(f.pool, counted, action, { modelRun: { ownerId, botId: null, workspaceId: null, runId: run } })
+    const result = await replay.writeFromRun(payload, intentKey)
     assert.equal(result.status, 'done')
     const after = (await f.pool.query('SELECT * FROM operation_ledger')).rows[0]
     assert.equal(after.operationId, before.operationId)
@@ -140,22 +141,15 @@ for (const transport of ['generic', 'slack'] as const) test(`${transport}: an au
     assert.equal(after.runId, run)
     assert.equal(after.binding.executionRunId, run)
     assert.equal(after.status, 'succeeded')
-    assert.equal(result.outcome?.id, after.receipt.providerObjectId)
     const expectedOutcome = { id: after.receipt.providerObjectId, ...(transport === 'slack' ? { url: `https://fixture.slack.com/archives/C12345678/p${after.receipt.providerObjectId.replace('.', '')}` } : {}) }
-    assert.deepEqual(result.outcome, expectedOutcome)
-    assert.deepEqual(notices, [{ proposal: proposal.id, status: 'done', outcome: expectedOutcome }])
-    assert.deepEqual((await service.view(actor, proposal.id)).outcome, expectedOutcome)
-    assert.equal((await service.decide(actor, proposal.id, true)).status, 'done')
+    assert.ok('outcome' in result); assert.deepEqual(result.outcome, expectedOutcome)
+    assert.deepEqual((await reader.view(actor, proposal.id)).outcome, expectedOutcome)
+    assert.equal((await replay.writeFromRun(payload, intentKey)).status, 'done')
     assert.equal(lookups, 1)
-    const newRun = randomUUID()
-    const retry = createApprovedWrites(f.pool, provider, action, { modelRun: { ownerId, botId: null, workspaceId: null, runId: newRun } })
-    await assert.rejects(retry.proposeFromRun(payload, intentKey), /operationBindingConflict/)
-    const endedWorker = createApprovedWrites(f.pool, provider, action, { modelRun: { ownerId, botId: null, workspaceId: null, runId: run } })
-    await assert.rejects(endedWorker.proposeFromRun(payload, intentKey), /writeRunUnavailable/)
     const ledger = createOperationLedger(f.pool, async () => {})
     await assert.rejects(ledger.claim({ operationId: after.operationId, ownerId, workspaceId: `personal:${ownerId}` }, randomUUID()), /operationRunMismatch/)
-    await f.pool.query('UPDATE agent_kit_heads SET external_write_permissions=$1 WHERE owner_id=$2', [{ [action]: 'deny' }, ownerId])
-    assert.equal((await service.decide(actor, proposal.id, true)).status, 'done')
+    await f.pool.query("UPDATE agent_kit_executions SET status='failed' WHERE id=$1", [run])
+    await assert.rejects(replay.writeFromRun(payload, intentKey), /writeRunUnavailable/)
     assert.equal(lookups, 1)
     assert.deepEqual(await (await fetch(f.origin + '/stats')).json(), { posts: 1, effects: 1 })
   } finally { if (worker) await stop(worker); await f.close() }

@@ -117,7 +117,7 @@ stub('../auth.ts', { auth: new Proxy({}, { get: unexpectedAuth }), authBaseURL: 
 stub('../device-link.ts', { DEVICE_ONLINE_WINDOW_MS: 60000, WORKSPACE_ID: 'synthetic-unused', issueDeviceToken: unexpectedAuth })
 stub('../composio.ts', { runComposioAction: forbidden })
 stub('../github/user-access.ts', { readAuthorizedIssue: forbidden })
-stub('../pending-action-store.ts', { proposeAction: forbidden, writeAccountAction: forbidden, proposeRepositoryPush: forbidden })
+stub('../pending-action-store.ts', { writeAccountAction: forbidden })
 stub('../telegram/client.ts', { postTelegramText: forbidden })
 stub('../../workflows/coordinator/tool-scope.ts', { assertNativeToolScope: forbidden })
 stub('./environment-instructions.ts', {

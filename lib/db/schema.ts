@@ -716,7 +716,7 @@ export const runTokens = pgTable('run_tokens', {
  * `dedupeKey` keeps a repeated write to one row.
  */
 /**
- * `action_decided` follows the person approving or declining a pending action.
+ * `action_decided` followed a person approving or declining a pending action; nothing writes it since ADR 2026-11-27-1615, and old events still render.
  * `run_report`, `run_question` and `run_blocked` come from the agent inside a
  * run, through the worker tools of the MCP server (lib/mcp/worker.ts).
  * `artifact_submitted` comes from `submit_artifact`, from a run or an OAuth agent.
@@ -1376,13 +1376,15 @@ export const runCaptureShares = pgTable('run_capture_shares', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('run_capture_shares_token_key').on(table.tokenHash), index('run_capture_shares_capture_idx').on(table.captureId)])
 /**
- * Something an agent does in the person's own accounts (send an email,
- * create or change a calendar event, or an agent-run write). A write the
- * connection and policy allow is inserted `running` with no `decidedAt` and
- * stays as the record. One that needs approval stays `pending` until the
- * person approves or declines it; approving runs exactly `input`
- * (lib/pending-actions.ts).
- * `context` is what the card shows besides the input, such as the event being changed.
+ * The write receipt for something an agent does in the person's own accounts
+ * (send an email, create or change a calendar event, an app tool call, or an
+ * agent-run write). It is inserted `running` before dispatch, with no
+ * `decidedAt`, then becomes `done` or `failed`; an `operationUncertain` result
+ * stays `running` and is never resent. Nothing waits for approval
+ * (ADR 2026-11-27-1615): `pending` and a `decidedAt` exist only on older rows,
+ * and drizzle/20261127162323_retire_write_approvals.sql closed every `pending`
+ * one as `declined` (error `approvalRetired`).
+ * `context` is the prepared context the write was bound to, such as the event being changed.
  */
 export const PENDING_ACTION_STATUSES = ['pending', 'running', 'done', 'failed', 'declined'] as const
 export type PendingActionStatus = (typeof PENDING_ACTION_STATUSES)[number]

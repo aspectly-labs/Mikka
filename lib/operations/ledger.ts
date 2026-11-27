@@ -15,6 +15,7 @@ const intent = identity.extend({
   // Optional only for legacy proposals. New run-bound callers must supply the
   // actual host run ID, not the separately generated attempt token.
   executionRunId: z.uuid().optional(),
+  // `approvalDefault` only parses bindings stored before ADR 2026-11-27-1615.
   policyScope: z.object({ botId: z.uuid().nullable(), workspaceId: z.uuid().nullable(), version: writePolicyVersion, approvalDefault: z.enum(['allow', 'ask']).optional() }).strict().optional(),
   approvalId: text, candidateSha: z.string().regex(/^[a-f0-9]{40,64}$/).optional(),
   proposalDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),

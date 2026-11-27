@@ -114,7 +114,7 @@ async function main() {
     const provider = slack ? await recoverySlackProvider(process.env.OPERATION_RECOVERY_ORIGIN!, afterEffect) : recoveryHttpProvider(process.env.OPERATION_RECOVERY_ORIGIN!, afterEffect)
     await createApprovedWrites(pool, provider, slack ? 'send_slack_message' : 'append_notion_paragraph', { modelRun: {
       ownerId: 'recovery-owner', botId: null, workspaceId: null, runId: process.env.OPERATION_RECOVERY_RUN!,
-    } }).proposeFromRun({ ...(slack ? { channel: 'C12345678' } : { page_id: process.env.OPERATION_RECOVERY_PAGE! }), text: 'Controlled local recovery effect' }, process.env.OPERATION_RECOVERY_INTENT!)
+    } }).writeFromRun({ ...(slack ? { channel: 'C12345678' } : { page_id: process.env.OPERATION_RECOVERY_PAGE! }), text: 'Controlled local recovery effect' }, process.env.OPERATION_RECOVERY_INTENT!)
   } finally { await pool.end() }
 }
 

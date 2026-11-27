@@ -1,6 +1,6 @@
 import 'server-only'
 import { auth } from '@/lib/auth'
-import { db, pool } from '@/lib/db'
+import { pool } from '@/lib/db'
 import { getComposio } from '@/lib/composio'
 import { createApprovedWrites } from './approved-writes'
 import { composioWriteProvider } from './write-provider'
@@ -20,7 +20,6 @@ import type { ModelWriteCall } from './model-write-tools'
 import { nativeMailboxFence, type PersonalNativeScope } from '@/lib/personal-mailbox-fence'
 import { WORKSPACE_ID } from '@/lib/device-link'
 import type { MailboxTransactionGuard } from '@/lib/mailbox-transaction-guard'
-import { approvedWriteDecisionEvent } from './write-notice'
 
 function guardForRun(run: { ownerId:string; workspaceId:string | null }) {
   return run.workspaceId ? (_tx: unknown, signal: AbortSignal) => acquireWorkspaceMembership(workspacePool, { workspaceId:run.workspaceId!, userId:run.ownerId }, signal) : undefined
@@ -42,8 +41,8 @@ export async function personalWriteFromRun(ownerId:string, botId:string | null, 
     const member = await memberGuard?.(tx,signal)
     return { signal:member?.signal ?? signal, async check() { await fence(tx); await member?.check() }, async close() { await member?.close() } }
   } : memberGuard
-  const service = personalWriteRuntime().operations(call.action as WriteActionName,{ modelRun:run, guard, guardForRun, nativeWriteReview, signal })
-  return service.proposeFromRun(call.input,callIntent(runId,call.toolCallId))
+  const service = personalWriteRuntime().operations(call.action as WriteActionName,{ modelRun:run, guard, nativeWriteReview, signal })
+  return service.writeFromRun(call.input,callIntent(runId,call.toolCallId))
 }
 
 /** Reuses personal-account auth and the shared pool. Slack reads and
@@ -55,10 +54,7 @@ export function personalWriteRuntime() {
     discovery: createApprovedWriteDiscovery(pool),
     operations: (action: WriteActionName, context?: WriteRequestContext) => {
       const client = getComposio()
-      return createApprovedWrites(pool, composioWriteProvider(client, action, composioConditionalCalendarDelete(client), undefined, composioSlackConversationReader(client), composioSlackDelivery(client)), action, { ...context, guardForRun }, async (proposal, result) => {
-        const { recordCoordinatorEvent } = await import('@/lib/coordinator-event-store')
-        await recordCoordinatorEvent(db, approvedWriteDecisionEvent(proposal, result))
-      })
+      return createApprovedWrites(pool, composioWriteProvider(client, action, composioConditionalCalendarDelete(client), undefined, composioSlackConversationReader(client), composioSlackDelivery(client)), action, context)
     },
   }
 }
