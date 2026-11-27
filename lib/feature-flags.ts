@@ -50,11 +50,11 @@ export interface ReleaseFlagDefinition {
   owner: string
   /** The risky change the flag guards. */
   description: string
-  /** YYYY-MM-DD the entry was added. */
+  /** YYYY-MM-DD (UTC) the entry was added; tomorrow in UTC is accepted. */
   added: string
-  /** YYYY-MM-DD the flag reached 100%; set it when it does. */
+  /** YYYY-MM-DD (UTC) the flag reached 100%; set it when it does. */
   fullAt?: string
-  /** YYYY-MM-DD: at most 60 days after `added` and 14 days after `fullAt`. CI fails the day after. */
+  /** YYYY-MM-DD (UTC): at most 60 days after `added` and 14 days after `fullAt`. CI fails from 00:00 UTC the day after. */
   removeBy: string
 }
 

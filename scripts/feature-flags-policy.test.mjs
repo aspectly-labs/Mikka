@@ -14,6 +14,7 @@ import {
   releaseFlagProblems,
   releaseFlagWarnings,
   undeclaredFlagKeyProblems,
+  flagBypassProblems,
 } from './feature-flags-policy.mjs'
 import { releaseFlagRows } from './docs-generated.mjs'
 
@@ -52,7 +53,8 @@ test('the warning starts 7 days before removeBy and never fails', () => {
 
 test('added is required, not in the future and not after removeBy', () => {
   assert.ok(problemsFor({ added: '' }).some(problem => /added must be a YYYY-MM-DD/.test(problem)))
-  assert.ok(problemsFor({ added: '2026-11-28' }).some(problem => /added 2026-11-28 is in the future/.test(problem)))
+  assert.deepEqual(problemsFor({ added: '2026-11-28' }), [], 'tomorrow in UTC is today for an author at UTC+8')
+  assert.ok(problemsFor({ added: '2026-11-29' }).some(problem => /added 2026-11-29 is in the future \(UTC\)/.test(problem)))
   assert.ok(problemsFor({ added: '2026-11-20', removeBy: '2026-11-19' }, '2026-11-19').some(problem => /added 2026-11-20 is after removeBy 2026-11-19/.test(problem)))
 })
 
@@ -175,4 +177,22 @@ test('release flags default off without PostHog', () => {
 test('releaseFlagEnabled holds the strict-true rule and refuses undeclared keys', async () => {
   const { releaseFlagEnabled } = await import('../lib/feature-flags.ts')
   for (const value of [true, false, undefined, 'true', 'variant']) assert.equal(releaseFlagEnabled('mikka-not-declared', value), false, String(value))
+})
+
+test('SDK flag reads outside their wrappers and `as FlagKey` casts fail', () => {
+  const files = [
+    { file: 'lib/analytics/posthog.ts', source: "export const postHogFlag = (key: FlagKey) => client?.getFeatureFlag(key)" },
+    { file: 'lib/posthog-server.ts', source: 'await posthog.getFeatureFlag(key, userId)' },
+    { file: 'lib/sneaky.ts', source: "export const on = () => posthog.isFeatureEnabled(someString)" },
+    { file: 'lib/all.ts', source: 'export const all = () => posthog.getAllFlags()' },
+    { file: 'lib/listen.ts', source: 'posthog.onFeatureFlags(flags => console.log(flags))' },
+    { file: '.hosted-ui/web/hooks/sdk.tsx', source: "export const useX = () => useFeatureFlagEnabled('mikka-memory')" },
+    { file: 'lib/cast.ts', source: "export const on = () => postHogFlag(value as FlagKey)" },
+    { file: 'lib/reload.ts', source: 'posthog.reloadFeatureFlags()' },
+  ]
+  const problems = flagBypassProblems({ files })
+  assert.deepEqual(problems.map(problem => problem.split(':').slice(0, 2).join(':')),
+    ['lib/sneaky.ts:1', 'lib/all.ts:1', 'lib/listen.ts:1', '.hosted-ui/web/hooks/sdk.tsx:1', 'lib/cast.ts:1'])
+  assert.match(problems.at(-1), /as FlagKey/)
+  assert.deepEqual(flagBypassProblems(), [], 'shipped code has no bypass')
 })

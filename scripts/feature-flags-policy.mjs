@@ -2,15 +2,18 @@
 //
 // 1. Every release flag in `releaseFlags` (lib/feature-flags.ts) has an owner,
 //    a description, an `added` date, an optional `fullAt` date (set at 100%) and
-//    a `removeBy` date. `removeBy` is at most 60 days after `added` and 14 days
+//    a `removeBy` date, all UTC (`added`/`fullAt` may be tomorrow in UTC). `removeBy` is at most 60 days after `added` and 14 days
 //    after `fullAt`; the day after `removeBy` CI fails, and from 7 days before
 //    it docs:check prints a warning so the owner acts first.
 // 2. Every flag key a flag read names, as a string literal or a same-file string
 //    constant, is declared as a flag in a registry (FLAG_REGISTRIES). This is a
 //    backstop: the readers take only `FlagKey` (lib/feature-flags.ts), so
 //    `pnpm typecheck` catches the rest. Not seen here: keys built in template
-//    strings with substitutions, readers reached through computed callees, and
-//    bulk reads such as `getAllFlags()`.
+//    strings with substitutions and readers reached through computed callees.
+// 3. The PostHog SDK's own flag reads (DIRECT_FLAG_METHODS, including bulk
+//    reads such as `getAllFlags()`) are called only in the wrappers that own
+//    them (DIRECT_FLAG_OWNERS), and no shipped code casts `as FlagKey`: both
+//    would let a plain string past the type.
 //
 // Runs in `pnpm docs:check` (scripts/docs-check.mjs) for this repository and,
 // with --overlay-only, in mikka-hosted-ui's Phase 1 CI for its checkout. Test
@@ -39,6 +42,23 @@ export const FLAG_READERS = new Set([
   'useFeatureFlagEnabled', 'useFeatureFlagPayload', 'useFeatureFlagVariantKey',
 ])
 
+/**
+ * PostHog SDK flag reads. They take any string (or hand over every flag), so
+ * outside the wrappers that own them they would bypass FlagKey; elsewhere a
+ * call fails. `reloadFeatureFlags()` reads nothing and stays allowed.
+ */
+export const DIRECT_FLAG_METHODS = new Set([
+  'getFeatureFlag', 'getFeatureFlagPayload', 'getFeatureFlagResult', 'isFeatureEnabled', 'getAllFlags', 'getAllFlagsAndPayloads',
+  'onFeatureFlags', 'useFeatureFlagEnabled', 'useFeatureFlagPayload', 'useFeatureFlagVariantKey', 'useActiveFeatureFlags',
+])
+
+/** Where the SDK's flag methods may be called, and why. */
+export const DIRECT_FLAG_OWNERS = {
+  'lib/analytics/posthog.ts': 'the browser wrapper; postHogFlag takes a FlagKey',
+  'lib/posthog-server.ts': 'the server wrapper; serverFlagEnabled takes a FlagKey',
+  'packages/protocol/src/analytics-client.ts': 'reads only FeatureFlag (packages/protocol/src/flags.ts), its own closed list',
+}
+
 export const MAX_RELEASE_DAYS = 60
 export const MAX_DAYS_AFTER_FULL = 14
 export const WARN_DAYS = 7
@@ -49,7 +69,7 @@ const DAY_MS = 86_400_000
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/
 const SKIPPED_DIR = /(?:^|\/)(?:\.[^/]+|node_modules|\.next|\.artifacts|dist|dist-[a-z0-9-]+|out|build|coverage|__tests__|__mocks__|tests?|e2e)\//
 const TEST_FILE = /(?:\.|-)(?:test|spec|node-test|fixture|stories)\.[cm]?[jt]sx?$|\.test-d\.ts$/
-const QUICK = /postHogFlag|serverFlagEnabled|productionFlagDefault|getFeatureFlag|isFeatureEnabled|useFeatureFlag|flags\[/
+const QUICK = /postHogFlag|serverFlagEnabled|productionFlagDefault|FeatureFlag|isFeatureEnabled|getAllFlags|useActiveFeatureFlags|FlagKey|flags\[/
 const POLICY_FILES = new Set(['scripts/feature-flags-policy.mjs'])
 
 const parse = (file, source) => ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true,
@@ -99,6 +119,7 @@ export function releaseFlagEntries(source = readFileSync('lib/feature-flags.ts',
 const validDate = value => typeof value === 'string' && DATE.test(value) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
 const days = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS)
 const todayUtc = () => new Date().toISOString().slice(0, 10)
+const addDays = (date, count) => new Date(Date.parse(`${date}T00:00:00Z`) + count * DAY_MS).toISOString().slice(0, 10)
 
 /** Problems (fail CI) and warnings (print only) for the release-flag registry. `today` is YYYY-MM-DD (UTC). */
 export function releaseFlagReport({ source = readFileSync('lib/feature-flags.ts', 'utf8'), today = todayUtc() } = {}) {
@@ -106,6 +127,8 @@ export function releaseFlagReport({ source = readFileSync('lib/feature-flags.ts'
   if (!entries) return { problems: ['lib/feature-flags.ts: `export const releaseFlags = { … }` is missing; it is the release-flag registry'], warnings: [] }
   const problems = []
   const warnings = []
+  // Dates are UTC; an author ahead of UTC (UTC+8) may write tomorrow's UTC date.
+  const latest = addDays(today, 1)
   for (const { key, owner, description, added, fullAt, removeBy } of entries) {
     const where = `lib/feature-flags.ts releaseFlags[${key ?? '?'}]`
     const fail = message => problems.push(`${where}: ${message}`)
@@ -119,11 +142,11 @@ export function releaseFlagReport({ source = readFileSync('lib/feature-flags.ts'
     if (!addedOk) fail('added must be a YYYY-MM-DD string literal')
     if (!removeOk) fail('removeBy must be a YYYY-MM-DD string literal')
     if (!fullOk) fail('fullAt, once set, must be a YYYY-MM-DD string literal')
-    if (addedOk && added > today) fail(`added ${added} is in the future`)
+    if (addedOk && added > latest) fail(`added ${added} is in the future (UTC)`)
     if (addedOk && removeOk && added > removeBy) fail(`added ${added} is after removeBy ${removeBy}`)
     if (addedOk && removeOk && days(added, removeBy) > MAX_RELEASE_DAYS) fail(`removeBy ${removeBy} is more than ${MAX_RELEASE_DAYS} days after added ${added}`)
     if (fullAt !== undefined && fullOk) {
-      if (fullAt > today) fail(`fullAt ${fullAt} is in the future; set it when the flag reaches 100%`)
+      if (fullAt > latest) fail(`fullAt ${fullAt} is in the future (UTC); set it when the flag reaches 100%`)
       if (addedOk && fullAt < added) fail(`fullAt ${fullAt} is before added ${added}`)
       if (removeOk && days(fullAt, removeBy) > MAX_DAYS_AFTER_FULL) fail(`removeBy ${removeBy} is more than ${MAX_DAYS_AFTER_FULL} days after fullAt ${fullAt}`)
     }
@@ -284,12 +307,39 @@ export function undeclaredFlagKeyProblems({ files = flagPolicyFiles(), declared 
     .map(({ key, line }) => `${file}:${line}: flag key ${key} is not declared; add it to a flag registry (lib/feature-flags.ts releaseFlags for a staged rollout)`))
 }
 
+/** Calls of the SDK's flag methods outside their owners, and `as FlagKey` casts, with line numbers. */
+export function flagBypasses(file, source) {
+  if (!QUICK.test(source)) return []
+  const tree = parse(file, source)
+  const found = []
+  const line = node => tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
+  const owner = Object.hasOwn(DIRECT_FLAG_OWNERS, file)
+  visit(tree, node => {
+    if (ts.isCallExpression(node) && !owner) {
+      const callee = ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text
+        : ts.isIdentifier(node.expression) ? node.expression.text : undefined
+      if (callee && DIRECT_FLAG_METHODS.has(callee)) {
+        found.push(`${file}:${line(node)}: ${callee}() takes any string and bypasses FlagKey; read flags through postHogFlag (lib/analytics/posthog.ts) or serverFlagEnabled (lib/posthog-server.ts)`)
+      }
+    }
+    if ((ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) && ts.isTypeReferenceNode(node.type)
+      && ts.isIdentifier(node.type.typeName) && node.type.typeName.text === 'FlagKey') {
+      found.push(`${file}:${line(node)}: \`as FlagKey\` outside a test hides an undeclared key; declare the flag in a registry instead`)
+    }
+  })
+  return found
+}
+
+export function flagBypassProblems({ files = flagPolicyFiles() } = {}) {
+  return files.flatMap(({ file, path, source }) => flagBypasses(file, source ?? readFileSync(path, 'utf8')))
+}
+
 export function featureFlagReport({ overlayOnly = false } = {}) {
   const registry = readRegistries()
   const release = overlayOnly ? { problems: [], warnings: [] } : releaseFlagReport()
   const files = flagPolicyFiles('.', { own: !overlayOnly })
   return {
-    problems: [...registry.problems, ...release.problems, ...undeclaredFlagKeyProblems({ files, declared: registry.keys })],
+    problems: [...registry.problems, ...release.problems, ...undeclaredFlagKeyProblems({ files, declared: registry.keys }), ...flagBypassProblems({ files })],
     warnings: release.warnings,
   }
 }
