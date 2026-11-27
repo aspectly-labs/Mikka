@@ -102,6 +102,8 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
       const sql=await readFile(new URL('../../drizzle/'+name,import.meta.url),'utf8')
       await pool.query(sql);await pool.query(sql)
     }
+    // A key is a person's or a workspace's (the schema part of 20261127173719_model_api_keys_personal_or_workspace).
+    await pool.query('ALTER TABLE model_api_keys ALTER COLUMN "ownerId" DROP NOT NULL, ADD COLUMN IF NOT EXISTS "workspaceId" uuid, ADD COLUMN IF NOT EXISTS "addedBy" text')
     await pool.query(`CREATE TABLE user_preferences ("userId" text, "archiveIdleAfterDays" integer);
       CREATE TABLE thread_title_settings ("userId" text, "workspaceId" uuid, instructions text, triggers text);
       CREATE TABLE artifacts (id uuid PRIMARY KEY, "userId" text, "workspaceId" uuid, "runId" uuid, "issueId" uuid);

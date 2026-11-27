@@ -6,13 +6,13 @@ import { recordAudit } from '@/lib/audit/record'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
 import { workspaceDb } from '@/lib/workspace-db'
 import { stopRunsUsingApiKeys } from '@/lib/model-api-key-runs'
-import { memberSubscriptionsAllowed } from '@/lib/personal-policy'
+import { memberSubscriptionsAllowed, stopRunsUsingSubscriptions } from '@/lib/personal-policy'
 
 /**
- * 团队权限 › 订阅与 API Key: whether members' own API keys serve their runs in this
- * team workspace (decision 2026-11-27-1740). On (the default): a member's own keys
- * first, then the workspace's. Off: the workspace's keys only. No personal
- * credential is ever shared with another member (subscriptions: decision 2026-11-17).
+ * 团队权限 › 订阅与 API Key: whether members' own subscriptions and API keys serve
+ * their runs in this team workspace (decision 2026-11-27-1740). On (the default):
+ * a member's own credentials first, then the workspace's keys. Off: the workspace's
+ * keys and Mikka 额度 only. No personal credential is ever shared with another member.
  */
 export interface MemberSubscriptionPolicy { allowed: boolean; canEdit: boolean }
 
@@ -35,7 +35,10 @@ export async function setMemberSubscriptionPolicy(actor: { id: string; name: str
       ON CONFLICT ("workspaceId") DO UPDATE SET subscriptions=EXCLUDED.subscriptions,"updatedBy"=EXCLUDED."updatedBy","updatedAt"=now()`)
     await recordAudit(tx, { workspaceId, actor: { type: 'user', id: actor.id, name: actor.name }, action: 'integration.permission_changed', target: { type: 'personal', id: 'subscriptions', label: 'subscriptions' }, metadata: { integration: 'personal_subscriptions', capability: 'use', from: previous ? 'allow' : 'deny', to: allowed ? 'allow' : 'deny' } , ...request })
   })
-  // Off: runs here on members' own keys stop now; runs on the workspace's keys go on.
-  if (!allowed) await stopRunsUsingApiKeys(pool, { workspaceId, personalOnly: true })
+  // Off: runs here on members' own subscriptions and keys stop now; runs on the workspace's keys go on.
+  if (!allowed) {
+    await stopRunsUsingSubscriptions(pool, { workspaceId })
+    await stopRunsUsingApiKeys(pool, { workspaceId, personalOnly: true })
+  }
   return getMemberSubscriptionPolicy(actor.id, workspaceId)
 }

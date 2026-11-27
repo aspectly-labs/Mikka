@@ -138,10 +138,12 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     const context = await order.orderView(tracked(contextStatements), scope, async () => [], 'context')
     const { location, preferredHarness, entries, candidates, cloudReady, cloudModels } = full
     assert.deepEqual(context, { location, preferredHarness, entries, candidates, cloudReady, cloudModels })
-    assert.equal(full.credentials, 2, 'the page still counts the subscription and key with sharing either allowed or denied')
+    // 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): the own key no longer serves here; the connected subscription is still counted.
+    assert.equal(full.credentials, allowed ? 2 : 1, 'the page counts the connected subscription and the keys usable here')
+    assert.equal(candidates.length > 0, allowed, 'off: no own subscription or key is a candidate here')
     assert.equal(Object.hasOwn(context, 'credentials'), false)
     const countStart = fullStatements.findIndex(row => row.sql.startsWith('SELECT id::text AS id FROM byos_connections WHERE'))
-    // No shared keys: only the connected-subscription and own/shared-key count reads.
+    // The connected-subscription count, the usable-key read and its switch read.
     const saved = 3
     assert.ok(countStart >= 0)
     assert.equal(fullStatements.length - contextStatements.length, saved)

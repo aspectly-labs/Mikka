@@ -416,6 +416,15 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
     const bobMenu = await botModelMenu(pool, settings, bob, bobBot);
     assert.ok(!bobMenu.groups.some(group => group.kind === "subscription" && group.options.some(option => option.id === luna)), "no teammate subscription is offered");
     await assert.rejects(chooseBotModel(pool, settings, bob, bobBot, luna), { code: "executionModelUnknown" });
+
+    // 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): Alice's own subscriptions are neither offered nor bound here.
+    await pool.query(`INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)
+      ON CONFLICT ("workspaceId") DO UPDATE SET subscriptions=false`, [workspace]);
+    assert.deepEqual(await settings.botModels(alice), [], "off: no own subscription is a candidate here");
+    assert.equal((await botModelMenu(pool, settings, alice, botA)).groups.some(group => group.kind === "subscription"), false);
+    assert.ok((await settings.botModels({ ownerId: "alice", workspaceId: elsewhere })).length > 0, "another workspace keeps them");
+    await pool.query('UPDATE workspace_personal_policies SET subscriptions=true WHERE "workspaceId"=$1', [workspace]);
+    assert.ok((await settings.botModels(alice)).length > 0, "on: her own subscriptions serve again");
   } finally {
     await pool.end();
     await admin.query(`DROP SCHEMA ${schema} CASCADE`);

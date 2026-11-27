@@ -86,6 +86,8 @@ test(
       );
       // The Bot's reasoning effort beside its model choice (freezeBotModel reads it).
       await pool.query(await readFile(new URL("../drizzle/20261120044916_bot_settings.sql", import.meta.url), "utf8"));
+      // A key is a person's or a workspace's (the schema part of 20261127173719_model_api_keys_personal_or_workspace).
+      await pool.query('ALTER TABLE model_api_keys ALTER COLUMN "ownerId" DROP NOT NULL, ADD COLUMN IF NOT EXISTS "workspaceId" uuid, ADD COLUMN IF NOT EXISTS "addedBy" text');
       const catalogueMigration = await readFile(new URL('../drizzle/20261030233002_byos_model_catalog.sql',import.meta.url),'utf8');
       await pool.query(catalogueMigration); await pool.query(catalogueMigration);
       const personalPolicyMigration = await readFile(new URL("../drizzle/20261101020201_workspace_personal_policies.sql",import.meta.url),"utf8");
@@ -346,12 +348,16 @@ test(
       await pool.query('INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","bindingId") VALUES ($1,$2,$3,$4)',['bob',teamB.workspaceId,bobBot,catalogue.bindingId]);
       await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:bobBot},dependencies),{code:'account_unavailable'},'a member\'s stored borrow refuses as unavailable, not an unknown model');
       await pool.query('DELETE FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2',['bob',teamB.workspaceId]);
-      // Team B's admin switch never limits her own use.
+      // Team B's admin switch 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): her own subscription does not serve there.
       await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)',[teamB.workspaceId]);
-      assert.ok((await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:teamBot},dependencies)).modelSelection,'admin switch off: her own bot still uses her subscription');
-      assert.ok((await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:null},dependencies)).modelSelection,'admin switch off: her Coordinator too');
-      assert.ok((await settings.botModels(teamB)).length > 0,'admin switch off: her menu still offers it');
+      assert.equal((await settings.botModels(teamB)).length,0,'admin switch off: her menu in team B offers no own subscription');
+      for (const botId of [teamBot,null]) {
+        const frozen = await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId},dependencies).catch((error: unknown) => error);
+        assert.notEqual((frozen as { modelSelection?: { type?: string } }).modelSelection?.type,'subscription','admin switch off: neither her bot nor her Coordinator runs on her subscription there');
+      }
       await pool.query('UPDATE workspace_personal_policies SET subscriptions=true WHERE "workspaceId"=$1',[teamB.workspaceId]);
+      assert.ok((await settings.botModels(teamB)).length > 0,'admin switch on: her menu offers it again');
+      assert.ok((await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:teamBot},dependencies)).modelSelection,'admin switch on: her own bot uses her subscription');
       // A subscription serves its owner only (decision 2026-11-17): bob's bot never runs on hers.
       await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:bobBot},dependencies),{code:'executionModelUnknown'},'bob\'s bot asks for his own model');
       await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:null},dependencies),{code:'executionModelUnknown'},'bob\'s Coordinator never uses another member\'s subscription');

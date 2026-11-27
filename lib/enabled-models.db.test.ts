@@ -25,7 +25,9 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
       CREATE TABLE byos_connections (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text NOT NULL,"modelCatalog" jsonb,"createdAt" timestamptz DEFAULT now(),"updatedAt" timestamptz DEFAULT now(),"removedAt" timestamptz,epoch bigint DEFAULT 1,state text DEFAULT 'connected',paused boolean DEFAULT false,provider text DEFAULT 'claude',"accountLabel" text,quota jsonb);
       CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"consumerId" text,"workspaceId" text,"modelId" text,route text,"connectionId" uuid,"connectionRevision" bigint,"createdAt" timestamptz DEFAULT now());
       CREATE TABLE model_api_keys (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid,models jsonb,"modelsError" text,"createdAt" timestamptz DEFAULT now(),"updatedAt" timestamptz DEFAULT now());
-      CREATE TABLE model_order_entries (id uuid DEFAULT gen_random_uuid(),"ownerId" text,"workspaceId" text,"sourceKind" text,"sourceId" uuid,model text)`)
+      CREATE TABLE model_order_entries (id uuid DEFAULT gen_random_uuid(),"ownerId" text,"workspaceId" text,"sourceKind" text,"sourceId" uuid,model text);
+      -- 团队权限 › 订阅与 API Key (decision 2026-11-27-1740): the catalogue reads it.
+      CREATE TABLE workspace_personal_policies ("workspaceId" text PRIMARY KEY,subscriptions boolean)`)
     await pool.query(`INSERT INTO byos_connections (id,"ownerId","modelCatalog","workspaceId") VALUES ($1,'owner',$2,$3)`, [source, { revision: '1', models: ['claude-opus-4-5', 'claude-opus-4-6'] }, workspaceId])
     await pool.query(`INSERT INTO byos_bindings (id,"ownerId","consumerId","workspaceId","modelId",route,"connectionId","connectionRevision") VALUES ($1,'owner','bot',$2,'claude-opus-4-5','claude_cpa',$3,1)`, [binding, workspaceId, source])
     await pool.query(`INSERT INTO model_api_keys (id,"ownerId",models) VALUES ($1,'owner','["old"]')`, [key])
@@ -84,8 +86,7 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
     assert.deepEqual(result.models.find(item => item.id === 'newer'), { id: 'newer', family: null, enabled: false, fresh: true, known: false })
     await pool.query(`ALTER TABLE model_api_keys ADD COLUMN provider text DEFAULT 'deepseek', ADD COLUMN name text,
       ADD COLUMN "baseUrl" text, ADD COLUMN protocol text DEFAULT 'anthropic', ADD COLUMN last4 text DEFAULT 'test',
-      ADD COLUMN "responsesApi" boolean DEFAULT true, ADD COLUMN features jsonb;
-      CREATE TABLE workspace_personal_policies ("workspaceId" text,subscriptions boolean)`)
+      ADD COLUMN "responsesApi" boolean DEFAULT true, ADD COLUMN features jsonb`)
     // The team switch is on: the owner's own key serves here (decision 2026-11-27-1740).
     await pool.query('INSERT INTO workspace_personal_policies VALUES ($1,true)', [workspaceId])
     // Use the canonical sharing schema for the real usable-key read below.

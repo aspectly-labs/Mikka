@@ -178,9 +178,9 @@ test('Agent Profiles: real PostgreSQL isolation, immutable versions, exact-sourc
           await pool.query('UPDATE model_api_keys SET "workspaceId"=$2 WHERE id=$1', [keys[1], who.workspaceId])
         }
       })
-      await t.test('the team switch off withholds members\' own keys and keeps the workspace\'s', async () => {
+      await t.test('the team switch off withholds members\' own subscriptions and keys and keeps the workspace\'s', async () => {
         await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)', [who.workspaceId])
-        try { await compare(sharedSelection); await compare(ownKey); await compare(workspaceKey, 'accepted'); await compare(ownSelection, 'accepted') }
+        try { await compare(sharedSelection); await compare(ownKey); await compare(ownSelection); await compare(workspaceKey, 'accepted') }
         finally { await pool.query('DELETE FROM workspace_personal_policies WHERE "workspaceId"=$1', [who.workspaceId]) }
       })
       for (const [field, value, original] of [['modelsError', 'invalid', null], ['responsesApi', false, true], ['models', JSON.stringify(['unrelated-model']), JSON.stringify(['fixed-entry-model', 'unrelated-model'])]] as const) await t.test(`same API-key refusal: ${field}`, async () => {

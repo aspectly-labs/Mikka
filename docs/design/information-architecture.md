@@ -140,7 +140,7 @@ per AGENTS.md triage is in brackets.
 | M5 | `app/actions/teams.ts:47-60` | Teams are team-only (T2) | `saveTeam` checks membership only: no admin check, no `kind` check | A personal workspace can hold a team through the API; UI hides it [2×3] | Refuse `kind = 'personal'` with `workspacePersonal`, as invitations do | P2 |
 | M6 | `lib/settings-sections.ts:46` vs `lib/secrets/permissions.ts:14-25` | Members may write repository-scoped secrets | The section is `adminOnly`, so members never reach it | Members' allowed action has no page [4×3] | Show 密钥与环境 to members with their scope only | P2 |
 | M7 | `lib/workspace-admin/members.ts:135`, `zh-CN.json:1160` | A member can leave (2225 rule 6) | No leave action; the error copy names 「离开工作区」 | Copy promises a missing action [3×3] | Build 离开工作区 on `releaseDepartingMember`, or drop the copy | P2 |
-| M8 | `components/settings/team-permissions-settings.tsx:55-58` | Members' own API keys serve their runs here only while it is on (2026-11-27-1740) | The row is 「允许成员使用个人订阅和 API Key」 (`workspace_personal_policies.subscriptions`) | Matches for API keys; subscriptions are not gated by it [3×4] | Keep | P2 |
+| M8 | `components/settings/team-permissions-settings.tsx:55-58` | Members' own subscriptions and API keys serve their runs here only while it is on (2026-11-27-1740) | The row is 「允许成员使用个人订阅和 API Key」 (`workspace_personal_policies.subscriptions`) | Matches; the Organization credential-sharing rule no longer affects it [3×4] | Keep | P2 |
 | M9 | `byos_connections.workspaceId` (drizzle `20261027164503`) | Subscriptions belong to the account (2225 rule 2, T6) | The binding row still carries a workspace | Two sources of truth for where a subscription runs [2×3] | Resolve by owner only; keep sharing in `workspace_subscription_shares` | P2 |
 | M10 | `lib/personal-workspace.ts:35-40` | Own credentials need no share (2240) | `ensurePersonalShare` writes a share row for the personal workspace | Redundant row; harmless [1×1] | Drop when the resolver no longer reads it | P2 |
 | M11 | `lib/workspace-admin/general.ts:114-134` | Transfer hands the workspace on | Only `workspaces.userId` changes; `cloud_machines.ownerId` and the Stripe customer stay with the old owner | Undefined who pays for the workspace's Mikka Cloud machine after transfer [2×4] | Decide with Alex; `cloud_machines` is one row per workspace while E2B keys are personal | P2 |
@@ -350,7 +350,7 @@ to `/task/:id?attempt=:runId`, then the task conversation
 | L6 | Settings group vs page vs menu | 账号 (group), 账户 (page), 「账户菜单」 (menu that also switches workspaces) | Menu label 账号菜单 |
 | L7 | `zh-CN.json` `Nav.workspace` (`components/nav-main.tsx:43`) | 工作空间 vs 工作区 | 工作区 (C-06) |
 | L8 | `Nav.inbox` / `Overview.followingTitle` | 收件箱 opens 关注的任务活动 | Name it for what it shows, or remove with G5 |
-| L9 | 团队权限 | 「允许成员使用个人订阅和 API Key」 decides whether members' own API keys serve runs in the workspace (2026-11-27-1740) | M8 |
+| L9 | 团队权限 | 「允许成员使用个人订阅和 API Key」 decides whether members' own subscriptions and API keys serve runs in the workspace (2026-11-27-1740) | M8 |
 | L10 | `docs/settings.md` § Sections | Profile, Workspace, Integrations vs 账户, 常规, 连接 | Use the UI names (C-06) |
 
 ## 7. Placement principles

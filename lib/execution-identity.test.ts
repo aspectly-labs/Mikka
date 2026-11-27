@@ -116,6 +116,17 @@ test('subscription disconnect and revision changes revoke frozen subscription au
   await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError)
 })
 
+test('the team switch off withholds the requester\'s own subscription in the workspace', async () => {
+  const f = fixture(); delete f.definition.apiKey
+  f.definition.subscription = { bindingId: id(8), modelId: 'example-model', route: 'codex_cli' }
+  f.state.memberKeys = false
+  await assert.rejects(f.freeze, ExecutionIdentityError)
+  f.state.memberKeys = true
+  await f.freeze()
+  f.state.memberKeys = false
+  await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError, 'turning it off ends a frozen subscription run')
+})
+
 test('retries retain immutable attribution and refuse an injected payment account', async () => {
   const f = fixture(); await f.freeze()
   const retry = retryWorkerDefinition(f.definition, 'Retry task')!

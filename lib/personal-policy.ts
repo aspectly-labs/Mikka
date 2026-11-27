@@ -4,7 +4,7 @@ import { runListChanged } from './live/lists'
 import { runControlChanged } from './device-gateway-notify'
 import { armDueTimerAfterCommit } from './due-timer'
 import { readBatchSubscriptionPolicy } from './desktop-rpc/read-batch-context'
-import { workspaceResourcePolicy } from './governance/resource-access'
+import { memberCredentialsAllowedSql } from './member-credentials-sql'
 
 /**
  * Decision 2026-11-17: a Claude or Codex subscription serves its owner only; no
@@ -28,15 +28,16 @@ export async function workspaceMemberCredentialsAllowed(query: Query, workspaceI
   })
 }
 
-/** The switch as the settings page shows it: also off when the Organization denies member credentials. */
+/**
+ * The switch as the settings page shows it: exactly the value that governs runs.
+ * The Organization's model-credential sharing rule governed only borrowed
+ * credentials, which no longer exist, so it no longer turns this off (decision 2026-11-27-1740).
+ */
 export async function memberSubscriptionsAllowed(query: Query, workspaceId: string): Promise<boolean> {
-  if ((await workspaceResourcePolicy(workspaceId)).modelCredentialSharing === 'deny') return false
   return workspaceMemberCredentialsAllowed(query, workspaceId)
 }
 
-/** SQL for the same switch: true unless the workspace turned members' own credentials off. */
-export const memberCredentialsAllowedSql = (workspace: string) =>
-  `NOT EXISTS (SELECT 1 FROM workspace_personal_policies mp WHERE mp."workspaceId"::text=(${workspace})::text AND NOT mp.subscriptions)`
+export { memberCredentialsAllowedSql }
 
 /**
  * Withdrawing a credential stops the runs using it now: disconnecting or leaving
@@ -66,10 +67,10 @@ export async function stopRunsUsingSubscriptions(query: Query, scope: { ownerId?
 /**
  * SQL for a run's subscription (decision 2026-11-17: a subscription serves its
  * owner only): may the credential owner's subscription serve the run owner's
- * run? Only when they are the same person. Membership lives in the workspace
- * database, so callers still check it there (authorizeSubscriptionWorkspace).
+ * run? Only when they are the same person, and only while the workspace's team
+ * switch 团队权限 › 订阅与 API Key allows members' own credentials (decision
+ * 2026-11-27-1740). Membership lives in the workspace database, so callers still
+ * check it there (authorizeSubscriptionWorkspace).
  */
 export const runMayUseCredentialSql = (credentialOwner: string, runOwner: string, workspace: string) =>
-  // The workspace expression stays referenced (and typed) so a caller's bound
-  // parameter for it remains inferable; it no longer widens the grant.
-  `(${credentialOwner}=${runOwner} AND ((${workspace})::text IS NULL OR true))`
+  `(${credentialOwner}=${runOwner} AND ${memberCredentialsAllowedSql(workspace)})`

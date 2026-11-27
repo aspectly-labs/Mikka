@@ -88,8 +88,13 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
     const { rows: [binding] } = await query.query<{ ownerId: string; workspaceId: string; revision: string; modelId: string; route: string }>(`SELECT b."ownerId",b."workspaceId",b."connectionRevision"::text AS revision,b."modelId",b.route
       FROM byos_bindings b JOIN byos_connections c ON c.id=b."connectionId" AND c."ownerId"=b."ownerId"
       AND c.state='connected' AND NOT c.paused AND c.epoch=b."connectionRevision" WHERE b.id=$1`, [definition.subscription.bindingId])
-    // A subscription serves its owner only (decision 2026-11-17).
+    // A subscription serves its owner only (decision 2026-11-17), and in a team workspace only while
+    // the team switch allows members' own credentials (decision 2026-11-27-1740).
     if (!binding || binding.modelId !== definition.subscription.modelId || binding.route !== definition.subscription.route || binding.ownerId !== run.userId) return denied()
+    const { workspaceMemberCredentialsAllowed } = await import('./personal-policy')
+    for (const scope of new Set([workspaceId, binding.workspaceId].filter((value): value is string => !!value))) {
+      if (!await workspaceMemberCredentialsAllowed(query, scope)) return denied()
+    }
     resourceBindings.push({ kind: 'subscription', id: definition.subscription.bindingId, ownerId: binding.ownerId, access: 'owner', revision: binding.revision })
     model = { kind: 'subscription', ownerId: binding.ownerId, resourceId: definition.subscription.bindingId, amount: 'provider_unknown' }
   // A credits-only definition bills the catalogue model through Mikka's native login — the

@@ -4,17 +4,18 @@
 - **Status:** Accepted (Alex, 2026-11-27)
 - Source: Alex, 2026-11-27: 「第三个，个人模型共享给工作区，这个是不允许的。如果说你要共享给工作区，应该在工作区的那个地方再添加，不是我们现在就是有了呀，一个是个人 connection，一个是工作区的 connection，那么应该是分开添加才行啊，不允许直接共享。」
 - Same rule as decision 2026-11-27-1700, personal MCP servers are not shareable (`2026-11-27-1700-personal-mcp-not-shareable.md`, #3392), applied to model API keys and custom providers.
-- Supersedes in part: the 「分享给团队成员」 exception for API keys in [orchestration spec](2026-10-31-2300-orchestration-spec.md); in [own credentials always usable](2026-11-01-2240-own-credentials-always-usable.md), "shares are only for other members' bots" and, for API keys in a team workspace, "no admin limit" (the team switch below decides; subscriptions are unchanged); 「API Key 的团队分享不变」 in [subscriptions serve their owner only](2026-11-17-1400-subscriptions-owner-only.md).
+- Supersedes in part: the 「分享给团队成员」 exception for API keys in [orchestration spec](2026-10-31-2300-orchestration-spec.md); in [own credentials always usable](2026-11-01-2240-own-credentials-always-usable.md), "shares are only for other members' bots" and, in a team workspace, "no admin limit" for subscriptions and API keys (the team switch below decides); 「API Key 的团队分享不变」 in [subscriptions serve their owner only](2026-11-17-1400-subscriptions-owner-only.md).
 
 An API key or custom provider in 设置 › 模型 belongs to exactly one owner:
 
 - **你的连接 (personal).** Added by a person, sealed to that person, used only
   by that person's own runs. No other member's run, Bot chat or model picker
   ever sees it. In a team workspace, the admin switch 团队权限 › 订阅与 API Key
-  decides whether members' own keys are used there: on (the default), a
-  member's own keys come first in their runs, then the workspace's; off, runs
-  in that workspace use only the workspace's keys (and Mikka 额度 as today).
-  A personal workspace has no switch.
+  decides whether members' own credentials (subscriptions and API keys) are
+  used there: on (the default), a member's own subscriptions and keys come
+  first in their runs, then the workspace's keys; off, runs in that workspace
+  use only the workspace's keys and Mikka 额度. A personal workspace has no
+  switch.
 - **工作区连接 (workspace).** Added to a team workspace by one of its admins,
   sealed to the workspace (not to the admin), used by every active member's
   runs in that workspace, and kept when the admin who added it leaves. Only
@@ -42,17 +43,24 @@ What changes:
   person's key are asked to stop; saved Bot chat choices and model-order
   entries that name another person's key are cleared. The table is dropped by
   a later contract migration.
-- Usable keys for a run, a Bot chat or the model picker in a workspace are the
-  person's own keys (while the team switch is on), then the workspace's own
-  keys. Claim (`validateRunApiKey`), the frozen execution identity, the model
-  order's credential states and provider health accept only those; a workspace
-  key's binding has access `workspace` and bills the workspace. Turning the
-  switch off stops that workspace's runs on members' own keys; runs on the
-  workspace's keys go on.
+- Usable credentials for a run, a Bot chat or the model picker in a workspace
+  are the person's own subscriptions and keys (while the team switch is on),
+  then the workspace's own keys. The subscription catalogue and saved bindings
+  (`executionModelOptions`, `executionBinding`), every subscription access and
+  renewal (`runMayUseCredentialSql`), key claim (`validateRunApiKey`), the
+  frozen execution identity, the model order's credential states and provider
+  health accept only those; a workspace key's binding has access `workspace`
+  and bills the workspace. Turning the switch off stops that workspace's runs
+  on members' own subscriptions and keys; runs on the workspace's keys go on.
+  The settings page shows exactly this value.
 - `setApiKeyShare`, `removeMemberApiKeyShares` and the `api_key` kind of
-  Organization resource approvals are removed. The Organization's
-  model-credential sharing rule no longer reaches API keys; the workspace's
-  own switch above does.
+  Organization resource approvals are removed.
+- The Organization's model-credential sharing rule is retired. It governed only
+  borrowed (shared) subscriptions and API keys, which no longer exist, so it no
+  longer turns the workspace switch off or reaches any credential; the
+  workspace's own switch above decides. Its stored value and the remaining
+  `subscription` approval kind are inert and go with the hosted Organization
+  settings follow-up.
 - One release of compatibility for the hosted settings page: `createApiKey(…,
   { share: true })` adds a workspace key (admins only), the page lists
   workspace keys where it read shared keys, and `updateApiKeyShare` answers

@@ -372,18 +372,15 @@ test('standalone read-only observation preserves the surrounding Native batch po
   assert.equal(f.calls.length, 2)
 })
 
-test('Organization deny remains fresh inside both read-only policy observation lifetimes', async () => {
+test('the retired Organization credential-sharing rule never turns the workspace switch off (decision 2026-11-27-1740)', async () => {
   for (const observe of [withReadBatchContext, observePolicy]) {
-    organizationId = 'organization'; sharing = 'allow'; workspaceReads.length = 0
+    organizationId = 'organization'; sharing = 'deny'; workspaceReads.length = 0
     const f = policyReader()
     await observe(async () => {
-      assert.equal(await memberSubscriptionsAllowed(f.query, workspace), true)
-      sharing = 'deny'
-      assert.equal(await memberSubscriptionsAllowed(f.query, workspace), false)
-      sharing = 'allow'
+      assert.equal(await memberSubscriptionsAllowed(f.query, workspace), true, 'the page shows the switch that governs runs')
       assert.equal(await memberSubscriptionsAllowed(f.query, workspace), true)
       assert.equal(f.calls.length, 1, 'only the existing APP policy observation is shared')
-      assert.equal(workspaceReads.filter(kind => kind === 'policy').length, 3, 'the Organization policy is re-read before every memo lookup')
+      assert.equal(workspaceReads.length, 0, 'no Organization policy read')
     })
   }
 })
