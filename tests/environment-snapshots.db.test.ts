@@ -213,6 +213,12 @@ test(
       [ws.id, { networkAllow: ['example.org'] }],
     )
     assert.equal(await readyEnvironmentSnapshot(input), null)
+    // Stored permission levels are not approvals (ADR 2026-11-27-1615) and do not withhold a snapshot.
+    await fixture.query(
+      'UPDATE workspace_computer_policies SET cli_run_policy=$2 WHERE "workspaceId"=$1',
+      [ws.id, { permissions: { network: 'deny', install_dependency: 'deny' } }],
+    )
+    assert.deepEqual(await readyEnvironmentSnapshot(input), ready)
     await fixture.query('DELETE FROM workspace_computer_policies WHERE "workspaceId"=$1', [ws.id])
     // No E2B key is configured for this fixture. The real builder records its failure
     // without contacting the provider or replacing the last successful image.

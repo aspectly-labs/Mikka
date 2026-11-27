@@ -60,11 +60,12 @@ export async function snapshotConfiguration(reader: Reader, input: SnapshotInput
     personalApprovalMode: configured.approvalMode,
     environment: 'cloud',
   })
+  // Agents run with full access (ADR 2026-11-27-1615): stored network and
+  // dependency-install permission levels never decide snapshot eligibility.
+  // A network allowlist still does, since the snapshot's setup ran unrestricted.
   const eligible =
     !policy.readOnly &&
-    policy.permissions.network === 'allow' &&
     configured.networkAllow === undefined &&
-    (!config.setup?.approved || !config.setup.command || policy.permissions.install_dependency === 'allow') &&
     (config.harness === 'any' || config.harness === harness) &&
     eligibleConfiguration(config, environment.repositories, resources.policy)
   return { eligible, environment }
