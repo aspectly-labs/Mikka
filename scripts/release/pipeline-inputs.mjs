@@ -6,6 +6,8 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { validateHistoricalReleaseManifest, validateReleaseManifest } from './service-builds.mjs'
 import { actionsMikkaRepository, officialMikkaRepository, operationsRepositoryId, publicRepositoryId } from '../cloudflare-source.mjs'
+import { checkedReleasePolicy, policyFromContents, POLICY_PATH, requireCommittedPromoters, requirePromoters } from './release-policy.mjs'
+import { runReleaseChecks } from './release-checks.mjs'
 
 const trustedActors = { owner: { id: '183887963', login: 'alexj11324' }, mergeQueue: { id: '118344674', login: 'github-merge-queue[bot]' } }
 const trustedActor = (actor, automatic) => String(actor?.id) === trustedActors.owner.id
@@ -331,15 +333,43 @@ export async function selectPipeline({ env = process.env, api = github } = {}) {
   return output
 }
 
-/** A paused (manual) promotion: the owner dispatches `pipeline-promote` naming a completed
- * merge-triggered staging run and the exact commit it staged. Nothing here runs automatically. */
+const forbiddenDispatchers = new Set([trustedActors.mergeQueue.id, '41898282'])
+
+/** A manual promotion: a listed promoter (the owner or an agent, policy `promoters`) dispatches
+ * `pipeline-promote` naming a completed merge-triggered staging run and the exact commit it staged.
+ * Evidence, not identity, decides: this run must be the reviewed main workflow, both its actor and
+ * whoever started this attempt must be promoters on current private main, and the staged run, the
+ * manifest, the no-downgrade rule and every required production check must hold. All of this runs
+ * before any deployment credential is read; only the read-only private source token is used. */
 async function manualStage(api, env) {
   assert.equal(env.MIKKA_DEPLOYMENT_PHASE, 'pipeline-promote', 'pipeline_deployment_phase_invalid')
-  // Only the owner in person; the merge queue and other repository writers cannot promote by hand.
-  assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, false), 'pipeline_actor_untrusted')
+  // Merge and Actions automation never promote, whatever the list says.
+  assert.ok(!forbiddenDispatchers.has(String(env.GITHUB_ACTOR_ID)), 'pipeline_actor_untrusted')
   assert.match(env.INPUT_PIPELINE_RUN ?? '', number, 'pipeline_promotion_stage_run_required')
   assert.match(env.INPUT_PROMOTE_SOURCE ?? '', sha, 'pipeline_promotion_source_required')
   assert.notEqual(env.INPUT_PIPELINE_RUN, env.GITHUB_RUN_ID, 'pipeline_promotion_stage_run_required')
+  // The running workflow is main's own file at the dispatched main commit, not a branch edit.
+  assert.equal(env.GITHUB_WORKFLOW_REF, `${env.GITHUB_REPOSITORY}/${deployment}@refs/heads/main`, 'pipeline_workflow_ref_required')
+  assert.equal(env.GITHUB_WORKFLOW_SHA, env.GITHUB_SHA, 'pipeline_workflow_ref_required')
+  const current = await api(`${repository}/actions/runs/${env.GITHUB_RUN_ID}/attempts/${env.GITHUB_RUN_ATTEMPT}`)
+  assert.ok(current?.path === deployment && current.event === 'workflow_dispatch' && current.head_branch === 'main'
+    && current.head_sha === env.GITHUB_SHA && String(current.id) === env.GITHUB_RUN_ID
+    && String(current.run_attempt) === env.GITHUB_RUN_ATTEMPT && String(current.actor?.id) === String(env.GITHUB_ACTOR_ID)
+    && current.actor?.login === env.GITHUB_ACTOR && current.triggering_actor?.login === env.GITHUB_TRIGGERING_ACTOR,
+  'pipeline_run_identity_mismatch')
+  const cloud = await api('alexj11324/mikka-cloud/git/ref/heads/main')
+  assert.match(cloud.object?.sha ?? '', sha, 'pipeline_operations_sha_required')
+  if (env.INPUT_CLOUD_SOURCE) assert.equal(env.INPUT_CLOUD_SOURCE, cloud.object.sha, 'pipeline_operations_source_must_be_current_main')
+  let policy
+  try {
+    policy = checkedReleasePolicy(policyFromContents(await api(`alexj11324/mikka-cloud/contents/${POLICY_PATH}?ref=${cloud.object.sha}`)).policy)
+    requirePromoters(policy, { actor: current.actor, triggeringActor: current.triggering_actor })
+    requireCommittedPromoters(policy)
+  } catch (cause) {
+    const code = /^releasePolicy:(actorNotPromoter|triggeringActorNotPromoter|noPromoters)$/.test(cause?.message) ? 'pipeline_actor_not_promoter'
+      : cause?.message === 'releasePolicy:promotersDiverged' ? 'pipeline_promoters_diverged' : 'pipeline_policy_unreadable'
+    throw new Error(code, { cause })
+  }
   const run = checkedRun(await api(`${repository}/actions/runs/${env.INPUT_PIPELINE_RUN}`), deployment,
     { event: 'workflow_run', automaticDeployment: true })
   assert.equal(String(run.id), env.INPUT_PIPELINE_RUN, 'pipeline_promotion_stage_run_mismatch')
@@ -361,16 +391,21 @@ async function manualStage(api, env) {
   const selected = await release(api, summary.origin.runId, summary.origin.runAttempt)
   assert.equal(selected.origin.artifactId, String(summary.origin.artifactId), 'pipeline_promotion_release_mismatch')
   assert.equal(selected.manifest.sourceCommit, env.INPUT_PROMOTE_SOURCE, 'pipeline_promotion_source_mismatch')
-  const cloud = await api('alexj11324/mikka-cloud/git/ref/heads/main')
-  assert.match(cloud.object?.sha ?? '', sha, 'pipeline_operations_sha_required')
-  if (env.INPUT_CLOUD_SOURCE) assert.equal(env.INPUT_CLOUD_SOURCE, cloud.object.sha, 'pipeline_operations_source_must_be_current_main')
+  // The candidate must still be what staging serves: a later staging run or rollback replaces it.
+  const latestStaging = await priorDeployment(api, env.GITHUB_RUN_ID, undefined, 'staging')
+  assert.ok(latestStaging && String(latestStaging.run.id) === String(run.id) && String(latestStaging.run.run_attempt) === String(run.run_attempt)
+    && latestStaging.summary?.rollback === undefined && latestStaging.summary?.status === 'passed', 'pipeline_stage_not_current')
+  try {
+    await runReleaseChecks('production', { checks: policy.requiredChecks.production, sourceCommit: selected.manifest.sourceCommit,
+      read: path => api(`${repository}/${path}`), builtin: {} })
+  } catch (cause) { throw new Error('pipeline_required_check_failed', { cause }) }
   return { selected, stage, stageRun: run, operations: cloud.object.sha }
 }
 
 /** Production consumes a completed staging artifact with its own serving baseline. It never
  * silently uses the staging baseline. An automatic run promotes the staging result of this same
  * run, and only while the private policy's `autoProduction` is true (the workflow skips it
- * otherwise); a manual owner dispatch promotes the named staging run instead. */
+ * otherwise); a manual dispatch by a listed promoter promotes the named staging run instead. */
 export async function selectPromotion({ env = process.env, api = github } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
   assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')

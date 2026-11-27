@@ -61,7 +61,7 @@ env:
   MIKKA_HOSTED_UI_GITHUB_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER }}
 jobs:
   deploy-application:
-    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !startsWith(inputs.phase, 'pipeline-')
+    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !startsWith(inputs.phase, 'pipeline-') && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor))
     outputs:
       serving-release: ${{ steps.apply.outputs.serving-release }}
     runs-on: ubuntu-latest
@@ -239,7 +239,7 @@ jobs:
 
 
   pipeline:
-    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_run' && (github.actor_id == '183887963' || (github.actor_id == '118344674' && github.actor == 'github-merge-queue[bot]' && (github.triggering_actor == 'github-merge-queue[bot]' || github.triggering_actor == 'alexj11324'))) && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.id == github.event.repository.id) || (github.event_name == 'workflow_dispatch' && (inputs.phase == 'pipeline-stage' || inputs.phase == 'pipeline-rollback')))
+    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_run' && (github.actor_id == '183887963' || (github.actor_id == '118344674' && github.actor == 'github-merge-queue[bot]' && (github.triggering_actor == 'github-merge-queue[bot]' || github.triggering_actor == 'alexj11324'))) && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.id == github.event.repository.id) || (github.event_name == 'workflow_dispatch' && (inputs.phase == 'pipeline-stage' || inputs.phase == 'pipeline-rollback') && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor))))
     runs-on: ubuntu-latest
     environment: cloudflare-runtime-release
     timeout-minutes: 45
@@ -496,16 +496,21 @@ jobs:
         run: node scripts/release/pipeline-record.mjs
 
   # Automatic: a merge-triggered run whose staging passed, while the private policy says autoProduction.
-  # Manual: only the owner's own dispatch of pipeline-promote, naming the staging run and commit.
+  # Manual: a dispatch of pipeline-promote on main naming the staging run and commit. The job runs only
+  # for a promoter in config/release-promoters.json (actor id, actor and re-run actor) before any secret;
+  # the select step then requires the same list on private main and the staged evidence before the
+  # deployment credential, and the private publisher checks the policy again.
   pipeline-production:
     needs: [pipeline, pipeline-record]
-    if: "!cancelled() && ((github.event_name == 'workflow_run' && needs.pipeline.result == 'success' && needs.pipeline-record.result == 'success' && needs.pipeline.outputs.production-enabled == 'true') || (github.event_name == 'workflow_dispatch' && inputs.phase == 'pipeline-promote' && github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274') && github.ref == 'refs/heads/main' && github.actor_id == '183887963'))"
+    if: >-
+      !cancelled() && ((github.event_name == 'workflow_run' && needs.pipeline.result == 'success' && needs.pipeline-record.result == 'success' && needs.pipeline.outputs.production-enabled == 'true') || (github.event_name == 'workflow_dispatch' && inputs.phase == 'pipeline-promote' && github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274') && github.ref == 'refs/heads/main' && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor))))
     runs-on: ubuntu-latest
     environment: cloudflare-runtime-release
     timeout-minutes: 45
     permissions:
       contents: read
       actions: read
+      checks: read
       issues: read
       id-token: write
     outputs:

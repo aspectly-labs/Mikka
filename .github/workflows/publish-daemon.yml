@@ -1,6 +1,10 @@
 name: Publish daemon
 
 # Keep this filename: npm trusted publishing authorizes this workflow identity.
+# A main push publishes to the npm `next` dist-tag only. Installed daemons follow `latest`, which
+# moves only when a promoter (config/release-promoters.json) dispatches this workflow with
+# `staged_run`, a successful push run whose daemon inputs match current main
+# (scripts/release/daemon-promotion.mjs; docs/operations/build-source-of-truth.md#production-promotion-switch).
 on:
   push:
     branches: [main]
@@ -19,6 +23,11 @@ on:
       - 'config/release-security.json'
       - '.github/workflows/publish-daemon.yml'
   workflow_dispatch:
+    inputs:
+      staged_run:
+        description: Successful push run of this workflow that published the same daemon inputs to npm next; this dispatch publishes main to latest
+        type: string
+        required: true
 
 concurrency:
   group: publish-daemon
@@ -36,7 +45,7 @@ env:
 
 jobs:
   publish:
-    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main'
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor)))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -45,6 +54,8 @@ jobs:
       id-token: write
     env:
       MIKKA_DAEMON_PACKAGE_NAME: '@aspectlylabs/mikka'
+      # Automatic pushes publish to next; only a verified promoter dispatch publishes to latest.
+      MIKKA_DAEMON_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && 'latest' || 'next' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -55,6 +66,12 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
+      - name: Verify the staged daemon run before publishing to latest
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STAGED_RUN: ${{ inputs.staged_run }}
+        run: node scripts/release/daemon-promotion.mjs
       - run: npm install --global npm@11.19.0
       - name: Prepare release version and check registry
         id: release

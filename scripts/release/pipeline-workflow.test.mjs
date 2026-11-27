@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { committedPromoters, promoterGateExpression } from './release-policy.mjs'
 import test from 'node:test'
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
@@ -39,8 +40,8 @@ test('only actual successful same-repository main pushes or explicit recovery ac
   assert.doesNotMatch(source, /GITHUB_EVENT_NAME:\s|GITHUB_REF:\s|GITHUB_ACTOR_ID:\s/)
 })
 
-test('automatic staging accepts the merge queue pair but manual recovery remains owner-only', () => {
-  const allowed = new Function('github', 'inputs', `return ${workflow.jobs.pipeline.if}`)
+test('automatic staging accepts the merge queue pair but manual recovery is promoter-only', () => {
+  const allowed = (github, inputs) => evaluate(workflow.jobs.pipeline.if, { github, inputs })
   const github = { repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main',
     actor_id: '118344674', actor: 'github-merge-queue[bot]', triggering_actor: 'github-merge-queue[bot]', event_name: 'workflow_run', event: {
       repository: { id: 1427517699 }, workflow_run: { event: 'push', head_branch: 'main', conclusion: 'success', head_repository: { id: 1427517699 } } } }
@@ -53,9 +54,12 @@ test('automatic staging accepts the merge queue pair but manual recovery remains
   for (const patch of [{ event: 'workflow_dispatch' }, { head_branch: 'feature' }, { conclusion: 'failure' }, { head_repository: { id: 7 } }])
     assert.equal(allowed({ ...github, event: { ...github.event, workflow_run: { ...github.event.workflow_run, ...patch } } }, {}), false)
   for (const phase of ['pipeline-stage', 'pipeline-rollback']) {
-    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase }), true)
-    assert.equal(allowed({ ...github, actor_id: '158243242', actor: 'devin-ai-integration[bot]', event_name: 'workflow_dispatch' }, { phase }), true)
-    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase: 'stage-all' }), false)
+    // Manual recovery is promoter-only: the merge queue cannot dispatch it, the owner and Devin can.
+    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase }), false)
+    const owner = { actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }
+    assert.equal(allowed({ ...github, ...owner, event_name: 'workflow_dispatch' }, { phase }), true)
+    assert.equal(allowed({ ...github, actor_id: '158243242', actor: 'devin-ai-integration[bot]', triggering_actor: 'devin-ai-integration[bot]', event_name: 'workflow_dispatch' }, { phase }), true)
+    assert.equal(allowed({ ...github, ...owner, event_name: 'workflow_dispatch' }, { phase: 'stage-all' }), false)
   }
 })
 
@@ -167,10 +171,12 @@ test('read-only migration admission precedes candidate preparation and deploymen
 // GitHub expression subset used by these job conditions, evaluated with JavaScript semantics.
 function condition(expression) {
   const body = expression.replace(/\.([A-Za-z_][A-Za-z0-9_]*-[A-Za-z0-9_-]+)/g, '["$1"]')
-  return new Function('github', 'inputs', 'needs', 'cancelled', 'always', 'startsWith', `return ${body}`)
+  return new Function('github', 'inputs', 'needs', 'cancelled', 'always', 'startsWith', 'contains', 'fromJSON', `return ${body}`)
 }
-const evaluate = (expression, { github, inputs = {}, needs = {} }) => condition(expression)(github, inputs, needs,
-  () => false, () => true, (value, prefix) => String(value ?? '').startsWith(prefix))
+function evaluate(expression, { github, inputs = {}, needs = {} }) {
+  return condition(expression)(github, inputs, needs, () => false, () => true,
+    (value, prefix) => String(value ?? '').startsWith(prefix), (list, item) => list.includes(item), JSON.parse)
+}
 
 // Runs the workflow's own inline policy reader against a fixture operations checkout.
 async function policyDecision(policy) {
@@ -212,16 +218,20 @@ test('the private autoProduction switch in manual mode leaves production to an o
   // Staging still runs on every merge regardless of the switch.
   assert.equal(evaluate(workflow.jobs.pipeline.if, { github }), true)
 
-  // The manual path: only the owner's own dispatch of pipeline-promote on main reaches production.
+  // The manual path: a dispatch of pipeline-promote on main reaches the selector, which admits only
+  // listed promoters on evidence (scripts/release/pipeline-inputs.test.mjs) before any deploy credential.
   const skipped = { pipeline: { result: 'skipped', outputs: {} }, 'pipeline-record': { result: 'skipped' } }
   const owner = { ...github, event_name: 'workflow_dispatch', actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }
   assert.equal(evaluate(production, { github: owner, inputs: { phase: 'pipeline-promote' }, needs: skipped }), true)
+  assert.equal(evaluate(production, { github: { ...owner, actor_id: '158243242', actor: 'devin-ai-integration[bot]' }, inputs: { phase: 'pipeline-promote' }, needs: skipped }), true)
+  const steps = workflow.jobs['pipeline-production'].steps
+  assert.ok(steps.findIndex(step => step.id === 'select') < steps.findIndex(step => step.name === 'Read the existing Cloudflare deployment identity'),
+    'promoter and evidence gates run before the deployment credential')
   assert.equal(evaluate(workflow.jobs.pipeline.if, { github: owner, inputs: { phase: 'pipeline-promote' } }), false)
   assert.equal(evaluate(workflow.jobs['deploy-application'].if, { github: owner, inputs: { phase: 'pipeline-promote' } }), false)
   for (const phase of ['pipeline-stage', 'pipeline-rollback', 'service-production', 'gateway-observe', undefined])
     assert.equal(evaluate(production, { github: owner, inputs: { phase }, needs: skipped }), false, String(phase))
-  for (const patch of [{ actor_id: '118344674', actor: 'github-merge-queue[bot]' }, { actor_id: '158243242', actor: 'devin-ai-integration[bot]' },
-    { ref: 'refs/heads/feature' }, { repository_id: '7' }, { repository_owner_id: '7' }])
+  for (const patch of [{ ref: 'refs/heads/feature' }, { repository_id: '7' }, { repository_owner_id: '7' }])
     assert.equal(evaluate(production, { github: { ...owner, ...patch }, inputs: { phase: 'pipeline-promote' }, needs: skipped }), false, JSON.stringify(patch))
   // The dispatch carries the staging run and the exact commit to promote into the selector.
   assert.ok(workflow.on.workflow_dispatch.inputs.phase.options.includes('pipeline-promote'))
@@ -230,4 +240,27 @@ test('the private autoProduction switch in manual mode leaves production to an o
   assert.equal(select.env.INPUT_PIPELINE_RUN, '${{ inputs.pipeline_run }}')
   assert.equal(select.env.INPUT_PROMOTE_SOURCE, '${{ inputs.promote_source }}')
   assert.equal(select.env.INPUT_CLOUD_SOURCE, '${{ inputs.cloud_source_sha }}')
+})
+
+test('every manual deployment job is gated on the committed promoters list before any secret is read', () => {
+  const gate = promoterGateExpression()
+  assert.deepEqual(committedPromoters().map(entry => entry.login), ['alexj11324', 'devin-ai-integration[bot]'])
+  for (const name of ['deploy-application', 'pipeline', 'pipeline-production'])
+    assert.equal(workflow.jobs[name].if.split(gate).length - 1, 1, name + ' must carry the promoter gate exactly once')
+  const promoter = { repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main', event_name: 'workflow_dispatch' }
+  const skipped = { pipeline: { result: 'skipped', outputs: {} }, 'pipeline-record': { result: 'skipped' } }
+  const cases = [['deploy-application', 'service-production'], ['deploy-application', 'production-web'], ['deploy-application', 'cloud-services-production'],
+    ['pipeline', 'pipeline-stage'], ['pipeline', 'pipeline-rollback'], ['pipeline-production', 'pipeline-promote']]
+  for (const [name, phase] of cases) {
+    const run = github => evaluate(workflow.jobs[name].if, { github: { ...promoter, ...github }, inputs: { phase }, needs: skipped })
+    assert.equal(run({ actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }), true, name + phase)
+    assert.equal(run({ actor_id: '158243242', actor: 'devin-ai-integration[bot]', triggering_actor: 'devin-ai-integration[bot]' }), true, name + phase)
+    // A non-listed writer, a re-run of a listed dispatch by someone else, a renamed account and merge automation never start the job.
+    for (const github of [{ actor_id: '7', actor: 'outsider', triggering_actor: 'outsider' },
+      { actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'outsider' },
+      { actor_id: '183887963', actor: 'renamed', triggering_actor: 'renamed' },
+      { actor_id: '118344674', actor: 'github-merge-queue[bot]', triggering_actor: 'github-merge-queue[bot]' },
+      { actor_id: '41898282', actor: 'github-actions[bot]', triggering_actor: 'github-actions[bot]' }])
+      assert.equal(run(github), false, name + phase + JSON.stringify(github))
+  }
 })

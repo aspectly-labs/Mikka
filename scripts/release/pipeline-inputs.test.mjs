@@ -432,11 +432,21 @@ async function manualPromotion(t, change = {}) {
     GITHUB_REF: 'refs/heads/main', GITHUB_ACTOR_ID: '183887963', GITHUB_ACTOR: 'alexj11324', GITHUB_EVENT_NAME: 'workflow_dispatch',
     GITHUB_ENV: join(directory, 'env'), RUNNER_TEMP: directory, GITHUB_RUN_ID: '201', GITHUB_RUN_ATTEMPT: '1',
     MIKKA_DEPLOYMENT_PHASE: 'pipeline-promote', INPUT_PIPELINE_RUN: '199', INPUT_PROMOTE_SOURCE: source,
-    INPUT_CLOUD_SOURCE: 'f'.repeat(40), ...change.env }
+    INPUT_CLOUD_SOURCE: 'f'.repeat(40), GITHUB_SHA: 'e'.repeat(40), GITHUB_WORKFLOW_SHA: 'e'.repeat(40),
+    GITHUB_WORKFLOW_REF: repo.full_name + '/.github/workflows/cloudflare-app-deploy.yml@refs/heads/main', ...change.env }
+  if (!('GITHUB_TRIGGERING_ACTOR' in env)) env.GITHUB_TRIGGERING_ACTOR = change.triggeringActor?.login ?? env.GITHUB_ACTOR
   await writeFile(env.GITHUB_ENV, '')
   const manifest = manifestFixture()
   const stageRun = { ...run(), id: 199, run_attempt: 1, path: deploy, event: 'workflow_run', actor: bot, triggering_actor: bot, ...change.stageRun }
-  const current = { ...run(), id: 201, run_attempt: 1, path: deploy, event: 'workflow_dispatch', status: 'in_progress', conclusion: null }
+  const dispatcher = change.dispatcher ?? { id: Number(env.GITHUB_ACTOR_ID), login: env.GITHUB_ACTOR }
+  const current = { ...run(), id: 201, run_attempt: 1, path: deploy, event: 'workflow_dispatch', status: 'in_progress', conclusion: null,
+    head_sha: 'e'.repeat(40), actor: dispatcher, triggering_actor: change.triggeringActor ?? dispatcher, ...change.current }
+  const policy = change.policy ?? { version: 1, autoProduction: false, mobileProduction: false,
+    promoters: [{ id: 183887963, login: 'alexj11324', note: 'owner' }, { id: 158243242, login: 'devin-ai-integration[bot]', note: 'Devin' }],
+    requiredChecks: { production: change.productionChecks ?? [], desktop: [], mobile: [] } }
+  const policyBytes = Buffer.from(typeof policy === 'string' ? policy : JSON.stringify(policy))
+  const policyRecord = { type: 'file', path: 'docs/operations/releases/deploy-pipeline.json', encoding: 'base64', size: policyBytes.length,
+    content: policyBytes.toString('base64'), sha: createHash('sha1').update('blob ' + policyBytes.length + '\0').update(policyBytes).digest('hex') }
   const qualified = { ...run(), id: 501, run_attempt: 1, path: '.github/workflows/cloud-services-ci.yml', event: 'workflow_dispatch' }
   const packet = (origin, id, prefix, files, sha = source) => {
     const bytes = zipped(files)
@@ -458,7 +468,12 @@ async function manualPromotion(t, change = {}) {
   packets[150] = packet(production, 450, 'deploy-production', { 'release-manifest.json': manifestFixture(older), 'pipeline-summary.json': {
     version: 1, target: 'production', status: 'passed', verification: { status: 'pass' }, deployment: { runId: '150', runAttempt: '1' },
     origin: { runId: '90', runAttempt: '1', artifactId: '290' } } }, older)
-  const stageJobs = change.stageJobs ?? [{ name: 'pipeline', status: 'completed', conclusion: 'success', steps: [
+  // A later staging writer: a pipeline-rollback dispatch that restored the previous staging release.
+  const newer = { ...run(), id: 200, run_attempt: 1, path: deploy, event: 'workflow_dispatch' }
+  packets[200] = packet(newer, 402, 'deploy-pipeline', { 'release-manifest.json': manifest, 'pipeline-summary.json': {
+    version: 1, target: 'staging', status: 'passed', verification: { status: 'pass' }, deployment: { runId: '200', runAttempt: '1' },
+    rollback: { status: 'passed' }, origin: summary.origin, previousOrigin: summary.origin } })
+  const stageJobs = change.stageJobs ?? [{ id: 7199, name: 'pipeline', status: 'completed', conclusion: 'success', steps: [
     { name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'success' },
     { name: 'Upload pipeline receipts', status: 'completed', conclusion: 'success' }] },
     { name: 'pipeline-production', status: 'completed', conclusion: 'skipped' }]
@@ -466,6 +481,9 @@ async function manualPromotion(t, change = {}) {
   const api = async path => {
     calls.push(path)
     if (path.endsWith('/runs/101/attempts/2')) return run()
+    if (path.endsWith('/runs/201/attempts/1')) return current
+    if (path === 'alexj11324/mikka-cloud/contents/docs/operations/releases/deploy-pipeline.json?ref=' + 'f'.repeat(40)) return policyRecord
+    if (path.includes(`/commits/${source}/check-runs?`)) return { total_count: 1, check_runs: change.checkRuns ?? [] }
     if (path.endsWith('/runs/90/attempts/1')) return oldRelease
     if (path.endsWith('/actions/runs/199')) return stageRun
     if (path.includes('/runs/199/attempts/1/jobs?')) return { total_count: stageJobs.length, jobs: stageJobs }
@@ -474,8 +492,14 @@ async function manualPromotion(t, change = {}) {
       if (path.endsWith(`/artifacts/${value.artifact.id}/zip`)) return value.bytes
     }
     if (path.endsWith('mikka-cloud/git/ref/heads/main')) return { object: { sha: 'f'.repeat(40) } }
-    if (path.includes('workflows/cloudflare-app-deploy.yml/runs?'))
-      return { total_count: change.production ? 2 : 1, workflow_runs: [current, ...(change.production ? [production] : [])] }
+    if (path.includes('workflows/cloudflare-app-deploy.yml/runs?')) {
+      const runs = [current, ...(change.newerStaging ? [newer] : []), stageRun, ...(change.production ? [production] : [])]
+      return { total_count: runs.length, workflow_runs: runs }
+    }
+    if (path.endsWith('/jobs/7199/logs')) return Buffer.from('Artifact deploy-pipeline-199-1.zip successfully finalized.\nArtifact ID 401\n')
+    if (path.includes('/runs/200/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 7200, name: 'pipeline', status: 'completed', conclusion: 'success',
+      steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'success' }] }] }
+    if (path.endsWith('/jobs/7200/logs')) return Buffer.from('Artifact deploy-pipeline-200-1.zip successfully finalized.\nArtifact ID 402\n')
     if (path.includes('/runs/150/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 7150, name: 'pipeline-production', status: 'completed',
       conclusion: 'success', steps: [{ name: 'Promote and verify the staged service manifest', conclusion: 'success' }] }] }
     if (path.endsWith('/jobs/7150/logs')) return Buffer.from('Artifact deploy-production-150-1.zip successfully finalized.\nArtifact ID 450\n')
@@ -486,7 +510,7 @@ async function manualPromotion(t, change = {}) {
   return { env, api, calls, read: () => readFile(env.GITHUB_ENV, 'utf8') }
 }
 
-test('a paused production promotes only the staging run and commit the owner names in a dispatch', async t => {
+test('a paused production promotes only the staging run and commit a listed promoter names in a dispatch', async t => {
   for (const production of [false, true]) {
     const f = await manualPromotion(t, { production })
     const result = await selectPromotion({ env: f.env, api: f.api })
@@ -500,13 +524,22 @@ test('a paused production promotes only the staging run and commit the owner nam
     assert.equal(variables.MIKKA_PRODUCTION_RELEASE_RUN_ID, production ? '90' : undefined)
     assert.equal(f.calls.some(path => path.includes('/compare/')), production)
   }
+  // An agent on the promoters list promotes exactly like the owner; a required production check must pass.
+  const devin = { GITHUB_ACTOR_ID: '158243242', GITHUB_ACTOR: 'devin-ai-integration[bot]' }
+  const agent = await manualPromotion(t, { env: devin })
+  assert.equal((await selectPromotion({ env: agent.env, api: agent.api })).status, 'selected')
+  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e' }
+  const passed = await manualPromotion(t, { productionChecks: [e2e], checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'completed', conclusion: 'success' }] })
+  assert.equal((await selectPromotion({ env: passed.env, api: passed.api })).status, 'selected')
 })
 
 test('a manual promotion refuses other actors, missing or mismatched inputs, unfinished staging and downgrades', async t => {
   const untrusted = async () => assert.fail('An untrusted dispatch must not read GitHub')
   for (const [env, code] of [
     [{ GITHUB_ACTOR_ID: '118344674', GITHUB_ACTOR: 'github-merge-queue[bot]' }, /pipeline_actor_untrusted/],
-    [{ GITHUB_ACTOR_ID: '158243242', GITHUB_ACTOR: 'devin-ai-integration[bot]' }, /pipeline_actor_untrusted/],
+    [{ GITHUB_ACTOR_ID: '41898282', GITHUB_ACTOR: 'github-actions[bot]' }, /pipeline_actor_untrusted/],
+    [{ GITHUB_WORKFLOW_REF: repo.full_name + '/.github/workflows/cloudflare-app-deploy.yml@refs/heads/feature' }, /pipeline_workflow_ref_required/],
+    [{ GITHUB_WORKFLOW_SHA: 'd'.repeat(40) }, /pipeline_workflow_ref_required/],
     [{ MIKKA_DEPLOYMENT_PHASE: 'pipeline-stage' }, /pipeline_deployment_phase_invalid/],
     [{ INPUT_PIPELINE_RUN: '' }, /pipeline_promotion_stage_run_required/],
     [{ INPUT_PIPELINE_RUN: '201' }, /pipeline_promotion_stage_run_required/],
@@ -533,6 +566,24 @@ test('a manual promotion refuses other actors, missing or mismatched inputs, unf
     [{ stagedManifest: manifestFixture('d'.repeat(40)) }, /pipeline_stage_manifest_mismatch/],
     [{ production: true, compare: 'behind' }, /pipeline_promotion_downgrade_rejected/],
     [{ production: true, compare: 'diverged' }, /pipeline_promotion_downgrade_rejected/],
+    // A rollback (or any later staging run) since the candidate staged makes it no longer promotable.
+    [{ newerStaging: true }, /pipeline_stage_not_current/],
+    [{ triggeringActor: { id: 158243242, login: 'devin-ai-integration[bot]' }, env: { GITHUB_TRIGGERING_ACTOR: 'alexj11324' } }, /pipeline_run_identity_mismatch/],
+    [{ policy: { version: 1, autoProduction: false, mobileProduction: false, promoters: [{ id: 183887963, login: 'alexj11324', note: 'owner' }],
+      requiredChecks: { production: [], desktop: [], mobile: [] } } }, /pipeline_promoters_diverged/],
+    // Gate on the promoters list and the run's real identity, including a re-run by someone else.
+    [{ env: { GITHUB_ACTOR_ID: '7', GITHUB_ACTOR: 'outsider' } }, /pipeline_actor_not_promoter/],
+    [{ triggeringActor: { id: 7, login: 'outsider' } }, /pipeline_actor_not_promoter/],
+    [{ env: { GITHUB_ACTOR: 'renamed' } }, /pipeline_actor_not_promoter/],
+    [{ current: { actor: { id: 158243242, login: 'devin-ai-integration[bot]' } } }, /pipeline_run_identity_mismatch/],
+    [{ current: { head_branch: 'feature' } }, /pipeline_run_identity_mismatch/],
+    [{ current: { path: '.github/workflows/other.yml' } }, /pipeline_run_identity_mismatch/],
+    [{ policy: { version: 1, autoProduction: false, mobileProduction: false, promoters: [], requiredChecks: { production: [], desktop: [], mobile: [] } } }, /pipeline_actor_not_promoter/],
+    [{ policy: { version: 1, autoProduction: false, mobileProduction: false, requiredChecks: { production: [], desktop: [], mobile: [] } } }, /pipeline_policy_unreadable/],
+    [{ policy: '{not json' }, /pipeline_policy_unreadable/],
+    [{ productionChecks: [{ name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e' }],
+      checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'completed', conclusion: 'failure' }] }, /pipeline_required_check_failed/],
+    [{ productionChecks: [{ name: 'mobile-smoke', kind: 'builtin' }] }, /pipeline_required_check_failed/],
   ]) {
     const f = await manualPromotion(t, change)
     await assert.rejects(selectPromotion({ env: f.env, api: f.api }), code, JSON.stringify(change))

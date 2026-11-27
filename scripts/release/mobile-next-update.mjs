@@ -2,12 +2,12 @@
 // Enforces next-channel OTA isolation, validates dispatch inputs and EAS channel
 // mappings before publication, and prints only public-safe metadata (never
 // credentials or private diagnostics).
-import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { artifactFor, readArtifactMembers } from './pipeline-inputs.mjs'
 import { officialMikkaRepository } from '../cloudflare-source.mjs'
+import { checkedReleasePolicy, isPromoter, isPromoterLogin, publicPolicy, readReleasePolicy, requireCommittedPromoters } from './release-policy.mjs'
 
 const SHA = /^[0-9a-f]{40}$/
 const MOBILE_OTA_RUNTIME_PATTERN = /^mikka-next-[1-9][0-9]*$/
@@ -20,10 +20,7 @@ export const EXPECTED_IOS_BUNDLE_ID = 'com.aspectlylabs.mikka'
 // A staged OTA lands on this EAS branch, which no user-facing channel may map to.
 export const STAGING_BRANCH = 'next-staging'
 export const MOBILE_PHASES = Object.freeze(['stage', 'publish', 'promote'])
-export const OWNER_ACTOR_ID = '183887963'
 const WORKFLOW_PATH = '.github/workflows/mobile-next-update.yml'
-const POLICY_PATH = 'docs/operations/releases/deploy-pipeline.json'
-const OPERATIONS_OWNERS = new Set(['alexj11324', 'aspectly-labs'])
 const DECIMAL = /^[1-9][0-9]{0,15}$/
 
 function hasControlChars(text) {
@@ -267,8 +264,11 @@ export function parseEasUpdateOutput(
         ? [payload]
         : []
 
+  // `update --json` and `update:view --json` print `branch`/`runtimeVersion` strings; `update:republish --json`
+  // prints GraphQL updates with `branch: {id, name}` and `runtime: {id, version}` (eas-cli 27.2.0).
+  const branchName = entry => typeof entry?.branch === 'string' ? entry.branch : entry?.branch?.name
   for (const entry of candidates) {
-    if (entry?.branch === 'production') fail('forbiddenBranch')
+    if (branchName(entry) === 'production') fail('forbiddenBranch')
   }
 
   const selected = candidates.find(entry => entry?.platform === expectedPlatform)
@@ -283,10 +283,10 @@ export function parseEasUpdateOutput(
     fail('updateIdInvalid')
   }
 
-  const runtimeVersion = selected.runtimeVersion ?? payload?.runtimeVersion ?? ''
+  const runtimeVersion = selected.runtimeVersion ?? selected.runtime?.version ?? payload?.runtimeVersion ?? ''
   if (runtimeVersion !== expectedRuntimeVersion) fail('runtimeVersionMismatch')
 
-  const branch = selected.branch ?? payload?.branch ?? expectedBranch ?? expectedChannel
+  const branch = branchName(selected) ?? payload?.branch ?? expectedBranch ?? expectedChannel
   if (typeof branch !== 'string' || !SAFE_BRANCH.test(branch) || branch === 'production') {
     fail('forbiddenBranch')
   }
@@ -332,26 +332,24 @@ export function requirePhaseAllowed(phase, mode) {
   if (phase === 'promote' && !['automatic', 'manual'].includes(mode)) fail('productionPolicyUnreadable')
 }
 
-/** Read the policy file on private main with a read-only contents token. Every failure is `unreadable`. */
-export async function readOperationsPolicy({ owner, token, fetchImpl = fetch } = {}) {
-  if (!OPERATIONS_OWNERS.has(owner) || typeof token !== 'string' || token.length < 10) return { mode: 'unreadable' }
+/** Read and check the release policy on private main. Every failure is `unreadable`; a policy whose
+ * promoters differ from config/release-promoters.json (the public job gate) is unreadable too. */
+export async function readOperationsPolicy({ owner, token, fetchImpl = fetch, read = readReleasePolicy } = {}) {
   try {
-    const response = await fetchImpl(`https://api.github.com/repos/${owner}/mikka-cloud/contents/${POLICY_PATH}?ref=main`, {
-      headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' },
-      redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30_000),
-    })
-    if (response.status !== 200) { await response.body?.cancel(); return { mode: 'unreadable' } }
-    const record = await response.json()
-    if (record?.type !== 'file' || record.path !== POLICY_PATH || record.encoding !== 'base64'
-      || !Number.isSafeInteger(record.size) || record.size <= 0 || record.size > 64 * 1024) return { mode: 'unreadable' }
-    const bytes = Buffer.from(String(record.content ?? ''), 'base64')
-    const blob = createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex')
-    if (bytes.length !== record.size || blob !== record.sha) return { mode: 'unreadable' }
-    const policy = JSON.parse(bytes.toString('utf8'))
-    return { mode: mobilePolicyMode(policy), blob }
+    const { policy, blob } = await read({ owner, token, fetchImpl })
+    const checked = checkedReleasePolicy(policy)
+    requireCommittedPromoters(checked)
+    return { mode: mobilePolicyMode(policy), blob, checked }
   } catch {
     return { mode: 'unreadable' }
   }
+}
+
+/** publish and promote run only for a promoter: the dispatcher (id and login) and whoever started this attempt. */
+export function requirePromoterDispatch(env, checked) {
+  if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || !checked
+    || !isPromoter(checked, { id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR })
+    || !isPromoterLogin(checked, env.GITHUB_TRIGGERING_ACTOR)) fail('dispatchNeedsPromoter')
 }
 
 function extractProductionBranches(productionChannelRaw) {
@@ -376,11 +374,9 @@ export function stageReceipt(summary, { runId, runAttempt }) {
     updateGroupId: summary.updateGroupId }
 }
 
-const isOwner = actor => String(actor?.id ?? '') === OWNER_ACTOR_ID
-
 /** Promotion requires a completed, successful stage run of this workflow on main, dispatched by a
  * repository writer, whose receipt names the exact hosted-ui commit the owner asks to promote. */
-export async function verifiedStage({ stageRun, hostedUiRef, read }) {
+export async function verifiedStage({ stageRun, hostedUiRef, read, checked }) {
   if (!DECIMAL.test(String(stageRun ?? ''))) fail('stageRunRequired')
   if (!SHA.test(hostedUiRef ?? '')) fail('promoteNeedsExactSha')
   const run = await read(`actions/runs/${stageRun}`)
@@ -390,6 +386,11 @@ export async function verifiedStage({ stageRun, hostedUiRef, read }) {
   if (run.path !== WORKFLOW_PATH || run.event !== 'workflow_dispatch' || run.head_branch !== 'main'
     || run.status !== 'completed' || run.conclusion !== 'success' || String(run.id) !== String(stageRun)
     || !DECIMAL.test(String(run.run_attempt))) fail('stageRunUnsuccessful')
+  // Only a stage a promoter started (and did not have re-run by someone else) can be promoted.
+  if (!checked || !isPromoter(checked, run.actor) || !isPromoter(checked, run.triggering_actor)) fail('stageRunNotPromoter')
+  // The workflow revision that staged it is part of main.
+  const compared = await read(`compare/${run.head_sha}...main`)
+  if (!['identical', 'ahead'].includes(compared?.status) || compared.merge_base_commit?.sha !== run.head_sha) fail('stageRunOffMain')
   const listing = await read(`actions/runs/${run.id}/artifacts?per_page=100`)
   let artifact, files
   try {
@@ -406,8 +407,18 @@ export async function verifiedStage({ stageRun, hostedUiRef, read }) {
     runtimeVersion: receipt.runtimeVersion, overlaySha: receipt.overlaySha }
 }
 
-export function requireOwnerPromotion(env) {
-  if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || !isOwner({ id: env.GITHUB_ACTOR_ID })) fail('promoteNeedsOwner')
+/** `eas update:view <group> --json` must show the staged group still on the staging branch, for iOS and its runtime. */
+export function verifyStagedGroup(rawOutput, { groupId, runtimeVersion }) {
+  const payload = parseJsonPayload(rawOutput, 'invalidStagedGroupJson')
+  const updates = Array.isArray(payload) ? payload : Array.isArray(payload?.updates) ? payload.updates : []
+  if (!updates.length || !SAFE_ID.test(groupId ?? '')) fail('stagedGroupMissing')
+  for (const update of updates) {
+    const branch = typeof update?.branch === 'string' ? update.branch : update?.branch?.name
+    const runtime = update?.runtimeVersion ?? update?.runtime?.version
+    if (update?.group !== groupId || branch !== STAGING_BRANCH || runtime !== runtimeVersion) fail('stagedGroupMismatch')
+  }
+  if (!updates.some(update => update.platform === EXPECTED_PLATFORM)) fail('stagedGroupMismatch')
+  return { groupId, branch: STAGING_BRANCH, runtimeVersion }
 }
 
 async function publicActionsRead(path, { bytes = false } = {}) {
@@ -441,13 +452,24 @@ export function formatStepSummary(summary) {
 
 async function main() {
   const [command, target, secondary] = process.argv.slice(2)
-  if (command === 'policy') {
-    // Usage: policy <phase>. Reads mikka-cloud main with MIKKA_OPERATIONS_READ_TOKEN; fails closed.
+  if (command === 'policy' || command === 'policy-recheck') {
+    // policy <phase>: read private main with MIKKA_OPERATIONS_READ_TOKEN; fail closed; publish and promote need a promoter.
+    // policy-recheck <phase>: the same, and the policy blob must still be the one read first (MOBILE_POLICY_BLOB).
     const phase = validatePhase(target)
-    const { mode } = await readOperationsPolicy({ owner: process.env.MIKKA_OPERATIONS_OWNER,
+    const { mode, blob, checked } = await readOperationsPolicy({ owner: process.env.MIKKA_OPERATIONS_OWNER,
       token: process.env.MIKKA_OPERATIONS_READ_TOKEN })
     requirePhaseAllowed(phase, mode)
+    if (phase !== 'stage') requirePromoterDispatch(process.env, checked)
+    if (command === 'policy-recheck' && (!blob || blob !== process.env.MOBILE_POLICY_BLOB)) fail('productionPolicyChanged')
+    if (command === 'policy' && process.env.GITHUB_ENV && checked) await appendFile(process.env.GITHUB_ENV,
+      `MOBILE_POLICY_BLOB=${blob}\nMIKKA_RELEASE_POLICY=${JSON.stringify(publicPolicy(checked, 'mobile'))}\n`)
     console.log(JSON.stringify({ phase, mode }))
+    return
+  }
+  if (command === 'verify-staged-group') {
+    if (!target) fail('easOutputPathRequired')
+    console.log(JSON.stringify(verifyStagedGroup(await readFile(target, 'utf8'), {
+      groupId: process.env.STAGED_UPDATE_GROUP, runtimeVersion: process.env.STAGED_RUNTIME_VERSION })))
     return
   }
   if (command === 'verify-staging-channel') {
@@ -472,9 +494,13 @@ async function main() {
     return
   }
   if (command === 'verify-stage') {
-    requireOwnerPromotion(process.env)
+    // Runs after `policy promote`, which exported the checked public projection of the policy.
+    let projection
+    try { projection = JSON.parse(process.env.MIKKA_RELEASE_POLICY ?? '') } catch { fail('policyRequired') }
+    const checked = { promoters: Array.isArray(projection?.promoters) ? projection.promoters : [] }
+    requirePromoterDispatch(process.env, checked)
     const staged = await verifiedStage({ stageRun: process.env.STAGE_RUN, hostedUiRef: process.env.HOSTED_UI_REF,
-      read: publicActionsRead })
+      read: publicActionsRead, checked })
     if (process.env.GITHUB_ENV) await appendFile(process.env.GITHUB_ENV,
       `STAGED_UPDATE_GROUP=${staged.updateGroupId}\nSTAGED_RUNTIME_VERSION=${staged.runtimeVersion}\n`)
     console.log(JSON.stringify(staged))

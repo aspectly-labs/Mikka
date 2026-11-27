@@ -253,8 +253,12 @@ and promotion remain with #2897/#1954.
 
 ## Production promotion switch
 
-**Paused: production promotion, Desktop publication and production mobile OTA
-need a human (Alex, 2026-11-27).** Staging still deploys every merge to `main`.
+**Paused: production promotion, Desktop publication, the production mobile OTA
+and npm `latest` need an explicit promoter (Alex, 2026-11-27).** Staging still
+deploys every merge to `main`, and the daemon still publishes to npm `next`.
+Promotion is gated on evidence, not on who triggers it: the owner and agents may
+promote, but only through an explicit dispatch whose evidence holds. A merge
+never promotes by itself.
 
 Why: from about 18:00 UTC on 2026-11-26, every merge to `main` staged, then
 promoted production (`pipeline-production`), and that promotion started a
@@ -264,52 +268,108 @@ CI became browser-free (hosted #385) and the Desktop route-allowlist guard skips
 when it has no hosted checkout. Desktop `2026.10000.1939` shipped broken to every
 user. Continuous deployment comes back once the gates listed below exist.
 
-**The switches** are two fields of one reviewed file, private `mikka-cloud`
-`docs/operations/releases/deploy-pipeline.json` on `main`: `autoProduction` for
-production and Desktop, `mobileProduction` for the mobile OTA. Both are `false`
-now. There is no public switch.
+### The policy
 
-| `autoProduction` | Staging | Production | Desktop |
-| --- | --- | --- | --- |
-| `true` | every merge | promoted after staging passes | built after that promotion |
-| `false` (current) | every merge | only the owner's dispatch of `pipeline-promote` | only the owner's dispatch of `desktop-release.yml` |
+One reviewed file, private `mikka-cloud`
+`docs/operations/releases/deploy-pipeline.json` on `main`, is authoritative:
 
-It fails closed. `cloudflare-app-deploy.yml` promotes automatically only when
-it reads exactly `version: 1` and `autoProduction: true`; a missing, unreadable
-or different policy counts as `false`, and staging continues. The private
-publisher refuses an automatic (`workflow_run`) promotion unless
-`autoProduction` is `true`, and before every production write it re-reads the
-policy on private `main`: any change to the file stops a running promotion.
+| Field | Meaning |
+| --- | --- |
+| `autoProduction` (`false` now) | `true`: a merge-triggered staging run promotes production and then chains Desktop. `false`: only a promoter's `pipeline-promote` dispatch promotes. |
+| `mobileProduction` (`false` now) | `true`: `mobile-next-update.yml` `publish` may write `next` directly. `false`: only `stage` then `promote`. |
+| `promoters` | `{id, login, note}` per GitHub identity allowed to dispatch a promotion. Both the stable id and the login must match. Missing or empty: nobody promotes. `github-merge-queue[bot]` and `github-actions[bot]` are refused even if listed. |
+| `requiredChecks` | Per target (`production`, `desktop`, `mobile`), extra evidence checks: `{name, kind: "builtin"}` (implemented in `scripts/release/release-checks.mjs`) or `{name, kind: "check-run", repository: "public", checkRun}` (a successful GitHub check run of that name on the released public commit). The Desktop route guard is mandatory in code whatever the list says. An unknown check fails the release. |
 
-While paused, these do not move production:
+Readers fail closed: a missing, unreadable or malformed file, or any field of the
+wrong type, admits no promotion. The private publisher also refuses an automatic
+(`workflow_run`) promotion unless `autoProduction` is `true`, and before every
+production write it re-reads the file on private `main`: any change stops a
+running promotion.
 
-- `deploy-build-inputs.json` `overlaySource` (the overlay-sync bot's PRs)
-  selects the hosted UI for upcoming builds, which is what staging receives.
-  Production serves the overlay in its promoted manifest and changes only
-  with a promotion. A promotion also requires the candidate's overlay to equal
-  the current `overlaySource`, so after the pin moves, stage again first.
-- `integration-to-main-promotion.yml` runs only on `workflow_dispatch`
-  (`dry_run` by default, #3363). Merging into `main` only stages.
-- Desktop never starts by itself from an owner deployment dispatch, including
-  the legacy `gateway-observe` and a manual `pipeline-promote`: the trigger
-  ignores them and a chained Desktop run refuses their receipts. Only an
-  automatic `pipeline-production` promotion (`autoProduction: true`) chains
-  Desktop; otherwise the owner dispatches `desktop-release.yml`.
+`config/release-promoters.json` in this repository is the public copy of
+`promoters`. Each promotion job's `if` embeds exactly that list
+(`promoterGateExpression()` in `scripts/release/release-policy.mjs`, checked by
+`scripts/release/release-policy.test.mjs`), so a non-listed actor's dispatch, or
+a re-run of a listed actor's dispatch by someone else (`github.triggering_actor`),
+never starts the job and never reaches a secret. The scripts then require the
+private list to equal the public copy (`promotersDiverged` otherwise) and check
+the actor id, login and re-run actor again. Change both lists in the same pair of
+PRs.
 
-Production at the pause is deployment run 45913824441 (`main` `0e259f65f`,
-services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back.
+Current promoters:
 
-### Promote while paused
+| Identity | Evidence (read-only, 2026-11-27) |
+| --- | --- |
+| `alexj11324` (183887963) | Owner. 832 of 848 `workflow_dispatch` runs in `aspectly-labs/Mikka` from 2026-10-26 to 2026-11-26 (the other 16 are `github-actions[bot]`). Claude Code, Codex and Cursor sessions act through this account's OAuth. |
+| `devin-ai-integration[bot]` (158243242) | Devin. Authored 86 of the last 500 PRs and triggers `pull_request` runs; commits in all three repositories. No dispatch seen yet. |
+
+Not listed: no `claude[bot]` or other Claude GitHub App activity was found;
+`mikka-github[bot]` (325300657) only authors merge commits, and
+`mikka-aspectly-labs[bot]` is the overlay-sync automation, so both are merge or
+automation identities; `capy-ai[bot]` (last commit 2026-11-11) and `tembo[bot]`
+(commits 2026-11-23/24, no runs) were not seen dispatching or authoring PRs.
+No Antigravity identity was found.
+
+### What each promotion checks, in order
+
+Workflows only run on `refs/heads/main`; a promotion script also requires
+`GITHUB_WORKFLOW_REF` to be the workflow on `refs/heads/main` and
+`GITHUB_WORKFLOW_SHA == GITHUB_SHA`, so a branch with an edited workflow cannot
+skip the gates. The order of secrets is:
+
+1. Job `if`: repository, `main`, and the committed promoter gate. No secret yet.
+2. A read-only `mikka-cloud` contents token is minted from the existing source
+   App (Infisical `GITHUB_APP_ID`/`GITHUB_APP_PRIVATE_KEY`), only to read the policy.
+3. Evidence gates with that token and `github.token` only.
+4. Only then deployment, signing, Expo or npm publication credentials.
+
+Production (`pipeline-promote`): this run's real actor and re-run actor are
+promoters on current private `main`; the named staging run is a successful
+merge-triggered (`workflow_run`) run whose `pipeline` job deployed and uploaded
+receipts, passed, was not rolled back, and is **still the current staging
+baseline** (a later staging run or a `pipeline-rollback` makes it
+unpromotable); it staged exactly `promote_source` and the producer's manifest;
+`cloud_source_sha` is current private `main`; the candidate contains what
+production serves (no downgrade); and every `requiredChecks.production` entry
+passes. The private publisher re-checks the promoters, the staging evidence
+(`stagingEvidence`) and the downgrade rule before any write.
+
+Desktop (a `desktop-release.yml` dispatch): the dispatcher and re-run actor are
+promoters; the receipt is verified as before (a manual `pipeline:` receipt must
+come from a promoter's `pipeline-promote`); then, after the hosted checkout and
+before any Apple credential, `release-checks.mjs desktop` runs the Desktop
+route-allowlist guard (`apps/desktop/src/main/bundled-routes.test.ts`) for the
+exact public commit and hosted SHA being packaged and fails on any failed or
+skipped test, followed by every listed Desktop check. Desktop never starts by
+itself from an owner deployment dispatch (`gateway-observe`, `pipeline-promote`).
+
+Mobile (`mobile-next-update.yml` `promote`): see [Mobile OTA while paused](#mobile-ota-while-paused).
+
+npm daemon (`publish-daemon.yml`): a main push publishes to the `next` dist-tag
+only. A promoter dispatch with `staged_run` publishes current main to `latest`
+only if that run is a successful push run of this workflow that published, is in
+main's history, and no daemon input path changed since
+(`scripts/release/daemon-promotion.mjs`); the package checks run again, and
+`latest` never moves backwards.
+
+### Break-glass phases that bypass the staging evidence
+
+These `cloudflare-app-deploy.yml` `deploy-application` phases still write
+production without a staged pipeline run or the `autoProduction` flag:
+`service-production` (per-service release from `service-release.json`),
+`production-web`, `production-api`, `production-*` in general, and
+`cloud-services-production`. They run only for a listed promoter (job `if`, and
+the private operator for every dispatch) and on a reviewed operations commit.
+`gateway-observe` and `service-production` still chain the E2B runtime release
+by itself (not Desktop). Use them only for recovery, and record why.
+
+### Promote while paused (owner or agent)
 
 1. Pick a successful merge-triggered run of `cloudflare-app-deploy.yml` whose
-   `pipeline` job staged the candidate (`pipeline-production` shows skipped),
-   and the commit it staged (the run's head SHA, also `sourceCommit` in its
-   `deploy-pipeline-*` artifact). Check staging yourself.
-2. As the owner, dispatch `cloudflare-app-deploy.yml` on `main` with
-   `phase: pipeline-promote`, `pipeline_run: <staging run id>`,
-   `promote_source: <commit>` and `cloud_source_sha: <current mikka-cloud main>`.
-   The form also requires `qualification_run` and `qualification_artifact`;
-   `pipeline-*` phases ignore them and find the qualification themselves.
+   `pipeline` job staged the candidate (`pipeline-production` shows skipped) and
+   that is still the latest staging writer, and the commit it staged (its head
+   SHA). Check staging yourself.
+2. As a listed promoter, dispatch on `main`:
 
    ```sh
    gh workflow run cloudflare-app-deploy.yml --repo aspectly-labs/Mikka --ref main \
@@ -317,69 +377,76 @@ services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back
      -f cloud_source_sha=<mikka-cloud main> -f qualification_run=0 -f qualification_artifact=0
    ```
 
-3. `pipeline-production` refuses any other actor or phase; a staging run that
-   was not merge-triggered, failed, was rolled back or staged another commit;
-   a `cloud_source_sha` that is not current private `main`; and a commit that
-   does not contain what production serves (no downgrade). The private
-   publisher checks the staging evidence again before any write. Production
-   verification failures restore production as before.
-4. After production is verified, release Desktop by dispatching
-   `desktop-release.yml` on `main` with
-   `cloudflare_receipt: pipeline:<promotion run id>:<attempt>`. A manual
-   promotion never starts Desktop by itself, and a chained Desktop run refuses
-   its receipt.
+   (`qualification_*` are required by the form; `pipeline-*` phases ignore them.)
+3. After production is verified, dispatch `desktop-release.yml` on `main` with
+   `cloudflare_receipt: pipeline:<promotion run id>:<attempt>`.
+
+Agents use the same commands through their own identity (Devin) or the owner's
+OAuth. Do not re-run someone else's promotion run: a re-run by a non-promoter is
+refused.
+
+**When a candidate cannot be promoted.** A dispatched `pipeline-stage` run is not
+promotable (promotion needs a merge-triggered run). A promotion also requires the
+candidate's overlay to equal the current `deploy-build-inputs.json`
+`overlaySource`, so merging an overlay-sync PR after a candidate was staged makes
+that candidate unpromotable; the fix is a new main push, whose merge-triggered
+staging run then becomes the candidate. **Long pauses:** the receipt artifacts
+are kept 90 days. Once the production or staging baseline's receipts expire,
+`priorDeployment` fails closed; recover with the existing reviewed bootstrap
+(`stage-all` for staging) before promoting.
 
 The Desktop and runtime verifiers read `https://app.aspectlylabs.com/mikka/api/version`.
 It is a known flake: on 2026-11-27 it briefly answered
 `{"error":"deploymentVersionUnavailable"}` (HTTP 200) before answering build
-`01a4a7dcd076`, overlay `24d3aa2a` again. The verifier
-(`readProductionVersion` in `scripts/release/cloudflare-promoted-web.mjs`)
-retries only that unavailability or a non-200, four reads with 2, 4 and 8
-second backoff, then fails closed; an answer that names a build is final.
+`01a4a7dcd076`, overlay `24d3aa2a` again. `readProductionVersion` retries only
+that unavailability or a non-200, four reads with 2, 4 and 8 second backoff,
+then fails closed; an answer that names a build is final.
+
+Production at the pause is deployment run 45913824441 (`main` `0e259f65f`,
+services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back.
 
 ### Before setting `autoProduction` back to `true`
 
-Each of these must exist and pass, with its evidence linked in the
-`mikka-cloud` PR that flips the flag:
+Each must exist and pass, listed in `requiredChecks` where it is a check, with
+evidence linked in the `mikka-cloud` PR that flips the flag:
 
-- the Desktop route-allowlist guard runs in release CI with the hosted checkout
-  and fails when that checkout is missing;
-- browser end-to-end tests run on hosted UI pull requests;
-- a smoke test of the signed Desktop build runs before publication;
+- the Desktop route-allowlist guard in release CI with the hosted checkout (now
+  mandatory in `desktop-release.yml`);
+- browser end-to-end tests on hosted UI pull requests;
+- a smoke test of the signed Desktop build before publication;
 - a Desktop beta channel with staged rollout.
 
 ### Mobile OTA while paused
 
-`mobile-next-update.yml` (dispatch only) has three phases. It reads
-`mobileProduction` the same fail-closed way, with a read-only `mikka-cloud`
-contents token, right before it reads `EXPO_TOKEN`:
+`mobile-next-update.yml` (dispatch only) has three phases:
 
 | Phase | Who | Needs | Publishes to |
 | --- | --- | --- | --- |
 | `stage` (default) | any repository writer | nothing from the policy | EAS branch `next-staging`, which neither the `next` nor the `production` channel may serve; uploads `mobile-ota-stage-<run>-<attempt>` |
-| `publish` | any repository writer | `mobileProduction: true` | `next` users directly; refused now |
-| `promote` | the owner only | a readable policy and a successful `stage` run | republishes that run's exact update group to `next` |
+| `publish` | a promoter | `mobileProduction: true` | `next` users directly; refused now |
+| `promote` | a promoter | a readable policy and a promoter's successful `stage` run | republishes that run's exact update group to `next` |
 
-To ship an OTA while paused:
+`publish` and `promote` read the policy before any other secret, then re-read it
+(the blob must not have changed) and run the listed mobile checks right before
+`EXPO_TOKEN`. `promote` requires a stage run of this workflow on `main`, started
+and not re-run by others than promoters, whose workflow commit is in main's
+history, whose receipt names the same `hosted_ui_ref`, runtime and platform, and
+whose update group `eas update:view` still shows on `next-staging`. It then
+re-verifies that app revision and runs `eas update:republish --group <staged
+group> --destination-branch <next branch>`.
 
-1. Dispatch `phase: stage` with `hosted_ui_ref: <exact mikka-hosted-ui main SHA>`.
-   The run verifies the app config, typecheck and tests as before, publishes to
-   `next-staging` and records the update group in its stage receipt. Check the
-   staged update yourself.
-2. As the owner, dispatch `phase: promote`, `stage_run: <that run id>` and the
-   same `hosted_ui_ref`. The job refuses any other actor; a stage run that is
-   not a successful dispatch of this workflow on `main`; a receipt that is
-   missing, for another run, branch, platform or runtime, or for another commit;
-   and an unreadable policy. It re-verifies that app revision, then runs
-   `eas update:republish --group <staged group> --destination-branch <next branch>`.
+There is **no build today whose channel maps to `next-staging`**, so a staged OTA
+cannot be run on a device yet. Until one exists, checking a staged update means
+its stage run's own checks plus `eas update:view <group>`. The intended method is
+an EAS build profile (for example `next-staging`, `channel: next-staging`)
+installed through internal TestFlight.
 
-Before setting `mobileProduction` back to `true`, these must exist and pass,
-with evidence linked in the `mikka-cloud` PR that flips it:
+Before setting `mobileProduction` back to `true`, these must exist and pass:
 
 - an end-to-end mobile smoke test on the release build, run against the staged
   update before it reaches `next`;
-- a staged OTA rollout channel (`--rollout-percentage` on the `next` channel, or
-  an equivalent staged channel) with a documented stop/rollback step.
+- a staged OTA rollout channel (`--rollout-percentage` on `next`, or an
+  equivalent staged channel) with a documented stop/rollback step.
 
 ## What current docs are authoritative?
 

@@ -26,8 +26,10 @@ function fixture(change = {}) {
   const post = { ...owner, id: 81, body: 'MIKKA_CLOUDFLARE_WEB_PROMOTION_V1\n' + raw, ...change.post }
   const env = { GITHUB_REPOSITORY: repo, GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_SHA: product,
     GITHUB_RUN_ID: '55', GITHUB_RUN_ATTEMPT: '2', GITHUB_TOKEN: 'test', CLOUDFLARE_RECEIPT: '81-' + digest(post.body), ...change.env }
+  withDesktopDispatch(env)
   const started = { repository: { id: 1427517699, full_name: repo, owner: { id: 183887963 } }, event: 'workflow_dispatch', path: workflow, head_sha: product, head_branch: 'main',
-    id: 55, run_attempt: 2, run_started_at: iso(30000), ...change.run }
+    id: 55, run_attempt: 2, run_started_at: iso(30000), actor: { id: 183887963, login: 'alexj11324' },
+    triggering_actor: { id: 183887963, login: 'alexj11324' }, ...change.run }
   const anchor = { name: '_mikka-release.aspectlylabs.com.', type: 16, data: '"mikka-release-v1=sha256:' + digest(raw) + '"' }
   const calls = []
   const fetchImpl = async (url, options) => {
@@ -202,7 +204,7 @@ test('read-only monitor witness rechecks an older actual promotion without autho
 
 test('Desktop and E2B accept only an original successful protected serving observation and the currently served pins', async () => {
   const repository = { id:1427517699, full_name:repo, fork:false }
-  const actor = { id:183887963 }
+  const actor = { id:183887963, login:'alexj11324' }
   const run = { repository, head_repository:repository, path:'.github/workflows/cloudflare-app-deploy.yml', head_branch:'main',
     head_sha:product, id:99, run_attempt:1, event:'workflow_dispatch', status:'completed', conclusion:'success', actor, triggering_actor:actor }
   const gate = { status:'completed', conclusion:'success', head_sha:product, run_id:99, run_attempt:1, completed_at:iso(0) }
@@ -230,7 +232,7 @@ test('Desktop and E2B accept only an original successful protected serving obser
 
 test('a successful gateway observation starts the runtime release by itself, but never Desktop', async () => {
   const repository = { id:1427517699, full_name:repo, fork:false }
-  const actor = { id:183887963 }
+  const actor = { id:183887963, login:'alexj11324' }
   const run = { repository, head_repository:repository, path:'.github/workflows/cloudflare-app-deploy.yml', head_branch:'main',
     head_sha:product, id:99, run_attempt:1, event:'workflow_dispatch', status:'completed', conclusion:'success', actor, triggering_actor:actor }
   const gate = { status:'completed', conclusion:'success', head_sha:product, run_id:99, run_attempt:1, completed_at:iso(0) }
@@ -309,6 +311,17 @@ sys.stdout.buffer.write(buf.getvalue())
 `], { input: JSON.stringify(entries), stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
+// A hand-dispatched Desktop carries the release policy projection and runs main's own workflow file.
+const releasePolicy = JSON.stringify({ promoters: [{ id: 183887963, login: 'alexj11324' }, { id: 158243242, login: 'devin-ai-integration[bot]' }],
+  requiredChecks: [{ name: 'desktop-route-guard', kind: 'builtin' }] })
+function withDesktopDispatch(env) {
+  if (!('MIKKA_RELEASE_POLICY' in env)) env.MIKKA_RELEASE_POLICY = releasePolicy
+  if (!('GITHUB_WORKFLOW_REF' in env)) env.GITHUB_WORKFLOW_REF = env.GITHUB_REPOSITORY + '/.github/workflows/desktop-release.yml@refs/heads/main'
+  if (!('GITHUB_WORKFLOW_SHA' in env)) env.GITHUB_WORKFLOW_SHA = env.GITHUB_SHA
+  for (const [key, value] of Object.entries(env)) if (value === null) delete env[key]
+  return env
+}
+
 function pipelineFixture(change = {}) {
   const desktop = '.github/workflows/desktop-release.yml'
   const head = change.head ?? 'b'.repeat(40)
@@ -370,6 +383,7 @@ function pipelineFixture(change = {}) {
     GITHUB_RUN_ID: '55', GITHUB_RUN_ATTEMPT: '2', GITHUB_TOKEN: 'test', CLOUDFLARE_RECEIPT: 'pipeline:101:1',
     ...change.env,
   }
+  withDesktopDispatch(env)
   const event = change.event ?? { workflow_run: deployRun }
   const redirectLocation = change.redirectLocation ?? 'https://productionresultssa0.blob.core.windows.net/artifacts/deploy-production-101-1.zip?sig=fixture'
   const logLocation = change.logLocation ?? 'https://pipelinesghubeus1.actions.githubusercontent.com/logs/9001.txt?sig=fixture'
@@ -688,4 +702,33 @@ test('the production version endpoint is retried with backoff only while it repo
   waits.length = 0
   await assert.rejects(pipelineFixture({ ...byHand, wait, version: { build: '1'.repeat(40) } }).desktopVerify(), /productionSource/)
   assert.deepEqual(waits, [])
+})
+
+test('a hand-dispatched Desktop accepts any listed promoter on evidence, and nobody else', async () => {
+  const devin = { id: 158243242, login: 'devin-ai-integration[bot]' }, outsider = { id: 7, login: 'outsider' }
+  const gate = { status: 'completed', head_sha: 'b'.repeat(40), run_id: 101, run_attempt: 1, completed_at: iso(0) }
+  const jobs = { total_count: 2, jobs: [{ ...gate, id: 9000, name: 'pipeline', conclusion: 'skipped' },
+    { ...gate, id: 9001, name: 'pipeline-production', conclusion: 'success', steps: [
+      { name: 'Promote and verify the staged service manifest', status: 'completed', conclusion: 'success' },
+      { name: 'Upload production receipts', status: 'completed', conclusion: 'success' }] }] }
+  const by = (promoter, consumer = promoter, env = {}) => ({ jobs,
+    deployRun: { event: 'workflow_dispatch', actor: promoter, triggering_actor: promoter },
+    env: { GITHUB_EVENT_NAME: 'workflow_dispatch', ...env },
+    consumerRun: { event: 'workflow_dispatch', actor: consumer, triggering_actor: consumer } })
+  // An agent promoted production and an agent releases Desktop: both are on the list.
+  assert.deepEqual(await pipelineFixture(by(devin)).desktopVerify(), { product: 'b'.repeat(40), releasePin, overlay })
+  for (const [change, code] of [
+    [by(devin, outsider), 'dispatchActor'],
+    [{ ...by(devin), consumerRun: { event: 'workflow_dispatch', actor: devin, triggering_actor: outsider } }, 'dispatchActor'],
+    [{ ...by(devin), consumerRun: { event: 'workflow_dispatch', actor: { id: devin.id, login: 'renamed' }, triggering_actor: devin } }, 'dispatchActor'],
+    [by(outsider, devin), 'pipelineRun'],
+    [{ ...by(devin), deployRun: { event: 'workflow_dispatch', actor: devin, triggering_actor: outsider } }, 'pipelineRun'],
+    [by(devin, devin, { MIKKA_RELEASE_POLICY: null }), 'dispatchActor'],
+    [by(devin, devin, { MIKKA_RELEASE_POLICY: JSON.stringify({ promoters: [], requiredChecks: [] }) }), 'dispatchActor'],
+    [by(devin, devin, { MIKKA_RELEASE_POLICY: '{nope' }), 'dispatchActor'],
+    // A dispatch from a branch, or an edited workflow file, cannot skip the gates.
+    [by(devin, devin, { GITHUB_WORKFLOW_REF: 'aspectly-labs/Mikka/.github/workflows/desktop-release.yml@refs/heads/feature' }), 'runIdentity'],
+    [by(devin, devin, { GITHUB_WORKFLOW_SHA: 'c'.repeat(40) }), 'runIdentity'],
+    [by(devin, devin, { GITHUB_REF: 'refs/heads/feature' }), 'dispatch'],
+  ]) await assert.rejects(pipelineFixture(change).desktopVerify(), new RegExp(code), JSON.stringify(change.env ?? change.consumerRun))
 })

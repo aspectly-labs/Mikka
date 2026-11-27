@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { releasePlan, releaseVersion, verifyRelease } from '../scripts/release.mjs'
+import { releaseChannel, releasePlan, releaseVersion, verifyRelease } from '../scripts/release.mjs'
 
 const sha = 'a'.repeat(40)
 const options = { packageName: '@aspectlylabs/mikka', version: '0.0.4', sha }
@@ -17,10 +17,18 @@ test('run versions are unique, retry-stable and newer than the initial 0.0.1', (
   for (const input of [undefined, '0', '-1', '1.1', '01', 'NaN', '9007199254740991']) assert.throws(() => releaseVersion(input))
 })
 
-test('new releases advance latest; older releases preserve it', async () => {
-  assert.deepEqual(await releasePlan({ ...options, fetchRegistry: registry({ latest: { version: '0.0.3' } }) }), { published: false, tag: 'latest' })
-  assert.deepEqual(await releasePlan({ ...options, fetchRegistry: registry({ latest: { version: '0.0.9' } }) }), { published: false, tag: 'build-0.0.4' })
-  assert.deepEqual(await releasePlan({ ...options, fetchRegistry: registry({}) }), { published: false, tag: 'latest' })
+test('automatic releases go to next only; a promotion advances latest and never downgrades it', async () => {
+  assert.deepEqual(await releasePlan({ ...options, fetchRegistry: registry({ next: { version: '0.0.3' }, latest: { version: '0.0.1' } }) }), { published: false, tag: 'next' })
+  assert.deepEqual(await releasePlan({ ...options, fetchRegistry: registry({ next: { version: '0.0.9' } }) }), { published: false, tag: 'build-0.0.4' })
+  assert.deepEqual(await releasePlan({ ...options, fetchRegistry: registry({}) }), { published: false, tag: 'next' })
+  const promote = { ...options, channel: 'latest' }
+  assert.deepEqual(await releasePlan({ ...promote, fetchRegistry: registry({ latest: { version: '0.0.3' } }) }), { published: false, tag: 'latest' })
+  assert.deepEqual(await releasePlan({ ...promote, fetchRegistry: registry({}) }), { published: false, tag: 'latest' })
+  await assert.rejects(releasePlan({ ...promote, fetchRegistry: registry({ latest: { version: '0.0.9' } }) }), /refusing to downgrade/)
+  await assert.rejects(releasePlan({ ...options, channel: 'beta', fetchRegistry: registry({}) }), /Invalid release channel/)
+  assert.equal(releaseChannel(undefined), 'next')
+  assert.equal(releaseChannel('latest'), 'latest')
+  assert.equal(releaseChannel('LATEST'), 'next')
 })
 
 test('retry skips a published version only when its commit matches', async () => {
@@ -32,7 +40,8 @@ test('retry skips a published version only when its commit matches', async () =>
 test('registry errors and an unexpected version scheme stop release', async () => {
   await assert.rejects(releasePlan({ ...options, fetchRegistry: async () => ({ status: 503, ok: false }) }), /503/)
   await assert.rejects(releasePlan({ ...options, fetchRegistry: async () => { throw new Error('offline') } }), /offline/)
-  await assert.rejects(releasePlan({ ...options, fetchRegistry: registry({ latest: { version: '1.0.0' } }) }), /version scheme/)
+  await assert.rejects(releasePlan({ ...options, fetchRegistry: registry({ next: { version: '1.0.0' } }) }), /version scheme/)
+  await assert.rejects(releasePlan({ ...options, channel: 'latest', fetchRegistry: registry({ latest: { version: '1.0.0' } }) }), /version scheme/)
   await assert.rejects(releasePlan({ ...options, sha: 'main', fetchRegistry: registry({}) }), /Invalid release commit/)
 })
 
@@ -51,7 +60,7 @@ test('CI stamps the runtime manifest and exports the same version and tag', asyn
       env: { ...process.env, GITHUB_RUN_NUMBER: '3', GITHUB_SHA: sha, GITHUB_OUTPUT: join(temporary, 'outputs'), MIKKA_DAEMON_PACKAGE_NAME: '@aspectlylabs/mikka' },
     })
     assert.deepEqual(JSON.parse(await readFile(join(temporary, 'package.json'), 'utf8')), { name: '@mikka/daemon', version: '0.0.4', private: true, gitHead: sha })
-    assert.equal(await readFile(join(temporary, 'outputs'), 'utf8'), 'version=0.0.4\npublished=false\ntag=latest\n')
+    assert.equal(await readFile(join(temporary, 'outputs'), 'utf8'), 'version=0.0.4\npublished=false\ntag=next\n')
     const command = ['--import', join(temporary, 'registry.mjs'), join(temporary, 'scripts/release.mjs'), '--verify']
     const env = { ...process.env, GITHUB_RUN_NUMBER: '3', GITHUB_SHA: sha, GITHUB_OUTPUT: join(temporary, 'outputs'), MIKKA_DAEMON_PACKAGE_NAME: '@aspectlylabs/mikka' }
     await writeFile(join(temporary, 'registry.mjs'), 'globalThis.fetch = async () => ({ status: 200, ok: true, json: async () => ({ gitHead: process.env.GITHUB_SHA }) })')
@@ -66,7 +75,7 @@ test('postpublish verification waits for delayed registry visibility', async () 
   let checks = 0
   const waits = []
   const fetchRegistry = async url => {
-    if (url.endsWith('/latest')) return { status: 404 }
+    if (url.endsWith('/latest') || url.endsWith('/next')) return { status: 404 }
     checks++
     return checks < 4 ? { status: 404 } : { status: 200, ok: true, json: async () => ({ gitHead: sha }) }
   }

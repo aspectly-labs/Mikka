@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { actionsMikkaRepository, officialMikkaRepository, publicRepositoryId } from '../cloudflare-source.mjs'
 import { isValidDeploymentId } from '../../lib/deployment-id.mjs'
 import { artifactFor, readArtifactMembers } from './pipeline-inputs.mjs'
+import { isPromoter } from './release-policy.mjs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { containsDesktopSource, githubRead, PRODUCTION_VERSION_URL } from './web-deploy.mjs'
 
@@ -269,7 +270,17 @@ const isPipelineProductionPromoted = job => job.name === 'pipeline-production'
   && job.steps.some(step => step.name === 'Upload production receipts'
     && step.status === 'completed' && step.conclusion === 'success')
 
-async function pipelineObservation(ref, api, { manual = false } = {}) {
+/** The release policy projection the workflow read from private main (release-policy.mjs read desktop). */
+function releasePromoters(env) {
+  let projection
+  try { projection = JSON.parse(env.MIKKA_RELEASE_POLICY ?? '') } catch { return null }
+  const promoters = projection?.promoters
+  if (!Array.isArray(promoters) || !promoters.length
+    || !promoters.every(entry => Number.isSafeInteger(entry?.id) && entry.id > 0 && typeof entry.login === 'string' && entry.login)) return null
+  return { promoters }
+}
+
+async function pipelineObservation(ref, api, { manual = false, policy = null } = {}) {
   const [, runId, attempt] = ref
   const path = '/actions/runs/' + runId + '/attempts/' + attempt
   const [run, listing, artifactsPage] = await Promise.all([
@@ -281,7 +292,7 @@ async function pipelineObservation(ref, api, { manual = false } = {}) {
     && run.path === deploymentWorkflow && run.head_branch === 'main' && present(run.head_sha, sha)
     && run.status === 'completed' && run.conclusion === 'success'
     && (run.event === 'workflow_run' ? isPipelineActor(run.actor) && isPipelineActor(run.triggering_actor)
-      : manual && run.event === 'workflow_dispatch' && isOwnerActor(run.actor) && isOwnerActor(run.triggering_actor))
+      : manual && policy && run.event === 'workflow_dispatch' && isPromoter(policy, run.actor) && isPromoter(policy, run.triggering_actor))
     && String(run.id) === runId && String(run.run_attempt) === attempt, 'pipelineRun')
   const dispatched = run.event === 'workflow_dispatch'
   requireProof(Array.isArray(listing.jobs) && listing.total_count === listing.jobs.length, 'pipelineJobs')
@@ -401,8 +412,17 @@ async function verifyPromotion(workflow, { env = process.env, event, fetchImpl =
     && (env.GITHUB_EVENT_NAME === 'workflow_dispatch' || chained && automated) && present(env.GITHUB_SHA, sha)
     && present(env.GITHUB_RUN_ID, decimal) && present(env.GITHUB_RUN_ATTEMPT, decimal), 'dispatch')
   // Desktop starts by itself only after an automatic pipeline-production promotion. A gateway
-  // observation (a manual production action) never chains Desktop; the owner dispatches it.
+  // observation (a manual production action) never chains Desktop; a listed promoter dispatches it.
   requireProof(!(workflow === desktopWorkflow && chained && observed), 'dispatchSource')
+  // A hand-dispatched Desktop is admitted on evidence for any listed promoter (release policy
+  // `promoters`), never for anyone else, and only from main's own workflow file at the dispatched commit.
+  const desktopDispatch = workflow === desktopWorkflow && !chained
+  const policy = desktopDispatch ? releasePromoters(env) : null
+  if (desktopDispatch) {
+    requireProof(policy, 'dispatchActor')
+    requireProof(env.GITHUB_WORKFLOW_REF === env.GITHUB_REPOSITORY + '/' + desktopWorkflow + '@refs/heads/main'
+      && env.GITHUB_WORKFLOW_SHA === env.GITHUB_SHA, 'runIdentity')
+  }
   if (chained) {
     const source = (event ?? await readEvent(env)).workflow_run
     requireProof(String(source?.id) === automated[1] && String(source?.run_attempt) === automated[2]
@@ -413,7 +433,7 @@ async function verifyPromotion(workflow, { env = process.env, event, fetchImpl =
   if (observed) {
     record = await servingObservation(observed, api)
   } else if (piped) {
-    record = await pipelineObservation(piped, api, { manual: !chained })
+    record = await pipelineObservation(piped, api, { manual: !chained, policy })
   } else {
     raw = await readOwnerBody(pin[1], pin[2], 'MIKKA_CLOUDFLARE_WEB_PROMOTION_V1\n', api)
     record = parsePromotionRecord(raw)
@@ -429,10 +449,13 @@ async function verifyPromotion(workflow, { env = process.env, event, fetchImpl =
   requireProof(officialRepository(run.repository) === env.GITHUB_REPOSITORY && run.event === (chained ? 'workflow_run' : 'workflow_dispatch') && run.path === workflow
     && run.head_sha === env.GITHUB_SHA && run.head_branch === 'main' && String(run.id) === env.GITHUB_RUN_ID
     && String(run.run_attempt) === env.GITHUB_RUN_ATTEMPT, 'runIdentity')
+  // The dispatcher and whoever started this attempt (a re-run) must both be allowed.
+  const dispatcher = desktopDispatch ? actor => isPromoter(policy, actor) : isOwnerActor
+  if (desktopDispatch) requireProof(dispatcher(run.actor) && dispatcher(run.triggering_actor), 'dispatchActor')
   if (observed) {
-    requireProof(isOwnerActor(run.actor) && isOwnerActor(run.triggering_actor), 'dispatchActor')
+    requireProof(dispatcher(run.actor) && dispatcher(run.triggering_actor), 'dispatchActor')
   } else if (piped) {
-    const allowedActor = chained ? isPipelineActor : isOwnerActor
+    const allowedActor = chained ? isPipelineActor : dispatcher
     requireProof(allowedActor(run.actor) && allowedActor(run.triggering_actor), 'dispatchActor')
   } else {
     const approvalBody = await readOwnerBody(record.approvalComment, record.approvalSha256, 'MIKKA_CUTOVER_ACCEPTANCE_V1', api)
