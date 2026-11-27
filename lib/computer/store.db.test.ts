@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
-import { bindFixtureWorkspaceDatabase, createFixtureWorkspaceTables } from '../../tests/helpers/workspace-database'
+import { bindFixtureAppDatabase, bindFixtureWorkspaceDatabase, createFixtureWorkspaceTables } from '../../tests/helpers/workspace-database'
 import { seedFixtureWorkspace } from '../../tests/helpers/task-workspace'
 import { builtinGateway } from '../builtin-gateway/runtime'
 import { ComputerStore } from './store'
@@ -38,6 +38,7 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
   await admin.query(`CREATE SCHEMA ${schema}`)
   const pool = new Pool({ connectionString: databaseURL, options: `-c search_path=${schema}` })
   const closeWorkspace = await bindFixtureWorkspaceDatabase(pool)
+  const closeApp = await bindFixtureAppDatabase(pool)
   let created = 0, failSync = false, failStart = false, epoch = 0, computerAllowed = true
   const syncedLeases: { sandboxId: string; computerAllowed?: boolean; display: number }[] = []
   const runtime = {
@@ -56,6 +57,7 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     const migration = await readFile(new URL('../../drizzle/20261027164501_cloud_computers.sql', import.meta.url), 'utf8')
     await pool.query(migration); await pool.query(migration)
     await pool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS "archivedAt" timestamptz')
+    await pool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS "environmentId" uuid')
     await createFixtureWorkspaceTables(pool)
     // Replace the helper's empty non-Org link shape with the full production
     // Org schema before any tenant is seeded; keep its real FK/check constraints.
@@ -574,6 +576,6 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     await store.setPolicy(actor.workspaceId, 'allow')
   } finally {
     console.log(`Retained computer test schema: ${schema}`)
-    await closeWorkspace(); await pool.end(); await admin.end()
+    await closeWorkspace(); await closeApp(); await pool.end(); await admin.end()
   }
 })

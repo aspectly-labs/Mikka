@@ -54,3 +54,27 @@ export async function createFixtureWorkspaceTables(pool: Pick<Pool, 'query'>) {
     );
   `)
 }
+
+/** The same, for the app database executor (`@/lib/db`): a fixture that keeps
+ * every table in one isolated schema reads app tables (e.g. `bots`) there too. */
+export async function bindFixtureAppDatabase(source: Pool) {
+  const connectionString = source.options.connectionString
+  assert.ok(connectionString, 'the fixture must explicitly own its database target')
+  assert.ok(['127.0.0.1', 'localhost', '[::1]'].includes(new URL(connectionString).hostname), 'fixture app target must be loopback')
+  const { currentDatabasePool } = await import('../../lib/db/request-scope')
+  const appPool = currentDatabasePool()
+  assert.equal(appPool.totalCount, 0, 'configure the app pool before its first connection')
+  const previous = { connectionString: appPool.options.connectionString, options: appPool.options.options }
+  appPool.options.connectionString = connectionString
+  appPool.options.options = source.options.options
+  let closed = false
+  return async () => {
+    if (closed) return
+    closed = true
+    try { await appPool.end() }
+    finally {
+      appPool.options.connectionString = previous.connectionString
+      appPool.options.options = previous.options
+    }
+  }
+}
