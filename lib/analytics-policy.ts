@@ -25,8 +25,44 @@ export function redactReplayRequest<T extends { name: string }>(request: T): T |
   } catch { return null }
 }
 
+/** Pages whose next segment is a credential, wherever they sit in the path
+ * (after a base path or locale): an artifact, thread or capture share link and
+ * the two invitations. Its holder can open what it names, so it never leaves. */
+const CREDENTIAL_PREFIXES = [['a'], ['invite'], ['organization-invite'], ['threads', 'shared'], ['share']]
+/** Pages whose next segment names a workspace (`/w/acme`) rather than a page. */
+const SLUG_PREFIXES = [['w']]
+/** A segment that is a page's own name (`settings`, `forgot-password`): lower-case
+ * words, no digits, so a lower-case hex id or token is never mistaken for one. */
+const ROUTE_WORD = /^(?=.{1,40}$)[a-z]+(?:-[a-z]+)*$/
+const LOCALE_SEGMENT = /^(?:en|zh-CN)$/
+
+function follows(previous: string[], prefix: string[]) {
+  return previous.length >= prefix.length && prefix.every((word, index) => previous[previous.length - prefix.length + index] === word)
+}
+
+/**
+ * A page path with every dynamic segment replaced by a placeholder. Only a
+ * page's own words and the locale stay; a share or invitation token becomes
+ * `:token` after its page word, a UUID or number `:id`, an email `:redacted`,
+ * and anything else that is not a route word (`SPOT-4`, a token on a page this
+ * list does not name yet) `:token`. The query and hash are the caller's to drop.
+ */
 export function analyticsPath(pathname: string) {
-  return pathname.replace(/^\/invite\/[^/]+/, '/invite/:token').replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi, '/:id')
+  const previous: string[] = []
+  const segments = pathname.split('/').map(raw => {
+    if (!raw) return raw
+    const word = raw.toLowerCase()
+    let clean: string
+    if (CREDENTIAL_PREFIXES.some(prefix => follows(previous, prefix))) clean = ':token'
+    else if (SLUG_PREFIXES.some(prefix => follows(previous, prefix))) clean = ':slug'
+    else if (EMAIL_LIKE_SEGMENT.test(raw)) clean = ':redacted'
+    else if (UUID_SEGMENT.test(raw) || /^\d+$/.test(raw)) clean = ':id'
+    else if (ROUTE_WORD.test(raw) || LOCALE_SEGMENT.test(raw)) clean = raw
+    else clean = ':token'
+    previous.push(clean === raw ? word : clean)
+    return clean
+  })
+  return segments.join('/')
 }
 
 /** Error levels an exception event may carry, from a closed set. */
@@ -192,18 +228,7 @@ function sanitizeRumRoute(value: unknown): string | undefined {
     pathname = pathname.split(/[?#]/, 1)[0] ?? '/'
   }
   if (!pathname.startsWith('/')) pathname = `/${pathname}`
-  const segments = pathname.split('/').filter(Boolean)
-  const clean: string[] = []
-  for (let index = 0; index < segments.length; index += 1) {
-    const raw = segments[index] ?? ''
-    if (index > 0 && segments[index - 1]?.toLowerCase() === 'invite') clean.push(':token')
-    else if (UUID_SEGMENT.test(raw)) clean.push(':id')
-    else if (EMAIL_LIKE_SEGMENT.test(raw)) clean.push(':redacted')
-    else if (LONG_TOKEN_SEGMENT.test(raw)) clean.push(':token')
-    else if (NUMERIC_ID_SEGMENT.test(raw)) clean.push(':id')
-    else clean.push(raw.slice(0, 48))
-  }
-  const normalized = `/${clean.join('/')}`
+  const normalized = analyticsPath(`/${pathname.split('/').filter(Boolean).join('/')}`)
   return normalized.length > 160 ? normalized.slice(0, 160) : normalized
 }
 

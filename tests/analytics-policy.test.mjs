@@ -10,7 +10,8 @@ import { gzipSync } from 'node:zlib'
 import { applicationPlugin } from '../apps/frontend/scripts/application-plugin.mjs'
 import { uiFixture } from '../apps/frontend/scripts/application-test-build.mjs'
 import { needsOfficialUi, readUi, uiExists } from '../scripts/official-ui-tree.mjs'
-import { analyticsPath, sanitizeAnalyticsEvent } from '../lib/analytics-policy.ts'
+import { analyticsPath, redactReplayRequest, sanitizeAnalyticsEvent } from '../lib/analytics-policy.ts'
+import { safeLanding } from '../lib/first-touch.ts'
 import { computerAcceptancePreview, computerProductionEnabled, featureAvailability, gatedFeatureEnabled, gatedFeatures, killSwitches, proactiveFeatures, upcomingFeatures } from '../lib/feature-flags.ts'
 import { analyticsEnvironment, analyticsKey, analyticsPaths, inspectAnalyticsBuild, localAnalyticsRequest, requiredRuntimeResources, syntheticPostHogRequest, verifyRuntimeResources } from '../scripts/check-analytics-ssr.mjs'
 import { analyticsBrowserProfile } from '../scripts/analytics-browser-sandbox.mjs'
@@ -30,6 +31,49 @@ test('pageviews strip query strings, hashes, document identifiers and unapproved
   })
   assert.equal(analyticsPath('/settings/teams'), '/settings/teams')
   assert.equal(analyticsPath('/invite/private-invitation-token'), '/invite/:token')
+})
+
+test('a share link or invitation never leaves in a route: pageviews, errors, RUM, replay and landing pages', () => {
+  // The tokens these pages carry open what they name (lib/artifacts/store.ts mks_,
+  // lib/thread-lifecycle.ts mkt_, lib/captures/store.ts mkc_, 64-hex invitations).
+  const artifact = 'mks_AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf' // no digit: the old opaque-id rule let it through
+  const thread = 'mkt_Q1wErTyUiOpAsDfGhJkLzXcVbNmQwEr'
+  const invitation = 'ab'.repeat(32)
+  const pages = [
+    [`/a/${artifact}`, '/a/:token'],
+    [`/en/a/${artifact}`, '/en/a/:token'],
+    [`/mikka/zh-CN/a/${artifact}/frame`, '/mikka/zh-CN/a/:token/frame'],
+    [`/threads/shared/${thread}`, '/threads/shared/:token'],
+    [`/mikka/en/threads/shared/${thread}`, '/mikka/en/threads/shared/:token'],
+    [`/organization-invite/${invitation}`, '/organization-invite/:token'],
+    [`/en/invite/${invitation}`, '/en/invite/:token'],
+    [`/mikka/invite/${invitation}`, '/mikka/invite/:token'],
+    [`/share/${thread}`, '/share/:token'],
+    ['/w/acme-corp', '/w/:slug'],
+    ['/en/tasks/SPOT-4', '/en/tasks/:token'],
+    ['/en/oauth/tok_abc1234567890xyz', '/en/oauth/:token'],
+    ['/en/issue/84c182d1-661c-461b-bca2-10410cb646d4/987654', '/en/issue/:id/:id'],
+    ['/settings/members', '/settings/members'],
+    [`/captures/${'0f'.repeat(16)}`, '/captures/:token'],
+    ['/en/reset-password', '/en/reset-password'],
+    ['/mikka', '/mikka'],
+    ['/', '/'],
+  ]
+  for (const [path, expected] of pages) {
+    assert.equal(analyticsPath(path), expected, path)
+    for (const origin of ['https://app.aspectlylabs.com', 'mikka://app']) {
+      const pageview = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${path}?token=${artifact}#${thread}` } })
+      assert.equal(pageview.properties.$pathname, expected)
+      assert.equal(pageview.properties.$current_url, `${origin}${expected}`)
+      const exception = sanitizeAnalyticsEvent({ event: '$exception', properties: { $current_url: `${origin}${path}`, $exception_list: [{ type: 'TypeError', value: 'x' }] } })
+      assert.equal(exception.properties.$pathname, expected)
+    }
+    const rum = sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route: path, lcp_ms: 900, flush_reason: 'pagehide' } })
+    assert.equal(rum.properties.route, expected)
+    // Replay's navigation metadata (rrweb's page href) and request names use the same route.
+    assert.equal(redactReplayRequest({ name: `https://app.aspectlylabs.com${path}?code=private` }).name, `https://app.aspectlylabs.com${expected}`)
+    assert.ok(![artifact, thread, invitation].some(token => safeLanding(path).includes(token)), path)
+  }
 })
 
 test('automatic top-level person mutations are stripped without losing ingestion metadata', () => {
