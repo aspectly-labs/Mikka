@@ -75,7 +75,7 @@ One rule for every move (`lib/task-status-advance.ts`): forward only along 待�
 
 ### The stored title
 
-A conversation owns its title, as Capy's threads do (`PATCH …/jams/:id` rename, `POST …/regenerate-title`, `titleTriggers: pull_opened | first_run_ended`).
+A conversation owns its title, as Capy's threads do: a person can rename it or have it written again, and the workspace chooses when it is rewritten (evidence: mikka-hosted-ui `docs/research/2026-11-27-public-evidence.md`, § one-task-status-titles).
 
 - **Storage.** `agent_runs.title` (60 characters, the task short title's check) and `agent_runs.titleSource` (`generated` or `manual`). A thread is a run and the runs that continue it ([2343](2026-11-10-2343-thread-attempt-is-a-run-in-a-chain.md)); chains have no row of their own, so every run of the chain carries the same title and a write covers the whole chain. No backfill: an older conversation keeps the bounded fallback.
 - **Generation.** The small model that writes a task's short title writes this one too, through the same call, admission, prompt, parsing and limits (`generateShortTitle`, `lib/short-title-server.ts`). It runs after the response as a background job, never on a render path and never blocking a run; a failure leaves the fallback. It reads only the recorded task range of the prompt, never the execution instructions around it.

@@ -21,7 +21,7 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `212` dated decision records here carry verified `Status:` headers (`156` Accepted, `13` Superseded, `43` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
+All `213` dated decision records here carry verified `Status:` headers (`157` Accepted, `13` Superseded, `43` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
 
 ### Key active architectural decisions
 
