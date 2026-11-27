@@ -350,8 +350,9 @@ jobs:
 
   desktop-checks:
     # Path-routed like Orca: on a pull request the trusted selector reports
-    # `desktop` only for apps/desktop, packages/protocol, desktop.yml, the Nx
-    # closure of @mikka/desktop and lockfile or manifest changes that reach it
+    # `desktop` only for apps/desktop, the workspace packages it links,
+    # desktop.yml, .npmrc, the paths desktop.yml runs, the Nx closure of
+    # @mikka/desktop and lockfile or manifest changes that reach it
     # (scripts/ci/select.mjs, desktop-inputs.mjs); merge groups and the daily run
     # keep the broad rule (global inputs too). Main pushes rely on the merge-queue run.
     needs: changes
@@ -653,9 +654,10 @@ jobs:
           CI_OK_EXPECT_UI_POLICY: 'true'
           CI_OK_EXPECT_BROWSER_TESTS_FULL: ${{ needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) }}
           CI_OK_EXPECT_BROWSER_TESTS: 'true'
-        # Main's verdict script, as the selector loads main's bootstrap: a pull request
-        # cannot change how its own results are judged. Only the PR that introduces the
-        # script runs its own copy.
+        # Main's verdict script, as the selector loads main's bootstrap, so a pull request
+        # cannot edit the script that judges it. It still controls this workflow, the
+        # needs and the expectations above (ci-ok.test.mjs ties each to its job's if:).
+        # Only the PR that introduces the script runs its own copy.
         run: |
           git fetch --no-tags --depth=1 origin main
           policy="$RUNNER_TEMP/ci-ok.mjs"

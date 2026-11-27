@@ -16,7 +16,11 @@ const evaluate = (expression, context) => runInNewContext(bare(expression).repla
   { always: () => true, cancelled: () => false, ...context })
 
 // Jobs CI OK does not wait for yet, each with the condition for adding it.
-const NOT_YET_REQUIRED = { 'nightly-journey': 'the offline journeys have never passed; add it once a scheduled run is green' }
+const NOT_YET_REQUIRED = {
+  // aspectly-labs/Mikka#3378: the three @journey tests fail (Eve duplicate key, core loop stuck at sign-in,
+  // DEPLOYMENT_IDENTITY_UNAVAILABLE). Add nightly-journey to ci-ok's needs once a scheduled run is green.
+  'nightly-journey': 'the offline journeys have never passed (#3378)',
+}
 
 test('the aggregate is named CI OK, always runs, and waits for every other CI job', () => {
   assert.equal(aggregate.name, 'CI OK')

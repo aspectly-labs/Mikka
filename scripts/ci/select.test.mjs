@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import yaml from 'js-yaml'
-import { select, diffRange, emit, desktopClosure, desktopEntryFiles } from './select.mjs'
+import { select, diffRange, emit, desktopClosure, desktopEntryFiles, desktopRunPaths, desktopWorkspaceRoots } from './select.mjs'
 import { buildGraph, dbId, sourceId, strictCommand } from './graph.mjs'
 import { selectScripts, shardScripts } from '../run-db-tests.mjs'
 
@@ -389,4 +389,30 @@ test('on a pull request Desktop follows its Nx closure, its workflow, and lockfi
   assert.equal((await select(plan, [], { event: 'pull_request' })).desktop, true)
   assert.equal((await select(plan, [change('scripts/ci/select.mjs')], { event: 'merge_group' })).desktop, true)
   assert.equal((await pr(['docs/ci/incremental.md'])).desktop, false)
+})
+
+test('on a pull request Desktop follows every workspace package it links and every path desktop.yml runs, present or not', async () => {
+  const pr = changes => select(plan, changes, { event: 'pull_request' })
+  // Derived from apps/desktop/package.json, followed through each linked package's own workspace: links.
+  const desktop = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'))
+  const direct = Object.entries({ ...desktop.dependencies, ...desktop.devDependencies }).filter(([, version]) => String(version).startsWith('workspace:')).map(([name]) => name)
+  const roots = desktopWorkspaceRoots()
+  for (const name of direct) {
+    const dir = roots.find(root => JSON.parse(readFileSync(`${root}package.json`, 'utf8')).name === name)
+    assert.ok(dir, `${name} is a Desktop input`)
+  }
+  for (const dir of ['packages/config/', 'packages/daemon/', 'packages/protocol/']) assert.ok(roots.includes(dir), dir)
+  for (const file of ['packages/config/tsconfig.base.json', 'packages/config/package.json', 'packages/daemon/package.json', '.npmrc'])
+    assert.equal((await pr([change(file)])).desktop, true, file)
+  // A path desktop.yml runs selects Desktop even when the pull request deletes it (it is gone from the candidate tree).
+  const run = desktopRunPaths()
+  assert.ok(run.includes('scripts/test-accounts/cli.mjs'))
+  assert.ok(run.includes('apps/desktop/scripts/install-electron.mjs'), 'a step\'s working-directory prefixes its paths')
+  const withoutCli = { ...plan, files: plan.files.filter(file => file !== 'scripts/test-accounts/cli.mjs') }
+  assert.ok(!desktopEntryFiles(process.cwd(), withoutCli.files).includes('scripts/test-accounts/cli.mjs'))
+  for (const status of ['D', 'M']) {
+    const deleted = change('scripts/test-accounts/cli.mjs', status === 'D' ? { status, mode: '000000' } : {})
+    assert.equal((await select(withoutCli, [deleted], { event: 'pull_request' })).desktop, true, status)
+  }
+  assert.equal((await pr([change('scripts/ci/select.mjs')])).desktop, false, 'a script desktop.yml does not run')
 })

@@ -75,7 +75,13 @@ test('no test skips on a missing official UI checkout on its own', () => {
   for (const file of listed.stdout.split('\0').filter(Boolean)) {
     if (file.startsWith('scripts/official-ui-requirement')) continue
     const source = readFileSync(join(repository, file), 'utf8')
-    if (/skip\(\s*['"`][^'"`]*hosted-ui not checked out/.test(source) || /MIKKA_REQUIRE_OFFICIAL_UI\s*===?/.test(source)) offenders.push(file)
+    // Any skip whose reason or condition names the checkout (.hosted-ui, the official UI, the UI overlay), and any
+    // test that reads the switch itself instead of officialUiRequired.
+    const skipsOnCheckout = /\bskip\s*\(\s*['"`][^'"`]*(?:hosted[- ]?ui|official[- ]ui|ui (?:checkout|overlay))/i.test(source) ||
+      /\bskip\s*:\s*[^,}\n]*(?:hosted-ui|MIKKA_UI_OVERLAY_DIR)/.test(source) ||
+      // A skip whose reason sits in a variable: the file checks for the checkout and skips, without the switch.
+      (/existsSync\([^)]*hosted-ui/.test(source) && /\bskip\b/.test(source) && !/officialUiSkip|needsOfficialUi|officialUi\b/.test(source))
+    if (skipsOnCheckout || /\benv(?:\.MIKKA_REQUIRE_OFFICIAL_UI|\[['"]MIKKA_REQUIRE_OFFICIAL_UI['"]\])/.test(source)) offenders.push(file)
   }
   assert.deepEqual(offenders, [], 'route these through officialUiSkip')
 })

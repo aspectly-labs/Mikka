@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { appendFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { posix, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { filterAffected } from 'nx/src/project-graph/affected/affected-project-graph.js'
 import yaml from 'js-yaml'
@@ -12,8 +12,9 @@ import { lockfileTouchesDesktop, manifestTouchesDesktop } from './desktop-inputs
 export const GLOBAL = /^(?:\.github\/(?!workflows\/README\.md$)|scripts\/|tests\/(?:helpers|support)\/|patches\/|packages\/(?:config|protocol|subscription-worker)\/|services\/|cloudflare\/|(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|nx\.json|[^/]*config[^/]*|[^/]*lock[^/]*|Dockerfile|docker-compose[^/]*|\.dockerignore|\.npmrc)$|lib\/(?:db(?:\/|\.)|auth|api-auth|fresh-session|credentials\/|secrets\/|permissions|.*authorization|.*tenant|.*scope))/
 // Keep the expression readable without a trailing whitespace token.
 // On a pull request Desktop runs only for a change that can reach it, as Orca routes its e2e: the Desktop app, the
-// protocol, the Desktop workflow, and whatever the Nx graph says @mikka/desktop imports. GLOBAL does not select it.
-export const DESKTOP_PATH = /^(?:apps\/desktop\/|packages\/protocol\/|\.github\/workflows\/desktop\.yml$)/
+// workspace packages it links (desktopWorkspaceRoots), the Desktop workflow, the registry settings its install reads,
+// and whatever the Nx graph says @mikka/desktop imports. GLOBAL does not select it.
+export const DESKTOP_PATH = /^(?:apps\/desktop\/|\.github\/workflows\/desktop\.yml$|\.npmrc$)/
 // Root files Nx treats as touching every project; Desktop reads their content instead (desktop-inputs.mjs).
 const ROOT_INPUTS = { 'pnpm-lock.yaml': 'lockfile', 'package.json': 'manifest' }
 const IMPLICIT_ALL = new Set(['pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'nx.json'])
@@ -46,14 +47,57 @@ export function diffRange(env, event) {
 // Root scripts only desktop.yml runs. Its other root scripts (lint:ui, build:app, migrate, test:e2e:setup and the
 // test:desktop-auth DB suite) also run in Source checks, the build and the DB shards, which select on their own.
 export const DESKTOP_ONLY_SCRIPTS = ['test:platform']
-// The files desktop.yml runs directly (`node <path>` and DESKTOP_ONLY_SCRIPTS), beyond what @mikka/desktop imports.
+const cached = (cache, key, compute) => cache.has(key) ? cache.get(key) : cache.set(key, compute()).get(key)
+const runTokenCache = new Map(), workspaceCache = new Map()
+/** Every path desktop.yml runs directly (`node <path>` and DESKTOP_ONLY_SCRIPTS), whether or not the file still exists:
+ * deleting or renaming one must still select Desktop. */
+export function desktopRunPaths(root = process.cwd()) {
+  return cached(runTokenCache, root, () => {
+    const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
+    const workflow = yaml.load(readFileSync(resolve(root, '.github/workflows/desktop.yml'), 'utf8'))
+    // A step's paths resolve against its working-directory; root scripts run from the root.
+    const scripts = [...Object.values(workflow.jobs ?? {}).flatMap(job => (job.steps ?? []).map(step => [step['working-directory'] ?? '', step.run ?? ''])),
+      ...DESKTOP_ONLY_SCRIPTS.map(name => ['', manifest.scripts?.[name] ?? ''])]
+    return [...new Set(scripts.flatMap(([directory, text]) => text.split(/[\s"'`;|&()=]+/)
+      .filter(token => /^[\w.-]+(?:\/[\w@.-]+)+$/.test(token) && !token.startsWith('.cache/'))
+      .map(token => directory ? posix.normalize(posix.join(directory, token)) : token)))].sort()
+  })
+}
+/** The files desktop.yml runs directly that exist in this tree, the seeds of Desktop's closure beyond @mikka/desktop. */
 export function desktopEntryFiles(root, files) {
   const present = new Set(files)
-  const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-  const workflow = yaml.load(readFileSync(resolve(root, '.github/workflows/desktop.yml'), 'utf8'))
-  const runs = Object.values(workflow.jobs ?? {}).flatMap(job => (job.steps ?? []).map(step => step.run ?? ''))
-  const text = [...runs, ...DESKTOP_ONLY_SCRIPTS.map(name => manifest.scripts?.[name] ?? '')].join('\n')
-  return [...new Set(text.split(/[\s"'`;|&()=]+/).filter(token => present.has(token)))].sort()
+  return desktopRunPaths(root).filter(token => present.has(token))
+}
+/** Directories (with a trailing slash) of every workspace package apps/desktop links through `workspace:`, followed
+ * transitively, read from the package manifests so a new link cannot be missed. */
+export function desktopWorkspaceRoots(root = process.cwd()) {
+  return cached(workspaceCache, root, () => {
+    const manifests = new Map()
+    for (const parent of ['apps', 'packages']) {
+      let entries = []
+      try { entries = readdirSync(resolve(root, parent), { withFileTypes: true }) } catch { continue }
+      for (const entry of entries.filter(entry => entry.isDirectory())) {
+        try {
+          const manifest = JSON.parse(readFileSync(resolve(root, parent, entry.name, 'package.json'), 'utf8'))
+          if (manifest.name) manifests.set(manifest.name, { dir: `${parent}/${entry.name}/`, manifest })
+        } catch {}
+      }
+    }
+    const desktop = [...manifests.values()].find(({ dir }) => dir === 'apps/desktop/')
+    const seen = new Set(), pending = desktop ? [desktop.manifest] : []
+    while (pending.length) {
+      const manifest = pending.pop()
+      for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']) {
+        for (const [name, version] of Object.entries(manifest[field] ?? {})) {
+          if (!String(version).startsWith('workspace:') || seen.has(name)) continue
+          seen.add(name)
+          const linked = manifests.get(name)
+          if (linked) pending.push(linked.manifest)
+        }
+      }
+    }
+    return [...seen].map(name => manifests.get(name)?.dir).filter(dir => dir && dir !== 'apps/desktop/').sort()
+  })
 }
 const closures = new WeakMap()
 /** Every source file Desktop's suite builds, imports or runs: the Nx closure of @mikka/desktop and of the files
@@ -74,9 +118,10 @@ export function desktopClosure(plan, root = process.cwd()) {
 }
 /** Desktop on a pull request: true only for a change that can reach the Desktop suite. `inputs` says whether the
  * root lockfile and manifest changes reach it (desktop-inputs.mjs); a change it does not cover counts as reaching it. */
-function desktopOnPullRequest(plan, changes, inputs, root) {
+function desktopOnPullRequest(plan, changes, inputs, root = process.cwd()) {
   const files = changes.map(c => c.file)
-  if (files.some(file => DESKTOP_PATH.test(file))) return true
+  const linked = desktopWorkspaceRoots(root), run = new Set(desktopRunPaths(root))
+  if (files.some(file => DESKTOP_PATH.test(file) || linked.some(dir => file.startsWith(dir)) || run.has(file))) return true
   // pnpm-workspace.yaml and nx.json change how every package resolves or builds.
   if (files.some(file => file === 'pnpm-workspace.yaml' || file === 'nx.json')) return true
   for (const [file, key] of Object.entries(ROOT_INPUTS)) if (files.includes(file) && inputs?.[key] !== false) return true

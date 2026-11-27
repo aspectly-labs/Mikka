@@ -37,8 +37,10 @@ protected UI check.
   A skipped job passes only where its own `if:` (trusted selection and event)
   left it out; each `CI_OK_EXPECT_*` is that `if:` (`scripts/ci/ci-ok.mjs`,
   compared by `scripts/ci/ci-ok.test.mjs`). The job runs main's copy of the
-  script, as the selector runs main's bootstrap, so a pull request cannot
-  change how its own results are judged. Draft PRs fail it until Ready.
+  script, as the selector runs main's bootstrap, so a pull request cannot edit
+  the script that judges it; the workflow, its `needs` and the expectations are
+  still the pull request's own, checked by `ci-ok.test.mjs`. Draft PRs fail it
+  until Ready.
 - All four existing required names remain intact until branch protection
   requires `CI OK` instead ([GitHub branch protection](#github-branch-protection-separate-repository-setting)).
 
@@ -461,9 +463,12 @@ and [measured results](../../docs/ci/1699-results.md).
 Selected reusable jobs consume CI's trusted decision without running another
 selector, as Orca routes its checks by path. On a pull request the selector
 reports `desktop` only for a change that can reach the Desktop suite:
-`apps/desktop/**`, `packages/protocol/**`, `desktop.yml`, any file in the Nx
-closure of `@mikka/desktop` and of the files `desktop.yml` runs directly
-(`test:platform`, its `node` scripts), `pnpm-workspace.yaml`/`nx.json`, and a
+`apps/desktop/**`, every workspace package `apps/desktop/package.json` links
+through `workspace:` (followed transitively, today `packages/config`,
+`packages/daemon` and `packages/protocol`), `desktop.yml`, `.npmrc`, a path
+`desktop.yml` runs directly (`test:platform`, its `node` scripts), even one the
+change deletes, any file in the Nx closure of `@mikka/desktop` and of those
+paths, `pnpm-workspace.yaml`/`nx.json`, and a
 `pnpm-lock.yaml` or root `package.json` change that alters Desktop's
 dependency closure or a root script it runs (`scripts/ci/desktop-inputs.mjs`).
 A global input alone (`scripts/`, other workflows, configs) does not select it.
