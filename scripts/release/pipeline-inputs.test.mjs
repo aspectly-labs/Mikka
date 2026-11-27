@@ -305,9 +305,11 @@ async function automaticPromotion(t, change = {}) {
   const env = { GITHUB_REPOSITORY: repo.full_name, GITHUB_REPOSITORY_ID: String(repo.id), GITHUB_REPOSITORY_OWNER_ID: '183887963',
     GITHUB_REF: 'refs/heads/main', GITHUB_ACTOR_ID: '183887963', GITHUB_EVENT_NAME: 'workflow_run',
     GITHUB_EVENT_PATH: join(directory, 'event.json'), GITHUB_ENV: join(directory, 'env'), RUNNER_TEMP: directory,
+    GITHUB_STEP_SUMMARY: join(directory, 'summary.md'),
     GITHUB_RUN_ID: '201', GITHUB_RUN_ATTEMPT: '1', INPUT_STAGE_ARTIFACT: '401', INPUT_OPERATIONS_SOURCE: 'f'.repeat(40) }
   await writeFile(env.GITHUB_EVENT_PATH, JSON.stringify(event(run())))
   await writeFile(env.GITHUB_ENV, '')
+  await writeFile(env.GITHUB_STEP_SUMMARY, '')
   const manifest = manifestFixture()
   const current = { ...run(), id: 201, run_attempt: 1, path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_run' }
   const bot = { id: 118344674, login: 'github-merge-queue[bot]' }
@@ -356,7 +358,8 @@ async function automaticPromotion(t, change = {}) {
       return { encoding: 'base64', content: Buffer.from("// export const MIN_DAEMON_VERSION = '9.9.9'\nexport const MIN_DAEMON_VERSION = '0.0.456'\n").toString('base64') }
     assert.fail('Unexpected promotion request: ' + path)
   }
-  return { env, api, state, bot, read: () => readFile(env.GITHUB_ENV, 'utf8'), npmLatest: async () => '0.0.500' }
+  return { env, api, state, bot, read: () => readFile(env.GITHUB_ENV, 'utf8'), summary: () => readFile(env.GITHUB_STEP_SUMMARY, 'utf8'),
+    npmLatest: async () => '0.0.500' }
 }
 
 test('promotion by the owner or the merge queue scans staging history and selects the staged release', async t => {
@@ -370,7 +373,9 @@ test('promotion by the owner or the merge queue scans staging history and select
     const queued = await selectPromotion({ env: { ...env, GITHUB_ACTOR_ID: String(bot.id), GITHUB_ACTOR: bot.login }, api, npmLatest })
     // The automatic path holds back a candidate whose daemon floor is above npm latest, too.
     assert.deepEqual(await selectPromotion({ env, api, npmLatest: async () => '0.0.455' }),
-      { status: 'not-ready', source, reason: 'pipeline_daemon_latest_behind', detail: '' })
+      { status: 'not-ready', source, reason: 'pipeline_daemon_latest_behind', detail: 'npm:latestBehind', check: '' })
+    // An npm registry outage is held back the same way, and says so.
+    assert.equal((await selectPromotion({ env, api, npmLatest: async () => undefined })).detail, 'npm:latestUnreadable')
     assert.equal(queued.status, 'selected')
     assert.equal(queued.source, source)
     assert.equal(state.scanned, true)
@@ -384,11 +389,14 @@ test('an automatic promotion re-reads the policy and needs its production checks
   const passed = await automaticPromotion(t, { productionChecks: [e2e], checkRuns: passing })
   assert.equal((await selectPromotion({ env: passed.env, api: passed.api, npmLatest: passed.npmLatest })).status, 'selected')
   assert.ok(passed.state.calls.some(path => path.includes(`/commits/${source}/check-runs?`)), 'the check reads the candidate commit')
-  // Evidence that has not arrived yet holds production back without failing the run.
-  for (const checkRuns of [[{ ...passing[0], conclusion: 'failure' }], [{ ...passing[0], status: 'in_progress', conclusion: null }], []]) {
+  // Evidence that has not arrived yet holds production back without failing the run, and a check that
+  // finished unsuccessfully is told apart from one still pending or never started (a wrong name or path).
+  for (const [checkRuns, detail] of [[[{ ...passing[0], conclusion: 'failure' }], 'releaseChecks:checkRunFailed'],
+    [[{ ...passing[0], conclusion: 'timed_out' }], 'releaseChecks:checkRunFailed'],
+    [[{ ...passing[0], status: 'in_progress', conclusion: null }], 'releaseChecks:checkRunMissing'], [[], 'releaseChecks:checkRunMissing']]) {
     const f = await automaticPromotion(t, { productionChecks: [e2e], checkRuns })
     assert.deepEqual(await selectPromotion({ env: f.env, api: f.api, npmLatest: f.npmLatest }),
-      { status: 'not-ready', source, reason: 'pipeline_required_check_failed', detail: 'releaseChecks:checkRunMissing' }, JSON.stringify(checkRuns))
+      { status: 'not-ready', source, reason: 'pipeline_required_check_failed', detail, check: 'browser-e2e' }, JSON.stringify(checkRuns))
     assert.equal(await f.read(), '', 'A held-back promotion exports nothing to later steps')
     assert.equal((await readdir(f.env.RUNNER_TEMP)).includes('deploy-production'), false, 'nor writes deployment inputs')
   }
@@ -703,4 +711,34 @@ test('a staging run whose automatic promotion was held back for a pending check 
   // Before the fix the automatic refusal failed the run, and a failed staging run is never promotable.
   const failedRun = await manualPromotion(t, { productionChecks: [e2e], checkRuns: passed, stageJobs: heldJobs, stageRun: { conclusion: 'failure' } })
   await assert.rejects(selectPromotion({ env: failedRun.env, api: failedRun.api, npmLatest: failedRun.npmLatest }), /pipeline_run_unsuccessful/)
+})
+
+test('a held-back automatic promotion writes a step summary with the reason and the exact recovery dispatch', async t => {
+  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e', workflow: '.github/workflows/browser-gate.yml' }
+  const recovery = `dispatch \`pipeline-promote\` with \`pipeline_run=201\` and \`promote_source=${source}\``
+  // Still pending: a wait, with the check named and the dispatch that recovers this run.
+  const pending = await automaticPromotion(t, { productionChecks: [e2e], checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'queued', conclusion: null }] })
+  await selectPromotion({ env: pending.env, api: pending.api, npmLatest: pending.npmLatest })
+  const waiting = await pending.summary()
+  assert.match(waiting, /^### Production held back: a required check has not passed yet$/m)
+  assert.match(waiting, /`pipeline_required_check_failed` \(`releaseChecks:checkRunMissing`\)/)
+  assert.ok(waiting.includes(`once \`browser-e2e\` passes on \`${source}\`, ${recovery}`), waiting)
+  assert.doesNotMatch(waiting, /likely a real failure/)
+  // Finished as a failure: flagged as a likely real failure that needs attention, with the same recovery.
+  for (const conclusion of ['failure', 'cancelled', 'timed_out']) {
+    const failed = await automaticPromotion(t, { productionChecks: [e2e], checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'completed', conclusion, app: { id: 15368 } }] })
+    await selectPromotion({ env: failed.env, api: failed.api, npmLatest: failed.npmLatest })
+    const attention = await failed.summary()
+    assert.match(attention, /^### Production held back: a required check failed$/m, conclusion)
+    assert.match(attention, /\*\*Attention: this is likely a real failure\.\*\*/)
+    assert.match(attention, /`releaseChecks:checkRunFailed`/)
+    assert.ok(attention.includes(`once \`browser-e2e\` passes on \`${source}\`, ${recovery}`), attention)
+  }
+  // The daemon floor names the registry state; a selected or refused promotion writes no such block.
+  const floor = await automaticPromotion(t)
+  await selectPromotion({ env: floor.env, api: floor.api, npmLatest: async () => undefined })
+  assert.match(await floor.summary(), /npm registry did not answer[\s\S]*pipeline_run=201/)
+  const selected = await automaticPromotion(t)
+  assert.equal((await selectPromotion({ env: selected.env, api: selected.api, npmLatest: selected.npmLatest })).status, 'selected')
+  assert.equal(await selected.summary(), '')
 })

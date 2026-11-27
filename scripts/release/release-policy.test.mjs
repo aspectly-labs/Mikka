@@ -160,7 +160,11 @@ test('required checks: mandatory ones cannot be dropped, unknown ones fail, chec
   await assert.rejects(runReleaseChecks('mobile', { checks: [e2e], read: read(ok) }), /unknownCheck/)
   await assert.rejects(runReleaseChecks('production', { checks: undefined }), /checksRequired/)
   assert.equal((await publicCheckRun(e2e, sha, read(ok))).workflow, '.github/workflows/browser-gate.yml')
-  for (const runs of [[], [{ ...ok[0], conclusion: 'failure' }], [{ ...ok[0], head_sha: 'b'.repeat(40) }], [{ ...ok[0], status: 'in_progress' }],
+  // A check GitHub Actions finished unsuccessfully on the commit is told apart from one still pending.
+  for (const conclusion of ['failure', 'cancelled', 'timed_out'])
+    await assert.rejects(publicCheckRun(e2e, sha, read([{ ...ok[0], conclusion }])), error => error.message === 'releaseChecks:checkRunFailed' && error.check === 'browser-e2e', conclusion)
+  await assert.rejects(publicCheckRun(e2e, sha, read([{ ...ok[0], status: 'queued', conclusion: null }])), error => error.message === 'releaseChecks:checkRunMissing' && error.check === 'browser-e2e')
+  for (const runs of [[], [{ ...ok[0], head_sha: 'b'.repeat(40) }], [{ ...ok[0], status: 'in_progress' }],
     // Another app posting the same name, or a check run with no Actions run behind it, never counts.
     [{ ...ok[0], app: { id: 1 } }], [{ ...ok[0], app: undefined }], [{ ...ok[0], details_url: 'https://evil.example/actions/runs/9/job/77' }]])
     await assert.rejects(publicCheckRun(e2e, sha, read(runs)), /checkRunMissing/)

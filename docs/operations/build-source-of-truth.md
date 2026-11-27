@@ -351,12 +351,30 @@ construction, because the workflow-level `cloudflare-application-deployment`
 concurrency group runs this run's staging and production jobs with no other
 deployment in between (so its own staging result is the current baseline), and
 the candidate was `main` when staging selected it inside that group, and `main`
-(protected, never rewritten) contains every commit production can already serve. If a required check has no successful run yet
-(pending, failed, or not started) or npm `latest` is below the daemon floor,
-the selector reports `not-ready` instead of failing: production is skipped, the
-run still succeeds, no failure issue is filed, and a promoter can dispatch
-`pipeline-promote` for that staging run once the evidence exists. A malformed
-policy or an unknown check still fails the run.
+(protected, never rewritten) contains every commit production can already
+serve.
+
+The automatic selector holds production back (`status=not-ready`) instead of
+failing the run when the evidence could still arrive for the same commit:
+
+- a listed check-run has no successful run on the commit: still queued or
+  running, not started, or finished as failure, cancelled or timed out. A
+  check-run entry whose `checkRun` name or `workflow` path matches nothing is
+  held back the same way, forever, not failed;
+- npm `latest` is below the candidate's `MIN_DAEMON_VERSION`, or the npm registry
+  did not answer (`npmLatestDaemon` returns undefined), which is held back the
+  same way, not failed.
+
+Production is then skipped, the run still succeeds and no failure issue is
+filed. The select step writes a step summary with the reason, the cause code
+and the recovery: dispatch `pipeline-promote` with that `pipeline_run` and
+`promote_source` once the check passes or npm `latest` meets the floor. A check
+that finished unsuccessfully is headed as a likely real failure and annotated
+as an error; a pending or never-started one as a wait. Only these fail the
+run: a `builtin` check the selector does not implement, a policy that fails its
+schema or cannot be read (including a malformed `requiredChecks` entry),
+`autoProduction` not `true` at the pinned operations commit, and every
+integrity refusal (manifest, artifact, run or actor).
 
 Desktop (a `desktop-release.yml` dispatch): the dispatcher and re-run actor are
 promoters; the receipt is verified as before (a manual `pipeline:` receipt must
@@ -467,6 +485,9 @@ evidence linked in the `mikka-cloud` PR that flips the flag:
 - the Infisical OIDC identity bound to `refs/heads/main` claims (owner action, above);
 - the daemon floor check (`MIN_DAEMON_VERSION` against npm `latest`) in the private
   publisher too, not only in the public selector.
+- a held-back automatic promotion (`not-ready`) opens, or updates, one
+  "production held back" issue naming the run, the check and the recovery
+  dispatch, so it is not visible only in a green run's step summary.
 
 ### Mobile OTA while paused
 
