@@ -1,10 +1,9 @@
 import { captureRunFailure, type RunFailureContext } from '@mikka/protocol/run-failure'
-import { trace } from '@opentelemetry/api'
 import { WorkflowRunFailureError } from './workflow-run-failure'
 import { APP_BUILD } from './app-build'
+import { createSubscriptionChatModel } from './model-gateway/litellm-client'
 import { workerSubscriptionMatches } from './agent-kit/worker'
-import { createLiteLLMSubscriptionModel, sendLiteLLMSubscriptionChat } from './model-gateway/litellm-client'
-import { signSubscriptionChat, SUBSCRIPTION_CHAT_MAX_BYTES } from './subscription-chat-ticket'
+import { SUBSCRIPTION_CHAT_MAX_BYTES } from './subscription-chat-ticket'
 import { quotaSnapshotSchema, type QuotaSnapshot } from '@mikka/protocol'
 import { authorizeSubscriptionUse, subscriptionQuotaState, SubscriptionRefusal, type SubscriptionAccess, type SubscriptionRoute, type SubscriptionUse } from '@mikka/protocol/subscription'
 import { WorkerRefusal, type SubscriptionWorkerClient, type WorkerMetadata } from '../packages/daemon/src/subscription-worker-client'
@@ -19,8 +18,6 @@ import { stepIdentity } from './model-call-timing'
 import { CLEANUP_DUE_SQL, expireSubscriptionAcquisitions } from './subscription-acquire-expiry'
 import { ownerSettingsChanged } from './live/lists'
 import { measureSubscriptionNative } from './subscription-native-timing'
-import { withRunSpan } from './tracing/context'
-import { linkSubscriptionChatGatewayCall } from './model-gateway/ledger'
 import { claudeFastSupport, codexDaybreakSupport, codexPrioritySupport, codexUltrafastSupport, subscriptionModelRequestPolicySchema, type CodexPrioritySupport, type SubscriptionCatalogueModel, type SubscriptionModelRequestPolicy } from './subscription-service-tier'
 import { daybreakTierFromProgram } from './model-capabilities'
 
@@ -49,19 +46,6 @@ export interface SubscriptionCapabilities {
 
 export type SubscriptionChatTransport = (use: SubscriptionUse, modelId: string, payload: string, signal?: AbortSignal) => Promise<Response>
 
-const sendSubscriptionChat: SubscriptionChatTransport = async (use, model, payload, signal) => {
-  const { body, callId } = await signSubscriptionChat(use, model, payload)
-  return withRunSpan('model.subscription.litellm', { 'mikka.model.call_id': callId }, async () => {
-    const { response, generationId } = await sendLiteLLMSubscriptionChat(body, callId, signal)
-    if (generationId) {
-      trace.getActiveSpan()?.setAttribute('mikka.litellm.call_id', generationId)
-      try { await linkSubscriptionChatGatewayCall((await import('./db')).db, callId, generationId) }
-      catch (error) { await response.body?.cancel(); throw error }
-    }
-    return response
-  })
-}
-
 function subscriptionWireError(error: unknown) {
   if (!error || typeof error !== 'object' || !('type' in error) || error.type !== 'mikka_subscription_failure'
     || !('code' in error) || typeof error.code !== 'string') return error
@@ -84,7 +68,7 @@ export class SubscriptionService {
     /** Active membership in the workspace database; a teammate's shared subscription needs it for both people. */
     readonly member: (userId: string, workspaceId: string, borrowerId?: string) => Promise<void> = async () => { throw new SubscriptionRefusal('account_unavailable', { detail: 'membership_hook_absent' }) },
     modelRequestPolicy?: SubscriptionModelRequestPolicy,
-    readonly chatTransport: SubscriptionChatTransport = sendSubscriptionChat) {
+    readonly chatTransport?: SubscriptionChatTransport) {
     this.modelRequestPolicy = modelRequestPolicy === undefined ? undefined : subscriptionModelRequestPolicySchema.parse(modelRequestPolicy)
   }
 
@@ -133,7 +117,7 @@ export class SubscriptionService {
     return resolveSubscriptionModel(use, binding.modelId, {
       access: () => this.access(use, signal),
       model: async (modelId, { connection }) => {
-        const model = createLiteLLMSubscriptionModel(modelId, async init => {
+        const model = createSubscriptionChatModel(modelId, async init => {
           if (typeof init?.body !== 'string') {
             await logRequestFailure('body_invalid', null)
             throw new SubscriptionRefusal('backend_unavailable', { detail: 'request_body_not_string' })
@@ -177,7 +161,10 @@ export class SubscriptionService {
           const prepared = JSON.stringify(payload)
           if (Buffer.byteLength(prepared, 'utf8') > MODEL_REQUEST_MAX_BYTES)
             throw new SubscriptionRefusal('backend_unavailable', { detail: 'payload_over_transport_limit' })
-          return this.chatTransport(use, modelId, prepared, init.signal ?? signal ?? undefined)
+          const callSignal = init.signal ?? signal ?? undefined
+          if (this.chatTransport) return this.chatTransport(use, modelId, prepared, callSignal)
+          const { streamSubscriptionChat } = await import('./subscription-chat-bridge')
+          return streamSubscriptionChat(use, modelId, callSignal, () => this.openLiteLLMChat(use, modelId, payload, callSignal))
         })
         const doStream = model.doStream.bind(model)
         model.doStream = async options => {
@@ -227,7 +214,7 @@ export class SubscriptionService {
       }
     })
   }
-  /** The signed LiteLLM callback revalidates live custody before it starts CPA. */
+  /** Revalidate live custody before starting a CPA stream. */
   async openLiteLLMChat(use: SubscriptionUse, modelId: string, payload: unknown, signal?: AbortSignal) {
     const binding = await this.repository.binding(use.ownerId, use.bindingId)
     if (use.execution !== 'model' || binding.modelId !== modelId) throw new SubscriptionRefusal('binding_mismatch')

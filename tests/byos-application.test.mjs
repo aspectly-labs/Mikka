@@ -200,6 +200,8 @@ test(scenario, { timeout: 90_000 }, async t => {
     }
     return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token', ...(nativeLiteLlm ? { nativeLiteLlmUrl: nativeLiteLlm.url, nativeLiteLlmKey: nativeLiteLlm.key } : {}) })
   }, { ready: () => true, nativeIsolation: 'verified_runtime', oauth: { codex: true, claude: true } }, undefined, chatOnly ? authorizeSubscriptionUse : async (_owner, workspace) => assert.equal(workspace, workspaceId), undefined, undefined, undefined, chat.fixtureTransport)
+  const directService = new SubscriptionService(repository, service.worker, service.capabilities,
+    service.quota, service.workspace, service.admitModel, service.member)
   const dependencies = {
     session: async request => {
       const value = request.headers.get('cookie')?.match(/fixture=([a-z-]+)/)?.[1]
@@ -358,6 +360,19 @@ test(scenario, { timeout: 90_000 }, async t => {
         const model = await resolveAgentModel({ type: 'subscription', bindingId: remembered }, { defaultModel: () => { throw new Error('paid fallback invoked') }, subscriptionModel: bindingId => resolveAgentSubscription('alice', consumerId, bindingId, service, dependencies.workspace) })
         await assertChat(model, use)
       }
+      const beforeDirect = { callbacks: chat.captured.length, providerCalls }
+      const direct = await chat.traceModel(async () => streamText({
+        model: await directService.model(use), prompt: 'HELLO', maxRetries: 0,
+      }).text)
+      assert.equal(direct.result, 'subscription fixture')
+      assert.equal(chat.captured.length, beforeDirect.callbacks)
+      assert.equal(providerCalls, beforeDirect.providerCalls + 1)
+      const directCallId = direct.spans.find(span => span.name === 'model.subscription.cpa')?.attributes['mikka.model.call_id']
+      assert.equal(typeof directCallId, 'string')
+      const directUsage = await pool.query('SELECT state, "billingSource", "generationId", "inputTokens", "outputTokens" FROM hosted_usage WHERE id=$1', [directCallId])
+      assert.deepEqual(directUsage.rows, [{
+        state: 'settled', billingSource: 'subscription', generationId: null, inputTokens: '1', outputTokens: '1',
+      }])
       assert.equal(secretMethods.filter(method => method === 'POST').length, initialSecretCreates, 'task reuse must not log in or store credentials again')
       if (chat.realLiteLLM) t.diagnostic(`${provider}: pinned LiteLLM preserved CPA trace, unique usage, and owner isolation`)
       let toolCalls = 0
