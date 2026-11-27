@@ -15,6 +15,11 @@ export const GLOBAL = /^(?:\.github\/(?!workflows\/README\.md$)|scripts\/|tests\
 // workspace packages it links (desktopWorkspaceRoots), the Desktop workflow, the registry settings its install reads,
 // and whatever the Nx graph says @mikka/desktop imports. GLOBAL does not select it.
 export const DESKTOP_PATH = /^(?:apps\/desktop\/|\.github\/workflows\/desktop\.yml$|\.npmrc$)/
+// What the Desktop renderer build reads without an import the Nx graph can see: the application plugin's virtual
+// modules (apps/frontend/scripts/application-plugin.mjs: `mikka:application` is headless.ts without the official UI,
+// each `@/app/actions/<name>` is generated from that file, the RPC registry is read as text) and Vite's own inputs.
+// Selected on pull requests and merge groups alike.
+export const DESKTOP_VIRTUAL_INPUT = /^(?:apps\/frontend\/(?:src\/headless\.ts|index\.html|vite\.config\.mjs)|app\/actions\/[\w-]+\.ts|lib\/desktop-rpc\/registry\.ts)$/
 // Root files Nx treats as touching every project; Desktop reads their content instead (desktop-inputs.mjs).
 const ROOT_INPUTS = { 'pnpm-lock.yaml': 'lockfile', 'package.json': 'manifest' }
 const IMPLICIT_ALL = new Set(['pnpm-lock.yaml', 'package.json', 'pnpm-workspace.yaml', 'nx.json'])
@@ -121,7 +126,7 @@ export function desktopClosure(plan, root = process.cwd()) {
 function desktopOnPullRequest(plan, changes, inputs, root = process.cwd()) {
   const files = changes.map(c => c.file)
   const linked = desktopWorkspaceRoots(root), run = new Set(desktopRunPaths(root))
-  if (files.some(file => DESKTOP_PATH.test(file) || linked.some(dir => file.startsWith(dir)) || run.has(file))) return true
+  if (files.some(file => DESKTOP_PATH.test(file) || DESKTOP_VIRTUAL_INPUT.test(file) || linked.some(dir => file.startsWith(dir)) || run.has(file))) return true
   // pnpm-workspace.yaml and nx.json change how every package resolves or builds.
   if (files.some(file => file === 'pnpm-workspace.yaml' || file === 'nx.json')) return true
   for (const [file, key] of Object.entries(ROOT_INPUTS)) if (files.includes(file) && inputs?.[key] !== false) return true
@@ -169,7 +174,7 @@ export async function select(plan, changes, { force = false, event, desktopInput
     // Merge groups, main pushes and full runs keep the broad rule; a pull request takes the routed one.
     desktop: !docs && (event === 'pull_request' && !force && files.length
       ? desktopOnPullRequest(plan, changes, desktopInputs, root)
-      : full || selected.has('@mikka/desktop') || areas.includes('desktop')),
+      : full || selected.has('@mikka/desktop') || areas.includes('desktop') || files.some(file => DESKTOP_VIRTUAL_INPUT.test(file))),
     analytics: !docs && (full || files.some(f => /analytics|posthog|instrumentation|^apps\/frontend\/|^app\/globals/.test(f))),
   }
   return { version: 1, full, docs_only: docs, areas, reasons, affected, units,

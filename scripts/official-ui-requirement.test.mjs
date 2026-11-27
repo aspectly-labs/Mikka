@@ -10,6 +10,7 @@ const repository = fileURLToPath(new URL('..', import.meta.url))
 
 test('a present checkout never skips, with or without the requirement', () => {
   for (const value of [undefined, '', '0', '1']) assert.equal(officialUiSkip('/checkout/core', 'x', { [REQUIRE_OFFICIAL_UI]: value }), false)
+  assert.throws(() => officialUiSkip('/checkout/core', 'x', { [REQUIRE_OFFICIAL_UI]: 'yes' }), /OFFICIAL_UI_REQUIREMENT_INVALID/, 'an invalid value fails even with the checkout')
 })
 
 test('a missing checkout skips with a reason unless the requirement is set', () => {

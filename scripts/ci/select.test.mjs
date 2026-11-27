@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import yaml from 'js-yaml'
-import { select, diffRange, emit, desktopClosure, desktopEntryFiles, desktopRunPaths, desktopWorkspaceRoots } from './select.mjs'
+import { select, diffRange, emit, desktopClosure, desktopEntryFiles, desktopRunPaths, desktopWorkspaceRoots, DESKTOP_VIRTUAL_INPUT, DESKTOP_PATH } from './select.mjs'
 import { buildGraph, dbId, sourceId, strictCommand } from './graph.mjs'
 import { selectScripts, shardScripts } from '../run-db-tests.mjs'
 
@@ -351,10 +351,12 @@ test('desktop paths route CI to desktop.yml; web-only and docs-only changes do n
       assert.equal(await routed([file], 'pull_request', true), false, 'a draft defers Desktop like every runner-heavy lane')
       assert.equal(await routed([file], 'push'), false, 'main pushes rely on the merge-queue run of the same commit')
     }
-    for (const file of ['apps/frontend/src/headless.ts', 'docs/ci/incremental.md']) {
+    for (const file of ['docs/ci/incremental.md']) {
       assert.equal(await routed([file]), false, file)
       assert.equal(await routed([file], 'merge_group'), false, file)
     }
+    // The page a build without the official UI compiles, reached through the plugin's virtual `mikka:application`.
+    for (const event of ['pull_request', 'merge_group']) assert.equal(await routed(['apps/frontend/src/headless.ts'], event), true, event)
     // A global input no longer selects Desktop on a pull request; the merge group still runs it.
     for (const file of ['scripts/ci/select.mjs', '.github/workflows/ui-policy.yml', 'pnpm-lock.yaml', 'package.json']) {
       assert.equal(await routed([file]), false, file)
@@ -368,7 +370,7 @@ test('on a pull request Desktop follows its Nx closure, its workflow, and lockfi
   const pr = (files, options = {}) => select(plan, files.map(file => typeof file === 'string' ? change(file) : file), { event: 'pull_request', ...options })
   const closure = desktopClosure(plan)
   assert.ok(closure.has('packages/protocol/src/index.ts'))
-  assert.ok(!closure.has('apps/frontend/src/headless.ts'))
+  assert.ok(!closure.has('apps/frontend/src/headless.ts'), 'the graph does not see the virtual import; DESKTOP_VIRTUAL_INPUT does')
   // A shared module Desktop imports, found through the graph rather than a path list.
   const shared = [...closure].find(file => file.startsWith('lib/') && !file.includes('.test.'))
   assert.ok(shared, 'Desktop imports at least one lib module')
@@ -415,4 +417,20 @@ test('on a pull request Desktop follows every workspace package it links and eve
     assert.equal((await select(withoutCli, [deleted], { event: 'pull_request' })).desktop, true, status)
   }
   assert.equal((await pr([change('scripts/ci/select.mjs')])).desktop, false, 'a script desktop.yml does not run')
+})
+
+test('every file the application plugin and Vite config read by name is a Desktop input on pull requests and merge groups', async () => {
+  const closure = desktopClosure(plan)
+  const covered = file => DESKTOP_PATH.test(file) || DESKTOP_VIRTUAL_INPUT.test(file) || closure.has(file)
+  for (const source of ['apps/frontend/scripts/application-plugin.mjs', 'apps/frontend/vite.config.mjs']) {
+    const text = readFileSync(source, 'utf8')
+    const literals = [...text.matchAll(/resolve\((frontend|repository|renderer|actionDirectory), '([^'$`]+)'\)/g)].map(([, base, path]) =>
+      ({ frontend: 'apps/frontend/', repository: '', renderer: 'apps/desktop/src/renderer/', actionDirectory: 'app/actions/' })[base] + path)
+      .filter(path => !/^(?:\.\.|public$|apps\/desktop\/dist$|dist)/.test(path) && /\.[a-z]+$/.test(path))
+    if (source.endsWith('application-plugin.mjs')) assert.ok(literals.includes('apps/frontend/src/headless.ts'), 'the plugin names the headless entry')
+    for (const path of literals) assert.ok(covered(path), `${source} reads ${path}`)
+  }
+  for (const file of ['apps/frontend/index.html', 'app/actions/billing.ts', 'lib/desktop-rpc/registry.ts']) {
+    for (const event of ['pull_request', 'merge_group']) assert.equal((await select(plan, [change(file)], { event })).desktop, true, `${file} on ${event}`)
+  }
 })

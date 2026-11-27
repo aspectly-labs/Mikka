@@ -381,7 +381,14 @@ on a Ready PR and a merge group:
    jobs (`ui-policy`, `browser-tests`) once no ruleset names them. Move the
    rule-as-code, Engineering Handbook and timing-summary steps of `ui-policy`
    into a job `ci-ok` needs, and drop the two jobs from `ci-ok`'s `needs` and
-   expectations in the same PR. Do not change protection to shorten a validation cycle. Follow
+   expectations in the same PR.
+
+`CI` does not run on `pull_request: edited`, so editing a PR description does
+not re-run it: `CI OK` (like `UI policy (strict)` today) keeps the result of
+the last push, including `Frontend screenshots`, which reads the description.
+After fixing a description, push a commit or re-run the failed jobs.
+
+Do not change protection to shorten a validation cycle. Follow
 the single [merge procedure](../../docs/dev-workflow.md#5-ownership-and-merging):
 normally integrate `main` when protection requires it, a conflict exists or a
 relevant landed change requires verification, then validate that candidate.

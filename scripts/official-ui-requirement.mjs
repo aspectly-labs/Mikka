@@ -21,8 +21,10 @@ export function officialUiRequired(env = process.env) {
 /** The `skip` option for a test that needs the checkout: false when it is present, otherwise the reason to skip.
  * When the requirement is set, a missing checkout throws, which fails the test file at import. */
 export function officialUiSkip(present, where, env = process.env) {
+  // Read the switch first: a typo fails even on a machine that has the checkout.
+  const required = officialUiRequired(env)
   if (present) return false
-  if (officialUiRequired(env)) {
+  if (required) {
     throw new Error(`OFFICIAL_UI_REQUIRED: ${REQUIRE_OFFICIAL_UI}=1 but the official UI checkout (${where}) is missing`)
   }
   return `needs the official UI checkout (${where}); mikka-hosted-ui CI runs it`

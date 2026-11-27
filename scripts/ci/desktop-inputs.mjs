@@ -13,7 +13,17 @@ const globalSections = ['lockfileVersion', 'settings', 'overrides', 'packageExte
 export const DESKTOP_ROOT_SCRIPTS = ['test:platform', 'lint:ui', 'migrate', 'test:e2e:setup', 'build:app', 'test:desktop-auth']
 const manifestFields = ['packageManager', 'engines', 'pnpm', 'type', 'workspaces', 'resolutions', 'overrides']
 
-/** Every lockfile entry Desktop's install depends on, as sorted strings. */
+export const UNRESOLVED = 'unresolved:'
+/** The snapshot key a dependency reference names. pnpm writes an aliased dependency (`alias: npm:real@1.0.0`) as
+ * `alias: real@1.0.0`: the reference already carries the real name, so it is the key itself. */
+export function snapshotKey(name, version) {
+  const value = String(version)
+  const head = value.split('(')[0]
+  return head.lastIndexOf('@') > 0 ? value : `${name}@${value}`
+}
+
+/** Every lockfile entry Desktop's install depends on, as sorted strings. A reference that names no snapshot or
+ * package becomes an UNRESOLVED entry, which lockfileTouchesDesktop treats as reaching Desktop. */
 export function desktopLockClosure(text) {
   const lock = yaml.load(text) ?? {}
   const importers = lock.importers ?? {}
@@ -26,7 +36,7 @@ export function desktopLockClosure(text) {
   const resolve = (from, name, version) => {
     const value = String(version)
     if (value.startsWith('link:')) pendingImporters.push(posix.normalize(posix.join(from, value.slice(5))) || '.')
-    else pendingSnapshots.push(`${name}@${value}`)
+    else pendingSnapshots.push(snapshotKey(name, value))
   }
   while (pendingImporters.length) {
     const key = pendingImporters.pop()
@@ -46,19 +56,23 @@ export function desktopLockClosure(text) {
     seenSnapshots.add(key)
     const snapshot = snapshots[key]
     const base = key.includes('(') ? key.slice(0, key.indexOf('(')) : key
+    if (!snapshot || !packages[base]) entries.add(`${UNRESOLVED}${key}`)
     entries.add(`snapshot:${key}=${JSON.stringify(snapshot ?? null)}`)
     entries.add(`package:${base}=${JSON.stringify(packages[base] ?? null)}`)
     for (const field of ['dependencies', 'optionalDependencies']) for (const [name, version] of Object.entries(snapshot?.[field] ?? {})) {
-      if (!String(version).startsWith('link:')) pendingSnapshots.push(`${name}@${version}`)
+      if (!String(version).startsWith('link:')) pendingSnapshots.push(snapshotKey(name, version))
     }
   }
   return [...entries].sort()
 }
 
-/** Whether the lockfile change alters Desktop's closure. Unreadable input counts as a change. */
+/** Whether the lockfile change alters Desktop's closure. Unreadable input or a reference that resolves to nothing
+ * counts as a change (fail safe). */
 export function lockfileTouchesDesktop(before, after) {
   try {
-    return JSON.stringify(desktopLockClosure(before)) !== JSON.stringify(desktopLockClosure(after))
+    const [a, b] = [desktopLockClosure(before), desktopLockClosure(after)]
+    if ([...a, ...b].some(entry => entry.startsWith(UNRESOLVED))) return true
+    return JSON.stringify(a) !== JSON.stringify(b)
   } catch { return true }
 }
 

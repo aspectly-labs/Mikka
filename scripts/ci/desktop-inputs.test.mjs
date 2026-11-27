@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import yaml from 'js-yaml'
-import { DESKTOP_ROOT_SCRIPTS, desktopLockClosure, lockfileTouchesDesktop, manifestTouchesDesktop } from './desktop-inputs.mjs'
+import { DESKTOP_ROOT_SCRIPTS, UNRESOLVED, desktopLockClosure, lockfileTouchesDesktop, manifestTouchesDesktop, snapshotKey } from './desktop-inputs.mjs'
 
 const lock = body => yaml.dump({ lockfileVersion: '9.0', settings: { autoInstallPeers: true }, ...body })
 const base = {
@@ -46,4 +46,29 @@ test('only the root scripts desktop.yml runs, dependencies and install settings 
     assert.equal(manifestTouchesDesktop(JSON.stringify(manifest), edit(mutate)), true, String(mutate))
   const workflow = readFileSync(new URL('../../.github/workflows/desktop.yml', import.meta.url), 'utf8')
   for (const name of DESKTOP_ROOT_SCRIPTS) assert.match(workflow, new RegExp(`pnpm (?:run )?${name.replace(/[:]/g, '\\:')}\\b`), `desktop.yml runs ${name}`)
+})
+
+test('an aliased dependency resolves to the real package, so a change in only that entry reaches Desktop', () => {
+  // PostHog's `web-vitals-soft-navs: npm:web-vitals@6.2.1` is written `web-vitals-soft-navs: web-vitals@6.2.1`.
+  assert.equal(snapshotKey('web-vitals-soft-navs', 'web-vitals@6.2.1'), 'web-vitals@6.2.1')
+  assert.equal(snapshotKey('alias', '@scope/real@1.0.0(peer@2.0.0)'), '@scope/real@1.0.0(peer@2.0.0)')
+  assert.equal(snapshotKey('plain', '1.0.0(peer@2.0.0)'), 'plain@1.0.0(peer@2.0.0)')
+  assert.equal(snapshotKey('@scope/plain', '1.0.0'), '@scope/plain@1.0.0')
+  const aliased = structuredClone(base)
+  aliased.snapshots['shared@1.0.0'].dependencies['soft-navs'] = 'real-vitals@6.2.1'
+  aliased.packages['real-vitals@6.2.1'] = { resolution: { integrity: 'v' } }
+  aliased.snapshots['real-vitals@6.2.1'] = {}
+  const entries = desktopLockClosure(lock(aliased))
+  assert.ok(entries.includes('snapshot:real-vitals@6.2.1={}'))
+  assert.ok(!entries.some(entry => entry.startsWith(UNRESOLVED)))
+  const tampered = structuredClone(aliased)
+  tampered.packages['real-vitals@6.2.1'].resolution.integrity = 'changed'
+  assert.equal(lockfileTouchesDesktop(lock(aliased), lock(tampered)), true)
+})
+
+test('a reference that resolves to no snapshot or package reaches Desktop (fail safe)', () => {
+  const dangling = structuredClone(base)
+  dangling.snapshots['shared@1.0.0'].dependencies.ghost = '9.9.9'
+  assert.ok(desktopLockClosure(lock(dangling)).includes(`${UNRESOLVED}ghost@9.9.9`))
+  assert.equal(lockfileTouchesDesktop(lock(dangling), lock(dangling)), true)
 })
