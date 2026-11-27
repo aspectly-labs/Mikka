@@ -431,8 +431,9 @@ The Desktop and runtime verifiers read `https://app.aspectlylabs.com/mikka/api/v
 It is a known flake: on 2026-11-27 it briefly answered
 `{"error":"deploymentVersionUnavailable"}` (HTTP 200) before answering build
 `01a4a7dcd076`, overlay `24d3aa2a` again. `readProductionVersion` retries only
-that unavailability or a non-200, four reads with 2, 4 and 8 second backoff,
-then fails closed; an answer that names a build is final.
+that unavailability or a non-200, four requests in total with 2, 4 and 8 second
+backoff (it skips the shared reader's immediate 503 retries), then fails closed;
+an answer that names a build is final.
 
 Production at the pause is deployment run 45913824441 (`main` `0e259f65f`,
 services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back.
