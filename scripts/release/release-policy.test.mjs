@@ -223,6 +223,10 @@ test('npm latest moves only for a promoter dispatch of a successful staged push 
   assert.ok(steps.indexOf('Verify the staged daemon run before publishing to latest') < steps.indexOf('Publish with npm trusted publishing and provenance'))
   assert.ok(steps.indexOf('Verify the staged daemon run before publishing to latest') < steps.indexOf('Prepare release version and check registry'))
   assert.ok(steps.indexOf('Read the reviewed release policy token') < steps.indexOf('Verify the staged daemon run before publishing to latest'))
+  // The release self-test runs in the job env, which a promotion sets to latest; it must pass under both.
+  const selfTest = daemon.jobs.publish.steps.find(step => step.name === 'Test the release script under both channels')
+  for (const channel of ['next', 'latest'])
+    assert.match(selfTest.run, new RegExp(`^MIKKA_DAEMON_CHANNEL=${channel} node --test packages/daemon/test/release\\.node-test\\.mjs$`, 'm'))
   const verify = daemon.jobs.publish.steps.find(step => step.name === 'Verify the staged daemon run before publishing to latest')
   assert.equal(verify.env.MIKKA_OPERATIONS_READ_TOKEN, '${{ steps.policy-token.outputs.token }}')
   for (const step of daemon.jobs.publish.steps.filter(step => step.uses?.startsWith('Infisical/') || step.uses?.startsWith('actions/create-github-app-token')))
