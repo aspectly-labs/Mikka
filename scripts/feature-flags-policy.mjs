@@ -7,11 +7,14 @@
 //    it docs:check prints a warning so the owner acts first.
 // 2. Every flag key a flag read names, as a string literal or a same-file string
 //    constant, is declared as a flag in a registry (FLAG_REGISTRIES). This is a
-//    backstop: the readers take only `FlagKey` (lib/feature-flags.ts), so
-//    `pnpm typecheck` catches the rest. Not seen here: keys built in template
-//    strings with substitutions and readers reached through computed callees.
+//    backstop: Mikka's typed wrappers (postHogFlag, serverFlagEnabled,
+//    productionFlagDefault, the official UI's hooks) take only `FlagKey`
+//    (lib/feature-flags.ts), so `pnpm typecheck` catches keys this scan cannot
+//    see in them: keys built in template strings with substitutions, and
+//    wrappers reached through computed callees. The SDK's own methods take any
+//    string; rule 3 keeps them inside their owners instead.
 // 3. The PostHog SDK's own flag reads (DIRECT_FLAG_METHODS, including bulk
-//    reads such as `getAllFlags()`) are called only in the wrappers that own
+//    reads such as `getAllFlags()`) are used only in the wrappers that own
 //    them (DIRECT_FLAG_OWNERS), and no shipped code casts `as FlagKey`: both
 //    would let a plain string past the type.
 //
@@ -307,23 +310,57 @@ export function undeclaredFlagKeyProblems({ files = flagPolicyFiles(), declared 
     .map(({ key, line }) => `${file}:${line}: flag key ${key} is not declared; add it to a flag registry (lib/feature-flags.ts releaseFlags for a staged rollout)`))
 }
 
-/** Calls of the SDK's flag methods outside their owners, and `as FlagKey` casts, with line numbers. */
+/**
+ * Uses of the SDK's flag methods outside their owners, and `as FlagKey` casts,
+ * with line numbers. A use is any reference, not only a call: `posthog.m(…)`,
+ * `posthog?.['m']`, `posthog.m.call(…)` / `.bind(…)`, `const { m: g } = posthog`,
+ * and importing or re-exporting `m` from a `posthog-*` package (aliases too).
+ */
 export function flagBypasses(file, source) {
   if (!QUICK.test(source)) return []
   const tree = parse(file, source)
   const found = []
   const line = node => tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1
   const owner = Object.hasOwn(DIRECT_FLAG_OWNERS, file)
+  const bypass = (node, name, how) => found.push(`${file}:${line(node)}: ${how} ${name} takes any string and bypasses FlagKey; read flags through postHogFlag (lib/analytics/posthog.ts) or serverFlagEnabled (lib/posthog-server.ts)`)
+  const fromPosthog = node => {
+    const declaration = ts.isImportSpecifier(node) ? node.parent.parent.parent : node.parent.parent
+    const module = declaration?.moduleSpecifier
+    return Boolean(module && ts.isStringLiteral(module) && module.text.startsWith('posthog-'))
+  }
+  // Local names for the FlagKey type: itself and any `import type { FlagKey as K }`.
+  const flagKeyNames = new Set(['FlagKey'])
   visit(tree, node => {
-    if (ts.isCallExpression(node) && !owner) {
-      const callee = ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text
-        : ts.isIdentifier(node.expression) ? node.expression.text : undefined
-      if (callee && DIRECT_FLAG_METHODS.has(callee)) {
-        found.push(`${file}:${line(node)}: ${callee}() takes any string and bypasses FlagKey; read flags through postHogFlag (lib/analytics/posthog.ts) or serverFlagEnabled (lib/posthog-server.ts)`)
+    if (ts.isImportSpecifier(node) && (node.propertyName ?? node.name).text === 'FlagKey') flagKeyNames.add(node.name.text)
+  })
+  const isFlagKeyType = type => {
+    if (ts.isTypeReferenceNode(type)) {
+      const name = type.typeName
+      return ts.isIdentifier(name) ? flagKeyNames.has(name.text) : name.right.text === 'FlagKey'
+    }
+    if (ts.isImportTypeNode(type) && type.qualifier) {
+      const qualifier = type.qualifier
+      return (ts.isIdentifier(qualifier) ? qualifier.text : qualifier.right.text) === 'FlagKey'
+    }
+    return false
+  }
+  visit(tree, node => {
+    if (!owner) {
+      if (ts.isPropertyAccessExpression(node) && DIRECT_FLAG_METHODS.has(node.name.text)) bypass(node, node.name.text, 'using')
+      else if (ts.isElementAccessExpression(node)) {
+        const name = textOf(unwrap(node.argumentExpression))
+        if (name && DIRECT_FLAG_METHODS.has(name)) bypass(node, name, 'using')
+      } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && DIRECT_FLAG_METHODS.has(node.expression.text)) {
+        bypass(node, node.expression.text, 'calling')
+      } else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+        const key = node.propertyName ? nameOf(node.propertyName) : ts.isIdentifier(node.name) ? node.name.text : undefined
+        if (key && DIRECT_FLAG_METHODS.has(key)) bypass(node, key, 'destructuring')
+      } else if ((ts.isImportSpecifier(node) || ts.isExportSpecifier(node)) && fromPosthog(node)) {
+        const name = (node.propertyName ?? node.name).text
+        if (DIRECT_FLAG_METHODS.has(name)) bypass(node, name, ts.isImportSpecifier(node) ? 'importing' : 're-exporting')
       }
     }
-    if ((ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) && ts.isTypeReferenceNode(node.type)
-      && ts.isIdentifier(node.type.typeName) && node.type.typeName.text === 'FlagKey') {
+    if ((ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) && isFlagKeyType(node.type)) {
       found.push(`${file}:${line(node)}: \`as FlagKey\` outside a test hides an undeclared key; declare the flag in a registry instead`)
     }
   })

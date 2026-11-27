@@ -196,3 +196,44 @@ test('SDK flag reads outside their wrappers and `as FlagKey` casts fail', () => 
   assert.match(problems.at(-1), /as FlagKey/)
   assert.deepEqual(flagBypassProblems(), [], 'shipped code has no bypass')
 })
+
+test('SDK flag methods are caught through aliases, re-exports, element access, destructuring, call and bind', () => {
+  const cases = {
+    'import { isFeatureEnabled as on } from \'posthog-js\'': /importing isFeatureEnabled/,
+    'import { useFeatureFlagEnabled } from \'posthog-js/react\'': /importing useFeatureFlagEnabled/,
+    'export { getFeatureFlag } from \'posthog-node\'': /re-exporting getFeatureFlag/,
+    'export { getAllFlags as all } from \'posthog-js\'': /re-exporting getAllFlags/,
+    'posthog[\'getFeatureFlag\'](key)': /using getFeatureFlag/,
+    'posthog?.[\'isFeatureEnabled\'](key)': /using isFeatureEnabled/,
+    'const { getFeatureFlag: g } = posthog': /destructuring getFeatureFlag/,
+    'const { onFeatureFlags } = client': /destructuring onFeatureFlags/,
+    'posthog.getFeatureFlag.call(posthog, key)': /using getFeatureFlag/,
+    'const read = posthog.isFeatureEnabled.bind(posthog)': /using isFeatureEnabled/,
+  }
+  for (const [source, expected] of Object.entries(cases)) {
+    const problems = flagBypassProblems({ files: [{ file: 'lib/sneaky.ts', source }] })
+    assert.equal(problems.length, 1, `${source}: ${problems.join('\n')}`)
+    assert.match(problems[0], expected, source)
+  }
+  for (const source of [
+    "import { PostHog } from 'posthog-node'",
+    "import { getFeatureFlag } from './local-helpers'",
+    'const { capture } = posthog',
+    "posthog['capture']('event')",
+  ]) assert.deepEqual(flagBypassProblems({ files: [{ file: 'lib/fine.ts', source }] }), [], source)
+  assert.deepEqual(flagBypassProblems({ files: [{ file: 'lib/posthog-server.ts', source: 'const { getFeatureFlag } = posthog; posthog.getFeatureFlag.call(posthog, key)' }] }), [])
+})
+
+test('casts to FlagKey are caught through qualified names, import types and aliases', () => {
+  for (const source of [
+    'postHogFlag(value as F.FlagKey)',
+    "postHogFlag(value as import('@/lib/feature-flags').FlagKey)",
+    "import type { FlagKey as Key } from '@/lib/feature-flags'\npostHogFlag(value as Key)",
+    'postHogFlag(<FlagKey>value)',
+  ]) {
+    const problems = flagBypassProblems({ files: [{ file: 'lib/cast.ts', source }] })
+    assert.equal(problems.length, 1, source)
+    assert.match(problems[0], /as FlagKey/)
+  }
+  assert.deepEqual(flagBypassProblems({ files: [{ file: 'lib/fine.ts', source: "const key = 'mikka-memory' satisfies FlagKey" }] }), [])
+})

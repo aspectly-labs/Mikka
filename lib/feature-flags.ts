@@ -36,7 +36,7 @@ export interface GatedFeatureDefinition {
 export const gatedFeatures = {
   /** The bots' cloud computer UI (#174); the E2B backend (#172) is live. */
   cloudComputer: { key: 'mikka-cloud-computer' },
-  /** The points meters in 计费 › 点数. Off in PostHog since 2026-11-27 (Alex): billing moves to one dollar-denominated balance for models and cloud computer time, and these meters are replaced, not shown. */
+  /** The points meters in 计费 › 点数. Off in PostHog since 2026-11-27 (Alex): billing moves to one dollar-denominated balance for models and cloud computer time, and these meters are replaced, not shown (#3369). */
   computerBilling: { key: 'mikka-computer-billing' },
   /** 记忆 (sidebar entry, its page and its settings section). Hidden: it does not work yet (Alex, 2026-11-20). */
   memory: { key: 'mikka-memory' },
