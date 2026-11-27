@@ -12,7 +12,7 @@ import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-t
 import { PersonalPluginStore } from './store'
 import { McpConnectionStore } from './connection-store'
 import { lockNativeMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
-import { createMcpSchema } from './contracts'
+import { createMcpSchema, type NativeMcpAuthority } from './contracts'
 import { createPersonalMcpRuntime, type McpDependencies } from './mcp'
 import { AgentKitStore } from '@/lib/agent-kit/store'
 import { DEFAULT_AGENT_DEFINITION } from '@/lib/agent-kit/builtin'
@@ -175,10 +175,11 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
       assert.ok('error' in await runtime(requester, snapshot, command)); assert.equal(calls, before)
       await pool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, user])
     })
-    await t.test('the locked native claim fence keeps a tool switch and rejects a committed connection edit', async () => {
+    await t.test('the locked native claim fence keeps a tool switch, refuses a stale or missing export, and rejects a committed connection edit', async () => {
       const before = await personal.snapshot(requester, pool, workspace)
       assert.ok(before.mcpAuthority?.servers.length)
-      const verify = async (authority: NonNullable<typeof before.mcpAuthority>) => {
+      const frozen = before.mcpAuthority
+      const verify = async (authority: NativeMcpAuthority) => {
         const client = await pool.connect()
         try {
           await client.query('BEGIN')
@@ -188,33 +189,43 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
           client.release()
         }
       }
-      await verify(before.mcpAuthority)
+      const assign = async () => (await personal.nativeMcpAssignment(requester, frozen)).authority
+      const refused = (error: { code?: string; status?: number }) => error.code === 'mcpConnectionChanged' && error.status === 409
+      await verify(await assign())
+
+      // Fail closed: an authority without the export's switches (the bare frozen authority, an
+      // empty record, a missing server or a malformed list) is refused like a stale export.
+      await assert.rejects(verify(frozen as NativeMcpAuthority), refused)
+      await assert.rejects(verify({ ...frozen, disabledTools: {} }), refused)
+      await assert.rejects(verify({ ...frozen, disabledTools: { [connection.id]: 'echo' as unknown as string[] } }), refused)
+      await assert.rejects(verify({ ...frozen, disabledTools: null as unknown as Record<string, string[]> }), refused)
+
       const connections = new McpConnectionStore(personal)
       await pool.query('INSERT INTO mcp_server_tools(server_id,tool_name) VALUES($1,$2) ON CONFLICT DO NOTHING', [connection.id, 'echo'])
-      // A tool switch is not a connection change: the claim still exports the current switches.
+      // A tool switch is not a connection change: the next claim exports the current switches and passes.
       await connections.setTool(owner, connection.id, 'echo', false)
-      await verify(before.mcpAuthority)
-      assert.deepEqual((await personal.nativeMcpConnections(requester, before.mcpAuthority)).flatMap(server => 'disabledTools' in server ? server.disabledTools ?? [] : []), ['echo'])
+      assert.deepEqual((await personal.nativeMcpConnections(requester, frozen)).flatMap(server => 'disabledTools' in server ? server.disabledTools ?? [] : []), ['echo'])
+      await verify(await assign())
       await connections.setTool(owner, connection.id, 'echo', true)
-      await verify(before.mcpAuthority)
+      await verify(await assign())
 
       // A claim's export read the switches before the claim locked them. The owner turning a tool
       // off in between refuses that claim (not the run: mcpConnectionChanged, never mcpUnavailable),
       // and the next claim exports the new list and passes.
-      const exported = (await personal.nativeMcpAssignment(requester, before.mcpAuthority)).authority
+      const exported = await assign()
       assert.deepEqual(exported.disabledTools, { [connection.id]: [] })
       await connections.setTool(owner, connection.id, 'echo', false)
-      await assert.rejects(verify(exported), (error: { code?: string; status?: number }) => error.code === 'mcpConnectionChanged' && error.status === 409)
-      const reclaimed = await personal.nativeMcpAssignment(requester, before.mcpAuthority)
+      await assert.rejects(verify(exported), refused)
+      const reclaimed = await personal.nativeMcpAssignment(requester, frozen)
       assert.deepEqual(reclaimed.authority.disabledTools, { [connection.id]: ['echo'] })
       assert.deepEqual(reclaimed.servers.flatMap(server => 'disabledTools' in server ? server.disabledTools ?? [] : []), ['echo'])
       await verify(reclaimed.authority)
       // Turning it back on also refuses the stale export, so a claim never runs with an old list.
       await connections.setTool(owner, connection.id, 'echo', true)
-      await assert.rejects(verify(reclaimed.authority), /mcpConnectionChanged/)
+      await assert.rejects(verify(reclaimed.authority), refused)
 
       // A switch made while a claim holds the fence waits for that claim to commit.
-      const current = (await personal.nativeMcpAssignment(requester, before.mcpAuthority)).authority
+      const current = await assign()
       const claim = await pool.connect()
       try {
         await claim.query('BEGIN')
@@ -227,15 +238,18 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
         await waiting
         assert.equal(switched, true)
       } finally { claim.release() }
-      await assert.rejects(verify(current), /mcpConnectionChanged/)
+      await assert.rejects(verify(current), refused)
       await connections.setTool(owner, connection.id, 'echo', true)
+
+      // A real connection edit still revokes an export taken before it.
+      const beforeRename = await assign()
       const renamed = await personal.updateMcp(owner, { id: connection.id, name: 'Renamed shared connection' })
-      await assert.rejects(verify(before.mcpAuthority), /mcpUnavailable/)
-      await personal.updateMcp(owner, { id: connection.id, name: before.mcpAuthority.servers.find(server => server.id === connection.id)!.name })
-      assert.ok(renamed.revision > before.mcpAuthority.servers.find(server => server.id === connection.id)!.revision)
+      await assert.rejects(verify(beforeRename), /mcpUnavailable/)
+      await personal.updateMcp(owner, { id: connection.id, name: frozen.servers.find(server => server.id === connection.id)!.name })
+      assert.ok(renamed.revision > frozen.servers.find(server => server.id === connection.id)!.revision)
       snapshot = await personal.snapshot(requester, pool, workspace)
       assert.ok(snapshot.mcpAuthority?.servers.length)
-      await verify(snapshot.mcpAuthority)
+      await verify((await personal.nativeMcpAssignment(requester, snapshot.mcpAuthority)).authority)
     })
     await t.test('disconnect/revision changes and normal member departure revoke references without rewriting history', async () => {
       const before = calls

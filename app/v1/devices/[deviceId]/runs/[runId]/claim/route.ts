@@ -27,7 +27,7 @@ import { liteLLMBaseUrl } from '@/lib/model-gateway/litellm-client'
 import { db, pool } from '@/lib/db'
 import { readRunChain } from '@/lib/run-chain'
 import { captureDatabaseQuery } from '@/lib/db/commit-effects'
-import { McpValidationError, PluginError, type McpAuthority } from '@/lib/plugins/contracts'
+import { McpValidationError, PluginError, type NativeMcpAuthority } from '@/lib/plugins/contracts'
 import { runChanged } from '@/lib/live/panels'
 import { agentRuns, agents, deviceRepos } from '@/lib/db/schema'
 import { authenticateDevice, ownedDeviceWithReport } from '@/lib/device-link'
@@ -338,7 +338,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     return RouteResponse.json({ error: 'Upgrade the Mikka daemon before using protected task Secrets.', code: 'daemonUpgradeRequired', daemonVersions: await daemonVersions() }, { status: 409 })
   }
   let servers: TaskMcpServer[] = []
-  let mcpAuthority: McpAuthority | undefined
+  let mcpAuthority: NativeMcpAuthority | undefined
   if (run.agentDefinition?.customMcp && ['claude_code','codex','cursor'].includes(harness)) {
     try {
       const assignment = await (await import('@/lib/plugins/runtime')).personalPlugins.nativeMcpAssignment(caller.userId, run.agentDefinition.customMcp, run.agentDefinition.projectExecution?.environment?.id ?? null)

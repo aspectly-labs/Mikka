@@ -49,7 +49,7 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
 }
 
 export async function lockNativeMcpAuthority(query: Query, userId: string, authority: NativeMcpAuthority) {
-  const { disabledTools: exported, ...frozen } = authority
+  const { disabledTools: exported, ...frozen } = authority as Omit<NativeMcpAuthority, 'disabledTools'> & { disabledTools?: unknown }
   if (!frozen.servers.length) return
   const ids = frozen.servers.map(server => server.id)
   await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [ids])
@@ -59,11 +59,15 @@ export async function lockNativeMcpAuthority(query: Query, userId: string, autho
   const { rows: tools } = await query.query<{ server_id: string; tool_name: string; enabled: boolean }>(
     'SELECT server_id,tool_name,enabled FROM mcp_server_tools WHERE server_id=ANY($1::uuid[]) ORDER BY server_id,tool_name FOR SHARE', [ids])
   await validateMcpAuthority(query, userId, frozen)
-  if (!exported) return
-  const same = (left: readonly string[], right: readonly string[]) => left.length === right.length && [...left].sort().every((name, index) => name === [...right].sort()[index])
+  // Fail closed: a claim whose export did not record a server's switches is refused like a stale
+  // one (the run stays preparing and is claimed again with a fresh assignment), never let through.
+  const recorded = exported && typeof exported === 'object' ? exported as Record<string, unknown> : null
+  const same = (left: readonly string[], right: readonly string[]) => { const a = [...left].sort(), b = [...right].sort(); return a.length === b.length && a.every((name, index) => name === b[index]) }
   for (const id of ids) {
+    const listed = recorded && Object.hasOwn(recorded, id) ? recorded[id] : undefined
+    if (!Array.isArray(listed) || !listed.every(name => typeof name === 'string')) throw new PluginError('mcpConnectionChanged', 409)
     const current = tools.filter(tool => tool.server_id === id && !tool.enabled).map(tool => tool.tool_name)
-    if (!same(current, exported[id] ?? [])) throw new PluginError('mcpConnectionChanged', 409)
+    if (!same(current, listed)) throw new PluginError('mcpConnectionChanged', 409)
   }
 }
 

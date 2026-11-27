@@ -74,9 +74,10 @@ export type McpAuthority = z.infer<typeof mcpAuthoritySchema>
 /**
  * What a native claim exported: the authority plus each server's disabled tools as the export
  * read them. A tool switch does not change a connection's revision, so the claim fence compares
- * these under lock; never stored with the run and never part of the frozen authority.
+ * these under lock and refuses a claim without them; never stored with the run and never part of
+ * the frozen authority.
  */
-export type NativeMcpAuthority = McpAuthority & { disabledTools?: Record<string, string[]> }
+export type NativeMcpAuthority = McpAuthority & { disabledTools: Record<string, string[]> }
 export type InstalledSkill = {
   id: string; name: string; source: string; slug: string; sourceKind: 'skills.sh' | 'built-in' | 'self-improvement';
   sourceRevision: string; sourcePath: string; sha256: string; enabled: boolean; createdAt: string;
