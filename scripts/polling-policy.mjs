@@ -192,6 +192,10 @@ export const pollingAllowlist = {
     "bounded release gate reads GitHub Actions status during an explicit release operation",
     1,
   ),
+  "scripts/release/cloudflare-promoted-web.mjs": retry(
+    "at most four reads of production's public version endpoint, with exponential backoff, only after it answered unavailable or without a build; a named build ends it at once",
+    1,
+  ),
   "scripts/release/web-deploy.mjs": external(
     "bounded release-time checks for the deployed build and source identity",
     1,

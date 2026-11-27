@@ -485,8 +485,8 @@ test('force-exit node tests run with blocking stdio so the TAP summary is flushe
   assert.deepEqual(chained, ['pnpm', ['-s', 'test:chained']])
   const [bin, args] = launch('test:workspace-admin-db', 'node --test-force-exit --import tsx --test tests/one.db.test.mjs')
   assert.equal(bin, process.execPath)
-  assert.equal(args[0], '--import')
-  assert.match(args[1], /blocking-stdio\.mjs$/)
+  assert.equal(args[0], '--require')
+  assert.match(args[1], /blocking-stdio\.cjs$/)
   assert.deepEqual(args.slice(2), ['--test-force-exit', '--import', 'tsx', '--test', 'tests/one.db.test.mjs'])
 })
 
@@ -523,6 +523,45 @@ test('verbose force-exit test files keep their test counts and status with separ
   assert.equal(incomplete.status, 1)
   assert.equal(parseSummary(incomplete.stdout).tests, 8, 'the other file reported all of its results')
   assert.match(incomplete.stderr, /missing\.test\.mjs: no node:test summary found/)
+})
+
+// The runner reads the stdout of the `node --test` orchestrator, so the preload
+// must run there, not only in the per-file child processes. The orchestrator
+// skips `--import` modules (merge-queue failures "no node:test summary found",
+// 2026-11-26/27, test:pat-api-db and test:scope-detachment-db).
+// Without this file's own NODE_TEST_CONTEXT, so the spawned `node --test` runs its files.
+const orchestratorEnv = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== 'NODE_TEST_CONTEXT'))
+test('the blocking stdio preload runs in the node --test orchestrator process', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-db-runner-preload-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeFileSync(join(root, 'one.test.mjs'), "import { test } from 'node:test'\ntest('one', () => {})\n")
+  const marks = join(root, 'marks.txt')
+  writeFileSync(join(root, 'probe.cjs'), `require('node:fs').appendFileSync(${JSON.stringify(marks)}, (process.env.NODE_TEST_CONTEXT ?? 'orchestrator') + '\\n')\n`)
+  const [bin, args] = launch('test:one-db', 'node --test-force-exit --test one.test.mjs')
+  // Same flag as the preload, so a switch back to `--import` fails here.
+  const result = spawnSync(bin, [args[0], join(root, 'probe.cjs'), ...args], { cwd: root, encoding: 'utf8', env: orchestratorEnv() })
+  assert.equal(result.status, 0, result.stderr)
+  assert.ok(readFileSync(marks, 'utf8').split('\n').includes('orchestrator'), 'preload flag is evaluated by the orchestrator')
+})
+
+test('force-exit keeps the summary when the last file reports a large burst into a slow reader', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-db-runner-burst-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  // A slow file reported first holds back a fast, noisy one: its whole report
+  // reaches stdout at the end of the run, right before force-exit.
+  writeFileSync(join(root, 'a.test.mjs'), "import { test } from 'node:test'\ntest('slow', () => new Promise(resolve => setTimeout(resolve, 300)))\n")
+  writeFileSync(join(root, 'b.test.mjs'), "import { test } from 'node:test'\ntest('burst', () => { for (let i = 0; i < 1500; i++) console.log('x'.repeat(200)) })\n")
+  // Reads 1 KiB a millisecond, so the orchestrator's stdout pipe stays full.
+  const throttle = "const fs=require('fs'),b=Buffer.alloc(1024),s=new Int32Array(new SharedArrayBuffer(4));for(;;){let n;try{n=fs.readSync(0,b)}catch(e){if(e.code==='EAGAIN'){Atomics.wait(s,0,0,1);continue}throw e}if(!n)break;fs.writeSync(1,b.subarray(0,n));Atomics.wait(s,0,0,1)}"
+  const [bin, args] = launch('test:burst-db', 'node --test-force-exit --test a.test.mjs b.test.mjs')
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const suite = spawn(bin, args, { cwd: root, env: orchestratorEnv(), stdio: ['ignore', 'pipe', 'ignore'] })
+    const reader = spawn(process.execPath, ['-e', throttle], { stdio: [suite.stdout, 'pipe', 'ignore'] })
+    const chunks = []
+    reader.stdout.on('data', chunk => chunks.push(chunk))
+    const [status] = await Promise.all([new Promise(resolve => suite.on('exit', resolve)), new Promise(resolve => reader.on('close', resolve))])
+    assert.equal(checkSummary('test:burst-db', status, parseSummary(Buffer.concat(chunks).toString('utf8'))), null, `attempt ${attempt + 1}`)
+  }
 })
 
 test('parses TAP/spec and rejects missing, zero, skipped, todo, cancelled or failed executions', () => {
