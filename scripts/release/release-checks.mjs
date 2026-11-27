@@ -31,7 +31,7 @@ export function routeGuardSummary(tap) {
   return summary
 }
 
-/** The bundled-routes allowlist guard for this exact public + hosted pairing, with the official UI required. */
+/** The UI API route contract (`scripts/ui-api-routes.test.mjs`) for this exact public + hosted pairing, with the official UI required. */
 export function desktopRouteGuard({ root = process.cwd(), env = process.env, run = execFileSync } = {}) {
   const git = (directory, args, code) => {
     try { return run('git', ['-C', directory, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() }

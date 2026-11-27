@@ -10,7 +10,8 @@ import { gzipSync } from 'node:zlib'
 import { applicationPlugin } from '../apps/frontend/scripts/application-plugin.mjs'
 import { uiFixture } from '../apps/frontend/scripts/application-test-build.mjs'
 import { needsOfficialUi, readUi, uiExists } from '../scripts/official-ui-tree.mjs'
-import { analyticsPath, sanitizeAnalyticsEvent } from '../lib/analytics-policy.ts'
+import { analyticsPath, redactReplayRequest, sanitizeAnalyticsEvent } from '../lib/analytics-policy.ts'
+import { safeLanding } from '../lib/first-touch.ts'
 import { computerAcceptancePreview, computerProductionEnabled, featureAvailability, gatedFeatureEnabled, gatedFeatures, killSwitches, proactiveFeatures, upcomingFeatures } from '../lib/feature-flags.ts'
 import { analyticsEnvironment, analyticsKey, analyticsPaths, inspectAnalyticsBuild, localAnalyticsRequest, requiredRuntimeResources, syntheticPostHogRequest, verifyRuntimeResources } from '../scripts/check-analytics-ssr.mjs'
 import { analyticsBrowserProfile } from '../scripts/analytics-browser-sandbox.mjs'
@@ -30,6 +31,75 @@ test('pageviews strip query strings, hashes, document identifiers and unapproved
   })
   assert.equal(analyticsPath('/settings/teams'), '/settings/teams')
   assert.equal(analyticsPath('/invite/private-invitation-token'), '/invite/:token')
+})
+
+test('a share link or invitation never leaves in a route: pageviews, errors, RUM, replay and landing pages', () => {
+  // The tokens these pages carry open what they name (lib/artifacts/store.ts mks_,
+  // lib/thread-lifecycle.ts mkt_, lib/captures/store.ts mkc_, 64-hex invitations).
+  const artifact = 'mks_AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf' // no digit: the old opaque-id rule let it through
+  const thread = 'mkt_Q1wErTyUiOpAsDfGhJkLzXcVbNmQwEr'
+  const invitation = 'ab'.repeat(32)
+  const pages = [
+    [`/a/${artifact}`, '/a/:token'],
+    [`/en/a/${artifact}`, '/en/a/:token'],
+    [`/mikka/zh-CN/a/${artifact}/frame`, '/mikka/zh-CN/a/:token/frame'],
+    [`/threads/shared/${thread}`, '/threads/shared/:token'],
+    [`/mikka/en/threads/shared/${thread}`, '/mikka/en/threads/shared/:token'],
+    [`/organization-invite/${invitation}`, '/organization-invite/:token'],
+    [`/en/invite/${invitation}`, '/en/invite/:token'],
+    [`/mikka/invite/${invitation}`, '/mikka/invite/:token'],
+    [`/share/${thread}`, '/share/:token'],
+    ['/w/acme-corp', '/w/:slug'],
+    ['/en/tasks/SPOT-4', '/en/tasks/:token'],
+    ['/en/oauth/tok_abc1234567890xyz', '/en/oauth/:token'],
+    ['/en/issue/84c182d1-661c-461b-bca2-10410cb646d4/987654', '/en/issue/:id/:id'],
+    ['/settings/members', '/settings/members'],
+    [`/captures/${'0f'.repeat(16)}`, '/captures/:token'],
+    ['/en/reset-password', '/en/reset-password'],
+    ['/mikka', '/mikka'],
+    ['/', '/'],
+  ]
+  for (const [path, expected] of pages) {
+    assert.equal(analyticsPath(path), expected, path)
+    for (const origin of ['https://app.aspectlylabs.com', 'mikka://app']) {
+      const pageview = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${path}?token=${artifact}#${thread}` } })
+      assert.equal(pageview.properties.$pathname, expected)
+      assert.equal(pageview.properties.$current_url, `${origin}${expected}`)
+      const exception = sanitizeAnalyticsEvent({ event: '$exception', properties: { $current_url: `${origin}${path}`, $exception_list: [{ type: 'TypeError', value: 'x' }] } })
+      assert.equal(exception.properties.$pathname, expected)
+    }
+    const rum = sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route: path, lcp_ms: 900, flush_reason: 'pagehide' } })
+    assert.equal(rum.properties.route, expected)
+    // Replay's navigation metadata (rrweb's page href) and request names use the same route.
+    assert.equal(redactReplayRequest({ name: `https://app.aspectlylabs.com${path}?code=private` }).name, `https://app.aspectlylabs.com${expected}`)
+    assert.ok(![artifact, thread, invitation].some(token => safeLanding(path).includes(token)), path)
+  }
+})
+
+test('sanitizing twice is sanitizing once: the desktop renderer\'s path, sanitized again by main, keeps its placeholders', () => {
+  const uuid = '84c182d1-661c-461b-bca2-10410cb646d4'
+  const paths = [
+    `/mikka/issue/${uuid}`, '/en/invite/PRIVATE_INVITE_CODE/users/alice@example.com/987654', '/a/mks_AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf/frame',
+    `/mikka/en/threads/shared/mkt_${'Q1'.repeat(16)}`, '/w/acme-corp/settings', '/en/tasks/SPOT-4', '/settings/members', '/', '/mikka',
+    `/en/${Array.from({ length: 40 }, (_, index) => `section-${'x'.repeat(index % 7)}/${uuid}`).join('/')}`,
+  ]
+  for (const path of paths) {
+    const once = analyticsPath(path)
+    assert.equal(analyticsPath(once), once, path)
+    // What apps/desktop/src/renderer/analytics.ts sends, then main's own pass (apps/desktop/src/main/telemetry.ts).
+    for (const origin of ['mikka://app', 'https://app.aspectlylabs.com']) {
+      const direct = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${path}?q=private` } })
+      const renderer = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${analyticsPath(path)}` } })
+      assert.deepEqual(renderer.properties, direct.properties, path)
+      assert.deepEqual(sanitizeAnalyticsEvent(direct).properties, direct.properties, path)
+    }
+    const rum = sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route: path, lcp_ms: 900, flush_reason: 'pagehide' } })
+    assert.equal(sanitizeAnalyticsEvent(rum).properties.route, rum.properties.route, path)
+    assert.ok(rum.properties.route.length <= 160)
+  }
+  assert.equal(analyticsPath('/mikka/issue/:id'), '/mikka/issue/:id')
+  assert.equal(analyticsPath('/en/invite/:token/users/:redacted/:id'), '/en/invite/:token/users/:redacted/:id')
+  assert.equal(analyticsPath('/w/:slug'), '/w/:slug')
 })
 
 test('automatic top-level person mutations are stripped without losing ingestion metadata', () => {
@@ -655,4 +725,30 @@ test('frontend_web_vitals keeps bounded CWV timings, drops empty/invalid payload
     },
   })
   assert.deepEqual(pageview.properties, { distinct_id: 'opaque-user-id' })
+})
+
+test('desktop reports keep only a route template, method, status and code, with the build tags', () => {
+  const base = { token: 'public-project-token', distinct_id: 'user-id', platform: 'desktop', app_version: '2026.10000.1940', public_sha: 'a'.repeat(40), overlay_sha: 'b'.repeat(40) }
+  const denied = sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: {
+    ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'untrusted_origin',
+    path: '/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels/label_1', body: '{"name":"private"}', message: 'private',
+  } })
+  assert.deepEqual(denied.properties, { ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'untrusted_origin' })
+  // A concrete path, an unknown method or a missing status is not a report.
+  for (const properties of [
+    { route: '/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels', method: 'GET', status: 403 },
+    { route: '/api/inbox?email=private@example.com', method: 'GET', status: 500 },
+    { route: '/api/inbox', method: 'BREW', status: 500 },
+    { route: '/api/inbox', method: 'GET' },
+  ]) assert.equal(sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: { ...base, ...properties } }), null)
+  const odd = sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: { ...base, route: 'unmatched', method: 'GET', status: 502, error_code: 'Upstream said: secret' } })
+  assert.equal(odd.properties.error_code, undefined)
+  const main = sanitizeAnalyticsEvent({ event: 'desktop_main_error', properties: { ...base, error_name: 'TypeError', error_source: 'uncaught_exception', message: 'token=private', stack: '/Users/private/app.js' } })
+  assert.deepEqual(main.properties, { ...base, error_name: 'TypeError', error_source: 'uncaught_exception' })
+  assert.equal(sanitizeAnalyticsEvent({ event: 'desktop_main_error', properties: { ...base, error_name: 'TypeError' } }), null)
+  const gone = sanitizeAnalyticsEvent({ event: 'desktop_process_gone', properties: { ...base, reason: 'crashed', process_type: 'renderer', exitCode: 11 } })
+  assert.deepEqual(gone.properties, { ...base, reason: 'crashed', process_type: 'renderer' })
+  // Tags that are not a closed word, a version or a SHA never ride along.
+  const tagged = sanitizeAnalyticsEvent({ event: '$pageview', properties: { token: 't', distinct_id: 'd', platform: 'linux user@host', app_version: 'v1 private', public_sha: 'not-a-sha' } })
+  assert.deepEqual(tagged.properties, { token: 't', distinct_id: 'd' })
 })

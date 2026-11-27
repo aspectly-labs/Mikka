@@ -345,13 +345,15 @@ Desktop (a `desktop-release.yml` dispatch): the dispatcher and re-run actor are
 promoters; the receipt is verified as before (a manual `pipeline:` receipt must
 come from a promoter's `pipeline-promote`); then, after the hosted checkout and
 before any Apple credential, `release-checks.mjs run desktop` runs the Desktop
-route-allowlist guard (`desktop-route-guard`): `pnpm run
+UI API route contract (`desktop-route-guard`): `pnpm run
 test:desktop-release-guard` from the product checkout being packaged, after
-checking the exact public commit and hosted SHA. It fails unless the TAP summary
-shows at least three tests, all passed, none skipped, todo or cancelled; that
-summary rule is what stops a missing hosted checkout today. It also passes
-`MIKKA_REQUIRE_OFFICIAL_UI=1`, which nothing reads yet; the Desktop lane's
-redefinition of the script is meant to fail on it instead of skipping. Then
+checking the exact public commit and hosted SHA. The script runs
+`scripts/ui-api-routes.test.mjs` (every API route the official UI requests
+exists on the server with its method) and the renderer request scanner's own
+tests; the Desktop app keeps no client-side route list. It fails unless the TAP
+summary shows at least three tests, all passed, none skipped, todo or
+cancelled, and it passes `MIKKA_REQUIRE_OFFICIAL_UI=1`, which makes the
+contract fail instead of skip without the hosted checkout. Then
 every listed Desktop check runs. A product commit without that package script
 cannot be released. Desktop never starts by itself from a deployment dispatch
 (`gateway-observe`, `pipeline-promote`).
@@ -437,7 +439,7 @@ services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back
 Each must exist and pass, listed in `requiredChecks` where it is a check, with
 evidence linked in the `mikka-cloud` PR that flips the flag:
 
-- the Desktop route-allowlist guard in release CI with the hosted checkout (now
+- the Desktop UI API route contract in release CI with the hosted checkout (now
   mandatory in `desktop-release.yml`);
 - browser end-to-end tests on hosted UI pull requests;
 - a smoke test of the signed Desktop build before publication;

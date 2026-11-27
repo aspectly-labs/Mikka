@@ -18,7 +18,7 @@ export function safeLanding(pathname: unknown) {
   if (typeof pathname !== 'string' || pathname === '/') return '/'
   const segments = pathname.split('/').filter(Boolean)
   if (segments.length > 4 || segments.some(part => !/^[a-z][a-z0-9-]{0,32}$/i.test(part))) return '/'
-  if (segments.some(part => ['invite', 'token', 'oauth', 'callback', 'reset-password', 'settings', 'w', 'a'].includes(part.toLowerCase()))) return '/'
+  if (segments.some(part => ['invite', 'organization-invite', 'share', 'shared', 'token', 'oauth', 'callback', 'reset-password', 'device', 'settings', 'w', 'a'].includes(part.toLowerCase()))) return '/'
   return '/' + segments.join('/')
 }
 

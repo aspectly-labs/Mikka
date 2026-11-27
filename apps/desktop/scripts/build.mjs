@@ -7,6 +7,8 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildRenderer } from './build-renderer.mjs'
 import { desktopOverlayEvidence } from '../../../scripts/release/hosted-ui.mjs'
+import { telemetryBuildConfig } from './telemetry-build-config.mjs'
+import { execFileSync } from 'node:child_process'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const outdir = resolve(root, 'dist')
@@ -23,10 +25,25 @@ if (flavor === 'prod' && parsed.protocol !== 'https:') {
   throw new Error('A production desktop build must load the app over HTTPS')
 }
 
+// Telemetry goes to the web's PostHog project (MIKKA_PUBLIC_POSTHOG_KEY, a
+// public ingestion key). A build without one sends nothing (src/main/telemetry.ts)
+// and its host is not checked. The host is POSTHOG_HOST (or its legacy name in
+// lib/public-env.mjs), normalized as the web normalizes it, else the web's own
+// default. The release sets no host: Mikka Cloud's project is in the US region
+// (us.posthog.com), so the default is the right ingestion origin.
+const { key: posthogKey, host: posthogHost } = telemetryBuildConfig(process.env)
+const revision = value => (/^[0-9a-f]{40}$/.test(value ?? '') ? value : '')
+let publicSha = revision(process.env.MIKKA_DESKTOP_SOURCE) || revision(process.env.GITHUB_SHA)
+if (!publicSha) try { publicSha = revision(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()) } catch { /* Not a checkout. */ }
+
 const define = {
   __MIKKA_APP_URL__: JSON.stringify(appUrl),
   __MIKKA_APP_VERSION__: JSON.stringify(pkg.version),
   __MIKKA_FLAVOR__: JSON.stringify(flavor),
+  __MIKKA_POSTHOG_KEY__: JSON.stringify(posthogKey),
+  __MIKKA_POSTHOG_HOST__: JSON.stringify(posthogHost),
+  __MIKKA_PUBLIC_SHA__: JSON.stringify(publicSha),
+  __MIKKA_OVERLAY_SHA__: JSON.stringify(revision(process.env.MIKKA_UI_OVERLAY_SHA)),
 }
 
 await rm(outdir, { recursive: true, force: true })
