@@ -446,6 +446,49 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
   })
   const complete = (claimed: RunAssignment) => b.link.completeRun(claimed.runId, { stopReason: 'cancelled',
     report: { summary: 'Local Secret scope fixture', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } })
+  await t.test('a tool switched during the claim reaches the same device on that claim, without a refusal or a stranded lease', async t => {
+    const { freezeExecutionIdentity } = await import('../lib/execution-identity')
+    const serverId = randomUUID()
+    await pool.query('INSERT INTO personal_mcp_servers (id,user_id,name,url,transport,connection_status) VALUES ($1,$2,\'Switch fixture MCP\',\'https://mcp.example.invalid/\',\'http\',\'connected\')', [serverId, owner])
+    await pool.query('INSERT INTO mcp_server_tools (server_id,tool_name) VALUES ($1,\'read_docs\'),($1,\'delete_docs\')', [serverId])
+    const { runId } = await freshQueuedRun()
+    const { rows: [run] } = await pool.query<Parameters<typeof freezeExecutionIdentity>[1]>(
+      'SELECT "userId","botId","deviceId","agentDefinition" FROM agent_runs WHERE id=$1', [runId])
+    assert.ok(run?.agentDefinition)
+    run.agentDefinition.customMcp = { requester: owner, workspaceId: workspace.id,
+      servers: [{ id: serverId, name: 'Switch fixture MCP', ownerId: owner, revision: 1, grantId: null }] }
+    run.agentDefinition.executionIdentity = await freezeExecutionIdentity(pool, run, pool)
+    await pool.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [runId, JSON.stringify(run.agentDefinition)])
+
+    // The owner turns delete_docs off after the claim exported the switches and just before the
+    // claim's fence reads them, the window a stale export used to fall into.
+    const events: string[] = []
+    const wrapped = new WeakSet<PoolClient>()
+    const observe = (client: PoolClient) => {
+      if (wrapped.has(client)) return
+      wrapped.add(client)
+      t.mock.method(client, 'query', new Proxy(client.query, { apply(query, self, args) {
+        const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text
+        if (sql?.includes('FROM mcp_server_tools') && sql.endsWith('FOR SHARE') && !events.includes('switched')) {
+          return pool.query('UPDATE mcp_server_tools SET enabled=false,updated_at=now() WHERE server_id=$1 AND tool_name=\'delete_docs\'', [serverId])
+            .then(() => { events.push('switched'); return Reflect.apply(query, self, args) })
+        }
+        return Reflect.apply(query, self, args)
+      } }))
+    }
+    appPool.on('acquire', observe)
+    let claimed: RunAssignment
+    try { claimed = await b.link.claimRun(b.id, runId) }
+    finally { appPool.off('acquire', observe) }
+    assert.deepEqual(events, ['switched'])
+    const servers = (claimed as RunAssignment & { mcp?: { servers?: { name: string; disabledTools?: string[] }[] } }).mcp?.servers
+    assert.deepEqual(servers?.map(server => [server.name, server.disabledTools]), [[`mcp_${serverId.replaceAll('-', '')}`, ['delete_docs']]])
+    const { rows: [after] } = await pool.query('SELECT status,"stopReason",error FROM agent_runs WHERE id=$1', [runId])
+    assert.equal(after.status, 'preparing')
+    assert.equal(after.stopReason, null)
+    assert.equal(after.error, null)
+    await complete(claimed)
+  })
   const assertJournalWithheld = async (claimed: RunAssignment, values: string[]) => {
     const path = join(directory, `runs-${claimed.runId}.json`), journal = new RunJournal(path)
     journal.put({ assignment: claimed, state: 'running', sessionId: null, worktree: null, lastSeq: 0, error: null, updatedAt: new Date().toISOString() })

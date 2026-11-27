@@ -358,3 +358,36 @@ test('自动化 lists accept 我的 and 定时 and nothing wider', () => {
   assert.equal(list.safeParse([{ owner: 'someone' }, workspace]).success, false)
   assert.equal(list.safeParse([{ trigger: 'github' }, workspace]).success, false)
 })
+
+test('bundled desktop accepts merged threads and group mentions', () => {
+  const validate = desktopActionSchemas['desktop-notifications.chooseDesktopNotifications']
+  assert.ok(validate.safeParse([[{ id: 'merged:one', kind: 'merged', runId: 'one' }, { id: 'mentioned:two', kind: 'mentioned', messageId: peer }]]).success)
+  assert.equal(validate.safeParse([[{ id: 'mentioned:two', kind: 'mentioned', issueId: peer }]]).success, false)
+})
+
+test('retired model favorite RPCs are removed while model menu, route and option RPCs stay registered', () => {
+  const registry = readFileSync(new URL('./registry.ts', import.meta.url), 'utf8')
+  const retired = [
+    'execution-settings.addModelFavorite',
+    'execution-settings.updateModelFavorite',
+    'execution-settings.removeModelFavorite',
+    'execution-settings.reorderModelFavorites',
+    'execution-settings.chooseModelFavorite',
+  ]
+  for (const name of retired) {
+    assert.equal(Object.hasOwn(desktopActionSchemas, name), false, `${name} must not have an RPC schema`)
+    assert.equal(registry.includes(`'${name}':`), false, `${name} must not be registered in registry.ts`)
+  }
+  assert.equal(desktopActionSchemas['execution-settings.getBotModelMenu'].safeParse([null]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.refreshBotModelMenuAction'].safeParse([owner]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.chooseBotModel'].safeParse([owner, 'credits:anthropic/claude-sonnet-5.5']).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setPreferredModelRoute'].safeParse([owner, 'anthropic/claude-sonnet-5-5', 'credits:anthropic/claude-sonnet-5.5']).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: false, ultrafast: false, pro: true, daybreak: false } }]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: true, ultrafast: false, pro: false, daybreak: true } }]).success, true)
+  assert.equal(Object.hasOwn(desktopActionSchemas, 'model-api-keys.refreshApiKeyDaybreak'), true)
+  assert.equal(registry.includes(`'model-api-keys.refreshApiKeyDaybreak':`), true)
+  assert.equal(desktopActionSchemas['model-api-keys.refreshApiKeyDaybreak'].safeParse([owner]).success, true)
+  assert.equal(desktopActionSchemas['model-api-keys.refreshApiKeyDaybreak'].safeParse(['not-a-uuid']).success, false)
+})
+

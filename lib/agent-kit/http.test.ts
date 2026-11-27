@@ -88,7 +88,7 @@ test('write policy settings use authenticated scope, gate, and strict request bo
   const handler = createAgentDefinitionHandler({
     enabled: () => true, authenticate: async () => 'owner-a', scope: async (ownerId, bot) => ({ ownerId, botId: bot, workspaceId: bot ? randomUUID() : null }),
     store: {} as AgentKitStore, defaults: DEFAULT_AGENT_DEFINITION, evaluate: async () => null,
-    writePolicy: { enabled: () => true, settings: { readWorkspace: async scope => { calls.push(scope); return { permissions: {}, version: '0' } }, setWorkspace: async (scope, permissions) => { calls.push({ scope, permissions }); return { permissions: permissions as Record<string, 'allow' | 'ask' | 'deny'>, version: '1' } } } },
+    writePolicy: { enabled: () => true, settings: { readWorkspace: async scope => { calls.push(scope); return { permissions: {}, version: '0' } }, setWorkspace: async (scope, permissions) => { calls.push({ scope, permissions }); return { permissions: permissions as Record<string, 'allow' | 'deny'>, version: '1' } } } },
   })
   // The per-Bot command is retired; the strict body rejects it as invalid.
   assert.equal((await handler(f.request({ action:'set_write_policy', permissions:{send_slack_message:'allow'}, expectedVersion:'0', ownerId:'other' }), botId)).status, 400)
@@ -97,6 +97,8 @@ test('write policy settings use authenticated scope, gate, and strict request bo
   assert.equal(result.status, 200)
   assert.equal((calls[0] as {scope:{ownerId:string}}).scope.ownerId, 'owner-a')
   assert.equal((await handler(f.request({ action:'set_workspace_write_policy', permissions:{send_slack_message:'permit'}, expectedVersion:'0' }), botId)).status, 400)
+  // Allow or deny only: there is no ask (ADR 2026-11-27-1615).
+  assert.equal((await handler(f.request({ action:'set_workspace_write_policy', permissions:{send_slack_message:'ask'}, expectedVersion:'0' }), botId)).status, 400)
   assert.equal((await handler(f.request({ action:'set_workspace_write_policy', permissions:{send_slack_message:'allow'}, expectedVersion:'0' }, { origin:'https://evil.test' }), botId)).status, 403)
   // The per-Bot view is retired too.
   assert.equal((await handler(new Request(`${origin}/api/bots/${botId}/definition?view=write_policy`), botId)).status, 400)

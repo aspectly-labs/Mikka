@@ -201,7 +201,6 @@ describe("the device report", () => {
     const claude = fakeCli(dir, "claude_code")
     const link = Object.assign(new MemoryServer("cloud-models").link(), {
       nativeContext: async () => { throw new Error("no run in this test") },
-      nativeRequest: async () => { throw new Error("no run in this test") },
     })
     const reports: { harnesses: { harness: string; modelSlots?: { slot: string; model: string }[] }[] }[] = []
     const report = link.report.bind(link)

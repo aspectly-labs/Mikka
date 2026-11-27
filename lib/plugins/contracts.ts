@@ -32,7 +32,6 @@ export const updateMcpSchema = z.object({
   headers: mcpHeadersSchema.nullable().optional(), env: mcpEnvironmentSchema.optional(),
 }).strict().refine(value => !(value.auth !== undefined && value.headers !== undefined)).refine(value => value.name !== undefined || value.enabled !== undefined || value.auth !== undefined || value.headers !== undefined || value.env !== undefined)
 export const deletePluginSchema = z.object({ id: z.uuid() }).strict()
-export const shareMcpSchema = z.object({ serverId: z.uuid(), workspaceId: z.uuid(), shared: z.boolean() }).strict()
 export const installSkillSchema = z.object({
   source: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9_.-]{1,100}$/),
   slug: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/),
@@ -53,15 +52,22 @@ export type McpServerView = {
   id: string; name: string; url: string; transport: 'http' | 'sse' | 'stdio'; enabled: boolean;
   revision: number; authKind: 'header' | 'none' | 'env' | 'oauth'; createdAt: string;
 }
+/**
+ * A person's own server seen from a workspace. Personal MCP servers are not shareable
+ * (decision 2026-11-27-1700): `mine` is always true and `shared`/`canShare` always false.
+ * Those fields stay for one release so clients built before sharing was retired keep working.
+ */
 export type McpWorkspaceServerView = Omit<McpServerView, 'url'> & {
-  /** A teammate receives public metadata, never the owner's private endpoint. */
   url: string | null; ownerId: string; ownerName: string | null; mine: boolean; shared: boolean;
 }
 export type McpWorkspacePage = {
   workspaceId: string; workspaceKind: 'personal' | 'team'; canShare: boolean;
   servers: McpWorkspaceServerView[]; count: number;
 }
-/** Host-owned references only. A recreated share never revives an old grant. */
+/**
+ * Host-owned references only. `ownerId` is the requester and `grantId` is null; an execution
+ * frozen while workspace sharing existed may still carry a grant ID, which every check refuses.
+ */
 export const mcpServerGrantSchema = z.object({
   id: z.uuid(), name: z.string().max(80), revision: z.number().int().positive(), ownerId: z.string().min(1),
   grantId: z.uuid().nullable(),

@@ -125,6 +125,46 @@ export function closeTab(tabs: SavedTabs, index: number, fallbackHref: string): 
   return { items, active }
 }
 
+/** Keeps only the tab at `index` (Close Other Tabs); it becomes the active one. */
+export function closeOtherTabs(tabs: SavedTabs, index: number): SavedTabs {
+  const keep = tabs.items[index]
+  if (!keep || tabs.items.length === 1) return tabs
+  return { items: [keep], active: 0 }
+}
+
+/** Closes every tab after `index` (Close Tabs to the Right); an active tab among them hands over to `index`. */
+export function closeTabsToRight(tabs: SavedTabs, index: number): SavedTabs {
+  if (index < 0 || index >= tabs.items.length - 1) return tabs
+  return { items: tabs.items.slice(0, index + 1), active: tabs.active > index ? index : tabs.active }
+}
+
+/** Closes every tab before `index` (Close Tabs to the Left); an active tab among them hands over to `index`. */
+export function closeTabsToLeft(tabs: SavedTabs, index: number): SavedTabs {
+  if (index <= 0 || index >= tabs.items.length) return tabs
+  return { items: tabs.items.slice(index), active: tabs.active < index ? 0 : tabs.active - index }
+}
+
+/** A copy of the tab at `index`, with its own back/forward history, opened right after it and made active. */
+export function duplicateTab(tabs: SavedTabs, index: number): SavedTabs {
+  const source = tabs.items[index]
+  if (!source || tabs.items.length >= MAX_SAVED_TABS) return tabs
+  const copy = { entries: [...source.entries], index: source.index }
+  return { items: [...tabs.items.slice(0, index + 1), copy, ...tabs.items.slice(index + 1)], active: index + 1 }
+}
+
+/** ⌘1–⌘8 pick that tab when it exists; ⌘9 always picks the last tab, as browsers do. */
+export function tabForNumber(count: number, number: number): number | null {
+  if (count < 1 || !Number.isInteger(number) || number < 1 || number > 9) return null
+  if (number === 9) return count - 1
+  return number <= count ? number - 1 : null
+}
+
+/** ⌃Tab / ⌃⇧Tab: the next or previous tab, wrapping around. */
+export function cycleTabIndex(count: number, current: number, direction: 'next' | 'previous'): number | null {
+  if (count < 2 || current < 0 || current >= count) return null
+  return direction === 'next' ? (current + 1) % count : (current - 1 + count) % count
+}
+
 export function nextTabIndex(count: number, current: number, key: string): number | null {
   if (count < 1 || current < 0 || current >= count) return null
   if (key === 'Home') return 0

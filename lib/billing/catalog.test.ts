@@ -23,6 +23,7 @@ import {
   billingCatalogPath,
   billingCatalogViewSchema,
   DEFAULT_CREDIT_CONVERSION,
+  deriveE2BMachineSkuCatalog,
   deriveMachineSkuCatalog,
   fetchBillingCatalog,
   formatCatalogCurrency,
@@ -237,6 +238,18 @@ test('resolveBillingCatalog falls back gracefully without fabricating prices whe
   assert.deepEqual(unconfigured.plans, [])
   assert.equal(unconfigured.activeOffer, null)
   assert.equal(unconfigured.machineSkus.length, selectableMachineSizeOptions().length)
+  assert.equal('e2bMachineSkus' in unconfigured, false)
+
+  const withE2B = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: { NODE_ENV: 'test', MIKKA_EDITION: 'community' },
+    fetchImpl: unexpectedFetch,
+    now: new Date('2026-11-15T12:00:00Z'),
+    activeOfferOverride: SAMPLE_OFFER,
+    checkOfferEligibility: () => true,
+    includeE2BMachineSkus: true,
+  })
+  assert.equal(withE2B.e2bMachineSkus?.length, 4)
 
   // Configured Stripe returning HTTP 503 fails gracefully with empty plans and null activeOffer.
   const failing = makeStripeFetch({ error: { message: 'secret_internal_detail' } }, 503)
@@ -569,6 +582,17 @@ test('machine SKUs derive directly from selectableMachineSizeOptions and exclude
   assert.ok(defaultSku)
   assert.equal(defaultSku.id, 'standard-3')
   assert.equal(defaultSku.hourlyRateCents, 20)
+
+  const e2bSkus = deriveE2BMachineSkuCatalog()
+  assert.deepEqual(
+    e2bSkus.map(sku => [sku.id, sku.hourlyRateCents, sku.perSecondMicroUsd, sku.provider, sku.isDefault]),
+    [
+      ['small', 12, 32, 'e2b', false],
+      ['medium', 23, 64, 'e2b', true],
+      ['large', 46, 128, 'e2b', false],
+      ['ultra', 92, 256, 'e2b', false],
+    ],
+  )
 })
 
 test('catalog-client pure formatters, keys, and fetchBillingCatalog work without server-only dependencies', async () => {
@@ -1306,4 +1330,44 @@ test('resolveBillingCatalog and resolveEligibleCheckoutOffer enforce applies_to.
     checkOfferEligibility: () => true,
   })
   assert.equal(boundaryCatalog.activeOffer, null)
+})
+
+test('catalog surfaces per_seat pricing and at-cost default unit_amount credits', async () => {
+  const seatFetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.endsWith('/v1/prices/price_team_1')) {
+      return Response.json({
+        id: 'price_team_1',
+        active: true,
+        currency: 'usd',
+        type: 'recurring',
+        billing_scheme: 'per_unit',
+        unit_amount: 3000,
+        recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+        metadata: {
+          mikka_billing_model: 'resource_v1',
+          mikka_plan: 'pro',
+          mikka_seat_model: 'per_seat',
+          mikka_pricing_model: 'at_cost_v1',
+        },
+      })
+    }
+    return new Response('{}', { status: 404 })
+  }) as typeof fetch
+  const catalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: {
+      MIKKA_EDITION: 'cloud',
+      STRIPE_SECRET_KEY: 'sk_test_catalog',
+      STRIPE_TEAM_RESOURCE_PRICE_ID: 'price_team_1',
+    },
+    fetchImpl: seatFetch,
+    bypassCache: true,
+  })
+  const team = catalog.plans.find((plan) => plan.plan === 'pro')
+  assert.ok(team)
+  assert.equal(team.active, true)
+  assert.equal(team.seatModel, 'per_seat')
+  assert.equal(team.includedPoints, 3000)
+  assert.equal(team.amountCents, 3000)
 })

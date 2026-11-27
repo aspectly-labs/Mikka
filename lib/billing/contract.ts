@@ -14,6 +14,14 @@ export interface BillingReceiptsPolicyView {
   source: 'provider'
 }
 
+export interface OveragePolicyView {
+  enabled: boolean
+  monthlyCapPoints: number | null
+  spentOveragePoints: number
+  remainingOveragePoints: number | null
+  revision: number
+}
+
 export interface WorkspaceBillingSettingsView {
   workspaceId: string
   accountWorkspaceId: string
@@ -22,6 +30,7 @@ export interface WorkspaceBillingSettingsView {
   source: 'provider'
   receipts: BillingReceiptsPolicyView
   autoRecharge: AutoRechargePolicyView
+  overage?: OveragePolicyView
 }
 
 export interface BillingView {
@@ -44,6 +53,7 @@ export interface BillingView {
   planPointsLimit: number | null
   purchasedPoints: number
   autoRecharge?: AutoRechargePolicyView
+  overage?: OveragePolicyView
   receiptsManagedBy?: 'stripe_portal'
   receipts?: BillingReceiptsPolicyView
 }
@@ -58,6 +68,7 @@ export interface CreditTransaction {
   stripeFeeCents: number | null
   status: 'succeeded'
   receiptUrl: string | null
+  expiresAt?: string | null
 }
 
 export interface CreditBillingView {

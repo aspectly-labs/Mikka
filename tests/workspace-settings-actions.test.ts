@@ -42,6 +42,11 @@ const client = { async query(command: string) {
 } } as unknown as PoolClient
 observeCommitEffects(client)
 const database = {
+  async execute(statement: SQL) {
+    const { sql } = dialect.sqlToQuery(statement)
+    assert.match(sql, /FROM workspace_setting_values/)
+    return { rows: [] }
+  },
   session: { client },
   insert: () => ({ values: async (row: Record<string, unknown>) => { inserted.push(row) } }),
   async transaction<T>(work: (tx: { session: { client: PoolClient } }) => Promise<T>): Promise<T> {
@@ -121,7 +126,11 @@ before(async () => {
   } })
   mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async () => ({ user: { id: actor.userId, email: actor.email, name: actor.name }, session: { id: 'workspace-fixture-session' } }) } } } })
   // Keep the Bot's fake writes on the same observed transaction as its live registration.
-  mock.module('@/lib/db', { namedExports: { pool: { query: () => { throw Error('unexpected query') } },
+  mock.module('@/lib/db', { namedExports: { pool: { query: async (sql: string, params: unknown[]) => {
+    assert.match(sql, /FROM model_order_settings WHERE "ownerId"=\$1 AND "workspaceId"=\$2/)
+    assert.deepEqual(params, [actor.userId, actor.workspaceId])
+    return { rows: [] }
+  } },
     db: { ...database,
       // Keep the shared fixture's BEGIN/COMMIT/rollback semantics while also
       // serving the P3 reads: execute() for workspace_setting_values and the
@@ -133,13 +142,7 @@ before(async () => {
           assert.match(command, /^SELECT p.visibility FROM resource_access_policies/)
           return { rows: [{ visibility: 'private' }] }
         } } as unknown as PoolClient
-        const tx = { ...database,
-          execute: async (statement: SQL) => {
-            const { sql } = dialect.sqlToQuery(statement)
-            assert.match(sql, /FROM workspace_setting_values/)
-            return { rows: [] }
-          },
-          session: { client: txClient } }
+        const tx = { ...database, session: { client: txClient } }
         observeCommitEffects(txClient)
         await txClient.query('BEGIN')
         try {
@@ -304,7 +307,11 @@ test('the Bot list for a shown workspace is read from that workspace, not the se
 
 test('bot defaults and workspace bot list actions', async () => {
   reset()
-  assert.deepEqual((await botActions.getWorkspaceBotDefaults()).error, undefined)
+  // 新建 Bot shows the person's own run location and effort; with no settings row yet, the dispatcher's defaults.
+  assert.deepEqual(await botActions.getWorkspaceBotDefaults(), {
+    defaultModel: 'codex', defaultRepository: null, models: ['mikka', 'codex', 'claude'], repositories: ['acme/app'],
+    personal: { location: 'cloud', effort: 'medium' },
+  })
   assert.deepEqual(await botActions.updateWorkspaceBotDefaults({ defaultModel: 'claude' }), { defaultModel: 'claude', defaultRepository: null })
   assert.deepEqual(await botActions.listWorkspaceBots(), { bots: [{ id: 'b', name: 'Bot', status: 'running', runningThreads: 2 }] })
   assert.deepEqual(relevant(), [['botDefaultOptions', actor.workspaceId], ['saveBotDefaults', actor.userId, actor.workspaceId, { defaultModel: 'claude' }], ['workspaceBots', actor.workspaceId]])

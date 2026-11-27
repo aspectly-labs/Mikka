@@ -8,6 +8,7 @@ import type { DeviceCaller } from '../lib/device-link'
 import type { SecretHttpPolicy } from '../lib/secrets/delivery'
 import type { ProjectExecutionSnapshot } from '../lib/project-resources/contracts'
 import { dbUrl, seedAgent, seedIssue, seedPersonalWorkspace, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 
 test('protected task Secret claims and use-time checks against PostgreSQL', { skip: !dbUrl }, async t => {
   const previousKey = process.env.WORKSPACE_SECRETS_KEY
@@ -78,8 +79,7 @@ test('protected task Secret claims and use-time checks against PostgreSQL', { sk
         values($1,$2,$3,'Secret access Project','','','planned','none','','','','','[]',1)`, [projectId, owner, ws.id])
       await (await import('../lib/resource-access/projects')).registerProjectAccess(owner, projectId, ws.id)
       await seedProjectTasks(pool, projectId, [issueId])
-      await resources.saveProjectResources(owner, { workspaceId: ws.id, projectId, revision: 1,
-        repositories: [{ repositoryKey, baseBranch: null, environmentId: environment.id, isPrimary: true }], environmentIds: [environment.id], defaultEnvironmentId: environment.id })
+      await assignTaskEnvironment(pool, owner, ws.id, [issueId], environment.id)
       projectExecution = await resources.withProjectExecution({ userId: owner, workspaceId: ws.id, issueId, repositoryKey, baseBranch: null, runtime: kind, harness: 'codex' }, async snapshot => snapshot)
       assert.deepEqual(projectExecution.environment?.secretIds, [saved.id])
     }

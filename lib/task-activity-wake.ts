@@ -52,7 +52,7 @@ export type WakeBot = { id: string; name: string; ownerId: string }
 export type TaskWake = { bot: WakeBot; kind: 'comment' | 'mention'; key: string; text: string | null }
 
 /**
- * Which Bots a save of a task's document wakes (Capy's issue_activity), and why:
+ * Which Bots a save of a task's document wakes (as Capy wakes a Captain on task activity), and why:
  * - a new comment wakes the Bot the task is assigned to, and each of the writer's Bots its text @-mentions;
  * - a Bot chip added to the description wakes that Bot.
  * `assigned` is the task's Bot delegate, `own` the writer's live Bots in the task's workspace; a mention of any other

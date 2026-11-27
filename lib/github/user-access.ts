@@ -1,4 +1,5 @@
 import 'server-only'
+import { CloudServiceError, cloudErrorStatus } from '@/lib/cloud-services/errors'
 import { auth } from '@/lib/auth'
 import { githubConnectionToken } from './connection'
 import { readGitHubAppConfig } from './app-config'
@@ -411,4 +412,55 @@ export async function readAuthorizedIssue(headers: Headers, url: string) {
   if (issue.pull_request != null || issue.number !== number || typeof issue.html_url !== 'string' || issue.html_url.toLowerCase() !== canonical.toLowerCase() ||
       (issue.state !== 'open' && issue.state !== 'closed') || typeof issue.updated_at !== 'string' || !Number.isFinite(Date.parse(issue.updated_at))) throw new GitHubAccessError('githubUnavailable', 502)
   return { userId: access.userId, githubAccountId: access.githubAccountId, repoId: repo.id, installationId: repo.installationId, issueId: githubId(issue.id), number, url: canonical, state: issue.state, updatedAt: issue.updated_at }
+}
+
+export async function authorizedPullWake(userId: string, repo: string, repositoryId: number, installationId: number,
+  conflict?: { number: number; head: string }) {
+  const budget = { deadline: Date.now() + 25_000 }
+  try {
+    const credential = await githubRepositoryReadCredential(userId, `v2/github.com/${repo}`, budget)
+    if (credential.repository.id !== String(repositoryId) || credential.repository.installationId !== String(installationId)) return false
+    if (!conflict) return true
+    const { number, head } = conflict
+    const { data } = await githubGet(credential.token, `/repositories/${repositoryId}/pulls/${number}`, budget)
+    if (data.state !== 'open' || data.number !== number || object(data.head).sha !== head) return false
+    return data.mergeable === null ? null : data.mergeable === false
+  } catch (error) {
+    if (error instanceof GitHubAccessError && error.status < 500 || error instanceof CloudServiceError && [401, 403].includes(cloudErrorStatus(error.code))) return false
+    throw error
+  }
+}
+
+/** Count only configured repositories visible to the reader through both GitHub and the App.
+ * A missing grant or incomplete search means the workspace denominator is unknown. */
+export async function countWorkspaceMergedPulls(userId: string, repositoryKeys: string[], from: Date, to: Date, previousFrom: Date) {
+  if (!repositoryKeys.length) return { current: 0, previous: 0 }
+  const unknown = { current: null, previous: null }
+  // Legacy OAuth accounts reserve up to 12 seconds for rotating credentials.
+  const budget = { deadline: Date.now() + 25_000 }
+  try {
+    const access = await repositoriesForUser(userId, undefined, { budget })
+    let current = 0, previous = 0
+    for (const key of new Set(repositoryKeys)) {
+      const repo = access.repositories.find(row => 'v2/github.com/' + row.fullName.toLowerCase() === key)
+      if (!repo || !REPO_NAME.test(repo.fullName)) return unknown
+      const token = access.token ?? (await (await import('./cloud')).cloudGitHubCredential(userId, key, budget))?.token
+      if (!token) return unknown
+      const count = async (start: Date, end: Date) => {
+        const day = (date: Date) => date.toISOString().slice(0, 10)
+        const query = `repo:${repo.fullName} is:pr is:merged merged:${day(start)}..${day(new Date(end.getTime() - 1))}`
+        const { data } = await githubGet(token, '/search/issues?' + new URLSearchParams({ q: query, per_page: '1' }), budget)
+        if (data.incomplete_results !== false || typeof data.total_count !== 'number' || !Number.isSafeInteger(data.total_count) || data.total_count < 0)
+          throw new GitHubAccessError('githubUnavailable', 502)
+        return data.total_count
+      }
+      const counts = await Promise.all([count(from, to), count(previousFrom, from)])
+      current += counts[0]
+      previous += counts[1]
+    }
+    return { current, previous }
+  } catch (error) {
+    if (error instanceof GitHubAccessError || error instanceof CloudServiceError || error instanceof DOMException && error.name === 'TimeoutError') return unknown
+    throw error
+  }
 }

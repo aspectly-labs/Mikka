@@ -102,6 +102,7 @@ export const nativeBrokerContextSchema = z.object({
 }).strict()
 export type NativeBrokerContext = z.infer<typeof nativeBrokerContextSchema>
 /** Opts into catalogue evidence on a prepared lease; older daemons parse a strict object. */
+export const SUBSCRIPTION_GATEWAY_HEADER = 'x-mikka-subscription-gateway'
 export const SUBSCRIPTION_MODEL_CATALOGUE_HEADER = 'x-mikka-subscription-model-catalogue'
 /**
  * One device run's short-lived access lease (orchestration.md §6): the

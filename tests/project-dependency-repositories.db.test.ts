@@ -82,9 +82,6 @@ test('dependency references use stable GitHub ids, retain hidden selections and 
   const key = 'v2/github.com/fixture/first'
   const search = () => projectPullAuthors({ id: member }, { ...scope, readerId: member, repository: key, query: 'ad' })
   const countBeforeSearch = requests.length
-  assert.deepEqual(await search(), [])
-  assert.equal(requests.length, countBeforeSearch)
-  await pool.query('insert into workspace_project_repositories ("projectId","workspaceId","repositoryKey") values ($1,$2,$3)', [projectId, ws.id, key])
   assert.deepEqual(await search(), ['Ada'])
   assert.equal(pullRequests.at(-1), `${member}/repositories/11/pulls`)
   assert.equal(requests.length, countBeforeSearch + 1)

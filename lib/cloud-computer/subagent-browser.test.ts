@@ -14,7 +14,13 @@ const saved = Object.fromEntries(['E2B_API_URL', 'E2B_SANDBOX_URL', 'E2B_HTTP_VE
 mock.module(new URL('../db/index.ts', import.meta.url).href, { namedExports: {
   pool: { query: async () => ({ rows }) },
 } })
+mock.module(new URL('../secrets/e2b-resource.ts', import.meta.url).href, { namedExports: {
+  e2bResourceAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+  e2bCreateAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+  bindE2BResource: async () => {},
+} })
 mock.module(new URL('../secrets/e2b-runtime.ts', import.meta.url).href, { namedExports: {
+  environmentSnapshotScope: () => 'team:test',
   e2bApiKey: async () => LOCAL_E2B_KEY,
   sandboxKeyOwner: async () => 'owner',
   computerTemplate: () => 'desktop',

@@ -28,7 +28,6 @@ const files = new Map([
   ['/lib/server-runtime/server.ts', 'export function after(){} export const RouteResponse={json:(body,init)=>Response.json(body,init)}'],
   ['/lib/server-runtime/headers.ts', `import { activityFixtureSession } from ${JSON.stringify(import.meta.url)}; export async function headers(){return new Headers()} export async function cookies(){return {get(key){const id=activityFixtureSession()?.workspaceId;return key==='mikka-workspace' && id ? {value:id} : undefined},set(){}}}`],
   ['/lib/auth.ts', `import { activityFixtureSession } from ${JSON.stringify(import.meta.url)}; export const auth={api:{async getSession(){return activityFixtureSession()}}}`],
-  ['/lib/linear-sync/dispatch.ts', 'export function dispatchLinearIssueSync(){} export function dispatchLinearWork(){}'],
   ['/lib/issue-scope-judge.ts', 'export async function judgeIssueScope(){}'],
   ['/lib/coordinator/wake.ts', 'export async function wakeCoordinator(){} export function coordinatorEnabled(){return false}'],
 ])

@@ -16,7 +16,7 @@ const issueId = '31300000-0000-4000-8000-000000000002'
 const botId = '31300000-0000-4000-8000-000000000003'
 const workspaceId = '31300000-0000-4000-8000-000000000004'
 const dialect = new PgDialect()
-const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_organization_workspaces\".\"organizationId\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\" = $1 and \"mikka_workspace_members\".\"status\" = $2 and \"mikka_workspaces\".\"id\" = $3 and (\"mikka_workspaces\".\"kind\" = $4 or (\"mikka_workspaces\".\"kind\" = $5 and \"mikka_workspaces\".\"userId\" = $6))) order by \"mikka_workspaces\".\"createdAt\" asc"
+const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\" as \"mfa\", \"mikka_organization_workspaces\".\"organizationId\" as \"org\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\"=$1 and \"mikka_workspace_members\".\"status\"='active' and \"mikka_workspaces\".\"id\"=$2 and (\"mikka_workspaces\".\"kind\"='team' or (\"mikka_workspaces\".\"kind\"='personal' and \"mikka_workspaces\".\"userId\"=\"mikka_workspace_members\".\"userId\"))) order by \"mikka_workspaces\".\"createdAt\" asc"
 let viewer: string | null = 'owner'
 let requestHeaders = new Headers({cookie: 'synthetic-session'})
 let sessionUser: string | null = null
@@ -145,10 +145,10 @@ before(async () => {
       return { rows: [{ workspaceId, status: live.status, stopRequestedAt: live.stopRequestedAt,
         harness: live.harness, canSteer: false, continuable: Boolean(live.deviceRepoId), interrupt: false }] }
     }
-    if (sql.startsWith('SELECT id,text,status,"failureCode","requestId" FROM (')) {
+    if (sql.startsWith('SELECT id,text,status,"failureCode","requestId","canSendNow" FROM (')) {
       assert.equal(viewer, current.run.userId)
       assert.deepEqual(params, [current.run.userId, workspaceId, current.run.id])
-      assert.match(sql, /"userId"=\$1 AND "workspaceId"=\$2 AND "rootRunId"=\$3/)
+      assert.match(sql, /q\."userId"=\$1 AND q\."workspaceId"=\$2 AND q\."rootRunId"=\$3/)
       return { rows: [] }
     }
     // These ordinary threads have no machine binding; still verify the scoped stop probe.
@@ -239,7 +239,7 @@ before(async () => {
         },
         where: (condition: SQL) => {
           if (projection?.organizationId) {
-            assert.deepEqual(Object.keys(projection), ['id', 'kind', 'organizationId'])
+            assert.deepEqual(Object.keys(projection), ['id', 'kind', 'factorAt', 'organizationId'])
             assert.ok(member && organization && memberJoin && organizationJoin)
             const selected = new QueryBuilder().select(projection as SelectedFields).from(table)
               .innerJoin(member, memberJoin).leftJoin(organization, organizationJoin).where(condition)
@@ -253,7 +253,7 @@ before(async () => {
                   .replaceAll('"' + name + '".', '"' + table + '".')
               }
               assert.equal(actualSql, expectedMembershipSql)
-              assert.deepEqual(compiled.params, [viewer, 'active', workspaceId, 'team', 'personal', viewer])
+              assert.deepEqual(compiled.params, [viewer, workspaceId])
               // SQL NULL keeps the real Enterprise filter on the ordinary
               // Shared path; membership still follows this fixture's state.
               return current.members.has(String(viewer)) ? [{ id: workspaceId, kind: 'team', organizationId: null }] : []

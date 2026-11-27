@@ -51,7 +51,7 @@ export function threadRunModel(definition: Pick<WorkerDefinitionSnapshot, 'model
  */
 export async function latestThreadRunModel(pool: Pick<Pool, 'query'>, userId: string, issueId: string, agentId: string): Promise<RunModel | null> {
   const { rows } = await pool.query<{ agentDefinition: WorkerDefinitionSnapshot }>(`SELECT "agentDefinition" FROM agent_runs
-    WHERE "userId"=$1 AND "issueId"=$2 AND "agentId"=$3 AND kind<>'group_chat' AND coalesce("agentDefinition"->>'model','')<>''
+    WHERE "userId"=$1 AND "issueId"=$2 AND "agentId"=$3 AND kind<>'group_chat' AND "threadRelation" IS DISTINCT FROM 'side' AND coalesce("agentDefinition"->>'model','')<>''
     ORDER BY "createdAt" DESC,id DESC LIMIT 1`, [userId, issueId, agentId])
   return threadRunModel(rows[0]?.agentDefinition)
 }
@@ -60,7 +60,7 @@ export async function latestThreadRunModel(pool: Pick<Pool, 'query'>, userId: st
  * A new cloud run's model by 优先使用的模型 (decision 2026-11-02-1400): the first usable cloud entry for
  * this harness. A subscription entry is bound to the Agent so the run uses that account.
  */
-export async function chooseCloudRunModel(pool: Pool, scope: { ownerId: string; workspaceId: string; botId: string | null }, agentId: string, harness: 'claude_code' | 'codex', asked?: string, purpose: 'task' | 'desktop' = 'desktop', exactEntry?: OrderEntry): Promise<RunModel | { error: 'machineUnavailable'; reason?: string }> {
+export async function chooseCloudRunModel(pool: Pool, scope: { ownerId: string; workspaceId: string; botId: string | null }, agentId: string, harness: 'claude_code' | 'codex', asked?: string, purpose: import('../cloud-template-models').CloudModelPurpose = 'desktop', exactEntry?: OrderEntry): Promise<RunModel | { error: 'machineUnavailable'; reason?: string }> {
   const { resolveModelDispatch, bindAgentToConnection } = await import('@/lib/model-dispatch')
   const target = await resolveModelDispatch(pool, scope, asked ? { harness, model: asked } : null, 'cloud', undefined, { cloudPurpose: purpose, harness, ...(exactEntry ? { exactEntry } : {}) })
   if (target.kind !== 'cloud') return { error: 'machineUnavailable', ...(target.kind === 'none' ? { reason: target.reason } : {}) }

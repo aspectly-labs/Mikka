@@ -19,6 +19,9 @@ after(() => {
 const lifecycleLog = mock.method(console, 'info', () => {})
 beforeEach(() => lifecycleLog.mock.resetCalls())
 
+// This fixture models self-hosted E2B with an owner-provided key.
+process.env.MIKKA_EDITION = 'community'
+
 const now = Date.UTC(2026, 10, 7)
 const running = { state: 'running' as const, endAt: now + 15 * 60_000 }
 const paused = { state: 'paused' as const, endAt: null }
@@ -109,6 +112,17 @@ test('a kept review retains parked provenance and does not renew an Agent lease'
   assert.equal(f.machine.lifecycleAt, now + 60_000)
   assert.equal(f.machine.leaseExpiresAt, null)
   assert.equal(f.counts().pauseCalls, 0)
+  assert.equal(f.counts().keepAliveCalls, 0, 'provider deadline already covers the review lease')
+})
+
+test('a review with insufficient provider time requests only the rest of its lease', async () => {
+  const f = fixture(row({ status: 'succeeded', safeExit: true, reviewExpiresAt: now + 60_000, lifecycle: { phase: 'review_resumed' } }))
+  let requested: number | undefined
+  await reconcileThreadMachine(f.pool, actor, 'run', { ...f.deps, provider: {
+    info: async () => ({ state: 'running', endAt: now + 20_000 }),
+    keepAlive: async (_sandboxId, _ownerId, milliseconds) => { requested = milliseconds },
+  } })
+  assert.equal(requested, 67_000)
 })
 
 test('a review opened after the lifecycle snapshot cannot be recorded as parked', async () => {

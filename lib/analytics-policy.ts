@@ -1,5 +1,6 @@
 import { scrubLocalString } from '@mikka/protocol/tracing'
 import { safeDomain, safeLabel, safeLanding } from './first-touch.ts'
+import { isTrackOwner } from './track-owner-rule.ts'
 import { analyticsOrigin, analyticsPath, analyticsTextPaths } from './analytics-path.ts'
 
 export { analyticsPath }
@@ -251,6 +252,17 @@ function sanitizeFrontendRumEvent<T extends { event: string; properties: Record<
   return narrow(event, kept)
 }
 
+/** A click on a control, reported by its build-time `data-track-owner`. The owner is source text written at build
+ * time, never user data; anything not shaped like one, or with anything in it that looks like data, is dropped with
+ * the event (lib/track-owner-rule.ts). */
+const OWNER_CLICK_EVENT = 'ui_control_click'
+
+function sanitizeOwnerClickEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T): T | null {
+  const owner = event.properties.owner
+  if (!isTrackOwner(owner)) return null
+  return narrow(event, { owner })
+}
+
 const desktopEvents = new Set(['desktop_api_error', 'desktop_main_error', 'desktop_process_gone'])
 /** A route template from apps/api/generated/routes.json (`/api/workspaces/[workspaceId]/task-labels`): never a concrete id. */
 const ROUTE_TEMPLATE = /^\/api(?:\/(?:[A-Za-z0-9._~-]{1,64}|\[{1,2}(?:\.{3})?[A-Za-z][A-Za-z0-9_]{0,63}\]{1,2})){1,16}$/
@@ -294,6 +306,7 @@ function sanitizeDesktopEvent<T extends { event: string; properties: Record<stri
 export function sanitizeAnalyticsEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T | null): T | null {
   if (!event) return null
   if (event.event === '$exception') return sanitizeExceptionEvent(event)
+  if (event.event === OWNER_CLICK_EVENT) return sanitizeOwnerClickEvent(event)
   if (frontendRumEvents.has(event.event)) return sanitizeFrontendRumEvent(event)
   if (desktopEvents.has(event.event)) return sanitizeDesktopEvent(event)
   if (event.event !== '$snapshot' && !allowedEvents.has(event.event)) return null

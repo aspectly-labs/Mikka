@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { z } from 'zod'
 import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
@@ -46,12 +46,6 @@ const columns = 'id,workspace_id,server_key,name,url,transport,environment_id,co
 const headerAad = (row: Pick<ServerRow, 'workspace_id' | 'id' | 'url'>, header: string) => JSON.stringify(['workspace-mcp', row.workspace_id, row.id, row.url, header.toLowerCase()])
 const oauthAad = (workspaceId: string, serverId: string, principal: string | null) => JSON.stringify(['workspace-mcp-oauth', workspaceId, serverId, principal ?? 'shared'])
 const unavailable = () => new PluginError('mcpUnavailable', 403)
-
-/** One canonical text of every frozen server's switched-off tools, for the claim fence. */
-export function mcpToolFingerprint(entries: Iterable<{ serverId: string; tool: string }>): string {
-  const lines = [...entries].map(entry => `${entry.serverId}\u0000${entry.tool}`).sort()
-  return createHash('sha256').update(lines.join('\n')).digest('hex')
-}
 
 async function activeWorkspace(members: Query, userId: string, workspaceId: string) {
   const { rows: [row] } = await members.query<{ kind: 'personal' | 'team' }>(`SELECT w.kind FROM mikka_workspaces w
@@ -413,16 +407,4 @@ export async function validateWorkspaceMcpGrants(query: Query, authority: McpAut
     if (!row || row.workspace_id !== authority.workspaceId || !row.enabled || row.revision !== grant.revision || row.connection_mode !== grant.mode
       || grant.ownerId !== authority.requester || row.environment_id !== null && row.environment_id !== (authority.environmentId ?? null)) throw unavailable()
   }
-}
-
-/** The switched-off tools of every frozen server, read on the claim's own transaction (and locked there). */
-export async function lockedMcpToolFingerprint(query: Query, authority: McpAuthority) {
-  const own = authority.servers.filter(server => server.source !== 'workspace').map(server => server.id)
-  const shared = authority.servers.filter(server => server.source === 'workspace').map(server => server.id)
-  // Every switch row is locked, not only the ones that are off: a switch turned off after
-  // this read would otherwise commit before the claim does.
-  type Switch = { server_id: string; tool_name: string; enabled: boolean }
-  const { rows: personal } = await query.query<Switch>('SELECT server_id,tool_name,enabled FROM mcp_server_tools WHERE server_id=ANY($1::uuid[]) ORDER BY server_id,tool_name FOR SHARE', [own])
-  const { rows: workspace } = shared.length ? await query.query<Switch>('SELECT server_id,tool_name,enabled FROM workspace_mcp_server_tools WHERE server_id=ANY($1::uuid[]) ORDER BY server_id,tool_name FOR SHARE', [shared]) : { rows: [] as Switch[] }
-  return mcpToolFingerprint([...personal, ...workspace].filter(row => !row.enabled).map(row => ({ serverId: row.server_id, tool: row.tool_name })))
 }

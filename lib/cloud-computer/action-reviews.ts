@@ -1,6 +1,5 @@
 import 'server-only'
 import { lockSubagentEvents, notifySubagentEvents } from '@/lib/computer/event-log'
-import { pendingActionsChanged } from '../live/pending-actions'
 import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import { ComputerError } from '@/lib/computer/store'
@@ -22,10 +21,10 @@ const SCRUB=`input=(input-'mutation')||'{"mutationScrubbed":true}'::jsonb`
 export async function scrubBrowserMutation(q:Query,actionId:string) {
   await q.query(`UPDATE pending_actions SET ${SCRUB} WHERE id=$1 AND action='browser_operation' AND input ? 'mutation' AND status IN ('done','declined','failed')`,[actionId])
 }
-/** Expire this person's stale undecided browser actions and scrub every terminal one that still holds a mutation. */
+/** Expire this person's stale undecided browser actions and scrub every terminal one that still holds a mutation.
+ * Nothing lists them any more (ADR 2026-11-27-1615), so there is no live invalidation. */
 export async function sweepBrowserMutations(q:Query,userId:string) {
-  const expired = await q.query(`UPDATE pending_actions SET status='failed',error='browserActionExpired' WHERE "userId"=$1 AND action='browser_operation' AND status='pending' AND "createdAt"<=now()-interval '5 minutes' RETURNING id`,[userId]) as { rows: { id: string }[] }
-  for (const row of expired.rows) await pendingActionsChanged(q, row.id, userId)
+  await q.query(`UPDATE pending_actions SET status='failed',error='browserActionExpired' WHERE "userId"=$1 AND action='browser_operation' AND status='pending' AND "createdAt"<=now()-interval '5 minutes'`,[userId])
   await q.query(`UPDATE pending_actions SET ${SCRUB} WHERE "userId"=$1 AND action='browser_operation' AND input ? 'mutation' AND status IN ('done','declined','failed')`,[userId])
 }
 

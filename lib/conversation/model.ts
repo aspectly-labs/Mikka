@@ -1,4 +1,5 @@
 import type { UIMessage } from 'ai'
+import type { AvailableCommandsChunkData, SystemEventData } from '@mikka/protocol/slash-commands'
 
 /**
  * Mikka's one message model for every chat (the Bot chat, an Agent's thread, a group): the AI SDK's `UIMessage`,
@@ -16,6 +17,10 @@ export type ConversationData = {
   'run-stage': { stage: 'repository' | 'worktree' | 'agent_start'; ms: number; ok: boolean }
   /** A real task attached to a Bot's desktop (`data-computer`). */
   computer: { botId: string; runId: string; task: string }
+  /** Runtime-reported slash commands for this thread (`data-available-commands`, #3333). */
+  'available-commands': AvailableCommandsChunkData
+  /** Harness system event lines (`data-system-event`, #3333). */
+  'system-event': SystemEventData
 }
 
 /**

@@ -11,6 +11,7 @@ import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-t
 import { PersonalPluginStore } from './store'
 import { lockNativeMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
 import { WorkspaceMcpServers } from './workspace-servers'
+import { nativeMcpName, withLockedToolSwitches } from './native-mcp'
 import { createMcpSchema, createWorkspaceMcpSchema, type McpAuthority, type PersonalPluginSnapshot } from './contracts'
 import { createPersonalMcpRuntime } from './mcp'
 
@@ -244,21 +245,38 @@ test('workspace MCP servers: any member manages them, threads resolve by their s
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM workspace_mcp_oauth WHERE user_id=$1', [carol])).rows[0].n, 0)
     })
 
-    await t.test('the claim fence reads tool switches fresh; Enabled, environment and edits are rechecked', async () => {
+    await t.test('the claim fence delivers tool switches as it locks them; Enabled, environment and edits are rechecked', async () => {
       const bobs = await freezer.freeze(bob, workspace)
       const assignment = await personal.nativeMcpAssignment(bob, bobs)
-      const exported = assignment.servers.find(entry => entry.name === `mcp_${docs.id.replaceAll('-', '')}`)
+      const exported = assignment.servers.find(entry => entry.name === nativeMcpName(docs.id))
       assert.deepEqual(exported && 'disabledTools' in exported ? exported.disabledTools : null, ['write'])
       assert.ok(exported && 'headers' in exported && exported.headers['X-Account'] === 'workspace-account')
-      const fence = (fingerprint = assignment.toolFingerprint) => pool.connect().then(async client => {
-        try { await client.query('BEGIN'); await lockNativeMcpAuthority(client, bob, assignment.authority, fingerprint); await client.query('COMMIT') }
+      const fence = () => pool.connect().then(async client => {
+        try { await client.query('BEGIN'); const locked = await lockNativeMcpAuthority(client, bob, assignment.authority); await client.query('COMMIT'); return locked }
         catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
       })
-      await fence()
-      // A switch keeps the revision (running tasks keep the server) but a claim exporting the old filter is refused.
+      assert.deepEqual((await fence())[docs.id], ['write'], 'the fence reads the workspace server\'s own switch table')
+      // A switch keeps the revision (running tasks keep the server). The claim is not refused: it
+      // delivers the switch as the fence locked it, never the export's older read.
       await servers.setTool(alice, workspace, docs.id, 'write', true)
-      await assert.rejects(fence(), /mcpConnectionChanged/)
-      await fence((await personal.nativeMcpAssignment(bob, bobs)).toolFingerprint)
+      const locked = await fence()
+      assert.deepEqual(locked[docs.id], [])
+      const delivered = withLockedToolSwitches(assignment.servers, locked, true).find(entry => entry.name === nativeMcpName(docs.id))
+      assert.deepEqual(delivered && 'disabledTools' in delivered ? delivered.disabledTools : null, [])
+      // A switch made while a claim holds the fence waits for that claim to commit.
+      const holder = await pool.connect()
+      let switched = false
+      try {
+        await holder.query('BEGIN')
+        await lockNativeMcpAuthority(holder, bob, assignment.authority)
+        const pending = servers.setTool(alice, workspace, docs.id, 'write', false).then(() => { switched = true })
+        await new Promise(resolve => setTimeout(resolve, 300))
+        assert.equal(switched, false, 'the switch waits for the claim holding the fence')
+        await holder.query('COMMIT')
+        await pending
+      } finally { holder.release() }
+      assert.deepEqual((await fence())[docs.id], ['write'])
+      await servers.setTool(alice, workspace, docs.id, 'write', true)
       assert.ok(!('error' in await call(bob, bobs, docs.id, 'write')))
       await servers.setTool(alice, workspace, docs.id, 'write', false)
       assert.deepEqual(await call(bob, bobs, docs.id, 'write'), { error: 'mcpToolDisabled' })

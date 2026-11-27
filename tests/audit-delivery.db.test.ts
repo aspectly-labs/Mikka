@@ -25,12 +25,16 @@ const exec = promisify(execFile)
 
 // Mirrors the existing E2E setup's real Drizzle table definitions; no customer data or external services.
 async function prepareWorkspace(database: Pool) {
-  for (const name of ['0006_workspace_tables.sql', '0014_workspace_teams.sql', '20261029213938_workspace_admin_identity.sql', '20261101020200_personal_workspace_kind.sql', '20261120201500_workspace_task_prefix.sql']) await database.query(await readFile(new URL(`../drizzle/${name}`, import.meta.url), 'utf8'))
+  for (const name of [
+    '0006_workspace_tables.sql', '0014_workspace_teams.sql', '20261029213938_workspace_admin_identity.sql',
+    '20261101020200_personal_workspace_kind.sql', '20261120201500_workspace_task_prefix.sql',
+    '20261126000109_workspace_two_factor_requirement.sql',
+  ]) await database.query(await readFile(new URL(`../drizzle/${name}`, import.meta.url), 'utf8'))
   const dialect = new PgDialect(), ident = (name: string) => dialect.sqlToQuery(sql`${sql.identifier(name)}`).sql
   function defaultValue(value: unknown) {
     if (value instanceof SQL) return dialect.sqlToQuery(value).sql
     if (typeof value === 'boolean' || typeof value === 'number') return String(value)
-    return `'${String(value).replaceAll("'", "''")}'`
+    return `'${(typeof value === 'object' ? JSON.stringify(value) : String(value)).replaceAll("'", "''")}'`
   }
   for (const table of [...Object.values(workspaceSchema), ...Object.values(teamSchema), ...Object.values(projectSchema)]) {
     if (!is(table, PgTable) || table === workspaceSchema.workspaceAuditOutbox) continue

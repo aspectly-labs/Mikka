@@ -73,6 +73,8 @@ export class McpConnectionStore {
     return { ...(page ? { workspaceId: page.workspaceId, workspaceKind: page.workspaceKind, canShare: page.canShare } : {}), servers: matched, count: matched.length }
   }
 
+  /** Owner-only changes that invalidate frozen references (the revision bump fails runs admitted
+   * against the old scope). A tool switch is not one of them: see `setTool`. */
   private async write<T>(userId: string, serverId: string, work: (client: PoolClient) => Promise<T>): Promise<T> {
     return withPluginTransaction(this.personal.pool, async client => {
       if (!(await client.query('SELECT 1 FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 FOR UPDATE', [serverId, userId])).rowCount) throw new PluginError('mcpNotFound', 404)
@@ -82,11 +84,27 @@ export class McpConnectionStore {
     })
   }
 
-  async setTool(userId: string, serverId: string, name: string, enabled: boolean) {
+  /**
+   * Turn one tool on or off, as Capy's per-tool switches do. Only the connection's owner may:
+   * it runs on the owner's credential and is never shared (decision 2026-11-27-1700), so no
+   * workspace member or admin can widen (or narrow) what it may do, and one switch applies to
+   * every run that uses it.
+   * The connection itself does not change, so its revision stays and running tasks keep it:
+   * every call re-reads the switch (`createPersonalMcpRuntime`), so a tool turned off is refused
+   * from the next call and one turned on works from the next call. `expectedEnabled` is the
+   * state the caller last saw; a different stored state is a concurrent change (409).
+   */
+  async setTool(userId: string, serverId: string, name: string, enabled: boolean, options: { expectedEnabled?: boolean } = {}) {
     const toolName = mcpToolName.parse(name)
-    if (typeof enabled !== 'boolean') throw new PluginError('invalidPluginInput', 400)
-    await this.write(userId, serverId, async client => {
-      if (!(await client.query('UPDATE mcp_server_tools SET enabled=$3,updated_at=now() WHERE server_id=$1 AND tool_name=$2 RETURNING tool_name', [serverId, toolName, enabled])).rowCount) throw new PluginError('mcpToolNotFound', 404)
+    if (typeof enabled !== 'boolean' || options.expectedEnabled !== undefined && typeof options.expectedEnabled !== 'boolean') throw new PluginError('invalidPluginInput', 400)
+    await withPluginTransaction(this.personal.pool, async client => {
+      // FOR SHARE: switches on different tools do not wait on each other, but a check or a
+      // connection change (both FOR UPDATE) does not interleave with one.
+      if (!(await client.query('SELECT 1 FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 FOR SHARE', [serverId, userId])).rowCount) throw new PluginError('mcpNotFound', 404)
+      const { rows: [tool] } = await client.query<{ enabled: boolean }>('SELECT enabled FROM mcp_server_tools WHERE server_id=$1 AND tool_name=$2 FOR UPDATE', [serverId, toolName])
+      if (!tool) throw new PluginError('mcpToolNotFound', 404)
+      if (options.expectedEnabled !== undefined && tool.enabled !== options.expectedEnabled) throw new PluginError('mcpConnectionChanged', 409)
+      if (tool.enabled !== enabled) await client.query('UPDATE mcp_server_tools SET enabled=$3,updated_at=now() WHERE server_id=$1 AND tool_name=$2', [serverId, toolName, enabled])
     })
     return this.detail(userId, serverId)
   }
@@ -97,7 +115,8 @@ export class McpConnectionStore {
     const sharing = new WorkspaceMcpStore(this.personal.pool, this.personal.membership)
     await sharing.workspace(userId, input.workspaceId)
     const members = await this.members()
-    const { rows } = await members.query<{ id: string }>('SELECT id FROM workspace_environments WHERE "workspaceId"=$1 AND id=ANY($2::uuid[]) AND "archivedAt" IS NULL', [input.workspaceId, input.environmentIds])
+    const { rows } = await members.query<{ id: string }>(`SELECT id FROM workspace_environments WHERE "workspaceId"=$1 AND id=ANY($2::uuid[]) AND "archivedAt" IS NULL
+      AND (scope='workspace' OR "ownerId"=$3)`, [input.workspaceId, input.environmentIds, userId])
     if (rows.length !== input.environmentIds.length) throw new PluginError('environmentAccessDenied', 403)
     await this.write(userId, serverId, async client => {
       await sharing.workspace(userId, input.workspaceId)

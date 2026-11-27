@@ -29,7 +29,13 @@ mock.module('./review-authority', { namedExports: {
     return scope
   },
 } })
+mock.module('../secrets/e2b-resource', { namedExports: {
+  e2bResourceAccount: async (ownerId: string) => { assert.equal(ownerId, fixture.ownerId); return { apiKey: LOCAL_E2B_KEY, scope: 'personal' } },
+  e2bCreateAccount: async () => ({ apiKey: LOCAL_E2B_KEY, scope: 'personal' }),
+  bindE2BResource: async () => {},
+} })
 mock.module('../secrets/e2b-runtime', { namedExports: {
+  environmentSnapshotScope: () => 'team:test',
   e2bApiKey: async (ownerId: string) => {
     assert.equal(ownerId, fixture.ownerId)
     return LOCAL_E2B_KEY

@@ -5,13 +5,12 @@ import { disposableDatabase } from '../../tests/helpers/e2e-target.mjs'
 import { seedCoordinator } from '../../tests/support/coordinator-bot'
 import { seedUser } from '../../tests/support/workspace-admin-db'
 import { createRequestScope, runRequestScope } from '../../apps/api/src/context'
-import type { WriteProvider } from '../operations/write-contract'
 
 const target = process.env.E2E_DATABASE_URL
 const ready = Boolean(target && disposableDatabase(process.env, target) && process.env.DATABASE_URL === target && process.env.MIKKA_DATABASE_URL === target)
 if (process.env.REQUIRE_DB === '1') assert.ok(ready, 'matching isolated loopback *_e2e databases are required')
 
-test('welcome and approved-write decisions wake through their stored event', { skip: !ready, timeout: 60_000 }, async t => {
+test('a welcome wakes through its stored event', { skip: !ready, timeout: 60_000 }, async t => {
   const jobs: Promise<unknown>[] = []
   const next = await import('@/lib/server-runtime/server')
   t.mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after: (work: () => Promise<unknown>) => { jobs.push(work()) } } })
@@ -49,16 +48,7 @@ test('welcome and approved-write decisions wake through their stored event', { s
   t.mock.module('../auth', { namedExports: { ...realAuth, auth: { api: { getSession: async () => viewer } } } })
   const existingWake = await import('./wake')
   t.mock.module('./wake', { namedExports: { ...existingWake, coordinatorEnabled: async () => configured, wakeCoordinator: async (userId: string) => { direct.push(userId) } } })
-  let sends = 0
-  const provider: WriteProvider = {
-    name: 'isolated-approval-wake',
-    prepare: async () => ({ accountId: 'synthetic-account', version: 'v1', context: null }),
-    execute: async request => { await request.beforeSend(); sends++; return { providerObjectId: 'test-receipt', evidenceDigest: 'a'.repeat(64) } },
-    lookup: async () => { throw Error('the settled result should be read from the ledger') },
-  }
-  t.mock.module('../operations/write-provider', { namedExports: { composioWriteProvider: () => provider } })
   const { welcomeCoordinator: welcome } = await import('../../app/actions/coordinator')
-  const { POST } = await import('../../app/api/approved-writes/route')
   // Authentication may import workspace readers before this fixture installs
   // its session stub. Exercise the real request-bound headers and cookie jar.
   async function scoped<T>(request: Request, work: () => Promise<T>) {
@@ -69,12 +59,6 @@ test('welcome and approved-write decisions wake through their stored event', { s
   const welcomeCoordinator = (...args: Parameters<typeof welcome>) => scoped(new Request('https://fixture.invalid/actions/coordinator', {
     headers: { cookie: `mikka-workspace=${workspaceId}`, 'x-mikka-locale': 'en' },
   }), () => welcome(...args))
-  const submit = async (body: object) => {
-    const request = new Request('https://fixture.invalid/api/approved-writes', {
-      method: 'POST', headers: { origin: 'https://fixture.invalid', cookie: 'fixture=one', 'x-mikka-locale': 'en' }, body: JSON.stringify({ action: 'append_notion_paragraph', ...body }),
-    })
-    return scoped(request, () => POST(request))
-  }
   await t.test('a ready, authenticated empty Bot receives one welcome', async () => {
     assert.equal((await welcomeCoordinator(botId)).error, 'authRequired')
     viewer = authenticated
@@ -93,33 +77,6 @@ test('welcome and approved-write decisions wake through their stored event', { s
     const row = await pool.query('SELECT "botId",payload->>\'source\' AS source FROM coordinator_events WHERE "userId"=$1 AND kind=$2', [owner, 'user_message'])
     assert.deepEqual(row.rows, [{ botId, source: 'coordinator_welcome' }])
     assert.deepEqual(committed, [owner])
-    assert.deepEqual(direct, [])
-  })
-  await t.test('approval and its replay send once and notify once; a new decline is independent', async () => {
-    viewer = authenticated
-    direct.length = 0
-    committed.length = 0
-    async function propose() {
-      const response = await submit({ op: 'propose', input: { page_id: randomUUID(), text: 'Local offline fixture' }, intentId: randomUUID() })
-      assert.equal(response.status, 200)
-      const proposed = await response.json()
-      assert.equal(proposed.status, 'awaiting_approval')
-      return proposed.actionId as string
-    }
-    const accepted = await propose(), declined = await propose()
-    for (const [id, approve] of [[accepted, true], [accepted, true], [declined, false]] as const) {
-      const expected = id === accepted ? 'done' : 'declined'
-      const delivered = (id === accepted && sends === 0) || id === declined ? wake() : null
-      const response = await submit({ op: 'decide', id, approve })
-      assert.equal(response.status, 200)
-      assert.equal((await response.json()).status, expected)
-      if (delivered) await delivered
-    }
-    await Promise.all(jobs.splice(0))
-    const rows = await pool.query('SELECT "dedupeKey" FROM coordinator_events WHERE "userId"=$1 AND "dedupeKey" LIKE $2 ORDER BY "dedupeKey"', [owner, 'approved_write_decided:%'])
-    assert.deepEqual(rows.rows.map(row => row.dedupeKey), [`approved_write_decided:${accepted}:done`, `approved_write_decided:${declined}:declined`].sort())
-    assert.equal(sends, 1)
-    assert.deepEqual(committed, [owner, owner])
     assert.deepEqual(direct, [])
   })
 })

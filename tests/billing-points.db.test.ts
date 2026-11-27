@@ -31,6 +31,10 @@ test('Stripe purchased points ledger', { skip: !dbUrl }, async t => {
     const grants = await rows(purchase.payment_intent)
     assert.equal(grants.length, 1)
     assert.deepEqual([grants[0].points, grants[0].amountCents, grants[0].externalId, grants[0].reason, grants[0].receiptUrl, grants[0].stripeFeeCents], [1000, 1000, purchase.id, 'purchase', payment.latest_charge.receipt_url, 59])
+    assert.ok(grants[0].expiresAt instanceof Date)
+    const expectedExpiry = new Date(grants[0].createdAt)
+    expectedExpiry.setUTCMonth(expectedExpiry.getUTCMonth() + 12)
+    assert.equal(grants[0].expiresAt.getTime(), expectedExpiry.getTime())
   })
 
   await t.test('unpaid and async pending sessions do not credit; async paid credits once', async () => {
@@ -65,6 +69,8 @@ test('Stripe purchased points ledger', { skip: !dbUrl }, async t => {
     assert.equal(grants.length, 3)
     assert.equal(grants.reduce((sum, row) => sum + row.points, 0), 0)
     assert.deepEqual(grants.filter(row => row.reason === 'refund').map(row => [row.points, row.amountCents]), [[-250, -250], [-750, -750]])
+    const parentExpiry = grants.find(row => row.reason === 'purchase')!.expiresAt
+    assert.ok(grants.filter(row => row.reason === 'refund').every(row => row.expiresAt?.getTime() === parentExpiry?.getTime()))
   })
 
   await t.test('Managed Payments tax remains on the receipt; proportional refunds cannot erase or mint extra points', async () => {

@@ -47,7 +47,7 @@ Collaboration and financial authority: [2026-11-10-0017](decisions/2026-11-10-00
 
 - The left column is the **bot list**. In the hosted shell a Bot expands
   its dispatched tasks and Agent work below its own row, like Capy's Captains
-  ([2026-11-10](decisions/2026-11-10-1317-capy-sidebar-and-task-layout.md)).
+  ([2026-11-10](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-10-1317-capy-sidebar-and-task-layout.md)).
   Bot and group rows keep their own avatars. A child is named for its work;
   a task carries its own state, and the Agent's mark identifies its executor.
   This navigation does not change the distinction between dispatching Bot,
@@ -56,7 +56,7 @@ Collaboration and financial authority: [2026-11-10-0017](decisions/2026-11-10-00
 - The right panel's 概览 header is the selected bot (the same avatar and
   name as its left row), followed by the tabs 详情 / 任务 / PR / 电脑. A
   task's title appears in its task row and detail, never as that
-  bot header (Alex, 2026-10-28; `rules.md` R-02, R-50).
+  bot header (Alex, 2026-10-28; `mikka-hosted-ui/docs/design/rules.md` R-02, R-50).
 - Choosing another bot on the left changes the center chat and the right
   column's dispatched tasks and computer together.
 - Inside one thread, read its runs oldest first and address the latest eligible run when replying. A task can link to several distinct roots. Activity shows human-level changes and comments. Its Work section presents the linked threads, PRs and expandable run progress.
@@ -157,7 +157,7 @@ belongs to (DDD: the consistency boundary that owns it). Where a line below
 and the Workspaces table above differ about 密钥与环境, the line below follows
 [2026-11-02-0231](decisions/2026-11-02-0231-workspace-is-the-tenant.md), which
 records the workspace tenancy rules. Bounded contexts, aggregates and the code that
-stores them: [information-architecture.md](information-architecture.md) § 1.
+stores them: [information-architecture.md](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/information-architecture.md) § 1.
 
 ### People and tenants
 

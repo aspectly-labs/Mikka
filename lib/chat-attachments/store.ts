@@ -435,8 +435,10 @@ export async function validateChatFiles(
   }
 }
 
-/** Bounded cleanup of cancelled/abandoned uploads, expired PUT grants and deleted-chat objects. */
+/** Bounded cleanup of cancelled/abandoned uploads, expired PUT grants, expired inline task files and deleted-chat objects. */
 export async function cleanupChatFiles() {
+  // Removing an inline task file queues its object below, in the same pass.
+  const taskInlineFiles = await (await import('@/lib/task-attachments/store')).cleanupTaskInlineFiles()
   const availableDraft = chatStorageCleanupOwner('chat_attachments')
   const availableRetirement = chatStorageCleanupOwner('chat_attachment_retirements')
   const client = await pool.connect()
@@ -473,7 +475,7 @@ export async function cleanupChatFiles() {
       /* Durable queue retains failed deletes. */
     }
   }
-  return { retired: removed }
+  return { retired: removed, taskInlineFiles }
 }
 
 type UserContent = Extract<UserModelMessage['content'], unknown[]>

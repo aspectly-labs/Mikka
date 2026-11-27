@@ -5,9 +5,9 @@
 // present pg/DB test files must map to a package script or inventory fails closed.
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { availableParallelism } from 'node:os'
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
-import { posix, resolve } from 'node:path'
+import { availableParallelism, tmpdir } from 'node:os'
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { join, posix, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isE2eTarget, E2E_DB_RULE } from '../tests/helpers/e2e-target.mjs'
@@ -19,12 +19,14 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/task-presentation-read.ts', file: 'tests/task-presentation.db.test.ts', script: 'test:task-presentation-db' },
   { marker: 'lib/issue-states-store.ts', file: 'tests/workspace-issue-states.db.test.ts', script: 'test:task-presentation-db' },
   { marker: 'lib/telegram/handler.ts', file: 'tests/telegram-task-link.db.test.ts', script: 'test:task-identity-db' },
-  { marker: 'lib/linear-sync/issue-sync.ts', file: 'tests/linear-responsibility.db.test.ts', script: 'test:task-identity-db' },
   { marker: 'lib/project-lifecycle.ts', file: 'tests/project-lifecycle.db.test.ts', script: 'test:project-v2-db' },
   { marker: 'lib/issue-delegation.test.ts', file: 'tests/task-responsibility.db.test.ts', script: 'test:task-identity-db' },
   { marker: 'lib/project-resources/run-lease.ts', file: 'tests/project-resource-lease.db.test.ts', script: 'test:project-resources-db' },
   { marker: 'drizzle/20261111030006_project_history_retention.sql', file: 'tests/domain-lifecycle.db.test.ts', script: 'test:domain-lifecycle-db' },
   { marker: 'lib/project-resources/store.ts', file: 'tests/project-resources.db.test.ts', script: 'test:project-resources-db' },
+  { marker: 'lib/project-resources/store.ts', file: 'tests/environment-scope.db.test.ts', script: 'test:project-resources-db' },
+  { marker: 'lib/project-resources/task-environment.ts', file: 'tests/environment-settings.db.test.ts', script: 'test:project-resources-db' },
+  { marker: 'drizzle/20261125223723_environment_scope_and_task_environments.sql', file: 'tests/environment-scope-migration.db.test.ts', script: 'test:project-resources-db' },
   { marker: 'lib/bot-instructions-store.ts', file: 'tests/instructions-extension.db.test.ts', script: 'test:project-resources-db' },
   { marker: 'lib/settings/instruction-preview.ts', file: 'tests/instructions-extension.db.test.ts', script: 'test:project-resources-db' },
   { marker: 'app/actions/environments.ts', file: 'tests/environment-list-action.db.test.ts', script: 'test:project-resources-db' },
@@ -107,6 +109,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/github/publication-webhook.ts', file: 'lib/github/publication-webhook.db.test.ts', script: 'test:run-publication-db' },
   { marker: 'lib/github/publication-webhook-actions.ts', file: 'tests/github-webhook-statements.db.test.ts', script: 'test:run-publication-db' },
   { marker: 'lib/cloud-computer/browser-authority.ts', file: 'lib/cloud-computer/unattended.db.test.ts', script: 'test:cloud-backend-db' },
+  { marker: 'lib/cloud-computer/task-compute-provider.ts', file: 'tests/portable-compute-provider-flow.db.test.ts', script: 'test:cloud-backend-db' },
   { marker: 'lib/credentials/store.ts', file: 'lib/credentials/store.db.test.ts', script: 'test:credentials-db' },
   { marker: 'lib/cloud-computer/subagents.ts', file: 'lib/cloud-computer/backend.db.test.ts', script: 'test:cloud-backend-db' },
   { marker: 'lib/factory/approval.ts', file: 'lib/factory/public-consumers.db.test.ts', script: 'test:factory-approval-db' },
@@ -209,7 +212,6 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/account/deletion-jobs.ts', file: 'lib/account/deletion-restore.db.test.ts', script: 'test:account-db' },
   { marker: 'lib/ops/monitor.ts', file: 'lib/ops/monitor.db.test.ts', script: 'test:ops-db' },
   { marker: 'lib/ops/egress-fallback.ts', file: 'lib/ops/egress-fallback.db.test.ts', script: 'test:ops-db' },
-  { marker: 'lib/linear-sync/archive.ts', file: 'tests/linear-archive.db.test.ts', script: 'test:scope-detachment-db' },
 ]
 // Suites that provision their own throwaway database and refuse the shared mikka_e2e service.
 // Each entry names its dedicated runner; the runner must exist and still invoke the file.
@@ -544,31 +546,78 @@ function progressText(value, limit = 512) {
   return value.length > limit || safe.length > limit ? safe.slice(0, limit - suffix.length) + suffix : safe
 }
 
-/** Streams attributed previews while retaining the complete output and status. */
-export function runScript(command, args, options) {
-  return new Promise(resolvePromise => {
+/** Streams piped previews while retaining the complete output and status. */
+function runCommand(command, args, options, outputFiles) {
+  return new Promise((resolvePromise, rejectPromise) => {
     const stdout = [], stderr = []
     const script = progressText(options.script ?? command, 120)
     const progress = (stream, line) => {
       const prefix = `[db-runner ${script} ${stream}] `
       process.stdout.write(prefix + progressText(line, 512 - prefix.length) + '\n')
     }
-    let settled = false
-    const done = result => { if (!settled) { settled = true; resolvePromise(result) } }
     progress('lifecycle', 'start')
-    const child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', 'pipe', 'pipe'] })
-    for (const [name, stream, buffer] of [['stdout', child.stdout, stdout], ['stderr', child.stderr, stderr]]) {
+    const descriptors = []
+    let child
+    try {
+      for (const file of outputFiles ?? []) descriptors.push(openSync(file, 'wx', 0o600))
+      child = spawn(command, args, { cwd: options.cwd, env: options.env, stdio: ['ignore', ...(outputFiles ? descriptors : ['pipe', 'pipe'])] })
+    } finally {
+      for (const descriptor of descriptors) closeSync(descriptor)
+    }
+    if (!outputFiles) for (const [name, stream, buffer] of [['stdout', child.stdout, stdout], ['stderr', child.stderr, stderr]]) {
       stream.on('data', chunk => buffer.push(chunk))
       // readline decodes split UTF-8 and emits the final unterminated line too.
       createInterface({ input: stream, crlfDelay: Infinity, terminal: false }).on('line', line => progress(name, line))
     }
-    child.on('error', error => done({ status: null, stdout: Buffer.concat(stdout).toString('utf8'), stderr: `${Buffer.concat(stderr).toString('utf8')}\n${error.message}` }))
+    let spawnError
+    child.on('error', error => { spawnError = error })
     child.on('exit', (status, signal) => progress('lifecycle', `exit code=${status} signal=${signal ?? 'none'}`))
     child.on('close', (status, signal) => {
       progress('lifecycle', `close code=${status} signal=${signal ?? 'none'}`)
-      done({ status, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') })
+      try {
+        const [output, diagnostics] = outputFiles ? outputFiles.map(file => readFileSync(file, 'utf8')) : [stdout, stderr].map(chunks => Buffer.concat(chunks).toString('utf8'))
+        resolvePromise({ status: spawnError ? null : status, stdout: output, stderr: spawnError ? `${diagnostics}\n${spawnError.message}` : diagnostics })
+      } catch (error) { rejectPromise(error) }
     })
   })
+}
+
+export async function runScript(command, args, options) {
+  const testIndex = args.indexOf('--test')
+  const flags = args.slice(0, testIndex)
+  const files = args.slice(testIndex + 1)
+  const direct = command === process.execPath && testIndex >= 0 && flags.includes('--test-force-exit') && files.length
+    && files.every(file => /^[\w./-]+\.test\.[cm]?[jt]sx?$/.test(file))
+    && !flags.some(flag => /^--(?:experimental-)?test-isolation(?:=|$)/.test(flag))
+  if (!direct) return runCommand(command, args, options)
+
+  // Node forwards force-exit to its isolated children, whose private pipes
+  // can lose results. Keep one process per file and let each reporter write
+  // directly to regular files before the forced exit.
+  const directory = mkdtempSync(join(tmpdir(), 'mikka-db-reports-'))
+  const results = []
+  let next = 0
+  const configured = Number(flags.find(flag => /^--test-concurrency=\d+$/.test(flag))?.split('=')[1])
+  const workers = Math.min(files.length, configured || Math.max(1, availableParallelism() - 1))
+  try {
+    const runs = await Promise.allSettled(Array.from({ length: workers }, async () => {
+      while (next < files.length) {
+        const index = next++
+        const file = files[index]
+        const result = await runCommand(command, [...flags, '--experimental-test-isolation=none', '--test', file],
+          { ...options, script: `${options.script ?? command} ${file}` }, ['stdout', 'stderr'].map(stream => join(directory, `${index}.${stream}`)))
+        const error = checkSummary(file, result.status, parseSummary(`${result.stdout}\n${result.stderr}`))
+        results[index] = { ...result, error }
+      }
+    }))
+    for (const run of runs) if (run.status === 'rejected') throw run.reason
+    return {
+      status: results.some(result => result.error) ? 1 : 0,
+      stdout: results.map(result => result.stdout).join('\n'),
+      stderr: results.map(result => [result.stderr, result.error].filter(Boolean).join('\n')).join('\n'),
+      steps: files.length,
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }) }
 }
 
 const blockingStdio = fileURLToPath(new URL('./ci/blocking-stdio.cjs', import.meta.url))
@@ -652,7 +701,7 @@ export async function main({ root = '.', env = process.env, run = runScript, clo
       process.stdout.write(result.stdout ?? ''); process.stderr.write(result.stderr ?? '')
       console.log('::endgroup::')
       const output = `${result.stdout}\n${result.stderr}`
-      const error = checkSummary(script, result.status, parseSummary(output), { steps: testSteps(scripts[script]).length, summaries: parseSummaries(output) })
+      const error = checkSummary(script, result.status, parseSummary(output), { steps: result.steps ?? testSteps(scripts[script]).length, summaries: parseSummaries(output) })
       if (error) { console.error(`::error::${error}`); failed = true }
       else console.log(`${script}: OK`)
     }

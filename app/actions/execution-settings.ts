@@ -3,11 +3,13 @@ import { headers } from "@/lib/server-runtime/headers";
 import { auth } from "@/lib/auth";
 import { ActionFailureError, runAction } from "@/lib/action-error";
 import type { ActionResult } from "@/lib/action-result";
+import { chatModelOptionsSchema } from "@/lib/model-picker-options";
+import type { ModelModes } from "@/lib/model-capabilities";
 import type { BotModelMenu } from "@/lib/bot-model-menu-view";
 import { loadWorkspaceContext } from "@/lib/workspace-access";
 import { pool } from "@/lib/db";
 import { ExecutionSettings } from "@/lib/execution-settings";
-import { botModelMenu, botModelScope, chooseBotModel as chooseBotModelFor, refreshBotModelMenu } from "@/lib/bot-model-menu";
+import { botModelMenu, botModelScope, chooseBotModel as chooseBotModelFor, refreshBotModelMenu, setPreferredRoute, setChatModelSettings } from "@/lib/bot-model-menu";
 import { z } from "zod";
 import { chatBotId } from "@/lib/coordinator/coordinator-bot";
 async function context(workspaceId?: string) {
@@ -51,6 +53,31 @@ export async function chooseBotModel(chatBot: string | null, id: string): Promis
   return runAction(async () => {
     const { botId, scope } = await chatScope(chatBot);
     return chooseBotModelFor(pool, new ExecutionSettings(pool), scope, botId, id);
+  });
+}
+
+/**
+ * Saves the chat's reasoning level and/or serving speed beside its model (decision 2026-11-25-1700) and returns
+ * the menu. A field left out keeps its value; null goes back to the default. The picker offers only what the
+ * chosen model supports, and the next run checks it again against the model it freezes.
+ */
+export async function setChatModelOptions(chatBot: string | null, change: { effort?: string | null; serviceTier?: string | null; modes?: ModelModes }): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const parsed = chatModelOptionsSchema.safeParse(change);
+    if (!parsed.success) throw new ActionFailureError("validationGeneric");
+    const { botId, scope } = await chatScope(chatBot);
+    const settings = new ExecutionSettings(pool);
+    const menu = await botModelMenu(pool, settings, scope, botId);
+    await setChatModelSettings(pool, scope, botId, parsed.data, menu.current.capabilities);
+    return botModelMenu(pool, settings, scope, botId);
+  });
+}
+
+/** Validate a preference chosen by the caller's picker without changing the account or chat. */
+export async function setPreferredModelRoute(chatBot: string | null, modelKey: string, optionId: string): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const { botId, scope } = await chatScope(chatBot);
+    return setPreferredRoute(pool, new ExecutionSettings(pool), scope, botId, modelKey, optionId);
   });
 }
 

@@ -96,7 +96,6 @@ export async function releaseDepartingMember(workspaceId: string, userId: string
   // A card they designated keeps paying through its grace period; admins see when it stops (计费).
   await releasePaymentDesignation(workspaceId, userId)
   await db.transaction(async main => {
-    await main.execute(sql`delete from personal_mcp_workspace_shares g using personal_mcp_servers s where g.server_id=s.id and s.user_id=${userId} and g.workspace_id=${workspaceId}`)
     await main.execute(sql`delete from personal_skill_workspace_shares g using personal_skills s where g.skill_id=s.id and s.user_id=${userId} and g.workspace_id=${workspaceId}`)
     // Their own account on the workspace's "member" MCP servers goes with them; every use also checks membership.
     await main.execute(sql`delete from workspace_mcp_oauth o using workspace_mcp_servers s where o.server_id=s.id and s.workspace_id=${workspaceId} and o.user_id=${userId}`)

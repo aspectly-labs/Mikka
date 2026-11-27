@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { before, beforeEach, mock, test } from 'node:test'
+import { after, before, beforeEach, mock, test } from 'node:test'
 import type { Pool } from 'pg'
 import type { UsableApiKey } from './model-api-keys'
 import { ActionFailureError } from './action-error'
@@ -23,7 +23,7 @@ mock.module(new URL('./settings/work-creation.ts', import.meta.url).href, { name
 } })
 mock.module(new URL('./project-resources/store.ts', import.meta.url).href, { namedExports: {
   withProjectExecution: async (input: ProjectExecutionInput, operation: (snapshot: ProjectExecutionSnapshot) => Promise<unknown>, requireExisting: boolean) => {
-    assert.deepEqual(input, { userId: 'alice', workspaceId: id(2), issueId: id(20), repositoryKey: repository.repoPath, baseBranch: repository.baseBranch, runtime: 'cloud', harness: 'claude_code' })
+    assert.deepEqual(input, { userId: 'alice', botId: id(1), workspaceId: id(2), issueId: id(20), repositoryKey: repository.repoPath, baseBranch: repository.baseBranch, runtime: 'cloud', harness: 'claude_code' })
     assert.equal(requireExisting, false)
     assert.equal(projectLeaseActive, false)
     if (projectDenied) throw new ActionFailureError('projectRepositoryDenied')
@@ -83,9 +83,19 @@ mock.module(new URL('./workspace-db.ts', import.meta.url).href, { namedExports: 
 let runCredentialSource: typeof import('./run-credential-source')['runCredentialSource']
 let quotaFallbackApiKey: typeof import('./run-credential-source')['quotaFallbackApiKey']
 let queueCloudRun: typeof import('./computer/queue-run')['queueCloudRun']
+const originalE2BKey = process.env.E2B_API_KEY
+const originalEdition = process.env.MIKKA_EDITION
 before(async () => {
-  ({ runCredentialSource, quotaFallbackApiKey } = await import('./run-credential-source'))
+  process.env.E2B_API_KEY = 'synthetic-credential-source-e2b-key'
+  process.env.MIKKA_EDITION = 'community'
+  ;({ runCredentialSource, quotaFallbackApiKey } = await import('./run-credential-source'))
   ;({ queueCloudRun } = await import('./computer/queue-run'))
+})
+after(() => {
+  if (originalE2BKey === undefined) delete process.env.E2B_API_KEY
+  else process.env.E2B_API_KEY = originalE2BKey
+  if (originalEdition === undefined) delete process.env.MIKKA_EDITION
+  else process.env.MIKKA_EDITION = originalEdition
 })
 const scope = { ownerId: 'alice', botId: id(1), harness: 'claude_code', botWorkspaceId: id(2), choiceWorkspaceId: id(2) }
 beforeEach(() => {
@@ -110,6 +120,13 @@ for (const localLogin of [true, false]) {
 }
 test('a missing explicit model cannot turn into a key’s first model', async () => {
   assert.deepEqual(await runCredentialSource(query, { ...scope, model: 'missing-fixture', subscription: null }), { subscription: null })
+})
+test('a run skips rejected keys before matching the model for quota fallback', async () => {
+  const model = 'claude-sonnet-fixture'
+  keys = [{ ...key(3, [model]), modelsError: 'invalid' }, key(4, [model])]
+  assert.deepEqual(await quotaFallbackApiKey(query, { ...scope, model }), { keyId: id(4), model })
+  keys[1] = { ...keys[1], modelsError: 'invalid' }
+  assert.equal(await quotaFallbackApiKey(query, { ...scope, model }), undefined)
 })
 // Decision 2026-11-15-2000: a catalogue model runs on the person's key for that same model, else on Mikka 额度.
 test('a catalogue model runs on Mikka 额度 unless a key of its vendor offers the same model', async () => {
@@ -213,7 +230,7 @@ function cloudQueueFixture() {
         assert.equal(projectLeaseActive, false)
         assert.ok(sql.startsWith('SELECT repo."repoPath",repo."remoteUrl",a.harness,'))
         assert.ok(sql.includes('i."workspaceId"=$5') && sql.includes('i."ownershipState"=\'bound\'') && sql.includes('repo."userId"=$3'))
-        assert.deepEqual(args, [id(22), id(21), scope.ownerId, id(20), id(2), null])
+        assert.deepEqual(args, [id(22), id(21), scope.ownerId, id(20), id(2), null, false])
         return { rows: [{ ...repository, harness: 'claude_code' }], rowCount: 1 }
       } } as unknown as Pool,
       { userId: scope.ownerId, workspaceId: id(2) },

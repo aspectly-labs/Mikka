@@ -28,7 +28,7 @@ import { runStopReason, runBenchmarkContext } from "./run"
 import { MAX_PROFILE_SKILLS_PER_RUN, MAX_SKILLS_PER_RUN, profileRunSkillSchema, runSkillSchema } from "./skill"
 import { skillAssignmentReceiptSchema } from './skill-artifact'
 import { sanitizeTraceContext } from './trace-context'
-import { nativeLeaseSchema } from './subscription'
+import { nativeBrokerContextSchema, nativeLeaseSchema } from './subscription'
 import { mailboxCatalogueSchema } from './mailbox'
 import { taskSecretAccessSchema } from './task-secrets'
 import { taskBranchSchema } from './orchestrator'
@@ -354,12 +354,22 @@ export const setupRecipeSchema = z.object({
   copyFiles: z.array(z.string().max(1_000)).max(200),
   /** Shell command run in the worktree, e.g. `bun install`. */
   command: z.string().max(2_000).optional(),
+  /** Optional command to refresh an environment restored from its prebuilt snapshot. */
+  maintenance: z.string().max(2_000).optional(),
   /** Approved once per repo by the user; unapproved recipes never run. */
   approved: z.boolean(),
 })
 export type SetupRecipe = z.infer<typeof setupRecipeSchema>
 
 export const REPO_ORIGIN_HEADER = "x-mikka-repo-origin-check"
+export const ENVIRONMENT_SNAPSHOT_HEADER = "x-mikka-environment-snapshot"
+export const PORTABLE_TASK_WORKSPACE_HEADER = "x-mikka-portable-task-workspace"
+export const portableTaskWorkspaceReceiptSchema = z.strictObject({
+  size: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  headSha: z.string().regex(/^[a-f0-9]{40}$/),
+})
+export const ENVIRONMENT_REPOSITORIES_HEADER = 'x-mikka-environment-repositories'
 export const PROJECT_ENVIRONMENT_HEADER = "x-mikka-project-environment"
 
 /** Sent by a daemon that injects `modelCredential`; a run frozen on an API key is handed only to one. */
@@ -398,6 +408,15 @@ export const runModelCredentialSchema = z.discriminatedUnion("kind", [
   }),
 ])
 export type RunModelCredential = z.infer<typeof runModelCredentialSchema>
+
+/** A native subscription uses only a scoped Mikka model gateway credential. */
+export function isSubscriptionGatewayCredential(credential: RunModelCredential | undefined, protocol: 'anthropic' | 'openai'): credential is Extract<RunModelCredential, { kind: 'provider' }> {
+  if (credential?.kind !== 'provider' || credential.protocol !== protocol ||
+      !/^mkg_[A-Za-z0-9_-]{43}$/.test(credential.key) || !runModelCredentialSchema.safeParse(credential).success) return false
+  const path = protocol === 'anthropic' ? '/api/model-gateway/anthropic' : '/api/model-gateway/openai/v1'
+  return URL.parse(credential.baseUrl)?.pathname.endsWith(path) === true
+}
+
 
 const hasGitIdentityForbiddenChar = (value: string) =>
   [...value].some(char => {
@@ -470,6 +489,7 @@ export type RunKind = (typeof RUN_KINDS)[number]
 
 /** `POST /v1/devices/:deviceId/runs/:runId/claim`: what the daemon gets. */
 export const runAssignmentSchema = z.object({
+  portableTaskWorkspace: portableTaskWorkspaceReceiptSchema.optional(),
   /** The server handles native model observations without transitioning run state. */
   acceptsModelObservations: z.literal(true).optional(),
   runId: id,
@@ -485,7 +505,9 @@ export const runAssignmentSchema = z.object({
   /** Absent means origin/HEAD after fetch. */
   baseBranch: z.string().min(1).max(500).optional(),
   /** Frozen configuration, not a VM or a credential. Requires PROJECT_ENVIRONMENT_HEADER. */
-  projectEnvironment: z.object({ id: z.uuid(), revision: z.number().int().positive(), setup: setupRecipeSchema.optional() }).strict().optional(),
+  projectEnvironment: z.object({ id: z.uuid(), revision: z.number().int().positive(), fromSnapshot: z.literal(true).optional(), setup: setupRecipeSchema.optional(),
+    startupRepositories: z.array(z.object({ key: z.string().max(1000), baseBranch: z.string().min(1).max(250).nullable() }).strict()).max(100).optional(),
+  }).strict().optional(),
   expectedRepoRemote: z.string().max(2_000).optional(),
   harness: harnessSchema,
   prompt: z.string().max(100_000),
@@ -507,6 +529,7 @@ export const runAssignmentSchema = z.object({
   }).strict().optional(),
   /** Access credential for the selected subscription. Kept in memory, never journaled. */
   subscriptionLease: nativeLeaseSchema.optional(),
+  subscriptionContext: nativeBrokerContextSchema.optional(),
   /**
    * The run's own API key, opened for this claim only. Never with
    * `subscriptionBinding`. The daemon keeps it in memory and hands it only
@@ -599,6 +622,7 @@ export const runAssignmentSchema = z.object({
   continuesRunId: id.optional(),
   /** A same-device retry with no usable snapshot must reuse its real worktree. */
   requireWorktreeContinuation: z.literal(true).optional(),
+  freshEnvironmentCheckout: z.literal(true).optional(),
   /**
    * The latest checkpoint of the attempt this run takes over after its
    * machine went offline. Used only for a new worktree (another machine, or
@@ -621,6 +645,12 @@ export const runAssignmentSchema = z.object({
    * a new session gets `prompt`, which already includes it.
    */
   followUp: z.string().max(100_000).optional(),
+  /** Optional control directive for `followUp` (compact, allowed slash command, or literal client_composed). */
+  followUpControl: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('compact'), instructions: z.string().max(10_000).optional() }).strict(),
+    z.object({ kind: z.literal('slash'), name: z.string().trim().min(1).max(160), args: z.string().max(10_000).optional() }).strict(),
+    z.object({ kind: z.literal('client_composed') }).strict(),
+  ]).optional(),
   /**
    * The workspace's agent permissions and network allow-list (ADR 0028).
    * Absent from an older server: the daemon applies the ADR 0009 defaults.
@@ -655,7 +685,12 @@ export const runAssignmentSchema = z.object({
   benchmark: runBenchmarkContext.optional(),
   /** Resolved personal/workspace Git commit author & committer identity (#3110). */
   gitIdentity: runGitIdentitySchema.optional(),
-}).refine(value => !(value.modelCredential && value.subscriptionBinding), { message: "A run has one model credential", path: ["modelCredential"] })
+}).refine(value => !(value.modelCredential && value.subscriptionBinding && !value.subscriptionContext), { message: "A run has one model credential", path: ["modelCredential"] })
+  .refine(value => !value.subscriptionContext || Boolean(value.subscriptionBinding && !value.subscriptionLease &&
+    value.subscriptionBinding.route === value.subscriptionContext.route &&
+    (value.harness === 'codex' ? value.subscriptionContext.route === 'codex_cli' && isSubscriptionGatewayCredential(value.modelCredential, 'openai')
+      : value.harness === 'claude_code' && value.subscriptionContext.route === 'claude_code_cli' && isSubscriptionGatewayCredential(value.modelCredential, 'anthropic'))),
+  { message: 'A subscription context requires its binding and model gateway credential', path: ['subscriptionContext'] })
   .refine(value => !value.subscriptionLease || Boolean(value.subscriptionBinding && value.subscriptionBinding.route === value.subscriptionLease.route &&
     (value.harness === 'codex' ? value.subscriptionLease.route === 'codex_cli' : value.harness === 'claude_code' && value.subscriptionLease.route === 'claude_code_cli')),
   { message: 'A subscription lease belongs to the selected harness and binding', path: ['subscriptionLease'] })
@@ -741,6 +776,13 @@ export const COMMANDS_MAX_SKIP_DEVICE_COMMANDS = 10
 /** Older daemons reject unknown command kinds; advertise this extension. */
 export const ACTIVE_TURN_STEER_HEADER = 'x-mikka-active-turn-steer'
 export const MAILBOX_NOTICE_HEADER = 'x-mikka-mailbox-notices'
+/** Advertises support for `compact` commands and `clientComposed` / `slashCommand` input flags (#3333). */
+export const RUN_CONTROL_COMMANDS_HEADER = 'x-mikka-run-control-commands'
+
+const slashCommandRefSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  args: z.string().max(10_000).optional(),
+})
 
 export const runCommandSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -748,8 +790,18 @@ export const runCommandSchema = z.discriminatedUnion("kind", [
     runId: id,
     messageId: z.uuid(),
     text: z.string().min(1).max(100_000),
+    /** Deliver text literally with no slash-command dispatch (`client_composed: true` on Claude SDK). */
+    clientComposed: z.literal(true).optional(),
+    /** Execute an allowed harness slash command directly without Mikka JSON source wrapper. */
+    slashCommand: slashCommandRefSchema.optional(),
   }),
   z.object({ kind: z.literal("steer"), runId: id, messageId: z.uuid(), text: z.string().min(1).max(100_000) }),
+  z.object({
+    kind: z.literal("compact"),
+    runId: id,
+    messageId: z.uuid(),
+    instructions: z.string().max(10_000).optional(),
+  }),
   z.object({ kind: z.literal("stop"), runId: id }),
   // A host notification carries addresses only; peer content remains behind
   // the authenticated mailbox read and retains its original provenance.

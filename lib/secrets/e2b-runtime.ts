@@ -1,14 +1,31 @@
 import 'server-only'
-// Every sandbox runs on its owner's own E2B key (orchestration § 2): never a teammate's, never the platform's.
-import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError } from 'e2b'
+import { createHash } from 'node:crypto'
+import { AuthenticationError, NotFoundError, RateLimitError, SandboxNotFoundError, ServiceBusyError } from 'e2b'
 import { runtimeEnv } from '@/lib/env/server'
-import { E2BKeyError, type E2BKeyErrorCode } from './flag'
+import { byoE2BKeyEnabled, E2BKeyError, type E2BKeyErrorCode } from './flag'
 import { cloudTemplateModels, type CloudTemplateKind } from '../cloud-template-models'
+import { e2bTemplateForSize, type E2BMachineSize } from '../cloud-computer/e2b-template-pricing'
+import { isCloudEdition } from '../edition'
 
 type Env = Readonly<Record<string, string | undefined>>
 
-/** The sandbox owner's own key; the unused argument keeps the existing caller signature. */
+export function environmentSnapshotApiKey(env: Env = runtimeEnv()): string {
+  const key = env.E2B_API_KEY?.trim()
+  if (!key) throw new E2BKeyError('e2b_key_missing', 'Instance E2B API key required')
+  return key
+}
+
+/** A configured team ID survives credential rotation. Without one, fail closed on a key change. */
+export function environmentSnapshotScope(env: Env = runtimeEnv()): string {
+  const team = env.E2B_TEAM_ID?.trim()
+  if (team) return 'team:' + team
+  const key = env.E2B_API_KEY?.trim()
+  return key ? 'key:' + createHash('sha256').update(key).digest('hex') : 'unconfigured'
+}
+
+/** Credential lookup for callers without an existing provider resource. */
 export async function e2bApiKey(ownerId: string, _platformMissing: string, env: Env = runtimeEnv()): Promise<string> {
+  if (!byoE2BKeyEnabled(env) || env.E2B_API_KEY?.trim()) return environmentSnapshotApiKey(env)
   return (await import('./e2b')).getUserE2BApiKey(ownerId, env)
 }
 
@@ -48,6 +65,15 @@ export function taskTemplate(harness: string, env: Env = runtimeEnv()): string {
   return selectedTemplate(official, key, env)
 }
 
+/** Hosted and plan-limited task tiers use the verified release inventory. */
+export function sizedTaskTemplate(harness: string, size?: E2BMachineSize, env: Env = runtimeEnv(), requireVerifiedHardware = false): string {
+  const medium = taskTemplate(harness, env)
+  if ((!isCloudEdition(env) && !requireVerifiedHardware) || !size) return medium
+  const variant = e2bTemplateForSize(harness === 'codex' ? 'codex' : 'claude', size, env)
+  if (!variant) throw new E2BKeyError('e2b_template_unavailable', 'Verified E2B compute tier required')
+  return variant
+}
+
 const status = (error: unknown): number | undefined => {
   const value = error && typeof error === 'object' ? (error as { status?: unknown; statusCode?: unknown }).status ?? (error as { statusCode?: unknown }).statusCode : undefined
   return typeof value === 'number' ? value : undefined
@@ -59,6 +85,7 @@ export function classifyE2BError(error: unknown, creating: boolean): E2BKeyError
   const code = status(error)
   if (error instanceof AuthenticationError || code === 401 || code === 403) return 'e2b_key_invalid'
   if (error instanceof RateLimitError || code === 429) return 'e2b_limit_reached'
+  if (error instanceof ServiceBusyError || code !== undefined && code >= 500) return 'e2b_unavailable'
   if (creating && !(error instanceof SandboxNotFoundError) && (error instanceof NotFoundError || code === 404)) return 'e2b_template_unavailable'
   return null
 }
@@ -75,7 +102,7 @@ export async function withE2BErrors<T>(ownerId: string, creating: boolean, run: 
     if (error instanceof E2BKeyError) throw error
     const code = classifyE2BError(error, creating)
     if (!code) throw error
-    if (code in CARD_CODE) await (await import('./e2b')).recordE2BKeyError(ownerId, CARD_CODE[code as keyof typeof CARD_CODE]).catch(() => undefined)
+    if (byoE2BKeyEnabled(_env) && !_env.E2B_API_KEY?.trim() && code in CARD_CODE) await (await import('./e2b')).recordE2BKeyError(ownerId, CARD_CODE[code as keyof typeof CARD_CODE]).catch(() => undefined)
     throw Object.assign(new E2BKeyError(code), { cause: error })
   }
 }
