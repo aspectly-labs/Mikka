@@ -282,9 +282,31 @@ export function validateTarget(env) {
 // Shell steps of a package script: split on && / || / ; so a guard must sit on
 // the same step that runs the guarded file, not merely somewhere in the script.
 export const scriptSteps = command => (command ?? '').split(/&&|\|\||;/).map(step => step.trim()).filter(Boolean)
-// Steps that start node's test runner, after any leading VAR=value assignments.
+// A step that runs node, after any leading VAR=value assignments.
 const NODE_STEP = /^((?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)node(\s.*)$/
-export const testSteps = command => scriptSteps(command).filter(step => NODE_STEP.test(step) && step.split(/\s+/).includes('--test'))
+// Words of one shell step; a quoted part stays inside its word.
+const words = step => step.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
+// Node options that take the next word as their value.
+const VALUE_OPTIONS = new Set(['--import', '--require', '-r', '--loader', '--experimental-loader', '--conditions', '-C', '--env-file', '--env-file-if-exists', '--input-type', '--test-reporter', '--test-reporter-destination', '--test-name-pattern', '--test-skip-pattern', '--test-concurrency', '--test-timeout', '--test-shard', '--test-isolation', '--test-global-setup', '--test-coverage-include', '--test-coverage-exclude', '--watch-path'])
+// The options node itself reads in a step: those before the first positional
+// word (the script, or with --test the first file). Null for a non-node step.
+function nodeOptions(step) {
+  const list = words(step)
+  let index = 0
+  while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(list[index] ?? '')) index++
+  if (list[index] !== 'node') return null
+  const options = []
+  for (index++; index < list.length && list[index].startsWith('-'); index++) {
+    options.push(list[index])
+    if (VALUE_OPTIONS.has(list[index])) index++
+  }
+  return options
+}
+const isForceExit = option => /^--test-force-exit(?:=|$)/.test(option)
+// One matcher for the suite-level gate and the per-step preload.
+const forceExitStep = step => nodeOptions(step)?.some(isForceExit) ?? false
+// Steps that start node's test runner: `node … --test …`, not `node script.mjs --test`.
+export const testSteps = command => scriptSteps(command).filter(step => nodeOptions(step)?.includes('--test'))
 
 export function inventory(files, scripts, expected = [], required = REQUIRED_SUITES, selfManaged = SELF_MANAGED, offlineGuarded = OFFLINE_GUARDED) {
   const has = path => Object.hasOwn(files, path)
@@ -562,17 +584,16 @@ const shellQuote = value => `'${value.replaceAll("'", `'\\''`)}'`
 // A single command runs directly. A plain `&&` chain of node commands runs in
 // sh with the preload on its force-exit steps. Anything else (quotes, pipes,
 // other programs) stays on pnpm unchanged.
-export function launch(script, command) {
-  if (typeof command !== 'string' || !command.includes('--test-force-exit') || /['"\\|;$`<>(){}*?~#\n]/.test(command)) return ['pnpm', ['-s', script]]
+export function launch(script, command, { execPath = process.execPath, preload = blockingStdio } = {}) {
+  if (typeof command !== 'string' || /['"\\|;$`<>(){}*?~#\n]/.test(command) || !scriptSteps(command).some(forceExitStep)) return ['pnpm', ['-s', script]]
   if (command.startsWith('node ') && !command.includes('&')) {
-    return [process.execPath, ['--require', blockingStdio, ...command.slice(5).trim().split(/\s+/)]]
+    return [execPath, ['--require', preload, ...command.slice(5).trim().split(/\s+/)]]
   }
   const steps = command.split('&&').map(step => step.trim())
   if (command.replaceAll('&&', '').includes('&') || !steps.every(step => NODE_STEP.test(step))) return ['pnpm', ['-s', script]]
   const chain = steps.map(step => {
     const [, assignments, rest] = step.match(NODE_STEP)
-    const preload = rest.split(/\s+/).includes('--test-force-exit') ? ` --require ${shellQuote(blockingStdio)}` : ''
-    return `${assignments}${shellQuote(process.execPath)}${preload}${rest}`
+    return `${assignments}${shellQuote(execPath)}${forceExitStep(step) ? ` --require ${shellQuote(preload)}` : ''}${rest}`
   })
   return ['/bin/sh', ['-c', chain.join(' && ')]]
 }

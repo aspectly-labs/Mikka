@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -514,6 +514,89 @@ test('force-exit orchestrators of single and chained suites hold a blocking stdo
   assert.deepEqual(run('test:chain-db'), ['forced blocking', 'plain nonblocking', 'last blocking'])
 })
 
+// launch() is the only place the preload is added, and it must not run what sh
+// would read differently from pnpm. Paths are injected so the quoting shows.
+test('launch keeps unsafe or non-node commands on pnpm and runs plain node chains through sh', () => {
+  const execPath = "/opt/node dir/it's/node", preload = '/repo dir/blocking-stdio.cjs'
+  const run = command => launch('test:x-db', command, { execPath, preload })
+  const forced = 'node --test-force-exit --test a.test.mjs'
+  const onPnpm = {
+    'double quotes': 'node --test-force-exit --test "odd name.test.mjs"',
+    'single quotes': "node --test-force-exit --test 'odd name.test.mjs'",
+    '||': `${forced} || node --test b.test.mjs`,
+    ';': `${forced}; node --test b.test.mjs`,
+    '|': `${forced} | tee out.txt`,
+    'single &': `${forced} & node --test b.test.mjs`,
+    '$': 'node --test-force-exit --test $FILES',
+    'pnpm step': `pnpm -s build && ${forced}`,
+    'tsx step': `tsx --test b.test.ts && ${forced}`,
+    'no force-exit': 'node --test a.test.mjs && node --test b.test.mjs',
+    'force-exit as a script argument': 'node script.mjs --test-force-exit --test a.test.mjs',
+    'empty step': `${forced} && && node --test b.test.mjs`,
+    'trailing &&': `${forced} &&`,
+    'leading &&': `&& ${forced}`,
+    'not a string': undefined,
+  }
+  for (const [name, command] of Object.entries(onPnpm)) assert.deepEqual(run(command), ['pnpm', ['-s', 'test:x-db']], name)
+
+  // One plain command runs directly, with nothing for a shell to read.
+  assert.deepEqual(run('node --test-force-exit --import tsx --test a.test.mjs'), [execPath, ['--require', preload, '--test-force-exit', '--import', 'tsx', '--test', 'a.test.mjs']])
+  assert.deepEqual(run('node --test-force-exit=true --test a.test.mjs'), [execPath, ['--require', preload, '--test-force-exit=true', '--test', 'a.test.mjs']])
+  // A chain, or a command with assignments, runs through sh: assignments kept,
+  // node shell-quoted, the preload only on force-exit steps.
+  const node = String.raw`'/opt/node dir/it'\''s/node'`, require = ` --require '/repo dir/blocking-stdio.cjs'`
+  assert.deepEqual(run('A=1 B=two node --test-force-exit --test a.test.mjs && node --test b.test.mjs && C=3 node --test-force-exit=true --test-concurrency=1 --test c.test.mjs'),
+    ['/bin/sh', ['-c', `A=1 B=two ${node}${require} --test-force-exit --test a.test.mjs && ${node} --test b.test.mjs && C=3 ${node}${require} --test-force-exit=true --test-concurrency=1 --test c.test.mjs`]])
+  assert.deepEqual(run('node --test b.test.mjs && node --test-force-exit --test a.test.mjs'), ['/bin/sh', ['-c', `${node} --test b.test.mjs && ${node}${require} --test-force-exit --test a.test.mjs`]])
+  assert.deepEqual(run('NODE_ENV=test node --test-force-exit --test a.test.mjs'), ['/bin/sh', ['-c', `NODE_ENV=test ${node}${require} --test-force-exit --test a.test.mjs`]])
+})
+
+test('a chain launched through sh runs when node and the preload sit under paths with spaces', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-db-runner-quoted-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, "node bin's dir"), marks = join(root, 'marks.txt')
+  mkdirSync(bin)
+  symlinkSync(process.execPath, join(bin, 'node'))
+  const preload = join(root, 'pre load dir', 'probe.cjs')
+  mkdirSync(join(root, 'pre load dir'))
+  // Records the steps whose orchestrator loaded it.
+  writeFileSync(preload, `if (!process.env.NODE_TEST_CONTEXT) require('node:fs').appendFileSync(${JSON.stringify(marks)}, process.env.STEP + '\\n')\n`)
+  writeFileSync(marks, '')
+  writeFileSync(join(root, 'a.test.mjs'), "import { test } from 'node:test'\ntest('a', () => {})\n")
+  const command = 'STEP=forced node --test-force-exit --test a.test.mjs && STEP=plain node --test a.test.mjs && STEP=last node --test-force-exit --test a.test.mjs'
+  const [shell, args] = launch('test:quoted-db', command, { execPath: join(bin, 'node'), preload })
+  assert.equal(shell, '/bin/sh')
+  const result = spawnSync(shell, args, { cwd: root, encoding: 'utf8', env: orchestratorEnv() })
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(parseSummaries(result.stdout).length, 3)
+  assert.deepEqual(readFileSync(marks, 'utf8').trim().split('\n'), ['forced', 'last'])
+})
+
+// A quote, `$` or other program added to a force-exit suite later would put it
+// back on pnpm without the preload, so the real inventory is checked here.
+test('every required DB suite with --test-force-exit gets the blocking stdio preload', () => {
+  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
+  const preload = fileURLToPath(new URL('./ci/blocking-stdio.cjs', import.meta.url))
+  const routes = { direct: [], sh: [] }
+  for (const script of inventory(readTree(), scripts).scripts) {
+    const command = scripts[script]
+    if (!command.includes('--test-force-exit')) continue
+    const [bin, args] = launch(script, command)
+    if (bin === process.execPath) {
+      assert.deepEqual(args.slice(0, 2), ['--require', preload], script)
+      routes.direct.push(script)
+    } else if (bin === '/bin/sh') {
+      const steps = command.split('&&').filter(step => step.includes('--test-force-exit')).length
+      assert.equal(args[1].split(` --require '${preload.replaceAll("'", `'\\''`)}' `).length - 1, steps, `${script}: one preload per force-exit step`)
+      routes.sh.push(script)
+    } else {
+      assert.fail(`${script} runs --test-force-exit through ${bin} without the blocking stdio preload; keep it one node command or an && chain of node commands, with no quotes, $, pipes or other programs`)
+    }
+  }
+  assert.ok(routes.direct.length > 0, 'single-command suites run directly')
+  for (const script of ['test:desktop-auth', 'test:device-revocation-db', 'test:run-publication-db', 'test:run-recovery-db']) assert.ok(routes.sh.includes(script), `${script} runs through sh`)
+})
+
 test('force-exit keeps the summary when the last file reports a large burst into a slow reader', async t => {
   const root = mkdtempSync(join(tmpdir(), 'mikka-db-runner-burst-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
@@ -560,6 +643,10 @@ test('a chain step that loses its summary fails instead of dropping out of the t
   assert.deepEqual(testSteps(command), ['node --test a.test.mjs', 'NODE_ENV=test node --test-force-exit --test b.test.mjs c.test.mjs'])
   assert.deepEqual(testSteps('node --test-force-exit --test a.test.mjs'), ['node --test-force-exit --test a.test.mjs'])
   assert.deepEqual(testSteps('pnpm -s test:x && tsx scripts/a.ts'), [])
+  // Only node's own --test counts: not a script argument, and a quoted option value stays one word.
+  assert.deepEqual(testSteps('node scripts/run.mjs --test && node --import tsx --test a.test.ts'), ['node --import tsx --test a.test.ts'])
+  assert.deepEqual(testSteps('X=1 node --test-reporter-destination="${DIR:?dir required}/out.xml" --import tsx --test a.test.ts').length, 1)
+  assert.deepEqual(testSteps('node --test-force-exit=true --test a.test.mjs'), ['node --test-force-exit=true --test a.test.mjs'])
   const first = 'ℹ tests 3\nℹ pass 3\nℹ fail 0\n'
   const truncated = `${first}▶ second step\n  ✔ one (1ms)\n`
   // The totals alone still look like a passing suite.
