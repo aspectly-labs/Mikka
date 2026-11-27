@@ -86,7 +86,8 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
       ADD COLUMN "baseUrl" text, ADD COLUMN protocol text DEFAULT 'anthropic', ADD COLUMN last4 text DEFAULT 'test',
       ADD COLUMN "responsesApi" boolean DEFAULT true, ADD COLUMN features jsonb;
       CREATE TABLE workspace_personal_policies ("workspaceId" text,subscriptions boolean)`)
-    await pool.query('INSERT INTO workspace_personal_policies VALUES ($1,false)', [workspaceId])
+    // The team switch is on: the owner's own key serves here (decision 2026-11-27-1740).
+    await pool.query('INSERT INTO workspace_personal_policies VALUES ($1,true)', [workspaceId])
     // Use the canonical sharing schema for the real usable-key read below.
     await pool.query(await readFile(new URL('../drizzle/20261101021000_model_api_keys.sql', import.meta.url), 'utf8'))
     assert.deepEqual((await usableApiKeys(pool, scope.ownerId, workspaceId))[0].models, ['old'])

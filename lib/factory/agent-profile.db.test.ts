@@ -133,7 +133,7 @@ test('Agent Profiles: real PostgreSQL isolation, immutable versions, exact-sourc
     const fetch = globalThis.fetch
     globalThis.fetch = async () => { providerCalls++; throw new Error('fixed target must not call a provider') }
     try {
-      for (const [name, selection, expectedQueries] of [['own subscription', ownSelection, 5], ['own key', ownKey, 4], ['workspace key', workspaceKey, 4]] as const) await t.test(name, async t => {
+      for (const [name, selection, expectedQueries] of [['own subscription', ownSelection, 5], ['own key', ownKey, 5], ['workspace key', workspaceKey, 4]] as const) await t.test(name, async t => {
         const original = await inspect(selection, true), fixed = await inspect(selection, false)
         assert.deepEqual(original.result, { ok: true }); assert.deepEqual(fixed.result, original.result)
         assert.equal(fixed.statements.length, expectedQueries)
@@ -178,9 +178,9 @@ test('Agent Profiles: real PostgreSQL isolation, immutable versions, exact-sourc
           await pool.query('UPDATE model_api_keys SET "workspaceId"=$2 WHERE id=$1', [keys[1], who.workspaceId])
         }
       })
-      await t.test('the old admin switch refuses no own or workspace key', async () => {
+      await t.test('the team switch off withholds members\' own keys and keeps the workspace\'s', async () => {
         await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)', [who.workspaceId])
-        try { await compare(sharedSelection); await compare(workspaceKey, 'accepted'); await compare(ownSelection, 'accepted'); await compare(ownKey, 'accepted') }
+        try { await compare(sharedSelection); await compare(ownKey); await compare(workspaceKey, 'accepted'); await compare(ownSelection, 'accepted') }
         finally { await pool.query('DELETE FROM workspace_personal_policies WHERE "workspaceId"=$1', [who.workspaceId]) }
       })
       for (const [field, value, original] of [['modelsError', 'invalid', null], ['responsesApi', false, true], ['models', JSON.stringify(['unrelated-model']), JSON.stringify(['fixed-entry-model', 'unrelated-model'])]] as const) await t.test(`same API-key refusal: ${field}`, async () => {

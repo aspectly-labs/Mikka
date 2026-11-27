@@ -379,10 +379,11 @@ export async function credentialStates(query: Query, scope: OrderScope, entries:
     connections = await readConnections()
     checkedAt = now ?? Date.now()
   }
+  const { memberCredentialsAllowedSql } = await import('./personal-policy')
   const keys = new Map((keyOwners.size ? (await query.query<{ id: string; modelsError: string | null; provider: string }>(
     `SELECT k.id::text AS id,k."modelsError",k.provider FROM model_api_keys k
       JOIN unnest($1::text[],$2::text[]) AS authorized(id,owner) ON k.id::text=authorized.id AND COALESCE(k."ownerId",k."workspaceId"::text)=authorized.owner
-      WHERE k."ownerId"=$3 OR k."workspaceId"::text=$4`,
+      WHERE (k."ownerId"=$3 AND ${memberCredentialsAllowedSql('$4')}) OR k."workspaceId"::text=$4`,
     [[...keyOwners.keys()], [...keyOwners.values()], scope.ownerId, scope.workspaceId])).rows : []).map(row => [row.id, row]))
   const health = await providerHealthStates(query, scope, authorizedCandidates, checkedAt)
   const states = new Map<string, { credential: CredentialState; provider: string; quotaCheckPending?: true }>()

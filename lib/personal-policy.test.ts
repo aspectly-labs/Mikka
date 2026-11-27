@@ -81,11 +81,10 @@ function policyReader(allowed: boolean | undefined = true) {
 }
 
 async function readPolicyConsumers(query: Pick<Pool, 'query'>) {
-  // Subscriptions serve their owner only (decision 2026-11-17) and API keys are a person's or the
-  // workspace's (decision 2026-11-27-1740): the key read no longer consults the policy, which is read once beside it.
+  // Subscriptions serve their owner only (decision 2026-11-17). API keys are a person's or the
+  // workspace's (decision 2026-11-27-1740); the switch decides whether the person's own keys serve here.
   const keys = await usableApiKeys(query, owner, workspace)
-  const allowed = await memberSubscriptionsAllowed(query, workspace)
-  return { allowed, keys: keys.map(key => ({ id: key.id, mine: key.mine })) }
+  return { keys: keys.map(key => ({ id: key.id, mine: key.mine })) }
 }
 
 function batchConsumers(query: Pick<Pool, 'query'>) {
@@ -98,21 +97,21 @@ function batchConsumers(query: Pick<Pool, 'query'>) {
 test('a Native read batch shares its workspace policy across the real key and subscription readers', async () => {
   const f = policyReader()
   assert.deepEqual(await batchConsumers(f.query), [{ ok: true, result: {
-    allowed: true, keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }, { id: '10000000-0000-4000-8000-000000000003', mine: false }],
+    keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }, { id: '10000000-0000-4000-8000-000000000003', mine: false }],
   } }])
   assert.equal(f.calls.filter(call => call === 'policy').length, 1, 'one actual policy SELECT in this batch')
   assert.deepEqual(f.calls.filter(call => call !== 'policy'), ['keys'], 'the key read still runs')
 })
 
-test('a refused batch policy changes no key: own and workspace keys are nobody\'s share', async () => {
+test('a refused batch policy withholds the person\'s own keys and keeps the workspace\'s', async () => {
   const f = policyReader(false)
   assert.deepEqual(await batchConsumers(f.query), [{ ok: true, result: {
-    allowed: false, keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }, { id: '10000000-0000-4000-8000-000000000003', mine: false }],
+    keys: [{ id: '10000000-0000-4000-8000-000000000003', mine: false }],
   } }])
   assert.deepEqual(f.calls, ['keys', 'policy'])
   f.state.allowed = undefined
   const [next] = await batchConsumers(f.query)
-  assert.equal(next.ok && (next.result as { allowed: boolean }).allowed, true, 'the next request observes the original absent-policy default')
+  assert.equal(next.ok && (next.result as { keys: unknown[] }).keys.length, 2, 'the next request observes the original absent-policy default')
   assert.equal(f.calls.filter(call => call === 'policy').length, 2, 'false is an observation, not a missing cache entry')
 })
 
@@ -206,7 +205,7 @@ test('only the policy is shared: key reads remain fresh in the batch', async () 
     assert.equal((await readPolicyConsumers(f.query)).keys.length, 2)
     f.state.workspaceKeys = false
     assert.deepEqual(await readPolicyConsumers(f.query), {
-      allowed: true, keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }],
+      keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }],
     })
   })
   assert.equal(f.calls.filter(call => call === 'keys').length, 2)
@@ -282,11 +281,11 @@ test('standalone read-only policy consumers share one observation and keep every
 test('standalone policy refusal and absence are observed again by the next read', async () => {
   const f = policyReader(false)
   assert.deepEqual(await observePolicy(() => readPolicyConsumers(f.query)), {
-    allowed: false, keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }, { id: '10000000-0000-4000-8000-000000000003', mine: false }],
+    keys: [{ id: '10000000-0000-4000-8000-000000000003', mine: false }],
   })
   assert.deepEqual(f.calls, ['keys', 'policy'])
   f.state.allowed = undefined
-  assert.equal((await observePolicy(() => readPolicyConsumers(f.query))).allowed, true)
+  assert.equal((await observePolicy(() => readPolicyConsumers(f.query))).keys.length, 2)
   assert.equal(f.calls.filter(call => call === 'policy').length, 2)
 })
 

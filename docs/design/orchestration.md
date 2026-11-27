@@ -58,6 +58,9 @@ flowchart TD
    belongs to, with no switch and no admin limit ([2026-11-01-2240-own-credentials-always-usable](decisions/2026-11-01-2240-own-credentials-always-usable.md)). If several qualify, the bot's saved choice wins;
    after that a subscription comes before an API key, and Claude comes before
    ChatGPT/Codex.
+   In a team workspace, an API key of the owner's is used only while the
+   admin switch 团队权限 › 订阅与 API Key is on (the default); off, runs there
+   skip to the workspace's keys.
 2. **Then the workspace's own API keys** (工作区连接), which a team
    workspace's admins add and manage, and every active member's runs there
    use. A person's API key is never shared into a workspace, and no other
@@ -466,7 +469,7 @@ external bill.
 | MVP | Later |
 | --- | --- |
 | A personal workspace for everyone; team workspaces beside it | — |
-| Account-level subscriptions, API keys and custom providers on 「模型与订阅」; own credentials usable in every workspace with no switch; subscriptions serve their owner only (2026-11-17); API keys are a person's or the workspace's, added separately and never shared (2026-11-27-1740) | Per-member spend caps |
+| Account-level subscriptions, API keys and custom providers on 「模型与订阅」; own credentials usable in every workspace with no switch; subscriptions serve their owner only (2026-11-17); API keys are a person's or the workspace's, added separately and never shared; the team switch decides whether members' own keys serve there (2026-11-27-1740) | Per-member spend caps |
 | Model order of §2; Mikka 默认 when there is nothing else; no mid-run switch; 「订阅额度用完后，自动改用 API Key」; a popup when nothing is left | — |
 | Model → Agent mapping with a per-model override | — |
 | Mikka Cloud on each person's own E2B key, with no Mikka caps | — |

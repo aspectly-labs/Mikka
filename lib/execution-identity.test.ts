@@ -9,7 +9,7 @@ const resourcePolicySql = "select w.kind,l.\"organizationId\",p.\"modelCredentia
 const id = (last: number) => `10000000-0000-4000-8000-${String(last).padStart(12, '0')}`
 function fixture() {
   const members = new Set(['requester', 'bot-owner', 'resource-owner'])
-  const state = { botOwner: 'bot-owner', workspace: id(1), deviceOwner: 'requester', keyOwner: 'requester', keyWorkspace: null as string | null, share: false, enabled: true, kind: 'local', revision: '1', subscription: true, e2b: true }
+  const state = { botOwner: 'bot-owner', workspace: id(1), deviceOwner: 'requester', keyOwner: 'requester', keyWorkspace: null as string | null, memberKeys: true, share: false, enabled: true, kind: 'local', revision: '1', subscription: true, e2b: true }
   const mcp = { queryError: undefined as Error | undefined }
   const definition = freezeWorkerDefinition({ harness: 'codex', instructions: '', prompt: 'A task', parent: null, executionId: null, model: 'example-model', apiKey: { keyId: id(2), model: 'example-model' } })
   const run = { userId: 'requester', botId: id(3), deviceId: id(4), agentDefinition: definition }
@@ -22,6 +22,7 @@ function fixture() {
     else if (sql.includes('FROM personal_mcp_servers') && mcp.queryError) throw mcp.queryError
     // A key is a person's or a workspace's (decision 2026-11-27-1740).
     else if (sql.includes('FROM model_api_keys')) rows = [{ ownerId: state.keyWorkspace ? null : state.keyOwner, workspaceId: state.keyWorkspace }]
+    else if (sql.includes('FROM workspace_personal_policies')) rows = [{ subscriptions: state.memberKeys }]
     else if (sql.includes('FROM byos_bindings')) rows = state.subscription ? [{ ownerId: state.keyOwner, workspaceId: state.workspace, revision: state.revision, shared: state.share, modelId: 'example-model', route: 'codex_cli' }] : []
     else if (sql.includes('FROM user_e2b_keys')) rows = state.e2b ? [{ found: 1 }] : []
     else if (sql.replace(/\s+/g, ' ').trim() === resourcePolicySql) {
@@ -80,6 +81,17 @@ for (const who of ['requester', 'bot-owner']) test(`revoking ${who}'s membership
   const f = fixture(); f.state.keyWorkspace = f.state.workspace
   await f.freeze(); f.members.delete(who)
   await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError)
+})
+
+test('the team admin switch decides whether the requester\'s own key serves runs in the workspace', async () => {
+  const f = fixture(); f.state.memberKeys = false
+  await assert.rejects(f.freeze, ExecutionIdentityError, 'off: the own key is refused')
+  f.state.memberKeys = true
+  await f.freeze()
+  f.state.memberKeys = false
+  await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError, 'turning it off ends a frozen own-key run')
+  f.state.keyWorkspace = f.state.workspace
+  assert.equal((await f.freeze()).billingAccount.model.ownerId, f.state.workspace, 'off: the workspace key still serves')
 })
 
 test('the member who added a workspace key leaving keeps it for everyone else', async () => {

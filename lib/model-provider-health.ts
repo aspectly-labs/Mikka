@@ -2,7 +2,7 @@ import 'server-only'
 import type { Pool, PoolClient } from 'pg'
 import { providerFailureSchema } from '@mikka/protocol/provider-failure'
 import { entryKey, sourceId, type EntrySource, type OrderCandidate, type OrderHarness } from './model-order-plan'
-import { runMayUseCredentialSql } from './personal-policy'
+import { memberCredentialsAllowedSql, runMayUseCredentialSql } from './personal-policy'
 
 type Query = Pick<Pool | PoolClient, 'query'>
 type Scope = { ownerId: string; workspaceId: string }
@@ -55,7 +55,7 @@ export async function providerHealthStates(query: Query, scope: Scope, candidate
     ), sources AS (
       SELECT DISTINCT requested.kind,requested.id,requested.owner,k."updatedAt" AS "validAfter",NULL::bigint AS epoch
       FROM requested JOIN model_api_keys k ON requested.kind='api_key' AND k.id::text=requested.id AND COALESCE(k."ownerId",k."workspaceId"::text)=requested.owner
-      WHERE k."ownerId"=$1 OR k."workspaceId"::text=$2
+      WHERE (k."ownerId"=$1 AND ${memberCredentialsAllowedSql('$2')}) OR k."workspaceId"::text=$2
       UNION ALL
       SELECT DISTINCT requested.kind,requested.id,requested.owner,NULL::timestamptz AS "validAfter",c.epoch
       FROM requested JOIN byos_connections c ON requested.kind='subscription' AND c.id::text=requested.id AND c."ownerId"=requested.owner

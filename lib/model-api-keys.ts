@@ -13,6 +13,7 @@ import { gatewayFeaturesSchema, parseGatewayFeatures, type GatewayFeatures } fro
 import { isPrivateAddress } from '@/lib/link-preview-parse'
 import { isLoopbackHost } from '@/lib/loopback'
 import { assertOrganizationModelProvider } from '@/lib/governance/resource-access'
+import { workspaceMemberCredentialsAllowed } from '@/lib/personal-policy'
 import { stopRunsUsingApiKeys } from '@/lib/model-api-key-runs'
 import { openSecret, sealSecret, SecretsKeyMissingError } from '@/lib/secrets/crypto'
 import { WorkspaceError } from '@/lib/workspace-error'
@@ -152,6 +153,9 @@ function modelsTarget(row: Pick<Row, 'provider' | 'baseUrl' | 'protocol'>): { mo
   return { modelsUrl: preset.modelsUrl, auth: preset.modelsAuth }
 }
 const uuidOrNull = (value: string) => z.uuid().safeParse(value).success ? value : null
+/** The team admin switch for members' own keys in this workspace; a scope without a workspace has none. */
+const memberKeysAllowed = (query: Query, workspaceId: string | null) => workspaceId && uuidOrNull(workspaceId)
+  ? workspaceMemberCredentialsAllowed(query, workspaceId) : Promise.resolve(true)
 
 /**
  * The page's list. `keys` are the person's own (`shared: false`) and, for an
@@ -414,14 +418,18 @@ export interface UsableApiKey extends ApiKeyView {
 /**
  * The API keys a person's runs may use in a workspace, in the order of
  * orchestration.md § 2 (like Capy, a person's own keys come first, then the
- * workspace's): the person's own keys, then the workspace's own
- * keys. Never another member's personal key (decision 2026-11-27-1740). The
- * model picker's 「API Key」 group reads this.
+ * workspace's): the person's own keys, while the team admin switch 团队权限 ›
+ * 订阅与 API Key is on, then the workspace's own keys. Never another member's
+ * personal key (decision 2026-11-27-1740). The model picker's 「API Key」 group
+ * reads this.
  */
 export async function usableApiKeys(query: Query, userId: string, workspaceId: string, selectedKeyId?: string): Promise<UsableApiKey[]> {
-  const rows = (await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys
+  const found = (await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys
     WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid)${selectedKeyId ? ' AND id=$3' : ''} ORDER BY ("ownerId" IS NULL),"createdAt",id`,
   [userId, uuidOrNull(workspaceId), ...(selectedKeyId ? [selectedKeyId] : [])])).rows
+  // One after the other: a dispatch reads this on its transaction's client. Only a person's own key needs the switch.
+  const ownAllowed = !found.some(row => row.ownerId === userId) || await memberKeysAllowed(query, workspaceId)
+  const rows = ownAllowed ? found : found.filter(row => row.ownerId !== userId)
   return rows.map(row => {
     const modelSpeedModes = parseStoredSpeedModes(row.modelSettings)
     const mine = row.ownerId === userId
@@ -531,7 +539,8 @@ export async function validateRunApiKey(query: Query, runId: string, keyId: stri
   try { await revalidateExecutionIdentity(query, run) }
   catch (error) { if (error instanceof ExecutionIdentityError) throw new WorkspaceError('apiKeyNotFound', { cause: error }); throw error }
   const key = await apiKeyOwnerOf(query, keyId)
-  const own = key?.ownerId === run.userId
+  // A person's own key serves their run in a workspace only while the admin switch allows members' own keys.
+  const own = key?.ownerId === run.userId && await memberKeysAllowed(query, run.workspaceId)
   const workspaceKey = Boolean(key?.workspaceId && run.workspaceId && key.workspaceId === run.workspaceId && run.agentDefinition?.apiKey
     && await executionMembersActive(run.workspaceId, [run.userId]))
   if (!key || (!own && !workspaceKey)) throw new WorkspaceError('apiKeyNotFound')

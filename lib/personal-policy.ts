@@ -7,22 +7,36 @@ import { readBatchSubscriptionPolicy } from './desktop-rpc/read-batch-context'
 import { workspaceResourcePolicy } from './governance/resource-access'
 
 /**
- * Decision 2026-11-01-2240: a person's own subscriptions and API keys always run
- * that person's own bots and runs, in every workspace they belong to.
  * Decision 2026-11-17: a Claude or Codex subscription serves its owner only; no
  * other member's bot or run can use it. Decision 2026-11-27-1740: the same holds
- * for API keys; a workspace adds its own keys instead.
+ * for API keys; a workspace adds its own keys instead, and the team admin switch
+ * 团队权限 › 订阅与 API Key decides whether members' own API keys are used for
+ * their runs in that workspace (on: their own first, then the workspace's; off:
+ * the workspace's keys only).
  */
 type Query = Pick<Pool | PoolClient, 'query'>
 
-/** The admin switch 团队权限 › 订阅与 API Key; an absent row means on. It never limits the owner's own use and, with no shared keys left (decision 2026-11-27-1740), grants nothing. */
-export async function memberSubscriptionsAllowed(query: Query, workspaceId: string): Promise<boolean> {
-  if ((await workspaceResourcePolicy(workspaceId)).modelCredentialSharing === 'deny') return false
+/**
+ * The team admin switch 团队权限 › 订阅与 API Key as stored for the workspace; an
+ * absent row (and every personal workspace) means on. Members' own API keys serve
+ * their runs in this workspace only while it is on (decision 2026-11-27-1740).
+ */
+export async function workspaceMemberCredentialsAllowed(query: Query, workspaceId: string): Promise<boolean> {
   return readBatchSubscriptionPolicy(query, workspaceId, async () => {
     const { rows: [row] } = await query.query<{ subscriptions: boolean }>('SELECT subscriptions FROM workspace_personal_policies WHERE "workspaceId"=$1', [workspaceId])
     return row?.subscriptions ?? true
   })
 }
+
+/** The switch as the settings page shows it: also off when the Organization denies member credentials. */
+export async function memberSubscriptionsAllowed(query: Query, workspaceId: string): Promise<boolean> {
+  if ((await workspaceResourcePolicy(workspaceId)).modelCredentialSharing === 'deny') return false
+  return workspaceMemberCredentialsAllowed(query, workspaceId)
+}
+
+/** SQL for the same switch: true unless the workspace turned members' own credentials off. */
+export const memberCredentialsAllowedSql = (workspace: string) =>
+  `NOT EXISTS (SELECT 1 FROM workspace_personal_policies mp WHERE mp."workspaceId"::text=(${workspace})::text AND NOT mp.subscriptions)`
 
 /**
  * Withdrawing a credential stops the runs using it now: disconnecting or leaving

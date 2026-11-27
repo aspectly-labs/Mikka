@@ -47,6 +47,8 @@ const catalogReads: unknown[][] = []
 const query = { query: async (sql: string, args: unknown[]) => {
   if (sql.startsWith('SELECT 1 FROM byos_connections')) { catalogReads.push(args); return { rowCount: (args[0] === 'bob' ? sharedCatalogOffers : catalogOffers) ? 1 : 0, rows: [] } }
   if (sql.startsWith('SELECT state,paused,epoch,quota')) return { rows: [{ state: 'connected', paused: false, epoch: '1', quota }] }
+  // 团队权限 › 订阅与 API Key: no row means members' own keys serve (decision 2026-11-27-1740).
+  if (sql.startsWith('SELECT subscriptions FROM workspace_personal_policies')) return { rows: [], rowCount: 0 }
   throw new Error(`unexpected fixture query: ${sql}`)
 } } as unknown as Pick<Pool, 'query'>
 mock.module(new URL('./model-api-keys.ts', import.meta.url).href, { namedExports: {

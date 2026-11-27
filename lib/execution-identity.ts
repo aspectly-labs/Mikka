@@ -77,7 +77,8 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
     if (workspaceId) await assertOrganizationModelProvider(workspaceId, 'api-key', membership)
     // The run owner's own key, or the key of the workspace the run is in (decision 2026-11-27-1740). Never another member's key.
     const { rows: [key] } = await query.query<{ ownerId: string | null; workspaceId: string | null }>('SELECT "ownerId","workspaceId"::text AS "workspaceId" FROM model_api_keys WHERE id=$1', [definition.apiKey.keyId])
-    const own = !!key && key.ownerId === run.userId
+    // The run owner's own key only while the workspace's admin switch allows members' own keys.
+    const own = !!key && key.ownerId === run.userId && (!workspaceId || await (await import('./personal-policy')).workspaceMemberCredentialsAllowed(query, workspaceId))
     if (!key || (!own && (!workspaceId || key.workspaceId !== workspaceId || !await executionMembersActive(workspaceId, [run.userId], membership)))) return denied()
     const keyOwner = own ? run.userId : workspaceId!
     resourceBindings.push(own ? { kind: 'api_key', id: definition.apiKey.keyId, ownerId: keyOwner, access: 'owner' }

@@ -209,10 +209,15 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
     assert.deepEqual((await store.usableApiKeys(pool, 'bob', team.id)).map(key => [key.name, key.mine]), [['Gateway', true], ['Local', true], ['Team', false]])
     assert.deepEqual((await store.usableApiKeys(pool, 'alice', personal.id)).map(key => key.provider), ['anthropic'], 'the workspace key stays in its workspace')
     assert.deepEqual(await store.usableApiKeys(pool, 'alice', team.id, gateway.id), [], 'Bob\'s personal key is never selectable by Alice')
-    // The old admin switch grants and withdraws nothing now.
+    // 团队权限 › 订阅与 API Key: on (the default), a member's own keys first, then the workspace's;
+    // off, runs in this workspace get the workspace's keys only. Other workspaces are untouched.
     await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)', [team.id])
-    assert.equal((await store.usableApiKeys(pool, 'alice', team.id)).length, 2)
+    assert.deepEqual((await store.usableApiKeys(pool, 'alice', team.id)).map(key => key.id), [teamGateway.id], 'off: only the workspace key')
+    assert.deepEqual(await store.usableApiKeys(pool, 'alice', team.id, anthropic.id), [], 'off: her own key cannot be selected here')
+    assert.deepEqual((await store.usableApiKeys(pool, 'alice', personal.id)).map(key => key.id), [anthropic.id], 'her own workspace keeps her key')
+    await assert.rejects(store.openApiKeyForChat(pool, 'alice', team.id, anthropic.id, env), { code: 'apiKeyNotFound' }, 'off: Bot chat cannot open her own key here')
     await pool.query('UPDATE workspace_personal_policies SET subscriptions=true WHERE "workspaceId"=$1', [team.id])
+    assert.deepEqual((await store.usableApiKeys(pool, 'alice', team.id)).map(key => key.id), [anthropic.id, teamGateway.id], 'on: her own first, then the workspace\'s')
     const anotherWorkspace = { id: randomUUID(), kind: 'team' as const }
     await pool.query('INSERT INTO mikka_workspaces(id,kind) VALUES ($1,$2)', [anotherWorkspace.id, anotherWorkspace.kind])
     assert.deepEqual((await store.usableApiKeys(pool, 'alice', anotherWorkspace.id)).map(key => [key.id, key.mine]), [[anthropic.id, true]], 'an own key works in another workspace')
@@ -290,6 +295,12 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
     assert.deepEqual(await store.validateRunApiKey(pool, carolRun, teamGateway.id), { ownerId: team.id, workspaceId: team.id }, 'every member\'s run uses the workspace key')
     await assert.rejects(store.validateRunApiKey(pool, done, anthropic.id), { code: 'apiKeyNotFound' }, 'finished runs get nothing')
     await assert.rejects(store.validateRunApiKey(pool, borrowedRun, anthropic.id), { code: 'apiKeyNotFound' }, 'a run frozen on another member\'s personal key gets nothing')
+    // Off: a run in the team cannot be handed its owner's own key; the workspace key still serves it.
+    await pool.query('UPDATE workspace_personal_policies SET subscriptions=false WHERE "workspaceId"=$1', [team.id])
+    await assert.rejects(store.validateRunApiKey(pool, run, anthropic.id), { code: 'apiKeyNotFound' }, 'off: the owner\'s own key is refused at claim')
+    assert.deepEqual(await store.validateRunApiKey(pool, workspaceRun, teamGateway.id), { ownerId: team.id, workspaceId: team.id }, 'off: the workspace key still serves')
+    assert.equal((await store.validateRunApiKey(pool, otherRun, anthropic.id)).ownerId, 'alice', 'off in one team does not reach another workspace')
+    await pool.query('UPDATE workspace_personal_policies SET subscriptions=true WHERE "workspaceId"=$1', [team.id])
     assert.deepEqual(await store.validateRunApiKey(pool, loose, local.id), { ownerId: 'bob', workspaceId: null }, 'a run without a bot may use its owner\'s own key')
     await assert.rejects(store.validateRunApiKey(pool, loose, anthropic.id), { code: 'apiKeyNotFound' })
     // Both CLI protocols are converted by LiteLLM; key authorization is independent of that protocol.
@@ -305,6 +316,14 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
     assert.equal(await stopped(deepRun), true, 'removing the key stops the run that was handed it')
     // The adder leaving the workspace keeps the workspace key and its runs; their own keys' runs there stop.
     const { stopRunsUsingApiKeys } = await import('../lib/model-api-key-runs')
+    // Turning the switch off stops runs there on members' own keys, never those on the workspace's key.
+    const ownTeamRun = randomUUID()
+    await pool.query(`INSERT INTO agent_runs (id,"userId","botId",status) VALUES ($1,'alice',$2,'running')`, [ownTeamRun, teamBot])
+    await store.validateRunApiKey(pool, ownTeamRun, anthropic.id)
+    assert.equal(await stopRunsUsingApiKeys(pool, { workspaceId: team.id, personalOnly: true }) >= 1, true)
+    assert.equal(await stopped(ownTeamRun), true, 'a run on her own key in the team stops')
+    assert.equal(await stopped(carolRun), false, 'a run on the workspace key goes on')
+    assert.equal(await stopped(otherRun), false, 'a run in another workspace goes on')
     await stopRunsUsingApiKeys(pool, { ownerId: 'bob', workspaceId: team.id })
     assert.equal(await stopped(carolRun), false, 'a workspace key run goes on when its adder leaves')
     assert.deepEqual(await store.validateRunApiKey(pool, carolRun, teamGateway.id), { ownerId: team.id, workspaceId: team.id })
