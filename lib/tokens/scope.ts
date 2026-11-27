@@ -114,17 +114,6 @@ export async function artifactOutsideToken(user: ApiUser, artifactId: string) {
   return artifact?.workspaceId !== workspaceId
 }
 
-/** The proposals, of these pending actions, outside the token's workspace: by the Bot that made them. */
-export async function pendingActionsOutsideToken(user: ApiUser, ids: readonly string[]): Promise<Set<string>> {
-  const scope = tokenScope(user)
-  if (!scope || !ids.length) return new Set()
-  const { rows } = await pool.query<{ id: string; workspaceId: string | null }>(
-    'SELECT p.id, b."workspaceId" FROM pending_actions p LEFT JOIN bots b ON b.id=p."botId" WHERE p.id=ANY($1::uuid[])', [ids])
-  const result = new Set<string>()
-  for (const row of rows) if (await outside(scope, [row.workspaceId])) result.add(row.id)
-  return result
-}
-
 /** The suggestions outside the token's workspace: by the Bot that owns them. */
 export async function suggestionsOutsideToken(user: ApiUser, ids: readonly string[]): Promise<Set<string>> {
   const scope = tokenScope(user)

@@ -117,6 +117,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   if (!run) return RouteResponse.json({ error: 'Run is not queued for this device.' }, { status: 409 })
   const taskMcpVersion = request.headers.get(TASK_MCP_HEADER)
   const previewToolFilters = taskMcpVersion === '2'
+  const mcpToolFilters = previewToolFilters || request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1'
   if (run.agentDefinition?.customMcp?.servers.length && taskMcpVersion !== TASK_MCP_VERSION && !previewToolFilters) {
     await failRunForDaemonUpgrade(runId,deviceId,caller.userId)
     return RouteResponse.json({error:'Upgrade the Mikka daemon before using native MCP servers.',code:'daemonUpgradeRequired',protocolVersion:DAEMON_PROTOCOL_VERSION,minVersion:MIN_DAEMON_VERSION,daemonVersions:await daemonVersions()},{status:409})
@@ -357,7 +358,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       }
       return RouteResponse.json({error:'MCP configuration unavailable.',code:'mcpUnavailable'},{status:409})
     }
-    const compatible = taskMcpForDaemon(servers, previewToolFilters || request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1')
+    const compatible = taskMcpForDaemon(servers, mcpToolFilters)
     if (compatible.length !== servers.length) {
       await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
       return RouteResponse.json({ error: 'Upgrade the Mikka daemon before using MCP tool filters.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, minVersion: MIN_DAEMON_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
@@ -649,8 +650,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         || current.agentDefinition?.projectExecution?.workspaceId !== workspaceId)) return false
     if (mcpAuthority?.servers.length) {
       try {
-        const { lockNativeMcpAuthority } = await import('@/lib/plugins/workspace-mcp')
-        await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
+        const [{ lockNativeMcpAuthority }, { withLockedToolSwitches }] = await Promise.all([import('@/lib/plugins/workspace-mcp'), import('@/lib/plugins/native-mcp')])
+        const locked = await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
+        // A tool switched since the export is delivered as it is now, never stale; the run is not refused.
+        if (mcp?.servers) mcp.servers = withLockedToolSwitches(mcp.servers, locked, mcpToolFilters)
       } catch (error) {
         if (!(error instanceof PluginError)) throw new McpValidationError('connection_lock', error)
         if (error.code !== 'mcpUnavailable') return false

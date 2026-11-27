@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createEveApprovalBridge, type ApprovalCall, type ApprovalRecord } from './approval-bridge'
+import type { NativeWriteDecision } from '../operations/native-write-review'
 
 const call: ApprovalCall = { ownerId:'owner',botId:'bot',workspaceId:'workspace',surface:'web',sessionId:'session',turnId:'turn',callId:'call',name:'send_email',input:{to:['person@example.invalid'],body:'Final text'},sourceEventId:'event' }
-const responder = {authenticator:'mikka',principalType:'user',principalId:'owner',attributes:{botId:'bot',workspaceId:'workspace',surface:'web'}}
-function fixture(decision:'allow'|'ask'|'deny'='ask',early?:unknown) {
+function fixture(decision:NativeWriteDecision='allow',early?:unknown) {
   const records = new Map<string,ApprovalRecord>()
   let sends = 0
   const audits:string[]=[]
@@ -21,66 +21,53 @@ function fixture(decision:'allow'|'ask'|'deny'='ask',early?:unknown) {
     async run(_call,review) {
       if(early!==undefined)return early
       const result=await review(decision,{ownerId:call.ownerId,botId:call.botId,action:call.name,input:call.input,accountId:'account',version})
-      if(result!=='allow') return {error:result==='deny'?'integrationActionDenied':'integrationApprovalRequired'}
+      if(result!=='allow') return {error:'integrationActionDenied'}
       sends++
       if(uncertain)throw new Error('synthetic lost response')
       return {status:'done',actionId:'receipt'}
     },
   })
-  return {bridge,records,audits,sends:()=>sends,setDecision:(value:typeof decision)=>{decision=value},setVersion:(value:string)=>{version=value},loseResponse:()=>{uncertain=true}}
+  return {bridge,records,audits,sends:()=>sends,setDecision:(value:NativeWriteDecision)=>{decision=value},setVersion:(value:string)=>{version=value},loseResponse:()=>{uncertain=true}}
 }
 
-test('Ask uses native approval without executing; an exact owner response sends once',async()=>{
+test('review records the exact plan without executing or prompting; execution sends once and replays',async()=>{
   const f=fixture()
-  assert.equal((await f.bridge.review(call))?.status,'user-approval')
-  // Values recorded before the shared digest was used. Existing stored approvals must replay.
-  assert.deepEqual([...f.records], [['8505ac4f74f6f8e3e7867a3ec13efa1bf2a643ffc7cc474370f628f26459374f', {
-    callDigest:'bfb67ebb985eea7dd2dd9d319f4ebf56348d46e2891fa598e94c0220e9c3972d',
-    planDigest:'f058d6fd51f072776796cbc61675ec995861ef8b5edc3412df2089dbc53dbb47',
-    decision:'ask',status:'prepared',
-  }]])
+  assert.equal((await f.bridge.review(call))?.status,'not-applicable')
+  const [[, record]] = [...f.records]
+  assert.equal(record.decision,'allow'); assert.equal(record.status,'prepared')
   assert.equal(f.sends(),0)
   assert.deepEqual(f.audits,[])
-  await assert.rejects(f.bridge.execute(call),/writeApprovalRequired/)
-  const output=await f.bridge.execute(call,responder)
+  const output=await f.bridge.execute(call)
   assert.deepEqual(output,{status:'done',actionId:'receipt'})
-  assert.deepEqual(await f.bridge.execute(call,responder),output)
+  assert.deepEqual(await f.bridge.execute(call),output)
   assert.equal(f.sends(),1)
   assert.deepEqual(f.audits,['before','after'])
 })
 
-test('Allow needs no native prompt and Deny never acquires an execution receipt',async()=>{
-  const allowed=fixture('allow')
-  assert.equal((await allowed.bridge.review(call))?.status,'not-applicable')
-  assert.equal(allowed.sends(),0)
-  await allowed.bridge.execute(call)
-  assert.equal(allowed.sends(),1)
+test('a deny never acquires an execution receipt',async()=>{
   const denied=fixture('deny')
   assert.equal((await denied.bridge.review(call))?.status,'denied')
-  await assert.rejects(denied.bridge.execute(call,responder),/integrationActionDenied/)
+  await assert.rejects(denied.bridge.execute(call),/integrationActionDenied/)
   assert.equal(denied.sends(),0)
 })
 
-test('another principal, Bot, Workspace, surface or authenticator cannot approve',async()=>{
-  const f=fixture();await f.bridge.review(call)
-  for(const forged of [
-    {...responder,principalId:'other'}, {...responder,principalType:'service'}, {...responder,authenticator:'slack'},
-    {...responder,attributes:{...responder.attributes,botId:'other'}},
-    {...responder,attributes:{...responder.attributes,workspaceId:'other'}},
-    {...responder,attributes:{...responder.attributes,surface:'slack'}},
-  ])await assert.rejects(f.bridge.execute(call,forged),/writeApprovalRequired/)
+test('a record stored as "ask" before ADR 2026-11-27-1615 is never run: nothing approves it now',async()=>{
+  const f=fixture()
+  await f.bridge.review(call)
+  const [[key, record]] = [...f.records]
+  f.records.set(key,{...record,decision:'ask' as unknown as NativeWriteDecision})
+  assert.equal((await f.bridge.review(call))?.status,'denied')
+  await assert.rejects(f.bridge.execute(call),/integrationActionDenied/)
   assert.equal(f.sends(),0)
-  await f.bridge.execute(call,responder)
-  assert.equal(f.sends(),1)
 })
 
-test('approval is bound to exact tool, input, execution and source event',async()=>{
+test('the replay record is bound to exact tool, input, execution and source event',async()=>{
   const f=fixture();await f.bridge.review(call)
   for(const changed of [
     {...call,name:'create_calendar_event'}, {...call,input:{...call.input as object,body:'Changed'}},
     {...call,sourceEventId:'other'}, {...call,executionId:'other'},
-  ])await assert.rejects(f.bridge.execute(changed,responder),/operationBindingConflict/)
-  await assert.rejects(f.bridge.execute({...call,callId:'other'},responder),/writeApprovalRequired/)
+  ])await assert.rejects(f.bridge.execute(changed),/operationBindingConflict/)
+  await assert.rejects(f.bridge.execute({...call,callId:'other'}),/writeApprovalRequired/)
   assert.equal(f.sends(),0)
 })
 
@@ -88,34 +75,34 @@ test('changed resolved account version or current policy refuses dispatch',async
   for(const change of ['version','policy']) {
     const f=fixture();await f.bridge.review(call)
     if(change==='version')f.setVersion('changed');else f.setDecision('deny')
-    await assert.rejects(f.bridge.execute(call,responder),/writePolicyChanged/)
+    await assert.rejects(f.bridge.execute(call),/writePolicyChanged/)
     assert.equal(f.sends(),0)
   }
 })
 
-test('simultaneous native responses and an uncertain provider outcome never resend',async()=>{
+test('simultaneous executions and an uncertain provider outcome never resend',async()=>{
   const f=fixture();await f.bridge.review(call)
-  const result=await Promise.all([f.bridge.execute(call,responder),f.bridge.execute(call,responder)])
+  const result=await Promise.all([f.bridge.execute(call),f.bridge.execute(call)])
   assert.equal(f.sends(),1)
   assert.ok(result.some(output=>(output as {error?:string}).error==='operationUncertain'))
   const lost=fixture();await lost.bridge.review(call);lost.loseResponse()
-  await assert.rejects(lost.bridge.execute(call,responder),/synthetic lost response/)
-  assert.deepEqual(await lost.bridge.execute(call,responder),{error:'operationUncertain'})
+  await assert.rejects(lost.bridge.execute(call),/synthetic lost response/)
+  assert.deepEqual(await lost.bridge.execute(call),{error:'operationUncertain'})
   assert.equal(lost.sends(),1)
   assert.deepEqual(lost.audits,['before','error'])
 })
 
-test('an aborted native response cannot claim or dispatch the write',async()=>{
+test('an aborted execution cannot claim or dispatch the write',async()=>{
   const f=fixture();await f.bridge.review(call)
-  await assert.rejects(f.bridge.execute(call,responder,AbortSignal.abort()))
+  await assert.rejects(f.bridge.execute(call,AbortSignal.abort()))
   assert.equal(f.sends(),0);assert.deepEqual(f.audits,[])
-  await f.bridge.execute(call,responder)
+  await f.bridge.execute(call)
   assert.equal(f.sends(),1)
 })
 
-test('account selection and connection errors survive native preflight without a prompt or send',async()=>{
+test('account selection and connection errors survive preflight without a send',async()=>{
   for(const output of [{error:'integrationAccountSelectionRequired',accounts:[{id:'account-a',alias:'Work'},{id:'account-b',alias:'Personal'}]},{error:'integrationNotConnected'}]) {
-    const f=fixture('ask',output)
+    const f=fixture('allow',output)
     assert.equal((await f.bridge.review(call))?.status,'not-applicable')
     assert.deepEqual(await f.bridge.execute(call),output)
     assert.equal(f.sends(),0);assert.deepEqual(f.audits,[])
