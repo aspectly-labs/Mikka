@@ -23,6 +23,7 @@ import {
   billingCatalogPath,
   billingCatalogViewSchema,
   DEFAULT_CREDIT_CONVERSION,
+  deriveE2BMachineSkuCatalog,
   deriveMachineSkuCatalog,
   fetchBillingCatalog,
   formatCatalogCurrency,
@@ -237,6 +238,18 @@ test('resolveBillingCatalog falls back gracefully without fabricating prices whe
   assert.deepEqual(unconfigured.plans, [])
   assert.equal(unconfigured.activeOffer, null)
   assert.equal(unconfigured.machineSkus.length, selectableMachineSizeOptions().length)
+  assert.equal('e2bMachineSkus' in unconfigured, false)
+
+  const withE2B = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: { NODE_ENV: 'test', MIKKA_EDITION: 'community' },
+    fetchImpl: unexpectedFetch,
+    now: new Date('2026-11-15T12:00:00Z'),
+    activeOfferOverride: SAMPLE_OFFER,
+    checkOfferEligibility: () => true,
+    includeE2BMachineSkus: true,
+  })
+  assert.equal(withE2B.e2bMachineSkus?.length, 4)
 
   // Configured Stripe returning HTTP 503 fails gracefully with empty plans and null activeOffer.
   const failing = makeStripeFetch({ error: { message: 'secret_internal_detail' } }, 503)
@@ -569,6 +582,17 @@ test('machine SKUs derive directly from selectableMachineSizeOptions and exclude
   assert.ok(defaultSku)
   assert.equal(defaultSku.id, 'standard-3')
   assert.equal(defaultSku.hourlyRateCents, 20)
+
+  const e2bSkus = deriveE2BMachineSkuCatalog()
+  assert.deepEqual(
+    e2bSkus.map(sku => [sku.id, sku.hourlyRateCents, sku.perSecondMicroUsd, sku.provider, sku.isDefault]),
+    [
+      ['small', 12, 32, 'e2b', false],
+      ['medium', 23, 64, 'e2b', true],
+      ['large', 46, 128, 'e2b', false],
+      ['ultra', 92, 256, 'e2b', false],
+    ],
+  )
 })
 
 test('catalog-client pure formatters, keys, and fetchBillingCatalog work without server-only dependencies', async () => {

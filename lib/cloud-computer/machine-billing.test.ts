@@ -1,7 +1,27 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PaidResourceError } from '@/lib/abuse/policy'
-import { DEFAULT_MACHINE_SIZE, MACHINE_CHUNK_MS, machineChunkMicroUsd, machineHourlyUsd, machineSkuListPrice, machineSkuGeometry, machinePriceIsEffective, machineLedgerLabel, prepaidMachineMicroUsd, machineListUsageMicroUsd, MACHINE_LIST_PRICE_START } from './machine-pricing'
+import {
+  DEFAULT_E2B_MACHINE_SIZE,
+  DEFAULT_MACHINE_SIZE,
+  E2B_MICRO_USD_PER_GIB_SECOND,
+  E2B_MICRO_USD_PER_VCPU_SECOND,
+  MACHINE_CHUNK_MS,
+  MACHINE_LIST_PRICE_START,
+  e2bAwakeSecondsMicroUsd,
+  e2bHourlyMicroUsd,
+  e2bHourlyRateCents,
+  e2bPerSecondMicroUsd,
+  machineChunkMicroUsd,
+  machineHourlyUsd,
+  machineLedgerLabel,
+  machineListUsageMicroUsd,
+  machinePriceIsEffective,
+  machineSkuGeometry,
+  machineSkuListPrice,
+  prepaidMachineMicroUsd,
+  selectableE2BMachineSizeOptions,
+} from './machine-pricing'
 import { fundMachineChunk, machineChunkId, type MachineBillingDependencies, type MachineChunk } from './machine-billing'
 
 test('machines are priced by memory at USD 0.025 per GiB-hour; standard-3 is the default', () => {
@@ -78,4 +98,32 @@ test('provider quotes use effective dates, exact resource prices and five-minute
   assert.equal(machineLedgerLabel(cloudflare), 'machine/cloudflare-standard-3')
   assert.equal(machineLedgerLabel({ provider: 'e2b', size: 'medium' }), 'machine/e2b-medium')
   assert.equal(machineChunkId({ provider: 'e2b', runId: 'run', operationId: 'op', index: 2 }), 'machine:e2b:op:2')
+})
+
+test('E2B tiers price at-cost per awake second with zero cost when paused', () => {
+  assert.equal(E2B_MICRO_USD_PER_VCPU_SECOND, 14)
+  assert.equal(E2B_MICRO_USD_PER_GIB_SECOND, 4.5)
+  assert.equal(DEFAULT_E2B_MACHINE_SIZE, 'medium')
+  const options = selectableE2BMachineSizeOptions()
+  assert.deepEqual(
+    options.map(option => ({
+      id: option.id,
+      vcpu: option.vcpu,
+      ramGib: option.ramGib,
+      hourlyRateCents: option.hourlyRateCents,
+      perSecondMicroUsd: option.perSecondMicroUsd,
+      isDefault: option.isDefault,
+    })),
+    [
+      { id: 'small', vcpu: 1, ramGib: 4, hourlyRateCents: 12, perSecondMicroUsd: 32, isDefault: false },
+      { id: 'medium', vcpu: 2, ramGib: 8, hourlyRateCents: 23, perSecondMicroUsd: 64, isDefault: true },
+      { id: 'large', vcpu: 4, ramGib: 16, hourlyRateCents: 46, perSecondMicroUsd: 128, isDefault: false },
+      { id: 'ultra', vcpu: 8, ramGib: 32, hourlyRateCents: 92, perSecondMicroUsd: 256, isDefault: false },
+    ],
+  )
+  assert.equal(e2bHourlyRateCents('small'), 12)
+  assert.equal(e2bPerSecondMicroUsd('ultra'), 256)
+  assert.equal(e2bAwakeSecondsMicroUsd(e2bHourlyMicroUsd('small'), 0), 0)
+  assert.equal(e2bAwakeSecondsMicroUsd(e2bHourlyMicroUsd('small'), 60), 1_920)
+  assert.equal(e2bAwakeSecondsMicroUsd(e2bHourlyMicroUsd('medium'), 300), 19_200)
 })

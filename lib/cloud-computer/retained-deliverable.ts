@@ -224,6 +224,10 @@ export function createRetainedDeliverableObserver(pool: Pool,
     if (failure && leased && (!connectAttempted || (connectConfirmed && confirmedPaused))) {
       await release().catch(() => undefined)
     }
+    if (confirmedPaused && runtime === defaultRuntime) {
+      const { settleE2BAwakeInterval } = await import('./e2b-compute-billing')
+      await settleE2BAwakeInterval(scope.ownerId, scope.sandboxId)
+    }
     if (failure || !snapshot || !confirmedPaused) {
       try { runtime.log(JSON.stringify({ event: 'retained_deliverable_observation_failed', runId: scope.machineRunId, phase, ...(probeCode ? { code: probeCode } : {}) })) } catch { /* Diagnostics never change the recovery outcome. */ }
       throw unavailable()

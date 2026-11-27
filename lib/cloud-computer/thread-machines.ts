@@ -11,7 +11,7 @@ import { daemonTraceSettings } from '@/lib/tracing/config'
 import 'server-only'
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { admittedTaskCompute, allocatedTaskProvider, previousTaskComputeSource } from './task-compute-provider'
-import { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, verifyE2BAllocation, e2bSnapshotFallbackSafe } from './e2b-compute-billing'
+import { createPrepaidE2B, e2bCanReplaceOperation, e2bCreationTimeout, settleE2BAwakeInterval, verifyE2BAllocation, e2bSnapshotFallbackSafe } from './e2b-compute-billing'
 import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { runListChanged } from '../live/lists'
 import { rebindExecutionDevice, revalidateExecutionIdentity } from '../execution-identity'
@@ -468,7 +468,10 @@ export async function acknowledgeQueuedThreadStop(pool: Pool, actor: Actor, runI
     // The persisted stop blocks claims; these same run/machine locks fence
     // adoption and provisioning. No nested transaction or Run write is used.
     if (machine.snapshotId === hostedSnapshot && sponsored) await releaseOwnedCloudflareTaskMachine(client,actor,runId,machine.operationId)
-    else if (machine.snapshotId !== hostedSnapshot && kill) await kill(machine.sandboxId)
+    else if (machine.snapshotId !== hostedSnapshot && kill) {
+      await kill(machine.sandboxId)
+      await settleE2BAwakeInterval(actor.userId, machine.sandboxId, undefined, client)
+    }
     else { await client.query('ROLLBACK'); return false }
     await endStopRequestedRun(client, actor, runId, machine.sandboxId)
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
@@ -778,7 +781,10 @@ export async function parkThreadMachine(pool: Pool, actor: Actor, runId: string,
               WHERE "runId"=$1 AND epoch=$2 AND "sandboxId"=$3 AND "operationId"=$5`,
             [runId, machine.epoch, machine.sandboxId, JSON.stringify(checkpoint), machine.operationId])
         }
-        else await withDatabaseClient(client, () => pause(machine.sandboxId))
+        else {
+          await withDatabaseClient(client, () => pause(machine.sandboxId))
+          await settleE2BAwakeInterval(actor.userId, machine.sandboxId, undefined, client)
+        }
       }
     }
     // An already paused provider/row still needs token revocation after a lost
@@ -1100,6 +1106,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       await afterRunEnded(actor.userId, runId)
       if (stale) {
         await provider.kill(stale, actor.userId)
+        await settleE2BAwakeInterval(actor.userId, stale)
         await recordCancelledThreadSessionEnd(pool, { runId, ownerId: actor.userId, workspaceId: actor.workspaceId, sandboxId: stale, operationId: machine.operationId })
       }
       throw new ComputerError(409, 'Thread stopped')
@@ -1372,6 +1379,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
         // lease may share the idempotent sandbox and must not have it killed.
         if (await recordCancelledSandbox(pool, runId, sandbox.sandboxId, machine.operationId)) {
           await provider.kill(sandbox.sandboxId, actor.userId)
+          await settleE2BAwakeInterval(actor.userId, sandbox.sandboxId)
           await recordCancelledThreadSessionEnd(pool, { runId, ownerId: actor.userId, workspaceId: actor.workspaceId, sandboxId: sandbox.sandboxId, operationId: machine.operationId })
         }
       }
@@ -1406,6 +1414,7 @@ async function ensureThreadMachineInternal(pool: Pool, actor: Actor, runId: stri
       await afterRunEnded(actor.userId, runId)
       if (stale) {
         await provider.kill(stale, actor.userId)
+        await settleE2BAwakeInterval(actor.userId, stale)
         await recordCancelledThreadSessionEnd(pool, { runId, ownerId: actor.userId, workspaceId: actor.workspaceId, sandboxId: stale, operationId: machine.operationId })
       }
       throw new ComputerError(409, 'Thread stopped')
@@ -1836,7 +1845,10 @@ export async function threadMachineAction(pool: Pool, actor: Actor, runId: strin
     if (sandboxId && !wasPaused && !hosted) await keepTailBeforeKill(pool, actor, runId, sandboxId)
     try {
       if (hosted && operationId && (sandboxId || creationPending)) await releaseOwnedCloudflareTaskMachine(pool,actor,runId,operationId)
-      else if (!hosted && sandboxId) await threadMachineProvider.kill(sandboxId, actor.userId).catch(error => { if (!sandboxGone(error)) throw error })
+      else if (!hosted && sandboxId) {
+        await threadMachineProvider.kill(sandboxId, actor.userId).catch(error => { if (!sandboxGone(error)) throw error })
+        await settleE2BAwakeInterval(actor.userId, sandboxId)
+      }
       const retired = await pool.query(`UPDATE thread_machines SET "sandboxId"=NULL,"workerLeaseUntil"=NULL,"lifecycleAt"=NULL,
         lifecycle=(lifecycle-'reconcileId'-'reconcileUntil')||jsonb_build_object('phase','retired','owner','run-recovery','failures',0)
         WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND epoch=$4 AND state='ended'

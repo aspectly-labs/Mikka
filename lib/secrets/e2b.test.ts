@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { byoE2BKeyEnabled, e2bErrorCode, verifyE2BKey } from './e2b'
 
-test('BYO cannot be disabled to spend the platform key', () => {
+test('BYO cannot be disabled to spend the platform key outside cloud', () => {
   for (const value of [undefined, '', '0', 'true', 'yes']) assert.equal(byoE2BKeyEnabled({ MIKKA_BYO_E2B_KEY: value }), true)
   assert.equal(byoE2BKeyEnabled({ MIKKA_BYO_E2B_KEY: '1' }), true)
+  assert.equal(byoE2BKeyEnabled({ MIKKA_EDITION: 'cloud' }), false)
+  assert.equal(byoE2BKeyEnabled({ MIKKA_EDITION: 'cloud', MIKKA_BYO_E2B_KEY: '1' }), false)
 })
 
 test('verify maps E2B responses and sends the key only as X-API-Key', async () => {

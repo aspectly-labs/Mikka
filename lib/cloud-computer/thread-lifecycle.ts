@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ThreadMachineFence } from './thread-machines'
 import { threadLifecycleProvider, type ThreadProviderInfo } from './thread-lifecycle-provider'
-import { E2B_RENEW_LEAD_MS, E2B_REVIEW_TIMEOUT_MARGIN_MS, e2bCreationRecoveryAt, voidUnallocatedE2BCompute } from './e2b-compute-billing'
+import { E2B_RENEW_LEAD_MS, E2B_REVIEW_TIMEOUT_MARGIN_MS, e2bCreationRecoveryAt, settleE2BAwakeInterval, voidUnallocatedE2BCompute } from './e2b-compute-billing'
 import { logThreadLifecycle, threadLifecycleErrorKind } from './thread-lifecycle-log'
 import { taskActivityChanged } from '../factory/activity-live'
 import { jsonbSafeBigIntSql, jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
@@ -425,6 +425,12 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
       if (provider.state === 'paused' && (TERMINAL.has(row.status) || (row.status === 'queued' && !live(row.leaseExpiresAt, now))
         || (row.status === 'paused' && row.pauseReason === 'quota_exhausted' && row.safeExit)))
         await deps.park(pool, actor, runId, fenceOf(row))
+    }
+    if (provider?.state === 'paused' && !live(row.workerLeaseUntil, now) && row.state !== 'ended' && row.sandboxId) {
+      await settleE2BAwakeInterval(actor.userId, row.sandboxId, new Date(now), undefined, {
+        runId: row.runId,
+        expectedEpoch: row.epoch,
+      })
     }
     const decision = threadMachineLifecycleDecision(row, provider, now)
     if (decision.action === 'retire') {

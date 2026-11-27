@@ -26,6 +26,7 @@ import {
   billingPlanCatalogEntrySchema,
   creditConversionSchema,
   DEFAULT_CREDIT_CONVERSION,
+  deriveE2BMachineSkuCatalog,
   deriveMachineSkuCatalog,
   machineSkuCatalogEntrySchema,
   type BillingActiveOffer,
@@ -672,6 +673,7 @@ export interface ResolveBillingCatalogOptions {
   activeOfferOverride?: BillingActiveOfferPayload | null
   checkOfferEligibility?: (workspaceId: string) => Promise<boolean> | boolean
   bypassCache?: boolean
+  includeE2BMachineSkus?: boolean
 }
 
 /**
@@ -761,6 +763,7 @@ export async function resolveBillingCatalog(
     plans,
     creditConversion: DEFAULT_CREDIT_CONVERSION,
     machineSkus: deriveMachineSkuCatalog(),
+    ...(options.includeE2BMachineSkus ? { e2bMachineSkus: deriveE2BMachineSkuCatalog() } : {}),
     activeOffer,
     fetchedAt: new Date(nowMs).toISOString(),
   })

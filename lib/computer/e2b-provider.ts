@@ -1,5 +1,5 @@
 import 'server-only'
-import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, withE2BProviderTime, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
+import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, settleE2BAwakeInterval, withE2BProviderTime, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
 import { isCloudEdition } from '@/lib/edition'
 import { releasedDesktopWorker } from '@/lib/cloud-template-models'
 import { armDueTimerSoon } from '@/lib/due-timer'
@@ -95,6 +95,7 @@ export async function killComputer(workspaceId: string, id: string) {
   const owner = await ownerOf(workspaceId, id)
   const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
   await withE2BErrors(owner, false, () => Sandbox.kill(id, base))
+  await settleE2BAwakeInterval(owner, id)
 }
 
 export async function computerState(workspaceId: string, id: string, observed?: (expiresAt: Date) => void) {

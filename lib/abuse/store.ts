@@ -21,6 +21,32 @@ const abandonedHold = `"settledAt" IS NULL AND (("createdAt" < now() - interval 
 const releaseMachineHold = `"machineCompute"="machineCompute"||'{"outcome":"measurement_expired"}'::jsonb,
   "machineComputeReviewAt"=NULL`
 type Query = Pick<PoolClient, 'query'>
+
+function reduceBucketAllocations(
+  allocations: Record<string, number>,
+  newBucketTotal: number,
+  orderedGrantIds: string[],
+) {
+  let allocatedTotal = 0
+  for (const amount of Object.values(allocations)) allocatedTotal += Number(amount)
+  let toRemove = Math.max(0, allocatedTotal - newBucketTotal)
+  if (toRemove <= 0) return
+  const order = [...orderedGrantIds]
+  const seen = new Set(order)
+  for (const grantId of Object.keys(allocations).reverse()) {
+    if (!seen.has(grantId)) order.push(grantId)
+  }
+  for (const grantId of order) {
+    const current = Number(allocations[grantId] ?? 0)
+    if (current <= 0) continue
+    const cut = Math.min(current, toRemove)
+    const next = current - cut
+    if (next > 0) allocations[grantId] = next
+    else delete allocations[grantId]
+    toRemove -= cut
+    if (toRemove === 0) break
+  }
+}
 export type HostedQuotaLease = { limit: number; close(): Promise<void>;
   billingAccount?: { workspaceId: string; organizationId: string | null } }
 export class HostedUsageStore {
@@ -588,5 +614,106 @@ export class HostedUsageStore {
         [workspaceId, sourceWorkspaceId ?? null],
       )
     ).rows
+  }
+
+  /**
+   * Adjusts a settled prepaid machine chunk downward after actual awake seconds are observed.
+   * Refunds LIFO across allocations so available credits and monthly overage headroom recover immediately.
+   */
+  async adjustSettledMachineCost(
+    id: string,
+    workspaceId: string,
+    ownerId: string,
+    targetCostMicroUsd: number,
+    existingTx?: Query,
+  ): Promise<{ adjusted: boolean; refundedMicroUsd: number }> {
+    if (!this.metered) return { adjusted: false, refundedMicroUsd: 0 }
+    if (!Number.isSafeInteger(targetCostMicroUsd) || targetCostMicroUsd < 0) {
+      throw new Error('invalid_usage_cost')
+    }
+    const apply = async (tx: Query) => {
+      const row = (
+        await tx.query(
+          'SELECT * FROM hosted_usage WHERE id=$1 AND COALESCE("usageWorkspaceId","workspaceId")=$2 AND "executionOwnerId" IS NOT DISTINCT FROM $3 FOR UPDATE',
+          [id, workspaceId, ownerId],
+        )
+      ).rows[0]
+      if (!row || row.state !== 'settled' || row.costMicroUsd === null) {
+        return { adjusted: false, refundedMicroUsd: 0 }
+      }
+      await this.lock(tx, row.workspaceId)
+      const oldCost = Number(row.costMicroUsd)
+      if (!Number.isFinite(oldCost) || targetCostMicroUsd >= oldCost) {
+        return { adjusted: false, refundedMicroUsd: 0 }
+      }
+      let remainingReduction = oldCost - targetCostMicroUsd
+      let unpaid = Number(row.unpaidMicroUsd ?? 0)
+      let free = Number(row.freeMicroUsd ?? 0)
+      let plan = Number(row.planMicroUsd ?? 0)
+      let purchased = Number(row.purchasedMicroUsd ?? 0)
+      const planAllocations = { ...(row.planAllocations as Record<string, number> | null) }
+      const purchasedAllocations = { ...(row.purchasedAllocations as Record<string, number> | null) }
+
+      const nonFreeUnpaid = Math.max(0, unpaid - free)
+      const unpaidReduce = Math.min(remainingReduction, nonFreeUnpaid)
+      unpaid -= unpaidReduce
+      remainingReduction -= unpaidReduce
+
+      const lifoGrantIds = async (allocations: Record<string, number>) => {
+        const ids = Object.keys(allocations)
+        if (!ids.length) return []
+        const { rows } = await tx.query<{ id: string }>(
+          `SELECT id FROM workspace_credit_grants
+           WHERE "workspaceId"=$1 AND id = ANY($2::uuid[])
+           ORDER BY "expiresAt" DESC NULLS FIRST, id DESC`,
+          [row.workspaceId, ids],
+        )
+        return rows.map(grant => grant.id)
+      }
+
+      const purchasedReduce = Math.min(remainingReduction, purchased)
+      purchased -= purchasedReduce
+      remainingReduction -= purchasedReduce
+      if (purchasedReduce > 0) {
+        reduceBucketAllocations(purchasedAllocations, purchased, await lifoGrantIds(purchasedAllocations))
+      }
+
+      const planReduce = Math.min(remainingReduction, plan)
+      plan -= planReduce
+      remainingReduction -= planReduce
+      if (planReduce > 0) {
+        reduceBucketAllocations(planAllocations, plan, await lifoGrantIds(planAllocations))
+      }
+
+      const freeReduce = Math.min(remainingReduction, free)
+      free -= freeReduce
+      unpaid = Math.max(0, unpaid - freeReduce)
+      if (freeReduce > 0) {
+        await tx.query(
+          'UPDATE hosted_allowances SET remaining=remaining+$2 WHERE "workspaceId"=$1',
+          [row.workspaceId, freeReduce],
+        )
+      }
+
+      const nextState = targetCostMicroUsd === 0 ? 'failed' : 'settled'
+      await tx.query(
+        `UPDATE hosted_usage SET state=$2,"costMicroUsd"=$3,"freeMicroUsd"=$4,"purchasedMicroUsd"=$5,
+          "unpaidMicroUsd"=$6,"planMicroUsd"=$7,"planAllocations"=$8,"purchasedAllocations"=$9,"platformMicroUsd"=$4
+         WHERE id=$1`,
+        [
+          id,
+          nextState,
+          targetCostMicroUsd,
+          free,
+          purchased,
+          unpaid,
+          plan,
+          JSON.stringify(planAllocations),
+          JSON.stringify(purchasedAllocations),
+        ],
+      )
+      return { adjusted: true, refundedMicroUsd: oldCost - targetCostMicroUsd }
+    }
+    return existingTx ? apply(existingTx) : this.transaction(apply)
   }
 }
