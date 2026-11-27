@@ -11369,6 +11369,7 @@
     "offlineKept": "未发送的内容会保留，联网后继续"
   },
   "ConversationDirectory": {
+    "groupChat": "多人线程",
     "loading": "正在加载线程…",
     "waiting": "待处理",
     "search": "搜索线程",

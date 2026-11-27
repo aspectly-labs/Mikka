@@ -11369,6 +11369,7 @@
     "offlineKept": "Unsent text stays here until you are back online"
   },
   "ConversationDirectory": {
+    "groupChat": "Group chat",
     "loading": "Loading threads…",
     "waiting": "Waiting",
     "search": "Search threads",
