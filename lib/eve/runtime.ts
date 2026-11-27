@@ -37,7 +37,7 @@ export async function modelForSession(ctx: DynamicModelContext) {
     const [{ HostedWorkflowModel }, { eveTurnRef }] = await Promise.all([import('../abuse/workflow-model'), import('../usage-turn-ref')])
     // The receipt names the turn the saved reply carries as mikkaStreamId (lib/eve/projection.ts).
     const turnRef = ctx.turn ? eveTurnRef(ctx.session.id, ctx.turn.id) : null
-    let hostedModel = withModelEffort(new HostedWorkflowModel(scope.ownerId, scope.botId, runtime.model, turnRef), runtime.effort)
+    let hostedModel = withModelEffort(new HostedWorkflowModel(scope.ownerId, scope.botId, runtime.model, turnRef, runtime.pro), runtime.pro ? undefined : runtime.effort)
     // Hosted Credits speed capability is verified server-side when freezing HostedRuntimeSnapshot.
     if (runtime.serviceTier === 'fast' || runtime.serviceTier === 'ultrafast') {
       hostedModel = withModelServiceTier(hostedModel, runtime.serviceTier)
@@ -47,14 +47,22 @@ export async function modelForSession(ctx: DynamicModelContext) {
   const [{ SubscriptionWorkflowModel }, { streamingModel }] = await Promise.all([
     import('../subscription-workflow-model'), import('./streaming-model'),
   ])
-  const requestPolicy = ctx.session.parent || turnRequest.get().scheduledRead || runtime.serviceTier === 'standard'
+  const basePolicy = runtime.pro && runtime.modelSelection.type === 'api_key' ? { apiKeyPro: true as const } : ctx.session.parent || turnRequest.get().scheduledRead || runtime.serviceTier === 'standard'
     ? undefined
     : runtime.serviceTier === 'ultrafast'
       ? { codexServiceTier: 'ultrafast' as const, apiKeyServiceTier: 'ultrafast' as const }
       : runtime.serviceTier === 'fast'
         ? { codexServiceTier: 'priority' as const, claudeSpeed: 'fast' as const, apiKeyServiceTier: 'fast' as const }
         : { codexServiceTier: 'priority' as const }
-  return withModelEffort(streamingModel(new SubscriptionWorkflowModel(runtime.modelSelection, requestPolicy)), runtime.effort)
+  const daybreakPolicy = !runtime.cyberAccessProgram
+    ? undefined
+    : runtime.modelSelection.type === 'api_key'
+      ? { apiKeyCyberAccessProgram: runtime.cyberAccessProgram }
+      : runtime.modelSelection.route === 'codex_cpa'
+        ? { codexCyberAccessProgram: runtime.cyberAccessProgram }
+        : undefined
+  const requestPolicy = basePolicy || daybreakPolicy ? { ...basePolicy, ...daybreakPolicy } : undefined
+  return withModelEffort(streamingModel(new SubscriptionWorkflowModel(runtime.modelSelection, requestPolicy)), runtime.pro ? undefined : runtime.effort)
 }
 
 export async function instructionsForSession(ctx: DynamicModelContext) {

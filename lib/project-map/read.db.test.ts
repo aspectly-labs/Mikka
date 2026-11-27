@@ -1,3 +1,4 @@
+import { isCloudEdition } from '../edition'
 import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -440,10 +441,11 @@ test('project map uses real PostgreSQL and normal HTTP PAT authorization', { ski
         cachedSessionOwner = owner; measurement = { queries: 0, selects: 0, bytes: 0 }; overrideDeploymentSwitch('dbEgressSample', true)
         const response = await get('', null, '/mikka/api/projects/' + project + '/map', shared.id), body = await response.json()
         assert.equal(response.status, 200, JSON.stringify(body)); assert.equal(body.page.matchedCount, nodes)
-        assert.equal(measurement.queries, 8); assert.equal(measurement.selects, 8)
+        const statements = isCloudEdition() ? 7 : 8
+        assert.equal(measurement.queries, statements); assert.equal(measurement.selects, statements)
         assert.ok(measurement.bytes <= (nodes === 500 ? 80 * 1024 : 100_000), `cached-session path returned ${measurement.bytes} DB JSON bytes`)
         t.diagnostic(JSON.stringify({ fixture: 'isolated-exact-production-layout-http', issues: 100, runs: totalRuns, nodes, ...measurement,
-          auth: 'cached session resolver stub; no cookie parsing measured', masking: 'enabled, two real database reads',
+          auth: 'cached session resolver stub; no cookie parsing measured', masking: isCloudEdition() ? 'enabled, one hosted material read' : 'enabled, material and member reads',
           includes: 'fresh pre/post workspace and issue ACL, live revision, all graph facts, masking', excludes: 'PostgreSQL wire framing and production network' }))
       } finally {
         cachedSessionOwner = null; measurement = null; overrideDeploymentSwitch('dbEgressSample', undefined)

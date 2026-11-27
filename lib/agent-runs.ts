@@ -124,6 +124,7 @@ type LocalDispatchInput = { issueId: string; agentId: string; repo: string; note
   policyCeiling?: RunModel['policyCeiling']
   /** The run this one continues, named when the model is missing. */
   threadRunId?: string
+  refreshTaskEnvironment?: true
   pinnedDeviceId?: string; readOnly?: boolean
   /** The API key the 优先使用的模型 entry names; the run uses it only when it may (lib/run-credential-source.ts). */
   apiKeyId?: string
@@ -313,7 +314,7 @@ async function queueAdmittedRun(userId: string, input: Omit<LocalDispatchInput, 
       .catch(error => { if (error instanceof ExecutionIdentityError) throw new ActionFailureError('executionAccountUnavailable'); throw error })
   }
   return (await import('@/lib/run-admission-store')).acceptLocalRun({ id: runId, userId, botId, issueId: issue.id, agentId: agent.id, deviceId: agent.deviceId,
-    deviceRepoId: repo.id, prompt, promptTaskLength, source: dispatch.source, origin: dispatch.origin, originRef: dispatch.originRef, definition: agentDefinition!, profileSourceRunId: input.threadRunId, factoryContext: internal?.factoryContext, ...(requestEventId ? { requestEventId } : {}), ...(parsed.data.requestKey ? { dispatch: { issueId: issue.id, agentId: agent.id, deviceRepoId: repo.id, note: parsed.data.note, requestKey: parsed.data.requestKey, ...(parsed.data.subscriptionBindingId ? { subscriptionBindingId: parsed.data.subscriptionBindingId } : {}) } } : {}), ...(internal ? { continuation: true, sourceRunId: internal.sourceRunId, frozenSourceRunId: internal.frozenSourceRunId } : {}), ...(input.delegation ? { delegation: input.delegation, continuation: true } : {}) }, internal?.client)
+    deviceRepoId: repo.id, prompt, promptTaskLength, source: dispatch.source, origin: dispatch.origin, originRef: dispatch.originRef, definition: agentDefinition!, profileSourceRunId: input.threadRunId, refreshTaskEnvironment: input.refreshTaskEnvironment, factoryContext: internal?.factoryContext, ...(requestEventId ? { requestEventId } : {}), ...(parsed.data.requestKey ? { dispatch: { issueId: issue.id, agentId: agent.id, deviceRepoId: repo.id, note: parsed.data.note, requestKey: parsed.data.requestKey, ...(parsed.data.subscriptionBindingId ? { subscriptionBindingId: parsed.data.subscriptionBindingId } : {}) } } : {}), ...(internal ? { continuation: true, sourceRunId: internal.sourceRunId, frozenSourceRunId: internal.frozenSourceRunId } : {}), ...(input.delegation ? { delegation: input.delegation, continuation: true } : {}) }, internal?.client)
 }
 
 /** A live run's own delegation surface (docs/factory/3089-run-delegation.md, #3089):
@@ -478,20 +479,27 @@ export const RUN_CHUNKS_LIMIT = 5_000
  */
 export async function readRunMessages(userId: string, runIds: string[], options?: { limit?: number | null }) {
   if (!runIds.length) return []
-  const base = db.select({ id: runMessages.id, text: runMessages.text, createdAt: runMessages.createdAt, sourceRunId: runMessages.runId,
+  const { systemEventDataSchema } = await import('@mikka/protocol/slash-commands')
+  const base = db.select({ id: runMessages.id, text: runMessages.text, createdAt: runMessages.createdAt, sourceRunId: runMessages.runId, userId: runMessages.userId,
     editable: sql<boolean>`${runMessages.userId}=${userId} AND ${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
-    submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'` })
+    submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'`,
+    systemEvent: sql<unknown>`${coordinatorEvents.payload}->'threadSystemEvent'` })
     .from(runMessages).leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id),
-      eq(coordinatorEvents.userId, userId), eq(coordinatorEvents.kind, 'user_message')))
+      eq(coordinatorEvents.userId, runMessages.userId), eq(coordinatorEvents.kind, 'user_message')))
     .where(inArray(runMessages.runId, runIds))
-  if (options?.limit === null) {
-    return base.orderBy(asc(runMessages.createdAt), asc(runMessages.id))
-  }
-  const limit = Math.max(1, Math.min(options?.limit ?? RUN_MESSAGES_LIMIT, RUN_MESSAGES_LIMIT))
-  const rows = await base
-    .orderBy(desc(runMessages.createdAt), desc(runMessages.id))
-    .limit(limit)
-  return rows.reverse()
+  const rawRows = options?.limit === null
+    ? await base.orderBy(asc(runMessages.createdAt), asc(runMessages.id))
+    : (await base
+        .orderBy(desc(runMessages.createdAt), desc(runMessages.id))
+        .limit(Math.max(1, Math.min(options?.limit ?? RUN_MESSAGES_LIMIT, RUN_MESSAGES_LIMIT)))).reverse()
+  return rawRows.map(({ userId: rowUserId, submissionId, systemEvent, ...rest }) => {
+    const parsed = systemEvent ? systemEventDataSchema.safeParse(systemEvent) : null
+    return {
+      ...rest,
+      submissionId: rowUserId === userId ? submissionId : null,
+      ...(parsed?.success ? { systemEvent: parsed.data } : {}),
+    }
+  })
 }
 
 export async function readRun(

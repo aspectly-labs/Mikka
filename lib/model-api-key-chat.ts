@@ -3,6 +3,7 @@ import { createLiteLLMModel } from './model-gateway/litellm-client'
 import type { LanguageModel } from 'ai'
 import { pool } from './db'
 import { openApiKeyForChat } from './model-api-keys'
+import { cyberAccessProgram as wireCyberProgram, daybreakTierFor, type CyberAccessProgram } from './model-capabilities'
 import type { HostedApiKeySnapshot } from './subscription-model-snapshot'
 import { withModelServiceTier } from './model-effort'
 import type { ModelSpeedMode } from './model-routing'
@@ -10,9 +11,19 @@ import { observedModel } from './tracing/ai'
 
 type V4Model = Extract<LanguageModel, { specificationVersion: 'v4' }>
 
-async function open(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode): Promise<V4Model> {
-  const { apiKey, baseUrl, provider, modelSpeedModes } = await openApiKeyForChat(pool, frozen.ownerId, frozen.workspaceId, frozen.keyId)
-  const model = createLiteLLMModel(frozen.modelId, { user: frozen.workspaceId, credential: { apiKey, baseUrl, provider: provider === 'anthropic' ? 'anthropic' : 'openai', modelId: frozen.modelId } })
+async function open(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode, pro = false, cyberAccessProgram?: CyberAccessProgram): Promise<V4Model> {
+  const { apiKey, baseUrl, provider, modelSpeedModes, daybreak } = await openApiKeyForChat(pool, frozen.ownerId, frozen.workspaceId, frozen.keyId)
+  if (pro && provider !== 'openai') throw new Error('model_pro_unavailable')
+  if (cyberAccessProgram) {
+    const grantedTier = provider === 'openai' ? daybreakTierFor(daybreak, frozen.modelId) : undefined
+    if (!grantedTier || wireCyberProgram(grantedTier) !== cyberAccessProgram) throw new Error('model_daybreak_unavailable')
+  }
+  const model = createLiteLLMModel(frozen.modelId, {
+    user: frozen.workspaceId,
+    ...(pro ? { pro } : {}),
+    ...(cyberAccessProgram ? { cyberAccessProgram } : {}),
+    credential: { apiKey, baseUrl, provider: provider === 'anthropic' ? 'anthropic' : 'openai', modelId: frozen.modelId },
+  })
   if (typeof model === 'string' || model.specificationVersion !== 'v4') throw new Error('subscription_model_unavailable')
   if (!serviceTier) return model
   // Verify server-advertised speed support against the exact authorized key and model before encoding the tier.
@@ -37,13 +48,13 @@ async function open(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode):
  * its next call instead of switching to another credential (orchestration.md § 2).
  * The provider bills the key's owner; Mikka charges no credits (§ 7).
  */
-export async function resolveApiKeyChatModel(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode): Promise<LanguageModel> {
-  const first = await open(frozen, serviceTier)
+export async function resolveApiKeyChatModel(frozen: HostedApiKeySnapshot, serviceTier?: ModelSpeedMode, pro = false, cyberAccessProgram?: CyberAccessProgram): Promise<LanguageModel> {
+  const first = await open(frozen, serviceTier, pro, cyberAccessProgram)
   return observedModel(new Proxy(first, { get(target, property) {
     const member = Reflect.get(target, property, target)
     if (property === 'doStream' || property === 'doGenerate') {
       return async (...args: unknown[]) => {
-        const current = await open(frozen, serviceTier)
+        const current = await open(frozen, serviceTier, pro, cyberAccessProgram)
         return Reflect.apply(Reflect.get(current, property, current) as (...a: unknown[]) => unknown, current, args)
       }
     }

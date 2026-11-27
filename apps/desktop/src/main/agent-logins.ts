@@ -1,5 +1,5 @@
 // Reads how this computer's official Claude Code and Codex CLIs are signed in,
-// the way Capy's desktop does: `claude auth status --json` and
+// as other desktop agent apps do: `claude auth status --json` and
 // `codex login status`. Fixed commands and arguments only, no renderer input;
 // only the login kind and plan leave main, never a credential or account id.
 

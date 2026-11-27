@@ -28,17 +28,19 @@ const fixtureModules = new Map([
   ['@hosted/core/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
   ['@hosted/core/components/swr-defaults', `export const SWRDefaults = ${wrapper};`],
   ['@hosted/core/components/ui/sonner', 'export const Toaster = () => null;'],
+  ['@hosted/web/components/ui/context-menu', 'import { createElement } from "react"; export const ContextMenu = ({ children }) => children; export const ContextMenuTrigger = ({ children, ...p }) => createElement("div", p, children); export const ContextMenuContent = ({ children }) => createElement("div", null, children); export const ContextMenuItem = ({ children, ...p }) => createElement("button", p, children); export const ContextMenuSeparator = () => null;'],
   ['@hosted/core/components/ui/button', `export const Button = ${wrapper}; export const buttonVariants = () => '';`],
   ['@hosted/core/components/blocks/auth-19/components/auth', `export const Auth = ${wrapper};`],
   ['@hosted/core/components/blocks/auth-19/components/auth-card', `export const AuthCard = ${wrapper};`],
   ['@hosted/core/components/workspace/workspace-loading', 'import { createElement } from "react"; export const WorkspaceLoading = () => createElement("div", { "data-loading": true });'],
   ['@hosted/core/components/workspace/create-workspace-form', 'export const CreateWorkspaceForm = () => null;'],
-  ['@hosted/core/components/workspace/invitation-card', 'export const InvitationCard = () => null; export const OrganizationInvitationCard = () => null;'],
+  ['@hosted/core/components/workspace/invitation-card', 'export const InvitationCard = () => null; export const OrganizationInvitationCard = () => null; export const InvitationLanding = () => null;'],
   ['@hosted/core/components/device-authorization', 'import { createElement } from "react"; export const DeviceAuthorization = () => createElement("div", { "data-device": true });'],
   ['@hosted/core/components/plugins/github-settings', 'export const GitHubSettings = () => null;'],
   ['@hosted/core/components/app-shell/not-found', 'export default () => null;'],
   ['@hosted/core/components/mobile-task-handoff', 'export default () => null;'],
   ['@/lib/swr/persistent-cache', `export const clearPersistentReadCaches = async () => { ${stateAccess}.cacheClears++; }; export class PersistentReadCache extends Map {} export const readCacheShareNamespace = () => null;`],
+  ['@/lib/auth-client', 'export const authClient = {}; export const cloudAuthClient = authClient; export const endSession = async () => ({ error: null });'],
   ['@/lib/live/browser-runtime', `export const browserRuntime = scope => ${stateAccess}.runtime(scope); export const watchPageVisibility = () => () => {};`],
   ['@/lib/platform/public-origin', `export const publicAppOrigin = () => ${stateAccess}.server;`],
 ])
@@ -143,7 +145,7 @@ async function fixture(t, { path = '/mikka/en/', fetch: fetchResponse } = {}) {
     session: async () => state.identity,
     onSessionChanged(callback) { state.listeners.add(callback); return () => state.listeners.delete(callback) },
   }, app: { runtime: 'electron', serverUrl: state.server } }
-  const values = { window, document: window.document, navigator: window.navigator, HTMLElement: window.HTMLElement, Node: window.Node,
+  const values = { window, document: window.document, navigator: window.navigator, Element: window.Element, HTMLElement: window.HTMLElement, Node: window.Node,
     MutationObserver: window.MutationObserver, Event: window.Event, IS_REACT_ACT_ENVIRONMENT: true,
     fetch: async (path, init) => {
       const request = { path, action: init?.body ? JSON.parse(init.body).action : null, args: init?.body ? JSON.parse(init.body).args : null }

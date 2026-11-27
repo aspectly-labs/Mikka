@@ -3,11 +3,8 @@ import { eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { workspaceBilling } from '@/lib/db/schema'
-import { organizationBillingAccounts } from '@/lib/db/governance-schema'
-import { workspaces } from '@/lib/db/workspace-schema'
-import { workspaceDb } from '@/lib/workspace-db'
-import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
-import { requireOrganizationAdmin } from '@/lib/governance/organizations'
+import { WorkspaceError } from '@/lib/workspace-access'
+import { withAccountOwnerLock } from './authority'
 import { recordAudit } from '@/lib/audit/write'
 
 export type { AutoRechargePolicyView } from './contract'
@@ -34,21 +31,7 @@ const input = autoRechargeInputSchema
 export async function saveAutoRechargePolicy(actorId: string, accountWorkspaceId: string, raw: unknown) {
   const value = input.parse(raw)
   z.uuid().parse(accountWorkspaceId)
-  return workspaceDb.transaction(async ws => {
-    const [workspace] = await ws.select({ id: workspaces.id, ownerId: workspaces.userId }).from(workspaces)
-      .where(eq(workspaces.id, accountWorkspaceId)).for('update').limit(1)
-    if (!workspace) throw new WorkspaceError('workspaceAccessDenied')
-    const [account] = await ws.select().from(organizationBillingAccounts).where(eq(organizationBillingAccounts.workspaceId, accountWorkspaceId)).limit(1)
-    let actorName: string
-    if (account) {
-      const { membership } = await requireOrganizationAdmin(ws, account.organizationId, actorId)
-      if (membership.role !== 'owner') throw new WorkspaceError('workspaceAccessDenied')
-      actorName = membership.name
-    } else {
-      const { membership } = await requireWorkspace(ws, accountWorkspaceId, actorId, true)
-      if (workspace.ownerId !== actorId) throw new WorkspaceError('workspaceAccessDenied')
-      actorName = membership.name
-    }
+  return withAccountOwnerLock(actorId, accountWorkspaceId, async actorName => {
     if (value.enabled) throw new WorkspaceError('billingAutoRechargeUnavailable')
     return db.transaction(async tx => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`billing:${accountWorkspaceId}`},0))`)

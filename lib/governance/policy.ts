@@ -38,20 +38,13 @@ export type Entitlements = {
   capabilities: WorkspaceCapabilities
 }
 
-export function resolveEntitlements(input: {
-  mode: DeploymentMode
-  kind: 'personal' | 'team'
-  grant?: PlanGrant | null
-  grants?: (PlanGrant | null | undefined)[]
-  now?: Date
-  capabilityOverrides?: PlanEntitlementOverrides | null
-}): Entitlements {
-  const nowDate = input.now ?? new Date()
-  const now = nowDate.getTime()
+/** Resolve the highest active plan from verified operator and Stripe billing grants. */
+export function resolvePlanFromGrants(input: { mode: DeploymentMode; grant?: PlanGrant | null; grants?: (PlanGrant | null | undefined)[]; now?: Date }): Plan {
+  const now = (input.now ?? new Date()).getTime()
   const rank: Record<Plan, number> = { free: 0, pro: 1, enterprise: 2 }
   let plan: Plan = 'free'
   for (const grant of [...(input.grants ?? []), input.grant]) {
-    if (!grant || input.kind === 'personal') continue
+    if (!grant) continue
     const manual = (!grant.expiresAt || grant.expiresAt.getTime() > now)
       && (input.mode === 'cloud' ? grant.source === 'cloud' : grant.source === 'license') ? grant.plan : 'free'
     // Stripe grants must have a paid-through boundary; missing/expired delivery
@@ -61,6 +54,19 @@ export function resolveEntitlements(input: {
     if (rank[manual] > rank[plan]) plan = manual
     if (rank[billed] > rank[plan]) plan = billed
   }
+  return plan
+}
+
+export function resolveEntitlements(input: {
+  mode: DeploymentMode
+  kind: 'personal' | 'team'
+  grant?: PlanGrant | null
+  grants?: (PlanGrant | null | undefined)[]
+  now?: Date
+  capabilityOverrides?: PlanEntitlementOverrides | null
+}): Entitlements {
+  const nowDate = input.now ?? new Date()
+  const plan: Plan = input.kind === 'personal' ? 'free' : resolvePlanFromGrants({ ...input, now: nowDate })
   const edition = resolveWorkspaceEdition({ plan, mode: input.mode, kind: input.kind })
   const capabilities = resolveWorkspaceCapabilities({
     plan,

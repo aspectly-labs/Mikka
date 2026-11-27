@@ -6,16 +6,15 @@ import { z } from 'zod'
 import * as Y from 'yjs'
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap'
 import type { JSONContent } from '@tiptap/core'
-import { runAction } from '@/lib/action-error'
+import { ActionFailureError, runAction } from '@/lib/action-error'
 import type { ActionResult } from '@/lib/action-result'
 import { db, pool } from '@/lib/db'
 import { workspacePool } from '@/lib/workspace-db'
 import { documentChanged, documentLiveWorkspace } from '@/lib/live/panels'
-import { issues, issueDocuments, issueMembers, issueVersions, linearIssueLinks, users } from '@/lib/db/schema'
+import { issues, issueDocuments, issueMembers, issueVersions, users } from '@/lib/db/schema'
 import { requireIssueAccess, requireIssueAccessWithoutBody } from '@/lib/issue-access'
 import { readIssueMetadata, withIssueMetadata } from '@/lib/issue-metadata'
-import { dispatchLinearIssueSync } from '@/lib/linear-sync/dispatch'
-import { bindCommentAuthorship, snapshotCommentAuthorship } from '@/lib/linear-sync/comment-authorship'
+import { bindCommentAuthorship, snapshotCommentAuthorship } from '@/lib/task-comments/authorship'
 import { activityActor } from '@/lib/activity-actor'
 import { requireCurrentIssueWorkspace, requireLockedIssueScope, withIssueWorkspace } from '@/lib/issue-scope-authorization'
 import { readableIssueContentOnServer as readableIssueContent } from '@/lib/issue-editor-schema-snapshot'
@@ -23,10 +22,12 @@ import { issueListChanged } from '@/lib/live/lists'
 import { readDocumentThreads } from '@/lib/task-activity-wake'
 import { recordTaskActivityWakes } from '@/lib/task-activity-wake-store'
 import { issueMembersChanged } from '@/lib/live/issue-detail'
+import { discussionSaveEffects } from '@/lib/task-comments/save-effects'
+import { taskFileNodeIds } from '@/lib/task-comments/document'
 import { mayGrantOwnerRole, mayManageMembers, mayMuteMember, maySetSubscription, type MembershipCaller } from '@/lib/issue-member-role'
 
 const encodedState = z.string().max(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/)
-const syncSchema = z.object({ id: z.uuid(), vector: encodedState.optional(), update: encodedState.optional(), seed: encodedState.optional(), known: z.string().regex(/^[0-9a-f]{32}$/).optional() })
+const syncSchema = z.object({ id: z.uuid(), vector: encodedState.optional(), update: encodedState.optional(), seed: encodedState.optional(), known: z.string().regex(/^[0-9a-f]{32}$/).optional(), inlineFiles: z.literal(1).optional() })
 /** The stored document's version: md5 of its state, as Postgres md5(state) computes it. */
 const documentVersion = (state: string) => createHash('md5').update(state).digest('hex')
 /**
@@ -72,21 +73,29 @@ export async function exchangeDocument(input: z.infer<typeof syncSchema>): Promi
       if (JSON.stringify(content).length > 250000) throw new Error('content exceeds size limit')
       const changed = writing && (!stored || state !== stored.state)
       if (changed) {
+        // Legacy editors omit atoms they cannot parse. Accept their other writes,
+        // but require support for taskFile before saving a document that drops one.
+        if (!parsed.inlineFiles) {
+          const before = taskFileNodeIds(locked.content as JSONContent)
+          const after = taskFileNodeIds(content)
+          if ([...before].some(id => !after.has(id))) throw new ActionFailureError('taskInlineFilesEditorRequired')
+        }
         await tx.insert(issueDocuments).values({ issueId: issue.id, userId: issue.userId, state }).onConflictDoUpdate({ target: issueDocuments.issueId, set: { state, updatedAt: new Date() } })
         await tx.update(issues).set({ content, updatedAt: new Date() }).where(and(eq(issues.id, issue.id), eq(issues.userId, issue.userId)))
         await documentChanged(tx, issue.id)
         await issueListChanged(tx, issue.id)
-        // A new comment or a Bot chip wakes the Bot it concerns (Capy's issue_activity), with this save.
+        const threadsAfter = readDocumentThreads(doc)
+        // A comment its author removed or deleted takes its reactions; inline files follow what still names them.
+        await discussionSaveEffects(tx, issue.id, { content: locked.content as JSONContent, threads: threadsBefore }, { content, threads: threadsAfter })
+        // A new comment or a Bot chip wakes the Bot it concerns (as Capy wakes a Captain on task activity), with this save.
         await recordTaskActivityWakes(tx, { task: { id: locked.id, workspaceId: locked.workspaceId, title: locked.title, identifier: locked.issuedIdentifier },
-          writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: readDocumentThreads(doc), content },
+          writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: threadsAfter, content },
           version: documentVersion(state) })
       }
-      const [link] = locked.linearSyncPolicy === 'explicit' && !locked.linearSyncBlocked ? await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks).where(and(eq(linearIssueLinks.issueId, locked.id), eq(linearIssueLinks.ownerId, issue.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1) : []
-      return { changed, syncEligible: Boolean(link), version: documentVersion(state), update: Buffer.from(Y.encodeStateAsUpdate(doc, parsed.vector ? Buffer.from(parsed.vector, 'base64') : undefined)).toString('base64') }
+      return { version: documentVersion(state), update: Buffer.from(Y.encodeStateAsUpdate(doc, parsed.vector ? Buffer.from(parsed.vector, 'base64') : undefined)).toString('base64') }
     } finally { doc.destroy() }
   })
   const result = writing ? await withIssueWorkspace(user, issue.workspaceId, { issueId: issue.id, action: 'canSteer' }, exchange) : await exchange()
-  if (result.changed && result.syncEligible) dispatchLinearIssueSync(issue.id)
   return { update: result.update, version: result.version, workspaceId }
 }
 export async function listMembers(id: string) {
@@ -187,7 +196,7 @@ export async function removeMember(id: string, memberId: string): Promise<Action
     if (issue.userId !== user.id) return { error: 'memberOwnerOnly' }
     const parsed = z.string().min(1).max(128).safeParse(memberId)
     if (!parsed.success) return { error: 'validationGeneric' }
-    const clearedAssignee = await withIssueWorkspace(user, issue.workspaceId, { issueId: issue.id, action: 'canManageAccess' }, () => db.transaction(async tx => {
+    await withIssueWorkspace(user, issue.workspaceId, { issueId: issue.id, action: 'canManageAccess' }, () => db.transaction(async tx => {
       const [latest] = await tx.select().from(issues).where(and(eq(issues.id, id), eq(issues.userId, user.id))).for('update')
       requireLockedIssueScope(latest, user.id, issue.scopeVersion, issue.workspaceId)
       const removed = await tx.delete(issueMembers).where(and(eq(issueMembers.issueId, id), eq(issueMembers.userId, user.id), eq(issueMembers.memberId, parsed.data))).returning({ memberId: issueMembers.memberId })
@@ -198,13 +207,8 @@ export async function removeMember(id: string, memberId: string): Promise<Action
         ;(await import('@/lib/coding-workspace/review-sessions')).reviewTaskChanged(tx, latest, saved)
         await tx.insert(issueVersions).values({ id: crypto.randomUUID(), issueId: id, userId: user.id, revision: saved.revision, title: saved.title, content: saved.content, status: saved.status, priority: saved.priority, ...activityActor(user.id) })
         await issueListChanged(tx, id)
-        if (saved.linearSyncPolicy !== 'explicit' || saved.linearSyncBlocked) return false
-        const [link] = await tx.select({ id: linearIssueLinks.id }).from(linearIssueLinks).where(and(eq(linearIssueLinks.issueId, saved.id), eq(linearIssueLinks.ownerId, saved.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1)
-        return Boolean(link)
       }
-      return false
     }))
-    if (clearedAssignee) dispatchLinearIssueSync(id)
     return { success: true }
   })
 }

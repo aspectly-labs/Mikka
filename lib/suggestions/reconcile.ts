@@ -1,15 +1,14 @@
 import 'server-only'
-import { and, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm'
+import { and, eq, gte, isNull, lt, or } from 'drizzle-orm'
 import { db } from '@/lib/db'
-import { linearSyncInbox, suggestions, suggestionTriggerChecks } from '@/lib/db/schema'
+import { suggestions, suggestionTriggerChecks } from '@/lib/db/schema'
 import { getComposio, runComposioAction } from '@/lib/composio'
 import { listComposioPages } from '@/lib/composio-pagination'
 import { redeliverFailedGitHubWebhooks, type RedeliveryResult } from './github-redelivery'
 import { gmailNotification, notionSearchNotification, type ExternalNotification } from './notification'
-import { ensureComposioTriggers, linearWebhookNotifications } from './sources'
+import { ensureComposioTriggers } from './sources'
 import { TRIGGER_CHECK_INTERVAL_MS } from './triggers'
 import { ingestNotifications } from './store'
-import { linearSyncEnabled } from '@/lib/linear-sync/flags'
 import { clearComposioNeedsReconnect, markComposioNeedsReconnect } from '@/lib/composio-account-store'
 
 // The hourly backfill behind the webhooks (app/api/cron/suggestions-reconcile).
@@ -28,7 +27,6 @@ const NOTION_PAGE_LIMIT = 3
 // Slack is left out: it is moving off Composio to Mikka's own Slack app.
 const COMPOSIO_TOOLKITS = ['gmail', 'notion'] as const
 const PEOPLE_CONCURRENCY = 4
-const LINEAR_INBOX_LIMIT = 500
 
 /** A provider read that failed, with the connected account it ran through when it got that far. */
 class ProviderReadError extends Error {
@@ -143,24 +141,6 @@ async function reconcilePerson(userId: string, toolkits: readonly string[], sinc
 }
 
 /**
- * Linear deliveries are stored in linear_sync_inbox before they are
- * acknowledged, whichever host received them, so the backfill replays the
- * window's Issue and Comment deliveries from there instead of asking Linear.
- */
-async function reconcileLinear(since: Date, result: ReconcileResult) {
-  if (!await linearSyncEnabled()) return
-  const deliveries = await db.select({ organizationId: linearSyncInbox.organizationId, payload: linearSyncInbox.payload }).from(linearSyncInbox)
-    .where(and(gte(linearSyncInbox.receivedAt, since), inArray(linearSyncInbox.eventType, ['Issue', 'Comment'])))
-    .limit(LINEAR_INBOX_LIMIT)
-  for (const delivery of deliveries) {
-    const notifications = await linearWebhookNotifications(delivery.organizationId, delivery.payload)
-    await ingestNotifications(notifications)
-    result.linear.notifications += notifications.length
-  }
-  result.linear.deliveries = deliveries.length
-}
-
-/**
  * Backfills the window for everyone who uses the suggestions list (has opened
  * it or connected an app through Composio). Stops starting new people after
  * `deadline`; they are covered by the next run while still in the window.
@@ -172,11 +152,6 @@ export async function reconcileSuggestions({ now = new Date(), deadline = Infini
   catch (error) {
     result.failed.github = 1
     console.error('Suggestions backfill could not redeliver GitHub webhooks', error instanceof Error ? error.message : error)
-  }
-  try { await reconcileLinear(since, result) }
-  catch (error) {
-    result.failed.linear = 1
-    console.error('Suggestions backfill could not replay Linear deliveries', error instanceof Error ? error.message : error)
   }
   const composio = getComposio()
   if (!composio) return result

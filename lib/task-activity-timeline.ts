@@ -1,5 +1,6 @@
 import type { ActivityActorView } from './activity-actor-view'
-import type { ThreadRecord } from './task-discussion'
+import type { ThreadMessage, ThreadRecord } from './task-discussion'
+import { isDeletedMessage, visibleThreadMessages } from './task-comments/contract'
 
 export type IssueActivityEvent = {
   id: string
@@ -86,6 +87,12 @@ export type TaskDiscussionEvent = {
   body: string
   at: string
   resolved: boolean
+  /** Shown as 「已编辑」 (Workspace.activity.commentEdited). */
+  editedAt?: string
+  /** A tombstone: an empty body shown as 「评论已删除」 (Workspace.activity.commentDeleted). */
+  deleted?: true
+  /** Inline task files (lib/task-comments/contract.ts). */
+  attachments?: NonNullable<ThreadMessage['attachments']>
 }
 
 export type PullRequestActivitySource = { url: string; title: string | null; createdAt: string | null; mergedAt: string | null; state: 'open' | 'closed' | 'merged' }
@@ -122,13 +129,18 @@ export type TaskActivityFact =
 export function taskDiscussionEvents(discussion: ActivityDiscussion | readonly ThreadRecord[]): TaskDiscussionEvent[] {
   if (!('thread' in discussion)) return discussion.flatMap(thread => taskDiscussionEvents({ id: thread.id, thread }))
   const { thread } = discussion
-  return thread.messages.map((message, i) => ({
+  // A deleted reply is dropped; a deleted first comment stays as a tombstone while its thread has replies.
+  const shown = new Set(visibleThreadMessages(thread))
+  return thread.messages.flatMap((message, i) => shown.has(message) ? [{
     ...(i === 0 && discussion.actor ? { actor: discussion.actor } : {}),
     kind: i === 0 ? 'comment' as const : 'reply' as const,
     id: `discussion:${thread.id}:${message.id}`, threadId: thread.id, messageId: message.id,
     author: message.author, authorId: message.authorUserId ?? null,
-    body: message.body, at: message.at, resolved: thread.resolved,
-  }))
+    body: isDeletedMessage(message) ? '' : message.body, at: message.at, resolved: thread.resolved,
+    ...(message.editedAt && !isDeletedMessage(message) ? { editedAt: message.editedAt } : {}),
+    ...(isDeletedMessage(message) ? { deleted: true as const } : {}),
+    ...(message.attachments?.length && !isDeletedMessage(message) ? { attachments: message.attachments } : {}),
+  }] : [])
 }
 
 export function taskActivityFacts(history: readonly IssueActivityEvent[], threads: readonly ThreadRecord[], stageComments: readonly FactoryStageComment[] = []): TaskActivityFact[] {

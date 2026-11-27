@@ -138,8 +138,18 @@ test('a thread reads as one conversation: agent text, folded steps and people in
     { chunk: { type: 'text-delta', id: 'c', delta: '  ' }, at: t(21) },
     { chunk: { type: 'error', errorText: 'Interrupted' }, at: t(30) },
   ], [{ id: 'm', text: 'Check the fallback', author: 'Lin', mine: false, at: t(10) }])
-  assert.deepEqual(items.map(item => item.kind === 'steps' ? `steps:${item.count}` : item.kind === 'person' ? `person:${item.author}` : item.kind === 'computer' ? `computer:${item.botId}` : item.kind === 'stages' ? `stages:${item.stages.length}` : `${item.kind}:${item.text}`),
+  assert.deepEqual(items.map(item => item.kind === 'steps' ? `steps:${item.count}` : item.kind === 'person' ? `person:${item.author}` : item.kind === 'computer' ? `computer:${item.botId}` : item.kind === 'stages' ? `stages:${item.stages.length}` : item.kind === 'system_event' ? `system_event:${item.event.kind}` : `${item.kind}:${item.text}`),
     ['agent:Reproduced it.', 'steps:2', 'person:Lin', 'agent:Fixed.', 'error:Interrupted'])
+})
+
+test('streams data-system-event chunks as system_event items and ignores data-available-commands in transcript', async () => {
+  const at = new Date()
+  const items = await threadItems([
+    { chunk: { type: 'data-available-commands', id: 'available-commands', data: { harness: 'claude_code', commands: [{ name: 'compact', description: 'Compact', _meta: { source: 'claude-code' } }] } }, at },
+    { chunk: { type: 'data-system-event', id: 's1', data: { kind: 'local_command_output', text: 'Compacted ok' } }, at },
+    { chunk: { type: 'data-system-event', id: 's2', data: { kind: 'compact_boundary', harness: 'claude_code', trigger: 'manual' } }, at },
+  ], [])
+  assert.deepEqual(items.map(item => item.kind === 'system_event' ? item.event.kind : item.kind), ['local_command_output', 'compact_boundary'])
 })
 
 test('a folded steps line keeps each tool call so it can open: name, what it ran, whether it failed', async () => {

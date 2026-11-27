@@ -6,8 +6,10 @@ import type { NativeWriteReview } from '@/lib/operations/native-write-review'
 
 // Any app a person connected from the 插件 store, through the tools Composio
 // lists for that toolkit; nothing is written per app (decision 2026-10-31).
-// Authorized calls run directly; native approval capabilities retain their
-// exact-call review. Writes leave a record before dispatch.
+// Every call runs directly in the account the person authorized on the
+// provider's site; Mikka adds no second approval (ADR 2026-11-27-1615). A
+// native review still sees the exact call and can only stop it. Writes leave a
+// receipt before dispatch.
 // Pure: the Composio client and the database come in as deps.
 
 const TOOL_SLUG = /^[A-Z][A-Z0-9_]{0,127}$/
@@ -34,9 +36,9 @@ export type ListAppToolsInput = z.infer<typeof listAppToolsInput>
 export type CallAppToolInput = z.infer<typeof callAppToolInput>
 
 export type AppTool = { slug: string; name: string; description?: string; tags?: readonly string[]; version?: string; toolkit?: { slug: string }; inputParameters?: unknown }
-/** What a card or the record keeps: the exact call, pinned to the tool version. */
+/** What the receipt keeps: the exact call, pinned to the tool version. */
 export type AppToolCall = { toolkit: string; tool: string; name: string; version: string; arguments: Record<string, unknown> }
-/** The exact call a card or record holds; anything else is not run. */
+/** The exact call a receipt holds; anything else is not run. */
 export const appToolCallSchema = z.object({
   toolkit: z.string().regex(TOOLKIT_SLUG),
   tool: z.string().regex(TOOL_SLUG),
@@ -58,8 +60,6 @@ export type AppToolDeps = {
   /** The record of a direct write, written before dispatch. */
   recordStart: (call: AppToolCall, accountId: string | null) => Promise<string>
   recordEnd: (id: string, outcome: { status: 'done' | 'failed' | 'running'; error?: string | null; result?: Record<string, string> }) => Promise<void>
-  /** An approval card; nothing runs until the person approves. */
-  propose: (call: AppToolCall, accountId: string | null) => Promise<unknown>
   /** An app with nothing to connect (Composio no-auth): its tools need no account. */
   noAuth?: (toolkit: string) => Promise<boolean>
 }
@@ -119,7 +119,7 @@ export async function listAppTools(deps: AppToolDeps, raw: unknown) {
   }
 }
 
-/** Runs one tool call in the person's own connected account, or turns it into a card. */
+/** Runs one tool call in the person's own connected account. */
 export async function callAppTool(deps: AppToolDeps, raw: unknown, native?: { ownerId: string; botId: string | null; review: NativeWriteReview }) {
   const parsed = callAppToolInput.safeParse(raw)
   if (!parsed.success) return { error: 'invalidIntegrationInput' }
@@ -135,8 +135,7 @@ export async function callAppTool(deps: AppToolDeps, raw: unknown, native?: { ow
   const decision = native
     ? await native.review('allow', { ownerId: native.ownerId, botId: native.botId, action: 'app_tool_call', input: call, accountId: ready.accountId, version: call.version, policy: null })
     : 'allow'
-  if (decision === 'deny') return { error: 'integrationActionDenied' }
-  if (decision === 'ask') return deps.propose(call, ready.accountId)
+  if (decision !== 'allow') return { error: 'integrationActionDenied' }
   if (!isReadOnlyTool(tool)) return runRecorded(deps, call, ready.accountId)
   try {
     const result = await deps.execute(call, ready.accountId)

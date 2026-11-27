@@ -132,17 +132,17 @@ it("observes the real HttpServerLink fetch edge even when daemon tracing is unco
     calls++
     expect(init?.headers).not.toHaveProperty("traceparent")
     if (calls === 3) throw new Error("private-network-error")
-    return calls === 1 ? new Response("private-provider-body", { headers: { "content-type": "text/event-stream" } }) : Response.json({})
+    return calls === 1 ? Response.json({ route: "claude_code_cli", modelId: "m", accountId: "private-account", revision: 1, expiresAt: "2030-01-01T00:00:00.000Z" }) : Response.json({})
   })
   try {
     observation.executing()
-    await link.nativeRequest(actualDevice, actualRun, { path: "/v1/messages", headers: { authorization: "private-token" }, body: "private-prompt" })
+    await link.nativeContext(actualDevice, actualRun)
     await link.updateRun(actualRun, { state: "running" })
     await expect(link.updateRun(actualRun, { state: "running" })).rejects.toBeInstanceOf(ServerUnreachableError)
     const receipt = observation.finish()!
     expect(calls).toBe(3)
     expect(receipt.requests.map(item => [item.endpoint, item.outcome])).toEqual([
-      ["provider_proxy", "ok"], ["run_telemetry", "ok"], ["run_telemetry", "error"],
+      ["subscription_context", "ok"], ["run_telemetry", "ok"], ["run_telemetry", "error"],
     ])
     expect(JSON.stringify(receipt)).not.toMatch(/private-|83e6a183|3f317b20|mikka.test/)
   } finally { observation.close() }

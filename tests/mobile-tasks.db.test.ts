@@ -401,11 +401,11 @@ test('mobile task endpoints with real task ACL, current workspace membership and
     const id = await workspaceTask()
     const v1 = randomUUID(), v2 = randomUUID(), threadId = 'discussion-' + randomUUID()
     const first = '2026-01-01T12:00:00.000Z', changed = '2026-01-01T12:01:00.000Z', replied = '2026-01-01T12:02:00.000Z'
-    const { loadIssueDocument, upsertLinearComment, encodedIssueDocument } = await import('../lib/linear-sync/document')
+    const { loadIssueDocument, upsertThreadMessage, encodedIssueDocument } = await import('../lib/task-comments/issue-document')
     const doc = loadIssueDocument(null, { type: 'doc' })
     try {
-      upsertLinearComment(doc, { threadId, messageId: 'c1', author: 'owner', authorUserId: owner, body: 'Root discussion', at: first })
-      upsertLinearComment(doc, { threadId, messageId: 'c2', author: 'owner', authorUserId: owner, body: 'A reply', at: replied })
+      upsertThreadMessage(doc, { threadId, messageId: 'c1', author: 'owner', authorUserId: owner, body: 'Root discussion', at: first })
+      upsertThreadMessage(doc, { threadId, messageId: 'c2', author: 'owner', authorUserId: owner, body: 'A reply', at: replied })
       await pool.query('insert into issue_documents ("issueId","userId",state) values ($1,$2,$3)', [id, owner, encodedIssueDocument(doc)])
       await pool.query(`insert into issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id,"createdAt")
         values ($1,$3,$4,1,'Before','{"type":"doc"}','todo','normal','user',$4,$5),($2,$3,$4,2,'After','{"type":"doc"}','todo','normal','user',$4,$6)`, [v1, v2, id, owner, first, changed])

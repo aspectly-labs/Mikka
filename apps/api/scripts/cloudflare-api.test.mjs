@@ -172,6 +172,9 @@ test('the private API receives its sign-in and product bindings without inheriti
   const allowed = {
     ...preserved,
     SLACK_APP_ID: 'AEXAMPLE', SLACK_CLIENT_ID: 'client-fixture', SLACK_CLIENT_SECRET: 'oauth-fixture',
+    E2B_API_KEY: 'platform-only', E2B_TEAM_ID: 'test-account',
+    MIKKA_CLOUDFLARE_TASK_WORKSPACES: 'legacy-cloudflare-workspace',
+    MIKKA_TASK_MACHINE_PLAN_LIMITS: '{"free":{"vcpu":1,"ramGib":4}}',
     E2B_BYO_COMPUTER_TEMPLATE: 'desktop-release', E2B_CLAUDE_TEMPLATE: 'claude-release', E2B_CODEX_TEMPLATE: 'codex-release',
     MIKKA_CLOUD_TEMPLATE_MODELS: 'verified-catalogue', MIKKA_CLOUD_WORKER_SHA: 'a'.repeat(40),
     MIKKA_CLOUD_WORKER_SOURCE_COMMIT: 'b'.repeat(40), MIKKA_CLOUD_RUNTIME_PREVIOUS: 'previous-verified-catalogue',
@@ -191,7 +194,7 @@ test('the private API receives its sign-in and product bindings without inheriti
     GITHUB_APP_PRIVATE_KEY: 'app-signing', AWS_ACCESS_KEY_ID: 'aws', AWS_SECRET_ACCESS_KEY: 'aws-secret',
     CREDENTIAL_MASTER_KEY: 'self-hosted-vault', CREDENTIAL_BROKER_ROLE_ARN: 'broker', EVE_QUEUE_SIGNING_KEY: 'world-signing',
     INFISICAL_CLIENT_SECRET: 'deploy', CLOUDFLARE_API_TOKEN: 'deploy', VERCEL_OIDC_TOKEN: 'legacy',
-    E2B_API_KEY: 'platform-only', VERCEL_TEAM_TOKEN: 'release-only',
+    VERCEL_TEAM_TOKEN: 'release-only',
     NODE_OPTIONS: '--inspect', BETTER_AUTH_URL: 'https://incorrect.example', MIKKA_API_INGRESS: 'other',
     STRIPE_WEBHOOK_SECRET: {}, SMTP_URL: '', TASK_MACHINE: { destroy() {} },
   }
@@ -450,6 +453,11 @@ test('ApiIngress rejects retired legacy daemon traffic and removed heartbeats at
     },
   }
   const ingress = new ApiIngress({}, env)
+
+  for (const path of ['/mikka/api/internal/subscription/chat', '/mikka/api/internal/%73ubscription/chat', '/mikka/api/internal/subscription/chat/']) {
+    assert.equal((await ingress.fetch(new Request(origin + path, { method: 'POST', body: '{}' }))).status, 404)
+  }
+  assert.equal(getByNameCalls, 0)
 
   // 1. Legacy daemon requests (missing/invalid x-mikka-device-session or outdated semver) return 426 with 0 container wakes.
   for (const [method, path, headers] of [

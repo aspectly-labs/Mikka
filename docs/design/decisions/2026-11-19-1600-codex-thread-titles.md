@@ -2,14 +2,14 @@
 
 - Date: 2026-11-19
 - **Status:** Accepted
-- Source: Alex: 「查一下 Codex 的仓库，看看 codex 标题和长度怎么做的，我们采纳 codex 的标题生成的做法，避免太长。」 Reference: openai/codex, `codex-rs/tui/src/app/thread_title.rs`.
+- Source: Alex: 「查一下 Codex 的仓库，看看 codex 标题和长度怎么做的，我们采纳 codex 的标题生成的做法，避免太长。」 Evidence: mikka-hosted-ui `docs/research/2026-11-27-public-evidence.md` (§ codex-thread-titles).
 - Rule: R-01; the short-title contract.
 - Replaces: the generated and manually entered Latin title limit (6 words, 60 characters) in [2026-11-10-1341](2026-11-10-1341-sidebar-short-title-limits.md). The CJK limit, database contract, compact display and deterministic fallback stay as that decision states.
 
 The small model that names a thread follows Codex's thread titles:
 
-- Latin text: at most 36 characters and under 5 words where possible (Codex's
-  `THREAD_TITLE_MAX_CHARS` is 36). CJK text keeps its 12-character bound, since
+- Latin text: at most 36 characters and under 5 words where possible, as
+  Codex limits its titles. CJK text keeps its 12-character bound, since
   36 CJK characters would be far longer on screen than 36 Latin ones.
 - The instructions ask for a single-line task title that starts with an
   imperative verb, capitalizes only the first word unless names or code terms
@@ -18,8 +18,8 @@ The small model that names a thread follows Codex's thread titles:
 - The model answers through structured output with a `maxLength` of 36 on the
   title. An answer that fails the schema is still read from its text and cut,
   as Codex does; nothing is lost to an overlong answer.
-- The conversation text sent to the model is held to 960 UTF-8 bytes
-  (Codex's `THREAD_TITLE_PROMPT_MAX_BYTES`). Only the conversation is bounded;
+- The conversation text sent to the model is held to 960 UTF-8 bytes, as
+  Codex bounds its title prompt. Only the conversation is bounded;
   the workspace's naming instructions travel separately in the instructions.
 - Cleaning trims quotes (including backticks) and trailing `. ? !` and their
   full-width forms, then holds the result to the limit without ending inside

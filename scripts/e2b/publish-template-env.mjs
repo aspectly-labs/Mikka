@@ -9,6 +9,7 @@
 // production's worker hash only when its complete runtime configuration agrees.
 // One upsert is followed by per-variable readback; mismatches refuse publication
 // and force a later revalidation (decision 2026-11-01-2335).
+import { releaseTemplateRows } from './machine-variants.mjs'
 import { assertCurrentMain, assertProductionSource } from '../release/web-deploy.mjs'
 import { isDeepStrictEqual } from 'node:util'
 import { readFileSync } from 'node:fs'
@@ -106,16 +107,18 @@ export function runtimeConfigurationSha(configuration, { allowLegacy = false } =
 
 export function assertReleaseEvidence({ releaseEvidence, templates, sourceSha, sourceCommit, models }) {
   if (releaseEvidence?.sourceCommit !== sourceCommit || releaseEvidence?.workerSha !== sourceSha) fail('runtime_release_source_invalid')
-  for (const kind of Object.keys(TEMPLATE_ENV)) {
-    const row = releaseEvidence.templates?.[kind], proof = row?.conservation
-    if (row?.templateId !== templates[kind] || row?.baseTemplate !== kind || row?.preinstalled !== true
-      || row?.public !== true || row?.buildStatus !== 'ready' || !row?.buildId) fail(`runtime_release_template_invalid ${kind}`)
-    if (!Array.isArray(row.models) || !isDeepStrictEqual(row.models, models?.[kind])) fail(`runtime_release_models_invalid ${kind}`)
-    assertConservation(proof, kind)
+  const ids = new Set()
+  for (const {kind,suffix,row} of releaseTemplateRows(releaseEvidence)) {
+    if ((suffix === kind && row?.templateId !== templates[kind]) || !/^[A-Za-z0-9_-]+$/.test(row?.templateId ?? '')
+      || ids.has(row.templateId) || row.baseTemplate !== kind || row.preinstalled !== true
+      || row.public !== true || row.buildStatus !== 'ready' || !row.buildId) fail(`runtime_release_template_invalid ${kind}`)
+    ids.add(row.templateId)
+    if (!Array.isArray(row.models) || (suffix === kind ? !isDeepStrictEqual(row.models,models?.[kind]) : !hasModels(row.models, REQUIRED_HARNESSES[kind]))) fail(`runtime_release_models_invalid ${kind}`)
+    assertConservation(row.conservation,kind)
   }
 }
 
-export function pairEnv({ templates, sourceSha, sourceCommit, models }) {
+export function pairEnv({ templates, sourceSha, sourceCommit, models, releaseEvidence }) {
   for (const kind of Object.keys(TEMPLATE_ENV))
     if (!/^[A-Za-z0-9_-]+$/.test(templates?.[kind] ?? '')) fail(`template_id_invalid ${kind}`)
   if (!/^[0-9a-f]{40}$/.test(sourceSha ?? '')) fail('source_sha_invalid')
@@ -129,6 +132,9 @@ export function pairEnv({ templates, sourceSha, sourceCommit, models }) {
   const catalogue = { version: 1, workerSha: sourceSha, ...(sourceCommit ? { sourceCommit } : {}), templates: Object.fromEntries(Object.keys(TEMPLATE_ENV).map(kind => [kind, {
     templateId: templates[kind], baseTemplate: kind, preinstalled: templates[kind] !== kind, models: models[kind],
   }])) }
+  if (releaseEvidence?.machineVariants !== undefined) catalogue.machineVariants = releaseTemplateRows(releaseEvidence).map(({kind,row}) => ({
+    kind, size:row.machineSize,templateId:row.templateId,cpuCount:row.cpuCount,memoryMB:row.memoryMB,
+  }))
   return [
     ...Object.entries(TEMPLATE_ENV).map(([kind, key]) => ({ key, value: templates[kind], type: 'plain', target: ['production'] })),
     { key: 'MIKKA_CLOUD_WORKER_SHA', value: sourceSha, type: 'plain', target: ['production'] },
@@ -149,7 +155,7 @@ export async function currentWorkerSha({ token, fetchImpl = fetch }) {
 /** Both hosting platforms consume the same accepted templates and model catalogue. */
 export function verifiedRuntimeEnvironment({ releaseEvidence, templates, sourceSha, sourceCommit, models }) {
   assertReleaseEvidence({ releaseEvidence, templates, sourceSha, sourceCommit, models })
-  const env = pairEnv({ templates, sourceSha, sourceCommit, models })
+  const env = pairEnv({ templates, sourceSha, sourceCommit, models, releaseEvidence })
   env.push({ key: 'MIKKA_CLOUD_WORKER_SOURCE_COMMIT', value: sourceCommit, type: 'plain', target: ['production'] })
   return env
 }

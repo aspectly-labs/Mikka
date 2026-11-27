@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto'
 import test from 'node:test'
 import { stripeConfig, stripeForm, stripePost, StripeRequestError, verifyStripeSignature } from './stripe'
 import { resourcePrice, subscriptionEntitlement } from './resource-plan'
+import { purchasedGrantExpiresAt } from './points'
 
 test('config is null without a key; form encoding nests the way Stripe expects', () => {
   assert.equal(stripeConfig({}), null)
@@ -16,12 +17,20 @@ test('a resource price requires configured identity and explicit resource metada
   const price = { id: 'price_resource', active: true, currency: 'usd', type: 'recurring', billing_scheme: 'per_unit', unit_amount: 2000,
     recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
     metadata: { mikka_billing_model: 'resource_v1', mikka_plan: 'pro', mikka_monthly_points: '2000' } }
-  assert.deepEqual(resourcePrice(price, price.id), { id: price.id, plan: 'pro', monthlyPoints: 2000, amountCents: 2000, currency: 'usd', version: 'resource_v1' })
+  assert.deepEqual(resourcePrice(price, price.id), { id: price.id, plan: 'pro', monthlyPoints: 2000, amountCents: 2000, currency: 'usd', version: 'resource_v1', seatModel: 'per_workspace' })
+  assert.deepEqual(resourcePrice({ ...price, metadata: { mikka_billing_model: 'resource_v1', mikka_plan: 'pro', mikka_pricing_model: 'at_cost_v1', mikka_seat_model: 'per_seat' } }, price.id), { id: price.id, plan: 'pro', monthlyPoints: 2000, amountCents: 2000, currency: 'usd', version: 'resource_v1', seatModel: 'per_seat' })
+  assert.throws(() => resourcePrice({ ...price, metadata: { ...price.metadata, mikka_monthly_points: '1000', mikka_pricing_model: 'at_cost_v1' } }, price.id))
+  assert.throws(() => resourcePrice({ ...price, metadata: { ...price.metadata, mikka_seat_model: 'org' } }, price.id))
   assert.throws(() => resourcePrice({ ...price, metadata: { ...price.metadata, mikka_billing_model: 'seat' } }, price.id))
   assert.throws(() => resourcePrice(price, 'price_legacy'))
   assert.throws(() => resourcePrice({ ...price, active: false }, price.id))
   assert.equal(resourcePrice({ ...price, active: false }, price.id, { requireActive: false }).plan, 'pro', 'archiving a price does not invalidate already-paid subscriptions')
   assert.throws(() => resourcePrice({ ...price, recurring: { ...price.recurring, interval: 'year' } }, price.id))
+})
+
+test('top-up grants expire 12 UTC months after purchase including leap days', () => {
+  assert.equal(purchasedGrantExpiresAt(new Date('2026-06-15T12:34:56.789Z')).toISOString(), '2027-06-15T12:34:56.789Z')
+  assert.equal(purchasedGrantExpiresAt(new Date('2024-02-29T08:00:00.000Z')).toISOString(), '2025-02-28T08:00:00.000Z')
 })
 
 test('paid entitlements expire; unpaid, canceled and unrecognized plans cannot grant access', () => {

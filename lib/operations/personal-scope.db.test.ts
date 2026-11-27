@@ -8,12 +8,14 @@ import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-t
 import { orderMigrations } from '../../scripts/migration-order.mjs'
 import { createApprovedWrites } from './approved-writes'
 import type { WriteProvider } from './write-contract'
+import { DEFAULT_AGENT_DEFINITION } from '../agent-kit/builtin'
+import { digest, makeSnapshot } from '../agent-kit/definition'
 
 const url = process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1') assert.ok(url, 'REQUIRE_DB=1 needs isolated PostgreSQL')
 if (url) assert.ok(disposableDatabase(process.env, url), 'loopback *_e2e only')
 
-test('full migrations preserve personal approved writes and all deletion fences', { skip: !url, timeout: 180_000 }, async t => {
+test('full migrations preserve personal direct writes and all deletion fences', { skip: !url, timeout: 180_000 }, async t => {
   const admin = new Pool({ connectionString: url, max: 1 })
   const name = 'operation_personal_guard_' + randomUUID().replaceAll('-', '') + '_e2e'
   let database: Pool | undefined
@@ -45,10 +47,20 @@ test('full migrations preserve personal approved writes and all deletion fences'
       },
       lookup: async () => { throw Error('No recovery is needed for this successful isolated operation') },
     }
-    const service = createApprovedWrites(db, provider, 'append_notion_paragraph', { actor })
-    const proposed = await service.propose(owner, { page_id: randomUUID(), text: 'Offline provider fixture; no external write.' }, randomUUID())
-    assert.equal(proposed.status, 'awaiting_approval')
-    assert.equal((await service.decide(actor, proposed.actionId, true)).status, 'done')
+    // A running Coordinator run writes directly; there is no approval (ADR 2026-11-27-1615).
+    const action = 'append_notion_paragraph', revision = randomUUID(), runId = randomUUID()
+    const definition = { ...DEFAULT_AGENT_DEFINITION, tools: [action] as typeof DEFAULT_AGENT_DEFINITION.tools }
+    const client = await db.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('INSERT INTO agent_kit_heads(owner_id,bot_key,active_version) VALUES($1,\'coordinator\',$2)', [owner, revision])
+      await client.query('INSERT INTO agent_kit_versions(id,owner_id,bot_key,version,definition,digest,source,request_key) VALUES($1,$2,\'coordinator\',1,$3,$4,\'user\',$5)', [revision, owner, definition, digest(definition), randomUUID()])
+      await client.query('INSERT INTO agent_kit_executions(id,owner_id,bot_key,execution_key,version_id,snapshot) VALUES($1,$2,\'coordinator\',$3,$4,$5)', [runId, owner, randomUUID(), revision, makeSnapshot(revision, 1, definition, 'host', { harness: 'ai_sdk', model: 'openai/gpt-6-luna' })])
+      await client.query('COMMIT')
+    } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+    const service = createApprovedWrites(db, provider, action, { modelRun: { ownerId: owner, botId: null, workspaceId: null, runId } })
+    const proposed = await service.writeFromRun({ page_id: randomUUID(), text: 'Offline provider fixture; no external write.' }, randomUUID())
+    assert.equal(proposed.status, 'done')
     assert.equal(executions, 1, 'the actual service executes the offline provider once')
     assert.equal((await service.view(actor, proposed.actionId)).status, 'done')
     const original = (await db.query('SELECT * FROM operation_ledger WHERE "operationId"=$1', [proposed.actionId])).rows[0]

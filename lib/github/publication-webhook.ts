@@ -121,6 +121,7 @@ export async function refreshPublishedPullRequest(event: string, payload: unknow
   const state = pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open'
   const lines = pr.additions !== undefined && pr.deletions !== undefined ? { additions: pr.additions, deletions: pr.deletions } : null
   const patch = JSON.stringify({ title: pr.title, state, ...lines,
+    ...(pr.merged_at && Number.isFinite(Date.parse(pr.merged_at)) ? { mergedAt: new Date(pr.merged_at).toISOString() } : {}),
     ...(pr.changed_files === undefined ? {} : { changedFiles: pr.changed_files }),
     ...(pr.head ? { headSha: pr.head.sha.toLowerCase(), ...(pr.head.ref ? { branch: pr.head.ref } : {}) } : {}),
     ...(pr.updated_at ? { githubUpdatedAt: new Date(pr.updated_at).toISOString() } : {}),

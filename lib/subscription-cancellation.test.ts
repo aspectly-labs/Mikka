@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { WorkerRefusal } from '../packages/daemon/src/subscription-worker-client'
 import { SubscriptionService } from './subscription-service'
 import { subscriptionFixture } from '../tests/fixtures/subscription'
+import { fixtureSubscriptionChat } from '../tests/fixtures/subscription-chat'
 
 function controlledSubscription() {
   const { use, access } = subscriptionFixture('claude_cpa')
@@ -25,7 +26,7 @@ function controlledSubscription() {
       } })
     },
   } as unknown as ReturnType<SubscriptionService['worker']>
-  const service = new SubscriptionService(repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => {}, async () => {})
+  const service = new SubscriptionService(repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => {}, async () => {}, undefined, undefined, fixtureSubscriptionChat(worker))
   return {
     stop, service, use,
     fail(error: unknown) { body.error(error) },

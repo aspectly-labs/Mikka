@@ -1,5 +1,6 @@
 import 'server-only'
 import { createHash, createHmac } from 'node:crypto'
+import { isCloudEdition } from '../edition'
 import { CodedError } from '@mikka/protocol/coded-error'
 // Workspace and repository secrets are enabled whenever the deployment has its
 // encryption key. Choosing BYO or platform E2B billing does not disable secret protection.
@@ -8,7 +9,7 @@ import { db } from '@/lib/db'
 import { userSecrets, workspaceSecrets } from '@/lib/db/secrets-schema'
 import { runtimeEnv } from '@/lib/env/server'
 import { openSecret, secretAad, secretsKey, SecretsKeyMissingError, userSecretAad } from './crypto'
-import { byoE2BKeyEnabled, workspaceSecretsConfigured, E2BKeyError } from './flag'
+import { workspaceSecretsConfigured, E2BKeyError } from './flag'
 import { isReservedEnvName, repositoryRef } from './format'
 import type { SecretAuditHook } from './store'
 import { createSecretMasker, MASK_RULES_VERSION, maskDeep, withCredentialMasking, type MaskableSecret, type Masker } from './mask'
@@ -257,7 +258,7 @@ export async function environmentSecretInjection(workspaceId: string, repository
 
 /** #438 C: E2B keys are masked like secrets: every member's own key (keys are personal). */
 async function workspaceE2BKeySecret(workspaceId: string, env: Env): Promise<{ name: string; value: string }[]> {
-  if (!byoE2BKeyEnabled(env)) return []
+  if (isCloudEdition(env)) return env.E2B_API_KEY?.trim() ? [{ name: 'E2B_API_KEY', value: env.E2B_API_KEY.trim() }] : []
   return (await (await import('./e2b')).maskableE2BKeys(workspaceId, env)).map(value => ({ name: 'E2B_API_KEY', value }))
 }
 
