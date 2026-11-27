@@ -47,5 +47,5 @@ test('production smoke follows deployment runs, not every deployment status', ()
   }
   const gate = smoke.jobs['production-promotion']
   assert.match(gate.if, /github\.event\.workflow_run\.conclusion == 'success'/)
-  assert.match(gate.steps[0].run, /select\(\.name == "pipeline-production" and \.conclusion == "success"\)/)
+  assert.equal(gate.steps.at(-1).run, 'node scripts/release/production-promotion.mjs', 'step-level promotion evidence')
 })
