@@ -691,12 +691,17 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   // The final fence refused this claim after it leased the run. The claim lookup only takes queued
   // runs and an open device session keeps extending the lease, so never leave it `preparing`.
   if (refusal === 'requeue' && device.kind !== 'cloud' && !Object.keys(factoryClaim).length) {
-    const { requeueLocalClaim } = await import('@/lib/computer/claim')
-    if (await requeueLocalClaim(pool, { runId, userId: caller.userId, deviceId, leaseExpiresAt })) {
+    const { requeueLocalClaim, CLAIM_REQUEUE_LIMIT } = await import('@/lib/computer/claim')
+    const requeued = await requeueLocalClaim(pool, { runId, userId: caller.userId, deviceId, leaseExpiresAt })
+    if (requeued === 'requeued') {
       await revokeRunTokens(runId)
       notifyDeviceWork(deviceId)
       return RouteResponse.json({ error: 'Run changed before claim response.', code: 'runRequeued' }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
     }
+    if (requeued === 'limit') return failPreparingClaim(new CodedError('run_failed', { detail: 'claim_requeue_limit' }),
+      `The run kept changing while it was being claimed and stopped after ${CLAIM_REQUEUE_LIMIT} tries.`)
+    if (requeued === 'receipted') return failPreparingClaim(new CodedError('run_failed', { detail: 'claim_receipt_bound' }),
+      'The run changed while it was being claimed, and its skill assignment is bound to that claim.')
   }
   if (refusal) return failPreparingClaim(new CodedError('run_access_denied'), 'Run access changed before claim response.')
   return RouteResponse.json({ error: 'Run access changed before claim response.' }, { status: 409 })

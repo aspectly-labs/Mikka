@@ -286,10 +286,13 @@ const sources = new Map([
     }`],
   ['/lib/computer/claim.ts', `
     // The same lease-scoped requeue as lib/computer/claim.ts: only this claim's still-preparing lease.
+    export const CLAIM_REQUEUE_LIMIT=3
     export async function requeueLocalClaim(_pool,claim){
       const p=globalThis.claimResponseProbe
-      if(claim.runId!==p.run.id||claim.userId!==p.run.userId||p.run.status!=='preparing'||p.run.stopRequestedAt||p.run.leaseExpiresAt?.toISOString()!==claim.leaseExpiresAt)return false
-      Object.assign(p.run,{status:'queued',startedAt:null,leaseExpiresAt:null,deviceTokenId:null});(p.requeued??=[]).push(claim);return true
+      if(claim.runId!==p.run.id||claim.userId!==p.run.userId||p.run.status!=='preparing'||p.run.stopRequestedAt||p.run.leaseExpiresAt?.toISOString()!==claim.leaseExpiresAt)return 'unavailable'
+      if((p.run.claimRequeues??0)>=CLAIM_REQUEUE_LIMIT)return 'limit'
+      if(p.skillReceiptRecorded)return 'receipted'
+      Object.assign(p.run,{status:'queued',startedAt:null,leaseExpiresAt:null,deviceTokenId:null,claimRequeues:(p.run.claimRequeues??0)+1});(p.requeued??=[]).push(claim);return 'requeued'
     }
     function claimTransaction(){
       const p=globalThis.claimResponseProbe

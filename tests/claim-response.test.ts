@@ -1098,6 +1098,39 @@ test('final response authorization rejects changed secret metadata, repository, 
   }
 })
 
+test('a run whose claim changed underneath it CLAIM_REQUEUE_LIMIT times ends instead of being requeued again', async t => {
+  const saved = process.env.WORKSPACE_SECRETS_KEY
+  process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
+  t.after(() => { if (saved === undefined) delete process.env.WORKSPACE_SECRETS_KEY; else process.env.WORKSPACE_SECRETS_KEY = saved })
+  const { probe } = protectedFixture()
+  probe.credentialCapability = true
+  Object.assign(probe.run, { claimRequeues: 3 })
+  probe.beforeToken = async () => { probe.repo.remoteUrl = 'https://github.com/other/repository.git' }
+  const response = await claim(probe, preparedClaim)
+  assert.equal(response.status, 409)
+  const body = await response.json()
+  assert.equal(body.code, 'run_failed')
+  assert.equal(body.detail, 'claim_requeue_limit')
+  assert.equal(probe.run.status, 'failed')
+  assert.equal(probe.run.stopReason, 'blocked')
+  assert.equal((probe as typeof probe & { requeued?: unknown[] }).requeued, undefined)
+})
+
+test('a run whose skill receipt binds the refused claim ends instead of being requeued into a receipt conflict', async t => {
+  const saved = process.env.WORKSPACE_SECRETS_KEY
+  process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
+  t.after(() => { if (saved === undefined) delete process.env.WORKSPACE_SECRETS_KEY; else process.env.WORKSPACE_SECRETS_KEY = saved })
+  const { probe } = protectedFixture()
+  probe.credentialCapability = true
+  Object.assign(probe, { skillReceiptRecorded: true })
+  probe.beforeToken = async () => { probe.repo.remoteUrl = 'https://github.com/other/repository.git' }
+  const response = await claim(probe, preparedClaim)
+  assert.equal(response.status, 409)
+  assert.equal((await response.json()).detail, 'claim_receipt_bound')
+  assert.equal(probe.run.status, 'failed')
+  assert.equal((probe as typeof probe & { requeued?: unknown[] }).requeued, undefined)
+})
+
 test('a changed valid frozen workspace identity cannot release a grant prepared for the earlier workspace', async t => {
   const saved = process.env.WORKSPACE_SECRETS_KEY
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')

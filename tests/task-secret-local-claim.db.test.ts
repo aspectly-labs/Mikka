@@ -531,6 +531,61 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
     assert.deepEqual(claimed, { status: 'preparing', deviceId: b.id })
     await complete(again)
   })
+  const changeRepository = async (t: { mock: { method: typeof mock.method } }, runId: string) => {
+    const { rows: [bound] } = await pool.query<{ repoId: string; remoteUrl: string }>(
+      'SELECT d.id AS "repoId",d."remoteUrl" FROM agent_runs r JOIN device_repos d ON d.id=r."deviceRepoId" WHERE r.id=$1', [runId])
+    const watch = duringClaimResponse(t, runId, () => pool.query('UPDATE device_repos SET "remoteUrl"=$2 WHERE id=$1', [bound.repoId, 'https://github.com/synthetic-other/repository.git']))
+    try { await assert.rejects(b.link.claimRun(b.id, runId)) } finally {
+      assert.equal(watch.done(), true)
+      await pool.query('UPDATE device_repos SET "remoteUrl"=$2 WHERE id=$1', [bound.repoId, bound.remoteUrl])
+    }
+  }
+  await t.test('a skill-assigned run whose claim changed ends with a reason: its append-only receipt binds that claim', async t => {
+    const { runId } = await freshQueuedRun()
+    const { skillAssignments } = await import('../lib/self-improvement/server')
+    await skillAssignments.selectBaseline(owner, runId)
+    await changeRepository(t, runId)
+    const { rows: [ended] } = await pool.query('SELECT status,"stopReason","failureDetails"->>\'code\' AS code,error,"claimRequeues" FROM agent_runs WHERE id=$1', [runId])
+    assert.equal(ended.status, 'failed', 'never left preparing, never requeued into a receipt conflict')
+    assert.equal(ended.stopReason, 'blocked')
+    assert.equal(ended.code, 'run_failed')
+    assert.match(ended.error, /skill assignment is bound to that claim/)
+    assert.equal(ended.claimRequeues, 0)
+    assert.equal((await pool.query('SELECT 1 FROM improvement_skill_receipts WHERE "runId"=$1', [runId])).rowCount, 1, 'provenance is kept')
+  })
+  await t.test('a subscription-pinned claim is requeued without its pin, and the same device claims it again', async () => {
+    const { claimLocalRun, requeueLocalClaim } = await import('../lib/computer/claim')
+    const connection = randomUUID(), binding = randomUUID()
+    await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject","modelCatalog",quota)
+      VALUES ($1,$2,$3,'claude','connected',1,('synthetic-'||$1::uuid::text),$4,'synthetic-subject','{"revision":"1","models":[]}','{}')`, [connection, owner, workspace.id, 'a'.repeat(64)])
+    await pool.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId")
+      VALUES ($1,$2,$3,'catalogue',$4,1,'claude_cpa','fixture-model')`, [binding, owner, workspace.id, connection])
+    const { runId } = await freshQueuedRun()
+    const leases = [new Date(Date.now() + 60_000), new Date(Date.now() + 120_000)]
+    assert.equal(await claimLocalRun(appPool, runId, b.id, leases[0], binding), 'claimed')
+    assert.equal((await pool.query('SELECT 1 FROM byos_native_runs WHERE "runId"=$1', [runId])).rowCount, 1)
+    assert.equal(await requeueLocalClaim(appPool, { runId, userId: owner, deviceId: b.id, leaseExpiresAt: leases[0].toISOString() }), 'requeued')
+    assert.equal((await pool.query('SELECT 1 FROM byos_native_runs WHERE "runId"=$1', [runId])).rowCount, 0)
+    // The same device claims again with the same subscription: the pin is recorded afresh, not a duplicate key.
+    assert.equal(await claimLocalRun(appPool, runId, b.id, leases[1], binding), 'claimed')
+    assert.deepEqual((await pool.query('SELECT "bindingId" FROM byos_native_runs WHERE "runId"=$1', [runId])).rows, [{ bindingId: binding }])
+    await pool.query(`UPDATE agent_runs SET status='cancelled',"finishedAt"=now() WHERE id=$1`, [runId])
+  })
+  await t.test('a run whose claim keeps changing ends after the requeue limit instead of cycling', async t => {
+    const { CLAIM_REQUEUE_LIMIT } = await import('../lib/computer/claim')
+    const { runId } = await freshQueuedRun()
+    for (let requeue = 1; requeue <= CLAIM_REQUEUE_LIMIT; requeue++) {
+      await changeRepository(t, runId)
+      assert.deepEqual((await pool.query('SELECT status,"claimRequeues" FROM agent_runs WHERE id=$1', [runId])).rows[0], { status: 'queued', claimRequeues: requeue })
+    }
+    await changeRepository(t, runId)
+    const { rows: [ended] } = await pool.query('SELECT status,"stopReason",error,"failureDetails"->>\'code\' AS code,"claimRequeues" FROM agent_runs WHERE id=$1', [runId])
+    assert.equal(ended.status, 'failed')
+    assert.equal(ended.stopReason, 'blocked')
+    assert.equal(ended.code, 'run_failed')
+    assert.match(ended.error, /stopped after 3 tries/)
+    assert.equal(ended.claimRequeues, CLAIM_REQUEUE_LIMIT)
+  })
   await t.test('a task deleted during the claim ends the claim\'s lease with a reason instead of stranding it', async t => {
     const { runId } = await freshQueuedRun()
     const { rows: [run] } = await pool.query<{ issueId: string }>('SELECT "issueId" FROM agent_runs WHERE id=$1', [runId])
