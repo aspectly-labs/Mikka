@@ -274,10 +274,19 @@ test('a 401 from one route keeps the session when the session endpoint still kno
   assert.deepEqual(await refused.json(), { version: 1, ok: false, error: { code: 'desktop_session_expired' } })
   assert.deepEqual(calls, ['/api/desktop/rpc', '/api/auth/get-session?disableCookieCache=true'])
   assert.deepEqual(auth.session(), identity)
-  // An unreachable session endpoint is no verdict either.
-  sessionReply = () => { throw new TypeError('fetch failed') }
-  assert.equal((await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })).headers.get('x-mikka-session-active'), '1')
-  assert.deepEqual(auth.session(), identity)
+  // No verdict (unreachable, a 5xx, a 403, a body that is not JSON) neither
+  // signs out nor vouches for the session: the 401 goes back unmarked.
+  for (const reply of [
+    () => { throw new TypeError('fetch failed') },
+    () => new Response(null, { status: 503 }),
+    () => new Response(null, { status: 403 }),
+    () => new Response('not json', { status: 200 }),
+  ]) {
+    sessionReply = reply
+    assert.equal((await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })).headers.has('x-mikka-session-active'), false)
+    assert.deepEqual(auth.session(), identity)
+  }
+  assert.equal(changes, 0)
   // Concurrent 401s ask once; the session endpoint saying "no session" signs
   // out, and those 401s carry no mark, so the renderer sees the expiry.
   sessionReply = () => Response.json(null)

@@ -31,7 +31,7 @@ export class BundledAuth {
   private readonly saved = new Map<string, StoredSession>()
   private generation = 0
   /** One re-validation per session at a time: a burst of 401s asks the server once. */
-  private readonly revalidations = new Map<string, Promise<boolean>>()
+  private readonly revalidations = new Map<string, Promise<SessionVerdict>>()
   private pendingStorage: Promise<void> = Promise.resolve()
   private restoration: Promise<void> | undefined
   private listener: LoopbackAuthServer | null = null
@@ -207,23 +207,26 @@ export class BundledAuth {
   }
 
   /**
-   * Whether the server still knows this session, read fresh from the session
-   * endpoint. Only a definite answer says no — a 401, a null session or
-   * another user; a 403 (refused, not unknown), a network failure or a 5xx
-   * keeps the session.
+   * What the session endpoint, asked fresh, says of this session:
+   * - `confirmed`: a 200 naming this same user;
+   * - `expired`: a definite no, a 401, a null session or another user;
+   * - `unknown`: no verdict, a 403 (refused, not unknown to it), a 5xx, a
+   *   timeout, a network failure or a body that is not JSON.
+   * Only `expired` signs out, and only `confirmed` lets a 401 pass as a
+   * refused operation (request below).
    */
-  private stillSignedIn(account: StoredSession): Promise<boolean> {
+  private sessionVerdict(account: StoredSession): Promise<SessionVerdict> {
     const pending = this.revalidations.get(account.token)
     if (pending) return pending
-    const check = (async () => {
+    const check = (async (): Promise<SessionVerdict> => {
       try {
         const response = await this.fetchAs('/api/auth/get-session?disableCookieCache=true', { signal: AbortSignal.timeout(15_000) }, account)
-        if (response.status === 401) return false
-        if (!response.ok) return true
+        if (response.status === 401) return 'expired'
+        if (response.status !== 200) return 'unknown'
         const body: unknown = await response.json().catch(() => undefined)
-        if (body === undefined) return true
-        return publicSession(body)?.user.id === account.identity.user.id
-      } catch { return true }
+        if (body === undefined) return 'unknown'
+        return publicSession(body)?.user.id === account.identity.user.id ? 'confirmed' : 'expired'
+      } catch { return 'unknown' }
     })().finally(() => this.revalidations.delete(account.token))
     this.revalidations.set(account.token, check)
     return check
@@ -261,7 +264,8 @@ export class BundledAuth {
       // endpoint itself, and sign out only when it says the session is gone.
       const account = this.current
       const definitive = path.split('?')[0] === '/api/auth/get-session'
-      if (definitive || !await this.stillSignedIn(account)) {
+      const verdict = definitive ? 'expired' : await this.sessionVerdict(account)
+      if (verdict === 'expired') {
         if (this.current?.token === token) {
           this.saved.delete(this.current.identity.user.id)
           this.current = null
@@ -274,9 +278,12 @@ export class BundledAuth {
           const retried = await this.fetchAs(path, init, this.current)
           if (token === this.current?.token && scope === this.scope()) response = retried
         }
-        // The session holds, so this 401 refused the operation, not the login:
-        // the same status and body, marked so the renderer keeps its session.
-        if (response.status === 401 && token === this.current?.token) response = withSessionActive(response, true)
+        // Confirmed, the session holds, so this 401 refused the operation, not
+        // the login: the same status and body, marked so the renderer keeps its
+        // session. Without a verdict nothing is marked: the renderer reads the
+        // 401 as it always has (sign in again), while main keeps the stored
+        // session for the next check, and never vouches for one it could not confirm.
+        if (verdict === 'confirmed' && response.status === 401 && token === this.current?.token) response = withSessionActive(response, true)
       }
     }
     // Password changes can rotate the current session. This private header is
@@ -502,6 +509,8 @@ export class BundledAuth {
     await revocation
   }
 }
+
+type SessionVerdict = 'confirmed' | 'expired' | 'unknown'
 
 /** The same response with main's session mark set or removed. */
 function withSessionActive(response: Response, active: boolean): Response {
