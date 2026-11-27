@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildRenderer } from './build-renderer.mjs'
 import { desktopOverlayEvidence } from '../../../scripts/release/hosted-ui.mjs'
-import { publicEnv } from '../../../lib/public-env.mjs'
+import { telemetryBuildConfig } from './telemetry-build-config.mjs'
 import { execFileSync } from 'node:child_process'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -26,15 +26,12 @@ if (flavor === 'prod' && parsed.protocol !== 'https:') {
 }
 
 // Telemetry goes to the web's PostHog project (MIKKA_PUBLIC_POSTHOG_KEY, a
-// public ingestion key). A build without one sends nothing (src/main/telemetry.ts).
-// The host is POSTHOG_HOST (or its legacy name in lib/public-env.mjs, both read by
-// publicEnv), else the web's own default, DEFAULT_POSTHOG_API_HOST in
-// lib/env/public.ts. The release sets no host: Mikka Cloud's project is in the
-// US region (us.posthog.com), so the default is the right ingestion origin.
-const posthogKey = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', process.env, '')
-const posthogHost = publicEnv('POSTHOG_HOST', process.env, '') || 'https://us.i.posthog.com'
-if (posthogKey && !/^ph[a-z]_[A-Za-z0-9]{20,80}$/.test(posthogKey)) throw new Error('MIKKA_PUBLIC_POSTHOG_KEY is not a PostHog project key')
-if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$|^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?$/.test(posthogHost)) throw new Error('POSTHOG_HOST must be an HTTPS origin')
+// public ingestion key). A build without one sends nothing (src/main/telemetry.ts)
+// and its host is not checked. The host is POSTHOG_HOST (or its legacy name in
+// lib/public-env.mjs), normalized as the web normalizes it, else the web's own
+// default. The release sets no host: Mikka Cloud's project is in the US region
+// (us.posthog.com), so the default is the right ingestion origin.
+const { key: posthogKey, host: posthogHost } = telemetryBuildConfig(process.env)
 const revision = value => (/^[0-9a-f]{40}$/.test(value ?? '') ? value : '')
 let publicSha = revision(process.env.MIKKA_DESKTOP_SOURCE) || revision(process.env.GITHUB_SHA)
 if (!publicSha) try { publicSha = revision(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()) } catch { /* Not a checkout. */ }

@@ -12,8 +12,10 @@
  */
 import { z } from 'zod'
 import {
+  DEFAULT_POSTHOG_API_HOST,
   LEGACY_PUBLIC_ENV,
   legacyPublicName,
+  normalizedPublicUrl,
   publicEnv,
   withLegacyPublicDefines,
   withLegacyPublicNames,
@@ -38,7 +40,7 @@ const optionalTrimmed = z.preprocess(
 )
 
 const optionalHttpUrl = z.preprocess(
-  value => (typeof value === 'string' && value.trim() ? value.trim().replace(/\/+$/, '') : undefined),
+  value => normalizedPublicUrl(value) || undefined,
   z.url({ protocol: /^https?$/ }).optional(),
 )
 
@@ -63,7 +65,7 @@ export const publicEnvSchema = z.object({
 
 export type PublicEnv = z.infer<typeof publicEnvSchema>
 
-export const DEFAULT_POSTHOG_API_HOST = 'https://us.i.posthog.com'
+export { DEFAULT_POSTHOG_API_HOST }
 export const DEFAULT_POSTHOG_UI_HOST = 'https://us.posthog.com'
 
 function inlinedOrRuntime(inlined: string | undefined, name: PublicEnvName, env?: Environment): string | undefined {
