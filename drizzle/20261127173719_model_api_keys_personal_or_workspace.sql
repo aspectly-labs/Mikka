@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3396 empties model_api_key_shares (Alex 2026-11-27: personal keys are never shared), stops active runs and clears bot choices/order entries that name another person's key; additive workspaceId/addedBy columns
 -- target: MIKKA_DATABASE_URL
 -- Model API keys are a person's or a workspace's, never shared
 -- (decision 2026-11-27-1740-model-keys-personal-or-workspace).
