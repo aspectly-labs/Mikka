@@ -5,8 +5,8 @@ name: Desktop shell
 # Developer ID signing, notarization and publication stay on release runners.
 
 # CI (ui-policy.yml, job desktop-checks) calls this when its trusted selector
-# reports `desktop`: on ready pull requests, merge-queue candidates and the daily
-# full run. Main pushes rely on the merge-queue run of the same commit.
+# reports `desktop` (routed on ready pull requests, broad on merge-queue candidates and the daily
+# full run). Main pushes rely on the merge-queue run of the same commit.
 on:
   workflow_call:
     inputs:

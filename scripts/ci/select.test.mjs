@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import yaml from 'js-yaml'
-import { select, diffRange, emit } from './select.mjs'
+import { select, diffRange, emit, desktopClosure, desktopEntryFiles } from './select.mjs'
 import { buildGraph, dbId, sourceId, strictCommand } from './graph.mjs'
 import { selectScripts, shardScripts } from '../run-db-tests.mjs'
 
@@ -332,21 +332,21 @@ test('desktop paths route CI to desktop.yml; web-only and docs-only changes do n
   assert.deepEqual(job.with, { selected: true })
   const evaluate = (expression, context) => runInNewContext(expression.replace(/\.([\w-]+)/g, '[$1]').replace(/\[([\w-]+)\]/g, '["$1"]'), context)
   const directory = mkdtempSync(join(tmpdir(), 'desktop-route-'))
-  const outputsFor = async files => {
+  const outputsFor = async (files, event) => {
     const output = join(directory, `output-${Math.random().toString(36).slice(2)}`)
     writeFileSync(output, '')
     const log = console.log
     console.log = () => {}
-    try { emit(await select(plan, files.map(file => change(file))), { GITHUB_OUTPUT: output }) } finally { console.log = log }
+    try { emit(await select(plan, files.map(file => change(file)), { event, desktopInputs: { lockfile: false, manifest: false } }), { GITHUB_OUTPUT: output }) } finally { console.log = log }
     return Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]))
   }
   const routed = async (files, event = 'pull_request', draft = false) => evaluate(job.if, {
-    needs: { changes: { result: 'success', outputs: await outputsFor(files) } },
+    needs: { changes: { result: 'success', outputs: await outputsFor(files, event) } },
     github: { event_name: event, event: { pull_request: { draft } } },
   })
   try {
     for (const file of ['apps/desktop/src/main/index.ts', 'apps/desktop/scripts/build.mjs']) {
-      assert.equal((await outputsFor([file])).desktop, 'true', file)
+      assert.equal((await outputsFor([file], 'pull_request')).desktop, 'true', file)
       for (const event of ['pull_request', 'merge_group', 'schedule', 'workflow_dispatch']) assert.equal(await routed([file], event), true, `${file} on ${event}`)
       assert.equal(await routed([file], 'pull_request', true), false, 'a draft defers Desktop like every runner-heavy lane')
       assert.equal(await routed([file], 'push'), false, 'main pushes rely on the merge-queue run of the same commit')
@@ -355,5 +355,38 @@ test('desktop paths route CI to desktop.yml; web-only and docs-only changes do n
       assert.equal(await routed([file]), false, file)
       assert.equal(await routed([file], 'merge_group'), false, file)
     }
+    // A global input no longer selects Desktop on a pull request; the merge group still runs it.
+    for (const file of ['scripts/ci/select.mjs', '.github/workflows/ui-policy.yml', 'pnpm-lock.yaml', 'package.json']) {
+      assert.equal(await routed([file]), false, file)
+      assert.equal(await routed([file], 'merge_group'), true, file)
+    }
+    for (const file of ['packages/protocol/src/index.ts', '.github/workflows/desktop.yml']) assert.equal(await routed([file]), true, file)
   } finally { rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('on a pull request Desktop follows its Nx closure, its workflow, and lockfile or manifest changes that reach it', async () => {
+  const pr = (files, options = {}) => select(plan, files.map(file => typeof file === 'string' ? change(file) : file), { event: 'pull_request', ...options })
+  const closure = desktopClosure(plan)
+  assert.ok(closure.has('packages/protocol/src/index.ts'))
+  assert.ok(!closure.has('apps/frontend/src/headless.ts'))
+  // A shared module Desktop imports, found through the graph rather than a path list.
+  const shared = [...closure].find(file => file.startsWith('lib/') && !file.includes('.test.'))
+  assert.ok(shared, 'Desktop imports at least one lib module')
+  assert.equal((await pr([shared])).desktop, true, shared)
+  // A file only desktop.yml runs (test:platform) is a Desktop input too.
+  for (const file of desktopEntryFiles(process.cwd(), plan.files)) assert.ok(closure.has(file), file)
+  assert.ok(desktopEntryFiles(process.cwd(), plan.files).some(file => file.startsWith('lib/platform/')))
+  for (const [inputs, expected] of [[{ lockfile: false }, false], [{ lockfile: true }, true], [{}, true]]) {
+    assert.equal((await pr(['pnpm-lock.yaml'], { desktopInputs: inputs })).desktop, expected, JSON.stringify(inputs))
+  }
+  for (const file of ['pnpm-workspace.yaml', 'nx.json']) assert.equal((await pr([file])).desktop, true, file)
+  // A deleted module Desktop imported leaves a dangling import in the closure.
+  const importer = [...closure].find(file => file.startsWith('apps/desktop/src/') && file.endsWith('.ts') && !file.includes('.test.'))
+  const dangling = { ...plan, unresolved: [...plan.unresolved, { file: importer, spec: './removed-module' }] }
+  assert.equal((await select(dangling, [change('lib/removed-module.ts', { status: 'D', mode: '000000' })], { event: 'pull_request' })).desktop, true)
+  assert.equal((await pr([change('lib/removed-module.ts', { status: 'D', mode: '000000' })])).desktop, false, 'a deletion Desktop never imported')
+  // No trustworthy diff, merge groups and docs keep their rules.
+  assert.equal((await select(plan, [], { event: 'pull_request' })).desktop, true)
+  assert.equal((await select(plan, [change('scripts/ci/select.mjs')], { event: 'merge_group' })).desktop, true)
+  assert.equal((await pr(['docs/ci/incremental.md'])).desktop, false)
 })

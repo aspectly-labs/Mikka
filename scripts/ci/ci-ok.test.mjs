@@ -9,7 +9,7 @@ import { expectationKey, problems, report } from './ci-ok.mjs'
 
 const workflow = yaml.load(readFileSync(new URL('../../.github/workflows/ui-policy.yml', import.meta.url), 'utf8'))
 const aggregate = workflow.jobs['ci-ok']
-const step = aggregate.steps.find(candidate => candidate.run === 'node scripts/ci/ci-ok.mjs')
+const step = aggregate.steps.find(candidate => candidate.name === 'Require every selected CI job; accept only selected skips')
 const bare = expression => String(expression).trim().replace(/^\$\{\{\s*/, '').replace(/\s*\}\}$/, '').replace(/\s+/g, ' ')
 // A GitHub expression as JavaScript, enough for these conditions (as scripts/ci/optimization.test.mjs does).
 const evaluate = (expression, context) => runInNewContext(bare(expression).replace(/\.([\w-]+)/g, '[$1]').replace(/\[([\w-]+)\]/g, '["$1"]'),
@@ -33,6 +33,15 @@ test('each expectation is the needed job\'s own if:, so a skip is accepted only 
     assert.equal(bare(expected), bare(condition), job)
   }
   assert.equal(step.env.CI_OK_NEEDS, '${{ toJSON(needs) }}')
+})
+
+test('the verdict runs main\'s copy of the script; only the introducing commit falls back to its own', () => {
+  assert.match(step.run, /git fetch --no-tags --depth=1 origin main/)
+  assert.match(step.run, /git show origin\/main:scripts\/ci\/ci-ok\.mjs > "\$policy"/)
+  assert.match(step.run, /node "\$policy"/)
+  assert.doesNotMatch(step.run, /^node scripts\/ci\/ci-ok\.mjs$/m)
+  const lines = step.run.trim().split('\n')
+  assert.equal(lines.at(-1).trim(), 'node "$policy"')
 })
 
 test('a draft PR fails the aggregate before it reads any result', () => {

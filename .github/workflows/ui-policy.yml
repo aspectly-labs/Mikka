@@ -2,8 +2,10 @@ name: CI
 
 # Pull requests to main run selected source and unit checks. Merge queue candidates
 # also run database shards and applicable acceptance on the combined commit.
-# Main retains each distinct postmerge run. The daily schedule runs everything
-# (no selection) plus the offline browser journeys. `CI OK` is the single
+# Main retains each distinct postmerge run. The daily schedule has no diff, so
+# the selector selects every lane; jobs bound to another event (merge-group
+# candidate and governance checks, PR screenshots, push-only cloud secret access)
+# still skip, and the schedule adds the offline browser journeys. `CI OK` is the single
 # aggregate; keep the older protected check names until branch protection
 # requires `CI OK` instead (.github/workflows/README.md).
 on:
@@ -347,9 +349,11 @@ jobs:
     uses: ./.github/workflows/ci-merge-candidate.yml
 
   desktop-checks:
-    # Path-routed like Orca: the trusted selector reports `desktop` for
-    # apps/desktop, its package dependencies and global inputs, and CI calls the
-    # Linux Desktop suite then. Main pushes rely on the merge-queue run.
+    # Path-routed like Orca: on a pull request the trusted selector reports
+    # `desktop` only for apps/desktop, packages/protocol, desktop.yml, the Nx
+    # closure of @mikka/desktop and lockfile or manifest changes that reach it
+    # (scripts/ci/select.mjs, desktop-inputs.mjs); merge groups and the daily run
+    # keep the broad rule (global inputs too). Main pushes rely on the merge-queue run.
     needs: changes
     if: needs.changes.result == 'success' && needs.changes.outputs.desktop == 'true' && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
     uses: ./.github/workflows/desktop.yml
@@ -648,4 +652,16 @@ jobs:
           CI_OK_EXPECT_UI_POLICY: 'true'
           CI_OK_EXPECT_BROWSER_TESTS_FULL: ${{ needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) }}
           CI_OK_EXPECT_BROWSER_TESTS: 'true'
-        run: node scripts/ci/ci-ok.mjs
+        # Main's verdict script, as the selector loads main's bootstrap: a pull request
+        # cannot change how its own results are judged. Only the PR that introduces the
+        # script runs its own copy.
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          policy="$RUNNER_TEMP/ci-ok.mjs"
+          if git show origin/main:scripts/ci/ci-ok.mjs > "$policy" 2>/dev/null; then
+            echo "Verdict from main's scripts/ci/ci-ok.mjs"
+          else
+            echo 'scripts/ci/ci-ok.mjs is not on main yet: using this commit'"'"'s copy'
+            cp scripts/ci/ci-ok.mjs "$policy"
+          fi
+          node "$policy"

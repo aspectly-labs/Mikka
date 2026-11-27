@@ -36,7 +36,9 @@ protected UI check.
   and the daily schedule, and fails if any needed job failed or was cancelled.
   A skipped job passes only where its own `if:` (trusted selection and event)
   left it out; each `CI_OK_EXPECT_*` is that `if:` (`scripts/ci/ci-ok.mjs`,
-  compared by `scripts/ci/ci-ok.test.mjs`). Draft PRs fail it until Ready.
+  compared by `scripts/ci/ci-ok.test.mjs`). The job runs main's copy of the
+  script, as the selector runs main's bootstrap, so a pull request cannot
+  change how its own results are judged. Draft PRs fail it until Ready.
 - All four existing required names remain intact until branch protection
   requires `CI OK` instead ([GitHub branch protection](#github-branch-protection-separate-repository-setting)).
 
@@ -163,7 +165,8 @@ product regression. Main pushes and merge groups continue normal full coverage.
   `e2b-byos`, `site-search`, `ssh-device-backend`, `unattended-sandbox`) run on
   pull requests only, selected by trusted dependencies or their existing path filters; each can still be run
   by hand (`workflow_dispatch`). CI calls `desktop.yml` on ready PRs, merge
-  groups and the daily full run when the selector reports `desktop`; a main
+  groups and the daily full run when the selector reports `desktop` (routed on
+  PRs, broad on merge groups); a main
   push relies on the merge-queue run of the same commit. Production Web is promoted through the
   Cloudflare deployment workflow; Vercel publication was removed on 2026-11-17.
 - `publish-daemon.yml` uses daemon/package-input path filters. A push publishes to the npm `next` dist-tag only; `latest` moves only when a promoter dispatches it with a successful `staged_run` whose daemon inputs match main.
@@ -456,10 +459,18 @@ or release credentials are added. See [policy and commands](../../docs/ci/increm
 and [measured results](../../docs/ci/1699-results.md).
 
 Selected reusable jobs consume CI's trusted decision without running another
-selector, as Orca routes its checks by path. The selector reports `desktop` for
-`apps/desktop/**`, the packages Desktop depends on and global inputs; CI's
-`desktop-checks` job then calls `desktop.yml` with `selected: true`
-(`scripts/ci/select.test.mjs` dry-runs this route). The Analytics and Desktop
+selector, as Orca routes its checks by path. On a pull request the selector
+reports `desktop` only for a change that can reach the Desktop suite:
+`apps/desktop/**`, `packages/protocol/**`, `desktop.yml`, any file in the Nx
+closure of `@mikka/desktop` and of the files `desktop.yml` runs directly
+(`test:platform`, its `node` scripts), `pnpm-workspace.yaml`/`nx.json`, and a
+`pnpm-lock.yaml` or root `package.json` change that alters Desktop's
+dependency closure or a root script it runs (`scripts/ci/desktop-inputs.mjs`).
+A global input alone (`scripts/`, other workflows, configs) does not select it.
+Merge groups and the daily run keep the broad rule, so a merge still runs
+Desktop for every global input. CI's `desktop-checks` job then calls
+`desktop.yml` with `selected: true` (`scripts/ci/select.test.mjs` dry-runs
+this route). The Analytics and Desktop
 conclusions contribute to `UI policy (strict)` and `CI OK`.
 The actual Analytics build, SSR checks and browser run own the `analytics-ssr`
 check name; no second runner summarizes that job. An absent or invalid trusted

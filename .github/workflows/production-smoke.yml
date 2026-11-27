@@ -227,7 +227,7 @@ jobs:
 
   production-promotion:
     # A deployment run that promoted production: its pipeline-production job
-    # succeeded (pipeline-record then writes the Production deployment).
+    # succeeded (pipeline-production-record then writes the Production deployment).
     if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.id == github.event.repository.id
     runs-on: ubuntu-latest
     timeout-minutes: 3
