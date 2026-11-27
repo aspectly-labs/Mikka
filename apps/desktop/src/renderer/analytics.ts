@@ -1,9 +1,9 @@
-import { setAnalyticsTransport, type AnalyticsTransport } from '@/lib/analytics/posthog'
+import { setAnalyticsTransport, type AnalyticsTransport } from '@/lib/analytics/client-source'
 import { analyticsPath } from '@/lib/analytics-policy'
 import type { BundledBridge } from '@mikka/protocol/bridge'
 
 // The desktop renderer has no PostHog SDK: its CSP connects only to the app
-// origin. This stand-in takes the calls the web makes on posthog-js (the
+// origin. This stand-in takes the calls the web makes on the PostHog browser SDK (the
 // official UI's PostHogAnalytics, ErrorBoundary and RUM reports) and hands each
 // event to the main process, which applies the web's allowlist
 // (lib/analytics-policy.ts), tags it with the platform, version and source
@@ -12,7 +12,7 @@ import type { BundledBridge } from '@mikka/protocol/bridge'
 
 type Telemetry = NonNullable<BundledBridge['telemetry']>
 
-/** The stand-in client: the methods callers use on posthog-js, nothing more. */
+/** The stand-in client: the methods callers use on the PostHog browser SDK, nothing more. */
 export function desktopAnalyticsTransport(telemetry: Telemetry, location: { origin: string; pathname: string } = window.location): AnalyticsTransport {
   let distinctId = ''
   const capture = ((event: string, properties?: Record<string, unknown> | null) => {
@@ -44,7 +44,7 @@ let installed = false
  * Called once at startup in the bundled window; a no-op on the web or an older
  * desktop. The official UI's PostHogAnalytics (pageviews, its RUM with
  * `window.onerror` and unhandled rejections) and its ErrorBoundaries then report
- * through this transport as they do through posthog-js on the web.
+ * through this transport as they do through the PostHog SDK on the web.
  */
 export function installDesktopAnalytics(target: Window & { mikka?: { bundled?: BundledBridge } }) {
   const telemetry = target.mikka?.bundled?.telemetry

@@ -1,5 +1,5 @@
 import { CLIENT_FLAG_KEYS } from '@/lib/feature-flags'
-import { setFlagSource } from '@/lib/analytics/posthog'
+import { setFlagSource } from '@/lib/analytics/client-source'
 import { installDesktopAnalytics } from './analytics'
 
 export type DesktopFeatures = { flags: Record<string, boolean>; cloudComputer: boolean }
