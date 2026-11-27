@@ -1,4 +1,4 @@
--- migrate: reviewed-data ADR 2026-11-27-1615 closes waiting write approvals and rewrites stored external-write "ask" to "allow"; deny and allow rows are untouched
+-- migrate: reviewed-data #3388 ADR 2026-11-27-1615 closes waiting write approvals and rewrites stored external-write "ask" to "allow"; deny and allow rows are untouched
 -- target: MIKKA_DATABASE_URL
 
 -- No permission approvals (docs/design/decisions/2026-11-27-1615-no-permission-approvals.md):

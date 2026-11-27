@@ -104,7 +104,7 @@ async function main() {
   const [{ default: pg }, { createApprovedWrites }] = await Promise.all([
     import('pg'), import('../../lib/operations/approved-writes'),
   ])
-  const pool = new pg.Pool({ connectionString: process.env.E2E_DATABASE_URL, options: `-c search_path=${schema},pg_catalog`, max: 2 })
+  const pool = new pg.Pool({ connectionString: process.env.E2E_DATABASE_URL, options: `-c search_path=${schema},pg_catalog`, max: 4 })
   try {
     const afterEffect = async () => {
       process.send?.({ kind: 'effect-applied' })
@@ -112,8 +112,12 @@ async function main() {
     }
     const slack = process.env.OPERATION_RECOVERY_PROVIDER === 'slack'
     const provider = slack ? await recoverySlackProvider(process.env.OPERATION_RECOVERY_ORIGIN!, afterEffect) : recoveryHttpProvider(process.env.OPERATION_RECOVERY_ORIGIN!, afterEffect)
-    await createApprovedWrites(pool, provider, slack ? 'send_slack_message' : 'append_notion_paragraph', { modelRun: {
-      ownerId: 'recovery-owner', botId: null, workspaceId: null, runId: process.env.OPERATION_RECOVERY_RUN!,
+    // A workspace run (a Bot's) writes under the owner's membership lease, as in production.
+    const workspaceId = process.env.OPERATION_RECOVERY_WORKSPACE ?? null, botId = process.env.OPERATION_RECOVERY_BOT ?? null
+    const { acquireWorkspaceMembership } = await import('../../lib/workspace-membership-guard')
+    const guard = workspaceId ? (_tx: unknown, signal: AbortSignal) => acquireWorkspaceMembership(pool, { workspaceId, userId: 'recovery-owner' }, signal) : undefined
+    await createApprovedWrites(pool, provider, slack ? 'send_slack_message' : 'append_notion_paragraph', { guard, modelRun: {
+      ownerId: 'recovery-owner', botId, workspaceId, runId: process.env.OPERATION_RECOVERY_RUN!,
     } }).writeFromRun({ ...(slack ? { channel: 'C12345678' } : { page_id: process.env.OPERATION_RECOVERY_PAGE! }), text: 'Controlled local recovery effect' }, process.env.OPERATION_RECOVERY_INTENT!)
   } finally { await pool.end() }
 }

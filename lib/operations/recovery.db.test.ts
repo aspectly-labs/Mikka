@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import pg from 'pg'
 import { createApprovedWrites } from './approved-writes'
+import { createReadbackAuthority } from './write-readback-authority'
+import { acquireWorkspaceMembership } from '../workspace-membership-guard'
 import { sweepWriteReceipts } from './write-receipt-sweep'
 import { createOperationLedger, type OperationIntent } from './ledger'
 import { DEFAULT_AGENT_DEFINITION } from '../agent-kit/builtin'
@@ -51,8 +53,10 @@ async function fixture() {
     await ownedPool.query(`CREATE TABLE "session" (id text primary key,"userId" text not null,"expiresAt" timestamptz not null);
       CREATE TABLE agent_kit_heads (owner_id text,bot_key text,workspace_id uuid,active_version uuid,PRIMARY KEY(owner_id,bot_key));
       CREATE TABLE agent_kit_versions(owner_id text,bot_key text,id uuid,definition jsonb,digest text);
-      CREATE TABLE agent_kit_executions(owner_id text,bot_key text,id uuid,status text,snapshot jsonb,version_id uuid)`)
-    for (const name of ['20261025043000_pending_actions.sql', '20261028143920_operation_ledger.sql', '20261028143921_approved_write_binding.sql', '20261029043646_agent_external_write_policy.sql']) {
+      CREATE TABLE agent_kit_executions(owner_id text,bot_key text,id uuid,status text,snapshot jsonb,version_id uuid);
+      CREATE TABLE composio_accounts ("accountId" text PRIMARY KEY,"userId" text NOT NULL,"needsReconnectAt" timestamptz);
+      CREATE TABLE mikka_workspace_members ("workspaceId" uuid NOT NULL,"userId" text NOT NULL,status text NOT NULL,PRIMARY KEY("workspaceId","userId"))`)
+    for (const name of ['20261025043000_pending_actions.sql', '20261028143920_operation_ledger.sql', '20261028143921_approved_write_binding.sql', '20261029043646_agent_external_write_policy.sql', '20261127173451_pending_actions_readback_attempt.sql']) {
       await ownedPool.query(await readFile(new URL('../../drizzle/' + name, import.meta.url), 'utf8'))
     }
     const ownedServer = server = child('server')
@@ -63,6 +67,11 @@ async function fixture() {
     await Promise.allSettled([server && stop(server), pool?.end(), admin.end()])
     throw error
   }
+}
+
+/** The production readback authority over the fixture schema (main and workspace tables share it here). */
+function readbackAuthority(pool: pg.Pool) {
+  return createReadbackAuthority(pool, pool, identity => (_tx, signal) => acquireWorkspaceMembership(pool, identity, signal))
 }
 
 for (const transport of ['generic', 'slack'] as const) test(`${transport}: ten concurrent callers and a new run retain one logical operation and effect`, { timeout: 30_000 }, async () => {
@@ -180,8 +189,11 @@ for (const transport of ['generic', 'slack'] as const) test(`${transport}: after
     let lookups = 0, readbacks = 0
     const provider = transport === 'slack' ? await recoverySlackProvider(f.origin) : recoveryHttpProvider(f.origin)
     const counted = { ...provider, lookup: async (input: Parameters<typeof provider.lookup>[0]) => { lookups++; return provider.lookup(input) } }
-    const service = createApprovedWrites(f.pool, counted, action, {})
+    const service = createApprovedWrites(f.pool, counted, action, { readbackAuthority: readbackAuthority(f.pool) })
     const readback = (owner: string, id: string) => { readbacks++; return service.readback(owner, id) }
+    // Without the owner's current authority nothing reads the provider.
+    await assert.rejects(createApprovedWrites(f.pool, counted, action, {}).readback(ownerId, receipt.id), /writePolicyUnavailable/)
+    assert.equal(lookups, 0)
     const replay = createApprovedWrites(f.pool, counted, action, { modelRun: { ownerId, botId: null, workspaceId: null, runId: run } })
     await assert.rejects(replay.writeFromRun(payload, intentKey), /writeRunUnavailable/)
     assert.equal(lookups, 0)
@@ -193,9 +205,14 @@ for (const transport of ['generic', 'slack'] as const) test(`${transport}: after
     // A late proposal from an older deployment during the rollout.
     const late = randomUUID()
     await f.pool.query(`INSERT INTO pending_actions (id,"userId",action,input,status) VALUES ($1,$2,'send_email','{}','pending')`, [late, ownerId])
+    // A late browser action holding its executable mutation: closed and stripped in the same statement.
+    const lateBrowser = randomUUID()
+    await f.pool.query(`INSERT INTO pending_actions (id,"userId",action,input,status) VALUES ($1,$2,'browser_operation',$3,'pending')`, [lateBrowser, ownerId, { mutation: { kind: 'click' }, summary: 'Click Save', digest: 'd'.repeat(64) }])
 
     const swept = await sweepWriteReceipts(f.pool, readback)
-    assert.deepEqual(swept, { retired: 1, readBack: 2, outcomes: { done: 1, failed: 1 } })
+    assert.deepEqual(swept, { retired: 2, readBack: 2, outcomes: { done: 1, failed: 1 } })
+    assert.deepEqual((await f.pool.query('SELECT status,error,input FROM pending_actions WHERE id=$1', [lateBrowser])).rows[0],
+      { status: 'declined', error: 'approvalRetired', input: { summary: 'Click Save', digest: 'd'.repeat(64), mutationScrubbed: true } })
     assert.equal(lookups, 1, 'one readback of the sent effect')
     const status = async (id: string) => (await f.pool.query('SELECT status,error FROM pending_actions WHERE id=$1', [id])).rows[0]
     assert.deepEqual(await status(receipt.id), { status: 'done', error: null })
@@ -211,4 +228,118 @@ for (const transport of ['generic', 'slack'] as const) test(`${transport}: after
     assert.equal(readbacks, 2); assert.equal(lookups, 1)
     assert.deepEqual(await (await fetch(f.origin + '/stats')).json(), { posts: 1, effects: 1 })
   } finally { if (worker) await stop(worker); await f.close() }
+})
+
+/** A write the worker sent before it died, recorded nowhere but the ledger's
+ * invoke gate, whose run then ended. With `workspace`, a Bot's run in a
+ * workspace the owner is an active member of. */
+async function sentAndEnded(f: Awaited<ReturnType<typeof fixture>>, transport: 'generic' | 'slack', workspace?: { workspaceId: string; botId: string }) {
+  const run = randomUUID(), revision = randomUUID(), intentKey = randomUUID(), page = randomUUID()
+  const action = transport === 'slack' ? 'send_slack_message' : 'append_notion_paragraph'
+  const ownerId = 'recovery-owner', actor = { userId: ownerId, sessionId: `recovery-session-${run}` }, key = workspace?.botId ?? 'coordinator'
+  const definition = { ...DEFAULT_AGENT_DEFINITION, tools: [action] }
+  const snapshot = makeSnapshot(revision, 1, definition, 'controlled local fixture', { harness: 'ai_sdk', model: 'openai/gpt-6-luna' })
+  await f.pool.query('INSERT INTO "session" VALUES($1,$2,now()+interval \'1 hour\')', [actor.sessionId, ownerId])
+  await f.pool.query('INSERT INTO agent_kit_heads(owner_id,bot_key,workspace_id,active_version) VALUES($1,$2,$3,$4)', [ownerId, key, workspace?.workspaceId ?? null, revision])
+  await f.pool.query('INSERT INTO agent_kit_versions VALUES($1,$2,$3,$4,$5)', [ownerId, key, revision, definition, digest(definition)])
+  await f.pool.query('INSERT INTO agent_kit_executions VALUES($1,$2,$3,\'running\',$4,$5)', [ownerId, key, run, snapshot, revision])
+  if (workspace) await f.pool.query('INSERT INTO mikka_workspace_members VALUES($1,$2,\'active\')', [workspace.workspaceId, ownerId])
+  const worker = child('worker', { OPERATION_RECOVERY_SCHEMA: f.schema, OPERATION_RECOVERY_ORIGIN: f.origin, OPERATION_RECOVERY_RUN: run, OPERATION_RECOVERY_PAGE: page, OPERATION_RECOVERY_INTENT: intentKey, OPERATION_RECOVERY_PROVIDER: transport, ...(workspace ? { OPERATION_RECOVERY_WORKSPACE: workspace.workspaceId, OPERATION_RECOVERY_BOT: workspace.botId } : {}) })
+  try { await message(worker, 'effect-applied') } finally { await stop(worker) }
+  await f.pool.query("UPDATE agent_kit_executions SET status='failed' WHERE id=$1", [run])
+  const receipt = (await f.pool.query<{ id: string; accountId: string }>('SELECT id,"operationBinding"->>\'accountId\' AS "accountId" FROM pending_actions WHERE "intentKey"=$1', [intentKey])).rows[0]
+  const ledger = (await f.pool.query('SELECT status,"invokedAt" FROM operation_ledger WHERE "operationId"=$1', [receipt.id])).rows[0]
+  assert.equal(ledger.status, 'executing'); assert.ok(ledger.invokedAt, 'the effect was sent before the worker died')
+  let lookups = 0
+  const provider = transport === 'slack' ? await recoverySlackProvider(f.origin) : recoveryHttpProvider(f.origin)
+  const counted = { ...provider, lookup: async (input: Parameters<typeof provider.lookup>[0]) => { lookups++; return provider.lookup(input) } }
+  const service = createApprovedWrites(f.pool, counted, action, { readbackAuthority: readbackAuthority(f.pool) })
+  const status = async (id: string) => (await f.pool.query('SELECT status,error FROM pending_actions WHERE id=$1', [id])).rows[0]
+  const copy = async (createdAt = 'now()'): Promise<string> => {
+    const id: string = randomUUID()
+    await f.pool.query(`INSERT INTO pending_actions (id,"userId",action,input,"intentKey","operationBinding",context,status,"createdAt")
+      SELECT $1,"userId",action,input,$2,"operationBinding",context,'running',${createdAt} FROM pending_actions WHERE id=$3`, [id, randomUUID(), receipt.id])
+    return id
+  }
+  return { ownerId, actor, receipt, service, status, copy, lookups: () => lookups }
+}
+const effects = async (origin: string) => (await fetch(origin + '/stats')).json()
+
+test('generic: receipts no readback can settle do not starve a newer receipt that can be read back', { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  try {
+    const sent = await sentAndEnded(f, 'generic')
+    // Older receipts whose provider readback keeps failing (as Notion and Calendar never return evidence).
+    const stuck = [await sent.copy("now()-interval '3 hours'"), await sent.copy("now()-interval '2 hours'"), await sent.copy("now()-interval '1 hour'")]
+    const tried: string[] = []
+    const readback = async (owner: string, id: string) => {
+      tried.push(id)
+      if (stuck.includes(id)) throw Error('fixture provider readback unavailable')
+      return sent.service.readback(owner, id)
+    }
+    assert.deepEqual(await sweepWriteReceipts(f.pool, readback, { limit: 3 }), { retired: 0, readBack: 3, outcomes: { unavailable: 3 } })
+    assert.deepEqual(tried, stuck, 'the oldest untried receipts first')
+    const attempts = (await f.pool.query('SELECT id,status,"readbackAttemptAt" FROM pending_actions')).rows
+    for (const row of attempts) {
+      assert.equal(row.status, 'running', 'a failed readback never closes a receipt')
+      assert.equal(Boolean(row.readbackAttemptAt), stuck.includes(row.id), 'each pick is stamped before its readback')
+    }
+    // The next sweep reads the untried receipt before retrying the failed ones.
+    tried.length = 0
+    assert.deepEqual(await sweepWriteReceipts(f.pool, readback, { limit: 3 }), { retired: 0, readBack: 3, outcomes: { done: 1, unavailable: 2 } })
+    assert.deepEqual(tried, [stuck[0], stuck[1], sent.receipt.id], 'the receipt never tried, then the ones tried longest ago, in creation order')
+    assert.deepEqual(await sent.status(sent.receipt.id), { status: 'done', error: null })
+    for (const id of stuck) assert.equal((await sent.status(id)).status, 'running')
+    assert.equal(sent.lookups(), 1)
+    assert.deepEqual(await effects(f.origin), { posts: 1, effects: 1 })
+  } finally { await f.close() }
+})
+
+for (const transport of ['generic', 'slack'] as const) test(`${transport}: after a Bot is taken over, its old owner's receipts end without any readback or resend`, { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  try {
+    const sent = await sentAndEnded(f, transport, { workspaceId: randomUUID(), botId: randomUUID() })
+    const unsent = await sent.copy()
+    // transferBots (lib/workspace-admin/members.ts) deletes the old owner's agent
+    // head; its versions and runs go with it (ON DELETE CASCADE).
+    await f.pool.query('DELETE FROM agent_kit_executions WHERE owner_id=$1', [sent.ownerId])
+    await f.pool.query('DELETE FROM agent_kit_versions WHERE owner_id=$1', [sent.ownerId])
+    await f.pool.query('DELETE FROM agent_kit_heads WHERE owner_id=$1', [sent.ownerId])
+    const readback = (owner: string, id: string) => sent.service.readback(owner, id)
+    assert.deepEqual(await sweepWriteReceipts(f.pool, readback), { retired: 0, readBack: 2, outcomes: { failed: 2 } })
+    assert.deepEqual(await sent.status(sent.receipt.id), { status: 'failed', error: 'writeUnconfirmed' })
+    assert.deepEqual(await sent.status(unsent), { status: 'failed', error: 'writeRunEnded' })
+    // A sent write that can no longer be read back keeps an unknown outcome, never "did not run".
+    const view = await sent.service.view(sent.actor, sent.receipt.id)
+    assert.deepEqual([view.status, view.error], ['running', 'operationUncertain'])
+    assert.equal((await sent.service.view(sent.actor, unsent)).status, 'declined')
+    assert.equal(sent.lookups(), 0, 'no provider readback through a binding that is gone')
+    assert.deepEqual(await sweepWriteReceipts(f.pool, readback), { retired: 0, readBack: 0, outcomes: {} })
+    assert.equal((await f.pool.query("SELECT status FROM operation_ledger")).rows[0].status, 'executing', 'the ledger keeps its record')
+    assert.deepEqual(await effects(f.origin), { posts: 1, effects: 1 })
+  } finally { await f.close() }
+})
+
+for (const transport of ['generic', 'slack'] as const) for (const change of ['none', 'removed-member', 'revoked-connection', 'transferred-connection'] as const) test(`${transport}: readback after the run ended with ${change === 'none' ? 'the owner still a member and connected' : change} ${change === 'none' ? 'reads the effect back' : 'closes the receipt unconfirmed without reading the provider'}`, { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  try {
+    const workspaceId = randomUUID()
+    const sent = await sentAndEnded(f, transport, { workspaceId, botId: randomUUID() })
+    if (change === 'removed-member') await f.pool.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2', [workspaceId, sent.ownerId])
+    if (change === 'revoked-connection') await f.pool.query('INSERT INTO composio_accounts VALUES($1,$2,now())', [sent.receipt.accountId, sent.ownerId])
+    if (change === 'transferred-connection') await f.pool.query('INSERT INTO composio_accounts VALUES($1,\'someone-else\',NULL)', [sent.receipt.accountId])
+    const readback = (owner: string, id: string) => sent.service.readback(owner, id)
+    if (change === 'none') {
+      await f.pool.query('INSERT INTO composio_accounts VALUES($1,$2,NULL)', [sent.receipt.accountId, sent.ownerId])
+      assert.deepEqual(await sweepWriteReceipts(f.pool, readback), { retired: 0, readBack: 1, outcomes: { done: 1 } })
+      assert.deepEqual(await sent.status(sent.receipt.id), { status: 'done', error: null })
+      assert.equal(sent.lookups(), 1)
+    } else {
+      assert.deepEqual(await sweepWriteReceipts(f.pool, readback), { retired: 0, readBack: 1, outcomes: { failed: 1 } })
+      assert.deepEqual(await sent.status(sent.receipt.id), { status: 'failed', error: 'writeUnconfirmed' })
+      assert.equal(sent.lookups(), 0, 'the provider is never read with an authority the owner no longer holds')
+      assert.deepEqual(await sweepWriteReceipts(f.pool, readback), { retired: 0, readBack: 0, outcomes: {} })
+    }
+    assert.deepEqual(await effects(f.origin), { posts: 1, effects: 1 })
+  } finally { await f.close() }
 })

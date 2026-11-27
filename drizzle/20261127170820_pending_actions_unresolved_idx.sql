@@ -1,4 +1,4 @@
--- migrate: reviewed-data ADR 2026-11-27-1615 additive concurrent partial index on pending_actions, modifies zero rows
+-- migrate: reviewed-data #3388 ADR 2026-11-27-1615 additive concurrent partial index on pending_actions, modifies zero rows
 -- target: MIKKA_DATABASE_URL
 -- migrate: no-transaction
 -- The safety-net sweep (lib/operations/write-receipt-due.ts) checks for write

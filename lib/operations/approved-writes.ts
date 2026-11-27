@@ -12,8 +12,9 @@ import { lockWritePolicy, lockWriteRunBinding } from './write-policy-store'
 import { withReadbackBinding, withWritePolicy } from './policy-authorization'
 import { snapshotDigest as digest } from './write-target'
 import { approvedWriteChanged } from '../live/approved-writes'
+import type { ReadbackAuthority } from './write-readback-authority'
 
-export interface StoredWriteProposal { id: string; userId: string; action: string; input: Record<string, unknown>; status: string; operationBinding: z.infer<typeof bindingSchema>; intentKey: string; context: Record<string, unknown> | null; createdAt: Date }
+export interface StoredWriteProposal { id: string; userId: string; action: string; input: Record<string, unknown>; status: string; error?: string | null; operationBinding: z.infer<typeof bindingSchema>; intentKey: string; context: Record<string, unknown> | null; createdAt: Date }
 type Proposal = StoredWriteProposal
 export interface ApprovedWriteView {
   /** Server read time plus the browser's monotonic request-start time. */
@@ -31,6 +32,8 @@ export interface ApprovedWriteView {
   outcome?: ApprovedWriteOutcome
 }
 export interface ApprovedWriteOutcome { id: string; url?: string }
+/** A receipt closed without readback after it was sent: its outcome is unknown and stays so. */
+export const WRITE_UNCONFIRMED = 'writeUnconfirmed'
 const writeOutcome = (receipt: NonNullable<OperationRecord['receipt']>): ApprovedWriteOutcome => ({ id: receipt.providerObjectId, ...(receipt.providerObjectUrl ? { url: receipt.providerObjectUrl } : {}) })
 // #204 acts in a person's own account, not a team workspace. Explicit personal
 // scope avoids inventing a workspace DB relationship or using a browser cookie.
@@ -48,7 +51,10 @@ export function projectApprovedWriteView(p: StoredWriteProposal, execution: (Ope
   if (p.status === 'declined' && execution?.invokedAt || p.status === 'failed' && execution?.status === 'succeeded' || p.status === 'done' && execution?.status !== 'succeeded') throw new OperationError('operationBindingConflict')
   // `failed` is a write closed unsent after its run ended (readback); to the
   // existing four-state client contract that is "did not run", like declined.
-  const status = p.status === 'declined' || p.status === 'failed' ? 'declined' : execution?.status === 'succeeded' ? 'done' : execution || p.status === 'running' ? 'running' : 'pending'
+  // `failed` / writeUnconfirmed was sent and can no longer be read back: its
+  // outcome stays unknown (running / operationUncertain), never "did not run".
+  const unconfirmed = p.status === 'failed' && p.error === WRITE_UNCONFIRMED
+  const status = unconfirmed ? 'running' : p.status === 'declined' || p.status === 'failed' ? 'declined' : execution?.status === 'succeeded' ? 'done' : execution || p.status === 'running' ? 'running' : 'pending'
   const created = z.coerce.date().safeParse(p.createdAt)
   if (!created.success) throw new OperationError('operationBindingConflict')
   return {
@@ -70,7 +76,7 @@ async function bounded<T>(call: (signal: AbortSignal) => Promise<T>, requestSign
 /** A personal write from a run runs directly (ADR 2026-11-27-1615: no
  * approvals). The `pending_actions` row is its receipt and the operation ledger
  * its exactly-once gate; an unclear outcome stays `running` and is never resent. */
-export function createApprovedWrites(pool: Pool, provider: WriteProvider, action: WriteActionName, context: WriteRequestContext = {}) {
+export function createApprovedWrites(pool: Pool, provider: WriteProvider, action: WriteActionName, context: WriteRequestContext & { /** Required before any provider readback. */ readbackAuthority?: ReadbackAuthority } = {}) {
   function transaction<T>(work: (tx: PoolClient) => Promise<T>, actor: WriteActor | undefined = context.actor) {
     return writeTransaction(pool, work, { signal: context.signal, guard: context.guard, ...(actor ? { authorizeCommit: (tx: PoolClient) => requireOperationSession(tx, actor, actor.userId) } : {}) })
   }
@@ -133,6 +139,33 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
       return { status: 'failed' as const, error: 'writeRunEnded' }
     })
   }
+  /** Ends a receipt the sweep may no longer read back: its run binding is gone
+   * (a Bot taken over removes the old owner's agent head and runs) or its owner
+   * lost the workspace or the connection. Reads only Mikka's own ledger, under
+   * the operation lock, never the provider; never claims, invokes or resends.
+   * An ended run can no longer claim or invoke, so a write whose invoke gate
+   * never committed was never sent (writeRunEnded); one that succeeded is done;
+   * one that was sent with no evidence is closed `failed` / writeUnconfirmed,
+   * which still reads as an unknown outcome. */
+  async function closeWithoutReadback(p: Proposal) {
+    return transaction(async tx => {
+      await lockOperation(tx, identity(p))
+      const locked = await tx.query<Proposal>('SELECT * FROM pending_actions WHERE id=$1 AND "userId"=$2 FOR UPDATE', [p.id, p.userId])
+      if (locked.rows[0]?.status !== 'running') return { status: locked.rows[0]?.status ?? 'failed', error: locked.rows[0]?.error ?? null }
+      const { rows } = await tx.query<OperationRecord & { invokedAt: Date | null }>('SELECT * FROM operation_ledger WHERE "operationId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 FOR UPDATE', [p.id, p.userId, scope(p.userId)])
+      const row = rows[0]
+      if (row?.status === 'succeeded' && row.receipt) {
+        await tx.query(`UPDATE pending_actions SET status='done',result=$2,error=NULL WHERE id=$1 AND status='running'`, [p.id, { id: row.receipt.providerObjectId }])
+        await approvedWriteChanged(tx, p.id, p.userId)
+        return { status: 'done' as const, error: null, outcome: writeOutcome(row.receipt) }
+      }
+      const sent = Boolean(row) && row!.status !== 'failed' && (Boolean(row!.invokedAt) || row!.status === 'uncertain')
+      const error = sent ? WRITE_UNCONFIRMED : 'writeRunEnded'
+      await tx.query("UPDATE pending_actions SET status='failed',error=$3 WHERE id=$1 AND \"userId\"=$2 AND status='running'", [p.id, p.userId, error])
+      await approvedWriteChanged(tx, p.id, p.userId)
+      return { status: 'failed' as const, error }
+    })
+  }
   return {
     async view(actor: { userId: string; sessionId: string }, id: string): Promise<ApprovedWriteView> {
       z.uuid().parse(id)
@@ -153,14 +186,24 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
      * ended: read and reconcile only, never claim, invoke or resend. Evidence of
      * the effect makes it `done`; a write whose invoke gate never committed is
      * closed `failed` (writeRunEnded); an invoked write with no evidence stays
-     * `running` / operationUncertain. A run still running is left to the run. */
+     * `running` / operationUncertain. A run still running is left to the run.
+     * The provider is read only while the owner still holds the workspace and
+     * the connection (`readbackAuthority`); a receipt whose binding or authority
+     * is gone is ended without any provider read (closeWithoutReadback). */
     async readback(ownerId: string, id: string) {
       z.uuid().parse(id)
       const p = await transaction(tx => owned(tx, ownerId, id))
       const run = p.operationBinding.run
       if (!run) throw new OperationError('operationAuthorizationRequired')
       if (p.status !== 'running') return { status: p.status, actionId: p.id }
-      const binding = await transaction(tx => lockWriteRunBinding(tx, { ownerId, botId: run.botId, workspaceId: run.workspaceId, runId: run.runId, action }))
+      let binding: { running: boolean }
+      try { binding = await transaction(tx => lockWriteRunBinding(tx, { ownerId, botId: run.botId, workspaceId: run.workspaceId, runId: run.runId, action })) }
+      catch (error) {
+        // The head or the run is gone for good (a Bot taken over, a Bot moved):
+        // nothing can claim or invoke it any more, and nothing may read it back.
+        if (error instanceof OperationError && ['writePolicyUnavailable', 'writeRunUnavailable'].includes(error.message)) return { ...await closeWithoutReadback(p), actionId: p.id }
+        throw error
+      }
       if (binding.running) return { status: 'running' as const, error: 'operationUncertain', actionId: p.id }
       const ledger = createOperationLedger(pool, withReadbackBinding(current), context)
       let row: OperationRecord | null
@@ -169,7 +212,19 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
       const invoked = Boolean(row && (row as OperationRecord & { invokedAt?: Date | string | null }).invokedAt)
       if (!row || row.status === 'reserved' || (row.status === 'executing' && !invoked) || row.status === 'failed') return { ...await closeUnsent(p), actionId: p.id }
       if (row.status === 'succeeded') return { ...await project(row), actionId: p.id }
-      return { ...await project(await ledger.reconcile(identity(p), record => bounded(signal => provider.lookup({ ownerId: p.userId, accountId: p.operationBinding.accountId, version: p.operationBinding.version, payload: p.input, idempotencyKey: record.idempotencyKey, signal }), context.signal))), actionId: p.id }
+      // Only now would the provider be read, with the owner's credential: the
+      // owner must still hold the workspace and the connection (fail closed).
+      if (!context.readbackAuthority) throw new OperationError('writePolicyUnavailable')
+      const authority = await context.readbackAuthority({ ownerId: p.userId, workspaceId: run.workspaceId, accountId: p.operationBinding.accountId })
+      if (!authority) return { ...await closeWithoutReadback(p), actionId: p.id }
+      const reader = createOperationLedger(pool, withReadbackBinding(current), { ...context, guard: authority.guard })
+      try {
+        return { ...await project(await reader.reconcile(identity(p), record => bounded(signal => provider.lookup({ ownerId: p.userId, accountId: p.operationBinding.accountId, version: p.operationBinding.version, payload: p.input, idempotencyKey: record.idempotencyKey, signal }), context.signal))), actionId: p.id }
+      } catch (error) {
+        // The provider says the account is no longer the owner's active one.
+        if (error instanceof OperationError && error.message === 'integrationAccountUnavailable') return { ...await closeWithoutReadback(p), actionId: p.id }
+        throw error
+      }
     },
     /** The receipt is written as `running` and the write dispatched in the same
      * call. A retry with the same intent replays the receipt and never resends. */

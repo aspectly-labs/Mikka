@@ -1386,7 +1386,11 @@ export const runCaptureShares = pgTable('run_capture_shares', {
  * one as `declined` (error `approvalRetired`); the reconcile sweep
  * (lib/operations/write-receipt-sweep.ts) closes any late one the same way and
  * reads back a run-bound receipt still `running` after its run ended (never
- * resending it; unsent ones become `failed` / `writeRunEnded`).
+ * resending it; unsent ones become `failed` / `writeRunEnded`). A sent one it
+ * may no longer read back, because its Bot was taken over or its owner lost the
+ * workspace or the connection, becomes `failed` / `writeUnconfirmed`, which
+ * still reads as an unknown outcome. `readbackAttemptAt` (raw SQL column) orders
+ * the sweep's picks so receipts it cannot settle never starve newer ones.
  * `context` is the prepared context the write was bound to, such as the event being changed.
  */
 export const PENDING_ACTION_STATUSES = ['pending', 'running', 'done', 'failed', 'declined'] as const

@@ -20,6 +20,7 @@ import type { ModelWriteCall } from './model-write-tools'
 import { nativeMailboxFence, type PersonalNativeScope } from '@/lib/personal-mailbox-fence'
 import { WORKSPACE_ID } from '@/lib/device-link'
 import type { MailboxTransactionGuard } from '@/lib/mailbox-transaction-guard'
+import { createReadbackAuthority } from './write-readback-authority'
 
 function guardForRun(run: { ownerId:string; workspaceId:string | null }) {
   return run.workspaceId ? (_tx: unknown, signal: AbortSignal) => acquireWorkspaceMembership(workspacePool, { workspaceId:run.workspaceId!, userId:run.ownerId }, signal) : undefined
@@ -54,7 +55,9 @@ export function personalWriteRuntime() {
     discovery: createApprovedWriteDiscovery(pool),
     operations: (action: WriteActionName, context?: WriteRequestContext) => {
       const client = getComposio()
-      return createApprovedWrites(pool, composioWriteProvider(client, action, composioConditionalCalendarDelete(client), undefined, composioSlackConversationReader(client), composioSlackDelivery(client)), action, context)
+      // A readback reads the provider only while the owner still holds the workspace and the connection.
+      const readbackAuthority = createReadbackAuthority(pool, workspacePool, identity => guardForRun({ ownerId: identity.userId, workspaceId: identity.workspaceId })!)
+      return createApprovedWrites(pool, composioWriteProvider(client, action, composioConditionalCalendarDelete(client), undefined, composioSlackConversationReader(client), composioSlackDelivery(client)), action, { ...context, readbackAuthority })
     },
   }
 }
