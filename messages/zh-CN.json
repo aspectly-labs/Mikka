@@ -1437,6 +1437,7 @@
       "hidden": "隐藏文件",
       "diffViewHint": "线程中的代码变更如何显示",
       "unavailable": "这项还没有接口",
+      "saveFailed": "设置保存失败。",
       "theme_softPurple": "柔和紫",
       "fill": "背景",
       "accent": "强调色",

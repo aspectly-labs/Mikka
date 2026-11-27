@@ -188,6 +188,9 @@ old module owners (backend was Codex's).
    cannot safely ship alone. Merge those branches normally into the batch,
    resolve conflicts once and verify the final batch head. Every merge uses
    a normal merge commit: no squash, rebase, force push or direct main push.
+   A PR enters the merge queue only through its owner's explicit intent:
+   turn on GitHub auto-merge to merge when green. While review findings are
+   open, keep the PR a draft; nothing enqueues a Ready PR on its own.
    Each issue retains its owner and acceptance criteria. Existing approved
    epic batches keep their original rules. A UI change merges only after the owner has reviewed its
    screenshots and attached them to the PR.
