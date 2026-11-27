@@ -143,13 +143,16 @@ test('official jobs keep private code out of public artifacts and pin desktop to
 test('native release admission requires a coherent official identity before credentials or paid work', async () => {
   for (const [file, job] of [['desktop-release', 'preflight'], ['mobile-next-ios', 'ios'], ['mobile-next-update', 'update'], ['e2b-official-runtime', 'check'], ['e2b-runtime-release', 'recheck'], ['e2b-runtime-release', 'cleanup'], ['e2b-template', 'build'], ['publish-daemon', 'publish']]) {
     const workflow = yaml.load(await readFile(new URL(`../../.github/workflows/${file}.yml`, import.meta.url), 'utf8'))
-    const allowed = new Function('github', 'needs', 'always', `return ${workflow.jobs[job].if ?? "true"}`)
+    const allowed = new Function('github', 'needs', 'always', 'inputs', 'contains', 'fromJSON', `return ${workflow.jobs[job].if ?? "true"}`)
     for (const repository of ['alexj11324/Mikka', 'aspectly-labs/Mikka', 'foreign/Mikka']) {
       for (const repository_id of ['1427517699', '999']) {
         for (const repository_owner_id of ['183887963', '359279274', '999']) {
-          const github = { repository, repository_id, repository_owner_id, ref: 'refs/heads/main', event_name: 'workflow_dispatch' }
+          // A listed promoter dispatching (release-promoters.json); the promoter gate itself is tested in release-policy.test.mjs.
+          const github = { repository, repository_id, repository_owner_id, ref: 'refs/heads/main', event_name: 'workflow_dispatch',
+            actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }
           const expected = repository_id === '1427517699' && ((repository === 'alexj11324/Mikka' && repository_owner_id === '183887963') || (repository === 'aspectly-labs/Mikka' && repository_owner_id === '359279274'))
-          assert.equal(allowed(github, { recheck: { result: 'success', outputs: {} } }, () => true), expected, `${file}:${job}:${JSON.stringify(github)}`)
+          assert.equal(allowed(github, { recheck: { result: 'success', outputs: {} } }, () => true, { phase: 'promote' },
+            (list, item) => list.includes(item), JSON.parse), expected, `${file}:${job}:${JSON.stringify(github)}`)
         }
       }
     }
