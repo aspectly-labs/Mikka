@@ -317,7 +317,7 @@ jobs:
         # The overlay's own check runs before it is built in: scripts/paid-sources.mjs, or on a pinned overlay older than
         # that, its predecessor scripts/paid-overrides.mjs. An overlay with neither has nothing to run (as before).
         # Paid blocks themselves are edited to match the top-product reference
-        # (docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md).
+        # (mikka-hosted-ui/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md).
         run: |
           if [ -f .hosted-ui/scripts/paid-sources.mjs ]; then
             node .hosted-ui/scripts/paid-sources.mjs

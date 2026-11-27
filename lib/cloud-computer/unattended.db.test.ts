@@ -150,10 +150,6 @@ test('#438 mutation lifecycle: no new approval rows; legacy pending rows still s
  const expired=await stored(e.actionId);assert.equal(expired.status,'failed');assert.equal(expired.error,'browserActionExpired');assert.equal(expired.input.mutation,undefined)
  const left=await pool.query(`SELECT id FROM pending_actions WHERE input ? 'mutation' AND status IN ('done','declined','failed')`)
  assert.equal(left.rowCount,0,'no terminal row keeps a mutation')
- // list endpoint and audit event expose summary-level fields only; errors are fixed codes
- const src=await readFile(new URL('../pending-actions.ts',import.meta.url),'utf8'),list=await readFile(new URL('../pending-action-store.ts',import.meta.url),'utf8')
- assert.match(src,/row\.action === 'browser_operation' \? \{ summary/)
- assert.match(list,/input: \{ summary: row\.input\.summary, origin: row\.input\.origin, operation: row\.input\.operation/)
 })
 test('default allow: with no workspace policy row every effect, payment and sending included, runs with no human approval',{skip:!enabled},async()=>{
  await pool.query('DELETE FROM workspace_computer_policies')

@@ -87,7 +87,7 @@ export async function exchangeDocument(input: z.infer<typeof syncSchema>): Promi
         const threadsAfter = readDocumentThreads(doc)
         // A comment its author removed or deleted takes its reactions; inline files follow what still names them.
         await discussionSaveEffects(tx, issue.id, { content: locked.content as JSONContent, threads: threadsBefore }, { content, threads: threadsAfter })
-        // A new comment or a Bot chip wakes the Bot it concerns (Capy's issue_activity), with this save.
+        // A new comment or a Bot chip wakes the Bot it concerns (as Capy wakes a Captain on task activity), with this save.
         await recordTaskActivityWakes(tx, { task: { id: locked.id, workspaceId: locked.workspaceId, title: locked.title, identifier: locked.issuedIdentifier },
           writer: { id: user.id, name: user.name }, before: { threads: threadsBefore, content: locked.content as JSONContent }, after: { threads: threadsAfter, content },
           version: documentVersion(state) })

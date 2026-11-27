@@ -108,7 +108,7 @@ This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.
   app's (`--font-sans`, `--color-blue-400`); this app's utilities inline their
   own values, so pages outside the slots look the same in both builds.
   Paid blocks in the layer are raw material, edited in place to match the
-  reference product ([2026-11-27-1409](design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). Because the
+  reference product ([2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). Because the
   shadcn token block is left out, affectUI blocks currently resolve shadcn
   token names to this app's values; that is a fact of the build, not a rule to
   follow.
@@ -120,7 +120,7 @@ This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.
 
 ### Shared chat screen (#2913)
 
-Every chat entrance calls `ThreadScreen`. The `host` identifies its containing surface without selecting a new style. Every chat, a group included, is the one official thread presentation: a group's members and Bots are entries with their own `author` (decision 2026-11-22-1510-group-chat-as-bot-chat). The readers still own history, delivery, unread state and callbacks; keyed rows, the scroll container and composer placement belong to the screen. Optional message nodes carry existing event/card contents, not another list.
+Every chat entrance calls `ThreadScreen`. The `host` identifies its containing surface without selecting a new style. Every chat, a group included, is the one official thread presentation: a group's members and Bots are entries with their own `author` ([decision 2026-11-22-1510](design/decisions/2026-11-22-1510-group-chat-as-bot-chat.md)). The readers still own history, delivery, unread state and callbacks; keyed rows, the scroll container and composer placement belong to the screen. Optional message nodes carry existing event/card contents, not another list.
 
 The optional `transcriptLabel` names the existing native transcript viewport as a region. Coordinator readers supply their existing conversation translation, as they do for embedded transcripts. While the first read is pending, `loadingLabel` gives the existing empty transcript column its waiting status and busy state. A resolved or failed read removes that state; any existing message keeps the column's original log role, conversation name and streaming busy state. Providers add no wrapper or visible content for these labels.
 

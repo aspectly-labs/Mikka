@@ -157,7 +157,7 @@ export async function updateIssueMetadata(input: { id: string; revision: number;
           if (added.length) await issueMembersChanged(tx, issue.id)
         }
         const view = await issueView(saved, tx)
-        // Assigning a Bot wakes it in its own chat (Capy's issue_activity); it decides whether to start work.
+        // Assigning a Bot wakes it in its own chat (as Capy wakes a Captain on task activity); it decides whether to start work.
         if (delegate?.kind === 'bot' && (metadata.delegate?.kind !== 'bot' || metadata.delegate.id !== delegate.id)) {
           await recordCoordinatorEvent(tx, issueAssignedEvent({ id: saved.id, ownerId: user.id, identifier: view.identifier ?? null, title: saved.title, revision: saved.revision },
             delegate, { name: user.name || delegate.name }))

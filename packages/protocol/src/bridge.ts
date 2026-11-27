@@ -234,8 +234,8 @@ export const pickRepoResult = z.discriminatedUnion("status", [
 export type PickRepoResult = z.infer<typeof pickRepoResult>
 
 /**
- * What this computer's official CLIs are signed in with (as Capy's desktop
- * reads it): `claude auth status --json` and `codex login status`. Only the
+ * What this computer's official CLIs are signed in with (as other desktop
+ * agent apps read it): `claude auth status --json` and `codex login status`. Only the
  * login kind and plan name, never a credential.
  */
 export const agentLoginKind = z.enum(["missing", "signed-out", "api-key", "subscription", "unknown"])

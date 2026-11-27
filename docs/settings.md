@@ -8,7 +8,7 @@ defaults, repository automation and the existing execution boundaries.
 Each section is a small heading over one card of rows, as in
 Comma's 「模型与 API」 (decision 2026-10-30). This is the open-source default
 settings surface; the hosted settings are affectUI screens edited to match the reference product
-([2026-11-27-1409](design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
+([2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 `components/settings/primitives.tsx` owns the shapes; product code only
 supplies content.
 
@@ -117,7 +117,7 @@ The official UI composes this page through the existing `settings-preferences`
 slot (`page: 'threads'`, `workspaceId`) and reuses `useThreadTitleSettings` and its existing
 read/write actions. Preferences keeps its ordinary personal settings; General
 keeps workspace identity, transfer and deletion. Neither repeats the title
-settings. See the [Threads settings decision](design/decisions/2026-11-19-threads-settings.md).
+settings. See the [Threads settings decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-19-threads-settings.md).
 
 
 The [organization security contract](design/decisions/2026-11-20-1900-settings-organization-security.md)

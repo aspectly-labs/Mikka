@@ -3,7 +3,7 @@
 - Date: 2026-11-27 16:15 UTC
 - **Status:** Accepted (Alex, 2026-11-27)
 - Source: Alex, 2026-11-27: 「我们不做权限审批。包括连接的 plugin、MCP 之类的东西，你在它的网站上授权了什么，我们就直接用什么，不做第二次审批。……Codex 是直接用 full access，CC 是用 bypass permission。……我们是不允许它去询问权限的呀。」
-- Supersedes in part: [2026-11-27-1409-top-products-over-paid-blocks](2026-11-27-1409-top-products-over-paid-blocks.md), only the words "approval/permission cards" in its list of chat surfaces (there are no permission cards); [2026-11-24-1518-design-system-v2-chatgpt-cc-standard](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md), only "permission" and "write approval" in its single-bottom-slot priority.
+- Supersedes in part: [2026-11-27-1409-top-products-over-paid-blocks](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md), only the words "approval/permission cards" in its list of chat surfaces (there are no permission cards); [2026-11-24-1518-design-system-v2-chatgpt-cc-standard](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md), only "permission" and "write approval" in its single-bottom-slot priority.
 - Restates, as one rule: the harness flags in [2026-11-01-2335-e2b-official-templates](2026-11-01-2335-e2b-official-templates.md), `docs/design/orchestration.md`, `docs/design/unattended-sandbox.md`, `docs/factory/execution-route-v1.md`, the "zero tool-approval waits" acceptance in `docs/operations/epic3076-e2e-acceptance.md`, and [authorized MCP connections](2026-11-19-native-mcp-authorization.md) (R-77).
 
 ## Why this record exists
@@ -26,5 +26,5 @@ The rule was already true in pieces: every harness launches with full access, an
 
 ## Consequences
 
-- `AGENTS.md` states the rule in its core invariants; `docs/design/rules.md` R-10, R-74 and R-77 and the `design-system.md` bottom-slot priority no longer mention permissions or write approvals.
+- `AGENTS.md` states the rule in its core invariants; `mikka-hosted-ui/docs/design/rules.md` R-10, R-74 and R-77 and the `design-system.md` bottom-slot priority no longer mention permissions or write approvals.
 - A reviewer rejects any PR that adds a permission prompt, an approval policy, or an "always approve" path.

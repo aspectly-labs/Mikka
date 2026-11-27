@@ -1,6 +1,6 @@
 // Every move inside the app window goes through one place, so the address
 // always says what is on screen and back steps through it one move at a time
-// (docs/design/rules.md R-82; decisions/2026-11-01-1320-navigation-model.md).
+// (mikka-hosted-ui/docs/design/rules.md R-82; decisions/2026-11-01-1320-navigation-model.md).
 //
 // - Only components/workspace/workspace-navigation.ts and
 //   lib/settings-navigation.ts write the browser history.

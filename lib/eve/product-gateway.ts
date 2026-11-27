@@ -7,6 +7,8 @@ import { asProductPrincipal, productContext, productTools } from './product-defi
 const id = z.string().min(1).max(256)
 const common = { sessionId: id, turnId: id, executionId: z.uuid().nullable().optional() }
 const toolCall = { ...common, name: z.string().min(1).max(128), input: z.unknown(), callId: id }
+// Accepted and ignored for one release: an older Eve deployment may still send
+// it. Nothing is approved by a person any more (ADR 2026-11-27-1615).
 const approvalResponder = z.object({
   authenticator: z.literal('mikka'), principalType: z.literal('user'), principalId: id,
   attributes: z.object({ botId: z.uuid(), workspaceId: z.uuid(), surface: z.enum(['web', 'slack']) }).strict(),
@@ -91,7 +93,7 @@ const defaultServices: EveProductGatewayServices = {
         const call = { ...scope, sessionId: input.sessionId, turnId: input.turnId, executionId: execution?.id, sourceEventId, name: input.name, input: checked.value, callId: input.callId }
         const { reviewEveProductApproval, executeEveApprovedWrite } = await import('./product-approval')
         if (input.operation === 'approval') return reviewEveProductApproval(call, signal)
-        const approved = await executeEveApprovedWrite(call, input.approvalResponder, signal)
+        const approved = await executeEveApprovedWrite(call, signal)
         if (approved) return approved.output
         return tool.execute!(checked.value, { toolCallId: input.callId, messages: [], context: {}, abortSignal: signal })
       })

@@ -8,7 +8,7 @@
   audit's four questions: 「那你就按照建议的来」.
 - Rule: R-82 (new), R-66 (desktop half rewritten)
 - Superseded in part by: [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md) (task details open beside chat and threads are reached inside a task) and [2026-11-07-2300](2026-11-07-2300-one-conversation-per-task.md) (all attempts open one task conversation).
-- Superseded in part by: decisions/2026-11-02-0310-all-threads-from-the-window-bar.md (全部线程 leaves the right panel)
+- Superseded in part by: mikka-hosted-ui/docs/design/decisions/2026-11-02-0310-all-threads-from-the-window-bar.md (全部线程 leaves the right panel)
 - Replaces: decisions.md 2026-10-25 「clicking it opens the thread conversation
   in the centre, ‹ Coordinator goes back」; R-66's 「on desktop the centre
   column switches to it」

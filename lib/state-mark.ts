@@ -61,9 +61,8 @@ const isStatus = (value: string) => ISSUE_STATUS_CODES.some(code => code === val
 const isPriority = (value: string) => ISSUE_PRIORITY_CODES.some(code => code === value)
 
 /**
- * The issue statuses' colours. Reading Capy 0.9.2 live settled them: 评审中 is
- * their `text-success` (oklch hue 143, green) and 完成 is the one violet state,
- * their `text-complete` (`oklch(60% .19 300)`), which is Linear's order too.
+ * The issue statuses' colours: 评审中 green, 完成 the one violet state, as Capy
+ * and Linear draw them (evidence in mikka-hosted-ui docs/research).
  * This table used to have those two swapped, so a finished issue read as review.
  * `doing` is yellow and the rest are grey, as Capy draws them.
  * The `Record<IssueStatus, …>` makes a status the enum adds but this table

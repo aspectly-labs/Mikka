@@ -2,15 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { applyCliFold, applyExternalFold, foldCliRunPolicy, foldExternalWritePermissions } from './workspace-policy-fold'
 
-test('external fold keeps deny/ask only and never copies an allow', () => {
+test('external fold keeps deny only: never copies an allow, and an old ask is not an approval', () => {
   assert.deepEqual(foldExternalWritePermissions([
     { slack: 'allow', notion: 'deny' },
     { slack: 'deny', gmail: 'ask' },
-  ]), { notion: 'deny', slack: 'deny', gmail: 'ask' })
+  ]), { notion: 'deny', slack: 'deny' })
   assert.deepEqual(foldExternalWritePermissions([{ slack: 'allow' }]), {})
-  // browser ask is not an option; a browser deny is folded
   assert.deepEqual(foldExternalWritePermissions([{ browser_payment: 'ask', browser_browse: 'deny' }]), { browser_browse: 'deny' })
-  // the retired pull-request key and a normalized git_push ask are not folded
+  // the retired pull-request key is not folded
   assert.deepEqual(foldExternalWritePermissions([{ github_pull_request: 'deny', git_push: 'ask' }]), {})
   assert.throws(() => foldExternalWritePermissions([{ 'Bad-Key': 'deny' }]))
   assert.throws(() => foldExternalWritePermissions([{ slack: 'maybe' }]))
@@ -31,6 +30,8 @@ test('cli fold is restrictive, intersects the network allow-list and carries rea
 
 test('folds merge into the workspace layer without dropping its choices or defaults', () => {
   assert.deepEqual(applyExternalFold({ slack: 'allow', gmail: 'ask' }, { gmail: 'deny' }), { slack: 'allow', gmail: 'deny' })
+  // a stored ask from before ADR 2026-11-27-1615 is written back as allow
+  assert.deepEqual(applyExternalFold({ notion: 'ask' }, {}), { notion: 'allow' })
   assert.deepEqual(applyCliFold({ permissions: { install_dependency: 'allow' }, defaults: { permissions: { network: 'allow' } } }, { permissions: { network: 'deny' }, approvalMode: 'read_only' }), {
     permissions: { install_dependency: 'allow', network: 'deny' },
     defaults: { permissions: { network: 'allow' } },

@@ -350,11 +350,18 @@ const sources = new Map([
   ['/lib/run-chain.ts', 'export async function readRunChain(){const p=globalThis.claimResponseProbe;return p.runChain??null}'],
   ['/lib/secrets/runtime.ts', secretSource],
   ['/lib/run-completion-effects.ts', 'export async function afterRunEnded(ownerId,runId){const p=globalThis.claimResponseProbe;(p.endedRuns??=[]).push({ownerId,runId})}'],
-  ['/lib/plugins/runtime.ts', 'export const personalPlugins = { async nativeMcpAssignment(_userId,authority) { const p = globalThis.claimResponseProbe; if (p.mcpAssignmentError) throw p.mcpAssignmentError; return {authority,servers:p.nativeMcpServers} } };'],
+  // The assignment hands the claim a fresh authority object; the fence must receive that exact object.
+  ['/lib/plugins/runtime.ts', 'export const personalPlugins = { async nativeMcpAssignment(_userId,authority) { const p = globalThis.claimResponseProbe; if (p.mcpAssignmentError) throw p.mcpAssignmentError; p.mcpAssigned = {...authority}; return {authority:p.mcpAssigned,servers:p.nativeMcpServers} } };'],
   ['/lib/plugins/workspace-mcp.ts', `import { PluginError } from ${JSON.stringify(new URL('../../lib/plugins/contracts.ts', import.meta.url).href)};
     function check(stage) { const p = globalThis.claimResponseProbe; p.mcpChecks.push(stage); const error = p.mcpErrors[stage].shift(); if (error) throw error; if (p.mcpRevoked) throw new PluginError('mcpUnavailable',403) }
     export async function validateMcpAuthority(_query, _owner, authority) { check('identity'); return authority }
-    export async function lockNativeMcpAuthority() { check('fence') }
+    // Returns each server's switches as read under the lock: by default what the assignment
+    // exported, or probe.lockedSwitches when a test switches a tool during the claim.
+    export async function lockNativeMcpAuthority(_query, _owner, authority) {
+      const p = globalThis.claimResponseProbe; check('fence'); (p.fenceAuthorities ??= []).push(authority)
+      const exported = id => (p.nativeMcpServers ?? []).find(server => server.name === 'mcp_' + id.replaceAll('-', ''))?.disabledTools ?? []
+      return p.lockedSwitches ?? Object.fromEntries(authority.servers.map(server => [server.id, exported(server.id)]))
+    }
   `],
   ['/lib/run-leases.ts', 'export async function latestCheckpoint(){const p=globalThis.claimResponseProbe;p.preparation.push("checkpoint");return structuredClone(p.checkpoint)};export async function failRunForDaemonUpgrade(...args){const p=globalThis.claimResponseProbe;p.preparation.push("daemon-upgrade");(p.upgradeRefusals??=[]).push(args);p.run.status="failed";p.run.stopReason="error";return true};export async function failQueuedSubscriptionRuntime(...args){const p=globalThis.claimResponseProbe;p.preparation.push("subscription-preflight");p.runtimeRefusal=args;p.run.status="failed";return true}'],
   ['/lib/daemon-release.ts', 'export function daemonTooOld(){return false};export async function daemonVersions(){return {min:"0.0.1",latest:"0.0.1"}}'],

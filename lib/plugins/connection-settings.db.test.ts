@@ -138,6 +138,72 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       assert.equal(toolCalls, 1)
       assert.deepEqual((await personal.nativeMcpConnections(member, snapshot.mcpAuthority!))[0].disabledTools, ['write_docs'])
     })
+    await t.test('tool switches keep running tasks, apply on the next call, and belong to the credential owner alone', async () => {
+      const workspaceAdmin = 'settings-admin'
+      await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())', [workspaceAdmin, `${workspaceAdmin}@example.invalid`])
+      await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,\'admin\',\'active\')', [workspace, workspaceAdmin, `${workspaceAdmin}@example.invalid`])
+      const revision = async () => (await personal.listMcp(owner)).find(server => server.id === installed.id)!.revision
+      const before = await revision()
+      // A task admitted now keeps this frozen snapshot for its whole run.
+      const running = await personal.snapshot(member, pool, workspace)
+      const runtime = createPersonalMcpRuntime(personal, { transport })
+      const call = (name: string) => runtime(member, running, { serverId: installed.id, name, arguments: {} })
+      const calls = toolCalls
+      assert.ok(!('error' in await call('read_docs')))
+
+      // Switching another tool on does not cut the running task off, and the new tool works on its next call.
+      await connections.setTool(owner, installed.id, 'write_docs', true, { expectedEnabled: false })
+      assert.equal(await revision(), before)
+      await shares.validate(member, running.mcpAuthority!)
+      assert.ok(!('error' in await call('read_docs')))
+      assert.ok(!('error' in await call('write_docs')))
+      assert.equal(toolCalls, calls + 3)
+
+      // Switching a tool off is refused from the very next call of the same run, and hidden from its listing.
+      await connections.setTool(owner, installed.id, 'read_docs', false)
+      assert.equal(await revision(), before)
+      assert.deepEqual(await call('read_docs'), { error: 'mcpToolDisabled' })
+      assert.equal(toolCalls, calls + 3)
+      assert.deepEqual((await runtime(member, running, { serverId: installed.id }) as { tools: { name: string }[] }).tools.map(tool => tool.name), ['write_docs'])
+      assert.ok(!('error' in await call('write_docs')))
+      assert.equal(toolCalls, calls + 4)
+      // A switch made during the handshake applies to that same listing: it is filtered with the
+      // switches re-read after the server initialized, not the ones read before it.
+      let reads = 0
+      const handshake = createPersonalMcpRuntime({ mcpConnection: async (...args: Parameters<typeof personal.mcpConnection>) => {
+        const connection = await personal.mcpConnection(...args)
+        return reads++ === 0 ? { ...connection, disabledTools: [...connection.disabledTools, 'write_docs'] } : connection
+      } }, { transport })
+      assert.deepEqual((await handshake(member, running, { serverId: installed.id }) as { tools: { name: string }[] }).tools.map(tool => tool.name), ['write_docs'])
+      assert.equal(reads, 2)
+      // One switch for every user of the connection: the owner's own runs see the same list.
+      assert.deepEqual((await personal.mcpConnection(owner, installed.id)).disabledTools, ['read_docs'])
+      await connections.setTool(owner, installed.id, 'read_docs', true)
+
+      // The connection runs on the owner's credential: no admin or member of a workspace it is
+      // shared to can switch its tools, in either direction.
+      await connections.setTool(owner, installed.id, 'write_docs', false, { expectedEnabled: true })
+      for (const user of [workspaceAdmin, member, outsider]) {
+        await assert.rejects(connections.setTool(user, installed.id, 'write_docs', true), /mcpNotFound/)
+        await assert.rejects(connections.setTool(user, installed.id, 'read_docs', false), /mcpNotFound/)
+      }
+      const shared = await connections.detail(workspaceAdmin, installed.id, workspace)
+      assert.deepEqual(shared.tools.map(tool => tool.name), ['read_docs'])
+      assert.deepEqual((await personal.mcpConnection(owner, installed.id)).disabledTools, ['write_docs'])
+
+      // Two switches from the same stale view: one applies, the other is a 409 and changes nothing.
+      const raced = await Promise.allSettled([
+        connections.setTool(owner, installed.id, 'write_docs', true, { expectedEnabled: false }),
+        connections.setTool(owner, installed.id, 'write_docs', true, { expectedEnabled: false }),
+      ])
+      assert.equal(raced.filter(result => result.status === 'fulfilled').length, 1)
+      const conflict = raced.find(result => result.status === 'rejected') as PromiseRejectedResult
+      assert.equal(conflict.reason.code, 'mcpConnectionChanged'); assert.equal(conflict.reason.status, 409)
+      await assert.rejects(connections.setTool(owner, installed.id, 'write_docs', false, { expectedEnabled: false }), /mcpConnectionChanged/)
+      assert.equal((await connections.detail(owner, installed.id)).tools.find(tool => tool.name === 'write_docs')?.enabled, true)
+      await connections.setTool(owner, installed.id, 'write_docs', false, { expectedEnabled: true })
+      assert.equal(await revision(), before)
+    })
     await t.test('environment bindings narrow both personal and shared grants and cannot reference another tenant', async () => {
       await assert.rejects(connections.setEnvironments(owner, installed.id, { workspaceId: workspace, environmentIds: [wrongEnvironment] }), /environmentAccessDenied/)
       await assert.rejects(connections.setEnvironments(owner, installed.id, { workspaceId: elsewhere, environmentIds: [wrongEnvironment] }), /workspaceAccessDenied/)
@@ -322,6 +388,18 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       assert.equal(requested.status, 200); assert.equal((await requested.json()).deviceCheck.status, 'pending')
       assert.equal((await check.POST(request('/api/integrations/mcp/id/check', 'POST', { deviceId: device, userId: outsider }), localContext)).status, 400)
       assert.equal((await connections.detail(owner, installed.id)).tools.find(tool => tool.name === 'read_docs')?.enabled, true)
+      const toolSwitch = (body: object) => tool.PATCH(request('/api/integrations/mcp/id/tools/read_docs', 'PATCH', body), context)
+      actor = 'settings-admin'
+      assert.equal((await toolSwitch({ enabled: false, expectedEnabled: true })).status, 404)
+      assert.equal((await toolSwitch({ enabled: false, workspaceId: workspace })).status, 400)
+      actor = owner
+      const switched = await toolSwitch({ enabled: false, expectedEnabled: true })
+      assert.equal(switched.status, 200); assert.equal((await switched.json()).tools.find((row: { name: string }) => row.name === 'read_docs').enabled, false)
+      const stale = await toolSwitch({ enabled: false, expectedEnabled: true })
+      assert.equal(stale.status, 409); assert.deepEqual(await stale.json(), { error: 'mcpConnectionChanged' })
+      assert.equal((await toolSwitch({ enabled: true, expectedEnabled: 'false' })).status, 400)
+      assert.equal((await toolSwitch({ enabled: true, expectedEnabled: false })).status, 200)
+      actor = owner
       const directory = await catalog.GET(request('/api/integrations/mcp/catalog?q=docs'))
       assert.equal(directory.status, 200)
       assert.deepEqual(await directory.json(), { entries: [{ name: 'io.example/docs', description: 'Directory fixture', version: '1.2.3', remotes: [{ index: 0, url: 'https://catalogue.example.com/mcp', transport: 'http' }] }], nextCursor: 'page-two' })
