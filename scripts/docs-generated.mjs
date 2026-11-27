@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import yaml from 'js-yaml'
 import { renderConfigContractsMarkdown } from './config-contract-sync.mjs'
+import { releaseFlagEntries } from './feature-flags-policy.mjs'
 
 export const GENERATED_RE = /<!-- generated:([a-z0-9-]+) -->\n[\s\S]*?<!-- \/generated:\1 -->/g
 
@@ -25,11 +26,17 @@ export function featureFlags() {
   const spreadDefaults = [...upcomingBody.matchAll(/^\s{2}\w+: \{ key: '([^']+)'/gm)]
     .filter(match => !literalDefaults.some(([, literal]) => literal === match[1]))
     .map(match => [match[0], match[1], 'false'])
-  const defaults = [...literalDefaults, ...spreadDefaults]
+  const release = releaseFlagEntries(source) ?? []
+  const releaseDefaults = release.map(({ key }) => [null, key, 'false'])
+  const defaults = [...literalDefaults, ...spreadDefaults, ...releaseDefaults]
     .map(([, key, value]) => `| \`${key}\` | \`${value}\` |`)
+  const releaseRows = release.map(({ key, owner, removeBy, description }) => `| \`${key}\` | ${owner} | ${removeBy} | ${description} |`)
   return [
     'Source: `lib/feature-flags.ts`.', '',
     '| Gated feature | PostHog key | waitsOn |', '| --- | --- | --- |', ...rows, '',
+    ...(releaseRows.length
+      ? ['| Release flag | Owner | removeBy | Staged rollout of |', '| --- | --- | --- | --- |', ...releaseRows]
+      : ['No release flags.']), '',
     '| Production default key | Default when PostHog is absent |', '| --- | --- |', ...defaults,
   ].join('\n')
 }

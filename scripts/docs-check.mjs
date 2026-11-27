@@ -3,6 +3,7 @@ import { GENERATED_DOCUMENTS } from './docs-generate.mjs'
 import { renderGenerated } from './docs-generated.mjs'
 import { validatePendingRegister, pendingLintProblems } from './pending-decisions.mjs'
 import { checkConfigContracts } from './config-contract-sync.mjs'
+import { featureFlagProblems } from './feature-flags-policy.mjs'
 
 
 const EXPECTED_GENERATED = {
@@ -36,6 +37,7 @@ for (const path of GENERATED_DOCUMENTS) {
 problems.push(...checkConfigContracts({ rootDir: '.' }))
 problems.push(...validatePendingRegister('.'))
 problems.push(...pendingLintProblems('.'))
+problems.push(...featureFlagProblems())
 const claims = JSON.parse(readFileSync('docs/doc-claims.json', 'utf8'))
 for (const claim of claims.claims) {
   for (const path of claim.paths ?? []) {

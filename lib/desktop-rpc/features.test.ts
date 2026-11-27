@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { gatedFeatures, killSwitches, upcomingFeatures } from '@/lib/feature-flags'
+import { gatedFeatures, killSwitches, releaseFlags, upcomingFeatures } from '@/lib/feature-flags'
 import { desktopFeatures } from './features'
 
 test('desktop flags use only the public hook keys and the verified user identity', async () => {
@@ -14,7 +14,7 @@ test('desktop flags use only the public hook keys and the verified user identity
   assert.equal(owner.flags[killSwitches.computerTab], true)
   assert.equal(owner.flags[upcomingFeatures.product.key], true)
   assert.equal(owner.flags[gatedFeatures.computerBilling.key], false)
-  assert.deepEqual(calls.map(([key]) => key).sort(), [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures).map(feature => feature.key), killSwitches.computerTab].sort())
+  assert.deepEqual(calls.map(([key]) => key).sort(), [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures).map(feature => feature.key), killSwitches.computerTab, ...Object.keys(releaseFlags)].sort())
   assert.ok(calls.every(([, userId]) => userId === 'owner'))
   const peer = await desktopFeatures('peer', { evaluate, env: {} })
   assert.equal(peer.cloudComputer, false)
@@ -24,7 +24,7 @@ test('desktop flags use only the public hook keys and the verified user identity
 test('signed-out config uses public defaults without evaluating an anonymous identity', async () => {
   const features = await desktopFeatures(undefined, { evaluate: async () => { throw new Error('anonymous flag evaluation') }, env: {} })
   assert.equal(features.cloudComputer, false)
-  assert.equal(Object.keys(features.flags).length, 8)
+  assert.equal(Object.keys(features.flags).length, 8 + Object.keys(releaseFlags).length)
   assert.ok(Object.values(features.flags).every(value => value === false))
 })
 

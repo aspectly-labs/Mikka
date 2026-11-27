@@ -552,7 +552,9 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
   A stored off is an admin's choice, never a leftover
   default: a migration that turns a default on also rewrites rows that hold
   the old default. A feature stays off only for real per-use cost, an
-  incident kill switch or a recorded Alex decision (`decisions.md`). Safety
+  incident kill switch, a recorded Alex decision (`decisions.md`) or, for some
+  people for a bounded time, a [staged rollout](decisions/2026-11-27-0330-staged-rollout-release-flags.md)
+  of a risky change. Safety
   and money defaults (approval requirements, auto-recharge) are not features;
   they change only with Alex's decision. Source: Alex, 2026-10-31.
 - **R-77** Enabled and authorized connections run their tools with the

@@ -1,13 +1,14 @@
 import 'server-only'
-import { computerAcceptancePreview, computerProductionEnabled, gatedFeatures, killSwitches, upcomingFeatures } from '@/lib/feature-flags'
+import { computerAcceptancePreview, computerProductionEnabled, gatedFeatures, killSwitches, releaseFlags, upcomingFeatures } from '@/lib/feature-flags'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import type { DesktopFeatures } from './wire'
 import { publicEnv } from '@/lib/public-env.mjs'
 import { runtimeEnv } from '@/lib/env/server'
 
-// These are the same public flags read by use-feature-availability. Never send
-// arbitrary PostHog flags, project configuration or server environment values.
-const publicKeys = [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures).map(feature => feature.key), killSwitches.computerTab]
+// These are the same public flags read by use-feature-availability, plus every
+// release flag so Desktop takes the server's answer for a staged rollout. Never
+// send arbitrary PostHog flags, project configuration or server environment values.
+const publicKeys = [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures).map(feature => feature.key), killSwitches.computerTab, ...Object.keys(releaseFlags)]
 
 /** A bootstrap snapshot, using the web's user identity and strict-true rules. */
 export async function desktopFeatures(userId?: string, {

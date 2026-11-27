@@ -39,6 +39,27 @@ export const gatedFeatures = {
 
 export type GatedFeature = keyof typeof gatedFeatures
 
+/** A staged rollout of a risky change (docs/design/decisions/2026-11-27-0330-staged-rollout-release-flags.md). */
+export interface ReleaseFlagDefinition {
+  /** Who widens the stages and deletes the flag. */
+  owner: string
+  /** YYYY-MM-DD, at most about two weeks after the flag reaches 100%. CI fails the day after. */
+  removeBy: string
+  /** The risky change the flag guards. */
+  description: string
+}
+
+/**
+ * Release flags, by PostHog key. Each is a gate: the new path runs only while
+ * PostHog answers exactly true for the person. While flags load, when PostHog
+ * is unreachable, and without a PostHog project, the previous behaviour runs.
+ * Stages: internal, a small percentage, then 100%. At 100% delete the entry,
+ * the flag and the dead branch. scripts/feature-flags-policy.mjs enforces it.
+ */
+export const releaseFlags = {} as const satisfies Record<string, ReleaseFlagDefinition>
+
+export type ReleaseFlag = keyof typeof releaseFlags
+
 /** Production capabilities when an installation has no PostHog project.
  * Billing and unshipped experiments remain off. See docs/self-hosting-byok.md. */
 export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
@@ -52,6 +73,7 @@ export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
   'mikka-proactive-profile': false,
   'mikka-proactive-research': false,
   ...Object.fromEntries(Object.values(upcomingFeatures).map(feature => [feature.key, false])),
+  ...Object.fromEntries(Object.keys(releaseFlags).map(key => [key, false])),
 }
 export const productionFlagDefault = (key: string) => PRODUCTION_FLAG_DEFAULTS[key] ?? false
 
