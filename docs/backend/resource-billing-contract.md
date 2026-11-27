@@ -193,3 +193,16 @@ Stripe 的 [幂等请求](https://docs.stripe.com/api/idempotent_requests) 明�
 4. **旧卡验证额度祖父迁移**：
    - 迁移 `20261126233650_billing_new_pricing_credits.sql` 将既有 `hosted_allowances.remaining > 0` 幂等迁入永不过期的 `workspace_credit_grants`（`bucket = 'purchased'`、`reason = 'allowance_grandfather'`、`expiresAt = NULL`）并将原 `hosted_allowances.remaining` 归零，保证现有用户余额不缩水、不重复计算。
 
+## E2B 按活跃秒计量合同（#3328 Part 2）
+
+1. **按成本单价与目录曝光（无免费机器分钟）**：
+   - E2B 沙箱仅在唤醒活跃期间按秒计费：`vCPU × $0.000014/s + GiB × $0.0000045/s`（`small` `$0.1152/hr ≈ $0.12/hr`、`medium` `$0.2304/hr ≈ $0.23/hr`、`large` `$0.4608/hr ≈ $0.46/hr`、`ultra` `$0.9216/hr ≈ $0.92/hr`），暂停/休眠期间费用为 `$0`，无免费机器时长。
+   - `billingCatalogViewSchema` 与 `resolveBillingCatalog()` 通过 `deriveE2BMachineSkuCatalog()` 输出 `e2bMachineSkus`（含 `perSecondMicroUsd`、`hourlyRateCents`、`hourlyUsd`、`vcpu`、`memoryGib`），保持原有 Cloudflare `machineSkus` 兼容不变。
+2. **预付分片唤醒追踪与暂停/销毁退还**：
+   - 迁移 `20261127021336_e2b_awake_second_metering.sql` 在 `e2b_compute_leases` 新增 `activeChunkStartedAt`、`previousActiveChunkStartedAt` 与 `lastSettledChunkIndex`。
+   - 创建（`recordE2BComputeSandbox`）、续期/唤醒（`paidTimeout`）及未使用续期回滚（`refundUnusedRenewal`）同步维护当前活跃分片的起始时间戳。
+   - 当 E2B 沙箱暂停（`parkThreadMachine`、`thread-lifecycle` 观测到 `paused`、`retained-deliverable` 暂停）或销毁（`threadMachines` Stop/`end`、`killComputer`）时，幂等调用 `settleE2BAwakeInterval()` 按实际唤醒秒数精确结算未结清分片，并通过 `HostedUsageStore.adjustSettledMachineCost()` LIFO 回退未消耗秒数至工作区余额与月度超额上限，同时将 `paidUntil` 封顶至暂停时刻，确保后续唤醒重新申请分片而非继续占用未付费窗口。
+3. **Cloud E2B BYO Key 禁用与连接型订阅机器计费**：
+   - `byoE2BKeyEnabled()` 在 `MIKKA_EDITION = 'cloud'` 时始终返回 `false`，Cloud 版强制走平台按活跃秒计费（连接已有 Claude/Codex 订阅节省的是模型 API 费用，E2B 沙箱机时仍按 `credits` 扣费）。
+
+

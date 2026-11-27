@@ -23,6 +23,7 @@ import {
   billingCatalogPath,
   billingCatalogViewSchema,
   DEFAULT_CREDIT_CONVERSION,
+  deriveE2BMachineSkuCatalog,
   deriveMachineSkuCatalog,
   fetchBillingCatalog,
   formatCatalogCurrency,
@@ -569,6 +570,17 @@ test('machine SKUs derive directly from selectableMachineSizeOptions and exclude
   assert.ok(defaultSku)
   assert.equal(defaultSku.id, 'standard-3')
   assert.equal(defaultSku.hourlyRateCents, 20)
+
+  const e2bSkus = deriveE2BMachineSkuCatalog()
+  assert.deepEqual(
+    e2bSkus.map(sku => [sku.id, sku.hourlyRateCents, sku.perSecondMicroUsd, sku.provider, sku.isDefault]),
+    [
+      ['small', 12, 32, 'e2b', false],
+      ['medium', 23, 64, 'e2b', true],
+      ['large', 46, 128, 'e2b', false],
+      ['ultra', 92, 256, 'e2b', false],
+    ],
+  )
 })
 
 test('catalog-client pure formatters, keys, and fetchBillingCatalog work without server-only dependencies', async () => {

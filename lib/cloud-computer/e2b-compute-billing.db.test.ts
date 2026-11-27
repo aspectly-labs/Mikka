@@ -605,4 +605,86 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   assert.equal(await e2bCreationTimeout(ownerId, 'personal', randomUUID(), 'codex', { workspaceId, runId }, 900_000), 900_000)
   assert.equal(await resume(), 900_000)
   assert.deepEqual(await receipts(), afterMismatch)
+
+  await t.test('settles E2B awake seconds on pause/kill, refunds unused credits, and charges fresh chunk on resume', async () => {
+    process.env.MIKKA_EDITION = 'cloud'
+    const awakeOwnerId = await seedUser(fixture, 'e2b-awake-sec')
+    const { id: awakeWorkspaceId } = await seedWorkspace(fixture, awakeOwnerId, [{ userId: awakeOwnerId, role: 'admin' }])
+    const awakeAgentId = await seedAgent(fixture, awakeOwnerId)
+    const awakeRunId = await seedRun(fixture, { userId: awakeOwnerId, agentId: awakeAgentId, workspaceId: awakeWorkspaceId, status: 'running' })
+    await fixture.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,reason,"externalId") VALUES ($1,$2,10,'purchased','test',$3)`,
+      [randomUUID(), awakeWorkspaceId, randomUUID()],
+    )
+    const { hostedUsage } = await import('../abuse/runtime')
+    const { recordE2BComputeSandbox, settleE2BAwakeInterval } = await import('./e2b-compute-billing')
+    const op = randomUUID()
+    const sb = `sb-${randomUUID()}`
+    const startedAt = new Date(Date.now() - 120_000)
+    await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture'),('sandbox',$3,$2,'team:fixture')`,
+      [op, awakeOwnerId, sb])
+
+    // Chunk 0 prepays 5 minutes of medium ($0.2304/hr = 19,200 micro-USD).
+    await e2bCreationTimeout(awakeOwnerId, 'team:fixture', op, templates.codex.templateId, { workspaceId: awakeWorkspaceId, runId: awakeRunId }, 900_000,
+      { provider: 'e2b', size: 'medium', hourlyMicroUsd: 230_400, pricingVersion: '2026-11-26', cpuCount: 2, memoryMB: 8192 })
+    await recordE2BComputeSandbox(awakeOwnerId, op, sb, startedAt)
+    assert.equal((await hostedUsage.balance(awakeWorkspaceId)).purchased, 100_000 - 19_200)
+
+    // Pause after 60 awake seconds using an existing transaction (verifies pool.max=1 safety) -> bills 60*64=3,840, refunds 15,360.
+    const pausedAt = new Date(startedAt.getTime() + 60_000)
+    const pauseTx = await pool.connect()
+    try {
+      await pauseTx.query('BEGIN')
+      const firstPause = await settleE2BAwakeInterval(awakeOwnerId, sb, pausedAt, pauseTx)
+      await pauseTx.query('COMMIT')
+      assert.deepEqual(firstPause, { settled: true, refundedMicroUsd: 15_360 })
+    } finally {
+      pauseTx.release()
+    }
+    assert.equal((await hostedUsage.balance(awakeWorkspaceId)).purchased, 100_000 - 3_840)
+
+    // Repeated settlement while still paused is idempotent ($0 while sleeping).
+    assert.deepEqual(await settleE2BAwakeInterval(awakeOwnerId, sb, new Date(pausedAt.getTime() + 60_000)), {
+      settled: false, refundedMicroUsd: 0,
+    })
+
+    // Resume bills chunk 1 (`19,200` micro-USD); kill after 10 awake seconds leaves chunk 0 untouched and settles chunk 1 at `640` micro-USD.
+    await withE2BProviderTime(awakeOwnerId, sb, 900_000, {
+      providerScope: 'team:fixture',
+      inspect: async () => ({ sandboxId: sb, templateId: templates.codex.templateId, cpuCount: 2, memoryMB: 8192, endAt: pausedAt }) as Awaited<ReturnType<typeof Sandbox.getInfo>>,
+    }, async timeoutMs => timeoutMs)
+    const leaseAfterResume = (await fixture.query<{ activeChunkIndex: number; activeChunkStartedAt: Date }>(
+      `SELECT "activeChunkIndex","activeChunkStartedAt" FROM e2b_compute_leases WHERE "operationId"=$1`, [op])).rows[0]
+    assert.equal(leaseAfterResume.activeChunkIndex, 1)
+
+    const killedAt = new Date(leaseAfterResume.activeChunkStartedAt.getTime() + 10_000)
+    const killSettle = await settleE2BAwakeInterval(awakeOwnerId, sb, killedAt)
+    assert.deepEqual(killSettle, { settled: true, refundedMicroUsd: 18_560 })
+    assert.equal((await hostedUsage.balance(awakeWorkspaceId)).purchased, 100_000 - 3_840 - 640)
+
+    // Renewal within the lead window before previous chunk finishes: stopping early zeroes the unreached chunk (`state='failed'`)
+    // AND refunds unused seconds of the active chunk.
+    const preRenewOp = randomUUID()
+    const preRenewSb = `sb-${randomUUID()}`
+    await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture'),('sandbox',$3,$2,'team:fixture')`,
+      [preRenewOp, awakeOwnerId, preRenewSb])
+    await e2bCreationTimeout(awakeOwnerId, 'team:fixture', preRenewOp, templates.codex.templateId, { workspaceId: awakeWorkspaceId, runId: awakeRunId }, 900_000,
+      { provider: 'e2b', size: 'medium', hourlyMicroUsd: 230_400, pricingVersion: '2026-11-26', cpuCount: 2, memoryMB: 8192 })
+    await recordE2BComputeSandbox(awakeOwnerId, preRenewOp, preRenewSb, new Date())
+    const balanceBeforeRenew = (await hostedUsage.balance(awakeWorkspaceId)).purchased
+    const chunk0NearEnd = new Date(Date.now() + 20_000)
+    await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=$2,"activeChunkStartedAt"=$3 WHERE "operationId"=$1`,
+      [preRenewOp, chunk0NearEnd, new Date(chunk0NearEnd.getTime() - 300_000)])
+    await withE2BProviderTime(awakeOwnerId, preRenewSb, 900_000, {
+      providerScope: 'team:fixture',
+      inspect: async () => ({ sandboxId: preRenewSb, templateId: templates.codex.templateId, cpuCount: 2, memoryMB: 8192, endAt: chunk0NearEnd }) as Awaited<ReturnType<typeof Sandbox.getInfo>>,
+    }, async timeoutMs => timeoutMs)
+    const leadStopAt = new Date(chunk0NearEnd.getTime() - 10_000)
+    const leadSettle = await settleE2BAwakeInterval(awakeOwnerId, preRenewSb, leadStopAt)
+    assert.deepEqual(leadSettle, { settled: true, refundedMicroUsd: 19_200 + 640 })
+    assert.equal((await hostedUsage.balance(awakeWorkspaceId)).purchased, balanceBeforeRenew + 640)
+    const chunk1Row = (await fixture.query<{ state: string; cost: string }>(
+      `SELECT state,"costMicroUsd"::text AS cost FROM hosted_usage WHERE id=$1`, [`machine:e2b:${preRenewOp}:1`])).rows[0]
+    assert.deepEqual(chunk1Row, { state: 'failed', cost: '0' })
+  })
 })

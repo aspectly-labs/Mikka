@@ -26,6 +26,7 @@ import {
   billingPlanCatalogEntrySchema,
   creditConversionSchema,
   DEFAULT_CREDIT_CONVERSION,
+  deriveE2BMachineSkuCatalog,
   deriveMachineSkuCatalog,
   machineSkuCatalogEntrySchema,
   type BillingActiveOffer,
@@ -761,6 +762,7 @@ export async function resolveBillingCatalog(
     plans,
     creditConversion: DEFAULT_CREDIT_CONVERSION,
     machineSkus: deriveMachineSkuCatalog(),
+    e2bMachineSkus: deriveE2BMachineSkuCatalog(),
     activeOffer,
     fetchedAt: new Date(nowMs).toISOString(),
   })

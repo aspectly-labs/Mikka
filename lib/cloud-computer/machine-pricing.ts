@@ -13,10 +13,15 @@ export const MACHINE_SIZES = {
   'standard-4-16': { vcpu: 4, gib: 16 },
 } as const
 export type MachineSize = keyof typeof MACHINE_SIZES
+export const E2B_MACHINE_SIZES = Object.keys(e2bSizes) as E2BMachineSize[]
 export type E2BMachineSize = keyof typeof e2bSizes
 export type MachineProvider = 'cloudflare' | 'e2b'
 export type MachineSku = { provider: 'cloudflare'; size: MachineSize } | { provider: 'e2b'; size: E2BMachineSize }
 export type MachineGeometry = { vcpu: number; ramGib: number }
+/** https://e2b.dev/pricing: $0.000014/vCPU-second + $0.0000045/GiB-second (at-cost list). */
+export const E2B_MICRO_USD_PER_VCPU_SECOND = 14
+export const E2B_MICRO_USD_PER_GIB_SECOND = 4.5
+export const DEFAULT_E2B_MACHINE_SIZE: E2BMachineSize = 'medium'
 /** Machine time is prepaid in chunks while the machine is awake. */
 export const MACHINE_CHUNK_MS = 5 * 60_000
 export const MACHINE_LIST_PRICE_VERSION = '2026-11-26'
@@ -155,4 +160,43 @@ export const selectableMachineSizeOptions = (): readonly MachineSizeOption[] =>
     ramGib: MACHINE_SIZES[id].gib,
     hourlyUsd: machineHourlyUsd(id),
     isDefault: id === DEFAULT_MACHINE_SIZE,
+  }))
+
+/** Exact per-awake-second list charge in micro-USD for an E2B tier. */
+export const e2bPerSecondMicroUsd = (size: E2BMachineSize): number =>
+  e2bSizes[size].cpuCount * E2B_MICRO_USD_PER_VCPU_SECOND
+  + (e2bSizes[size].memoryMB / 1_024) * E2B_MICRO_USD_PER_GIB_SECOND
+
+/** E2B hourly list rate in micro-USD and USD. */
+export const e2bHourlyMicroUsd = (size: E2BMachineSize): number => e2bSizes[size].hourlyMicroUsd
+export const e2bHourlyUsd = (size: E2BMachineSize): number => e2bHourlyMicroUsd(size) / 1_000_000
+/** Rounded integer USD cents per hour (`$0.12`, `$0.23`, `$0.46`, `$0.92`). */
+export const e2bHourlyRateCents = (size: E2BMachineSize): number => Math.round(e2bHourlyUsd(size) * 100)
+
+/** Computes exact E2B awake-second charge from an hourly micro-USD list price. */
+export function e2bAwakeSecondsMicroUsd(hourlyMicroUsd: number, awakeSeconds: number): number {
+  if (!Number.isFinite(awakeSeconds) || awakeSeconds <= 0 || hourlyMicroUsd <= 0) return 0
+  return integerHourCost(BigInt(Math.round(hourlyMicroUsd)) * BigInt(Math.floor(awakeSeconds)) * 1_000n)
+}
+
+export interface E2BMachineSizeOption {
+  readonly id: E2BMachineSize
+  readonly vcpu: number
+  readonly ramGib: number
+  readonly hourlyUsd: number
+  readonly hourlyRateCents: number
+  readonly perSecondMicroUsd: number
+  readonly isDefault: boolean
+}
+
+/** Structured metadata (vCPU, GiB, USD/hr, USD/s) for E2B sandbox tiers. */
+export const selectableE2BMachineSizeOptions = (): readonly E2BMachineSizeOption[] =>
+  (Object.keys(e2bSizes) as E2BMachineSize[]).map(id => ({
+    id,
+    vcpu: e2bSizes[id].cpuCount,
+    ramGib: e2bSizes[id].memoryMB / 1_024,
+    hourlyUsd: e2bHourlyUsd(id),
+    hourlyRateCents: e2bHourlyRateCents(id),
+    perSecondMicroUsd: e2bPerSecondMicroUsd(id),
+    isDefault: id === DEFAULT_E2B_MACHINE_SIZE,
   }))

@@ -51,8 +51,11 @@ const defaultRuntime: RetainedDeliverableRuntime = {
     })))
   },
   async pause(scope, budget) {
-    const [{ Sandbox }, { withE2BErrors }, options] = await Promise.all([import('e2b'), import('../secrets/e2b-runtime'), ownerOptions(scope)])
+    const [{ Sandbox }, { withE2BErrors }, { settleE2BAwakeInterval }, options] = await Promise.all([
+      import('e2b'), import('../secrets/e2b-runtime'), import('./e2b-compute-billing'), ownerOptions(scope),
+    ])
     await withE2BErrors(scope.ownerId, false, () => Sandbox.pause(scope.sandboxId, { ...options, ...requestOptions(budget, 10_000) }))
+    await settleE2BAwakeInterval(scope.ownerId, scope.sandboxId)
   },
   script: () => readFile(join(process.cwd(), 'scripts/e2b/inspect-retained-deliverable.mjs'), 'utf8'),
   now: Date.now,

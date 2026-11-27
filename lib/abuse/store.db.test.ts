@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Pool } from 'pg'
+import { hostedBillingScope } from './context'
 import { HostedUsageStore } from './store'
 import { signupRateLimit as configuredSignupRateLimit } from './signup'
 const signupRateLimit = (
@@ -701,5 +702,47 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
       [randomUUID(), workspaceId, g1],
     )
     assert.equal((await store.balance(workspaceId)).purchased, 0)
+  })
+  await t.test('adjustSettledMachineCost refunds unused awake seconds LIFO across expiring grants and overage cap', async () => {
+    const workspaceId = randomUUID()
+    // Ensure soonerId sorts AFTER laterId lexicographically so JSONB key order alone would fail LIFO.
+    const soonerId = 'ffffffff-1111-4111-8111-111111111111'
+    const laterId = '00000000-1111-4111-8111-111111111111'
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"expiresAt") VALUES
+        ($1,$3,1,'purchased',now() + interval '10 days'),
+        ($2,$3,2,'purchased',now() + interval '300 days')`,
+      [soonerId, laterId, workspaceId],
+    )
+    const callId = `machine:e2b:${randomUUID()}:0`
+    await hostedBillingScope.run(
+      { workspaceId, billingAccountWorkspaceId: workspaceId, ownerId: workspaceId, billingSource: 'credits', attributionComplete: true },
+      () => store.reserve(workspaceId, 'machine/e2b-medium', callId, {}, 19_200, true),
+    )
+    assert.deepEqual(
+      (await pool.query('SELECT "purchasedMicroUsd"::int AS p,"purchasedAllocations" AS alloc FROM hosted_usage WHERE id=$1', [callId])).rows[0],
+      { p: 19_200, alloc: { [soonerId]: 10_000, [laterId]: 9_200 } },
+    )
+    assert.equal((await store.balance(workspaceId)).purchased, 10_800)
+
+    const partial = await store.adjustSettledMachineCost(callId, workspaceId, workspaceId, 3_840)
+    assert.deepEqual(partial, { adjusted: true, refundedMicroUsd: 15_360 })
+    assert.deepEqual(
+      (await pool.query('SELECT state,"costMicroUsd"::int AS c,"purchasedMicroUsd"::int AS p,"purchasedAllocations" AS alloc FROM hosted_usage WHERE id=$1', [callId])).rows[0],
+      { state: 'settled', c: 3_840, p: 3_840, alloc: { [soonerId]: 3_840 } },
+    )
+    assert.equal((await store.balance(workspaceId)).purchased, 26_160)
+
+    const noop = await store.adjustSettledMachineCost(callId, workspaceId, workspaceId, 5_000)
+    assert.deepEqual(noop, { adjusted: false, refundedMicroUsd: 0 })
+
+    const zeroed = await store.adjustSettledMachineCost(callId, workspaceId, workspaceId, 0)
+    assert.deepEqual(zeroed, { adjusted: true, refundedMicroUsd: 3_840 })
+    assert.deepEqual(
+      (await pool.query('SELECT state,"costMicroUsd"::int AS c,"purchasedMicroUsd"::int AS p,"purchasedAllocations" AS alloc FROM hosted_usage WHERE id=$1', [callId])).rows[0],
+      { state: 'failed', c: 0, p: 0, alloc: {} },
+    )
+    assert.equal((await store.balance(workspaceId)).purchased, 30_000)
   })
 })
