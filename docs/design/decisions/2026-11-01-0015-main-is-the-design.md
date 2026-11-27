@@ -1,7 +1,7 @@
 # main is the design; superseded Figma drafts are archived at once
 
 - Date: 2026-11-01
-- **Status:** Superseded in part by [2026-11-01-1440-dev-workflow-local-first](2026-11-01-1440-dev-workflow-local-first.md)
+- **Status:** Superseded in part by [2026-11-01-1440-dev-workflow-local-first](2026-11-01-1440-dev-workflow-local-first.md) and [2026-11-27-1409](2026-11-27-1409-top-products-over-paid-blocks.md)
 - Source: Alex, after sessions kept building on stale Figma frames:
   「现在真实在跑的…命上面的代码…找到对应的那个 figma 的稿。如果说没有
   figma 的稿，那你就重新画。只要是不是在命上面的，那都是废稿。废稿的话，
@@ -11,6 +11,7 @@
   where it names pages that are now in 归档.
 - Superseded in part by: [2026-11-01-1440-dev-workflow-local-first](2026-11-01-1440-dev-workflow-local-first.md) (merging through integration batches, itself replaced by [2026-11-01-1545-trunk-based](2026-11-01-1545-trunk-based.md))
 - Superseded in part by: [2026-11-09-0050](2026-11-09-0050-paid-blocks-as-shipped.md): a paid block's look comes from the library's shipped demo, not from `main`.
+- Superseded in part by: [2026-11-27-1409](2026-11-27-1409-top-products-over-paid-blocks.md): rule 1 — for a surface a top product covers, the top-product reference decides look and layout over `main`; `main` decides only where no reference covers the surface.
 
 ## Rule
 

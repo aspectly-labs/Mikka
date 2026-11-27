@@ -3,7 +3,7 @@
 - Date: 2026-11-27 14:09 UTC
 - **Status:** Accepted (Alex, 2026-11-25)
 - Source: Alex, effective 2026-11-25, restated 2026-11-27: anything not aligned with the top products must not stay.
-- Supersedes: [2026-11-09-0050-paid-blocks-as-shipped](2026-11-09-0050-paid-blocks-as-shipped.md) (「原样使用，只换数据」) in full, and the "Retains: Paid blocks as shipped" clause of [2026-11-24-1518-design-system-v2-chatgpt-cc-standard](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md). The rest of 2026-11-24-1518, including its precedence of reference products, stands. Supersedes in part: [2026-11-18-1900-icons-hugeicons](2026-11-18-1900-icons-hugeicons.md), its 「付费库原样保留」 bullet only (paid libraries keep their own icons); the rest of that decision, the task-status exception included, stands.
+- Supersedes: [2026-11-09-0050-paid-blocks-as-shipped](2026-11-09-0050-paid-blocks-as-shipped.md) (「原样使用，只换数据」) in full, and the "Retains: Paid blocks as shipped" clause of [2026-11-24-1518-design-system-v2-chatgpt-cc-standard](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md). The rest of 2026-11-24-1518, including its precedence of reference products, stands. Supersedes in part: [2026-11-18-1900-icons-hugeicons](2026-11-18-1900-icons-hugeicons.md), its 「付费库原样保留」 bullet only (paid libraries keep their own icons); the rest of that decision, the task-status exception included, stands. Supersedes in part: [2026-11-01-0015-main-is-the-design](2026-11-01-0015-main-is-the-design.md), rule 1 only for surfaces a top product covers (`main` still decides where no reference covers the surface).
 - Icons source: owner, 2026-11-27: 「我们使用的 huge icons」.
 
 ## Decision
