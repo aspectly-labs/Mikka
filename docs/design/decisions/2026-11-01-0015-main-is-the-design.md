@@ -1,7 +1,7 @@
 # main is the design; superseded Figma drafts are archived at once
 
 - Date: 2026-11-01
-- **Status:** Superseded in part by [2026-11-01-1440-dev-workflow-local-first](2026-11-01-1440-dev-workflow-local-first.md)
+- **Status:** Superseded in part by [2026-11-01-1440-dev-workflow-local-first](2026-11-01-1440-dev-workflow-local-first.md) and [2026-11-27-1409](2026-11-27-1409-top-products-over-paid-blocks.md)
 - Source: Alex, after sessions kept building on stale Figma frames:
   「现在真实在跑的…命上面的代码…找到对应的那个 figma 的稿。如果说没有
   figma 的稿，那你就重新画。只要是不是在命上面的，那都是废稿。废稿的话，
