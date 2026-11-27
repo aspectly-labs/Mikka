@@ -5,7 +5,7 @@ They are not application runtime code and contain no scripts. `AGENTS.md`
 and the release and test rules always win over a skill. For product and visual
 rules the two design skills (`unslop`, `interface-design`) win over an R-rule
 by default (decision 2026-10-31): change the code, the R-entry in
-`docs/design/rules.md` and its `lint:ui` / `check-copy` check together. The
+`mikka-hosted-ui/docs/design/rules.md` and its `lint:ui` / `check-copy` check together. The
 exception is a skill rule that does not fit a dense SaaS product (marketing
 hero type, decorative motion, big whitespace in data views); skip it and say
 why. Where the two skills disagree, `interface-design` decides;
@@ -19,7 +19,7 @@ No skill outranks the top-product reference: a paid block or component
 (BoardUI Pro, affectUI, beUI Pro) is edited to match ChatGPT / Codex, Claude /
 Claude Code, Capy or Linear, and a skill's token, icon-set, font and polish
 rules apply only where that reference is silent
-(`docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md`).
+(`mikka-hosted-ui/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md`).
 
 Vendored on 2026-10-29, unmodified, from these pinned commits:
 
@@ -88,7 +88,7 @@ text is at [`../skill-licenses/anthropic-frontend-design/LICENSE`](../skill-lice
 - **iOS app look and feel** (Alex, 2026-11-24: 「根据这个来进行设计」): every design or redesign of an iOS screen in `mikka-hosted-ui/mobile-next` reads `apple-design` and `mobile-native` (Emil Kowalski) and `swiftui-ui-patterns` (OpenAI Build iOS Apps) before drawing it, and checks motion with `review-animations` / `animate-expo` and gestures with `gestures`. Their SwiftUI code applies only to `@expo/ui/swift-ui` trees; in React Native screens they decide the iOS result (hierarchy, spacing, type, controls, motion), and the Expo skills decide how to build it.
 - **iOS app UI** (`mikka-hosted-ui/mobile-next`): load `expo-overview` first and the Expo skills it routes to (`expo-native-ui`, `expo-router`, `expo-animation`, `expo-ui`, `expo-design-system`), with `react-native-skills` for list, animation and UI patterns. An iOS UI PR carries Expo Web screenshots and a checklist of what Alex checks on TestFlight after the OTA. `ios-design` stays a review checklist (native controls first, gestures as springs, keyboard through `react-native-keyboard-controller`); its Uizze MCP steps are optional and not connected here. Where it and the Expo skills differ on how to build something in Expo, the Expo skills decide.
 
-- **Flow usability (glanceable, simple user flow)**: before a design or UI change is handed in, run `ux-heuristics` (score every screen out of 10; below 8 is not ready) and `cognitive-walkthrough` on each key task, counting clicks, scrolls and page switches per step. Report both results with the design. The author's own score is only a reference: the review that decides is done by an independent reviewer that did not author the design, against full-size screenshots and the live product, and it also checks R-84 to R-90 in `docs/design/rules.md` (Design review) one by one, including R-90: every part reuses an existing component.
+- **Flow usability (glanceable, simple user flow)**: before a design or UI change is handed in, run `ux-heuristics` (score every screen out of 10; below 8 is not ready) and `cognitive-walkthrough` on each key task, counting clicks, scrolls and page switches per step. Report both results with the design. The author's own score is only a reference: the review that decides is done by an independent reviewer that did not author the design, against full-size screenshots and the live product, and it also checks R-84 to R-90 in `mikka-hosted-ui/docs/design/rules.md` (Design review) one by one, including R-90: every part reuses an existing component.
 - **Product UX checks**: `ux-heuristics` (Nielsen's 10 heuristics with severity ratings and the 10-point score), `ux-information-architecture-audit`, `ux-navigation`, `ux-settings` (with `settings-pages`); `ui-ux-pro-max` references as a UI checklist. `docs/design/` and `interface-design` still decide.
 - **Architecture remediation** uses `improve-codebase-architecture` with
   `codebase-design` to trace callers and test whether a layer can be removed.
@@ -182,4 +182,4 @@ The files below are **Mikka-authored procedural adapters**, not verbatim vendore
 | `impeccable-audit` | Visual craft/UX audit without alternative design system or paid UI restyling | [Impeccable at b4bff16](https://github.com/pbakaus/impeccable/tree/b4bff1626c344067788c2679f048a20057c7cc5a), Apache-2.0 |
 | `ui-ux-pro-max` | Existing MIT reference checklists, adapted to use `references/` without absent search scripts | [nextlevelbuilder/ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) pinned above |
 
-Upstream methods are acknowledged, not copied as executable dependencies. For availability, Mikka's built-in `pnpm lint:ui` does not cover every private/native UI: use the role-aware matrix and actual source-pinned official runtime. Browser observations are **not** an automatic main-branch E2E CI gate. See [audit baseline](../../docs/design/ux-quality-audit.md) and [#2212](https://github.com/alexj11324/Mikka/issues/2212).
+Upstream methods are acknowledged, not copied as executable dependencies. For availability, Mikka's built-in `pnpm lint:ui` does not cover every private/native UI: use the role-aware matrix and actual source-pinned official runtime. Browser observations are **not** an automatic main-branch E2E CI gate. See [audit baseline](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/ux-quality-audit.md) and [#2212](https://github.com/alexj11324/Mikka/issues/2212).

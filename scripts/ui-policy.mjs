@@ -16,7 +16,7 @@ export function exemptFrameworkShims(file, diagnostics, policy) {
   return roots.some(root => file === root || (root.endsWith('/') && file.startsWith(root))) ? diagnostics.filter(d => !FRAMEWORK_SHIM_RULES.has(d.rule)) : diagnostics
 }
 
-// From docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md (superseded by 2026-11-27-1409): files under
+// From mikka-hosted-ui/docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md (superseded by 2026-11-27-1409): files under
 // ui-policy.json asShipped.public, which is empty, drop only these two rules.
 const AS_SHIPPED_RULES = new Set(['style/semantic-colors', 'typography/preset-only'])
 export function exemptAsShipped(file, diagnostics, policy) {

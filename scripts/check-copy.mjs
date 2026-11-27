@@ -1,5 +1,5 @@
 /**
- * Guards the parts of docs/design/copy.md that a script can decide without
+ * Guards the parts of mikka-hosted-ui/docs/design/copy.md that a script can decide without
  * reading the component. Run it with `node scripts/check-copy.mjs`; it exits
  * non-zero and lists every offender.
  *
@@ -22,7 +22,7 @@
  *
  * It does not check English contractions (Microsoft recommends them), 「请」 in
  * full sentences, or whether a status line offers a next step. Reviewers judge
- * those against copy.md.
+ * those against mikka-hosted-ui docs/design/copy.md.
  */
 import { readFileSync } from 'node:fs'
 

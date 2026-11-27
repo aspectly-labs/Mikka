@@ -16,9 +16,8 @@ the three integrations.
   renders only inside the BoardUI *template* settings modal
   (`app/multi-agent-chat`, `/templates/project-board`), never the product
   settings 连接 page. It is template filler data owned by the private repo.
-- **Revyl** — Figma-only. The only repo mention is
-  `docs/research/2026-11-10-capy-desktop-gap.md:81`, which lists "Revyl 云手机"
-  among route/API names observed inside Capy's desktop bundle — a Capy
+- **Revyl** — Figma-only. Its only mention is in private competitor research
+  (evidence: mikka-hosted-ui `docs/research/2026-11-27-public-evidence.md`, § integrations-figma-only): a Capy
   product capability, not a Mikka one.
 - **Tailscale** — Figma-only as a settings integration. The only code-adjacent
   mention is a planned daemon host source (`tailscale status --json` in

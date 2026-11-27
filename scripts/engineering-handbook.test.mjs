@@ -12,7 +12,6 @@ const FROZEN_DECISIONS = 'docs/design/decisions.md'
 
 const REQUIRED_TEMPLATES = [
   'docs/engineering/templates/design-doc.md',
-  'docs/engineering/templates/ui-spec.md',
   'docs/engineering/templates/coe-postmortem.md',
 ]
 
@@ -37,8 +36,11 @@ const LOCAL_DIR_PREFIXES = new Set([
 ])
 const LOCAL_ROOT_FILES = new Set(['AGENTS.md', 'CONTRIBUTING.md', 'package.json', 'ui-policy.json'])
 
+// A successor is a record in this folder, or a UI-only record in the private hosted repository
+// (UI decisions moved there on 2026-11-27; only the link's shape can be checked here).
+const HOSTED_DECISIONS_URL = 'https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/'
 const CANONICAL_ADR_STATUS_RE =
-  /^(?:-\s+)?(?:\*\*Status:\*\*|Status:)\s*(Accepted\b|Superseded(?:\s+in\s+part)?\s+by\s+\[[^\]]+\]\(([0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+\.md)\))/
+  /^(?:-\s+)?(?:\*\*Status:\*\*|Status:)\s*(Accepted\b|Superseded(?:\s+in\s+part)?\s+by\s+\[[^\]]+\]\(((?:https:\/\/github\.com\/aspectly-labs\/mikka-hosted-ui\/blob\/main\/docs\/design\/decisions\/)?[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+\.md)\))/
 
 function stripFencedCodeBlocks(markdown) {
   const lines = markdown.split(/\r?\n/)
@@ -327,9 +329,16 @@ export function auditEngineeringHandbook(root) {
         continue
       }
       const statusText = match[1]
-      const targetFile = match[2]
+      const hosted = match[2]?.startsWith(HOSTED_DECISIONS_URL) ?? false
+      const targetFile = hosted ? match[2].slice(HOSTED_DECISIONS_URL.length) : match[2]
       if (targetFile) {
-        if (targetFile === file) {
+        if (hosted) {
+          if (fileSet.has(targetFile)) {
+            errors.push(`${DECISIONS_DIR}/${file}: Status links '${targetFile}' in the hosted repository, but it is in this folder`)
+          } else if (targetFile.slice(0, 10) < file.slice(0, 10)) {
+            errors.push(`${DECISIONS_DIR}/${file}: Status supersession target '${targetFile}' predates this ADR`)
+          }
+        } else if (targetFile === file) {
           errors.push(`${DECISIONS_DIR}/${file}: Status header cannot supersede itself`)
         } else if (!fileSet.has(targetFile)) {
           errors.push(`${DECISIONS_DIR}/${file}: Status supersession target '${targetFile}' does not exist`)
@@ -363,7 +372,8 @@ export function auditEngineeringHandbook(root) {
 test('Engineering Handbook, templates, pointers, and all ADRs pass Tier 3 audit', () => {
   const result = auditEngineeringHandbook(REPO_ROOT)
   assert.deepEqual(result.errors, [], `Handbook / ADR audit errors:\n${result.errors.join('\n')}`)
-  assert.ok(result.adrCounts.total >= 300, `expected >= 300 ADRs, saw ${result.adrCounts.total}`)
+  // UI-only records moved to mikka-hosted-ui on 2026-11-27; this folder keeps backend, product and process records.
+  assert.ok(result.adrCounts.total >= 200, `expected >= 200 ADRs, saw ${result.adrCounts.total}`)
   assert.equal(
     result.adrCounts.accepted + result.adrCounts.superseded + result.adrCounts.supersededInPart,
     result.adrCounts.total,
@@ -411,7 +421,19 @@ test('auditEngineeringHandbook rejects missing ADR Status headers, broken supers
       '# Older\n\n- **Status:** Superseded by [old](2026-11-01-0000-no-status.md)\n',
     )
 
+    writeFileSync(
+      join(dir, 'docs/design/decisions/2026-11-06-0000-hosted-target.md'),
+      '# Hosted\n\n- **Status:** Superseded by [ui](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-0000-ui-only.md)\n',
+    )
+    writeFileSync(
+      join(dir, 'docs/design/decisions/2026-11-08-0000-hosted-local.md'),
+      '# Hosted local\n\n- **Status:** Superseded by [x](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-0000-here.md)\n',
+    )
+    writeFileSync(join(dir, 'docs/design/decisions/2026-11-09-0000-here.md'), '# Here\n\n- **Status:** Accepted\n')
+
     const { errors } = auditEngineeringHandbook(dir)
+    assert.ok(!errors.some(e => e.includes('2026-11-06-0000-hosted-target.md')))
+    assert.ok(errors.some(e => e.includes("2026-11-08-0000-hosted-local.md: Status links '2026-11-09-0000-here.md' in the hosted repository")))
     assert.ok(errors.some(e => e.includes("referenced local path 'scripts/does-not-exist.mjs'")))
     assert.ok(errors.some(e => e.includes("broken markdown link target '../nope.md'")))
     assert.ok(errors.some(e => e.includes("broken markdown link target '../also-missing.md'")))

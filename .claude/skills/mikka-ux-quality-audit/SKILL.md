@@ -39,6 +39,6 @@ Before auditing, record exact public `Mikka` and private `mikka-hosted-ui` sourc
 
 ## Evidence and reporting
 
-Run the [domain workflow](../../../docs/design/ux-quality-audit.md#run-one-domain) from the public checkout. Attach the command results and observed interaction to the source-bound matrix. Statuses: `verified-missing`, `verified-broken`, `source-only-candidate`, `verified-intentional`, `verified-fixed`, `not-tested`. Never treat an empty result list or an AST pass as full functional coverage.
+Run the [domain workflow](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/ux-quality-audit.md#run-one-domain) from the public checkout. Attach the command results and observed interaction to the source-bound matrix. Statuses: `verified-missing`, `verified-broken`, `source-only-candidate`, `verified-intentional`, `verified-fixed`, `not-tested`. Never treat an empty result list or an AST pass as full functional coverage.
 
 No general browser E2E CI gate, product polling, Vercel preview or new paid UI source. An audit does not authorize production data writes or publishing. If production/physical-device acceptance is unavailable, record the exact remaining gate; continue unrelated actionable work without declaring the entire goal finished.

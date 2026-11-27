@@ -98,7 +98,7 @@ This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.
   app's (`--font-sans`, `--color-blue-400`); this app's utilities inline their
   own values, so pages outside the slots look the same in both builds.
   Paid blocks in the layer are raw material, edited in place to match the
-  reference product ([2026-11-27-1409](design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). Because the
+  reference product ([2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). Because the
   shadcn token block is left out, affectUI blocks currently resolve shadcn
   token names to this app's values; that is a fact of the build, not a rule to
   follow.
