@@ -51,11 +51,8 @@ const defaultRuntime: RetainedDeliverableRuntime = {
     })))
   },
   async pause(scope, budget) {
-    const [{ Sandbox }, { withE2BErrors }, { settleE2BAwakeInterval }, options] = await Promise.all([
-      import('e2b'), import('../secrets/e2b-runtime'), import('./e2b-compute-billing'), ownerOptions(scope),
-    ])
+    const [{ Sandbox }, { withE2BErrors }, options] = await Promise.all([import('e2b'), import('../secrets/e2b-runtime'), ownerOptions(scope)])
     await withE2BErrors(scope.ownerId, false, () => Sandbox.pause(scope.sandboxId, { ...options, ...requestOptions(budget, 10_000) }))
-    await settleE2BAwakeInterval(scope.ownerId, scope.sandboxId)
   },
   script: () => readFile(join(process.cwd(), 'scripts/e2b/inspect-retained-deliverable.mjs'), 'utf8'),
   now: Date.now,
@@ -226,6 +223,10 @@ export function createRetainedDeliverableObserver(pool: Pool,
     }
     if (failure && leased && (!connectAttempted || (connectConfirmed && confirmedPaused))) {
       await release().catch(() => undefined)
+    }
+    if (confirmedPaused) {
+      const { settleE2BAwakeInterval } = await import('./e2b-compute-billing')
+      await settleE2BAwakeInterval(scope.ownerId, scope.sandboxId)
     }
     if (failure || !snapshot || !confirmedPaused) {
       try { runtime.log(JSON.stringify({ event: 'retained_deliverable_observation_failed', runId: scope.machineRunId, phase, ...(probeCode ? { code: probeCode } : {}) })) } catch { /* Diagnostics never change the recovery outcome. */ }

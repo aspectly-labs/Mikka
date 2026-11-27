@@ -703,17 +703,17 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     )
     assert.equal((await store.balance(workspaceId)).purchased, 0)
   })
-  await t.test('adjustSettledMachineCost refunds unused awake seconds LIFO across expiring grants and overage cap', async () => {
+  await t.test('adjustSettledMachineCost refunds unused awake seconds LIFO across expiring and non-expiring grants', async () => {
     const workspaceId = randomUUID()
     // Ensure soonerId sorts AFTER laterId lexicographically so JSONB key order alone would fail LIFO.
     const soonerId = 'ffffffff-1111-4111-8111-111111111111'
-    const laterId = '00000000-1111-4111-8111-111111111111'
+    const neverExpiresId = '00000000-1111-4111-8111-111111111111'
     await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
     await pool.query(
       `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"expiresAt") VALUES
         ($1,$3,1,'purchased',now() + interval '10 days'),
-        ($2,$3,2,'purchased',now() + interval '300 days')`,
-      [soonerId, laterId, workspaceId],
+        ($2,$3,2,'purchased',NULL)`,
+      [soonerId, neverExpiresId, workspaceId],
     )
     const callId = `machine:e2b:${randomUUID()}:0`
     await hostedBillingScope.run(
@@ -722,7 +722,7 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     )
     assert.deepEqual(
       (await pool.query('SELECT "purchasedMicroUsd"::int AS p,"purchasedAllocations" AS alloc FROM hosted_usage WHERE id=$1', [callId])).rows[0],
-      { p: 19_200, alloc: { [soonerId]: 10_000, [laterId]: 9_200 } },
+      { p: 19_200, alloc: { [soonerId]: 10_000, [neverExpiresId]: 9_200 } },
     )
     assert.equal((await store.balance(workspaceId)).purchased, 10_800)
 

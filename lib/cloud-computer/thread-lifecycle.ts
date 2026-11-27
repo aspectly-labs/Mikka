@@ -421,11 +421,13 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
       row.computeSeconds = updated.rows[0].computeSeconds
       taskActivityChanged(pool, runId)
       if (provider.state === 'running') delete row.lifecycle.pausedAt
-      if (provider.state === 'paused' && row.sandboxId) await settleE2BAwakeInterval(actor.userId, row.sandboxId, new Date(now))
       await (await import('@/lib/live/panels')).runChanged(pool, runId)
       if (provider.state === 'paused' && (TERMINAL.has(row.status) || (row.status === 'queued' && !live(row.leaseExpiresAt, now))
         || (row.status === 'paused' && row.pauseReason === 'quota_exhausted' && row.safeExit)))
         await deps.park(pool, actor, runId, fenceOf(row))
+    }
+    if (provider?.state === 'paused' && !live(row.workerLeaseUntil, now) && row.state !== 'ended' && row.sandboxId) {
+      await settleE2BAwakeInterval(actor.userId, row.sandboxId, new Date(now))
     }
     const decision = threadMachineLifecycleDecision(row, provider, now)
     if (decision.action === 'retire') {

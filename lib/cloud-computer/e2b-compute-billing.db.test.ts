@@ -686,5 +686,30 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     const chunk1Row = (await fixture.query<{ state: string; cost: string }>(
       `SELECT state,"costMicroUsd"::text AS cost FROM hosted_usage WHERE id=$1`, [`machine:e2b:${preRenewOp}:1`])).rows[0]
     assert.deepEqual(chunk1Row, { state: 'failed', cost: '0' })
+
+    // A stale prepareKeepAlive.cancel() / reconcile after pause must NOT revert paidUntil or activeChunkIndex.
+    const lateCancelOp = randomUUID()
+    const lateCancelSb = `sb-${randomUUID()}`
+    await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture'),('sandbox',$3,$2,'team:fixture')`,
+      [lateCancelOp, awakeOwnerId, lateCancelSb])
+    await e2bCreationTimeout(awakeOwnerId, 'team:fixture', lateCancelOp, templates.codex.templateId, { workspaceId: awakeWorkspaceId, runId: awakeRunId }, 900_000,
+      { provider: 'e2b', size: 'medium', hourlyMicroUsd: 230_400, pricingVersion: '2026-11-26', cpuCount: 2, memoryMB: 8192 })
+    await recordE2BComputeSandbox(awakeOwnerId, lateCancelOp, lateCancelSb, new Date())
+    const nearEnd = new Date(Date.now() + 20_000)
+    await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=$2,"activeChunkStartedAt"=$3 WHERE "operationId"=$1`,
+      [lateCancelOp, nearEnd, new Date(nearEnd.getTime() - 300_000)])
+    const { prepareE2BProviderTime } = await import('./e2b-compute-billing')
+    const prepared = await prepareE2BProviderTime(awakeOwnerId, lateCancelSb, 900_000, {
+      providerScope: 'team:fixture',
+      inspect: async () => ({ sandboxId: lateCancelSb, templateId: templates.codex.templateId, cpuCount: 2, memoryMB: 8192, endAt: nearEnd }) as Awaited<ReturnType<typeof Sandbox.getInfo>>,
+    })
+    const settledPauseAt = new Date(nearEnd.getTime() - 10_000)
+    await settleE2BAwakeInterval(awakeOwnerId, lateCancelSb, settledPauseAt)
+    await prepared.cancel()
+    const afterLateCancel = (await fixture.query<{ activeChunkIndex: number; lastSettledChunkIndex: number; paidUntil: Date }>(
+      `SELECT "activeChunkIndex","lastSettledChunkIndex","paidUntil" FROM e2b_compute_leases WHERE "operationId"=$1`, [lateCancelOp])).rows[0]
+    assert.equal(afterLateCancel.activeChunkIndex, 1)
+    assert.equal(afterLateCancel.lastSettledChunkIndex, 1)
+    assert.equal(afterLateCancel.paidUntil.getTime(), settledPauseAt.getTime())
   })
 })

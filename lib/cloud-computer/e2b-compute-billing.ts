@@ -135,6 +135,7 @@ async function refundUnusedRenewal(ownerId: string, operationId: string, index: 
       "previousActiveChunkStartedAt"=NULL,"renewalReviewAt"=NULL,
       "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL
       WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND "chunkIndex"=$3 AND "usedChunkIndex"<$3
+        AND "lastSettledChunkIndex"<$3
         AND "renewalDispatchId" IS NOT DISTINCT FROM $5::uuid
         AND ($5::uuid IS NULL OR "renewalUnchangedAt"<clock_timestamp()-interval '29 seconds')
       RETURNING "workspaceId"
@@ -300,6 +301,7 @@ export async function settleE2BAwakeInterval(
       `UPDATE e2b_compute_leases
        SET "lastSettledChunkIndex"="activeChunkIndex",
          "paidUntil"=least("paidUntil",$3::timestamptz),
+         "previousPaidUntil"=NULL,"previousActiveChunkIndex"=-1,"previousActiveChunkStartedAt"=NULL,
          "renewalReviewAt"=NULL,"renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,
          "renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL
        WHERE "operationId"=$1 AND "ownerId"=$2`,
