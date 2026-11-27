@@ -108,7 +108,7 @@ test('real PG: computer changes publish committed owner state without heartbeat 
         "stopRequestedAt" timestamptz,"updatedAt" timestamptz,"finishedAt" timestamptz,"resumeStatus" text,"pauseReason" text,
         "botId" uuid,"machineAuthority" boolean NOT NULL DEFAULT false,cli_policy_hierarchy jsonb,"workspaceId" uuid);
       CREATE TABLE computer_run_bindings ("runId" uuid PRIMARY KEY REFERENCES agent_runs(id),"botId" uuid,"ownerId" text,"workspaceId" uuid,
-        "approvedForRun" boolean NOT NULL DEFAULT false,FOREIGN KEY ("botId","workspaceId","ownerId") REFERENCES bots(id,"workspaceId","ownerId"));
+        FOREIGN KEY ("botId","workspaceId","ownerId") REFERENCES bots(id,"workspaceId","ownerId"));
       CREATE TABLE thread_machines ("runId" uuid PRIMARY KEY,"botId" uuid,"ownerId" text,"workspaceId" uuid,"deviceId" uuid,state text,"sandboxId" text,epoch integer);`)
     await database.query(await readFile(new URL('../../drizzle/20261027164510_local_computer_reviews.sql', import.meta.url), 'utf8'))
     for (const name of ['20261109035020_organization_governance.sql', '20261109035023_enterprise_live_session_authority.sql']) {

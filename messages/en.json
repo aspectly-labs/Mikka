@@ -10668,19 +10668,6 @@
     },
     "openScreen": "Open {name}'s screen full window",
     "loading": "Connecting to the computer",
-    "approval": {
-      "allowRun": "Allow for this task",
-      "action": {
-        "key": "Press a key",
-        "click": "Click the screen",
-        "scroll": "Scroll",
-        "screenshot": "View the screen",
-        "type": "Type text"
-      },
-      "allow": "Allow",
-      "deny": "Deny",
-      "failed": "Not delivered. Try again."
-    },
     "addE2BKey": "Add E2B API Key",
     "wakeFailed": "Could not wake it. Try again.",
     "waking": "Waking",

@@ -451,7 +451,6 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     await store.setPolicy(actor.workspaceId, 'deny')
     assert.equal(await store.policy(actor.workspaceId), 'deny')
     assert.equal(computerAllowed, false, 'workspace denial reaches the actual display guard')
-    assert.equal((await pool.query('SELECT "approvedForRun" FROM computer_run_bindings WHERE "runId"=$1', [runId])).rows[0].approvedForRun, false)
     assert.ok((await pool.query('SELECT "stopRequestedAt" FROM agent_runs WHERE id=$1', [runId])).rows[0].stopRequestedAt, 'active cloud threads are stopped')
     const stoppedQueued = (await pool.query('SELECT status,"finishedAt" FROM agent_runs WHERE id=$1', [secondRunId])).rows[0]
     assert.equal(stoppedQueued.status, 'stopped')
@@ -536,7 +535,6 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     assert.deepEqual(displays, [1, 2, 3], 'uncertain start keeps its binding rather than leaking its desktop to a later bot')
     await store.setPolicy(actor.workspaceId, 'deny')
     await store.setPolicy(actor.workspaceId, 'allow')
-    assert.equal((await pool.query('SELECT "approvedForRun" FROM computer_run_bindings WHERE "runId"=$1', [runId])).rows[0].approvedForRun, false, 'a policy transition revokes old run-scoped approval')
     const allowedRun = randomUUID()
     await pool.query('INSERT INTO agent_runs (id,"userId","agentId",status,"deviceId","workspaceId") VALUES ($1,$2,$3,$4,$5,$6)', [allowedRun, actor.userId, consumer, 'queued', worker.deviceId, actor.workspaceId])
     await bindComputerRun(pool, actor, allowedRun, bot.id)
@@ -557,7 +555,6 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     await pool.query(`INSERT INTO computer_run_bindings("runId","botId","workspaceId","ownerId") VALUES ($1,$2,$3,$4)`, [threadRun, later.id, actor.workspaceId, actor.userId])
     await pool.query(`INSERT INTO thread_machines("runId","workspaceId","ownerId","botId","sandboxId","snapshotId","operationId",state,"deviceId") VALUES ($1,$2,$3,$4,'sandbox-thread','snapshot-thread',$5,'running',$6)`, [threadRun, actor.workspaceId, actor.userId, later.id, randomUUID(), threadDevice])
     await store.setPolicy(actor.workspaceId, 'deny')
-    assert.equal((await pool.query('SELECT "approvedForRun" FROM computer_run_bindings WHERE "runId"=$1', [threadRun])).rows[0].approvedForRun, false)
     const threadLease = syncedLeases.filter(lease => lease.sandboxId === 'sandbox-thread').at(-1)
     assert.equal(threadLease?.computerAllowed, false, 'deny reaches the dedicated driver before policy commit')
     assert.equal(threadLease?.display, 1)

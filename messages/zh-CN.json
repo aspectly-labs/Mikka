@@ -10668,19 +10668,6 @@
     },
     "openScreen": "全屏查看 {name} 的屏幕",
     "loading": "正在连接电脑",
-    "approval": {
-      "allowRun": "本任务内都允许",
-      "action": {
-        "key": "按键",
-        "click": "点击屏幕",
-        "scroll": "滚动",
-        "screenshot": "查看屏幕",
-        "type": "输入文字"
-      },
-      "allow": "允许",
-      "deny": "拒绝",
-      "failed": "未送达，请重试。"
-    },
     "addE2BKey": "添加 E2B API Key",
     "wakeFailed": "唤醒失败，请重试。",
     "waking": "唤醒中",

@@ -600,7 +600,6 @@ test(
           const f=await cloudFixture(machineState),answer={reference:questionReference(f.q),answerId:randomUUID(),text:'Continue the correct current artifact; preserve all constraints'};
           // Sharing policy limits teammates, never the owner's own subscription.
           await pool.query('INSERT INTO workspace_personal_policies("workspaceId",subscriptions) VALUES($1,false)',[f.workspaceId]);
-          await pool.query('UPDATE computer_run_bindings SET "approvedForRun"=true WHERE "runId"=$1',[f.runId]);
           await pool.query(`INSERT INTO run_publications("runId","userId","issueId","remoteUrl","remoteKey",branch,"baseBranch","pushApproved") VALUES($1,$2,$3,'fixture/repo','/isolated','frozen-branch','main',false)`,[f.runId,userId,f.issueId]);
           const result=await f.service.answer(human,answer);
           assert.equal((await questionExecutionContinuation(pool,result.task,result.task.attemptId))?.sourceRunId,f.runId);
@@ -623,7 +622,6 @@ test(
           assert.equal(message.text,answer.text,'host metadata does not change the persisted human answer');
           const {rows:machines}=await pool.query('SELECT * FROM thread_machines WHERE "runId"=ANY($1::uuid[])',[[f.runId,child.id]]);
           const old=machines.find(m=>m.runId===f.runId),current=machines.find(m=>m.runId===child.id);
-          const {rows:[grant]}=await pool.query('SELECT "approvedForRun" FROM computer_run_bindings WHERE "runId"=$1',[child.id]);assert.equal(grant.approvedForRun,false);
           const {rows:[publication]}=await pool.query('SELECT "remoteUrl","remoteKey",branch,"baseBranch","pushApproved" FROM run_publications WHERE "runId"=$1',[child.id]);assert.deepEqual(publication,{remoteUrl:'fixture/repo',remoteKey:'/isolated',branch:'frozen-branch',baseBranch:'main',pushApproved:false});
           assert.equal(old.state,'ended');assert.equal(old.sandboxId,null);assert.equal(old.deviceId,f.childDevice);assert.equal(current.state,machineState);assert.equal(current.sandboxId,f.sandboxId);assert.equal(current.deviceId,f.childDevice);assert.equal(current.repoId,f.childRepo);assert.equal(f.fallbackCalls(),0);
           assert.equal((await pool.query('SELECT count(*)::int AS n FROM agent_runs WHERE "issueId"=$1',[f.issueId])).rows[0].n,2);

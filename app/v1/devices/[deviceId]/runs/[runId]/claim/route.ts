@@ -516,11 +516,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const resolvedPolicy = { ...cliPolicy.policy, permissions: { ...cliPolicy.policy.permissions, git_push: push } }
   // A read-only run cannot change its worktree.
   const executionPolicy = run.agentDefinition?.readOnly ? readOnlyRunPolicy(resolvedPolicy) : resolvedPolicy
+  // A computer grant is used at once: nobody is asked (ADR 2026-11-27-1720).
+  // The device's own computer-use setting can still block it.
   const claimedComputer = computer?.permission ?? localComputer?.permission
-  // A legacy computer grant of `ask` never waited for anyone; it reads as allow.
-  const computerPermission = device.computerUseEnabled === false
-    ? 'deny' as const
-    : claimedComputer === 'ask' ? 'allow' as const : claimedComputer
+  const computerPermission = device.computerUseEnabled === false ? 'deny' as const : claimedComputer
   // Computer authority comes from its persisted claim; retain every trusted
   // CLI restriction and its revision when attaching that independent grant.
   const policy = computerPermission

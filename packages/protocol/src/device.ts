@@ -520,7 +520,11 @@ export const runAssignmentSchema = z.object({
     botId: z.uuid(), ownerId: z.string().min(1).max(128), workspaceId: z.uuid(),
     /** Compat: released daemons still require the field; new code ignores it. */
     policyVersion: z.number().int().nonnegative().max(2147483647).optional(),
-    permission: z.enum(['allow', 'ask']),
+    /** Always `allow`: the run uses the computer without asking anyone (ADR
+     * 2026-11-27-1615, 2026-11-27-1720). A workspace or device that blocks
+     * computer use sends no grant at all. An older server's `ask` never waited
+     * for a person and reads as allow; released daemons still accept both. */
+    permission: z.enum(['allow', 'ask']).transform((): 'allow' => 'allow'),
   }).strict().optional(),
   /** Trusted server assignment; the model cannot choose a Bot or display. */
   computer: z.object({

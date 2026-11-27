@@ -62,8 +62,9 @@ export const PERMISSION_DEFAULTS: Readonly<
   // withheld (decision 2026-11-02-1600).
   git_push: "deny",
   network: "allow",
-  // The computer grant is the host's (workspace computer policy, the device's
-  // own consent); a run without one gets none from this default.
+  // The computer grant is the host's: the workspace's computer-use setting and
+  // the device's own switch, never a question to a person (ADR
+  // 2026-11-27-1720). A run without one gets none from this default.
   computer_use: "allow",
 }
 
