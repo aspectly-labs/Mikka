@@ -6217,7 +6217,7 @@
       "default": "The provider's usage limit or credit balance has been reached. Check your usage."
     },
     "run_failed": {
-      "claim_requeue_limit": "The task kept changing while a computer was taking it and stopped after 3 tries. Start it again.",
+      "claim_requeue_limit": "The task kept changing while a computer was taking it and stopped after several tries. Start it again.",
       "claim_receipt_bound": "The task changed while a computer was taking it, and its assigned skill was already recorded for that attempt. Start it again.",
       "default": "The task could not be completed. Check the error details or try again."
     },
