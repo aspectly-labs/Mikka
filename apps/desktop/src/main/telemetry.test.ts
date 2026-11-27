@@ -138,6 +138,16 @@ test('a shared artifact, shared thread or invitation page never sends its token'
   for (const token of tokens) assert.equal(JSON.stringify(events()).includes(token), false)
 })
 
+test('a path the renderer already sanitized comes out of main unchanged', async t => {
+  const { make, events } = await harness(t)
+  const telemetry = make()
+  // apps/desktop/src/renderer/analytics.ts sends analyticsPath's result; main sanitizes it again.
+  for (const path of ['/mikka/issue/:id', '/mikka/en/invite/:token/users/:redacted/:id', '/mikka/w/:slug']) telemetry.capture('$pageview', { $current_url: `mikka://app${path}` })
+  await settle()
+  await telemetry.flush()
+  assert.deepEqual(events().map(event => event.properties.$pathname), ['/mikka/issue/:id', '/mikka/en/invite/:token/users/:redacted/:id', '/mikka/w/:slug'])
+})
+
 test('a renderer exception keeps its class and in-app frames, never its message', async t => {
   const { make, events } = await harness(t)
   const telemetry = make()

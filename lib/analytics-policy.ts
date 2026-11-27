@@ -35,6 +35,10 @@ const SLUG_PREFIXES = [['w']]
  * words, no digits, so a lower-case hex id or token is never mistaken for one. */
 const ROUTE_WORD = /^(?=.{1,40}$)[a-z]+(?:-[a-z]+)*$/
 const LOCALE_SEGMENT = /^(?:en|zh-CN)$/
+/** What this function writes in place of a segment. A path that already went
+ * through it (the desktop renderer's, which main sanitizes again) keeps them, so
+ * a second pass changes nothing. A placeholder carries no data of its own. */
+const PLACEHOLDERS = new Set([':id', ':token', ':redacted', ':slug'])
 
 function follows(previous: string[], prefix: string[]) {
   return previous.length >= prefix.length && prefix.every((word, index) => previous[previous.length - prefix.length + index] === word)
@@ -46,6 +50,7 @@ function follows(previous: string[], prefix: string[]) {
  * `:token` after its page word, a UUID or number `:id`, an email `:redacted`,
  * and anything else that is not a route word (`SPOT-4`, a token on a page this
  * list does not name yet) `:token`. The query and hash are the caller's to drop.
+ * Idempotent: an existing placeholder stays as it is.
  */
 export function analyticsPath(pathname: string) {
   const previous: string[] = []
@@ -53,7 +58,8 @@ export function analyticsPath(pathname: string) {
     if (!raw) return raw
     const word = raw.toLowerCase()
     let clean: string
-    if (CREDENTIAL_PREFIXES.some(prefix => follows(previous, prefix))) clean = ':token'
+    if (PLACEHOLDERS.has(raw)) clean = raw
+    else if (CREDENTIAL_PREFIXES.some(prefix => follows(previous, prefix))) clean = ':token'
     else if (SLUG_PREFIXES.some(prefix => follows(previous, prefix))) clean = ':slug'
     else if (EMAIL_LIKE_SEGMENT.test(raw)) clean = ':redacted'
     else if (UUID_SEGMENT.test(raw) || /^\d+$/.test(raw)) clean = ':id'
@@ -228,7 +234,10 @@ function sanitizeRumRoute(value: unknown): string | undefined {
     pathname = pathname.split(/[?#]/, 1)[0] ?? '/'
   }
   if (!pathname.startsWith('/')) pathname = `/${pathname}`
-  const normalized = analyticsPath(`/${pathname.split('/').filter(Boolean).join('/')}`)
+  const segments = analyticsPath(`/${pathname.split('/').filter(Boolean).join('/')}`).split('/')
+  // Cut whole segments, never a placeholder in half, so a second pass leaves it as it is.
+  while (segments.length > 2 && segments.join('/').length > 160) segments.pop()
+  const normalized = segments.join('/')
   return normalized.length > 160 ? normalized.slice(0, 160) : normalized
 }
 

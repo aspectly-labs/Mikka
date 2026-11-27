@@ -76,6 +76,32 @@ test('a share link or invitation never leaves in a route: pageviews, errors, RUM
   }
 })
 
+test('sanitizing twice is sanitizing once: the desktop renderer\'s path, sanitized again by main, keeps its placeholders', () => {
+  const uuid = '84c182d1-661c-461b-bca2-10410cb646d4'
+  const paths = [
+    `/mikka/issue/${uuid}`, '/en/invite/PRIVATE_INVITE_CODE/users/alice@example.com/987654', '/a/mks_AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf/frame',
+    `/mikka/en/threads/shared/mkt_${'Q1'.repeat(16)}`, '/w/acme-corp/settings', '/en/tasks/SPOT-4', '/settings/members', '/', '/mikka',
+    `/en/${Array.from({ length: 40 }, (_, index) => `section-${'x'.repeat(index % 7)}/${uuid}`).join('/')}`,
+  ]
+  for (const path of paths) {
+    const once = analyticsPath(path)
+    assert.equal(analyticsPath(once), once, path)
+    // What apps/desktop/src/renderer/analytics.ts sends, then main's own pass (apps/desktop/src/main/telemetry.ts).
+    for (const origin of ['mikka://app', 'https://app.aspectlylabs.com']) {
+      const direct = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${path}?q=private` } })
+      const renderer = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${analyticsPath(path)}` } })
+      assert.deepEqual(renderer.properties, direct.properties, path)
+      assert.deepEqual(sanitizeAnalyticsEvent(direct).properties, direct.properties, path)
+    }
+    const rum = sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route: path, lcp_ms: 900, flush_reason: 'pagehide' } })
+    assert.equal(sanitizeAnalyticsEvent(rum).properties.route, rum.properties.route, path)
+    assert.ok(rum.properties.route.length <= 160)
+  }
+  assert.equal(analyticsPath('/mikka/issue/:id'), '/mikka/issue/:id')
+  assert.equal(analyticsPath('/en/invite/:token/users/:redacted/:id'), '/en/invite/:token/users/:redacted/:id')
+  assert.equal(analyticsPath('/w/:slug'), '/w/:slug')
+})
+
 test('automatic top-level person mutations are stripped without losing ingestion metadata', () => {
   const event = sanitizeAnalyticsEvent({
     event: '$identify', uuid: 'event-id', timestamp: '2026-10-21T00:00:00Z',
