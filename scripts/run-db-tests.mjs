@@ -240,17 +240,35 @@ export const OFFLINE_GUARDED = [
 export const SERVER_BACKED = ['tests/factory-query-http.test.ts', 'tests/factory-question-http.test.ts', 'tests/factory-monitor-cycle-http.test.ts']
 export const BOOTSTRAP = 'tests/migrate-empty-db.test.mjs'
 
+const SUMMARY_LINE = /^(?:# |ℹ )(tests|pass|fail|skipped|todo|cancelled) (\d+)\s*$/gm
 export function parseSummary(output) {
   const totals = {}
-  for (const [, key, n] of output.matchAll(/^(?:# |ℹ )(tests|pass|fail|skipped|todo|cancelled) (\d+)\s*$/gm)) totals[key] = (totals[key] ?? 0) + Number(n)
+  for (const [, key, n] of output.matchAll(SUMMARY_LINE)) totals[key] = (totals[key] ?? 0) + Number(n)
   return totals
 }
-export function checkSummary(script, status, totals) {
+/** One summary per `node --test` invocation, in output order; each opens with its `tests` line. */
+export function parseSummaries(output) {
+  const summaries = []
+  for (const [, key, n] of output.matchAll(SUMMARY_LINE)) {
+    if (key === 'tests') summaries.push({})
+    const summary = summaries.at(-1)
+    if (summary) summary[key] = (summary[key] ?? 0) + Number(n)
+  }
+  return summaries
+}
+// A chain's totals add up its steps, so a step that lost its summary would only
+// lower the count. Each `node … --test` step must report its own summary.
+export function checkSummary(script, status, totals, { steps = 0, summaries = [] } = {}) {
   if (status !== 0) return `${script} exited with ${status}`
   if (!Number.isInteger(totals.tests)) return `${script}: no node:test summary found`
   if (totals.tests < 1) return `${script}: ran no tests`
   for (const key of ['skipped', 'todo', 'fail', 'cancelled']) if (totals[key]) return `${script}: ${totals[key]} ${key} (forbidden in required DB gates)`
   if (totals.pass !== totals.tests) return `${script}: passed count does not equal test count`
+  if (steps && summaries.length !== steps) return `${script}: ${summaries.length} node:test summaries for ${steps} node --test steps`
+  for (const [index, summary] of summaries.entries()) {
+    if (!(summary.tests >= 1)) return `${script}: node --test step ${index + 1} ran no tests`
+    if (summary.pass !== summary.tests) return `${script}: node --test step ${index + 1} passed count does not equal its test count`
+  }
   return null
 }
 
@@ -264,6 +282,9 @@ export function validateTarget(env) {
 // Shell steps of a package script: split on && / || / ; so a guard must sit on
 // the same step that runs the guarded file, not merely somewhere in the script.
 export const scriptSteps = command => (command ?? '').split(/&&|\|\||;/).map(step => step.trim()).filter(Boolean)
+// Steps that start node's test runner, after any leading VAR=value assignments.
+const NODE_STEP = /^((?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)node(\s.*)$/
+export const testSteps = command => scriptSteps(command).filter(step => NODE_STEP.test(step) && step.split(/\s+/).includes('--test'))
 
 export function inventory(files, scripts, expected = [], required = REQUIRED_SUITES, selfManaged = SELF_MANAGED, offlineGuarded = OFFLINE_GUARDED) {
   const has = path => Object.hasOwn(files, path)
@@ -530,17 +551,30 @@ export function runScript(command, args, options) {
 
 const blockingStdio = fileURLToPath(new URL('./ci/blocking-stdio.cjs', import.meta.url))
 
+const shellQuote = value => `'${value.replaceAll("'", `'\\''`)}'`
+
 // Force-exit can exit the `node --test` orchestrator while its piped stdout
-// still queues the end of the report and the summary. A single node --test
-// command gets a blocking stdio handle so the summary is in the pipe before
-// exit. It is a `--require` preload because the orchestrator, whose stdout this
-// runner reads, does not evaluate `--import` modules. Shell chains stay on pnpm
-// so each command keeps its flags.
+// still queues the end of the report and the summary, so every force-exit step
+// gets a blocking stdio handle. It is a `--require` preload because the
+// orchestrator, whose stdout this runner reads, does not evaluate `--import`
+// modules. It goes on the force-exit command lines only, never in NODE_OPTIONS,
+// which every process a test spawns (sandboxed CLIs, fake daemons) would inherit.
+// A single command runs directly. A plain `&&` chain of node commands runs in
+// sh with the preload on its force-exit steps. Anything else (quotes, pipes,
+// other programs) stays on pnpm unchanged.
 export function launch(script, command) {
-  if (typeof command === 'string' && command.startsWith('node ') && command.includes('--test-force-exit') && !/['"\\&|;]/.test(command)) {
+  if (typeof command !== 'string' || !command.includes('--test-force-exit') || /['"\\|;$`<>(){}*?~#\n]/.test(command)) return ['pnpm', ['-s', script]]
+  if (command.startsWith('node ') && !command.includes('&')) {
     return [process.execPath, ['--require', blockingStdio, ...command.slice(5).trim().split(/\s+/)]]
   }
-  return ['pnpm', ['-s', script]]
+  const steps = command.split('&&').map(step => step.trim())
+  if (command.replaceAll('&&', '').includes('&') || !steps.every(step => NODE_STEP.test(step))) return ['pnpm', ['-s', script]]
+  const chain = steps.map(step => {
+    const [, assignments, rest] = step.match(NODE_STEP)
+    const preload = rest.split(/\s+/).includes('--test-force-exit') ? ` --require ${shellQuote(blockingStdio)}` : ''
+    return `${assignments}${shellQuote(process.execPath)}${preload}${rest}`
+  })
+  return ['/bin/sh', ['-c', chain.join(' && ')]]
 }
 
 export function concurrency(value, fallback = DEFAULT_CONCURRENCY) {
@@ -596,7 +630,8 @@ export async function main({ root = '.', env = process.env, run = runScript, clo
       console.log(`::group::pnpm ${script} (${database ?? 'template database'}, ${seconds}s)`)
       process.stdout.write(result.stdout ?? ''); process.stderr.write(result.stderr ?? '')
       console.log('::endgroup::')
-      const error = checkSummary(script, result.status, parseSummary(`${result.stdout}\n${result.stderr}`))
+      const output = `${result.stdout}\n${result.stderr}`
+      const error = checkSummary(script, result.status, parseSummary(output), { steps: testSteps(scripts[script]).length, summaries: parseSummaries(output) })
       if (error) { console.error(`::error::${error}`); failed = true }
       else console.log(`${script}: OK`)
     }
