@@ -84,7 +84,7 @@ async function deleteApiKeyBody(id: string, workspaceId?: string): Promise<Setti
 }
 
 /** 重新获取模型 for one key; the page's list comes back with the result or the reason. */
-export async function refetchApiKeyModels(id: string, workspaceId?: string): Promise<SettingsActionResult<ApiKeysPage>> {
+async function refetchApiKeyModelsBody(id: string, workspaceId?: string): Promise<SettingsActionResult<ApiKeysPage>> {
   return settingsWorkspaceAction(async () => {
     const current = await actor(workspaceId)
     await refreshApiKeyModels(pool, await ownerForKey(current, id), id)
@@ -114,7 +114,7 @@ export async function updateApiKeyAfterQuota(on: boolean, workspaceId?: string):
 }
 
 /** Turns off request features a custom provider rejects (decision 2026-11-15-2000). Owner only (a workspace key's admins). */
-export async function updateApiKeyFeatures(id: string, features: import('@/lib/model-gateway/features').GatewayFeatures, workspaceId?: string): Promise<SettingsActionResult<ApiKeysPage>> {
+async function updateApiKeyFeaturesBody(id: string, features: import('@/lib/model-gateway/features').GatewayFeatures, workspaceId?: string): Promise<SettingsActionResult<ApiKeysPage>> {
   return settingsWorkspaceAction(async () => {
     const current = await actor(workspaceId)
     await setApiKeyFeatures(pool, await ownerForKey(current, id), id, features)
@@ -127,3 +127,5 @@ export async function createApiKey(...args: Parameters<typeof createApiKeyBody>)
 export async function updateApiKey(...args: Parameters<typeof updateApiKeyBody>) { return withFreshSession(() => updateApiKeyBody(...args)) }
 export async function deleteApiKey(...args: Parameters<typeof deleteApiKeyBody>) { return withFreshSession(() => deleteApiKeyBody(...args)) }
 export async function updateApiKeyShare(...args: Parameters<typeof updateApiKeyShareBody>) { return withFreshSession(() => updateApiKeyShareBody(...args)) }
+export async function refetchApiKeyModels(...args: Parameters<typeof refetchApiKeyModelsBody>) { return withFreshSession(() => refetchApiKeyModelsBody(...args)) }
+export async function updateApiKeyFeatures(...args: Parameters<typeof updateApiKeyFeaturesBody>) { return withFreshSession(() => updateApiKeyFeaturesBody(...args)) }

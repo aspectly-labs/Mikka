@@ -236,6 +236,23 @@ test('provider health persists across dispatches without changing credential own
     assert.deepEqual([...(await read(scope)).states.values()][0].credential, { usable: false, reason: 'keyRefused' })
   })
 
+  await t.test('the team switch off withholds the owner\'s own key from credential states and provider health (decision 2026-11-27-1740)', async () => {
+    const scope = await person('provider-switch')
+    const own = await key(scope, ['fixture-switch'])
+    const source = { kind: 'api_key' as const, keyId: own.id }
+    await run(scope, source, { kind: 'balance', retryable: false }, now - 5_000)
+    const entry: StoredEntry = { id: 'switch-entry', harness: 'codex', model: 'fixture-switch', source }
+    const candidate = { ...entry, name: entry.model, provider: 'custom', credentialOwnerId: scope.ownerId }
+    const { providerHealthStates } = await import('../lib/model-provider-health')
+    assert.deepEqual((await order.credentialStates(pool, scope, [entry], [candidate], now, { probe: false })).get(entry.id)?.credential, { usable: false, reason: 'balance' }, 'on: the own key is a source and its failure is remembered')
+    assert.ok((await providerHealthStates(pool, scope, [candidate], now)).size > 0)
+    await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)', [scope.workspaceId])
+    try {
+      assert.deepEqual((await order.credentialStates(pool, scope, [entry], [candidate], now, { probe: false })).get(entry.id)?.credential, { usable: false, reason: 'missing' }, 'off: even a stale candidate cannot make the own key a source')
+      assert.equal((await providerHealthStates(pool, scope, [candidate], now)).size, 0, 'off: provider health reads no own key')
+    } finally { await pool.query('DELETE FROM workspace_personal_policies WHERE "workspaceId"=$1', [scope.workspaceId]) }
+  })
+
   await t.test('history is scoped to the requesting owner and workspace; order entries cannot grant a key', async () => {
     const scope = await person('provider-owner')
     const stranger = await person('provider-stranger')

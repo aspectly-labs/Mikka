@@ -259,6 +259,17 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
     assert.deepEqual(await store.setBotApiKeyChoice(pool, scope, null, anthropic.id, 'claude-opus-5-5'), { keyId: anthropic.id, model: 'claude-opus-5-5', harnesses: ['claude_code'] })
     assert.deepEqual(await store.botApiKeyChoice(pool, scope, aliceBot), { keyId: teamGateway.id, model: 'team-model', harnesses: ['claude_code', 'codex'] })
     await assert.rejects(pool.query(`INSERT INTO bot_model_choices VALUES ('alice',$1,'both',$2,$3,'m')`, [team.id, randomUUID(), anthropic.id]), { code: '23514' }, 'a choice is a binding or a key, not both')
+    // The Coordinator (no bot) runs in its workspace: its saved workspace-key choice is used, and with the team
+    // switch off its own key gives way to the workspace's key instead of failing (decision 2026-11-27-1740).
+    const { runCredentialSource } = await import('../lib/run-credential-source')
+    const coordinator = (choice: string | null) => runCredentialSource(pool, { ownerId: 'alice', botId: null, harness: 'codex', botWorkspaceId: null, choiceWorkspaceId: choice, subscription: null })
+    await store.setBotApiKeyChoice(pool, scope, null, teamGateway.id, 'team-model')
+    assert.deepEqual((await coordinator(team.id)).apiKey, { keyId: teamGateway.id, model: 'team-model' }, 'the Coordinator\'s saved workspace-key choice is used')
+    await store.setBotApiKeyChoice(pool, scope, null, anthropic.id, 'claude-opus-5-5')
+    await pool.query('UPDATE workspace_personal_policies SET subscriptions=false WHERE "workspaceId"=$1', [team.id])
+    assert.equal((await coordinator(team.id)).apiKey?.keyId, teamGateway.id, 'off: the Coordinator\'s own key gives way to the workspace key')
+    await pool.query('UPDATE workspace_personal_policies SET subscriptions=true WHERE "workspaceId"=$1', [team.id])
+    assert.equal((await coordinator(null)).apiKey?.keyId === teamGateway.id, false, 'with no workspace there is no workspace key')
     // An Anthropic-only custom provider serves threads, not bot chats.
     await assert.rejects(store.setBotApiKeyChoice(pool, { ownerId: 'bob', workspaceId: team.id }, null, local.id, 'glm-5'), { code: 'executionModelUnknown' })
     // Each bot-chat model call opens the key again through the same rule.

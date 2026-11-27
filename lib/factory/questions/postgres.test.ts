@@ -669,10 +669,17 @@ test(
           assert.equal((await pool.query('SELECT "answerId" FROM factory_questions WHERE id=$1',[f.q.id])).rows[0].answerId,null);
           assert.equal(f.fallbackCalls(),0);
         });
+        await t.test('the team switch off withholds the owner\'s own subscription from the continuation (decision 2026-11-27-1740)',async()=>{
+          const f=await cloudFixture('running'),answer={reference:questionReference(f.q),answerId:randomUUID(),text:'Continue with members\' own credentials turned off'};
+          await pool.query('INSERT INTO workspace_personal_policies("workspaceId",subscriptions) VALUES($1,false)',[f.workspaceId]);
+          await assert.rejects(f.service.answer(human,answer),{code:'factoryQuestionContinuationUnavailable'});
+          assert.equal((await pool.query('SELECT count(*)::int AS n FROM agent_runs WHERE "issueId"=$1',[f.issueId])).rows[0].n,1);
+          await pool.query('DELETE FROM workspace_personal_policies WHERE "workspaceId"=$1',[f.workspaceId]);
+        });
         for(const machineState of ['running','paused']) await t.test(machineState+' same VM transfer and replay',async()=>{
           const f=await cloudFixture(machineState),answer={reference:questionReference(f.q),answerId:randomUUID(),text:'Continue the correct current artifact; preserve all constraints'};
-          // Sharing policy limits teammates, never the owner's own subscription.
-          await pool.query('INSERT INTO workspace_personal_policies("workspaceId",subscriptions) VALUES($1,false)',[f.workspaceId]);
+          // 团队权限 › 订阅与 API Key on: the owner's own subscription continues (decision 2026-11-27-1740).
+          await pool.query('INSERT INTO workspace_personal_policies("workspaceId",subscriptions) VALUES($1,true) ON CONFLICT ("workspaceId") DO UPDATE SET subscriptions=true',[f.workspaceId]);
           await pool.query('UPDATE computer_run_bindings SET "approvedForRun"=true WHERE "runId"=$1',[f.runId]);
           await pool.query(`INSERT INTO run_publications("runId","userId","issueId","remoteUrl","remoteKey",branch,"baseBranch","pushApproved") VALUES($1,$2,$3,'fixture/repo','/isolated','frozen-branch','main',false)`,[f.runId,userId,f.issueId]);
           const result=await f.service.answer(human,answer);
