@@ -361,6 +361,12 @@ export const setupRecipeSchema = z.object({
 })
 export type SetupRecipe = z.infer<typeof setupRecipeSchema>
 
+/** A recipe as the server sends it to a daemon: `approved` is always true, so
+ * a released daemon also runs one stored before approval was removed. */
+export function runnableSetup(recipe: SetupRecipe): SetupRecipe {
+  return { ...recipe, approved: true }
+}
+
 export const REPO_ORIGIN_HEADER = "x-mikka-repo-origin-check"
 export const PROJECT_ENVIRONMENT_HEADER = "x-mikka-project-environment"
 
