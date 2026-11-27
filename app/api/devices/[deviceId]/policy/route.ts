@@ -6,7 +6,7 @@ import { readRequiredJsonBody, wsGJsonResponse } from '@/lib/settings/device-pol
 import { WorkspaceError } from '@/lib/workspace-access'
 
 export const GET = freshSessionRoute(defineRoute<'session', 'none', { deviceId: string }>(
-  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, route: '/api/devices/[deviceId]/policy' },
+  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, route: '/api/devices/[deviceId]/policy', desktop: true },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {
       const workspaceId = new URL(request.url).searchParams.get('workspaceId')
@@ -35,6 +35,7 @@ export const PATCH = freshSessionRoute(defineRoute<'session', 'none', { deviceId
     freshSession: true,
     route: '/api/devices/[deviceId]/policy',
     onOriginFailure: deviceOriginDenied,
+    desktop: true,
   },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {

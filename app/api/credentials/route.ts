@@ -9,7 +9,7 @@ const credentialAuthRequired = () => Response.json(
 )
 
 export const GET = defineRoute(
-  { auth: 'session', origin: 'any', workspace: 'none', onAuthFailure: credentialAuthRequired },
+  { auth: 'session', origin: 'any', workspace: 'none', onAuthFailure: credentialAuthRequired, desktop: true },
   ({ request }) => savedCredentialsRoute(request),
 )
 
@@ -26,6 +26,7 @@ const DELETEBody = defineRoute(
     freshSession: true,
     onOriginFailure: credentialCsrfRejected,
     onAuthFailure: credentialAuthRequired,
+    desktop: true,
   },
   ({ request }) => savedCredentialsRoute(request),
 )

@@ -22,6 +22,7 @@ export const GET = defineRoute<'public', 'none', { workspaceId: string }>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
 )
@@ -32,6 +33,7 @@ export const POST = defineRoute<'public', 'none', { workspaceId: string }>(
     auth: 'public',
     origin: 'same-origin-or-desktop',
     workspace: 'none',
+    desktop: true,
   },
   ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
 )

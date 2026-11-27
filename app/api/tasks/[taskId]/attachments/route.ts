@@ -87,6 +87,7 @@ export const GET = defineRoute<'session', 'pat-scoped', { taskId: string }>(
     disableRefresh: true,
     onAuthFailure: () => failure('authRequired', 401),
     onWorkspaceError: () => failure('notFound', 404),
+    desktop: true,
   },
   ({ request, params, session }) => attachments(request, { params: Promise.resolve(params) }, session),
 )
@@ -101,6 +102,7 @@ const writeSpec = {
   onAuthFailure: () => failure('authRequired', 401),
   onOriginFailure: () => failure('originNotAllowed', 403),
   onWorkspaceError: () => failure('notFound', 404),
+  desktop: true,
 } as const
 export const POST = defineRoute<'session', 'pat-scoped', { taskId: string }>(writeSpec, ({ request, params, session }) => attachments(request, { params: Promise.resolve(params) }, session))
 export const DELETE = defineRoute<'session', 'pat-scoped', { taskId: string }>(writeSpec, ({ request, params, session }) => attachments(request, { params: Promise.resolve(params) }, session))

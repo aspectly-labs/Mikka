@@ -28,6 +28,7 @@ export const GET = defineRoute<'public', 'none'>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   ({ request }) => GETBody(request),
 )

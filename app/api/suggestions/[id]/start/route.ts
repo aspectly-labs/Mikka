@@ -34,6 +34,7 @@ export const POST = defineRoute<'session', 'none', { id: string }>(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none', write: true,
+    desktop: true,
   },
   async ({ request, session, params }) => handlePOST(request, session, { params: Promise.resolve(params) }),
 )

@@ -20,7 +20,7 @@ function assertCookieMutationOrigin(request: Request, tokenId: string | undefine
 }
 
 export const GET = freshSessionRoute(defineRoute<'session', 'none', { deviceId: string }>(
-  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, route: '/api/devices/[deviceId]/repositories' },
+  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, route: '/api/devices/[deviceId]/repositories', desktop: true },
   async ({ params, session }) =>
     wsGJsonResponse(async () =>
       listDeviceRepositories({ userId: session.user.id, tokenWorkspaceId: session.tokenWorkspaceId }, params.deviceId),
@@ -40,6 +40,7 @@ export const PUT = freshSessionRoute(defineRoute<'session', 'none', { deviceId: 
     freshSession: true,
     route: '/api/devices/[deviceId]/repositories',
     onOriginFailure: deviceOriginDenied,
+    desktop: true,
   },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {
@@ -57,6 +58,7 @@ export const PATCH = freshSessionRoute(defineRoute<'session', 'none', { deviceId
     freshSession: true,
     route: '/api/devices/[deviceId]/repositories',
     onOriginFailure: deviceOriginDenied,
+    desktop: true,
   },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {
@@ -74,6 +76,7 @@ export const DELETE = freshSessionRoute(defineRoute<'session', 'none', { deviceI
     freshSession: true,
     route: '/api/devices/[deviceId]/repositories',
     onOriginFailure: deviceOriginDenied,
+    desktop: true,
   },
   async ({ request, params, session }) =>
     wsGJsonResponse(async () => {

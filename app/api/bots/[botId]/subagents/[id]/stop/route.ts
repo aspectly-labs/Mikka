@@ -6,6 +6,7 @@ export const POST = defineRoute<'session', 'pat-scoped', { botId: string; id: st
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
+    desktop: true,
   },
   ({ request, params }) => subagentRoute(request, params.botId, params.id, 'stop'),
 )

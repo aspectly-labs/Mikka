@@ -16,6 +16,7 @@ export const GET = defineRoute<'human-session-only', 'none'>(
     workspace: 'none',
     freshSession: true,
     onAuthFailure: () => new Response(null, { status: 401, headers }),
+    desktop: true,
   },
   async ({ request, user }) => {
     const params = new URL(request.url).searchParams

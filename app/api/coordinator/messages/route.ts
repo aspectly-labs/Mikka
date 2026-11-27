@@ -9,7 +9,7 @@ import { defineRoute } from '@/lib/primitives/define-route'
 
 /** `GET /api/coordinator/messages`: the person's conversation with their Coordinator, oldest first. */
 export const GET = defineRoute<'session', 'pat-scoped'>(
-  { route: '/api/coordinator/messages', auth: 'session', origin: 'any', workspace: 'pat-scoped' },
+  { route: '/api/coordinator/messages', auth: 'session', origin: 'any', workspace: 'pat-scoped', desktop: true },
   async ({ request, user }) => {
     const botId = await openChatBotId(user, null)
     const params = new URL(request.url).searchParams
@@ -30,6 +30,6 @@ export const GET = defineRoute<'session', 'pat-scoped'>(
 
 // Retirement is deliberately public and returns before parsing input.
 export const POST = defineRoute<'public', 'none'>(
-  { route: '/api/coordinator/messages', auth: 'public', origin: 'any', workspace: 'none' },
+  { route: '/api/coordinator/messages', auth: 'public', origin: 'any', workspace: 'none', desktop: true },
   () => Response.json({ error: 'coordinatorSendRetired' }, { status: 410, headers: { 'Cache-Control': 'no-store' } }),
 )

@@ -25,6 +25,7 @@ export const GET = defineRoute(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   ({ request }) => unguardedGET(request),
 )

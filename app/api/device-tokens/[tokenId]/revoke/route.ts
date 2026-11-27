@@ -15,6 +15,7 @@ const POSTBody = defineRoute<'session', 'none', { tokenId: string }>(
     workspace: 'none',
     freshSession: true,
     onOriginFailure: () => RouteResponse.json({ error: 'originRejected' }, { status: 403 }),
+    desktop: true,
   },
   async ({ request, params, session }) => {
     if (request.headers.get('origin') !== new URL(request.url).origin) return RouteResponse.json({ error: 'originRejected' }, { status: 403 })

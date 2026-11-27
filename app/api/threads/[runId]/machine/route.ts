@@ -17,6 +17,7 @@ export const GET = defineRoute<'session', 'none', { runId: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   async ({ session, params }) => {
     const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })
@@ -43,6 +44,7 @@ export const POST = defineRoute<'session', 'none', { runId: string }>(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none',
+    desktop: true,
   },
   async ({ request, session, params }) => {
     const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })

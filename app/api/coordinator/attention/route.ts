@@ -9,7 +9,7 @@ const headers = { 'Cache-Control': 'private, no-store' }
 
 /** Whether the Coordinator is handed matters from connected apps (R-20), and both budgets as they stand. */
 export const GET = defineRoute<'session', 'pat-scoped'>(
-  { auth: 'session', origin: 'any', workspace: 'pat-scoped' },
+  { auth: 'session', origin: 'any', workspace: 'pat-scoped', desktop: true },
   async ({ user }) => RouteResponse.json(await attentionBudgets(user.id), { headers }),
 )
 

@@ -63,6 +63,7 @@ export const GET = defineRoute(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   ({ request }) => unguardedGET(request),
 )

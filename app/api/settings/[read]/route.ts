@@ -116,6 +116,7 @@ export const GET = defineRoute<'session', 'pat-scoped', { read: string }>(
       !Object.hasOwn(READS, params.read) || ACCOUNT_READS.has(params.read) || params.read === 'sessions'
         ? undefined
         : new URL(request.url).searchParams.get('workspace'),
+    desktop: true,
   },
   async ({ request, params, session }) => {
     const { read } = params

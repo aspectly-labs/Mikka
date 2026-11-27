@@ -14,6 +14,7 @@ export const GET = defineRoute(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   async ({ request, session }) => {
     let viewerId: string | null = null
@@ -46,6 +47,7 @@ const DELETEBody = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   async ({ request, session }) => {
     if (hasPatAuthorizationHeader(request) || isPatSession(session)) return Response.json({ error: 'sessionRequired' }, { status: 403, headers })

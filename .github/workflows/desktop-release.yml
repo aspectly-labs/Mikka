@@ -241,6 +241,14 @@ jobs:
             echo "::error::Private UI dependency installation failed; private diagnostics withheld."
             exit 1
           fi
+      # Main forwards only the routes a defineRoute spec declares for the desktop
+      # (apps/api/generated/desktop-routes.json). This pairing is the one the
+      # installer ships, so every route its renderer requests must be declared;
+      # MIKKA_REQUIRE_OFFICIAL_UI makes a missing checkout fail instead of skip.
+      - name: Require every renderer route on the desktop allowlist
+        env:
+          MIKKA_REQUIRE_OFFICIAL_UI: '1'
+        run: node --import tsx --test apps/desktop/src/main/bundled-routes.test.ts apps/desktop/scripts/renderer-requests.test.mjs
       - name: Cache electron-builder downloads
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:

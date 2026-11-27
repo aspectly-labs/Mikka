@@ -66,6 +66,7 @@ export const GET = defineRoute<'public', 'none'>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   async ({ request }) => handleGET(request),
 )

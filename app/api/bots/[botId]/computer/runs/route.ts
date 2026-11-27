@@ -32,6 +32,7 @@ export const POST = defineRoute<'session', 'none', { botId: string }>(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none',
+    desktop: true,
   },
   async ({ request, session, params }) => {
     if (!cloudComputerRunsEnabled()) return Response.json({ error: 'Cloud computer task unavailable' }, { status: 503, headers })

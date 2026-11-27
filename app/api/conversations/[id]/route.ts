@@ -7,6 +7,7 @@ export const PATCH = defineRoute<'session', 'pat-scoped', { id: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     write: true,
+    desktop: true,
   },
   ({ request, params }) => respondGroup(request, 'conversations', params.id),
 )

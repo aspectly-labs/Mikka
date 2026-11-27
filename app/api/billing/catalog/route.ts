@@ -11,6 +11,7 @@ export const GET = defineRoute<'session', 'pat-scoped'>(
     origin: 'any',
     workspace: 'pat-scoped',
     workspaceId: ({ request }) => new URL(request.url).searchParams.get('workspace'),
+    desktop: true,
   },
   async ({ session, requestedWorkspaceId, assertWorkspaceAllowed }) => {
     const context = await loadWorkspaceContext(requestedWorkspaceId ?? undefined, session.user)

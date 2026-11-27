@@ -21,6 +21,7 @@ export const GET = defineRoute<'session', 'none'>(
     auth: 'session',
     origin: 'same-origin-or-desktop',
     workspace: 'none',
+    desktop: true,
   },
   ({ request }) => handleAgentImagesGET(request),
 )

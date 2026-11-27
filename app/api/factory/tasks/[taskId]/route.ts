@@ -48,6 +48,7 @@ export const GET = defineRoute<'session','none',{ taskId: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   ({ request, params, session }) => respond(request, { params: Promise.resolve(params) }, session),
 )
@@ -59,6 +60,7 @@ export const POST = defineRoute<'session','none',{ taskId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     onOriginFailure: () => RouteResponse.json({ error: 'originRejected' }, { status: 403, headers: { 'Cache-Control': 'private, no-store' } }),
+    desktop: true,
   },
   ({ request, params, session }) => respond(request, { params: Promise.resolve(params) }, session),
 )

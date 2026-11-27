@@ -36,6 +36,7 @@ export const GET = defineRoute(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   async ({ request }) => handleGET(request),
 )

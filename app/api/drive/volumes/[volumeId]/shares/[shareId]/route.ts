@@ -7,6 +7,7 @@ export const GET = defineRoute<'session', 'none', { volumeId: string; shareId: s
     auth: 'session',
     origin: 'any',
     workspace: 'none', freshSession: true,
+    desktop: true,
   },
   async ({ request, params, session }) => driveResponse(request, 'link', params, session),
 )
@@ -17,6 +18,7 @@ export const PATCH = defineRoute<'session', 'none', { volumeId: string; shareId:
     auth: 'session',
     origin: 'native-mobile-allowed',
     workspace: 'none', write: true, freshSession: true,
+    desktop: true,
   },
   async ({ request, params, session }) => driveResponse(request, 'link', params, session),
 )
@@ -27,6 +29,7 @@ export const DELETE = defineRoute<'session', 'none', { volumeId: string; shareId
     auth: 'session',
     origin: 'native-mobile-allowed',
     workspace: 'none', write: true, freshSession: true,
+    desktop: true,
   },
   async ({ request, params, session }) => driveResponse(request, 'link', params, session),
 )

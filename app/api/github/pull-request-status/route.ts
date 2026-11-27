@@ -46,6 +46,7 @@ export const POST = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     onOriginFailure: () => fail('originNotAllowed', 403),
+    desktop: true,
   },
   ({ request, session }) => handlePOST(request, session),
 )

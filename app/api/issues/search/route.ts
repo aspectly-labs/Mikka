@@ -45,6 +45,7 @@ export const GET = defineRoute(
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
+    desktop: true,
   },
   ({ request, session }) => unguardedGET(request, session),
 )

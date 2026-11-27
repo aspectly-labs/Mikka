@@ -9,6 +9,7 @@ export const GET = defineRoute<'session', 'none'>(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   async ({ request, session }) => {
     const headers = { 'Cache-Control': 'private, no-store' }

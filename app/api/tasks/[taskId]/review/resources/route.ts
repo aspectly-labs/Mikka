@@ -6,6 +6,6 @@ export const maxDuration = 30
 const handler = taskReviewHttp(readTaskReviewResources)
 
 export const GET = defineRoute<'public','none',{ taskId: string }>(
-  { route: '/api/tasks/[taskId]/review/resources', auth: 'public', origin: 'any', workspace: 'none' },
+  { route: '/api/tasks/[taskId]/review/resources', auth: 'public', origin: 'any', workspace: 'none', desktop: true },
   ({ request, params }) => handler(request, { params: Promise.resolve(params) }),
 )

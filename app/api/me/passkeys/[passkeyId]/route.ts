@@ -26,6 +26,7 @@ export const PATCH = freshSessionRoute(defineRoute<'session', 'none', { passkeyI
     freshSession: true,
     onOriginFailure: passkeyOriginDenied,
     onAuthFailure: passkeyUnauthorized,
+    desktop: true,
   },
   async ({ request, params }) => passkeyRouteResponse(async () => {
     const session = await passkeyAccountSession(request)
@@ -44,6 +45,7 @@ export const DELETE = freshSessionRoute(defineRoute<'session', 'none', { passkey
     freshSession: true,
     onOriginFailure: passkeyOriginDenied,
     onAuthFailure: passkeyUnauthorized,
+    desktop: true,
   },
   async ({ request, params }) => passkeyRouteResponse(async () => {
     const session = await passkeyAccountSession(request)

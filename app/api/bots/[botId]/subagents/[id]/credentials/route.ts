@@ -8,6 +8,7 @@ export const POST = defineRoute<'session', 'pat-scoped', { botId: string; id: st
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     write: true,
+    desktop: true,
   },
   ({ request, params }) => subagentCredentialRoute(request, params.botId, params.id, 'submit'),
 )

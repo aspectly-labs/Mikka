@@ -64,6 +64,7 @@ export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string }>
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => z.uuid().safeParse(params.workspaceId).success ? params.workspaceId : undefined,
     onAuthFailure: () => new RouteResponse(null, { status: 401 }),
+    desktop: true,
   },
   ({ request, params, session }) => GETBody(request, { params: Promise.resolve(params) }, session),
 )

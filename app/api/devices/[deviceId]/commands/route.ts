@@ -11,6 +11,7 @@ export const POST = defineRoute<'session', 'none', { deviceId: string }>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   async ({ request, session, params }) => {
     if (!sameOriginMutationAllowed(request)) return new Response(null, { status: 403 })
@@ -29,6 +30,7 @@ export const GET = defineRoute<'session', 'none', { deviceId: string }>(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   async ({ session, params }) => {
     if (isPatSession(session)) return new Response(null, { status: 403 })

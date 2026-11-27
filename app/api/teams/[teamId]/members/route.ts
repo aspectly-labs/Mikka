@@ -29,6 +29,7 @@ export const GET = defineRoute<'public', 'none', { teamId: string }>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
 )

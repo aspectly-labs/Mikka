@@ -45,10 +45,10 @@ function handle(request: Request, params: { botId: string }) {
   })
 }
 export const GET = defineRoute<'session', 'pat-scoped', { botId: string }>(
-  { auth: 'session', origin: 'any', workspace: 'pat-scoped' },
+  { auth: 'session', origin: 'any', workspace: 'pat-scoped', desktop: true },
   ({ request, params }) => handle(request, params),
 )
 export const PATCH = defineRoute<'session', 'pat-scoped', { botId: string }>(
-  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'pat-scoped', write: true },
+  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'pat-scoped', write: true, desktop: true },
   ({ request, params }) => handle(request, params),
 )

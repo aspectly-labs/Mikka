@@ -23,6 +23,7 @@ export const GET = defineRoute<'public', 'none'>(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   ({ request }) => GETBody(request),
 )
@@ -34,6 +35,7 @@ export const POST = defineRoute<'public', 'none'>(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   ({ request }) => POSTBody(request),
 )

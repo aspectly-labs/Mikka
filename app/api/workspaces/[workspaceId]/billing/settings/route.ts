@@ -13,6 +13,7 @@ export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string }>
     workspace: 'pat-scoped',
     workspaceId: ({ params }) => params.workspaceId,
     freshSession: true,
+    desktop: true,
   },
   ({ request, params, session }) =>
     wsGJsonResponse(async () => {
@@ -29,6 +30,8 @@ const mutateSpec = {
   workspace: 'pat-scoped',
   workspaceId: ({ params }: { params: { workspaceId: string } }) => params.workspaceId,
   freshSession: true,
+  // PUT and PATCH are one write; the desktop's billing page sends PATCH.
+  desktop: true,
 } as const
 
 const mutateHandler = ({ request, params, session }: { request: Request; params: { workspaceId: string }; session: Parameters<typeof apiWorkspaceAllowed>[0] }) =>

@@ -24,6 +24,7 @@ export const GET = defineRoute<'public', 'none', { workspaceId: string }>(
     origin: 'any',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
 )

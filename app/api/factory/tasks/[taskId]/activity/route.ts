@@ -28,6 +28,7 @@ export const GET = defineRoute<'session', 'none', { taskId: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   ({ params, session }) => handleGET(params.taskId, session),
 )

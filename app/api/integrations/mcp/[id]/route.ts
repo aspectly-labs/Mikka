@@ -19,6 +19,7 @@ export const GET = defineRoute<'session','pat-scoped',{ id: string }>(
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
+    desktop: true,
   },
   ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
 )

@@ -15,11 +15,11 @@ async function handle(request: Request, user: ApiSession['user']) {
 
 
 export const GET = defineRoute<'session', 'none'>(
-  { route: '/api/self-improvement', auth: 'session', origin: 'any', workspace: 'none' },
+  { route: '/api/self-improvement', auth: 'session', origin: 'any', workspace: 'none', desktop: true },
   async ({ request, user }) => handle(request, user),
 )
 
 export const POST = defineRoute<'session', 'none'>(
-  { route: '/api/self-improvement', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true },
+  { route: '/api/self-improvement', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true, desktop: true },
   async ({ request, user }) => handle(request, user),
 )

@@ -7,6 +7,7 @@ export const GET = defineRoute<'session', 'none'>(
     auth: 'session',
     origin: 'any',
     workspace: 'none', freshSession: true,
+    desktop: true,
   },
   async ({ request, session }) => driveResponse(request, 'workspaceLinks', {}, session),
 )

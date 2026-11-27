@@ -14,6 +14,6 @@ async function handlePOST(request: Request, session: ApiSession) {
 }
 
 export const POST = defineRoute<'session', 'none'>(
-  { route: '/api/skills/share', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true },
+  { route: '/api/skills/share', auth: 'session', origin: 'same-origin-or-desktop', workspace: 'none', write: true, desktop: true },
   async ({ request, session }) => handlePOST(request, session),
 )

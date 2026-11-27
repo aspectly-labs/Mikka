@@ -11,6 +11,7 @@ export const GET = defineRoute<'session', 'pat-scoped', { runId: string; stepId:
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
+    desktop: true,
   },
   async ({ request, params, user }) => {
     const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'Cache-Control': 'private, no-store' } })

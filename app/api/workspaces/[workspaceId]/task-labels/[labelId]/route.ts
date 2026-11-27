@@ -44,6 +44,7 @@ export const PATCH = defineRoute<'public', 'none', { workspaceId: string; labelI
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   ({ request, params }) => PATCHBody(request, { params: Promise.resolve(params) }),
 )
@@ -55,6 +56,7 @@ export const DELETE = defineRoute<'public', 'none', { workspaceId: string; label
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   ({ request, params }) => DELETEBody(request, { params: Promise.resolve(params) }),
 )

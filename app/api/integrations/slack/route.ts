@@ -150,6 +150,7 @@ export const GET = defineRoute(
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
+    desktop: true,
   },
   ({ request, session }) => handle(request, session),
 )
@@ -161,6 +162,7 @@ export const POST = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'pat-scoped',
     onOriginFailure: () => reply({ error: 'originRejected' }, 403),
+    desktop: true,
   },
   ({ request, session }) => handle(request, session),
 )

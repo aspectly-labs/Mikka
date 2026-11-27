@@ -14,6 +14,7 @@ export const GET = defineRoute<'public', 'none', { organizationId: string; volum
     origin: 'any',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   ({ request, params }) => volumeShares(request, { params: Promise.resolve(params) }),
 )
@@ -25,6 +26,7 @@ export const POST = defineRoute<'public', 'none', { organizationId: string; volu
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   ({ request, params }) => volumeShares(request, { params: Promise.resolve(params) }),
 )

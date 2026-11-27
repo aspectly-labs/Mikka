@@ -15,6 +15,7 @@ export const GET = defineRoute<'session', 'pat-scoped'>(
     origin: 'any',
     workspace: 'pat-scoped',
     workspaceId: ({ request }) => selectedWorkspaceId(new URL(request.url).searchParams.get('workspaceId')) ?? undefined,
+    desktop: true,
   },
   ({ request }) => GETBody(request),
 )
@@ -26,6 +27,7 @@ export const PATCH = defineRoute<'session', 'pat-scoped'>(
     workspace: 'pat-scoped',
     workspaceId: ({ request }) => selectedWorkspaceId(new URL(request.url).searchParams.get('workspaceId')) ?? undefined,
     freshSession: true,
+    desktop: true,
   },
   ({ request }) => PATCHBody(request),
 )

@@ -35,6 +35,7 @@ export const GET = defineRoute<'public','none',{ questionId: string }>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   ({ request, params }) => handle(request, { params: Promise.resolve(params) }),
 )
@@ -45,6 +46,7 @@ export const POST = defineRoute<'public','none',{ questionId: string }>(
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   ({ request, params }) => handle(request, { params: Promise.resolve(params) }),
 )

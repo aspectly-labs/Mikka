@@ -10,7 +10,7 @@ import { defineRoute } from '@/lib/primitives/define-route'
  * removed picture or deleted account does not linger in caches for long.
  */
 export const GET = defineRoute<'public', 'none', { userId: string; hash: string }>(
-  { auth: 'public', origin: 'any', workspace: 'none' },
+  { auth: 'public', origin: 'any', workspace: 'none', desktop: true },
   async ({ params }) => {
     const { userId, hash } = params
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(userId) || !/^[a-f0-9]{64}$/.test(hash)) return new Response('Not found', { status: 404 })

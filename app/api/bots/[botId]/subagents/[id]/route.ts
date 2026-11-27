@@ -6,6 +6,7 @@ export const GET = defineRoute<'session', 'pat-scoped', { botId: string; id: str
     auth: 'session',
     origin: 'any',
     workspace: 'pat-scoped',
+    desktop: true,
   },
   ({ request, params }) => subagentRoute(request, params.botId, params.id),
 )

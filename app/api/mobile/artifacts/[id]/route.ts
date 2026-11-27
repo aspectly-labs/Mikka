@@ -23,6 +23,7 @@ export const DELETE = defineRoute<'mobile-or-session', 'none', { id: string }>(
     origin: 'native-mobile-allowed',
     workspace: 'none',
     write: true,
+    desktop: true,
   },
   async ({ user, params }) => {
     const id = z.uuid().safeParse(params.id)

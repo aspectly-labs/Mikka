@@ -10,7 +10,7 @@ const governanceDenied = () => Response.json(
 )
 
 export const GET = freshSessionRoute(defineRoute(
-  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, onAuthFailure: governanceDenied },
+  { auth: 'session', origin: 'any', workspace: 'none', freshSession: true, onAuthFailure: governanceDenied, desktop: true },
   async ({ request }) => governanceResponse(async () => {
     const session = await organizationAccountSession(request)
     return listReceivedOrganizationInvitations(session.user)

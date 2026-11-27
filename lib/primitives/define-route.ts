@@ -85,6 +85,16 @@ type RouteSpecBase<P extends RouteHandlerParams> = {
   origin: RouteOriginPolicy
   /** Enforces `writeAllowed` when true (in addition to stricter `origin` policies). */
   write?: boolean
+  /**
+   * The bundled desktop renderer may call this method through the desktop main
+   * process. `apps/api/scripts/generate-routes.mjs` reads this literal into
+   * `apps/api/generated/desktop-routes.json`, the only allowlist
+   * `apps/desktop/src/main/bundled-policy.ts` forwards; a method without it is
+   * answered `desktop_route_denied` there. `true` allows the route; a catch-all
+   * route lists the exact sub-path templates it allows (`/api/auth/device`).
+   * Leave it out for routes only browsers, phones, machines or webhooks call.
+   */
+  desktop?: true | readonly string[]
   /** Forces database-fresh session reads (`disableCookieCache: true` inside `withFreshSession`). */
   freshSession?: boolean
   /** Prevents Better Auth from renewing/extending the session cookie on read (`disableRefresh: true`). */
@@ -428,7 +438,15 @@ function validateSpec(spec: {
   origin: string
   workspace: string
   verifyWebhook?: unknown
+  desktop?: unknown
 }): void {
+  if (spec.desktop !== undefined && spec.desktop !== true
+    && !(Array.isArray(spec.desktop) && spec.desktop.length > 0 && spec.desktop.every(path => typeof path === 'string' && path.startsWith('/api/')))) {
+    throw new TypeError('defineRoute: desktop must be true or a list of /api/ sub-paths')
+  }
+  if (spec.desktop !== undefined && (spec.auth === 'cron-secret' || spec.auth === 'webhook-signature')) {
+    throw new TypeError(`defineRoute: auth "${spec.auth}" is never a desktop route`)
+  }
   if (!AUTH_MODE_SET.has(spec.auth)) {
     throw new TypeError(`defineRoute: invalid auth mode "${String(spec.auth)}"`)
   }

@@ -21,7 +21,7 @@ const enrollmentOriginRefused = () => Response.json(
 )
 
 const POSTBody = defineRoute(
-  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', onOriginFailure: enrollmentOriginRefused },
+  { auth: 'public', origin: 'same-origin-or-desktop', workspace: 'none', onOriginFailure: enrollmentOriginRefused, desktop: true },
   ({ request }) => handleEnrollment(request),
 )
 

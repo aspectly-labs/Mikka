@@ -19,6 +19,7 @@ const POSTBody = defineRoute(
     origin: 'same-origin-or-desktop',
     workspace: 'none',
     freshSession: true,
+    desktop: true,
   },
   async ({ request, session }) => {
     if (hasPatAuthorizationHeader(request) || isPatSession(session)) return Response.json({ error: 'sessionRequired' }, { status: 403, headers })

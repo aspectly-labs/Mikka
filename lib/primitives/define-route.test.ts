@@ -143,6 +143,22 @@ test('spec validation fails fast on invalid auth/origin/workspace combinations',
   )
 })
 
+test('a desktop declaration is true or a list of API sub-paths, and never on a machine route', () => {
+  assert.doesNotThrow(() => defineRoute({ auth: 'session', origin: 'any', workspace: 'none', desktop: true }, () => routeJson({ ok: true })))
+  assert.doesNotThrow(() => defineRoute({ auth: 'public', origin: 'any', workspace: 'none', desktop: ['/api/auth/device'] }, () => routeJson({ ok: true })))
+  for (const desktop of [false, [], ['auth/device'], 'yes']) {
+    assert.throws(
+      // @ts-expect-error only true or a list of sub-paths is a declaration
+      () => defineRoute({ auth: 'session', origin: 'any', workspace: 'none', desktop }, () => routeJson({ ok: true })),
+      /desktop must be true or a list/,
+    )
+  }
+  assert.throws(
+    () => defineRoute({ auth: 'cron-secret', origin: 'any', workspace: 'none', desktop: true }, () => routeJson({ ok: true })),
+    /never a desktop route/,
+  )
+})
+
 test('public route with origin: any allows unauthenticated cross-origin requests', async () => {
   const handler = defineRoute(
     { auth: 'public', origin: 'any', workspace: 'none' },

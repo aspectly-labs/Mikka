@@ -21,6 +21,7 @@ export const GET = defineRoute<'public', 'none', { artifactId: string; version: 
     auth: 'public',
     origin: 'any',
     workspace: 'none',
+    desktop: true,
   },
   async ({ request, params }) => handleGET(request, { params: Promise.resolve(params) }),
 )

@@ -14,7 +14,7 @@ const privateHeaders = { 'cache-control': 'private, no-store', 'referrer-policy'
 // Browser-only download link using @/lib/auth with disableRefresh: true and plain-text 401 instructions;
 // must never invoke @/lib/api-auth (enforced by tests/account-export-route.test.ts).
 export const GET = defineRoute<'public', 'none', { token: string }>(
-  { auth: 'public', origin: 'any', workspace: 'none', freshSession: true },
+  { auth: 'public', origin: 'any', workspace: 'none', freshSession: true, desktop: true },
   async ({ request, params }) => {
     const session = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true, disableRefresh: true } })
     if (!session?.user) return new Response('Sign in to Mikka with the account that asked for this export, then open the link again.', { status: 401, headers: privateHeaders })

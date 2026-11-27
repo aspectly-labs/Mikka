@@ -70,13 +70,16 @@ test('path policy rejects traversal, encoded delimiters, absolute targets and un
   assert.equal(allowedApiPath('/api/settings/preferences', 'GET'), true)
   assert.equal(allowedApiPath('/api/settings/preferences', 'POST'), false)
   assert.equal(allowedApiPath('/api/settings/issue-prefix', 'GET'), true)
-  for (const method of ['HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+  assert.equal(allowedApiPath('/api/settings/issue-prefix', 'HEAD'), true, 'HEAD reads as GET, as the server answers it')
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
     assert.equal(allowedApiPath('/api/settings/issue-prefix', method), false)
   }
   assert.equal(allowedApiPath('/api/settings/issue-prefix/extra', 'GET'), false)
   assert.equal(allowedApiPath('/api/artifacts/shared/public-share-token', 'GET'), true)
   assert.equal(allowedApiPath('/api/settings/personal', 'GET'), true)
-  assert.equal(allowedApiPath('/api/settings/personal', 'PATCH'), false)
+  // Saving a personal setting is the same route's declared write.
+  assert.equal(allowedApiPath('/api/settings/personal', 'PATCH'), true)
+  assert.equal(allowedApiPath('/api/settings/personal', 'DELETE'), false)
   assert.equal(allowedApiPath('/api/artifacts/shared/public-share-token', 'POST'), false)
   // 收件箱 reads its authorized page and writes its lifecycle commands; nothing
   // else about it is reachable, and the count query rides the same GET.
@@ -123,11 +126,12 @@ test('private Drive forwarding has exact identifiers, paths and HTTP methods', (
   ]
   for (const [path, methods] of routes) {
     for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) {
-      assert.equal(allowedApiPath(path, method), methods.includes(method), `${method} ${path}`)
+      assert.equal(allowedApiPath(path, method), methods.includes(method === 'HEAD' ? 'GET' : method), `${method} ${path}`)
     }
   }
-  for (const path of ['/api/drive/admin', '/api/drive/scopes/extra', '/api/drive/shares/extra', '/api/drive/volumes/not-a-volume', `/api/drive/volumes/${volume}/files/extra`,
-    `/api/drive/volumes/${volume}/versions/not-a-version`, `/api/drive/volumes/${volume}/shares/non-uuid`, `/api/drive/volumes/${volume}/delete`]) {
+  // Identifiers are the handlers' to validate; a value that is not one plain segment never reaches them.
+  for (const path of ['/api/drive/admin', '/api/drive/scopes/extra', `/api/drive/volumes/${volume}/files/extra`, `/api/drive/volumes/${volume}/delete`,
+    '/api/drive/volumes/not a volume', `/api/drive/volumes/${volume}/versions/version:1`, `/api/drive/volumes/${volume}/shares/${'a'.repeat(129)}`]) {
     for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
   }
 })
@@ -140,11 +144,11 @@ test('renderer CSP has no remote code, eval, inline scripts, external fetch, wor
   assert.match(RENDERER_CSP, /worker-src 'none'/)
 })
 
-test('Factory flow accepts only a strict UUID and its two declared methods', () => {
+test('Factory flow accepts one plain task segment and its two declared methods', () => {
   const path = `/api/factory/tasks/${identity.user.id}/flow`
-  for (const method of ['GET', 'POST']) assert.equal(allowedApiPath(path, method), true)
-  for (const method of ['HEAD', 'PATCH', 'DELETE', 'PUT', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
-  for (const id of ['task_1', identity.user.id.replaceAll('-', ''), identity.user.id.replace('-461b-', '-z61b-'), identity.user.id.replace('-bca2-', '-1ca2-')]) {
+  for (const method of ['GET', 'HEAD', 'POST']) assert.equal(allowedApiPath(path, method), true)
+  for (const method of ['PATCH', 'DELETE', 'PUT', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
+  for (const id of ['task 1', 'task:1', 'é']) {
     for (const method of ['GET', 'POST']) assert.equal(allowedApiPath(`/api/factory/tasks/${id}/flow`, method), false)
   }
   assert.equal(allowedApiPath(`${path}/extra`, 'GET'), false)
@@ -154,10 +158,10 @@ test('Factory activity and its media are read-only under a strict task UUID', ()
   const task = identity.user.id
   for (const path of [`/api/factory/tasks/${task}/activity`, `/api/factory/tasks/${task}/media/${task}`]) {
     assert.equal(allowedApiPath(path, 'GET'), true, path)
-    for (const method of ['HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
     assert.equal(allowedApiPath(`${path}/extra`, 'GET'), false)
   }
-  assert.equal(allowedApiPath('/api/factory/tasks/task_1/activity', 'GET'), false)
+  assert.equal(allowedApiPath('/api/factory/tasks/task 1/activity', 'GET'), false)
   assert.equal(allowedApiPath(`/api/factory/tasks/${task}/media/`, 'GET'), false)
 })
 
@@ -168,13 +172,14 @@ test('service identity management forwards only its declared human-session metho
   const item = `${directory}/${identity}`
   const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
   const governance = `/api/workspaces/${workspace}/governance`
-  for (const method of methods) assert.equal(allowedApiPath(governance, method), method === 'GET', method)
-  for (const method of methods) assert.equal(allowedApiPath(governance + '/usage', method), method === 'GET', `${method} ${governance}/usage`)
+  const read = (method: string) => method === 'GET' || method === 'HEAD'
+  for (const method of methods) assert.equal(allowedApiPath(governance, method), read(method), method)
+  for (const method of methods) assert.equal(allowedApiPath(governance + '/usage', method), read(method), `${method} ${governance}/usage`)
   const routes = [[directory, 'POST'], [item, 'PATCH'], [item + '/projects', 'PUT'], [item + '/credential', 'POST']]
   for (const [path, mutation] of routes) {
-    for (const method of methods) assert.equal(allowedApiPath(path, method), method === 'GET' || method === mutation, `${method} ${path}`)
+    for (const method of methods) assert.equal(allowedApiPath(path, method), read(method) || method === mutation, `${method} ${path}`)
   }
-  for (const path of [governance.replace(workspace, 'unknown'), governance.replace(workspace, 'unknown') + '/usage', directory.replace(workspace, 'unknown'), directory + '/bad-id', item + '/unknown',
+  for (const path of [governance.replace(workspace, 'not a workspace'), directory.replace(workspace, 'x:y'), item + '/unknown',
     item + '/credential/rotate', item + '/projects/', '/api/service-identity/projects']) {
     for (const method of methods) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
   }
@@ -186,14 +191,15 @@ test('organization lifecycle, workspace binding and service keys use their decla
   const overview = `/api/organizations/${org}`
   const collection = overview + '/api-keys'
   for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath('/api/organizations', method), ['GET', 'POST'].includes(method))
-    assert.equal(allowedApiPath('/api/organizations/deleted', method), method === 'GET')
+    assert.equal(allowedApiPath('/api/organizations', method), ['GET', 'HEAD', 'POST'].includes(method))
+    // The literal route wins over the organization id beside it, as on the server.
+    assert.equal(allowedApiPath('/api/organizations/deleted', method), ['GET', 'HEAD'].includes(method))
     assert.equal(allowedApiPath('/api/organizations/deleted/extra', method), false)
-    assert.equal(allowedApiPath(overview, method), ['GET', 'PUT', 'PATCH', 'DELETE'].includes(method))
+    assert.equal(allowedApiPath(overview, method), ['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE'].includes(method))
     assert.equal(allowedApiPath(overview + '/workspaces', method), ['POST', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(collection, method), method === 'GET')
+    assert.equal(allowedApiPath(collection, method), ['GET', 'HEAD'].includes(method))
     assert.equal(allowedApiPath(collection + '/' + key, method), method === 'PATCH')
-    for (const path of [overview.replace(org, 'unknown'), overview + '/workspaces/extra', overview.replace(org, 'unknown') + '/workspaces', collection.replace(org, 'unknown'), collection + '/unknown', collection + '/' + key + '/revoke']) {
+    for (const path of [overview.replace(org, 'not an id'), overview + '/workspaces/extra', overview.replace(org, 'a:b') + '/workspaces', collection + '/' + key + '/revoke']) {
       assert.equal(allowedApiPath(path, method), false)
     }
   }
@@ -203,8 +209,8 @@ test('organization audit permits only listing and named export requests for a si
   const organization = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
   const path = `/api/organizations/${organization}/audit-log`
   for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(path, method), method === 'GET' || method === 'POST')
-    assert.equal(allowedApiPath(path.replace(organization, 'unknown'), method), false)
+    assert.equal(allowedApiPath(path, method), ['GET', 'HEAD', 'POST'].includes(method))
+    assert.equal(allowedApiPath(path.replace(organization, 'not an id'), method), false)
     assert.equal(allowedApiPath(path + '/events', method), false)
   }
 })
@@ -212,19 +218,19 @@ test('organization audit permits only listing and named export requests for a si
 test('resource policy and approval requests use only their own declared methods', () => {
   const root = '/api/organizations/' + identity.user.id
   for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(root + '/policy', method), ['GET', 'PATCH'].includes(method))
+    assert.equal(allowedApiPath(root + '/policy', method), ['GET', 'HEAD', 'PATCH'].includes(method))
     assert.equal(allowedApiPath(root + '/approvals', method), ['POST', 'PATCH'].includes(method))
     assert.equal(allowedApiPath(root + '/approvals/all', method), false)
-    assert.equal(allowedApiPath('/api/organizations/unknown/policy', method), false)
+    assert.equal(allowedApiPath('/api/organizations/not an id/policy', method), false)
   }
 })
 
 test('Organization Files forwards only a signed directory read', () => {
   const path = '/api/organizations/' + identity.user.id + '/drive-shares'
   for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(path, method), method === 'GET')
-    assert.equal(allowedApiPath(path + '/all', method), false)
-    assert.equal(allowedApiPath('/api/organizations/unknown/drive-shares', method), false)
+    assert.equal(allowedApiPath(path, method), ['GET', 'HEAD'].includes(method))
+    assert.equal(allowedApiPath(path + '/all/extra', method), false)
+    assert.equal(allowedApiPath('/api/organizations/not an id/drive-shares', method), false)
   }
 })
 
@@ -244,12 +250,12 @@ test('Organization domain discovery and admission forward only the declared rout
   const base = `/api/organizations/${org}`
   const collection = `${base}/allowed-domains`
   for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath('/api/me/joinable-organizations', method), method === 'GET')
-    assert.equal(allowedApiPath('/api/me/invitations', method), method === 'GET')
-    assert.equal(allowedApiPath(collection, method), method === 'GET' || method === 'POST')
+    assert.equal(allowedApiPath('/api/me/joinable-organizations', method), ['GET', 'HEAD'].includes(method))
+    assert.equal(allowedApiPath('/api/me/invitations', method), ['GET', 'HEAD'].includes(method))
+    assert.equal(allowedApiPath(collection, method), ['GET', 'HEAD', 'POST'].includes(method))
     assert.equal(allowedApiPath(`${collection}/${domain}`, method), method === 'DELETE')
     assert.equal(allowedApiPath(`${base}/join-by-domain`, method), method === 'POST')
-    for (const path of [collection.replace(org, 'unknown'), `${collection}/unknown`, `${collection}/${domain}/unknown`, `${base}/join-by-domain/extra`]) {
+    for (const path of [collection.replace(org, 'not an id'), `${collection}/${domain}/unknown`, `${base}/join-by-domain/extra`]) {
       assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
     }
   }
@@ -258,10 +264,10 @@ test('Organization domain discovery and admission forward only the declared rout
 test('billing metadata and commands have exact scoped routes and methods', () => {
   for (const scope of ['workspaces', 'organizations']) {
     const path = `/api/${scope}/${identity.user.id}/billing`
-    for (const method of ['GET', 'POST']) assert.equal(allowedApiPath(path, method), true)
-    for (const method of ['HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
+    for (const method of ['GET', 'HEAD', 'POST']) assert.equal(allowedApiPath(path, method), true)
+    for (const method of ['PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
     assert.equal(allowedApiPath(`${path}/credentials`, 'GET'), false)
-    assert.equal(allowedApiPath(`/api/${scope}/forged/billing`, 'POST'), false)
+    assert.equal(allowedApiPath(`/api/${scope}/for ged/billing`, 'POST'), false)
   }
 })
 
@@ -269,8 +275,8 @@ test('organization membership exposes the directory and declared membership writ
   const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
   const members = `/api/organizations/${org}/members`
   for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(members, method), ['GET', 'POST', 'PATCH', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(members.replace(org, 'unknown'), method), false)
+    assert.equal(allowedApiPath(members, method), ['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(method))
+    assert.equal(allowedApiPath(members.replace(org, 'not an id'), method), false)
     assert.equal(allowedApiPath(members + '/roles', method), false)
   }
 })
@@ -281,13 +287,16 @@ test('installed Organization invitations expose only listing, issuing, revoking 
   const accept = '/api/organization-invitations/accept'
   const token = 'a'.repeat(64)
   for (const method of ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(collection, method), ['GET', 'POST', 'DELETE'].includes(method))
+    assert.equal(allowedApiPath(collection, method), ['GET', 'HEAD', 'POST', 'DELETE'].includes(method))
     assert.equal(allowedApiPath(accept, method), method === 'POST')
-    assert.equal(allowedApiPath(`/api/invitations/${token}`, method), method === 'GET')
-    assert.equal(allowedApiPath(`/api/organization-invitations/${token}`, method), method === 'GET')
+    // An invitation preview takes whatever token the link carries; the server answers an unknown one.
+    for (const preview of [token, 'Zy-9_tokenFromAnInvitationLink']) {
+      assert.equal(allowedApiPath(`/api/invitations/${preview}`, method), ['GET', 'HEAD'].includes(method))
+      assert.equal(allowedApiPath(`/api/organization-invitations/${preview}`, method), ['GET', 'HEAD'].includes(method))
+    }
     for (const path of [
-      collection.replace(org, 'unknown'), `${collection}/accept`, `${collection}/${org}`, `${accept}/extra`,
-      '/api/invitations/not-hex', `/api/invitations/${token}/extra`, `/api/organization-invitations/${token}/extra`,
+      collection.replace(org, 'not an id'), `${collection}/accept`, `${collection}/${org}`, `${accept}/extra`,
+      '/api/invitations/not a token', `/api/invitations/${token}/extra`, `/api/organization-invitations/${token}/extra`,
     ]) {
       assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
     }
@@ -695,6 +704,7 @@ test('run environment and thread title settings forwarding permits only exact re
     assert.equal(allowedApiPath(path, 'GET'), true, path)
     assert.equal(allowedApiPath(`${path}/extra`, 'GET'), false)
     assert.equal(allowedApiPath(`${path}/`, 'GET'), false)
-    for (const method of ['HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
+    assert.equal(allowedApiPath(path, 'HEAD'), true)
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
   }
 })

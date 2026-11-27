@@ -9,6 +9,7 @@ export const POST = defineRoute<'session', 'none', { volumeId: string }>(
     auth: 'session',
     origin: 'native-mobile-allowed',
     workspace: 'none', write: true, freshSession: true,
+    desktop: true,
   },
   async ({ request, params, session }) => driveResponse(request, 'restore', params, session),
 )

@@ -61,6 +61,7 @@ export const GET = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }
     auth: 'mobile-or-session',
     origin: 'any',
     workspace: 'pat-scoped',
+    desktop: true,
   },
   async ({ request, user, params }) => handleGET(request, user, { params: Promise.resolve(params) }),
 )
@@ -71,6 +72,7 @@ export const PATCH = defineRoute<'mobile-or-session', 'pat-scoped', { id: string
     auth: 'mobile-or-session',
     origin: 'native-mobile-allowed',
     workspace: 'pat-scoped', write: true,
+    desktop: true,
   },
   async ({ request, user, params }) => handlePATCH(request, user, { params: Promise.resolve(params) }),
 )
