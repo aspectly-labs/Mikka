@@ -6,7 +6,7 @@
 - **Target surface(s):** Web | Desktop | iOS (`mikka-hosted-ui` / `apps/mobile`)
 - **Visual reference target (mandatory before coding):**
   - Figma file & frame ID: `<for example, zPe5LKycb2XuT1ivCLRw07 node XX:YY>` OR
-  - Governing reference screen: `<ChatGPT / Codex | Claude / Claude Code | Capy 0.9.2 (exact asset/route) | Linear>` with a Mobbin screen link or unpacked app/source path (a paid block demo is not a reference: [2026-11-27-1409](../../design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md))
+  - Governing reference screen: `<ChatGPT / Codex | Claude / Claude Code | Capy 0.9.2 (exact asset/route) | Linear | Apple HIG (native mobile UI and desktop window chrome only)>` with a Mobbin screen link or unpacked app/source path (a paid block demo is not a reference: [2026-11-27-1409](../../design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md))
 
 Copy this template before coding UI. Every UI PR must reference the completed spec and attach side-by-side visual evidence (`## 视觉对照`).
 
