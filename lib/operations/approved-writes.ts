@@ -115,7 +115,7 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
       const row = await ledger.reserve(intent(p))
       if (row.status !== 'reserved') {
         if (row.status === 'succeeded') return project(row)
-        return project(await ledger.reconcile(identity(p), record => bounded(signal => provider.lookup({ ownerId: p.userId, accountId: p.operationBinding.accountId, version: p.operationBinding.version, payload: p.input, idempotencyKey: record.idempotencyKey, signal }), context.signal)))
+        return project(await ledger.reconcile(identity(p), (record, leaseSignal) => bounded(signal => provider.lookup({ ownerId: p.userId, accountId: p.operationBinding.accountId, version: p.operationBinding.version, payload: p.input, idempotencyKey: record.idempotencyKey, signal: AbortSignal.any([signal, leaseSignal]) }), context.signal)))
       }
       let claimed: OperationRecord
       try { claimed = await ledger.claim(identity(p), run.runId) }
@@ -214,15 +214,21 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
       if (row.status === 'succeeded') return { ...await project(row), actionId: p.id }
       // Only now would the provider be read, with the owner's credential: the
       // owner must still hold the workspace and the connection (fail closed).
-      if (!context.readbackAuthority) throw new OperationError('writePolicyUnavailable')
-      const authority = await context.readbackAuthority({ ownerId: p.userId, workspaceId: run.workspaceId, accountId: p.operationBinding.accountId })
+      const readbackAuthority = context.readbackAuthority
+      if (!readbackAuthority) throw new OperationError('writePolicyUnavailable')
+      const authority = await readbackAuthority({ ownerId: p.userId, workspaceId: run.workspaceId, accountId: p.operationBinding.accountId })
       if (!authority) return { ...await closeWithoutReadback(p), actionId: p.id }
       const reader = createOperationLedger(pool, withReadbackBinding(current), { ...context, guard: authority.guard })
       try {
-        return { ...await project(await reader.reconcile(identity(p), record => bounded(signal => provider.lookup({ ownerId: p.userId, accountId: p.operationBinding.accountId, version: p.operationBinding.version, payload: p.input, idempotencyKey: record.idempotencyKey, signal }), context.signal))), actionId: p.id }
+        // The provider read is bounded by the membership lease: when the lease
+        // is lost or expires, the read is aborted and any late answer discarded.
+        return { ...await project(await reader.reconcile(identity(p), (record, leaseSignal) => bounded(signal => provider.lookup({ ownerId: p.userId, accountId: p.operationBinding.accountId, version: p.operationBinding.version, payload: p.input, idempotencyKey: record.idempotencyKey, signal: AbortSignal.any([signal, leaseSignal]) }), context.signal))), actionId: p.id }
       } catch (error) {
         // The provider says the account is no longer the owner's active one.
         if (error instanceof OperationError && error.message === 'integrationAccountUnavailable') return { ...await closeWithoutReadback(p), actionId: p.id }
+        // Any other failure (a lost lease among them): if the owner's authority
+        // is gone by now, end the receipt without reading; otherwise retry later.
+        if (!await readbackAuthority({ ownerId: p.userId, workspaceId: run.workspaceId, accountId: p.operationBinding.accountId })) return { ...await closeWithoutReadback(p), actionId: p.id }
         throw error
       }
     },

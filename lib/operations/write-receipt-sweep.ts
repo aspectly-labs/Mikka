@@ -4,6 +4,9 @@ import { WRITE_RECEIPT_READBACK_LIMIT } from './write-receipt-due'
 import { WRITE_ACTIONS, type WriteActionName } from './write-schema'
 import { OperationError } from './write-error'
 
+/** How long one sweep keeps starting readbacks; each is itself bounded (30s). */
+export const WRITE_RECEIPT_SWEEP_BUDGET_MS = 60_000
+
 type Readback = (ownerId: string, id: string, action: WriteActionName) => Promise<{ status: string }>
 
 /** The executable browser mutation leaves a closed browser_operation row
@@ -19,29 +22,39 @@ const SCRUB_BROWSER_MUTATION = `CASE WHEN action = 'browser_operation' AND input
  *    a late browser action loses its executable mutation in the same statement;
  * 2. reads back each run-bound receipt still `running` after its run ended,
  *    through the readback-only ledger path: never claims, invokes or resends.
- *    Each pick stamps "readbackAttemptAt" first, and picks go to receipts never
- *    tried, then the one tried longest ago, so receipts no provider can settle never
+ *    One receipt is claimed at a time, right before its readback starts: the
+ *    claim stamps "readbackAttemptAt", so a stamp always means a readback was
+ *    started, and reads go in claim order. Claims go to receipts never tried,
+ *    then the one tried longest ago, so receipts no provider can settle never
  *    starve newer ones; one tried in the last five minutes is skipped, so
- *    overlapping sweeps never read the same receipt. A failed readback leaves
- *    the receipt `running` and is counted under `failures` by error code or
- *    name only (never its message).
+ *    overlapping sweeps never read the same receipt. The sweep stops claiming
+ *    after `limit` receipts or once its time budget is spent; receipts it did
+ *    not reach keep their previous stamp. A failed readback leaves the receipt
+ *    `running` and is counted under `failures` by error code or name only
+ *    (never its message).
  */
-export async function sweepWriteReceipts(pool: Pick<Pool, 'query'>, readback?: Readback, options: { limit?: number } = {}) {
+export async function sweepWriteReceipts(pool: Pick<Pool, 'query'>, readback?: Readback, options: { limit?: number; budgetMs?: number; now?: () => number } = {}) {
   const closed = await pool.query(`UPDATE pending_actions SET status='declined', error='approvalRetired', input=${SCRUB_BROWSER_MUTATION} WHERE status='pending'`)
-  const candidates = await pool.query<{ id: string; userId: string; action: string; createdAt: Date }>(
-    `WITH due AS (SELECT p.id FROM pending_actions p
-      WHERE p.status = 'running' AND p.action = ANY($1::text[]) AND p."operationBinding"->'run' IS NOT NULL
-        AND p."createdAt" > now() - interval '7 days'
-        AND NOT EXISTS (SELECT 1 FROM agent_kit_executions e
-          WHERE e.id::text = p."operationBinding"->'run'->>'runId' AND e.owner_id = p."userId" AND e.status = 'running')
-        AND (p."readbackAttemptAt" IS NULL OR p."readbackAttemptAt" < now() - interval '5 minutes')
-      ORDER BY p."readbackAttemptAt" ASC NULLS FIRST, p."createdAt", p.id LIMIT $2 FOR UPDATE OF p SKIP LOCKED)
-    UPDATE pending_actions p SET "readbackAttemptAt" = now() FROM due WHERE p.id = due.id
-    RETURNING p.id, p."userId", p.action, p."createdAt"`, [WRITE_ACTIONS, options.limit ?? WRITE_RECEIPT_READBACK_LIMIT])
-  const rows = candidates.rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+  const now = options.now ?? Date.now
+  const deadline = now() + (options.budgetMs ?? WRITE_RECEIPT_SWEEP_BUDGET_MS)
+  const limit = options.limit ?? WRITE_RECEIPT_READBACK_LIMIT
   const read = readback ?? defaultReadback
   const outcomes: Record<string, number> = {}, failures: Record<string, number> = {}
-  for (const row of rows) {
+  let readBack = 0
+  while (readBack < limit && now() < deadline) {
+    const claimed = await pool.query<{ id: string; userId: string; action: string }>(
+      `UPDATE pending_actions p SET "readbackAttemptAt" = now()
+      WHERE p.id = (SELECT c.id FROM pending_actions c
+        WHERE c.status = 'running' AND c.action = ANY($1::text[]) AND c."operationBinding"->'run' IS NOT NULL
+          AND c."createdAt" > now() - interval '7 days'
+          AND NOT EXISTS (SELECT 1 FROM agent_kit_executions e
+            WHERE e.id::text = c."operationBinding"->'run'->>'runId' AND e.owner_id = c."userId" AND e.status = 'running')
+          AND (c."readbackAttemptAt" IS NULL OR c."readbackAttemptAt" < now() - interval '5 minutes')
+        ORDER BY c."readbackAttemptAt" ASC NULLS FIRST, c."createdAt", c.id LIMIT 1 FOR UPDATE OF c SKIP LOCKED)
+      RETURNING p.id, p."userId", p.action`, [WRITE_ACTIONS])
+    const row = claimed.rows[0]
+    if (!row) break
+    readBack++
     let status: string
     try { status = (await read(row.userId, row.id, row.action as WriteActionName)).status }
     catch (error) {
@@ -51,7 +64,7 @@ export async function sweepWriteReceipts(pool: Pick<Pool, 'query'>, readback?: R
     }
     outcomes[status] = (outcomes[status] ?? 0) + 1
   }
-  return { retired: closed.rowCount ?? 0, readBack: rows.length, outcomes, ...(Object.keys(failures).length ? { failures } : {}) }
+  return { retired: closed.rowCount ?? 0, readBack, outcomes, ...(Object.keys(failures).length ? { failures } : {}) }
 }
 
 /** A stable code, never a message: OperationError's message is its code; anything else gives its `code` or `name`. */

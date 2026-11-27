@@ -31,7 +31,12 @@ export function recoveryHttpProvider(origin: string, afterEffect?: () => Promise
 
 /** Real product Slack adapter over an independent HTTP protocol fixture. No
  * Composio credentials or SaaS account are used by this fault-injection test. */
-export async function recoverySlackProvider(origin: string, afterEffect?: () => Promise<never>): Promise<WriteProvider> {
+export async function recoverySlackProvider(origin: string, afterEffect?: () => Promise<never>, fixture: {
+  /** The owner's active Slack connections (default: the one the fixture writes through). */
+  accounts?: string[]
+  /** Sees every Slack API call before it is made, with the connection it uses. */
+  observe?: (accountId: string, endpoint: string) => void
+} = {}): Promise<WriteProvider> {
   const base = new URL(origin)
   if (base.protocol !== 'http:' || base.hostname !== '127.0.0.1') throw Error('loopback effect fixture required')
   const [{ composioWriteProvider }, { composioSlackConversationReader }, { composioSlackDelivery }] = await Promise.all([
@@ -39,10 +44,11 @@ export async function recoverySlackProvider(origin: string, afterEffect?: () => 
   ])
   const client = {
     connectedAccounts: { list: async ({ userIds, toolkitSlugs }: { userIds: string[]; toolkitSlugs: string[] }) => ({
-      items: userIds.length === 1 && ['owner', 'recovery-owner'].includes(userIds[0]) && toolkitSlugs[0] === 'slack' ? [{ id: 'fixture-slack-account', toolkit: { slug: 'slack' }, status: 'ACTIVE', isDisabled: false }] : [],
+      items: userIds.length === 1 && ['owner', 'recovery-owner'].includes(userIds[0]) && toolkitSlugs[0] === 'slack' ? (fixture.accounts ?? ['fixture-slack-account']).map(id => ({ id, toolkit: { slug: 'slack' }, status: 'ACTIVE', isDisabled: false })) : [],
     }) },
     // SLACK_SEND_MESSAGE's tags as Composio returned them on 2026-10-31.
     tools: { getRawComposioToolBySlug: async () => ({ version: '00000000_00', tags: ['chat', 'important', 'openWorldHint'] }), proxyExecute: async (request: { endpoint: string; method: string; userId: string; connectedAccountId: string; body?: unknown; parameters?: { in: string; name: string; value: string | number }[] }, options?: { signal?: AbortSignal }) => {
+      fixture.observe?.(request.connectedAccountId, request.endpoint)
       if (!['owner', 'recovery-owner'].includes(request.userId) || request.connectedAccountId !== 'fixture-slack-account') throw Error('fixture account mismatch')
       const url = new URL(request.endpoint, base)
       for (const parameter of request.parameters ?? []) {

@@ -142,19 +142,23 @@ export function createOperationLedger(pool: Pool, authorize: OperationAuthorize,
     },
     /** Trusted readback only; never invokes an effect. Unknown/absent objects keep their state:
      * a negative query cannot prove an old in-flight request will not later complete.
+     * `lookup` gets the transaction's signal, which aborts when the authorization
+     * lease is lost or expires: a provider read must not outlive it.
      */
-    async reconcile(input: OperationIdentity, lookup: (record: Readonly<OperationRecord>) => Promise<OperationReceipt | null>) {
+    async reconcile(input: OperationIdentity, lookup: (record: Readonly<OperationRecord>, leaseSignal: AbortSignal) => Promise<OperationReceipt | null>) {
       return transaction(input, async tx => {
         const row = await owned(tx, input)
         assertOperationRun(row.binding, row.runId)
         await authorize(tx, row.binding, row.runId, 'reconcile')
         return row
-      }, async (tx, row, lease) => {
+      }, async (tx, row, lease, signal) => {
         if (!['executing', 'uncertain'].includes(row.status)) return row
         // External readback shares the same current-authority lease as effects.
         await lease?.check()
         await authorize(tx, row.binding, row.runId, 'reconcile')
-        const evidence = await lookup(row)
+        signal.throwIfAborted()
+        const evidence = await lookup(row, signal)
+        signal.throwIfAborted()
         await lease?.check()
         await authorize(tx, row.binding, row.runId, 'reconcile')
         // Absence is not proof of failure and must not invalidate a concurrent

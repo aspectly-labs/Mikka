@@ -233,7 +233,7 @@ for (const transport of ['generic', 'slack'] as const) test(`${transport}: after
 /** A write the worker sent before it died, recorded nowhere but the ledger's
  * invoke gate, whose run then ended. With `workspace`, a Bot's run in a
  * workspace the owner is an active member of. */
-async function sentAndEnded(f: Awaited<ReturnType<typeof fixture>>, transport: 'generic' | 'slack', workspace?: { workspaceId: string; botId: string }) {
+async function sentAndEnded(f: Awaited<ReturnType<typeof fixture>>, transport: 'generic' | 'slack', workspace?: { workspaceId: string; botId: string }, slack?: Parameters<typeof recoverySlackProvider>[2]) {
   const run = randomUUID(), revision = randomUUID(), intentKey = randomUUID(), page = randomUUID()
   const action = transport === 'slack' ? 'send_slack_message' : 'append_notion_paragraph'
   const ownerId = 'recovery-owner', actor = { userId: ownerId, sessionId: `recovery-session-${run}` }, key = workspace?.botId ?? 'coordinator'
@@ -251,7 +251,7 @@ async function sentAndEnded(f: Awaited<ReturnType<typeof fixture>>, transport: '
   const ledger = (await f.pool.query('SELECT status,"invokedAt" FROM operation_ledger WHERE "operationId"=$1', [receipt.id])).rows[0]
   assert.equal(ledger.status, 'executing'); assert.ok(ledger.invokedAt, 'the effect was sent before the worker died')
   let lookups = 0
-  const provider = transport === 'slack' ? await recoverySlackProvider(f.origin) : recoveryHttpProvider(f.origin)
+  const provider = transport === 'slack' ? await recoverySlackProvider(f.origin, undefined, slack) : recoveryHttpProvider(f.origin)
   const counted = { ...provider, lookup: async (input: Parameters<typeof provider.lookup>[0]) => { lookups++; return provider.lookup(input) } }
   const service = createApprovedWrites(f.pool, counted, action, { readbackAuthority: readbackAuthority(f.pool) })
   const status = async (id: string) => (await f.pool.query('SELECT status,error FROM pending_actions WHERE id=$1', [id])).rows[0]
@@ -261,7 +261,7 @@ async function sentAndEnded(f: Awaited<ReturnType<typeof fixture>>, transport: '
       SELECT $1,"userId",action,input,$2,"operationBinding",context,'running',${createdAt} FROM pending_actions WHERE id=$3`, [id, randomUUID(), receipt.id])
     return id
   }
-  return { ownerId, actor, receipt, service, status, copy, lookups: () => lookups }
+  return { ownerId, actor, receipt, service, status, copy, action: action as 'send_slack_message' | 'append_notion_paragraph', lookups: () => lookups }
 }
 const effects = async (origin: string) => (await fetch(origin + '/stats')).json()
 
@@ -351,6 +351,88 @@ for (const transport of ['generic', 'slack'] as const) for (const change of ['no
       assert.equal(sent.lookups(), 0, 'the provider is never read with an authority the owner no longer holds')
       assert.deepEqual(await sweepWriteReceipts(f.pool, readback), { retired: 0, readBack: 0, outcomes: {} })
     }
+    assert.deepEqual(await effects(f.origin), { posts: 1, effects: 1 })
+  } finally { await f.close() }
+})
+
+test('generic: a sweep stops starting readbacks when its budget is spent; reads follow claim order and only started ones are stamped', { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  try {
+    const sent = await sentAndEnded(f, 'generic')
+    const older = [await sent.copy("now()-interval '3 hours'"), await sent.copy("now()-interval '2 hours'"), await sent.copy("now()-interval '1 hour'")]
+    let clock = 0
+    const tried: string[] = []
+    // Each readback takes 40 seconds of a 60-second budget.
+    const readback = async (owner: string, id: string) => { tried.push(id); clock += 40_000; return sent.service.readback(owner, id) }
+    const swept = await sweepWriteReceipts(f.pool, readback, { limit: 10, budgetMs: 60_000, now: () => clock })
+    assert.equal(swept.readBack, 2)
+    assert.deepEqual(tried, older.slice(0, 2), 'the oldest untried receipts, read in the order they were claimed')
+    const stamps = Object.fromEntries((await f.pool.query('SELECT id,"readbackAttemptAt" FROM pending_actions')).rows.map(row => [row.id, Boolean(row.readbackAttemptAt)]))
+    assert.deepEqual(stamps, { [older[0]]: true, [older[1]]: true, [older[2]]: false, [sent.receipt.id]: false }, 'a receipt the sweep never reached carries no stamp')
+    // The next sweep starts where this one stopped.
+    tried.length = 0; clock = 0
+    await sweepWriteReceipts(f.pool, readback, { limit: 10, budgetMs: 60_000, now: () => clock })
+    assert.deepEqual(tried, [older[2], sent.receipt.id])
+    assert.deepEqual(await sent.status(sent.receipt.id), { status: 'done', error: null })
+    assert.deepEqual(await effects(f.origin), { posts: 1, effects: 1 })
+  } finally { await f.close() }
+})
+
+for (const accounts of [['fixture-slack-account', 'fixture-slack-second'], ['fixture-slack-second']] as const) test(`slack: readback with the owner's active connections ${accounts.join(' + ')} ${accounts.length === 2 ? 'recovers through the receipt\'s own connection' : 'never reads through another connection and closes the receipt unconfirmed'}`, { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  try {
+    const calls: string[] = []
+    const sent = await sentAndEnded(f, 'slack', undefined, { accounts: [...accounts], observe: (account, endpoint) => calls.push(`${account} ${endpoint}`) })
+    assert.equal(sent.receipt.accountId, 'fixture-slack-account')
+    const result = await sent.service.readback(sent.ownerId, sent.receipt.id)
+    assert.equal(sent.lookups(), 1)
+    if (accounts.length === 2) {
+      assert.equal(result.status, 'done', 'a second connection does not make the original one unavailable')
+      assert.ok(calls.length > 0 && calls.every(call => call.startsWith('fixture-slack-account ')), 'only the receipt\'s own connection is read')
+    } else {
+      assert.deepEqual([result.status, (result as { error?: string }).error], ['failed', 'writeUnconfirmed'])
+      assert.deepEqual(calls, [], 'no Slack call through any other connection')
+    }
+    assert.deepEqual(await effects(f.origin), { posts: 1, effects: 1 })
+  } finally { await f.close() }
+})
+
+for (const mode of ['honors-abort', 'ignores-abort', 'member-stays'] as const) test(`generic: a readback whose membership lease expires mid-lookup (${mode}) ${mode === 'member-stays' ? 'fails and is retried later' : 'is aborted, its answer discarded, and the receipt ends without a readback once the owner is removed'}`, { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  try {
+    const workspaceId = randomUUID()
+    const sent = await sentAndEnded(f, 'generic', { workspaceId, botId: randomUUID() })
+    const base = recoveryHttpProvider(f.origin)
+    let removal: Promise<unknown> = Promise.resolve(), late: Promise<unknown> = Promise.resolve(), aborted = false, completed = 0
+    const slow = { ...base, lookup: (input: Parameters<typeof base.lookup>[0]) => {
+      // The owner is removed while the read is in flight; the removal waits for the lease to end.
+      if (mode !== 'member-stays') removal = f.pool.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2', [workspaceId, sent.ownerId])
+      const read = (async () => {
+        await new Promise(resolve => { input.signal?.addEventListener('abort', resolve, { once: true }); setTimeout(resolve, 5_000) })
+        aborted = Boolean(input.signal?.aborted)
+        if (mode !== 'ignores-abort') input.signal?.throwIfAborted()
+        const evidence = await base.lookup(input)
+        completed++
+        return evidence
+      })()
+      late = read.catch(() => undefined)
+      return read
+    } }
+    // The lease expires 500ms after it is taken, as the real one does after 20s.
+    const authority = createReadbackAuthority(f.pool, f.pool, identity => (_tx, signal) => acquireWorkspaceMembership(f.pool, identity, AbortSignal.any([signal, AbortSignal.timeout(500)])))
+    let authorityCalls = 0
+    const service = createApprovedWrites(f.pool, slow, sent.action, { readbackAuthority: async subject => { if (authorityCalls++) await removal; return authority(subject) } })
+    if (mode === 'member-stays') {
+      await assert.rejects(service.readback(sent.ownerId, sent.receipt.id))
+      assert.deepEqual(await sent.status(sent.receipt.id), { status: 'running', error: null }, 'still a member: left for a later sweep')
+    } else {
+      const result = await service.readback(sent.ownerId, sent.receipt.id)
+      assert.deepEqual([result.status, (result as { error?: string }).error], ['failed', 'writeUnconfirmed'])
+    }
+    await late
+    assert.ok(aborted, 'the provider read is aborted when the lease expires')
+    assert.equal(completed, mode === 'ignores-abort' ? 1 : 0)
+    assert.equal((await f.pool.query('SELECT status FROM operation_ledger WHERE "operationId"=$1', [sent.receipt.id])).rows[0].status, 'executing', 'an answer that arrives after the lease is discarded')
     assert.deepEqual(await effects(f.origin), { posts: 1, effects: 1 })
   } finally { await f.close() }
 })
