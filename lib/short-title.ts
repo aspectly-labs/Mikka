@@ -2,14 +2,14 @@
 // A conversation's short title, as Capy names its threads: a few words that pick the conversation out of a long list.
 // The small model writes it (thread-title-server.ts through short-title-server.ts). Tasks are not named by a
 // model: a task keeps the title a person or an Agent gave it, as Capy's issues do. Pure, and safe in client components.
-// The limits and instructions follow Codex's thread titles (openai/codex, codex-rs/tui/src/app/thread_title.rs):
+// The limits and instructions follow Codex's thread titles (decision 2026-11-19-1600-codex-thread-titles):
 // at most 36 characters, under five words where possible, starting with an imperative verb.
 
-/** Limits for newly generated or manually entered titles (Codex's THREAD_TITLE_MAX_CHARS is 36); CJK text keeps its own, shorter bound. */
+/** Limits for newly generated or manually entered titles (36 characters, as Codex's); CJK text keeps its own, shorter bound. */
 export const SHORT_TITLE_CJK_MAX = 12
 export const SHORT_TITLE_WORDS_MAX = 5
 export const SHORT_TITLE_CHARS_MAX = 36
-/** The whole prompt sent to the model is held to this many UTF-8 bytes (Codex's THREAD_TITLE_PROMPT_MAX_BYTES). */
+/** The whole prompt sent to the model is held to this many UTF-8 bytes, as Codex bounds its title prompt. */
 export const SHORT_TITLE_PROMPT_MAX_BYTES = 960
 
 const CJK = /[぀-ヿ㐀-鿿豈-﫿가-힯]/

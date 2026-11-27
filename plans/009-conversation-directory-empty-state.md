@@ -20,7 +20,7 @@ The thread directory has four filters (`search`, `state`, `archived`, `pullState
 
 It is also shown when there are genuinely no threads at all, where "no matching" is wrong. And in either case there is **no control that resolves it**: no "clear filters", no "new thread". The user is told there is nothing and given no next step.
 
-`rules.md` is explicit:
+`mikka-hosted-ui/docs/design/rules.md` is explicit:
 
 > **R-96** Every list state is drawn. "Nothing here" and "nothing matches the filters" are two different states, each with the one action that resolves it (R-41); loading is a skeleton, never a status string.
 >

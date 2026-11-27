@@ -40,7 +40,7 @@ const report = (node, text) => {
 
 > **Do not widen that gate in this plan.** A "no literal English in JSX" rule needs an allowlist for brand names, protocol names and identifiers; doing it here would either produce hundreds of false positives or ship a weakened rule. It is recorded as a separate follow-up in the maintenance notes.
 
-**2. A disabled button has no stated reason (R-101).** `rules.md` R-101:
+**2. A disabled button has no stated reason (R-101).** `mikka-hosted-ui/docs/design/rules.md` R-101:
 
 > A disabled control says why it cannot be pressed. … A control disabled because a field is still empty, or because a read is still in flight, needs no prose; one disabled by a permission, a plan, a missing connection or an owner does.
 
