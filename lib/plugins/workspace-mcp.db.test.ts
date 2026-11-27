@@ -9,10 +9,11 @@ import { Pool } from 'pg'
 import { orderMigrations } from '../../scripts/migration-order.mjs'
 import { isE2eTarget, E2E_DB_RULE } from '../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-test-database'
+import { isolateCoordinatorWakes } from '../../tests/support/coordinator-wake'
 import { PersonalPluginStore } from './store'
 import { McpConnectionStore } from './connection-store'
 import { lockNativeMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
-import { createMcpSchema } from './contracts'
+import { createMcpSchema, type McpAuthority } from './contracts'
 import { withLockedToolSwitches } from './native-mcp'
 import { createPersonalMcpRuntime, type McpDependencies } from './mcp'
 import { AgentKitStore } from '@/lib/agent-kit/store'
@@ -21,11 +22,16 @@ import { freezeWorkerDefinition, retryWorkerDefinition } from '@/lib/agent-kit/w
 import { freezeExecutionIdentity, ExecutionIdentityError } from '@/lib/execution-identity'
 import { createExecutionClaim } from '../../tests/helpers/factory-execution-claim'
 
+mock.module(new URL('../coordinator/decide.ts', import.meta.url).href, { namedExports: { invokeDecision: async () => null } })
+
 const url = process.env.E2E_DATABASE_URL
 if (url) assert.ok(isE2eTarget(url), E2E_DB_RULE)
-else if (process.env.REQUIRE_DB === '1') assert.fail('Shared MCP tests require an isolated E2E_DATABASE_URL')
+else if (process.env.REQUIRE_DB === '1') assert.fail('Personal MCP tests require an isolated E2E_DATABASE_URL')
 
-test('explicit workspace MCP sharing keeps requester, resource grants, tokens and history distinct', { skip: !url, timeout: 180_000 }, async t => {
+// The migration that withdrew every workspace grant (decision 2026-11-27-1700).
+const RETIRE_SHARES = '20261127170034_retire_personal_mcp_workspace_shares.sql'
+
+test('a personal MCP server serves its owner only; retired workspace grants admit nothing', { skip: !url, timeout: 180_000 }, async t => {
   const admin = new Pool({ connectionString: url, max: 1 })
   const database = `workspace_mcp_${randomUUID().replaceAll('-', '')}_e2e`
   await createTestDatabase(admin, database, 'template0')
@@ -35,6 +41,7 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
   let appPool: Pool | undefined, workspacePool: Pool | undefined
   const saved = { MIKKA_DATABASE_URL: process.env.MIKKA_DATABASE_URL, DATABASE_URL: process.env.DATABASE_URL, WORKSPACE_SECRETS_KEY: process.env.WORKSPACE_SECRETS_KEY }
   Object.assign(process.env, { MIKKA_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
+  const wakes = await isolateCoordinatorWakes(t)
   const secret = `synthetic-mcp-${randomUUID()}`, privateUrl = 'https://mcp.acme.dev/private-endpoint'
   let calls = 0, handshakes = 0, afterInitialize: (() => Promise<void>) | undefined
   const server = createServer(async (request, response) => {
@@ -46,7 +53,7 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
     if (!('id' in input)) { response.writeHead(202); response.end(); return }
     if (input.method === 'initialize') { handshakes++; await afterInitialize?.() }
     if (input.method === 'tools/call') calls++
-    const result = input.method === 'initialize' ? { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'shared-fixture', version: '1' } }
+    const result = input.method === 'initialize' ? { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'owner-fixture', version: '1' } }
       : input.method === 'tools/list' ? { tools: [{ name: 'echo', description: `${privateUrl} ${secret}`, inputSchema: { type: 'object', properties: {} } }] }
         : { content: [{ type: 'text', text: JSON.stringify({ done: true, secret, authorization: `Bearer ${secret}`, encoded: Buffer.from(secret).toString('base64'), endpoint: privateUrl }) }] }
     response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ jsonrpc: '2.0', id: input.id, result }))
@@ -57,93 +64,165 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
   const transport: McpDependencies = { transport: (_origin, signal) => ({ fetch: (input, init) => fetch(address + new URL(String(input)).pathname, { ...init, signal }), close: async () => {} }) }
   try {
     const directory = new URL('../../drizzle/', import.meta.url)
-    for (const migration of orderMigrations((await readdir(directory)).filter(name => name.endsWith('.sql')))) await pool.query(await readFile(new URL(migration, directory), 'utf8'))
-    await pool.query(await readFile(new URL('20261104003000_mcp_workspace_shares.sql', directory), 'utf8'))
+    const migrations = orderMigrations((await readdir(directory)).filter(name => name.endsWith('.sql')))
+    assert.ok(migrations.includes(RETIRE_SHARES))
+    // Every migration before the retirement: the database as production had it, grants included.
+    for (const migration of migrations.filter(name => name !== RETIRE_SHARES)) await pool.query(await readFile(new URL(migration, directory), 'utf8'))
     mock.module('@/lib/server-runtime/server', { namedExports: { after() {} } })
     const { issueRunToken, verifyRunToken } = await import('@/lib/mcp/worker')
     const { runMcpAuthority, runCustomMcp } = await import('./run-mcp')
-    const { submitArtifact, readArtifact } = await import('@/lib/artifacts/store')
     const { releaseDepartingMember } = await import('@/lib/workspace-admin/members')
     appPool = (await import('@/lib/db')).pool; workspacePool = (await import('@/lib/workspace-db')).workspacePool
-    const owner = 'mcp-owner', requester = 'mcp-requester', outsider = 'mcp-outsider'
-    for (const user of [owner, requester, outsider]) await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())', [user, `${user}@example.invalid`])
-    const workspace = randomUUID(), foreignWorkspace = randomUUID(), personalWorkspace = randomUUID(), bot = randomUUID(), device = randomUUID(), agent = randomUUID(), issue = randomUUID()
-    for (const [id, kind] of [[workspace, 'team'], [foreignWorkspace, 'team'], [personalWorkspace, 'personal']]) {
+    const owner = 'mcp-owner', peer = 'mcp-peer', outsider = 'mcp-outsider'
+    for (const user of [owner, peer, outsider]) await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())', [user, `${user}@example.invalid`])
+    const workspace = randomUUID(), personalWorkspace = randomUUID()
+    for (const [id, kind] of [[workspace, 'team'], [personalWorkspace, 'personal']]) {
       await pool.query('INSERT INTO mikka_workspaces(id,"userId",name,kind) VALUES($1,$2,\'MCP fixture\',$3)', [id, owner, kind])
-      for (const user of kind === 'personal' ? [owner] : [owner, requester]) await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,\'member\',\'active\')', [id, user, `${user}@example.invalid`])
+      for (const user of kind === 'personal' ? [owner] : [owner, peer]) await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,\'member\',\'active\')', [id, user, `${user}@example.invalid`])
     }
-    await pool.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,\'Requester Bot\')', [bot, requester, workspace])
-    await pool.query('INSERT INTO devices(id,"ownerId",name) VALUES($1,$2,\'Requester device\')', [device, requester])
-    await pool.query('INSERT INTO agents(id,"userId",name,harness,"deviceId") VALUES($1,$2,\'Requester Agent\',\'codex\',$3)', [agent, requester, device])
-    await pool.query('INSERT INTO issues(id,"userId","workspaceId",title,content,status,priority) VALUES($1,$2,$3,\'MCP fixture\',\'{"type":"doc","content":[]}\',\'doing\',\'normal\')', [issue, requester, workspace])
-    const personal = new PersonalPluginStore(pool, process.env, pool), shares = new WorkspaceMcpStore(pool, pool)
+    // Each person has their own Bot, computer, Agent and task.
+    const fixtures = Object.fromEntries(await Promise.all([owner, peer].map(async user => {
+      const ids = { bot: randomUUID(), device: randomUUID(), agent: randomUUID(), issue: randomUUID() }
+      await pool.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,\'Fixture Bot\')', [ids.bot, user, workspace])
+      await pool.query('INSERT INTO devices(id,"ownerId",name) VALUES($1,$2,\'Fixture device\')', [ids.device, user])
+      await pool.query('INSERT INTO agents(id,"userId",name,harness,"deviceId") VALUES($1,$2,\'Fixture Agent\',\'codex\',$3)', [ids.agent, user, ids.device])
+      await pool.query('INSERT INTO issues(id,"userId","workspaceId",title,content,status,priority) VALUES($1,$2,$3,\'MCP fixture\',\'{"type":"doc","content":[]}\',\'doing\',\'normal\')', [ids.issue, user, workspace])
+      return [user, ids] as const
+    })))
+    const personal = new PersonalPluginStore(pool, process.env, pool), servers = new WorkspaceMcpStore(pool, pool)
     const connection = await personal.createMcp(owner, createMcpSchema.parse({ name: 'Team finance', url: privateUrl, auth: { name: 'Authorization', value: `Bearer ${secret}` } }))
     const runtime = createPersonalMcpRuntime(personal, transport)
     const command = { serverId: connection.id, name: 'echo', arguments: {} }
+    const insertRun = async (user: string, definition: unknown, status = 'queued') => {
+      const id = randomUUID(), f = fixtures[user]
+      await pool.query('INSERT INTO agent_runs(id,"userId","botId","deviceId","agentId","issueId",status,"agentDefinition","workspaceId") VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [id, user, f.bot, f.device, f.agent, f.issue, status, definition === null ? null : JSON.stringify(definition), workspace])
+      return id
+    }
 
-    await t.test('membership alone lends nothing; only the resource owner may explicitly share into an existing team', async () => {
-      assert.deepEqual((await shares.list(requester, workspace)).servers, [])
-      assert.equal((await personal.snapshot(requester, pool, workspace)).servers.length, 0)
-      await assert.rejects(personal.mcpConnection(requester, connection.id), /mcpUnavailable/)
-      await assert.rejects(shares.share(requester, { serverId: connection.id, workspaceId: workspace, shared: true }), /mcpNotFound/)
-      await assert.rejects(shares.share(outsider, { serverId: connection.id, workspaceId: workspace, shared: true }), /workspaceAccessDenied/)
-      await assert.rejects(shares.share(owner, { serverId: connection.id, workspaceId: personalWorkspace, shared: true }), /workspaceAccessDenied/)
+    // Before the deploy: the owner had shared the server, and a teammate's run was admitted with it.
+    const grantId = randomUUID()
+    await pool.query('INSERT INTO personal_mcp_workspace_shares(id,server_id,workspace_id) VALUES($1,$2,$3)', [grantId, connection.id, workspace])
+    const formerlyShared: McpAuthority = { requester: peer, workspaceId: workspace, servers: [{ id: connection.id, name: connection.name, revision: connection.revision, ownerId: owner, grantId }] }
+    const legacySnapshot = { servers: [{ id: connection.id, name: connection.name, revision: connection.revision }], skills: [], mcpAuthority: formerlyShared }
+    const legacyRun = await insertRun(peer, { harness: 'codex', instructions: 'Peer task', prompt: 'Use the team resource', customMcp: formerlyShared }, 'running')
+    const ownRun = await insertRun(owner, { harness: 'codex', instructions: 'Owner task', prompt: 'Own resource', customMcp: await servers.freeze(owner, workspace) }, 'running')
+
+    await t.test('the migration withdraws every grant, refuses new ones, stops runs holding another person\'s server and is idempotent', async () => {
+      const retire = await readFile(new URL(RETIRE_SHARES, directory), 'utf8')
+      await pool.query(retire)
+      assert.equal((await pool.query('SELECT 1 FROM personal_mcp_workspace_shares')).rowCount, 0)
+      await assert.rejects(pool.query('INSERT INTO personal_mcp_workspace_shares(id,server_id,workspace_id) VALUES($1,$2,$3)', [randomUUID(), connection.id, workspace]),
+        (error: { code?: string }) => error.code === '23514', 'an old build still serving during the rollout cannot share again')
+      const stopped = async (id: string) => (await pool.query<{ stopped: boolean }>('SELECT "stopRequestedAt" IS NOT NULL AS stopped FROM agent_runs WHERE id=$1', [id])).rows[0].stopped
+      assert.equal(await stopped(legacyRun), true, 'a native task machine already holding the owner credential is stopped')
+      assert.equal(await stopped(ownRun), false, 'a run on its requester\'s own server keeps going')
+      await pool.query(retire)
+      assert.equal(await stopped(ownRun), false)
+    })
+
+    await t.test('a member neither sees nor receives another person\'s server, in any workspace', async () => {
+      for (const id of [workspace]) {
+        const page = await servers.list(peer, id)
+        assert.deepEqual({ canShare: page.canShare, servers: page.servers }, { canShare: false, servers: [] })
+        assert.equal((await personal.snapshot(peer, pool, id)).servers.length, 0)
+        assert.deepEqual((await servers.freeze(peer, id)).servers, [])
+      }
+      await assert.rejects(servers.list(outsider, workspace), /workspaceAccessDenied/)
+      await assert.rejects(personal.mcpConnection(peer, connection.id), /mcpUnavailable/)
+      await assert.rejects(new McpConnectionStore(personal).detail(peer, connection.id, workspace), /mcpNotFound/)
+      assert.equal((await new McpConnectionStore(personal).search(peer, { workspaceId: workspace })).count, 0)
       assert.equal(handshakes, 0)
     })
-    await shares.share(owner, { serverId: connection.id, workspaceId: workspace, shared: true })
-    let snapshot = await personal.snapshot(requester, pool, workspace)
-    await t.test('shared discovery and a real MCP handshake use the owner credential without returning it or changing the requester', async () => {
-      assert.equal(snapshot.mcpAuthority?.requester, requester)
-      assert.equal(snapshot.mcpAuthority?.servers[0].ownerId, owner)
-      assert.ok(snapshot.mcpAuthority?.servers[0].grantId)
-      const view = (await shares.list(requester, workspace)).servers[0]
-      assert.equal(view.url, null); assert.equal(view.mine, false); assert.equal(view.ownerId, owner)
-      assert.ok(!JSON.stringify(view).includes(secret)); assert.ok(!JSON.stringify(snapshot).includes(privateUrl))
-      const catalog = await runtime(requester, snapshot, { serverId: connection.id })
-      const result = await runtime(requester, snapshot, command)
-      assert.equal(calls, 1); assert.ok('tools' in catalog)
-      for (const value of [catalog, result]) for (const needle of [secret, Buffer.from(secret).toString('base64'), privateUrl]) assert.ok(!JSON.stringify(value).includes(needle))
-      const stored = (await pool.query('SELECT ciphertext FROM personal_mcp_servers WHERE id=$1', [connection.id])).rows[0]
-      assert.ok(stored.ciphertext && !stored.ciphertext.includes(secret))
-      assert.equal((await runtime(owner, await personal.snapshot(owner), command) as { error?: string }).error, undefined, 'legacy personal runtime stays usable')
+
+    await t.test('a run admitted with a formerly shared server fails closed on its next call, claim and identity check', async () => {
+      const before = { calls, handshakes }
+      assert.deepEqual(await runtime(peer, legacySnapshot, command), { error: 'mcpUnavailable' })
+      assert.deepEqual(await runtime(peer, legacySnapshot, { serverId: connection.id }), { error: 'mcpUnavailable' })
+      // Forged references: the owner's server without the grant, or the owner's own reference with one.
+      for (const authority of [{ ...formerlyShared, servers: formerlyShared.servers.map(grant => ({ ...grant, grantId: null })) },
+        { ...formerlyShared, requester: owner }, { ...formerlyShared, requester: owner, servers: formerlyShared.servers.map(grant => ({ ...grant, ownerId: owner })) }]) {
+        assert.ok('error' in await runtime(authority.requester, { ...legacySnapshot, mcpAuthority: authority }, command))
+        await assert.rejects(personal.nativeMcpConnections(authority.requester, authority), /mcpUnavailable/)
+      }
+      await assert.rejects(personal.nativeMcpConnections(peer, formerlyShared), /mcpUnavailable/)
+      const client = await pool.connect()
+      try { await client.query('BEGIN'); await assert.rejects(lockNativeMcpAuthority(client, peer, formerlyShared), /mcpUnavailable/) }
+      finally { await client.query('ROLLBACK'); client.release() }
+      const definition = { harness: 'codex', instructions: 'Peer task', prompt: 'Use the team resource', customMcp: formerlyShared } as never
+      await assert.rejects(freezeExecutionIdentity(pool, { userId: peer, botId: fixtures[peer].bot, deviceId: fixtures[peer].device, agentDefinition: definition }, pool), ExecutionIdentityError)
+      const { token } = await issueRunToken({ id: legacyRun, userId: peer })
+      const verified = await verifyRunToken(new Request('http://127.0.0.1/mikka/api/runs/mcp/custom_mcp'), token)
+      if (verified) assert.ok('error' in await runCustomMcp(new Request('http://127.0.0.1/mikka/api/runs/mcp/custom_mcp'), verified, command, transport))
+      assert.deepEqual({ calls, handshakes }, before, 'no credential was used and no server was contacted')
     })
-    await t.test('workspace, requester, connection revision and grant ID are bound independently', async () => {
-      const before = calls
-      assert.equal((await personal.snapshot(requester, pool, foreignWorkspace)).servers.length, 0)
-      for (const authority of [{ ...snapshot.mcpAuthority!, requester: owner }, { ...snapshot.mcpAuthority!, workspaceId: foreignWorkspace },
-        { ...snapshot.mcpAuthority!, servers: snapshot.mcpAuthority!.servers.map(item => ({ ...item, grantId: randomUUID() })) }])
-        assert.ok('error' in await runtime(requester, { ...snapshot, mcpAuthority: authority }, command))
-      assert.equal(calls, before)
-      const grant = snapshot.mcpAuthority!.servers[0].grantId
-      await shares.share(owner, { serverId: connection.id, workspaceId: workspace, shared: true })
-      assert.equal((await personal.snapshot(requester, pool, workspace)).mcpAuthority!.servers[0].grantId, grant, 'exact sharing replay preserves the grant')
+
+    await t.test('the code no longer reads grants: a stray grant row lends nothing', async () => {
+      const before = { calls, handshakes }
+      await pool.query('ALTER TABLE personal_mcp_workspace_shares DROP CONSTRAINT personal_mcp_workspace_shares_retired')
+      await pool.query('INSERT INTO personal_mcp_workspace_shares(id,server_id,workspace_id) VALUES($1,$2,$3)', [grantId, connection.id, workspace])
+      try {
+        assert.deepEqual((await servers.list(peer, workspace)).servers, [])
+        assert.deepEqual((await servers.freeze(peer, workspace)).servers, [])
+        assert.deepEqual(await runtime(peer, legacySnapshot, command), { error: 'mcpUnavailable' })
+        await assert.rejects(personal.nativeMcpConnections(peer, formerlyShared), /mcpUnavailable/)
+      } finally {
+        await pool.query(await readFile(new URL(RETIRE_SHARES, directory), 'utf8'))
+      }
+      assert.equal((await pool.query('SELECT 1 FROM personal_mcp_workspace_shares')).rowCount, 0)
+      assert.deepEqual({ calls, handshakes }, before)
     })
-    const kit = new AgentKitStore(pool), scope = { ownerId: requester, botId: bot, workspaceId: workspace }
-    const execution = await kit.beginExecution(scope, 'shared-mcp-execution', 'Requester instructions only', { harness: 'ai_sdk', model: 'fixture-no-model-call' }, DEFAULT_AGENT_DEFINITION, client => personal.snapshot(requester, client, workspace))
-    const definition = freezeWorkerDefinition({ harness: 'codex', instructions: 'Requester task', prompt: 'Read the authorized team resource', parent: execution.snapshot, executionId: execution.id, allowLocalRecovery: true })
-    definition.executionIdentity = await freezeExecutionIdentity(pool, { userId: requester, botId: bot, deviceId: device, agentDefinition: definition }, pool)
-    const runId = randomUUID(), legacyId = randomUUID(), request = new Request('http://127.0.0.1/mikka/api/runs/mcp/custom_mcp')
-    for (const [id, value] of [[runId, definition], [legacyId, null]]) await pool.query('INSERT INTO agent_runs(id,"userId","botId","deviceId","agentId","issueId",status,"agentDefinition","workspaceId") VALUES($1,$2,$3,$4,$5,$6,\'queued\',$7,$8)', [id, requester, bot, device, agent, issue, value ? JSON.stringify(value) : null, workspace])
-    const { token } = await issueRunToken({ id: runId, userId: requester }), legacy = await issueRunToken({ id: legacyId, userId: requester })
+
+    const kit = new AgentKitStore(pool), scope = { ownerId: owner, botId: fixtures[owner].bot, workspaceId: workspace }
+    const execution = await kit.beginExecution(scope, 'owner-mcp-execution', 'Owner instructions only', { harness: 'ai_sdk', model: 'fixture-no-model-call' }, DEFAULT_AGENT_DEFINITION, client => personal.snapshot(owner, client, workspace))
+    const definition = freezeWorkerDefinition({ harness: 'codex', instructions: 'Owner task', prompt: 'Read my own resource', parent: execution.snapshot, executionId: execution.id, allowLocalRecovery: true })
+    definition.executionIdentity = await freezeExecutionIdentity(pool, { userId: owner, botId: fixtures[owner].bot, deviceId: fixtures[owner].device, agentDefinition: definition }, pool)
+    const runId = await insertRun(owner, definition), request = new Request('http://127.0.0.1/mikka/api/runs/mcp/custom_mcp')
+    const { token } = await issueRunToken({ id: runId, userId: owner })
     const verified = await verifyRunToken(request, token); assert.ok(verified)
     const claim = createExecutionClaim(pool, async () => true)
-    await claim(requester, device, runId, new Date(Date.now() + 300_000).toISOString())
-    let artifactId = ''
-    await t.test('actual run token, claim and artifact provenance retain requester and immutable resource owner; legacy tokens gain no shared catalogue', async () => {
-      assert.equal((await runMcpAuthority(requester, runId))?.servers[0].ownerId, owner)
-      assert.equal(await runMcpAuthority(owner, runId), null)
-      assert.ok(await verifyRunToken(request, legacy.token)); assert.equal(await runMcpAuthority(requester, legacyId), null)
+    await claim(owner, fixtures[owner].device, runId, new Date(Date.now() + 300_000).toISOString())
+    let snapshot = await personal.snapshot(owner, pool, workspace)
+
+    await t.test('the owner\'s own runs keep working in a team workspace, without leaking the credential', async () => {
+      const page = await servers.list(owner, workspace)
+      assert.equal(page.canShare, false)
+      assert.deepEqual(page.servers.map(({ id, url, mine, shared, ownerId }) => ({ id, url, mine, shared, ownerId })), [{ id: connection.id, url: privateUrl, mine: true, shared: false, ownerId: owner }])
+      assert.deepEqual(snapshot.mcpAuthority?.servers, [{ id: connection.id, name: connection.name, revision: connection.revision, ownerId: owner, grantId: null }])
+      const catalog = await runtime(owner, snapshot, { serverId: connection.id })
+      const result = await runtime(owner, snapshot, command)
+      assert.equal(calls, 1); assert.ok('tools' in catalog)
+      for (const value of [catalog, result]) for (const needle of [secret, Buffer.from(secret).toString('base64'), privateUrl]) assert.ok(!JSON.stringify(value).includes(needle))
+      assert.equal((await runtime(owner, await personal.snapshot(owner), command) as { error?: string }).error, undefined, 'the personal runtime outside a workspace stays usable')
+      assert.deepEqual(definition.executionIdentity?.resourceBindings.find(item => item.kind === 'mcp'),
+        { kind: 'mcp', id: connection.id, ownerId: owner, access: 'owner', revision: String(connection.revision), workspaceId: workspace })
+      assert.equal((await runMcpAuthority(owner, runId))?.servers[0].ownerId, owner)
       assert.ok(!('error' in await runCustomMcp(request, verified, command, transport)))
-      assert.equal(definition.executionIdentity?.requester, requester); assert.equal(definition.executionIdentity?.outputOwner, requester)
-      const resource = definition.executionIdentity?.resourceBindings.find(item => item.kind === 'mcp')
-      assert.deepEqual(resource, { kind: 'mcp', id: connection.id, ownerId: owner, access: 'workspace_share', revision: String(connection.revision), grantId: snapshot.mcpAuthority!.servers[0].grantId, workspaceId: workspace })
-      const artifact = await submitArtifact({ userId: requester, runId, botId: bot, issueId: issue, authorName: 'Fixture' }, { title: 'Requester output', kind: 'markdown', content: 'Synthetic result without private connection data' })
-      assert.ok(!('error' in artifact)); if ('error' in artifact) return
-      artifactId = artifact.artifactId
-      assert.ok(await readArtifact(requester, artifactId)); assert.equal(await readArtifact(owner, artifactId), null)
+      assert.equal((await personal.nativeMcpConnections(owner, snapshot.mcpAuthority!)).length, 1)
       assert.deepEqual(retryWorkerDefinition(definition, 'Retry current target')?.customMcp, definition.customMcp)
-      assert.equal(retryWorkerDefinition(definition, 'Retry current target')?.allowLocalRecovery, true)
     })
+
+    await t.test('a teammate\'s message in the owner\'s thread still runs on the thread starter\'s servers, never the sender\'s', async () => {
+      await pool.query(`UPDATE resource_access_policies SET visibility='shared' WHERE kind='thread' AND id=$1`, [runId])
+      // The peer's own server: it must never reach the owner's thread.
+      const peerConnection = await personal.createMcp(peer, createMcpSchema.parse({ name: 'Peer notes', url: 'https://mcp.acme.dev/peer', auth: { name: 'Authorization', value: 'Bearer peer-only' } }))
+      const { sendToThread } = await import('@/lib/interop/threads')
+      const sent = await sendToThread({ kind: 'account', userId: peer, workspaceId: workspace }, { runId, text: 'Please check the finance numbers', key: 'peer-message-1' })
+      assert.deepEqual(sent, { runId, continued: false }, 'a working thread takes the message on its own run')
+      const authority = await runMcpAuthority(owner, runId)
+      assert.deepEqual(authority?.servers.map(grant => [grant.id, grant.ownerId]), [[connection.id, owner]])
+      assert.equal(await runMcpAuthority(peer, runId), null, 'the sender does not become the run\'s requester')
+      const before = calls
+      assert.ok(!('error' in await runCustomMcp(request, verified, command, transport)))
+      assert.equal(calls, before + 1)
+      assert.ok('error' in await runCustomMcp(request, verified, { serverId: peerConnection.id, name: 'echo', arguments: {} }, transport), 'the sender\'s server is not offered in the owner\'s thread')
+      // In the peer's own thread, the peer's servers and never the owner's.
+      const peerAuthority = await servers.freeze(peer, workspace)
+      assert.deepEqual(peerAuthority.servers.map(grant => [grant.id, grant.ownerId]), [[peerConnection.id, peer]])
+      await personal.deleteMcp(peer, peerConnection.id)
+      await pool.query(`UPDATE resource_access_policies SET visibility='private' WHERE kind='thread' AND id=$1`, [runId])
+    })
+
     await t.test('token withdrawal during the MCP handshake refuses the side effect', async () => {
       const before = calls
       afterInitialize = async () => { await pool.query('UPDATE run_tokens SET "revokedAt"=now() WHERE "runId"=$1', [runId]) }
@@ -152,45 +231,22 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
       assert.equal(calls, before)
       await pool.query('UPDATE run_tokens SET "revokedAt"=NULL WHERE "runId"=$1', [runId])
     })
-    await t.test('sharing withdrawal during initialization refuses the next call and re-sharing never revives old execution snapshots', async () => {
-      const before = calls, oldGrant = snapshot.mcpAuthority!.servers[0].grantId
-      afterInitialize = async () => { await shares.share(owner, { serverId: connection.id, workspaceId: workspace, shared: false }) }
-      assert.deepEqual(await runtime(requester, snapshot, command), { error: 'mcpUnavailable' })
-      afterInitialize = undefined
-      assert.equal(calls, before); assert.equal(await verifyRunToken(request, token), undefined)
-      await pool.query('UPDATE agent_runs SET status=\'queued\' WHERE id=$1', [runId])
-      await assert.rejects(claim(requester, device, runId, new Date(Date.now() + 300_000).toISOString()), ExecutionIdentityError)
-      await shares.share(owner, { serverId: connection.id, workspaceId: workspace, shared: true })
-      assert.ok('error' in await runtime(requester, snapshot, command))
-      snapshot = await personal.snapshot(requester, pool, workspace)
-      assert.notEqual(snapshot.mcpAuthority!.servers[0].grantId, oldGrant)
-      assert.ok(!('error' in await runtime(requester, snapshot, command)))
-      assert.equal(await verifyRunToken(request, token), undefined, 'new grants do not repair or widen a historical token')
-      const history = (await pool.query('SELECT "executionIdentity" FROM artifact_versions WHERE "artifactId"=$1', [artifactId])).rows[0]
-      assert.deepEqual(history.executionIdentity, definition.executionIdentity)
-      assert.deepEqual((await kit.readExecution(scope, execution.id)).snapshot.personalPlugins, execution.snapshot.personalPlugins)
-    })
-    for (const user of [owner, requester]) await t.test(`the next MCP call refuses an inactive ${user}`, async () => {
-      const before = calls
-      await pool.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, user])
-      assert.ok('error' in await runtime(requester, snapshot, command)); assert.equal(calls, before)
-      await pool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, user])
-    })
+
     await t.test('the locked native claim fence returns the switches current at commit and rejects a committed connection edit', async () => {
-      const before = await personal.snapshot(requester, pool, workspace)
+      const before = await personal.snapshot(owner, pool, workspace)
       assert.ok(before.mcpAuthority?.servers.length)
       const frozen = before.mcpAuthority
       const fence = async (authority: typeof frozen) => {
         const client = await pool.connect()
         try {
           await client.query('BEGIN')
-          return await lockNativeMcpAuthority(client, requester, authority)
+          return await lockNativeMcpAuthority(client, owner, authority)
         } finally {
           await client.query('ROLLBACK')
           client.release()
         }
       }
-      const assign = () => personal.nativeMcpAssignment(requester, frozen)
+      const assign = () => personal.nativeMcpAssignment(owner, frozen)
       const listed = (servers: { disabledTools?: string[] }[]) => servers.flatMap(server => server.disabledTools ?? [])
       assert.deepEqual(await fence(frozen), { [connection.id]: [] })
 
@@ -218,7 +274,7 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
       const claim = await pool.connect()
       try {
         await claim.query('BEGIN')
-        assert.deepEqual(await lockNativeMcpAuthority(claim, requester, frozen), { [connection.id]: [] })
+        assert.deepEqual(await lockNativeMcpAuthority(claim, owner, frozen), { [connection.id]: [] })
         let switched = false
         const waiting = connections.setTool(owner, connection.id, 'echo', false).then(() => { switched = true })
         await new Promise(resolve => setTimeout(resolve, 300))
@@ -232,27 +288,29 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
 
       // A real connection edit still revokes an export taken before it.
       const beforeRename = await assign()
-      const renamed = await personal.updateMcp(owner, { id: connection.id, name: 'Renamed shared connection' })
+      const renamed = await personal.updateMcp(owner, { id: connection.id, name: 'Renamed connection' })
       await assert.rejects(fence(beforeRename.authority), /mcpUnavailable/)
       await personal.updateMcp(owner, { id: connection.id, name: frozen.servers.find(server => server.id === connection.id)!.name })
       assert.ok(renamed.revision > frozen.servers.find(server => server.id === connection.id)!.revision)
-      snapshot = await personal.snapshot(requester, pool, workspace)
+      snapshot = await personal.snapshot(owner, pool, workspace)
       assert.ok(snapshot.mcpAuthority?.servers.length)
       await fence(snapshot.mcpAuthority)
     })
-    await t.test('disconnect/revision changes and normal member departure revoke references without rewriting history', async () => {
+
+    await t.test('disconnect/revision changes and the owner\'s departure revoke workspace references', async () => {
       const before = calls
       await personal.updateMcp(owner, { id: connection.id, enabled: false })
-      assert.ok('error' in await runtime(requester, snapshot, command)); assert.equal(calls, before)
+      assert.ok('error' in await runtime(owner, snapshot, command)); assert.equal(calls, before)
       await personal.updateMcp(owner, { id: connection.id, enabled: true })
-      assert.ok('error' in await runtime(requester, snapshot, command))
-      snapshot = await personal.snapshot(requester, pool, workspace)
+      assert.ok('error' in await runtime(owner, snapshot, command))
+      snapshot = await personal.snapshot(owner, pool, workspace)
       await releaseDepartingMember(workspace, owner)
-      assert.ok('error' in await runtime(requester, snapshot, command))
-      assert.equal((await shares.list(requester, workspace)).servers.length, 0)
-      assert.ok(await readArtifact(requester, artifactId), 'resource withdrawal does not erase requester-owned output')
+      await pool.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, owner])
+      assert.ok('error' in await runtime(owner, snapshot, command)); assert.equal(calls, before)
+      assert.equal((await runtime(owner, await personal.snapshot(owner), command) as { error?: string }).error, undefined, 'outside the workspace the server stays the owner\'s')
     })
   } finally {
+    await wakes.flush()
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()))
     for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value }
     await (await import('../builtin-gateway/runtime')).builtinGateway()?.stop()

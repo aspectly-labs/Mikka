@@ -1,6 +1,6 @@
 # MCP connection settings
 
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-27-1700-personal-mcp-not-shareable.md](2026-11-27-1700-personal-mcp-not-shareable.md) (no explicit share; a connection is its owner's only)
 
 Issue: #2956 P4. The connection owner manages authentication, tools and runtime
 environment scope. Workspace membership alone never grants a connection; the

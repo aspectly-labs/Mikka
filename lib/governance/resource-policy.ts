@@ -55,18 +55,17 @@ export async function configureOrganizationResourcePolicy(organizationId: string
   return readOrganizationResourcePolicy(organizationId, userId)
 }
 
-const approvalInput = z.object({ workspaceId: z.uuid(), kind: z.enum(['subscription', 'api_key', 'mcp', 'skill']), resourceId: z.string().min(1).max(200) }).strict()
+// No 'mcp': a personal MCP server is not shareable, so there is nothing to approve (decision 2026-11-27-1700).
+const approvalInput = z.object({ workspaceId: z.uuid(), kind: z.enum(['subscription', 'api_key', 'skill']), resourceId: z.string().min(1).max(200) }).strict()
 export async function requestOrganizationResourceApproval(organizationId: string, userId: string, input: unknown) {
   const value = approvalInput.parse(input)
   if (value.kind === 'subscription') {
     if (value.resourceId !== userId) throw new GovernanceError('access_denied')
   } else {
     z.uuid().parse(value.resourceId)
-    const owned = value.kind === 'mcp'
-      ? await pool.query('select 1 from personal_mcp_servers where id=$1 and user_id=$2', [value.resourceId, userId])
-      : value.kind === 'skill'
-        ? await pool.query('select 1 from personal_skills where id=$1 and user_id=$2', [value.resourceId, userId])
-        : await pool.query('select 1 from model_api_keys where id=$1 and "ownerId"=$2', [value.resourceId, userId])
+    const owned = value.kind === 'skill'
+      ? await pool.query('select 1 from personal_skills where id=$1 and user_id=$2', [value.resourceId, userId])
+      : await pool.query('select 1 from model_api_keys where id=$1 and "ownerId"=$2', [value.resourceId, userId])
     if (!owned.rowCount) throw new GovernanceError('access_denied')
   }
   return workspaceDb.transaction(async tx => {

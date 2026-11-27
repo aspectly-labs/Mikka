@@ -3177,8 +3177,8 @@
       },
       "tightenNote": "When you tighten it, shares that no longer fit are withdrawn and their runs stop.",
       "mcpSharing": {
-        "note": "Members sharing personal MCP servers.",
-        "label": "MCP servers"
+        "note": "Members sharing personal skills. Personal MCP servers serve their owner only.",
+        "label": "Skills"
       },
       "revision": "Policy revision {revision}",
       "retention": {
