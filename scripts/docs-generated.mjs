@@ -15,6 +15,13 @@ export function hostedModels() {
   return ['Source: `deploy/litellm/config.yaml`.', '', '| Alias | Upstream model |', '| --- | --- |', ...rows].join('\n')
 }
 
+/** Markdown rows for release flags; `|`, `\\` and line breaks in a value are escaped so a row stays one row. */
+export function releaseFlagRows(release) {
+  const cell = value => value === undefined ? '—' : String(value).replaceAll('\\', '\\\\').replaceAll('|', '\\|').replace(/\s*\n\s*/g, ' ')
+  return release.map(({ key, owner, added, fullAt, removeBy, description }) =>
+    `| \`${cell(key)}\` | ${cell(owner)} | ${cell(added)} | ${cell(fullAt)} | ${cell(removeBy)} | ${cell(description)} |`)
+}
+
 export function featureFlags() {
   const source = read('lib/feature-flags.ts')
   const body = /export const gatedFeatures = \{([\s\S]*?)\n\} as const/.exec(source)?.[1] ?? ''
@@ -22,7 +29,7 @@ export function featureFlags() {
     .map(([, name, key, issue]) => `| \`${name}\` | \`${key}\` | ${issue ? `[#${issue}](https://github.com/aspectly-labs/Mikka/issues/${issue})` : '—'} |`)
   const defaultsBody = /export const PRODUCTION_FLAG_DEFAULTS[\s\S]*?= \{([\s\S]*?)\n\}/.exec(source)?.[1] ?? ''
   const literalDefaults = [...defaultsBody.matchAll(/^\s{2}'([^']+)': (true|false),/gm)]
-  const upcomingBody = /export const upcomingFeatures = \{([\s\S]*?)\n\} satisfies/.exec(source)?.[1] ?? ''
+  const upcomingBody = /export const upcomingFeatures = \{([\s\S]*?)\n\} (?:as const )?satisfies/.exec(source)?.[1] ?? ''
   const spreadDefaults = [...upcomingBody.matchAll(/^\s{2}\w+: \{ key: '([^']+)'/gm)]
     .filter(match => !literalDefaults.some(([, literal]) => literal === match[1]))
     .map(match => [match[0], match[1], 'false'])
@@ -30,12 +37,12 @@ export function featureFlags() {
   const releaseDefaults = release.map(({ key }) => [null, key, 'false'])
   const defaults = [...literalDefaults, ...spreadDefaults, ...releaseDefaults]
     .map(([, key, value]) => `| \`${key}\` | \`${value}\` |`)
-  const releaseRows = release.map(({ key, owner, removeBy, description }) => `| \`${key}\` | ${owner} | ${removeBy} | ${description} |`)
+  const releaseRows = releaseFlagRows(release)
   return [
     'Source: `lib/feature-flags.ts`.', '',
     '| Gated feature | PostHog key | waitsOn |', '| --- | --- | --- |', ...rows, '',
     ...(releaseRows.length
-      ? ['| Release flag | Owner | removeBy | Staged rollout of |', '| --- | --- | --- | --- |', ...releaseRows]
+      ? ['| Release flag | Owner | Added | 100% at | removeBy | Staged rollout of |', '| --- | --- | --- | --- | --- | --- |', ...releaseRows]
       : ['No release flags.']), '',
     '| Production default key | Default when PostHog is absent |', '| --- | --- |', ...defaults,
   ].join('\n')

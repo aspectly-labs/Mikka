@@ -1,12 +1,17 @@
 import { getNodeEnv } from './env/public.ts'
 import { envValue } from './env/runtime.mjs'
+// Types only: the other flag registries, so FlagKey covers every declared flag.
+import type { DEPLOYMENT_SWITCHES, PERSON_SWITCHES } from './deployment-switches'
+import type { LINEAR_SYNC_FLAG } from './linear-sync/flags'
+import type { RUNTIME_CONFIG_DEFINITIONS } from './runtime-config/schema'
+import type { SUBSCRIPTION_ROUTE_FLAGS } from './subscription-routes'
 
 export const upcomingFeatures = {
   product: { key: 'mikka-upcoming-product-features', implemented: false },
   integrations: { key: 'mikka-upcoming-integrations', implemented: false },
   administration: { key: 'mikka-upcoming-administration', implemented: false },
   teamSettings: { key: 'mikka-upcoming-team-settings', implemented: false },
-} satisfies Record<string, { key: string; implemented: boolean }>
+} as const satisfies Record<string, { key: string; implemented: boolean }>
 
 export type UpcomingFeature = keyof typeof upcomingFeatures
 
@@ -43,18 +48,23 @@ export type GatedFeature = keyof typeof gatedFeatures
 export interface ReleaseFlagDefinition {
   /** Who widens the stages and deletes the flag. */
   owner: string
-  /** YYYY-MM-DD, at most about two weeks after the flag reaches 100%. CI fails the day after. */
-  removeBy: string
   /** The risky change the flag guards. */
   description: string
+  /** YYYY-MM-DD the entry was added. */
+  added: string
+  /** YYYY-MM-DD the flag reached 100%; set it when it does. */
+  fullAt?: string
+  /** YYYY-MM-DD: at most 60 days after `added` and 14 days after `fullAt`. CI fails the day after. */
+  removeBy: string
 }
 
 /**
  * Release flags, by PostHog key. Each is a gate: the new path runs only while
- * PostHog answers exactly true for the person. While flags load, when PostHog
- * is unreachable, and without a PostHog project, the previous behaviour runs.
- * Stages: internal, a small percentage, then 100%. At 100% delete the entry,
- * the flag and the dead branch. scripts/feature-flags-policy.mjs enforces it.
+ * PostHog answers exactly true for the person (releaseFlagEnabled). While flags
+ * load, when PostHog is unreachable, and without a PostHog project, the
+ * previous behaviour runs. Stages: internal, a small percentage, then 100%. At
+ * 100% delete the entry, the flag and the dead branch.
+ * scripts/feature-flags-policy.mjs enforces the dates.
  */
 export const releaseFlags = {} as const satisfies Record<string, ReleaseFlagDefinition>
 
@@ -62,7 +72,7 @@ export type ReleaseFlag = keyof typeof releaseFlags
 
 /** Production capabilities when an installation has no PostHog project.
  * Billing and unshipped experiments remain off. See docs/self-hosting-byok.md. */
-export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
+export const PRODUCTION_FLAG_DEFAULTS: Readonly<Partial<Record<FlagKey, boolean>>> = {
   'mikka-cloud-computer': true,
   'mikka-computer-billing': false,
   'mikka-memory': false,
@@ -75,7 +85,7 @@ export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
   ...Object.fromEntries(Object.values(upcomingFeatures).map(feature => [feature.key, false])),
   ...Object.fromEntries(Object.keys(releaseFlags).map(key => [key, false])),
 }
-export const productionFlagDefault = (key: string) => PRODUCTION_FLAG_DEFAULTS[key] ?? false
+export const productionFlagDefault = (key: FlagKey) => PRODUCTION_FLAG_DEFAULTS[key] ?? false
 
 /** Local server acceptance can exercise both flag states without a PostHog key.
  * Production ignores this setting before reading or parsing it. */
@@ -122,6 +132,28 @@ export const killSwitches = {
 export function gatedFeatureEnabled(remoteValue: boolean | string | undefined) {
   return remoteValue === true
 }
+
+/** A release flag's new path: on only when PostHog says exactly true, so loading, unreachable and no-PostHog keep the previous behaviour. */
+export function releaseFlagEnabled(key: ReleaseFlag, remoteValue: boolean | string | undefined) {
+  return Object.hasOwn(releaseFlags, key) && remoteValue === true
+}
+
+/**
+ * Every PostHog flag key a registry declares. Flag reads (postHogFlag,
+ * serverFlagEnabled, productionFlagDefault) take only these, so an undeclared
+ * key fails `pnpm typecheck`; scripts/feature-flags-policy.mjs is the backstop.
+ */
+export type FlagKey =
+  | (typeof upcomingFeatures)[UpcomingFeature]['key']
+  | (typeof gatedFeatures)[GatedFeature]['key']
+  | ReleaseFlag
+  | (typeof proactiveFeatures)[keyof typeof proactiveFeatures]
+  | (typeof killSwitches)[keyof typeof killSwitches]
+  | (typeof DEPLOYMENT_SWITCHES)[keyof typeof DEPLOYMENT_SWITCHES]['flag']
+  | (typeof PERSON_SWITCHES)[keyof typeof PERSON_SWITCHES]['flag']
+  | (typeof RUNTIME_CONFIG_DEFINITIONS)[keyof typeof RUNTIME_CONFIG_DEFINITIONS]['flag']
+  | typeof LINEAR_SYNC_FLAG
+  | (typeof SUBSCRIPTION_ROUTE_FLAGS)[keyof typeof SUBSCRIPTION_ROUTE_FLAGS]
 
 /** An explicitly configured Preview can exercise the real cloud UI before rollout. */
 export function computerAcceptancePreview(environment: string | undefined, enabled: string | undefined) {

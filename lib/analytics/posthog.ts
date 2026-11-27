@@ -1,5 +1,6 @@
 import type { PostHog } from 'posthog-js'
 import { posthogConfig } from '@/lib/posthog-config'
+import type { FlagKey } from '@/lib/feature-flags'
 
 // The one way the app reaches PostHog. posthog-js is not on the first-load
 // path: it is imported (with lib/analytics/posthog-init.ts, which starts it)
@@ -56,4 +57,4 @@ export function onPostHogFlags(notify: () => void): () => void {
 }
 
 /** A feature flag's value without sending an event; undefined until PostHog has loaded. */
-export const postHogFlag = (key: string) => client?.getFeatureFlag(key, { send_event: false })
+export const postHogFlag = (key: FlagKey) => client?.getFeatureFlag(key, { send_event: false })

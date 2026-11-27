@@ -1,21 +1,20 @@
 import 'server-only'
-import { computerAcceptancePreview, computerProductionEnabled, gatedFeatures, killSwitches, releaseFlags, upcomingFeatures } from '@/lib/feature-flags'
+import { computerAcceptancePreview, computerProductionEnabled, gatedFeatures, killSwitches, upcomingFeatures, type FlagKey } from '@/lib/feature-flags'
 import { serverFlagEnabled } from '@/lib/posthog-server'
 import type { DesktopFeatures } from './wire'
 import { publicEnv } from '@/lib/public-env.mjs'
 import { runtimeEnv } from '@/lib/env/server'
 
-// These are the same public flags read by use-feature-availability, plus every
-// release flag so Desktop takes the server's answer for a staged rollout. Never
-// send arbitrary PostHog flags, project configuration or server environment values.
-const publicKeys = [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures).map(feature => feature.key), killSwitches.computerTab, ...Object.keys(releaseFlags)]
+// These are the same public flags read by use-feature-availability. Never send
+// arbitrary PostHog flags, project configuration or server environment values.
+const publicKeys = [...Object.values(upcomingFeatures).map(feature => feature.key), ...Object.values(gatedFeatures).map(feature => feature.key), killSwitches.computerTab]
 
 /** A bootstrap snapshot, using the web's user identity and strict-true rules. */
 export async function desktopFeatures(userId?: string, {
   evaluate = serverFlagEnabled,
   env = runtimeEnv(),
 }: {
-  evaluate?: (key: string, userId: string) => Promise<boolean>
+  evaluate?: (key: FlagKey, userId: string) => Promise<boolean>
   env?: Readonly<Record<string, string | undefined>>
 } = {}): Promise<DesktopFeatures> {
   const flags = Object.fromEntries(await Promise.all(publicKeys.map(async key => [key, userId ? await evaluate(key, userId) : false])))
