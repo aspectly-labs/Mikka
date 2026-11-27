@@ -6,6 +6,9 @@
 -- application code and keep these tables; never discard saved credentials.
 -- Membership lives in the workspace database and is checked there on every use,
 -- so workspace_id carries no foreign key.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
 CREATE TABLE IF NOT EXISTS workspace_mcp_servers (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL,
@@ -75,3 +78,5 @@ CREATE TABLE IF NOT EXISTS workspace_mcp_server_tools (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(server_id, tool_name)
 );
+
+COMMIT;
