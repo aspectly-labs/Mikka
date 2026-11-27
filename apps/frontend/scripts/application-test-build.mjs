@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { build } from 'vite'
 import { OVERLAY_APPLICATION, uiOverlay } from '../../../lib/ui-overlay.mjs'
+import { officialUiSkip } from '../../../scripts/official-ui-requirement.mjs'
 import { applicationPlugin, repository } from './application-plugin.mjs'
 
 /** The official UI checkout this test process builds with (MIKKA_UI_OVERLAY_DIR), or none. A test that needs the real
  * interface skips without it; mikka-hosted-ui's CI runs these tests with its checkout mounted (scripts/core-ui.test.mjs). */
 export const officialUi = uiOverlay(repository)
-export const needsOfficialUi = !officialUi.dir && 'needs the official UI checkout (MIKKA_UI_OVERLAY_DIR); mikka-hosted-ui CI runs it'
+export const needsOfficialUi = officialUiSkip(officialUi.dir, 'MIKKA_UI_OVERLAY_DIR')
 
 /** A minimal stand-in checkout with every application file the build requires (lib/ui-overlay.mjs), inside this
  * repository as a real checkout is. `files` adds or replaces files by checkout-relative path. */
