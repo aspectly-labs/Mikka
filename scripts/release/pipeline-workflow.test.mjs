@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { committedPromoters, promoterGateExpression } from './release-policy.mjs'
+import { committedPromoters, isBreakGlassPhase, promoterGateExpression } from './release-policy.mjs'
 import test from 'node:test'
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
@@ -249,8 +249,11 @@ test('every manual deployment job is gated on the committed promoters list befor
     assert.equal(workflow.jobs[name].if.split(gate).length - 1, 1, name + ' must carry the promoter gate exactly once')
   const promoter = { repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main', event_name: 'workflow_dispatch' }
   const skipped = { pipeline: { result: 'skipped', outputs: {} }, 'pipeline-record': { result: 'skipped' } }
-  const breakGlass = ['service-production', 'production-web', 'production-api', 'production-migrate-database', 'cloud-services-production']
-  const cases = [...breakGlass.map(phase => ['deploy-application', phase]), ['deploy-application', 'stage-all'], ['deploy-application', 'gateway-observe'],
+  const breakGlass = ['service-production', 'production-web', 'production-api', 'production-migrate-database', 'cloud-services-production',
+    'eve-retire', 'gateway-observe']
+  assert.ok(breakGlass.every(isBreakGlassPhase) && !['stage-all', 'gateway-prepare', 'service-stage', 'pipeline-promote'].some(isBreakGlassPhase))
+  const cases = [...breakGlass.map(phase => ['deploy-application', phase]), ['deploy-application', 'stage-all'], ['deploy-application', 'gateway-prepare'],
+    ['deploy-application', 'service-stage'], ['deploy-application', 'cloud-services-stage'],
     ['pipeline', 'pipeline-stage'], ['pipeline', 'pipeline-rollback'], ['pipeline-production', 'pipeline-promote']]
   for (const [name, phase] of cases) {
     const run = github => evaluate(workflow.jobs[name].if, { github: { ...promoter, ...github }, inputs: { phase }, needs: skipped })

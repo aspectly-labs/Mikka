@@ -338,14 +338,19 @@ test('promotion by the owner or the merge queue scans staging history and select
         return { total_count: jobs.length, jobs }
       }
       if (path.includes('workflows/cloud-services-ci.yml/runs?')) return { total_count: 1, workflow_runs: [qualified] }
+      if (path.endsWith(`/contents/packages/protocol/src/device.ts?ref=${source}`))
+        return { encoding: 'base64', content: Buffer.from("// export const MIN_DAEMON_VERSION = '9.9.9'\nexport const MIN_DAEMON_VERSION = '0.0.456'\n").toString('base64') }
       assert.fail('Unexpected promotion request: ' + path)
     }
-    const result = await selectPromotion({ env, api })
+    const npmLatest = async () => '0.0.500'
+    const result = await selectPromotion({ env, api, npmLatest })
     assert.equal(result.status, 'selected')
     assert.equal(result.source, source)
     assert.equal(scanned, true)
     scanned = false
-    const queued = await selectPromotion({ env: { ...env, GITHUB_ACTOR_ID: String(bot.id), GITHUB_ACTOR: bot.login }, api })
+    const queued = await selectPromotion({ env: { ...env, GITHUB_ACTOR_ID: String(bot.id), GITHUB_ACTOR: bot.login }, api, npmLatest })
+    // The automatic path refuses a candidate whose daemon floor is above npm latest, too.
+    await assert.rejects(selectPromotion({ env, api, npmLatest: async () => '0.0.455' }), /pipeline_daemon_latest_behind/)
     assert.equal(queued.status, 'selected')
     assert.equal(queued.source, source)
     assert.equal(scanned, true)
@@ -486,7 +491,9 @@ async function manualPromotion(t, change = {}) {
     if (path.endsWith(`/contents/packages/protocol/src/device.ts?ref=${source}`))
       return { encoding: 'base64', content: Buffer.from(`export const MIN_DAEMON_VERSION = '${change.daemonFloor ?? '0.0.456'}'\n`).toString('base64') }
     if (path.includes(`/commits/${source}/check-runs?`)) return { total_count: 1, check_runs: change.checkRuns ?? [] }
-    if (path.endsWith('/actions/runs/601')) return { id: 601, path: '.github/workflows/browser-gate.yml', head_sha: source, head_branch: 'main', status: 'completed', conclusion: 'success' }
+    if (path.endsWith('/actions/runs/601')) return { id: 601, path: '.github/workflows/browser-gate.yml', head_sha: source, head_branch: 'main', status: 'completed',
+      conclusion: 'success', event: 'push', repository: { id: 1427517699 }, head_repository: { id: 1427517699 } }
+    if (path.endsWith('/actions/jobs/1')) return { id: 1, run_id: 601, name: 'Browser e2e', head_sha: source, status: 'completed', conclusion: 'success' }
     if (path.endsWith('/runs/90/attempts/1')) return oldRelease
     if (path.endsWith('/actions/runs/199')) return stageRun
     if (path.includes('/runs/199/attempts/1/jobs?')) return { total_count: stageJobs.length, jobs: stageJobs }

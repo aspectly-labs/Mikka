@@ -12,6 +12,7 @@ const SHA = /^[0-9a-f]{40}$/
 // only binds it to the exact pairing and requires a complete, unskipped TAP result.
 export const ROUTE_GUARD_SCRIPT = 'test:desktop-release-guard'
 const GITHUB_ACTIONS_APP_ID = 15368
+const PUBLIC_REPOSITORY_ID = 1427517699
 
 function fail(code) {
   throw new Error('releaseChecks:' + code)
@@ -54,8 +55,9 @@ export function desktopRouteGuard({ root = process.cwd(), env = process.env, run
 }
 
 /** A successful check run with this exact name on the released public commit, created by GitHub Actions
- * (app 15368) from a run of exactly the listed main workflow file. A check run another app or a
- * branch-edited workflow posts under the same name never counts. */
+ * (app 15368) for a job of that name that itself succeeded, in a `push` run of exactly the listed workflow
+ * file on main of this repository. A check run another app posts, a `pull_request` run (even from a branch
+ * or fork named `main`), a fork's run, or a check pointing at a run whose real job was skipped never counts. */
 export async function publicCheckRun(check, sourceCommit, read) {
   if (!SHA.test(sourceCommit ?? '')) fail('sourceCommitRequired')
   const listing = await read(`commits/${sourceCommit}/check-runs?check_name=${encodeURIComponent(check.checkRun)}&filter=latest&per_page=100`)
@@ -63,11 +65,17 @@ export async function publicCheckRun(check, sourceCommit, read) {
   for (const item of runs) {
     if (item?.name !== check.checkRun || item.head_sha !== sourceCommit || item.status !== 'completed'
       || item.conclusion !== 'success' || item.app?.id !== GITHUB_ACTIONS_APP_ID) continue
-    const runId = /^https:\/\/github\.com\/[^/]+\/Mikka\/actions\/runs\/([1-9][0-9]{0,15})\/job\/[1-9][0-9]{0,15}$/.exec(item.details_url ?? '')?.[1]
-    if (!runId) continue
-    const origin = await read(`actions/runs/${runId}`)
-    if (origin?.path === check.workflow && origin.head_sha === sourceCommit && origin.head_branch === 'main'
-      && origin.status === 'completed' && origin.conclusion === 'success') return { name: check.name, checkRun: check.checkRun, workflow: check.workflow, sourceCommit }
+    const ids = /^https:\/\/github\.com\/[^/]+\/Mikka\/actions\/runs\/([1-9][0-9]{0,15})\/job\/([1-9][0-9]{0,15})$/.exec(item.details_url ?? '')
+    if (!ids) continue
+    const [, runId, jobId] = ids
+    const [origin, job] = await Promise.all([read(`actions/runs/${runId}`), read(`actions/jobs/${jobId}`)])
+    if (origin?.path === check.workflow && origin.event === 'push' && origin.head_branch === 'main'
+      && origin.head_sha === sourceCommit && String(origin.id) === runId
+      && origin.repository?.id === PUBLIC_REPOSITORY_ID && origin.head_repository?.id === PUBLIC_REPOSITORY_ID
+      && origin.status === 'completed' && origin.conclusion === 'success'
+      && String(job?.id) === jobId && String(job.run_id) === runId && job.name === check.checkRun && job.head_sha === sourceCommit
+      && job.status === 'completed' && job.conclusion === 'success')
+      return { name: check.name, checkRun: check.checkRun, workflow: check.workflow, sourceCommit }
   }
   fail('checkRunMissing')
 }

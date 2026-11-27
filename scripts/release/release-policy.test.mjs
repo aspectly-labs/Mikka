@@ -142,9 +142,13 @@ test('required checks: mandatory ones cannot be dropped, unknown ones fail, chec
   const sha = 'a'.repeat(40)
   const guard = async () => ({ pass: 3 })
   const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e', workflow: '.github/workflows/browser-gate.yml' }
-  const origin = { id: 9, path: '.github/workflows/browser-gate.yml', head_sha: sha, head_branch: 'main', status: 'completed', conclusion: 'success' }
-  const read = (runs, run = origin) => async path => {
+  const repo = { id: 1427517699, full_name: 'aspectly-labs/Mikka' }
+  const origin = { id: 9, path: '.github/workflows/browser-gate.yml', head_sha: sha, head_branch: 'main', status: 'completed', conclusion: 'success',
+    event: 'push', repository: repo, head_repository: repo }
+  const realJob = { id: 77, run_id: 9, name: 'Browser e2e', head_sha: sha, status: 'completed', conclusion: 'success' }
+  const read = (runs, run = origin, job = realJob) => async path => {
     if (path === 'actions/runs/9') return run
+    if (path === 'actions/jobs/77') return job
     assert.match(path, new RegExp(`^commits/${sha}/check-runs\\?check_name=Browser%20e2e&`)); return { check_runs: runs }
   }
   const ok = [{ name: 'Browser e2e', head_sha: sha, status: 'completed', conclusion: 'success', app: { id: 15368 },
@@ -162,8 +166,16 @@ test('required checks: mandatory ones cannot be dropped, unknown ones fail, chec
     await assert.rejects(publicCheckRun(e2e, sha, read(runs)), /checkRunMissing/)
   // The run behind it must be the listed workflow on main for that commit, and must have succeeded.
   for (const run of [{ ...origin, path: '.github/workflows/other.yml' }, { ...origin, head_branch: 'feature' }, { ...origin, head_sha: 'b'.repeat(40) },
-    { ...origin, conclusion: 'failure' }])
-    await assert.rejects(publicCheckRun(e2e, sha, read(ok, run)), /checkRunMissing/)
+    { ...origin, conclusion: 'failure' },
+    // A pull_request run from a branch named main, in this repository or a fork, is not the push run on main.
+    { ...origin, event: 'pull_request' },
+    { ...origin, event: 'pull_request', head_repository: { id: 999, full_name: 'attacker/Mikka' } },
+    { ...origin, head_repository: { id: 999, full_name: 'attacker/Mikka' } }, { ...origin, repository: { id: 999 } }, { ...origin, id: 10 }])
+    await assert.rejects(publicCheckRun(e2e, sha, read(ok, run)), /checkRunMissing/, JSON.stringify(run))
+  // A fake check pointing at a real run whose job of that name was skipped, another job, or a job of another run.
+  for (const job of [{ ...realJob, conclusion: 'skipped' }, { ...realJob, name: 'Lint' }, { ...realJob, run_id: 10 }, { ...realJob, id: 78 },
+    { ...realJob, head_sha: 'b'.repeat(40) }, null])
+    await assert.rejects(publicCheckRun(e2e, sha, read(ok, origin, job)), /checkRunMissing/, JSON.stringify(job))
 })
 
 test('npm latest moves only for a promoter dispatch of a successful staged push run with the same daemon inputs', async () => {

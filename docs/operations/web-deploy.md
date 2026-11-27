@@ -73,7 +73,9 @@ owns runtime candidate checks and recovery.
 To retry by hand, dispatch the official runtime workflow on current main with
 its retry reason and `cloudflare_receipt`. A dispatch without a receipt fails
 before any builder starts. For a Cloudflare-to-Cloudflare
-promotion, run the existing Cloudflare application deployment workflow with phase
+promotion, the owner (`gateway-observe` is owner-only,
+[promotion switch](build-source-of-truth.md#break-glass-phases-that-bypass-the-staging-evidence))
+runs the existing Cloudflare application deployment workflow with phase
 `gateway-observe` on the reviewed operations commit containing the prepared
 checklist. The observer only reads the provider and canonical application.
 Use `actions:RUN_ID:ATTEMPT` from that successful observation in the consumer

@@ -278,7 +278,7 @@ One reviewed file, private `mikka-cloud`
 | `autoProduction` (`false` now) | `true`: a merge-triggered staging run promotes production and then chains Desktop. `false`: only a promoter's `pipeline-promote` dispatch promotes. |
 | `mobileProduction` (`false` now) | `true`: `mobile-next-update.yml` `publish` may write `next` directly. `false`: only `stage` then `promote`. |
 | `promoters` | `{id, login, note}` per GitHub identity allowed to dispatch a promotion. Both the stable id and the login must match. Missing or empty: nobody promotes. `github-merge-queue[bot]` and `github-actions[bot]` are refused even if listed. |
-| `requiredChecks` | Per target (`production`, `desktop`, `mobile`), extra evidence checks: `{name, kind: "builtin"}` (implemented in `scripts/release/release-checks.mjs`) or `{name, kind: "check-run", repository: "public", checkRun, workflow}` (a successful check run of that name on the released public commit, created by GitHub Actions, app id 15368, from a successful `main` run of exactly that workflow file). The Desktop route guard is mandatory in code whatever the list says. An unknown check fails the release. |
+| `requiredChecks` | Per target (`production`, `desktop`, `mobile`), extra evidence checks: `{name, kind: "builtin"}` (implemented in `scripts/release/release-checks.mjs`) or `{name, kind: "check-run", repository: "public", checkRun, workflow}` (a successful check run of that name on the released public commit, created by GitHub Actions (app id 15368) for a job of that name that itself succeeded, in a successful `push` run on `main` of exactly that workflow file in this repository; a `pull_request` run, even from a branch or fork named `main`, never counts). The Desktop route guard is mandatory in code whatever the list says. An unknown check fails the release. |
 
 Readers fail closed: a missing, unreadable or malformed file, or any field of the
 wrong type, admits no promotion. The private publisher also refuses an automatic
@@ -346,12 +346,15 @@ promoters; the receipt is verified as before (a manual `pipeline:` receipt must
 come from a promoter's `pipeline-promote`); then, after the hosted checkout and
 before any Apple credential, `release-checks.mjs run desktop` runs the Desktop
 route-allowlist guard (`desktop-route-guard`): `pnpm run
-test:desktop-release-guard` from the product checkout being packaged, with
-`MIKKA_REQUIRE_OFFICIAL_UI=1`, after checking the exact public commit and hosted
-SHA. It fails unless the TAP summary shows at least three tests, all passed,
-none skipped, todo or cancelled; then every listed Desktop check runs. A product
-commit without that package script cannot be released. Desktop never starts by
-itself from an owner deployment dispatch (`gateway-observe`, `pipeline-promote`).
+test:desktop-release-guard` from the product checkout being packaged, after
+checking the exact public commit and hosted SHA. It fails unless the TAP summary
+shows at least three tests, all passed, none skipped, todo or cancelled; that
+summary rule is what stops a missing hosted checkout today. It also passes
+`MIKKA_REQUIRE_OFFICIAL_UI=1`, which nothing reads yet; the Desktop lane's
+redefinition of the script is meant to fail on it instead of skipping. Then
+every listed Desktop check runs. A product commit without that package script
+cannot be released. Desktop never starts by itself from a deployment dispatch
+(`gateway-observe`, `pipeline-promote`).
 
 Mobile (`mobile-next-update.yml` `promote`): see [Mobile OTA while paused](#mobile-ota-while-paused).
 
@@ -365,7 +368,9 @@ must equal the public copy); the package checks run again, and `latest` never
 moves backwards. **`latest` must move before production:** a production
 candidate whose `MIN_DAEMON_VERSION` (`packages/protocol/src/device.ts`) is above
 npm `latest` would refuse every installed daemon, so `pipeline-promote` refuses
-it (`pipeline_daemon_latest_behind`); promote the daemon to `latest` first.
+it (`pipeline_daemon_latest_behind`); promote the daemon to `latest` first. This applies to every promotion, automatic
+or manual (the selector reads the declaration at the start of a line in the
+candidate commit and ignores comments).
 
 ### Break-glass phases that bypass the staging evidence
 
@@ -374,11 +379,14 @@ production without a staged pipeline run or the `autoProduction` flag:
 `service-production` (per-service release from `service-release.json`),
 `production-web`, `production-api`, `production-*` in general, and
 `cloud-services-production`. They carry none of the `pipeline-promote` evidence,
-so they stay **owner-only** (Alex, 2026-11-27): the job `if` and the private
-operator require `alexj11324` as both actor and re-run actor. Agents promote
-through `pipeline-promote`. Other manual phases (`stage-*`, `gateway-*`,
-`eve-retire`, `service-stage`, `cloud-services-stage`) need any promoter, on a
-reviewed operations commit.
+so they stay **owner-only** (Alex, 2026-11-27), and so do `eve-retire` (stops
+production Eve hosts) and `gateway-observe` (runs funded model acceptance and
+chains the E2B runtime release): the job `if` and the private operator require
+`alexj11324` as both actor and re-run actor (`BREAK_GLASS_PHASES` in
+`scripts/release/release-policy.mjs`). Agents promote only through
+`pipeline-promote`. The remaining manual phases (`stage-*`, `gateway-prepare`,
+`service-stage`, `cloud-services-stage`, `pipeline-stage`, `pipeline-rollback`)
+need any promoter, on a reviewed operations commit.
 `gateway-observe` and `service-production` still chain the E2B runtime release
 by itself (not Desktop). Use them only for recovery, and record why.
 
@@ -438,7 +446,9 @@ evidence linked in the `mikka-cloud` PR that flips the flag:
   staging baseline and that every `requiredChecks.production` check run passed
   (today only the public selector enforces these, before the private publisher
   re-checks the promoters, the staging evidence and the downgrade rule);
-- the Infisical OIDC identity bound to `refs/heads/main` claims (owner action, above).
+- the Infisical OIDC identity bound to `refs/heads/main` claims (owner action, above);
+- the daemon floor check (`MIN_DAEMON_VERSION` against npm `latest`) in the private
+  publisher too, not only in the public selector.
 
 ### Mobile OTA while paused
 

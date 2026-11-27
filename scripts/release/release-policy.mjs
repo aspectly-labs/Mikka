@@ -98,14 +98,20 @@ export function promoterGateExpression(promoters = committedPromoters()) {
   return `(contains(fromJSON('${ids}'), github.actor_id) && contains(fromJSON('${logins}'), github.actor) && contains(fromJSON('${logins}'), github.triggering_actor))`
 }
 
-/** Break-glass phases write production without any pipeline-promote evidence: owner only (Alex, 2026-11-27).
- * Agents promote through pipeline-promote, which carries the evidence gates. */
+/** Owner-only phases (Alex, 2026-11-27): those that write production without any pipeline-promote evidence
+ * (`production-*`, `service-production`, `cloud-services-production`), plus `eve-retire` (stops production
+ * Eve hosts) and `gateway-observe` (runs funded model acceptance and chains the E2B runtime release).
+ * Agents promote only through pipeline-promote, which carries the evidence gates. One source for the
+ * job `if` below and the tests. */
 export const BREAK_GLASS_OWNER = Object.freeze({ id: 183887963, login: 'alexj11324' })
+export const BREAK_GLASS_PREFIX = 'production-'
+export const BREAK_GLASS_PHASES = Object.freeze(['service-production', 'cloud-services-production', 'eve-retire', 'gateway-observe'])
 export const isBreakGlassPhase = phase => typeof phase === 'string'
-  && (phase.startsWith('production-') || phase === 'service-production' || phase === 'cloud-services-production')
+  && (phase.startsWith(BREAK_GLASS_PREFIX) || BREAK_GLASS_PHASES.includes(phase))
 export function breakGlassGateExpression() {
   const owner = `(github.actor_id == '${BREAK_GLASS_OWNER.id}' && github.actor == '${BREAK_GLASS_OWNER.login}' && github.triggering_actor == '${BREAK_GLASS_OWNER.login}')`
-  return `(!(startsWith(inputs.phase, 'production-') || inputs.phase == 'service-production' || inputs.phase == 'cloud-services-production') || ${owner})`
+  const phases = [`startsWith(inputs.phase, '${BREAK_GLASS_PREFIX}')`, ...BREAK_GLASS_PHASES.map(phase => `inputs.phase == '${phase}'`)]
+  return `(!(${phases.join(' || ')}) || ${owner})`
 }
 
 /** The private list is authoritative; a public gate that drifted from it admits nobody. */

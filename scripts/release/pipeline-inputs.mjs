@@ -363,12 +363,13 @@ export async function npmLatestDaemon(fetchImpl = fetch) {
 async function daemonFloorReached(api, sourceCommit, npmLatest) {
   const file = await api(`${repository}/contents/${daemonFloorPath}?ref=${sourceCommit}`)
   const text = file?.encoding === 'base64' ? Buffer.from(String(file.content ?? ''), 'base64').toString('utf8') : ''
-  const floor = /export const MIN_DAEMON_VERSION = '([0-9.]+)'/.exec(text)?.[1]
+  // Only a real declaration at the start of a line counts; a commented-out or quoted copy does not.
+  const floor = /^export const MIN_DAEMON_VERSION = '([0-9.]+)'$/m.exec(text)?.[1]
   assert.match(floor ?? '', plainVersion, 'pipeline_daemon_floor_unreadable')
   assert.ok(versionAtLeast(await npmLatest(), floor), 'pipeline_daemon_latest_behind')
 }
 
-async function manualStage(api, env, npmLatest) {
+async function manualStage(api, env) {
   assert.equal(env.MIKKA_DEPLOYMENT_PHASE, 'pipeline-promote', 'pipeline_deployment_phase_invalid')
   // Merge and Actions automation never promote, whatever the list says.
   assert.ok(!forbiddenDispatchers.has(String(env.GITHUB_ACTOR_ID)), 'pipeline_actor_untrusted')
@@ -418,7 +419,6 @@ async function manualStage(api, env, npmLatest) {
   const selected = await release(api, summary.origin.runId, summary.origin.runAttempt)
   assert.equal(selected.origin.artifactId, String(summary.origin.artifactId), 'pipeline_promotion_release_mismatch')
   assert.equal(selected.manifest.sourceCommit, env.INPUT_PROMOTE_SOURCE, 'pipeline_promotion_source_mismatch')
-  await daemonFloorReached(api, selected.manifest.sourceCommit, npmLatest)
   // The candidate must still be what staging serves: a later staging run or rollback replaces it.
   const latestStaging = await priorDeployment(api, env.GITHUB_RUN_ID, undefined, 'staging')
   assert.ok(latestStaging && String(latestStaging.run.id) === String(run.id) && String(latestStaging.run.run_attempt) === String(run.run_attempt)
@@ -445,7 +445,7 @@ export async function selectPromotion({ env = process.env, api = github, npmLate
     assert.match(env[key] ?? '', number, 'pipeline_promotion_input_required')
   if (!manual) assert.match(env.INPUT_OPERATIONS_SOURCE ?? '', sha, 'pipeline_operations_source_required')
   let selected, stage, stageRun, operations
-  if (manual) ({ selected, stage, stageRun, operations } = await manualStage(api, env, npmLatest))
+  if (manual) ({ selected, stage, stageRun, operations } = await manualStage(api, env))
   else {
     const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'))
     selected = await release(api, event.workflow_run?.id, event.workflow_run?.run_attempt)
@@ -456,6 +456,8 @@ export async function selectPromotion({ env = process.env, api = github, npmLate
     operations = env.INPUT_OPERATIONS_SOURCE
   }
   assert.deepEqual(stage.files['release-manifest.json'], selected.manifest, 'pipeline_stage_manifest_mismatch')
+  // Every promotion, automatic or manual: npm latest must already satisfy the candidate's daemon floor.
+  await daemonFloorReached(api, selected.manifest.sourceCommit, npmLatest)
   assert.equal(stage.files['pipeline-summary.json']?.status, 'passed', 'pipeline_stage_incomplete')
   assert.equal(stage.files['pipeline-summary.json'].target, 'staging', 'pipeline_stage_target_mismatch')
   assert.equal(stage.files['pipeline-summary.json'].rollback, undefined, 'pipeline_stage_rollback_rejected')
