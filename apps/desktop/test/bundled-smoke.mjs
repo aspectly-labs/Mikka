@@ -233,7 +233,9 @@ try {
   await page.goto('mikka://app/mikka/en/settings?section=computers', { waitUntil: 'domcontentloaded' })
   // A build without the official UI checkout shows the page that says so (apps/frontend/src/headless.ts); the shell
   // around it is what this repository owns, and the devices page is checked where the official UI is built in.
-  if (await page.evaluate(() => document.documentElement.dataset.mikkaHeadless === 'true')) {
+  // Whether this build has the official UI was read once the first page rendered; reading the marker again right after
+  // domcontentloaded would race the application's dynamic import.
+  if (headless) {
     await rendered(page)
     assert.equal(nativeErrors.length, 0, `renderer uncaught errors: ${nativeErrors.join(',')}`)
     check('settings deep link reaches the renderer (no official UI in this build)')
