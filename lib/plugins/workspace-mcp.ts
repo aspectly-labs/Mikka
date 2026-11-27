@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { mcpAuthoritySchema, PluginError, type McpAuthority, type McpServerGrant, type McpWorkspacePage, type McpWorkspaceServerView } from './contracts'
 import { assertOrganizationResourceShare, organizationResourceAllowed, workspaceResourcePolicy } from '@/lib/governance/resource-access'
+import { mcpServerKey } from './contracts'
+import { lockedMcpToolFingerprint, validateWorkspaceMcpGrants, workspaceMcpGrants } from './workspace-servers'
 
 type Query = Pick<Pool | PoolClient, 'query'>
 type Workspace = { id: string; kind: 'personal' | 'team'; name: string }
@@ -33,10 +35,13 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
   if (new Set(ids).size !== ids.length) throw unavailable()
   const names = authority.workspaceId ? await activeNames(members!, authority.workspaceId, [userId, ...authority.servers.map(server => server.ownerId)]) : null
   if (names && !names.has(userId)) throw unavailable()
+  // Workspace servers: the requester is an active member (above) of the server's workspace.
+  const own = authority.servers.filter(server => server.source !== 'workspace')
+  await validateWorkspaceMcpGrants(query, authority, authority.servers.filter(server => server.source === 'workspace'))
   const { rows } = await query.query<Row>(`SELECT ${columns},g.id AS grant_id FROM personal_mcp_servers s
-    LEFT JOIN personal_mcp_workspace_shares g ON g.server_id=s.id AND g.workspace_id=$2 WHERE s.id=ANY($1::uuid[])`, [ids, authority.workspaceId])
-  const { rows: bindings } = await query.query<{ server_id: string; workspace_id: string; environment_id: string }>('SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [ids])
-  for (const grant of authority.servers) {
+    LEFT JOIN personal_mcp_workspace_shares g ON g.server_id=s.id AND g.workspace_id=$2 WHERE s.id=ANY($1::uuid[])`, [own.map(server => server.id), authority.workspaceId])
+  const { rows: bindings } = await query.query<{ server_id: string; workspace_id: string; environment_id: string }>('SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [own.map(server => server.id)])
+  for (const grant of own) {
     const scoped = bindings.filter(binding => binding.server_id === grant.id)
     if (scoped.length && !scoped.some(binding => binding.workspace_id === authority.workspaceId && binding.environment_id === authority.environmentId)) throw unavailable()
     const row = rows.find(server => server.id === grant.id)
@@ -48,10 +53,19 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
   return authority
 }
 
-export async function lockNativeMcpAuthority(query: Query, userId: string, authority: McpAuthority) {
+/**
+ * The claim fence: lock every frozen server, recheck the authority, and (with
+ * `toolFingerprint`, the switched-off tools the claim response exports) refuse a claim whose
+ * tool switches changed after the export. A tool switch keeps the revision, so the revision
+ * check alone would hand a daemon a stale filter.
+ */
+export async function lockNativeMcpAuthority(query: Query, userId: string, authority: McpAuthority, toolFingerprint?: string) {
   if (!authority.servers.length) return
-  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [authority.servers.map(server => server.id)])
+  const workspaceIds = authority.servers.filter(server => server.source === 'workspace').map(server => server.id)
+  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [authority.servers.filter(server => server.source !== 'workspace').map(server => server.id)])
+  if (workspaceIds.length) await query.query('SELECT id FROM workspace_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [workspaceIds])
   await validateMcpAuthority(query, userId, authority)
+  if (toolFingerprint !== undefined && await lockedMcpToolFingerprint(query, authority) !== toolFingerprint) throw new PluginError('mcpConnectionChanged', 409)
 }
 
 /** Existing workspace membership governs an explicit resource grant, never an implicit loan. */
@@ -123,10 +137,16 @@ export class WorkspaceMcpStore {
       .filter(row => row.enabled && !(row.oauth_enabled && row.connection_status === 'needs_connect')).slice(0, 64)
     const { rows: bindings } = await query.query<{ server_id: string; workspace_id: string; environment_id: string }>('SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [available.map(row => row.id)])
     const rows = available.filter(row => { const scoped = bindings.filter(binding => binding.server_id === row.id); return !scoped.length || scoped.some(binding => binding.workspace_id === workspaceId && binding.environment_id === environmentId) })
-    return { requester: userId, workspaceId, ...(environmentId ? { environmentId } : {}), servers: rows.map(row => ({
+    const personal: McpServerGrant[] = rows.map(row => ({
       id: row.id, name: row.name, revision: row.revision, ownerId: row.user_id,
       grantId: row.user_id === userId ? null : row.grant_id,
-    })) }
+    }))
+    // The workspace's servers join the requester's own (Capy: "a thread uses the organization's
+    // servers plus the private servers of the person who started it"); on a key clash the
+    // requester's own server wins. `available` already checked active membership.
+    const workspaceGrants = workspaceId ? await workspaceMcpGrants(query, userId, workspaceId, environmentId,
+      new Set(rows.filter(row => row.user_id === userId).map(row => mcpServerKey(row.name)))) : []
+    return { requester: userId, workspaceId, ...(environmentId ? { environmentId } : {}), servers: [...personal, ...workspaceGrants].slice(0, 64) }
   }
 
   /** No grant discovery here: an old execution can use only the exact references frozen by its host. */
@@ -145,7 +165,15 @@ export async function scopedMcpAuthority(query: Query, authority: McpAuthority):
   if (!ids.length) return authority
   const { rows: bindings } = await query.query<{ server_id: string; workspace_id: string; environment_id: string }>(
     'SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [ids])
+  const workspaceIds = authority.servers.filter(grant => grant.source === 'workspace').map(grant => grant.id)
+  const { rows: workspaceScopes } = workspaceIds.length ? await query.query<{ id: string; environment_id: string | null }>(
+    'SELECT id,environment_id FROM workspace_mcp_servers WHERE id=ANY($1::uuid[])', [workspaceIds]) : { rows: [] }
   return { ...authority, servers: authority.servers.filter(grant => {
+    if (grant.source === 'workspace') {
+      const scope = workspaceScopes.find(row => row.id === grant.id)
+      // A deleted server stays in the list, so validation reports it unavailable.
+      return !scope || scope.environment_id === null || scope.environment_id === (authority.environmentId ?? null)
+    }
     const scoped = bindings.filter(binding => binding.server_id === grant.id)
     return !scoped.length || scoped.some(binding => binding.workspace_id === authority.workspaceId && binding.environment_id === authority.environmentId)
   }) }

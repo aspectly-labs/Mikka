@@ -339,11 +339,13 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   }
   let servers: TaskMcpServer[] = []
   let mcpAuthority: McpAuthority | undefined
+  let mcpToolFingerprint: string | undefined
   if (run.agentDefinition?.customMcp && ['claude_code','codex','cursor'].includes(harness)) {
     try {
       const assignment = await (await import('@/lib/plugins/runtime')).personalPlugins.nativeMcpAssignment(caller.userId, run.agentDefinition.customMcp, run.agentDefinition.projectExecution?.environment?.id ?? null)
       servers = assignment.servers
       mcpAuthority = assignment.authority
+      mcpToolFingerprint = assignment.toolFingerprint
     }
     catch (error) {
       logCodedError(new CodedError('mcpUnavailable',{cause:error}),{runId:run.id})
@@ -648,7 +650,8 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     if (mcpAuthority?.servers.length) {
       try {
         const { lockNativeMcpAuthority } = await import('@/lib/plugins/workspace-mcp')
-        await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
+        // The exported tool filters are part of the fence: a switch changed since is a retry.
+        await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority, mcpToolFingerprint)
       } catch (error) {
         if (!(error instanceof PluginError)) throw new McpValidationError('connection_lock', error)
         if (error.code !== 'mcpUnavailable') return false

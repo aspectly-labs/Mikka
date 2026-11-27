@@ -21,6 +21,7 @@ Task MCP uses native CLI configuration and credential delivery ([2026-11-11-0534
 - Deliver selected HTTP endpoints/headers and STDIO command/environment configuration directly to the task's official CLI (the task can read those configured MCP credentials).
 - Keep Composio service credentials with the provider and preserve the exposure boundary for unrelated Secrets.
 - Do not build a second generic MCP client or approval loop alongside Eve and native CLI clients.
+- Workspace MCP servers ([2026-11-27-1700](../design/decisions/2026-11-27-1700-workspace-mcp-servers-like-capy.md)) follow Capy's organization servers: any active member manages them; a run uses the workspace's servers plus its starter's own (the starter's own wins a key clash); `shared` uses the workspace's one account, `member` only the run requester's own account; the claim fence includes the exported tool switches.
 
 ## Derived E2B template releases
 

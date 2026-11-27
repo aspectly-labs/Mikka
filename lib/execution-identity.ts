@@ -65,8 +65,9 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
       if (error.code === 'mcpUnavailable') throw new ExecutionMcpAuthorityError({ cause: error })
       throw new ExecutionIdentityError({ cause: error })
     })
+    // A workspace server is the workspace's; the requester is the account a "member" server uses.
     for (const grant of authority.servers) resourceBindings.push({ kind: 'mcp', id: grant.id, ownerId: grant.ownerId,
-      access: grant.grantId ? 'workspace_share' : 'owner', revision: String(grant.revision),
+      access: grant.grantId || grant.source === 'workspace' ? 'workspace_share' : 'owner', revision: String(grant.revision),
       ...(grant.grantId ? { grantId: grant.grantId } : {}), ...(authority.workspaceId ? { workspaceId: authority.workspaceId } : {}),
     })
   }

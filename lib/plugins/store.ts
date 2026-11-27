@@ -9,6 +9,7 @@ import { taskMcpServerSchema, type TaskMcpServer } from '../../packages/protocol
 import type { McpAuthority } from './contracts'
 import type { McpOAuthStore } from './mcp-oauth'
 import { scopedMcpAuthority, singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
+import { mcpToolFingerprint, type WorkspaceMcpServers } from './workspace-servers'
 
 type McpRow = Omit<McpServerView, 'authKind' | 'createdAt'> & {
   auth_header: string | null; ciphertext: string | null; iv: string | null; key_version: number | null; created_at: Date; oauth_enabled: boolean;
@@ -24,7 +25,10 @@ const stdioConfiguration = (row: McpRow, value: string) => taskMcpServerSchema.o
 
 export class PersonalPluginStore {
   constructor(readonly pool: Pool, readonly env: Readonly<Record<string, string | undefined>> = runtimeEnv(), readonly membership?: Pick<Pool | PoolClient, 'query'>,
-    private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>) {}
+    private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>, private readonly workspaceServers?: Pick<WorkspaceMcpServers, 'connection'>) {}
+  private async workspaceConnections() {
+    return this.workspaceServers ?? new (await import('./workspace-servers')).WorkspaceMcpServers(this.pool, this.env, this.membership)
+  }
   private async write<T>(userId: string, work: (client: PoolClient) => Promise<T>) {
     const client = await this.pool.connect()
     try {
@@ -90,6 +94,12 @@ export class PersonalPluginStore {
   /** Called immediately before remote discovery/call. Never returned by an API. */
   async mcpConnection(userId: string, id: string, revision?: number, authority?: McpAuthority) {
     const grant = authority ? (await new WorkspaceMcpStore(this.pool, this.membership).validate(userId, singleMcpAuthority(authority, id))).servers[0] : null
+    if (grant?.source === 'workspace') {
+      // Validation fixed requester === userId: a "member" server uses this person's account only.
+      const connection = await (await this.workspaceConnections()).connection(userId, authority!.workspaceId!, grant)
+      if (revision !== undefined && connection.revision !== revision) throw new PluginError('mcpUnavailable', 404)
+      return { ...connection, native: undefined }
+    }
     const ownerId = grant?.ownerId ?? userId
     const row = (await this.pool.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true`, [id, ownerId])).rows[0]
     if (!row || revision !== undefined && row.revision !== revision) throw new PluginError('mcpUnavailable', 404)
@@ -115,11 +125,14 @@ export class PersonalPluginStore {
     const store = new WorkspaceMcpStore(this.pool,this.membership)
     const requested = environmentId === undefined ? authority : { ...authority, environmentId }
     const authorized = await store.validate(userId,await scopedMcpAuthority(this.pool,requested))
+    const switchedOff: { serverId: string; tool: string }[] = []
     const servers = await Promise.all(authorized.servers.map(async grant => {
       const connection = await this.mcpConnection(userId,grant.id,grant.revision,authorized)
+      switchedOff.push(...connection.disabledTools.map(tool => ({ serverId: grant.id, tool })))
       return connection.native ?? taskMcpServerSchema.parse({ name:`mcp_${grant.id.replaceAll('-','')}`, transport:connection.transport,url:connection.url,headers:connection.headers,...(connection.disabledTools.length ? { disabledTools:connection.disabledTools } : {}) })
     }))
-    return { authority: authorized, servers }
+    // The claim fence compares this with the locked switches (lockNativeMcpAuthority).
+    return { authority: authorized, servers, toolFingerprint: mcpToolFingerprint(switchedOff) }
   }
 
   async listSkills(userId: string): Promise<InstalledSkill[]> {

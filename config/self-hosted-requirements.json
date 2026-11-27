@@ -4582,5 +4582,89 @@
     "behavior": "Authenticated native clients read workspace or organization billing status and invoke billing actions with a fresh session under the mobile origin policy.",
     "test": "tests/mobile-api-gaps.test.ts",
     "suite": "test:mobile"
+  },
+  "drizzle/20261127170716_workspace_mcp_servers.sql": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Adds workspace-owned MCP servers, their shared or per-member OAuth accounts and tool switches in the existing application database. Additive and replayable; no new service or credential.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/workspace-servers.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Any active workspace member manages workspace MCP servers; a run uses the workspace account (shared) or its starter's own account (member) through the existing MCP transport, OAuth flow and workspace-secret encryption.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/contracts.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates workspace MCP server input and the server key that resolves a key clash in favour of the thread starter's own server. No network or credential requirement.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/connection-contracts.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates a workspace MCP tool switch with the state the caller last saw. No network or credential requirement.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/mcp-oauth.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Runs the existing MCP SDK OAuth flow against a person's own or a workspace server's account rows, using the existing DNS-pinned public transport and workspace-secret encryption.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/runtime.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Exposes the workspace MCP server store on the existing application pool. No new environment input.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/tools/[name]/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/check/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/connection/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/oauth/callback/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
   }
 }

@@ -4706,6 +4706,8 @@
     "mcpCatalogUnavailable": "MCP 目录不可用。",
     "mcpCatalogRemoteUnavailable": "无法访问 MCP 目录源。",
     "mcpCatalogMismatch": "该目录条目与服务器已不匹配。",
+    "mcpServerKeyTaken": "此工作区已有服务器使用这个键名，请换一个。",
+    "mcpConnectionModeUnavailable": "只有通过 OAuth 登录的服务器才能让每位成员连接自己的账号。",
     "restoreExpired": "已超过可恢复期限。",
     "chatRevisionUnavailable": "这条消息已不能编辑或重新生成。",
     "chatRevisionBusy": "等回复结束后再试。",
