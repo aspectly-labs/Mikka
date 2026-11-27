@@ -41,7 +41,21 @@ const FLUSH_AFTER_MS = 10_000
 const QUEUE_LIMIT = 200
 /** The same failure is worth one report per window, not one per retry. */
 const REPEAT_WINDOW_MS = 10 * 60_000
+/** At most this many of main's own reports in any hour, however long the app runs. */
 const REPORT_LIMIT = 200
+const REPORT_LIMIT_WINDOW_MS = 60 * 60_000
+
+/**
+ * Desktop error reports carry the error's class, never its message (the
+ * "name/code only" logging rule): the web's allowlist keeps a redacted message
+ * for `$exception`, so on desktop each entry's value becomes its type. The
+ * in-app stack frames (function, bundled file, line, column) stay for grouping.
+ */
+export function withoutErrorMessages<T extends { event: string; properties: Record<string, unknown> }>(event: T): T {
+  if (event.event !== '$exception' || !Array.isArray(event.properties.$exception_list)) return event
+  const list = (event.properties.$exception_list as Record<string, unknown>[]).map(entry => ({ ...entry, value: entry.type }))
+  return { ...event, properties: { ...event.properties, $exception_list: list } }
+}
 
 export class DesktopTelemetry {
   private preferences: Preferences | null = null
@@ -49,7 +63,8 @@ export class DesktopTelemetry {
   private readonly queue: QueuedEvent[] = []
   private timer: ReturnType<typeof setTimeout> | null = null
   private readonly reported = new Map<string, number>()
-  private reports = 0
+  /** Report times in the last hour, oldest first. */
+  private readonly reports: number[] = []
 
   constructor(private readonly config: TelemetryConfig, private readonly identity: TelemetryIdentity, private readonly options: {
     file: string
@@ -114,20 +129,30 @@ export class DesktopTelemetry {
       } })
       if (!sanitized) return
       if (this.queue.length >= QUEUE_LIMIT) this.queue.shift()
-      this.queue.push({ ...sanitized, timestamp: new Date(this.now()).toISOString() })
+      this.queue.push({ ...withoutErrorMessages(sanitized), timestamp: new Date(this.now()).toISOString() })
       if (this.queue.length >= FLUSH_AT) void this.flush()
       else this.timer ??= setTimeout(() => { void this.flush() }, FLUSH_AFTER_MS)
     }).catch(() => {})
   }
 
-  /** A report main makes itself, at most once per kind in the repeat window. */
+  /**
+   * A report main makes itself, at most once per kind in the repeat window and
+   * REPORT_LIMIT an hour. Nothing is recorded or counted while nothing would be
+   * sent (no key, a self-hosted account, sharing off), so turning sharing on
+   * later starts with a full allowance and no stale suppression.
+   */
   private report(key: string, event: string, properties: Record<string, unknown>): void {
-    const now = this.now()
-    const last = this.reported.get(key)
-    if ((last !== undefined && now - last < REPEAT_WINDOW_MS) || this.reports >= REPORT_LIMIT) return
-    this.reported.set(key, now)
-    this.reports++
-    this.capture(event, properties)
+    if (!this.config.key) return
+    void this.load().then(preferences => {
+      if (!preferences.enabled || !this.identity.cloud()) return
+      const now = this.now()
+      while (this.reports.length && now - this.reports[0]! >= REPORT_LIMIT_WINDOW_MS) this.reports.shift()
+      for (const [kind, at] of this.reported) if (now - at >= REPEAT_WINDOW_MS) this.reported.delete(kind)
+      if (this.reported.has(key) || this.reports.length >= REPORT_LIMIT) return
+      this.reported.set(key, now)
+      this.reports.push(now)
+      this.capture(event, properties)
+    }).catch(() => {})
   }
 
   /** A renderer API call main refused or the server failed, by route template: never the path's ids. */

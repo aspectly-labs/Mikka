@@ -364,6 +364,8 @@ jobs:
           actool --version
       # Desktop telemetry uses the web's PostHog project; its ingestion key is
       # public (apps/desktop/src/main/telemetry.ts). A build without it sends nothing.
+      # No host is read: the project is in PostHog's US region, the build's
+      # default (https://us.i.posthog.com, as the web's DEFAULT_POSTHOG_API_HOST).
       - name: Read the existing PostHog project ingestion key through OIDC
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:

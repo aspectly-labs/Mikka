@@ -75,6 +75,51 @@ test('a refused or failed renderer request is reported by its route template, on
   assert.equal(events().length, 3, 'reported again after the window')
 })
 
+test('reports are limited per hour, and nothing is counted while sharing is off', async t => {
+  const { make, events, advance } = await harness(t)
+  const telemetry = make()
+  await telemetry.setEnabled(false)
+  telemetry.apiFailure({ route: '/api/inbox', method: 'GET', status: 503 })
+  for (let index = 0; index < 250; index++) telemetry.mainError(Object.assign(new Error('x'), { name: `Off${index}` }), 'uncaught_exception')
+  await settle()
+  await telemetry.setEnabled(true)
+  // The failure seen while off was neither sent nor recorded, so it is reported now.
+  telemetry.apiFailure({ route: '/api/inbox', method: 'GET', status: 503 })
+  for (let index = 0; index < 250; index++) telemetry.mainError(Object.assign(new Error('x'), { name: `On${index}` }), 'uncaught_exception')
+  await settle()
+  await telemetry.flush()
+  assert.equal(events().length, 200, 'the hour allows 200 reports')
+  assert.equal(events()[0]!.properties.route, '/api/inbox')
+  advance(30 * 60_000)
+  telemetry.mainError(Object.assign(new Error('x'), { name: 'Later' }), 'uncaught_exception')
+  await settle()
+  await telemetry.flush()
+  assert.equal(events().length, 200, 'still within the same hour')
+  advance(31 * 60_000)
+  telemetry.mainError(Object.assign(new Error('x'), { name: 'NextHour' }), 'uncaught_exception')
+  await settle()
+  await telemetry.flush()
+  assert.equal(events().length, 201, 'a new hour, not a new process')
+})
+
+test('a renderer exception keeps its class and in-app frames, never its message', async t => {
+  const { make, events } = await harness(t)
+  const telemetry = make()
+  telemetry.capture('$exception', { $exception_level: 'error', $exception_list: [{
+    type: 'TypeError', value: 'Cannot read secret-note of a@b.example at /Users/someone/x',
+    mechanism: { type: 'onerror', handled: false },
+    stacktrace: { frames: [{ in_app: true, filename: 'mikka://app/mikka/assets/index-abc.js', function: 'render', lineno: 3, colno: 9 }] },
+  }] })
+  await settle()
+  await telemetry.flush()
+  const [exception] = events()
+  const [entry] = exception!.properties.$exception_list as { type: string; value: string; stacktrace?: { frames: { function: string }[] } }[]
+  assert.equal(entry!.type, 'TypeError')
+  assert.equal(entry!.value, 'TypeError')
+  assert.equal(entry!.stacktrace?.frames[0]?.function, 'render')
+  for (const word of ['secret-note', 'a@b.example', 'someone', 'Cannot read']) assert.equal(JSON.stringify(events()).includes(word), false, word)
+})
+
 test('main-process errors report their class only', async t => {
   const { make, events } = await harness(t)
   const telemetry = make()
