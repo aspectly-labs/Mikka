@@ -11718,7 +11718,6 @@
   "DesktopTelemetry": {
     "heading": "Privacy",
     "share": "Share usage and error reports",
-    "description": "Pages you open and errors, never your content",
     "failed": "That didn't work"
   }
 }

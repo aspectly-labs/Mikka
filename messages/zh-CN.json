@@ -11718,7 +11718,6 @@
   "DesktopTelemetry": {
     "heading": "隐私",
     "share": "共享使用情况和错误报告",
-    "description": "打开的页面和出现的错误，不含你的内容",
     "failed": "操作失败，请重试"
   }
 }

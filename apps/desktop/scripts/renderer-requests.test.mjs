@@ -59,8 +59,8 @@ test('the scan follows the renderer graph and the helpers between a route and it
   assert.deepEqual(methods('/api/mobile/bots/*'), ['PATCH'])
   assert.deepEqual(methods('/api/mobile/groups/*'), ['PATCH'])
   assert.deepEqual(methods('/api/coordinator/overview'), ['GET'])
-  // The key reaches the reader through SWR, so the scan sees it as a literal: any method its route declares will do.
-  assert.equal(sites.get('/api/coordinator/overview').bare, true)
+  // The key reaches the reader through SWR: its fetcher reads it with GET, and the route must serve that.
+  assert.equal(sites.get('/api/coordinator/overview').bare, false)
   assert.equal(sites.get('/api/billing/catalog').bare, true, 'a returned path is a bare literal')
   assert.ok(!sites.has('/api/integrations/github/install'), 'links never reach the main process')
   assert.ok(!sites.has('/api/unused'))

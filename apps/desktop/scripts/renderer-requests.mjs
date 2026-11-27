@@ -14,8 +14,9 @@
 //   `fetchSettingsData(url)`, `send(url, 'PATCH', body)`);
 // - a call to a helper that builds the URL itself from its parameters
 //   (`settingsRead('issue-states')` becomes `/api/settings/issue-states`);
-// - every other `/api/…` literal in the module (a SWR key, a path returned by a
-//   `…Path()` function), as a GET unless its call says otherwise. Links and
+// - a SWR key (`useSWR('/api/x', fetcher)`), which its fetcher reads with GET;
+// - every other `/api/…` literal in the module (a path returned by a
+//   `…Path()` function, an endpoint constant), as a GET unless its call says otherwise. Links and
 //   browser hand-offs are left out: they never reach the main process.
 //
 // It is still a lower bound: a URL assembled at run time from values the source
@@ -27,6 +28,8 @@ import ts from 'typescript'
 const SERVER_FILE = /^(?:app\/api\/|app\/actions\/|lib\/server-runtime\/|lib\/intl\/i18n-server(?:\.ts|$)|lib\/server-only\.ts$|lib\/(?:auth|db|session)\.ts$|lib\/db\/|lib\/desktop-rpc\/(?:registry|schemas|handler|bootstrap|authentication|session(?:-cache(?:-context)?)?)\.ts$)/
 const EXTENSIONS = ['', '.ts', '.tsx', '.mts', '.js', '.mjs', '/index.ts', '/index.tsx', '/index.js']
 const METHODS = /^(?:GET|POST|PUT|PATCH|DELETE|HEAD)$/
+/** SWR's hooks, whose first argument is the key the fetcher reads (`useSWR`, `useSWRImmutable`, `useSWRInfinite`). */
+const SWR_HOOK = /^useSWR(?:Immutable|Infinite)?$/
 /** Calls that leave the renderer instead of requesting: links and external browser hand-offs. */
 const NAVIGATIONS = new Set(['assign', 'replace', 'open', 'openExternal', 'navigate', 'push', 'pushState', 'replaceState'])
 /** Literal holes are written as this character; `*` in the report. */
@@ -352,6 +355,11 @@ export function rendererRequests(modules) {
         if (url && isRequest(entry, node)) {
           const paths = pathsOf(url, entry.values).filter(path => path.includes('/api/'))
           for (const path of paths) record(path, methodOf(node) ?? 'GET', file)
+          if (paths.length) consume(url, entry.values)
+        } else if (url && SWR_HOOK.test(calleeName(node) ?? '')) {
+          // A SWR key is the URL its fetcher reads: a GET, whatever the fetcher is.
+          const paths = pathsOf(url, entry.values).filter(path => path.includes('/api/'))
+          for (const path of paths) record(path, 'GET', file)
           if (paths.length) consume(url, entry.values)
         }
         // A helper that builds its URL from its parameters, called with literals.

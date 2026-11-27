@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { desktopAliases, desktopOverlayAliases } from '../apps/frontend/scripts/application-plugin.mjs'
 import { HOLE, rendererModules, rendererRequests } from '../apps/desktop/scripts/renderer-requests.mjs'
 import { CLIENT_FLAG_KEYS } from '../lib/feature-flags.ts'
+import ts from 'typescript'
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const overlay = join(repository, '.hosted-ui')
@@ -118,7 +119,9 @@ function unserved(sites) {
     const served = samples(site.path).map(sample => [sample, serving(sample)]).filter(([sample, route]) => route && dispatches(site.path, sample, route)).map(([, route]) => route)
     const where = `(${[...site.files].join(', ')})`
     if (!served.length) { missing.push(`${site.bare ? 'ANY' : [...site.methods].join('|')} ${described(site.path)}: no route ${where}`); continue }
-    // A literal seen outside a request (a SWR key, a `…Path()` result) names a route but not its method.
+    // A literal seen outside any request (a `…Path()` result, an endpoint
+    // constant) names a route but not its method. A SWR key is not bare: the
+    // scan records it as the GET its fetcher sends, so its method is checked.
     if (site.bare) continue
     const methods = new Set(served.flatMap(route => route.methods.includes('GET') ? [...route.methods, 'HEAD'] : route.methods))
     for (const method of site.methods) if (!methods.has(method)) missing.push(`${method} ${described(site.path)}: the route has ${[...methods].join(', ')} ${where}`)
@@ -141,6 +144,23 @@ test('a parameter-dispatched route serves only the values its handler names', ()
   assert.deepEqual(unserved([site('/api/settings/issue-states'), site('/api/settings/personal', 'PATCH'), site(`/api/settings/${HOLE}`)]), [])
   assert.deepEqual(unserved([site('/api/settings/issue-statez')]), ['GET /api/settings/issue-statez: no route (test)'])
   assert.deepEqual(unserved([site('/api/settings/issue-states', 'POST')]), ['POST /api/settings/issue-states: the route has GET, HEAD (test)'])
+})
+
+test('a SWR key is a GET the route must serve, not just a route that exists', () => {
+  // Needs no UI checkout: the scan and the check, on a module written here.
+  const writeOnly = routes.find(route => !route.methods.includes('GET') && !route.template.includes('['))
+  assert.ok(writeOnly, 'the route table has a static route without GET')
+  const source = [
+    "import useSWR from 'swr'",
+    "export function A({ on }: { on: boolean }) { useSWR(on ? '/api/settings/issue-states' : null, fetcher); useSWR(`" + writeOnly.template + "`, fetcher); return null }",
+    "const endpoint = { path: '/api/settings/activity' }",
+  ].join('\n')
+  const ast = ts.createSourceFile('fixture.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const sites = rendererRequests(new Map([['fixture.tsx', { name: 'fixture.tsx', path: 'fixture.tsx', source, ast, imports: new Map() }]]))
+  assert.deepEqual([...sites.values()].map(site => [site.path, [...site.methods], site.bare]), [
+    ['/api/settings/issue-states', ['GET'], false], [writeOnly.template, ['GET'], false], ['/api/settings/activity', ['GET'], true],
+  ])
+  assert.deepEqual(unserved(sites.values()), [`GET ${writeOnly.template}: the route has ${writeOnly.methods.join(', ')} (fixture.tsx)`])
 })
 
 test('the recorded literals are still in the UI', { skip }, () => {

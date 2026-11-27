@@ -43,6 +43,10 @@ const QUEUE_LIMIT = 200
 const REPEAT_WINDOW_MS = 10 * 60_000
 /** At most this many of main's own reports in any hour, however long the app runs. */
 const REPORT_LIMIT = 200
+/** At most this many of the renderer's events in any hour: a page stuck in an
+ * error loop or a hostile one cannot turn the person's machine into a firehose.
+ * Counted apart from main's reports, so it cannot crowd them out. */
+const RENDERER_EVENT_LIMIT = 500
 const REPORT_LIMIT_WINDOW_MS = 60 * 60_000
 
 /**
@@ -65,6 +69,8 @@ export class DesktopTelemetry {
   private readonly reported = new Map<string, number>()
   /** Report times in the last hour, oldest first. */
   private readonly reports: number[] = []
+  /** The renderer's sent-event times in the last hour, oldest first. */
+  private readonly rendererEvents: number[] = []
 
   constructor(private readonly config: TelemetryConfig, private readonly identity: TelemetryIdentity, private readonly options: {
     file: string
@@ -110,8 +116,17 @@ export class DesktopTelemetry {
     return this.state()
   }
 
-  /** One event from the renderer or main. Never throws and never waits on the network. */
+  /** One event from the renderer, at most RENDERER_EVENT_LIMIT an hour. Never throws and never waits on the network. */
   capture(event: unknown, properties: unknown = {}): void {
+    this.enqueue(event, properties, this.rendererEvents, RENDERER_EVENT_LIMIT)
+  }
+
+  /**
+   * Queues one event that passed the allowlist. With a budget, the event counts
+   * against it and is dropped once the hour's allowance is spent; only events
+   * that would be sent count, so nothing is spent while sharing is off.
+   */
+  private enqueue(event: unknown, properties: unknown, budget?: number[], limit = 0): void {
     if (!this.config.key || typeof event !== 'string' || event.length > 100) return
     const input = properties && typeof properties === 'object' && !Array.isArray(properties) ? properties as Record<string, unknown> : {}
     void this.load().then(preferences => {
@@ -128,6 +143,12 @@ export class DesktopTelemetry {
         ...(this.config.overlaySha ? { overlay_sha: this.config.overlaySha } : {}),
       } })
       if (!sanitized) return
+      if (budget) {
+        const now = this.now()
+        while (budget.length && now - budget[0]! >= REPORT_LIMIT_WINDOW_MS) budget.shift()
+        if (budget.length >= limit) return
+        budget.push(now)
+      }
       if (this.queue.length >= QUEUE_LIMIT) this.queue.shift()
       this.queue.push({ ...withoutErrorMessages(sanitized), timestamp: new Date(this.now()).toISOString() })
       if (this.queue.length >= FLUSH_AT) void this.flush()
@@ -151,7 +172,7 @@ export class DesktopTelemetry {
       if (this.reported.has(key) || this.reports.length >= REPORT_LIMIT) return
       this.reported.set(key, now)
       this.reports.push(now)
-      this.capture(event, properties)
+      this.enqueue(event, properties)
     }).catch(() => {})
   }
 

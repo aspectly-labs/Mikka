@@ -16,7 +16,7 @@ async function harness(t: { after(fn: () => unknown): void }, overrides: { confi
   t.after(() => rm(directory, { recursive: true, force: true }))
   const sent: { url: string; body: { api_key: string; batch: { event: string; properties: Record<string, unknown> }[] } }[] = []
   let now = 1_000_000
-  const make = () => new DesktopTelemetry({ ...config, ...overrides.config }, {
+  const make = () => latest = new DesktopTelemetry({ ...config, ...overrides.config }, {
     userId: () => (overrides.userId === undefined ? 'user-1' : overrides.userId),
     cloud: () => overrides.cloud ?? true,
   }, {
@@ -27,7 +27,12 @@ async function harness(t: { after(fn: () => unknown): void }, overrides: { confi
   return { make, sent, directory, advance: (ms: number) => { now += ms }, events: () => sent.flatMap(request => request.body.batch) }
 }
 
-const settle = () => new Promise(resolve => setTimeout(resolve, 20))
+let latest: DesktopTelemetry | undefined
+/** Waits out the first read of telemetry.json and main's report → capture hop, not a fixed time alone. */
+const settle = async () => {
+  for (let hop = 0; hop < 3; hop++) await latest?.state()
+  await new Promise(resolve => setTimeout(resolve, 20))
+}
 
 test('events pass the web allowlist and carry the platform, version and both source revisions', async t => {
   const { make, sent, events } = await harness(t)
@@ -100,6 +105,37 @@ test('reports are limited per hour, and nothing is counted while sharing is off'
   await settle()
   await telemetry.flush()
   assert.equal(events().length, 201, 'a new hour, not a new process')
+})
+
+test('renderer events have their own hourly limit, apart from main\'s reports', async t => {
+  const { make, events, advance } = await harness(t)
+  const telemetry = make()
+  for (let index = 0; index < 600; index++) telemetry.capture('frontend_runtime_error', { error_name: 'TypeError', error_source: 'window_error', route: '/mikka' })
+  telemetry.mainError(Object.assign(new Error('x'), { name: 'MainStillReports' }), 'uncaught_exception')
+  await settle()
+  await telemetry.flush()
+  assert.equal(events().filter(event => event.event === 'frontend_runtime_error').length, 500, 'the hour allows 500 renderer events')
+  assert.equal(events().filter(event => event.event === 'desktop_main_error').length, 1, 'a flooding page does not crowd out main')
+  advance(61 * 60_000)
+  telemetry.capture('frontend_runtime_error', { error_name: 'TypeError', error_source: 'window_error', route: '/mikka' })
+  await settle()
+  await telemetry.flush()
+  assert.equal(events().filter(event => event.event === 'frontend_runtime_error').length, 501, 'a new hour')
+})
+
+test('a shared artifact, shared thread or invitation page never sends its token', async t => {
+  const { make, events } = await harness(t)
+  const telemetry = make()
+  const tokens = ['mks_AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf', 'mkt_QwErTyUiOpAsDfGhJkLzXcVbNmQwEr', 'ab'.repeat(32)]
+  for (const path of [`/mikka/a/${tokens[0]}`, `/mikka/en/threads/shared/${tokens[1]}`, `/mikka/organization-invite/${tokens[2]}`, `/mikka/en/invite/${tokens[2]}`]) {
+    telemetry.capture('$pageview', { $current_url: `mikka://app${path}` })
+    telemetry.capture('frontend_web_vitals', { route: path, lcp_ms: 1200, flush_reason: 'pagehide' })
+  }
+  await settle()
+  await telemetry.flush()
+  assert.deepEqual(events().filter(event => event.event === '$pageview').map(event => event.properties.$pathname), ['/mikka/a/:token', '/mikka/en/threads/shared/:token', '/mikka/organization-invite/:token', '/mikka/en/invite/:token'])
+  assert.deepEqual(events().filter(event => event.event === 'frontend_web_vitals').map(event => event.properties.route), ['/mikka/a/:token', '/mikka/en/threads/shared/:token', '/mikka/organization-invite/:token', '/mikka/en/invite/:token'])
+  for (const token of tokens) assert.equal(JSON.stringify(events()).includes(token), false)
 })
 
 test('a renderer exception keeps its class and in-app frames, never its message', async t => {
