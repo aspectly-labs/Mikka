@@ -5,11 +5,12 @@ import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { uiOverlay } from '../../../lib/ui-overlay.mjs'
+import { officialUiSkip } from '../../../scripts/official-ui-requirement.mjs'
 
 export const repository = fileURLToPath(new URL('../../../', import.meta.url))
 export const officialUi = uiOverlay(repository)
 export const officialRenderer = officialUi.dir ? join(officialUi.dir, 'core/renderer') : join(repository, '.hosted-ui/core/renderer')
-export const needsOfficialUi = !officialUi.dir && 'needs the official UI checkout (MIKKA_UI_OVERLAY_DIR); mikka-hosted-ui CI runs it'
+export const needsOfficialUi = officialUiSkip(officialUi.dir, 'MIKKA_UI_OVERLAY_DIR')
 
 const workspace = createRequire(join(repository, 'package.json'))
 

@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
+import { officialUiSkip } from '../../../../scripts/official-ui-requirement.mjs'
 import { allowedApiPath } from './bundled-policy'
 
 // The main process allowlists API routes by hand (bundled-policy.ts), so a route
@@ -285,7 +286,7 @@ const asked = new Set([...sites.keys()].map(key))
 
 // The renderer's screens are the official UI's: without its checkout around this repository the scan has nothing to
 // read, and mikka-hosted-ui's CI runs these with it (scripts/core-ui.test.mjs there).
-const needsOfficialUi = !existsSync(join(repository, '.hosted-ui/core')) && 'needs the official UI checkout at .hosted-ui; mikka-hosted-ui CI runs it'
+const needsOfficialUi = officialUiSkip(existsSync(join(repository, '.hosted-ui/core')), '.hosted-ui')
 
 test('every API route the renderer requests is on the desktop allowlist', { skip: needsOfficialUi }, () => {
   const denied = [...sites.values()]
