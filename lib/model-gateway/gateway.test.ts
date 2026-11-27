@@ -111,9 +111,8 @@ const post = (body: unknown, headers: Record<string, string> = { 'x-api-key': 'm
   new Request('https://mikka.test/api/model-gateway/anthropic/v1/messages', { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) })
 
 test('native subscription reserves one correlated usage receipt and settles only observed usage', async () => {
-  const generationId = '10000000-0000-4000-8000-000000000003'
   const selected = grant({ source: { kind: 'subscription', deviceId: 'fixture-device' } })
-  for (const outcome of ['complete', 'missing-usage', 'incomplete', 'missing-id'] as const) {
+  for (const outcome of ['complete', 'missing-usage', 'incomplete', 'missing-receipt-writer'] as const) {
     const ids: string[] = []
     const completed: boolean[] = []
     const events = [
@@ -122,22 +121,22 @@ test('native subscription reserves one correlated usage receipt and settles only
     ]
     const { calls, dependencies } = harness({
       verify: async () => selected,
-      subscription: async () => new Response(sse(events), { headers: { 'content-type': 'text/event-stream',
-        ...(outcome !== 'missing-id' && { 'x-litellm-call-id': generationId }) } }),
-      beginSubscriptionReceipt: async (grant, observedId) => {
+      subscription: async () => new Response(sse(events), { headers: { 'content-type': 'text/event-stream' } }),
+      beginSubscriptionReceipt: outcome === 'missing-receipt-writer' ? undefined : async (grant, observedId) => {
         assert.deepEqual(grant, selected)
         ids.push(observedId)
         return async (receipt, complete) => {
-          assert.equal(receipt.generationId, generationId)
+          assert.equal(receipt.generationId, undefined)
           completed.push(complete)
         }
       },
     })
     const response = await handleModelGateway(post({ model: 'untrusted', stream: true }), 'anthropic', 'messages', dependencies)
-    assert.equal(response.status, outcome === 'missing-id' ? 502 : 200, outcome)
-    assert.deepEqual(ids, outcome === 'missing-id' ? [] : [generationId], outcome)
+    assert.equal(response.status, outcome === 'missing-receipt-writer' ? 502 : 200, outcome)
+    assert.equal(ids.length, outcome === 'missing-receipt-writer' ? 0 : 1, outcome)
+    if (ids.length) assert.match(ids[0], /^[0-9a-f-]{36}$/)
     await response.text()
-    assert.deepEqual(completed, outcome === 'missing-id' ? [] : [outcome === 'complete'], outcome)
+    assert.deepEqual(completed, outcome === 'missing-receipt-writer' ? [] : [outcome === 'complete'], outcome)
     assert.deepEqual(calls.reserved, [])
     assert.deepEqual(calls.fetched, [])
   }

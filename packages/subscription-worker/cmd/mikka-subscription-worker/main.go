@@ -45,8 +45,6 @@ func run() error {
 		Scope                   worker.Scope           `json:"scope"`
 		Use                     *worker.RuntimeUse     `json:"use"`
 		ExecutionOnly           bool                   `json:"executionOnly"`
-		NativeLiteLLMURL        string                 `json:"nativeLiteLlmUrl"`
-		NativeLiteLLMKey        string                 `json:"nativeLiteLlmKey"`
 		AccessPath              string                 `json:"accessPath"`
 		AccessProject           string                 `json:"accessProject"`
 		AccessToken             string                 `json:"accessToken"`
@@ -133,7 +131,7 @@ func run() error {
 			access = secrets
 		}
 	}
-	w := worker.Worker{Repo: &worker.Repository{DB: db}, Secrets: grants, AccessSecrets: access, Scope: config.Scope, Use: config.Use, ExecutionOnly: config.ExecutionOnly, DatabaseURL: config.DatabaseURL, NativeLiteLLMURL: config.NativeLiteLLMURL, NativeLiteLLMKey: config.NativeLiteLLMKey}
+	w := worker.Worker{Repo: &worker.Repository{DB: db}, Secrets: grants, AccessSecrets: access, Scope: config.Scope, Use: config.Use, ExecutionOnly: config.ExecutionOnly, DatabaseURL: config.DatabaseURL}
 	if !config.ExecutionOnly {
 		// Source custody is optional for canonical status/disconnect. Invalid or
 		// incomplete source configuration must never prevent the epoch fence;

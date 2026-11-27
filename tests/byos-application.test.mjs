@@ -26,7 +26,7 @@ import { authorizeSubscriptionUse } from '../lib/subscription-runtime.ts'
 import { authorizedAccessName } from '../lib/subscription-access-snapshot.ts'
 import { readSubscriptionQuota } from '../packages/daemon/src/subscription-quota.ts'
 import { signSubscriptionChat, verifySubscriptionChat } from '../lib/subscription-chat-ticket.ts'
-import { runNativeCliThroughGateway, startNativeLiteLlm } from './support/native-cli-litellm.mjs'
+import { runNativeCliThroughGateway } from './support/native-cli-cpa.mjs'
 import { seedFixtureWorkspace } from './helpers/task-workspace.ts'
 
 const workspaceId = '20000000-0000-4000-8000-000000000001'
@@ -48,6 +48,7 @@ test(scenario, { timeout: 90_000 }, async t => {
   const secretMethods = []
   const blockedDeletes = new Set()
   let providerCalls = 0
+  let officialNativeCli = false
   let unexpectedExternalRequests = 0
   const devices = new Map()
   const deviceVerifier = 'v'.repeat(43)
@@ -88,7 +89,7 @@ test(scenario, { timeout: 90_000 }, async t => {
       return
     }
     assert.equal(body.stream, true)
-    if (!process.env.MIKKA_NATIVE_LITELLM_BIN) assert.ok(!Object.hasOwn(body, 'metadata'), 'no synthetic native identity metadata')
+    if (!officialNativeCli) assert.ok(!Object.hasOwn(body, 'metadata'), 'no synthetic native identity metadata')
     const provider = request.url.endsWith('/codex') ? 'codex' : 'claude'
     if (provider === 'codex') { assert.equal(body.store, false); assert.equal(request.headers.originator, 'Mikka'); assert.equal(request.headers['chatgpt-account-id'], 'fixture-account') }
     const raw = JSON.stringify(body)
@@ -163,16 +164,6 @@ test(scenario, { timeout: 90_000 }, async t => {
   })
   await new Promise(resolve => infisical.listen(0, '127.0.0.1', resolve))
   const origin = `https://127.0.0.1:${infisical.address().port}`
-  let nativeLiteLlm
-  try {
-    nativeLiteLlm = await startNativeLiteLlm(root, directory, origin, certificate)
-  } catch (error) {
-    infisical.closeAllConnections()
-    await new Promise(resolve => infisical.close(resolve))
-    await pool.end()
-    throw error
-  }
-  if (nativeLiteLlm) t.after(nativeLiteLlm.close)
   const repository = new SubscriptionRepository(pool)
   let workerStarts = 0
   let service
@@ -198,7 +189,7 @@ test(scenario, { timeout: 90_000 }, async t => {
           return snapshot(...args)
         }, snapshot)
     }
-    return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token', ...(nativeLiteLlm ? { nativeLiteLlmUrl: nativeLiteLlm.url, nativeLiteLlmKey: nativeLiteLlm.key } : {}) })
+    return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token' })
   }, { ready: () => true, nativeIsolation: 'verified_runtime', oauth: { codex: true, claude: true } }, undefined, chatOnly ? authorizeSubscriptionUse : async (_owner, workspace) => assert.equal(workspace, workspaceId), undefined, undefined, undefined, chat.fixtureTransport)
   const directService = new SubscriptionService(repository, service.worker, service.capabilities,
     service.quota, service.workspace, service.admitModel, service.member)
@@ -411,7 +402,29 @@ test(scenario, { timeout: 90_000 }, async t => {
         assert.equal(contextResponse.status,200)
         const metadata=await contextResponse.json();assert.equal(metadata.route,nativeRoute);assert.equal(metadata.revision,revision);assert.ok(!JSON.stringify(metadata).includes('accessToken'));assert.ok(!JSON.stringify(metadata).includes('fixture-access'))
         const payload={path:provider==='codex'?'/responses':'/v1/messages',headers:{'user-agent':'Mikka/1.0',originator:'Mikka',authorization:'Bearer caller-placeholder'},body:provider==='codex'?{model:'fixture-model',stream:true,store:false,input:[{role:'user',content:'HELLO'}]}:{model:'fixture-model',stream:true,max_tokens:16,messages:[{role:'user',content:'HELLO'}]}}
-        if (nativeLiteLlm && task === 0) await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model', metadata, bindingId: agentBinding.body.bindingId, consumerId: agentId })
+        if (task === 0) {
+          const { handleModelGateway, modelGatewayDependencies, forwardNativeSubscription } = await import('../lib/model-gateway/handler.ts')
+          const { mintGatewayToken } = await import('../lib/model-gateway/token.ts')
+          const { token } = await mintGatewayToken(pool, { runId, ownerId: 'alice', workspaceId, harness: provider === 'claude' ? 'claude_code' : 'codex',
+            model: 'fixture-model', source: { kind: 'subscription', deviceId } })
+          const deps = modelGatewayDependencies()
+          deps.subscription = (...args) => forwardNativeSubscription(...args, service)
+          const request = new Request('http://localhost/api/model-gateway', { method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(payload.body) })
+          const response = await handleModelGateway(request, provider === 'claude' ? 'anthropic' : 'openai', provider === 'claude' ? 'messages' : 'responses', deps)
+          assert.equal(response.status, 200)
+          assert.match(await response.text(), /subscription fixture/)
+          const { rows } = await pool.query('SELECT state, "billingSource", "generationId", "inputTokens", "outputTokens" FROM hosted_usage WHERE "usageRunId"=$1', [runId])
+          assert.deepEqual(rows, [{ state: 'settled', billingSource: 'subscription', generationId: null, inputTokens: '1', outputTokens: '1' }])
+        }
+        if (task === 0 && (provider === 'claude' ? process.env.MIKKA_NATIVE_CLAUDE_BIN : process.env.MIKKA_NATIVE_CODEX_BIN)) {
+          officialNativeCli = true
+          try {
+            await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model', metadata, bindingId: agentBinding.body.bindingId, consumerId: agentId })
+          } finally {
+            officialNativeCli = false
+          }
+        }
         const callsBeforeRetiredRoute = providerCalls
         const retired = await nativePost(runId, { action: 'request', payload })
         assert.equal(retired.status, 410)

@@ -31,7 +31,7 @@ export interface GatewayDependencies {
   reserve(grant: GatewayGrant, id: string): Promise<void>
   settle(id: string, cost: number | null, usage: GatewayUsage | null, generationId?: string, messageId?: string | null): Promise<void>
   recordExternal?(grant: GatewayGrant, id: string, receipt: ModelReceipt): Promise<void>
-  beginSubscriptionReceipt?(grant: GatewayGrant, generationId: string): Promise<(receipt: ModelReceipt, complete: boolean) => Promise<void>>
+  beginSubscriptionReceipt?(grant: GatewayGrant, id: string): Promise<(receipt: ModelReceipt, complete: boolean) => Promise<void>>
   /** The catalogue the cost is priced from. */
   catalogue(): Promise<readonly import('@/lib/model-catalog').CatalogModel[]>
   /** Nothing can pay: the run stops with the refusal as its reason, so the thread shows 「Mikka 额度已用完」. */
@@ -157,13 +157,12 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
   if (type) headers.set('content-type', type)
   let nativeReceipt: Awaited<ReturnType<NonNullable<GatewayDependencies['beginSubscriptionReceipt']>>> | undefined
   if (response.ok && grant.source.kind === 'subscription' && operation !== 'count_tokens') {
-    if (!generationId || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(generationId)
-      || !dependencies.beginSubscriptionReceipt || !grant.workspaceId) {
+    if (!dependencies.beginSubscriptionReceipt || !grant.workspaceId) {
       await response.body?.cancel().catch(() => undefined)
       return errorResponse(protocol, 502, 'model_gateway_subscription_receipt_unavailable')
     }
-    trace.getActiveSpan()?.setAttribute('mikka.litellm.call_id', generationId)
-    try { nativeReceipt = await dependencies.beginSubscriptionReceipt(grant, generationId) }
+    trace.getActiveSpan()?.setAttribute('mikka.model.call_id', holdId)
+    try { nativeReceipt = await dependencies.beginSubscriptionReceipt(grant, holdId) }
     catch (error) { await response.body?.cancel().catch(() => undefined); throw error }
   }
   const observable = Boolean(nativeReceipt) || (operation !== 'count_tokens' && !!dependencies.recordExternal && !!grant.workspaceId)
@@ -184,7 +183,7 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
         ? gatewayCostMicroUsd(catalogModel(grant.model, await dependencies.catalogue()), receipt.usage) : null
       await dependencies.settle(holdId, settledCost, receipt.usage, generationId, receipt.messageId)
     } else if (nativeReceipt) {
-      await nativeReceipt({ ...receipt, cost, generationId }, complete && receipt.usage !== null)
+      await nativeReceipt(receipt, complete && receipt.usage !== null)
     } else if (receipt.messageId || receipt.usage || cost !== null) {
       await dependencies.recordExternal?.(grant, holdId, { ...receipt, cost, generationId })
     }
@@ -220,12 +219,12 @@ export function modelGatewayDependencies(): GatewayDependencies {
       await recordExternalModelUsage(db, { ...receipt, id, threadId, workspaceId: grant.workspaceId, ownerId: grant.ownerId,
         runId: grant.runId, model: grant.model, source: 'api_key' })
     },
-    async beginSubscriptionReceipt(grant, generationId) {
+    async beginSubscriptionReceipt(grant, callId) {
       if (!grant.workspaceId) throw new Error('model_gateway_billing_scope_missing')
       const threadId = (await readRunChain(pool, grant.ownerId, grant.runId))?.rootRunId ?? null
-      const id = `subscription-native:${generationId}`
+      const id = `subscription-native:${callId}`
       const claimed = await claimSubscriptionUsage(db, { id, workspaceId: grant.workspaceId, ownerId: grant.ownerId,
-        runId: grant.runId, model: grant.model, generationId, threadId })
+        runId: grant.runId, model: grant.model, threadId })
       return async (receipt, complete) => { if (claimed) await finishSubscriptionUsage(db, id, receipt, complete) }
     },
     catalogue: async () => (await import('@/lib/model-catalog-server')).modelCatalog(),

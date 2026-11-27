@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -49,7 +48,6 @@ func bindNativeRunFixture(t *testing.T, w *Worker, revision int64, route string)
 		t.Fatal(err)
 	}
 	w.Use.ConsumerID, w.Use.RunID = agent, run
-	w.NativeLiteLLMURL, w.NativeLiteLLMKey = "http://127.0.0.1:40123", "fixture-llm-proxy"
 	return run
 }
 
@@ -74,11 +72,11 @@ func TestNativeBrokerUsesAccessOnlyCredentialsWithoutExportOrEndpointSelection(t
 			var calls atomic.Int32
 			w.NativeClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				calls.Add(1)
-				expected := w.NativeLiteLLMURL + "/v1/mikka/subscription/codex/responses"
+				expected := "https://chatgpt.com/backend-api/codex/responses"
 				if provider == "claude" {
-					expected = w.NativeLiteLLMURL + "/v1/mikka/subscription/claude/messages"
+					expected = "https://api.anthropic.com/v1/messages?beta=true"
 				}
-				if r.URL.String() != expected || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer fixture-"+provider+"-access-") || r.Header.Get("x-litellm-api-key") != "Bearer fixture-llm-proxy" || r.Header.Get("Cookie") != "" || r.Header.Get("X-Api-Key") != "" {
+				if r.URL.String() != expected || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer fixture-"+provider+"-access-") || r.Header.Get("x-litellm-api-key") != "" || r.Header.Get("Cookie") != "" || r.Header.Get("X-Api-Key") != "" {
 					t.Error("native forwarding changed destination/authority")
 				}
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: {\"native\":true}\n\n"))}, nil
@@ -277,11 +275,7 @@ func TestNativeRunModelChoiceUsesFrozenServerSnapshot(t *testing.T) {
 	}
 }
 
-func TestNativeBrokerThroughRealLiteLLM(t *testing.T) {
-	proxy := os.Getenv("MIKKA_NATIVE_TEST_LITELLM_URL")
-	if proxy == "" {
-		t.Skip("Run deploy/litellm/native-subscription.test.py with a local LiteLLM binary")
-	}
+func TestNativeBrokerPreservesLargeRequestsAndProviderUsage(t *testing.T) {
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			w, _, _ := fixtureWorker(t, provider)
@@ -291,7 +285,17 @@ func TestNativeBrokerThroughRealLiteLLM(t *testing.T) {
 				route, path = "claude_code_cli", "/v1/messages?beta=true"
 			}
 			bindNativeRunFixture(t, w, initial.Revision, route)
-			w.NativeLiteLLMURL, w.NativeLiteLLMKey = proxy, os.Getenv("LITELLM_MASTER_KEY")
+			w.NativeClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				payload, err := io.ReadAll(r.Body)
+				if err != nil || !bytes.Contains(payload, []byte(strings.Repeat("a", 300<<10))) {
+					t.Fatal("native request body was truncated", err)
+				}
+				kind, body := "text/event-stream", `data: {"input_tokens":1,"output_tokens":1}`+"\n\n"
+				if r.URL.Path == "/v1/messages/count_tokens" {
+					kind, body = "application/json", `{"input_tokens":13}`
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {kind}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
 			run := func(path string, stream bool, expectedType, expectedBody string) {
 				t.Helper()
 				payload, _ := json.Marshal(map[string]any{"model": "fixture-model", "stream": stream, "system": "run safety instructions",
@@ -300,15 +304,15 @@ func TestNativeBrokerThroughRealLiteLLM(t *testing.T) {
 				request := NativeRequest{Path: path, Headers: map[string]string{"authorization": "Bearer caller-placeholder", "cookie": "foreign", "x-api-key": "foreign"}, Body: payload}
 				var output bytes.Buffer
 				if err := w.NativeStream(context.Background(), initial.Revision, request, func(kind string, generationID string) error {
-					if !nativeGenerationID.MatchString(generationID) {
-						t.Error("missing actual LiteLLM call ID")
+					if generationID != "" {
+						t.Error("direct CPA must not emit a LiteLLM generation ID")
 					}
 					if kind != expectedType {
 						t.Errorf("unexpected response type %q", kind)
 					}
 					return nil
 				}, func(part []byte) error { _, err := output.Write(part); return err }); err != nil {
-					t.Fatal("native request through real LiteLLM failed", err)
+					t.Fatal("direct native request failed", err)
 				}
 				if !strings.Contains(output.String(), expectedBody) || strings.Contains(output.String(), "fixture-"+provider+"-access-") {
 					t.Fatal("native usage receipt was missing or exposed a bearer")
