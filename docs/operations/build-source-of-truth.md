@@ -339,7 +339,12 @@ unpromotable); it staged exactly `promote_source` and the producer's manifest;
 `cloud_source_sha` is current private `main`; the candidate contains what
 production serves (no downgrade); and every `requiredChecks.production` entry
 passes. The private publisher re-checks the promoters, the staging evidence
-(`stagingEvidence`) and the downgrade rule before any write.
+(`stagingEvidence`) and the downgrade rule before any write. An automatic
+(`workflow_run`) promotion passes the same evidence gate in the public selector:
+it re-reads and validates the policy at the operations commit it deploys,
+requires `autoProduction: true` there, and runs every `requiredChecks.production`
+entry against the candidate's `sourceCommit` before any deployment input is
+exported or credential read.
 
 Desktop (a `desktop-release.yml` dispatch): the dispatcher and re-run actor are
 promoters; the receipt is verified as before (a manual `pipeline:` receipt must

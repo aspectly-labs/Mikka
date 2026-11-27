@@ -369,6 +369,11 @@ async function daemonFloorReached(api, sourceCommit, npmLatest) {
   assert.ok(versionAtLeast(await npmLatest(), floor), 'pipeline_daemon_latest_behind')
 }
 
+/** The private release policy at one operations commit, fully validated; anything else is unreadable. */
+async function productionPolicy(api, operations) {
+  return checkedReleasePolicy(policyFromContents(await api(`alexj11324/mikka-cloud/contents/${POLICY_PATH}?ref=${operations}`)).policy)
+}
+
 async function manualStage(api, env) {
   assert.equal(env.MIKKA_DEPLOYMENT_PHASE, 'pipeline-promote', 'pipeline_deployment_phase_invalid')
   // Merge and Actions automation never promote, whatever the list says.
@@ -390,7 +395,7 @@ async function manualStage(api, env) {
   if (env.INPUT_CLOUD_SOURCE) assert.equal(env.INPUT_CLOUD_SOURCE, cloud.object.sha, 'pipeline_operations_source_must_be_current_main')
   let policy
   try {
-    policy = checkedReleasePolicy(policyFromContents(await api(`alexj11324/mikka-cloud/contents/${POLICY_PATH}?ref=${cloud.object.sha}`)).policy)
+    policy = await productionPolicy(api, cloud.object.sha)
     requirePromoters(policy, { actor: current.actor, triggeringActor: current.triggering_actor })
     requireCommittedPromoters(policy)
   } catch (cause) {
@@ -423,17 +428,15 @@ async function manualStage(api, env) {
   const latestStaging = await priorDeployment(api, env.GITHUB_RUN_ID, undefined, 'staging')
   assert.ok(latestStaging && String(latestStaging.run.id) === String(run.id) && String(latestStaging.run.run_attempt) === String(run.run_attempt)
     && latestStaging.summary?.rollback === undefined && latestStaging.summary?.status === 'passed', 'pipeline_stage_not_current')
-  try {
-    await runReleaseChecks('production', { checks: policy.requiredChecks.production, sourceCommit: selected.manifest.sourceCommit,
-      read: path => api(`${repository}/${path}`), builtin: {} })
-  } catch (cause) { throw new Error('pipeline_required_check_failed', { cause }) }
-  return { selected, stage, stageRun: run, operations: cloud.object.sha }
+  return { selected, stage, stageRun: run, operations: cloud.object.sha, policy }
 }
 
 /** Production consumes a completed staging artifact with its own serving baseline. It never
  * silently uses the staging baseline. An automatic run promotes the staging result of this same
- * run, and only while the private policy's `autoProduction` is true (the workflow skips it
- * otherwise); a manual dispatch by a listed promoter promotes the named staging run instead. */
+ * run, and only while the private policy's `autoProduction` is true at the operations commit it
+ * deploys (the workflow skips it otherwise, and this re-reads it); a manual dispatch by a listed
+ * promoter promotes the named staging run instead. Either way the policy's production
+ * `requiredChecks` must pass on the candidate's source commit before anything is exported. */
 export async function selectPromotion({ env = process.env, api = github, npmLatest = npmLatestDaemon } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
   assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')
@@ -444,8 +447,8 @@ export async function selectPromotion({ env = process.env, api = github, npmLate
   for (const key of ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', ...(manual ? [] : ['INPUT_STAGE_ARTIFACT'])])
     assert.match(env[key] ?? '', number, 'pipeline_promotion_input_required')
   if (!manual) assert.match(env.INPUT_OPERATIONS_SOURCE ?? '', sha, 'pipeline_operations_source_required')
-  let selected, stage, stageRun, operations
-  if (manual) ({ selected, stage, stageRun, operations } = await manualStage(api, env))
+  let selected, stage, stageRun, operations, policy
+  if (manual) ({ selected, stage, stageRun, operations, policy } = await manualStage(api, env))
   else {
     const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'))
     selected = await release(api, event.workflow_run?.id, event.workflow_run?.run_attempt)
@@ -454,6 +457,9 @@ export async function selectPromotion({ env = process.env, api = github, npmLate
     stage = await members(api, stageRun, 'deploy-pipeline')
     assert.equal(String(stage.artifact.id), env.INPUT_STAGE_ARTIFACT, 'pipeline_stage_artifact_mismatch')
     operations = env.INPUT_OPERATIONS_SOURCE
+    // The same file the staging job's switch read, at the operations commit this run deploys.
+    try { policy = await productionPolicy(api, operations) } catch (cause) { throw new Error('pipeline_policy_unreadable', { cause }) }
+    assert.equal(policy.autoProduction, true, 'pipeline_auto_production_disabled')
   }
   assert.deepEqual(stage.files['release-manifest.json'], selected.manifest, 'pipeline_stage_manifest_mismatch')
   // Every promotion, automatic or manual: npm latest must already satisfy the candidate's daemon floor.
@@ -461,6 +467,11 @@ export async function selectPromotion({ env = process.env, api = github, npmLate
   assert.equal(stage.files['pipeline-summary.json']?.status, 'passed', 'pipeline_stage_incomplete')
   assert.equal(stage.files['pipeline-summary.json'].target, 'staging', 'pipeline_stage_target_mismatch')
   assert.equal(stage.files['pipeline-summary.json'].rollback, undefined, 'pipeline_stage_rollback_rejected')
+  // Every promotion, automatic or manual, needs the policy's production evidence on the exact commit.
+  try {
+    await runReleaseChecks('production', { checks: policy.requiredChecks.production, sourceCommit: selected.manifest.sourceCommit,
+      read: path => api(`${repository}/${path}`), builtin: {} })
+  } catch (cause) { throw new Error('pipeline_required_check_failed', { cause }) }
   const prior = await priorDeployment(api, env.GITHUB_RUN_ID, undefined, 'production')
   const previousOrigin = prior && baselineOrigin(prior.summary, 'production')
   const previous = previousOrigin && await historicalRelease(api, previousOrigin.runId, previousOrigin.runAttempt)
