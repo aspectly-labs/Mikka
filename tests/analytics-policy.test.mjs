@@ -336,7 +336,7 @@ test('the active Vite web entry initializes PostHog and the shared application m
 
 test('the official interface never imports posthog-js statically and mounts the pageview tracker', { skip: needsOfficialUi }, () => {
   // The interface lives in the official UI checkout (core/ and web/, decision 2026-11-24-1000-all-ui-in-hosted).
-  for (const file of ['components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'hooks/use-approval-live.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
+  for (const file of ['components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
     const path = [file, `.hosted-ui/web/${file}`].find(uiExists)
     if (path) assert.doesNotMatch(readUi(path), /from 'posthog-js'/, file)
   }
@@ -769,6 +769,114 @@ test('frontend_web_vitals keeps bounded CWV timings, drops empty/invalid payload
     },
   })
   assert.deepEqual(pageview.properties, { distinct_id: 'opaque-user-id' })
+})
+
+test('a control click keeps only its build-time owner; anything else in it, or a malformed owner, is dropped', () => {
+  const owner = 'web/components/settings/members.tsx#MembersPage:Button[Invite]'
+  const event = sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: {
+    owner, token: 'public-project-token', distinct_id: 'opaque-user-id', $el_text: 'private@example.com',
+    $elements: [{ text: 'private' }], email: 'private@example.com', $current_url: 'https://example.com/settings?email=x',
+  } })
+  assert.deepEqual(event.properties, {
+    token: 'public-project-token', distinct_id: 'opaque-user-id', owner,
+    $current_url: 'https://example.com/settings', $pathname: '/settings',
+  })
+  for (const bad of [undefined, 42, 'private@example.com', 'not-a-file#X:button', `web/a.tsx#A:button[${'x'.repeat(200)}]`]) {
+    assert.equal(sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: { owner: bad } }), null, String(bad))
+  }
+})
+
+test('a control owner names a file under a UI source root and a plugin-written label, never data', () => {
+  const kept = owner => sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: { owner } })?.properties.owner
+  // Owners the UI checkout's plugin writes (scripts/track-owner/vite-plugin.mjs).
+  for (const owner of [
+    'web/components/settings/members.tsx#MembersPage:Button[Invite]',
+    'web/components/demo/panel.tsx#Fancy:button[Save draft]',
+    'slots/a.tsx#A:button.1',
+    'slots/thread.tsx#ThreadSlot:Tabs.Trigger[Changes].2',
+    'core/components/sidebar.tsx#Sidebar:a[Open sidebar]',
+    'components/mikka/create-window.tsx#CreateWindow:button[新建任务]',
+    'components/mikka/right-column-strip/strip.tsx#Strip:button[onClick=props.onCloseRightColumnTabAndFocus]',
+    'lib/settings-frame.tsx#SettingsFrame:Link[settings.nav.general]',
+    'shared/x.jsx#module:input.3',
+    'preview/templates.tsx#Templates:summary[Version 2026]',
+    `web/a.tsx#A:button[${'x'.repeat(48)}]`,
+    `web/a.tsx#A:button[onClick=${'h'.repeat(64)}]`,
+    'web/a.tsx#A:button.999',
+    // Hashed message keys are names (the UI checkout's FeatureCopy.c_<8 hex>).
+    'slots/settings-members.tsx#TeamsTab:Button[FeatureCopy.c_30108106]',
+    'slots/settings-members.tsx#TeamMembersPage:Button[FeatureCopy.c_352987c4]',
+    'web/components/slots/settings-sidebar.tsx#SettingsSidebar:SidebarMenuButton[FeatureCopy.c_cb11190c]',
+    'web/components/x.tsx#X:button[Settings.nav.createTeam]',
+    'web/components/x.tsx#X:a[versionPullRequest].2',
+    // Brackets, `#` and `:` of the owner itself are not data, nor are a mention's `@` or a component named Data.
+    'web/a.tsx#A:button[@].1',
+    'web/a.tsx#A:button[@here]',
+    'web/a.tsx#Data:button',
+    'web/a.tsx#Tel:a[Run]',
+  ]) assert.equal(kept(owner), owner, owner)
+  for (const owner of [
+    'web/a.tsx#A:button[x@y.com]',
+    'web/a.tsx#A:button[Mail alex@example.com]',
+    '../../etc/passwd.tsx#A:b',
+    'web/../../etc/passwd.tsx#A:b',
+    'web/./a.tsx#A:b',
+    'etc/passwd.tsx#A:b',
+    'node_modules/pkg/a.tsx#A:button',
+    '/web/a.tsx#A:button',
+    'web.tsx#A:button',
+    `web/a.tsx#A:button[${'x'.repeat(49)}]`,
+    'web/a.tsx#A:button[https://example.com]',
+    'web/a.tsx#A:button[www.example.com]',
+    'web/a.tsx#A:button[example.com/reset?token=abc]',
+    'web/a.tsx#A:button[mailto:alex]',
+    'web/a.tsx#A:button[Order 123456]',
+    'web/a.tsx#A:button[Call +1 (555) 123-4567]',
+    'web/a.tsx#A:button[onClick=x@y.com]',
+    // Data anywhere in the owner, not only in its label.
+    'web/alex@example.com/a.tsx#A:button',
+    'web/www.example.com/a.tsx#A:button',
+    'web/4111111111111111.tsx#A:button',
+    'web/evil.example.com/a.tsx#A:button',
+    'web/a.tsx#A:button[onClick=www.example.com]',
+    'web/a.tsx#A:button[onClick=x4111111111111111]',
+    `web/a.tsx#A:button[onClick=${'h'.repeat(65)}]`,
+    'web/a.tsx#A:button.4111111111111111',
+    'web/a.tsx#A:button.1234',
+    'web/a.tsx#A4111111111111111:button',
+    'web/a.tsx#A:Menu.x4111111111111111',
+    // Control and invisible characters, other scripts' forms of data.
+    'web/a.tsx#A:button[Save\rDraft]',
+    'web/a.tsx#A:button[Save\u0000]',
+    'web/a.tsx#A:button[Save\u202eDraft]',
+    'web/a.tsx#A:button[alex＠example.com]',
+    'web/a.tsx#A:button[４１１１ ４１１１ ４１１１ ４１１１]',
+    'web/a.tsx#A:button[٤١١١٤١١١٤١١١٤١١١]',
+    'web/a.tsx#A:button[4111/1111/1111/1111]',
+    'web/a.tsx#A:button[evil.example.com]',
+    'web/a.tsx#A:button[10.0.0.1]',
+    'web/a.tsx#A:button[data:text/html,x]',
+    'web/a.tsx#A:button[FeatureCopy.c_30108106 4111111]',
+    'web/a.tsx#A:button[FeatureCopy.c_301081061]',
+    // Only FeatureCopy's hashed keys are names.
+    'web/a.tsx#A:button[x4111111111111111.c_00000000]',
+    'web/a.tsx#A:button[x10.0.0.1.c_00000000]',
+    'web/a.tsx#A:button[evil.example.com.c_deadbeef]',
+    // URLs, domains, hosts, ids and tokens.
+    'web/a.tsx#A:button[bit.ly/abc123]',
+    'web/a.tsx#A:button[get.sh/install]',
+    'web/a.tsx#A:button[MAILTO:alex]',
+    'web/a.tsx#A:button[Tel:+1 555]',
+    'web/a.tsx#A:button[JavaScript:void]',
+    ...['acme.ly', 'notion.so', 'alex.me', 'site.fr', 'foo.info', 'discord.gg', 'alex%40acme.ly'].map(label => `web/a.tsx#A:button[${label}]`),
+    'web/a.tsx#A:button[api.acme:8080]',
+    'web/a.tsx#A:button[Open 123e4567-e89b-12d3-a456-426614174000]',
+    'web/a.tsx#A:button[sk_live_51Habcdefghijklmnop]',
+    'web/a.tsx#A:button[deadbeefdeadbeefdeadbeef1]',
+    'web/a.tsx#A:button[Call 1 2 3 4 5 6 7]',
+    'web/a.tsx#A:button[Pay 1$2$3$4$5$6$7]',
+    'web/a.tsx#A:button[onClick=sk_live_51Habcdefghijklmnop]',
+  ]) assert.equal(kept(owner), undefined, owner)
 })
 
 test('desktop reports keep only a route template, method, status and code, with the build tags', () => {

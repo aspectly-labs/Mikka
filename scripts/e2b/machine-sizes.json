@@ -1,0 +1,6 @@
+{
+  "small": { "cpuCount": 1, "memoryMB": 4096, "hourlyMicroUsd": 115200 },
+  "medium": { "cpuCount": 2, "memoryMB": 8192, "hourlyMicroUsd": 230400 },
+  "large": { "cpuCount": 4, "memoryMB": 16384, "hourlyMicroUsd": 460800 },
+  "ultra": { "cpuCount": 8, "memoryMB": 32768, "hourlyMicroUsd": 921600 }
+}

@@ -120,8 +120,9 @@ export async function readWorkspaceUsage(workspaceId: string, reader: string | E
       const envIds = [...new Set(rawRows.flatMap(row => row.environmentId ? [row.environmentId] : []))]
       const names = envIds.length
         ? new Map((await workspacePool.query<{ id: string; name: string }>(
-            'select id::text as id, name from workspace_environments where "workspaceId"=$1 and id=any($2::uuid[])',
-            [workspaceId, envIds],
+            `select id::text as id, name from workspace_environments where "workspaceId"=$1 and id=any($2::uuid[])
+              and (scope='workspace' or "ownerId"=$3)`,
+            [workspaceId, envIds, userId],
           )).rows.map(row => [row.id, row.name] as const))
         : new Map<string, string>()
       rows = rawRows.map(row => ({ ...row, environmentName: row.environmentId ? names.get(row.environmentId) ?? null : null }))

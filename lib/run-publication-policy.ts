@@ -34,6 +34,7 @@ export function validPublicationBranch(branch: string, identifier: string) {
 export function publicationGate(input: {
   stopReason: string | null; kind: string; report: RunReport | null
   assignment: { branch: string | null } | null
+  autoOpen?: boolean
 }): { state: 'skipped' } | { state: 'blocked'; error: PublicationErrorCode } | { state: 'pending' } {
   const { report, assignment } = input
   if (input.stopReason !== 'submitted' || input.kind === 'plan' || !report || report.verify.status === 'failed') return { state: 'skipped' }
@@ -42,5 +43,5 @@ export function publicationGate(input: {
   if (!assignment.branch) return { state: 'blocked', error: 'task_identifier_required' }
   if (!report.publish?.pushed) return { state: 'blocked', error: 'push_failed' }
   if (report.publish.branch !== assignment.branch || report.publish.remote !== 'origin' || !report.publish.commit || !/^[a-f0-9]{40,64}$/i.test(report.publish.commit)) return { state: 'blocked', error: 'publication_mismatch' }
-  return { state: 'pending' }
+  return { state: input.autoOpen === false ? 'skipped' : 'pending' }
 }

@@ -2,7 +2,7 @@
 
 **Audience:** Engineers and coding agents adding configuration, pricing, entitlements, model catalogs, host routing, runtime flags, or localized copy across `aspectly-labs/Mikka` and `mikka-hosted-ui`.
 **Scope:** The five truth tiers (T1–T5), the placement decision rule, the six mechanical CI gates (G1–G6) enforced at zero ratchet baselines, and the four-rule semantic lint gate.
-**Out of scope:** Secret values and private deployment inventories (see private `mikka-cloud/AGENTS.md`), visual token rules ([Design System v2](../design/design-system.md)), and historical decision snapshots (`docs/design/decisions.md` is frozen pre-2026-11-01 history and is not operating policy).
+**Out of scope:** Secret values and private deployment inventories (see private `mikka-cloud/AGENTS.md`), visual token rules ([Design System v2](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/design-system.md)), and historical decision snapshots (`docs/design/decisions.md` is frozen pre-2026-11-01 history and is not operating policy).
 
 Start at the [documentation index](../README.md) for general orientation and [7-layer primitive architecture](primitives.md) for the broader executable gate map. When prose and code disagree, the executable gate wins; update this document in the same pull request.
 

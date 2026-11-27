@@ -14,7 +14,7 @@ export function renderAgentMermaid(id: string, source: string, theme: 'dark' | '
     const sanitize = (svg: string) => DOMPurify.sanitize(svg, {
       USE_PROFILES: { svg: true, svgFilters: true },
       FORBID_TAGS: ['foreignObject', 'script', 'iframe', 'image', 'a', 'use', 'animate', 'set', 'animateTransform'],
-      FORBID_ATTR: ['href', 'xlink:href'],
+      FORBID_ATTR: ['href', 'xlink:href', 'data-track-owner'],
     }) as SanitizedMermaidSvg
     if (supportsBeautifulMermaid(source)) {
       try {

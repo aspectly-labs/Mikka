@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends nftables \
 COPY --from=worker-build /opt/mikka/worker /opt/mikka/worker
 COPY --from=worker-build /opt/mikka/runtime/preview-python-3.14.0 /opt/mikka/runtime/preview-python-3.14.0
 COPY packages/daemon/scripts/workspace-ingress.py /opt/mikka/runtime/ingress-v1/guard.py
+COPY packages/daemon/src/task-workspace-archive.mjs /opt/mikka/task-sandbox/task-workspace-archive.mjs
 COPY packages/daemon/scripts/workspace-control-install.py /opt/mikka/task-sandbox/workspace-control-install.py
 COPY scripts/e2b/terminal-gateway.py /opt/mikka/terminal/gateway.py
 COPY scripts/e2b/preview-gateway.py scripts/e2b/preview_firewall.py /opt/mikka/preview/

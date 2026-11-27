@@ -50,6 +50,7 @@ export interface ConversationDirectoryPage {
     pulls: DirectoryPull[]; taskTitle: string | null; kind: 'run' | 'chat'; id: string; issueId: string | null; identifier: string | null; title: string
     linkedTasks?: DirectoryTaskLink[]
     state: DirectoryState; at: string; pinned: boolean; unread?: boolean
+    folder?: string | null; tags?: string[]
   }[]
   cursor: NonNullable<DirectoryInput['cursor']> | null
 }

@@ -94,7 +94,10 @@ async function handlePOST(request: Request) {
   // Keep form-action 'self': Chromium also applies it to cross-origin POST
   // redirects. Finish the local form first, then make an ordinary GET with no referrer.
   let response: RouteResponse
-  if (destination.origin === url.origin) {
+  // Linear starts on this origin but redirects to the provider. Complete the
+  // form on an HTML document so the provider visit is a fresh navigation too.
+  const linearConnect = destination.pathname === withBasePath('/api/integrations/linear/connect')
+  if (destination.origin === url.origin && !linearConnect) {
     response = RouteResponse.redirect(destination, { status: 303, headers: safeHeaders })
   } else {
     const href = escape(destination.href)

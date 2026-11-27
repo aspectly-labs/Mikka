@@ -189,11 +189,11 @@ A change a person can see is drawn in Figma first, reviewed with the
 `interface-design:design-review` and `unslop` skills until nothing blocking
 remains, confirmed by Alex, and only then implemented. The PR shows the built
 screen next to the confirmed frames; green CI alone does not make it
-mergeable. Details: `docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md`.
+mergeable. Details: `mikka-hosted-ui/docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md`.
 A paid block or component (BoardUI Pro, affectUI, beUI Pro) is raw material:
 it is edited in its own source to match the top-product reference, and its PR
 cites that reference per changed surface and lists the differences that remain
-(`docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md`).
+(`mikka-hosted-ui/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md`).
 
 ### Test logins: never ask for a password
 

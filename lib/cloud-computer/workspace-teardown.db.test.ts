@@ -77,9 +77,9 @@ test('workspace and account deletion kill their machines\' sandboxes and retry a
 
     const { retrySandboxKills } = await import('./workspace-teardown')
     kills.length = 0
-    assert.deepEqual(await retrySandboxKills(database), { killed: 0, pending: 1 }, 'still failing: the row stays')
+    assert.deepEqual(await retrySandboxKills(database, { ownerId: member }), { killed: 0, pending: 1 }, 'still failing: the row stays')
     failing = new Set()
-    assert.deepEqual(await retrySandboxKills(database), { killed: 1, pending: 0 })
+    assert.deepEqual(await retrySandboxKills(database, { ownerId: member }), { killed: 1, pending: 0 })
     assert.deepEqual(kills.map(row => [row.ownerId, row.sandboxId]), [[member, theirs.thread], [member, theirs.thread]])
     assert.deepEqual(await retries([theirs.thread]), [])
     // A sandbox E2B no longer has counts as killed.

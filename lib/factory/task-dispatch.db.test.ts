@@ -45,7 +45,7 @@ async function fixtureWorkspaceTransaction<T>(work: (tx: {
             assert.equal(mode, 'share')
             const query = dialect.sqlToQuery(condition)
             if (table === workspaces) {
-              assert.deepEqual(Object.keys(fields), ['id', 'kind', 'ownerId'])
+              assert.deepEqual(Object.keys(fields), ['id', 'kind', 'ownerId', 'factorAt'])
               assert.equal(fields.id, workspaces.id); assert.equal(fields.kind, workspaces.kind); assert.equal(fields.ownerId, workspaces.userId)
               assert.equal(compact(query.sql), '"mikka_workspaces"."id" = $1')
               assert.deepEqual(query.params, [scope.workspaceId])

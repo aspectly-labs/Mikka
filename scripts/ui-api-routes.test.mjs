@@ -192,6 +192,7 @@ test('every flag the desktop renderer reads is one its bootstrap carries', { ski
       if (flag) read.set(flag, module.name)
     }
   }
-  assert.ok(read.has('mikka-personal-writes-off'), 'the scan sees use-approval-live\'s flag read')
+  // Not tied to one flag: the renderer may read none (the approval hint left with use-approval-live).
+  assert.ok(modules('desktop').graph.size > 0, 'the scan walks the desktop renderer')
   assert.deepEqual([...read].filter(([flag]) => !CLIENT_FLAG_KEYS.includes(flag)).map(([flag, file]) => `${flag} (${file})`), [], 'add these to CLIENT_FLAG_KEYS in lib/feature-flags.ts')
 })

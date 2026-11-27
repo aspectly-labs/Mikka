@@ -1,7 +1,7 @@
 import { apiWorkspaceAllowed } from '@/lib/api-auth'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { WorkspaceError } from '@/lib/workspace-access'
-import { readWorkspaceBillingSettings, writeWorkspaceAutoRecharge } from '@/lib/billing/settings'
+import { readWorkspaceBillingSettings, writeWorkspaceAutoRecharge, writeWorkspaceOveragePolicy } from '@/lib/billing/settings'
 import { readRequiredJsonBody, requireDeviceApiSession, wsGJsonResponse } from '@/lib/settings/device-policy-http'
 import { defineRoute } from '@/lib/primitives/define-route'
 
@@ -36,6 +36,9 @@ const mutateHandler = ({ request, params, session }: { request: Request; params:
     const verified = await requireDeviceApiSession(request, true, session)
     if (!apiWorkspaceAllowed(verified, params.workspaceId)) throw new WorkspaceError('workspaceAccessDenied')
     const body = await readRequiredJsonBody(request)
+    if (body && typeof body === 'object' && !Array.isArray(body) && 'overage' in body && Object.keys(body).length === 1) {
+      return writeWorkspaceOveragePolicy(verified.user.id, params.workspaceId, (body as { overage: unknown }).overage, verified.user[enterprisePrincipal])
+    }
     return writeWorkspaceAutoRecharge(verified.user.id, params.workspaceId, body, verified.user[enterprisePrincipal])
   })
 

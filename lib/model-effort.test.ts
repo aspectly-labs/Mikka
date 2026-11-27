@@ -27,15 +27,18 @@ test('a supported effort is added to each call; the call\'s own options win', as
   assert.deepEqual((codex.calls[0] as { openai: unknown }).openai, { reasoningEffort: 'xhigh' })
 })
 
-test('no effort, or one the model does not list, leaves the model as it is', () => {
+test('no effort, or one a known model does not list, leaves the model as it is', () => {
   const { model } = recorder('claude-haiku-5-5')
   assert.equal(withModelEffort(model, null), model)
   assert.equal(withModelEffort(model, undefined), model)
   assert.equal(withModelEffort(recorder('gpt-5.5').model, 'max').modelId, 'gpt-5.5')
   const gpt55 = recorder('gpt-5.5').model
   assert.equal(withModelEffort(gpt55, 'max'), gpt55, 'gpt-5.5 has no max effort')
+  // A model Mikka's built-in list does not know keeps the level the turn froze: freezeBotModel already checked it
+  // against the provider's own catalogue (lib/model-capabilities.ts, decision 2026-11-25-1700).
   const unknown = recorder('some-new-model').model
-  assert.equal(withModelEffort(unknown, 'low'), unknown)
+  assert.notEqual(withModelEffort(unknown, 'low'), unknown)
+  assert.equal(withModelEffort(unknown, null), unknown)
 })
 
 test('speed capabilities come strictly from server evidence and withModelServiceTier maps fast/ultrafast', async () => {

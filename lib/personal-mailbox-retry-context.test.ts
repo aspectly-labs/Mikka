@@ -49,8 +49,12 @@ const tx = {
 const database = {
   execute: async (statement: SQL) => {
     const query = queryOf(statement)
-    assert.deepEqual(query.params, [lost.id, lost.userId])
     assert.ok(resourceLocked, 'recovery reads hold the live resource lease')
+    if (query.sql === 'select "environmentId" from bots where id=$1 and "workspaceId"=$2 and "ownerId"=$3 and "archivedAt" is null') {
+      assert.deepEqual(query.params, [botId, workspaceId, lost.userId])
+      return { rows: [{ environmentId: null }] }
+    }
+    assert.deepEqual(query.params, [lost.id, lost.userId])
     assert.ok([
       'select b."workspaceId",m."sandboxId",m."operationId",m."deviceId",m."repoId" from computer_run_bindings b left join thread_machines m on m."runId"=b."runId" and m."ownerId"=b."ownerId" and m."workspaceId"=b."workspaceId" where b."runId"=$1 and b."ownerId"=$2',
       'select 1 from computer_run_bindings where "runId"=$1 and "ownerId"=$2',
@@ -152,6 +156,10 @@ const workspaceTx = {
     assert.ok(resourceLocked)
     if (query.sql === 'select mode,"repositoryKeys",revision from workspace_repository_policies where "workspaceId"=$1') {
       assert.deepEqual(query.params, [workspaceId]); return { rows: [] }
+    }
+    if (query.sql === 'select (select "environmentId" from workspace_task_environments where "issueId"=$1 and "workspaceId"=$2) as "environmentId", (select "baseBranch" from workspace_task_legacy_repository_branches where "workspaceId"=$3 and "issueId"=$4 and "repositoryKey"=$5) as "legacyBranch"') {
+      assert.deepEqual(query.params, [lost.issueId, workspaceId, workspaceId, lost.issueId, repository.repoPath])
+      return { rows: [{ environmentId: null, legacyBranch: null }] }
     }
     assert.equal(query.sql, 'select p.id,p.revision,p."archivedAt" from workspace_project_tasks t join workspace_projects p on p.id=t."projectId" and p."workspaceId"=t."workspaceId" where t."issueId"=$1 and t."workspaceId"=$2')
     assert.deepEqual(query.params, [lost.issueId, workspaceId]); return { rows: [] }

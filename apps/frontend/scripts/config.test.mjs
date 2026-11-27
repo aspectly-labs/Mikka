@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { frontendConfig } from '../vite.config.mjs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { frontendConfig, trackOwnerPlugins } from '../vite.config.mjs'
 import { browserModule } from './test-module.mjs'
 import { uiFixture } from './application-test-build.mjs'
 import { LEGACY_PUBLIC_ENV } from '../../../lib/public-env.mjs'
@@ -137,4 +140,22 @@ test('without the official UI checkout the headless page builds for web and desk
       await assert.rejects(frontendConfig(), /OFFICIAL_UI_CHECKOUT_AND_REVISION_REQUIRED|UI_OVERLAY_DIR_REQUIRED_FOR_RELEASE/)
     })
   })
+})
+
+test('the UI checkout\'s data-track-owner plugin is imported only with an explicit MIKKA_TRACK_OWNER=1', async () => {
+  const on = { MIKKA_TRACK_OWNER: '1' }
+  assert.deepEqual(await trackOwnerPlugins({ dir: null }, on), [])
+  const dir = await mkdtemp(join(tmpdir(), 'mikka-track-owner-'))
+  try {
+    assert.deepEqual(await trackOwnerPlugins({ dir }, on), [])
+    await mkdir(join(dir, 'scripts/track-owner'), { recursive: true })
+    // A module that throws on import proves it is never imported unless the switch is on.
+    await writeFile(join(dir, 'scripts/track-owner/vite-plugin.mjs'), 'if (!globalThis.__mikkaTrackOwnerAllowed) throw new Error("imported")\nexport const trackOwnerPlugin = ({ root }) => ({ name: "mikka-track-owner", root })\n')
+    for (const env of [{}, { MIKKA_TRACK_OWNER: '0' }, { MIKKA_TRACK_OWNER: 'true' }, { MIKKA_TRACK_OWNER: ' 1' }])
+      assert.deepEqual(await trackOwnerPlugins({ dir }, env), [], JSON.stringify(env))
+    globalThis.__mikkaTrackOwnerAllowed = true
+    const [plugin] = await trackOwnerPlugins({ dir }, on)
+    assert.equal(plugin.name, 'mikka-track-owner')
+    assert.equal(plugin.root, dir)
+  } finally { await rm(dir, { recursive: true, force: true }) }
 })

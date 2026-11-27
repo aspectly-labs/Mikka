@@ -6,22 +6,17 @@ const externalPolicySchema = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 
 /**
  * Fold stored external-write layers into the workspace's restrictive values.
- * Only deny/ask are folded: copying an allow would grant it to every Bot in the
- * workspace, while dropping it can only fall back to the Decision API. Browser
- * ask is not an option and is dropped; github_pull_request is retired with its
- * route; git_push ask was normalized to allow elsewhere.
+ * Only deny is folded: copying an allow would grant it to every Bot in the
+ * workspace, and there is no ask (ADR 2026-11-27-1615; an old ask reads as
+ * allow). github_pull_request is retired with its route.
  */
-export function foldExternalWritePermissions(sources: readonly unknown[]): Record<string, 'ask' | 'deny'> {
-  const folded: Record<string, 'ask' | 'deny'> = {}
+export function foldExternalWritePermissions(sources: readonly unknown[]): Record<string, 'deny'> {
+  const folded: Record<string, 'deny'> = {}
   for (const source of sources) {
     const parsed = externalPolicySchema.parse(source ?? {})
     for (const [key, value] of Object.entries(parsed)) {
-      if (value === 'allow') continue
-      if (key.startsWith('browser_') && value === 'ask') continue
-      if (key === 'github_pull_request') continue
-      if (key === 'git_push' && value === 'ask') continue
-      if (value === 'deny') folded[key] = 'deny'
-      else if (folded[key] !== 'deny') folded[key] = 'ask'
+      if (value !== 'deny' || key === 'github_pull_request') continue
+      folded[key] = 'deny'
     }
   }
   return folded
@@ -62,8 +57,11 @@ export function applyCliFold(workspacePolicy: unknown, folded: z.infer<typeof cl
   }
 }
 
-/** Merge an external fold over the workspace's current choices. */
-export function applyExternalFold(workspacePolicy: unknown, folded: Record<string, 'ask' | 'deny'>): Record<string, 'allow' | 'ask' | 'deny'> {
+/** Merge an external fold over the workspace's current choices. A stored ask
+ * from before ADR 2026-11-27-1615 is written back as allow. */
+export function applyExternalFold(workspacePolicy: unknown, folded: Record<string, 'deny'>): Record<string, 'allow' | 'deny'> {
   const current = externalPolicySchema.parse(workspacePolicy ?? {})
-  return { ...current, ...folded }
+  const merged: Record<string, 'allow' | 'deny'> = {}
+  for (const [key, value] of Object.entries(current)) merged[key] = value === 'deny' ? 'deny' : 'allow'
+  return { ...merged, ...folded }
 }

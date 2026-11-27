@@ -2,9 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { hostedBrokerDevice, leaseDevice } from './subscription-native-device'
-import { subscriptionNativeLease } from './subscription-native-lease'
 import { subscriptionNativeHTTP } from './subscription-native-http'
-import { SUBSCRIPTION_MODEL_CATALOGUE_HEADER, SubscriptionRefusal } from '@mikka/protocol/subscription'
+import { SubscriptionRefusal } from '@mikka/protocol/subscription'
 import { WorkerRefusal } from '../packages/daemon/src/subscription-worker-client'
 import { DeviceAuthorityRevoked, DeviceFenceUnavailable } from './db/device-scope'
 import { ModelAdmissionError } from './model-admission/contract'
@@ -55,13 +54,6 @@ test('a failed self-test overrides an old broker flag for leases and hosted acce
     assert.equal(leaseDevice({ ...device, harnesses: [...device.harnesses, ...broker] }), true)
   }
 })
-
-const lease = { route: 'claude_code_cli', modelId: 'm', revision: 1, accountId: 'a', expiresAt: '2026-11-01T01:00:00.000Z', accessToken: 'fixture-access' }
-const service = (fail = false) => () => ({
-  nativeRun: async () => ({ ownerId: 'o', workspaceId: 'w', consumerId: 'c', bindingId: 'b', execution: 'native' as const, runId: ids.runId }),
-  nativeLease: async () => { if (fail) throw new Error('fixture-refusal-detail'); return lease as never },
-})
-const post = () => new Request('http://local/lease', { method: 'POST' })
 
 test('full-model catalogue checks are opt-in and keep the native context wire format compatible', async () => {
   const checks: unknown[] = []
@@ -177,39 +169,14 @@ for (const phase of ['authorize', 'context'] as const) {
   }
 }
 
-test('the lease is returned uncached to an authorized device', async () => {
-  const handler = subscriptionNativeLease({ authorize: async () => 'o', service: service() })
-  const response = await handler(post(), { params: Promise.resolve(ids) })
-  assert.equal(response.status, 200)
-  assert.equal(response.headers.get('cache-control'), 'private, no-store')
-  assert.deepEqual(await response.json(), lease)
-})
-
-test('lease catalogue evidence is negotiated without changing old strict responses', async () => {
-  const checks: boolean[] = []
-  const original = service()()
-  const handler = subscriptionNativeLease({ authorize: async () => 'o', service: () => ({ ...original,
-    nativeLease: async (_use, _signal, includeCatalogue = false) => {
-      checks.push(includeCatalogue)
-      return { ...lease, ...(includeCatalogue ? { modelCatalogueVerified: true } : {}) } as never
-    },
-  }) })
-  for (const enabled of [false, true]) {
-    const request = new Request('http://local/lease', { method: 'POST', headers: enabled ? { [SUBSCRIPTION_MODEL_CATALOGUE_HEADER]: '1' } : {} })
-    const response = await handler(request, { params: Promise.resolve(ids) })
-    assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), { ...lease, ...(enabled ? { modelCatalogueVerified: true } : {}) })
+test('the old inference action refuses before resolving a run or contacting the subscription service', async () => {
+  const request = () => new Request('http://local/subscription', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'request', payload: { path: '/responses', body: { model: 'm' } } }) })
+  for (const [owner, status] of [['o', 410], [null, 401]] as const) {
+    const handler = subscriptionNativeHTTP({ authorize: async () => owner, service: () => assert.fail('legacy action reached subscription runtime') })
+    const response = await handler(request(), { params: Promise.resolve(ids) })
+    assert.equal(response.status, status)
+    assert.equal(response.headers.get('cache-control'), 'private, no-store')
+    if (owner) assert.deepEqual(await response.json(), { error: 'subscription_gateway_required' })
   }
-  assert.deepEqual(checks, [false, true])
-})
-
-test('an unauthorized device, a bad id or a refusal gets no token and no detail', async () => {
-  const unauthorized = subscriptionNativeLease({ authorize: async () => null, service: service() })
-  assert.equal((await unauthorized(post(), { params: Promise.resolve(ids) })).status, 401)
-  const authorized = subscriptionNativeLease({ authorize: async () => 'o', service: service(true) })
-  assert.equal((await authorized(post(), { params: Promise.resolve({ ...ids, runId: 'x' }) })).status, 404)
-  const refused = await authorized(post(), { params: Promise.resolve(ids) })
-  assert.equal(refused.status, 409)
-  const body = await refused.text()
-  assert.doesNotMatch(body, /fixture-access|fixture-refusal-detail/)
 })

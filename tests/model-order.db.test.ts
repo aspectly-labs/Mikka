@@ -122,7 +122,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     assert.equal((await order.orderView(pool, scope, async () => [])).devices, 0, 'the supplied display snapshot is the one consumed')
   })
 
-  for (const allowed of [false, true]) await t.test(`prompt order facts omit only unused count queries when member sharing is ${allowed}`, async t => {
+  for (const allowed of [false, true]) await t.test(`prompt order facts omit Settings-only counts and capabilities when member sharing is ${allowed}`, async t => {
     const scope = await person('order-context-count')
     await subscribe(scope, 'claude', ['claude-haiku-5-5'])
     await keys.addApiKey(pool, scope.ownerId, { provider: 'deepseek', apiKey: `sk-${randomBytes(12).toString('hex')}` }, { fetch: (async () => Response.json({ data: [{ id: 'count-fixture' }] })) as unknown as typeof fetch })
@@ -137,15 +137,25 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     const full = await order.orderView(tracked(fullStatements), scope, async () => [])
     const context = await order.orderView(tracked(contextStatements), scope, async () => [], 'context')
     const { location, preferredHarness, entries, candidates, cloudReady, cloudModels } = full
-    assert.deepEqual(context, { location, preferredHarness, entries, candidates, cloudReady, cloudModels })
-    assert.equal(full.credentials, 2, 'the page still counts the subscription and key with sharing either allowed or denied')
+    assert.ok(candidates.every(candidate => candidate.capabilities), 'Settings receives populated route capabilities')
+    const promptCandidates = candidates.map(({ capabilities: _capabilities, ...candidate }) => candidate)
+    assert.deepEqual(context, { location, preferredHarness, entries, candidates: promptCandidates, cloudReady, cloudModels })
+    // 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): the own key no longer serves here; the connected subscription is still counted.
+    assert.equal(full.credentials, allowed ? 2 : 1, 'the page counts the connected subscription and the keys usable here')
+    assert.equal(candidates.length > 0, allowed, 'off: no own subscription or key is a candidate here')
     assert.equal(Object.hasOwn(context, 'credentials'), false)
     const countStart = fullStatements.findIndex(row => row.sql.startsWith('SELECT id::text AS id FROM byos_connections WHERE'))
-    // No shared keys: only the connected-subscription and own/shared-key count reads.
-    const saved = 3
+    // The connected-subscription count, the usable-key read and its switch read.
+    const countReads = 3
+    const capabilityRead = fullStatements.findIndex(row => row.sql.includes('AS "effortSupport"'))
     assert.ok(countStart >= 0)
+    // Capabilities are read for the candidates only; with the switch off there are none to read.
+    if (allowed) assert.ok(capabilityRead >= countStart + countReads)
+    else assert.equal(capabilityRead, -1, 'off: no candidate, so no capability read')
+    const saved = countReads + (allowed ? 1 : 0)
     assert.equal(fullStatements.length - contextStatements.length, saved)
-    assert.deepEqual(contextStatements, [...fullStatements.slice(0, countStart), ...fullStatements.slice(countStart + saved)], 'every remaining SQL statement and scoped argument is unchanged')
+    assert.deepEqual(contextStatements, fullStatements.filter((_, i) => (i < countStart || i >= countStart + countReads) && i !== capabilityRead),
+      'every remaining SQL statement and scoped argument is unchanged')
     t.diagnostic(JSON.stringify({ kind: 'order_projection_pg_query_budget', allowed, full: fullStatements.length, context: contextStatements.length, saved }))
   })
 
@@ -328,6 +338,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
 
   await t.test('dispatch: the first model a device that takes part reported; then the next; a thread\'s own model first; nothing says why', async () => {
     const scope = await person('order-dispatch')
+    await order.changeOrder(pool, scope, { kind: 'location', location: 'local' })
     const claude = await subscribe(scope, 'claude', ['acct-opus-c', 'acct-sonnet-c'])
     const ctx = { ...scope, botId: null }
     // No computer connected yet: no device can run it, and the card says so.
@@ -466,6 +477,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
   await t.test('subscription dispatch depends on runtime readiness, not exact device model reports', async () => {
     // Claude Max connected, 本地, computers online and taking part with Claude Code installed; models reported or not (Alex, 2026-11-03).
     const scope = await person('order-unreported')
+    await order.changeOrder(pool, scope, { kind: 'location', location: 'local' })
     await subscribe(scope, 'claude', ['acct-opus-u'])
     const ctx = { ...scope, botId: null }
     const row = async () => (await order.orderView(pool, scope)).entries[0].block

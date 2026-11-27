@@ -1,5 +1,6 @@
 import type { Pool, PoolClient, QueryResultRow } from 'pg'
 import { jsonbFlagIsNotFalseSql } from './primitives/jsonb-predicates'
+import { memberCredentialsAllowedSql } from './member-credentials-sql'
 
 /** A catalogue page, not a timer: each SQL read returns at most 128 options. */
 export const EXECUTION_MODEL_PAGE_SIZE = 128
@@ -17,7 +18,8 @@ const connected = `FROM byos_bindings b JOIN byos_connections c ON c.id=b."conne
 
 /** Saved binding lookup is exact and independent of catalogue deduplication. */
 export async function executionBinding(query: Query, scope: Scope, bindingId: string) {
-  return (await query.query(`SELECT ${fullColumns} ${connected} AND b.id=$2 LIMIT 1`, [scope.ownerId, bindingId])).rows[0]
+  // The owner's own subscription serves here only while the team switch allows members' own credentials (decision 2026-11-27-1740).
+  return (await query.query(`SELECT ${fullColumns} ${connected} AND b.id=$2 AND ${memberCredentialsAllowedSql('$3')} LIMIT 1`, [scope.ownerId, bindingId, scope.workspaceId])).rows[0]
 }
 
 /**
@@ -35,6 +37,7 @@ export async function executionModelOptions(query: Query, scope: Scope, catalogu
         (b."workspaceId"=$2) AS "_preferred",b."createdAt"::text AS "_at",b.id AS "_id"
       ${connected}
         AND (c."modelCatalog" IS NULL OR c."modelCatalog"->>'revision'<>c.epoch::text OR c."modelCatalog"->'models' ? b."modelId")${selected ? ' AND c.id=$7::uuid AND b."modelId"=$8' : ''}
+        AND ${memberCredentialsAllowedSql('$2')}
       ORDER BY c.id,b."modelId",(b."workspaceId"=$2) DESC,b."createdAt" DESC,b.id
     ) SELECT * FROM choices
       WHERE ($3::boolean IS NULL OR "_preferred"<$3

@@ -39,6 +39,7 @@ export const ENV_DENY_PATTERNS: readonly RegExp[] = [
   /^ANTHROPIC_/,
   /^OPENAI_/,
   /^AWS_/,
+  /^E2B_/,
   /^AZURE_/,
   /^GOOGLE_/,
   /^GCLOUD_/,

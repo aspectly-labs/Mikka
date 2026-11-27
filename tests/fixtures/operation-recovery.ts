@@ -31,7 +31,12 @@ export function recoveryHttpProvider(origin: string, afterEffect?: () => Promise
 
 /** Real product Slack adapter over an independent HTTP protocol fixture. No
  * Composio credentials or SaaS account are used by this fault-injection test. */
-export async function recoverySlackProvider(origin: string, afterEffect?: () => Promise<never>): Promise<WriteProvider> {
+export async function recoverySlackProvider(origin: string, afterEffect?: () => Promise<never>, fixture: {
+  /** The owner's active Slack connections (default: the one the fixture writes through). */
+  accounts?: string[]
+  /** Sees every Slack API call before it is made, with the connection it uses. */
+  observe?: (accountId: string, endpoint: string) => void
+} = {}): Promise<WriteProvider> {
   const base = new URL(origin)
   if (base.protocol !== 'http:' || base.hostname !== '127.0.0.1') throw Error('loopback effect fixture required')
   const [{ composioWriteProvider }, { composioSlackConversationReader }, { composioSlackDelivery }] = await Promise.all([
@@ -39,10 +44,11 @@ export async function recoverySlackProvider(origin: string, afterEffect?: () => 
   ])
   const client = {
     connectedAccounts: { list: async ({ userIds, toolkitSlugs }: { userIds: string[]; toolkitSlugs: string[] }) => ({
-      items: userIds.length === 1 && ['owner', 'recovery-owner'].includes(userIds[0]) && toolkitSlugs[0] === 'slack' ? [{ id: 'fixture-slack-account', toolkit: { slug: 'slack' }, status: 'ACTIVE', isDisabled: false }] : [],
+      items: userIds.length === 1 && ['owner', 'recovery-owner'].includes(userIds[0]) && toolkitSlugs[0] === 'slack' ? (fixture.accounts ?? ['fixture-slack-account']).map(id => ({ id, toolkit: { slug: 'slack' }, status: 'ACTIVE', isDisabled: false })) : [],
     }) },
     // SLACK_SEND_MESSAGE's tags as Composio returned them on 2026-10-31.
     tools: { getRawComposioToolBySlug: async () => ({ version: '00000000_00', tags: ['chat', 'important', 'openWorldHint'] }), proxyExecute: async (request: { endpoint: string; method: string; userId: string; connectedAccountId: string; body?: unknown; parameters?: { in: string; name: string; value: string | number }[] }, options?: { signal?: AbortSignal }) => {
+      fixture.observe?.(request.connectedAccountId, request.endpoint)
       if (!['owner', 'recovery-owner'].includes(request.userId) || request.connectedAccountId !== 'fixture-slack-account') throw Error('fixture account mismatch')
       const url = new URL(request.endpoint, base)
       for (const parameter of request.parameters ?? []) {
@@ -104,7 +110,7 @@ async function main() {
   const [{ default: pg }, { createApprovedWrites }] = await Promise.all([
     import('pg'), import('../../lib/operations/approved-writes'),
   ])
-  const pool = new pg.Pool({ connectionString: process.env.E2E_DATABASE_URL, options: `-c search_path=${schema},pg_catalog`, max: 2 })
+  const pool = new pg.Pool({ connectionString: process.env.E2E_DATABASE_URL, options: `-c search_path=${schema},pg_catalog`, max: 4 })
   try {
     const afterEffect = async () => {
       process.send?.({ kind: 'effect-applied' })
@@ -112,9 +118,13 @@ async function main() {
     }
     const slack = process.env.OPERATION_RECOVERY_PROVIDER === 'slack'
     const provider = slack ? await recoverySlackProvider(process.env.OPERATION_RECOVERY_ORIGIN!, afterEffect) : recoveryHttpProvider(process.env.OPERATION_RECOVERY_ORIGIN!, afterEffect)
-    await createApprovedWrites(pool, provider, slack ? 'send_slack_message' : 'append_notion_paragraph', { modelRun: {
-      ownerId: 'recovery-owner', botId: null, workspaceId: null, runId: process.env.OPERATION_RECOVERY_RUN!,
-    } }).proposeFromRun({ ...(slack ? { channel: 'C12345678' } : { page_id: process.env.OPERATION_RECOVERY_PAGE! }), text: 'Controlled local recovery effect' }, process.env.OPERATION_RECOVERY_INTENT!)
+    // A workspace run (a Bot's) writes under the owner's membership lease, as in production.
+    const workspaceId = process.env.OPERATION_RECOVERY_WORKSPACE ?? null, botId = process.env.OPERATION_RECOVERY_BOT ?? null
+    const { acquireWorkspaceMembership } = await import('../../lib/workspace-membership-guard')
+    const guard = workspaceId ? (_tx: unknown, signal: AbortSignal) => acquireWorkspaceMembership(pool, { workspaceId, userId: 'recovery-owner' }, signal) : undefined
+    await createApprovedWrites(pool, provider, slack ? 'send_slack_message' : 'append_notion_paragraph', { guard, modelRun: {
+      ownerId: 'recovery-owner', botId, workspaceId, runId: process.env.OPERATION_RECOVERY_RUN!,
+    } }).writeFromRun({ ...(slack ? { channel: 'C12345678' } : { page_id: process.env.OPERATION_RECOVERY_PAGE! }), text: 'Controlled local recovery effect' }, process.env.OPERATION_RECOVERY_INTENT!)
   } finally { await pool.end() }
 }
 

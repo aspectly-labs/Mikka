@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,7 +53,9 @@ func (w *Worker) NativeContext(ctx context.Context, epoch int64) (NativeContext,
 	return NativeContext{AccountID: account, Plan: plan, ExpiresAt: expires}, nil
 }
 
-func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRequest, head func(string) error, emit func([]byte) error) error {
+var nativeGenerationID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRequest, head func(string, string) error, emit func([]byte) error) error {
 	if w.Use == nil || w.Use.RunID == "" {
 		return ErrUnavailable
 	}
@@ -59,7 +63,10 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
 	}
-	if len(request.Body) > 262144 || json.Unmarshal(request.Body, &body) != nil || !modelPattern.MatchString(body.Model) || len(request.Headers) > 32 {
+	if len(request.Body) > nativeRequestMaxBytes {
+		return ErrPayloadTooLarge
+	}
+	if json.Unmarshal(request.Body, &body) != nil || !modelPattern.MatchString(body.Model) || len(request.Headers) > 32 {
 		return ErrUnsupported
 	}
 	ctx, stopAuthority, eventDriven := w.watchActiveAuthority(ctx)
@@ -73,15 +80,30 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	if canonicalDecoder.Decode(&canonical) != nil {
 		return ErrUnsupported
 	}
-	request.Body, _ = json.Marshal(canonical)
-	endpoint := ""
-	if w.Scope.Provider == "claude" && (request.Path == "/v1/messages" || request.Path == "/v1/messages?beta=true") {
-		endpoint = "https://api.anthropic.com" + request.Path
-	} else if w.Scope.Provider == "codex" && request.Path == "/responses" {
-		endpoint = "https://chatgpt.com/backend-api/codex/responses"
-	} else {
+	route := ""
+	switch {
+	case w.Scope.Provider == "claude" && (request.Path == "/v1/messages" || request.Path == "/v1/messages?beta=true"):
+		route = "/v1/mikka/subscription/claude/messages"
+		canonical["system"] = claudeSubscriptionSystem(canonical["system"])
+	case w.Scope.Provider == "claude" && request.Path == "/v1/messages/count_tokens":
+		route = "/v1/mikka/subscription/claude/count_tokens"
+		canonical["system"] = claudeSubscriptionSystem(canonical["system"])
+	case w.Scope.Provider == "codex" && request.Path == "/responses":
+		route = "/v1/mikka/subscription/codex/responses"
+		canonical["store"] = false
+	default:
 		return ErrUnsupported
 	}
+	request.Body, _ = json.Marshal(canonical)
+	if len(request.Body) > nativeRequestMaxBytes {
+		return ErrPayloadTooLarge
+	}
+	base, err := url.Parse(w.NativeLiteLLMURL)
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" ||
+		base.User != nil || base.RawQuery != "" || base.Fragment != "" || w.NativeLiteLLMKey == "" {
+		return ErrUnavailable
+	}
+	endpoint := strings.TrimSuffix(strings.TrimRight(base.String(), "/"), "/v1") + route
 	r, auth, err := w.readyAuth(ctx, epoch)
 	if err != nil || core.IsCodexUseSIWC(auth) {
 		return ErrUnavailable
@@ -109,10 +131,25 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 		}
 	}
 	upstream.Header.Set("Authorization", "Bearer "+token)
+	upstream.Header.Set("x-litellm-api-key", "Bearer "+w.NativeLiteLLMKey)
+	if w.Scope.Provider == "claude" {
+		beta := upstream.Header.Get("anthropic-beta")
+		const oauth = "oauth-2025-04-20"
+		if beta == "" {
+			upstream.Header.Set("anthropic-beta", oauth)
+		} else if !strings.Contains(","+strings.ReplaceAll(beta, " ", "")+",", ","+oauth+",") {
+			upstream.Header.Set("anthropic-beta", beta+","+oauth)
+		}
+		if upstream.Header.Get("anthropic-version") == "" {
+			upstream.Header.Set("anthropic-version", "2023-06-01")
+		}
+	}
 	upstream.Header.Set("Content-Type", "application/json")
+	upstream.Header.Set("User-Agent", "Mikka/1.0")
 	if w.Scope.Provider == "codex" {
 		account, _ := auth.Metadata["account_id"].(string)
 		upstream.Header.Set("ChatGPT-Account-Id", account)
+		upstream.Header.Set("Originator", "Mikka")
 	}
 	client := http.Client{Timeout: 270 * time.Second}
 	if w.NativeClient != nil {
@@ -156,7 +193,7 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		failureBody, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
-		return providerFailure(providerStatusFailure(response.StatusCode), w.Scope.Provider, response.StatusCode, failureBody, request.Body, token)
+		return providerFailure(providerStatusFailure(response.StatusCode), w.Scope.Provider, response.StatusCode, failureBody, request.Body, token, w.NativeLiteLLMKey)
 	}
 	contentType := strings.Split(response.Header.Get("Content-Type"), ";")[0]
 	if contentType == "" && w.Scope.Provider == "codex" && body.Stream {
@@ -168,7 +205,11 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	if callCtx.Err() != nil {
 		return ErrUnavailable
 	}
-	if err = head(contentType); err != nil {
+	generationID := response.Header.Get("x-litellm-call-id")
+	if !nativeGenerationID.MatchString(generationID) {
+		generationID = ""
+	}
+	if err = head(contentType, generationID); err != nil {
 		return ErrUnavailable
 	}
 	// Retain a token-sized tail so an upstream echo split across chunks cannot
@@ -178,7 +219,7 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	for {
 		n, readErr := response.Body.Read(buffer)
 		carry = append(carry, buffer[:n]...)
-		if bytes.Contains(carry, []byte(token)) {
+		if bytes.Contains(carry, []byte(token)) || bytes.Contains(carry, []byte(w.NativeLiteLLMKey)) {
 			return ErrIntegrity
 		}
 		if eventDriven {
@@ -188,7 +229,7 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 		} else if w.authorizeRuntime(ctx, r.Epoch, "native_active", body.Model) != nil {
 			return ErrUnavailable
 		}
-		flush := len(carry) - len(token) + 1
+		flush := len(carry) - max(len(token), len(w.NativeLiteLLMKey)) + 1
 		if readErr == io.EOF {
 			flush = len(carry)
 		}

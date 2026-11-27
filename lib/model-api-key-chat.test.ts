@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 
 let allowed = true, opens = 0, calls = 0
+let keyProvider: 'openai' | 'anthropic' | 'custom' = 'custom'
 let keySpeedModes: Record<string, readonly ('fast' | 'ultrafast')[]> | undefined
+let keyDaybreak: import('./model-capabilities').DaybreakAccess | undefined
 const credentials: unknown[] = []
 const callOpts: unknown[] = []
 mock.module(new URL('./db/index.ts', import.meta.url).href, { namedExports: { pool: {} } })
@@ -10,7 +12,13 @@ mock.module(new URL('./model-api-keys.ts', import.meta.url).href, { namedExports
   openApiKeyForChat: async () => {
     opens++
     if (!allowed) throw Error('apiKeyNotFound')
-    return { apiKey: 'synthetic-key', baseUrl: 'https://provider.fixture.invalid/v1', provider: 'custom', ...(keySpeedModes ? { modelSpeedModes: keySpeedModes } : {}) }
+    return {
+      apiKey: 'synthetic-key',
+      baseUrl: keyProvider === 'openai' ? 'https://api.openai.com/v1' : 'https://provider.fixture.invalid/v1',
+      provider: keyProvider,
+      ...(keySpeedModes ? { modelSpeedModes: keySpeedModes } : {}),
+      ...(keyDaybreak ? { daybreak: keyDaybreak } : {}),
+    }
   },
 } })
 mock.module(new URL('./model-gateway/litellm-client.ts', import.meta.url).href, { namedExports: {
@@ -52,4 +60,18 @@ test('API key chat routes through LiteLLM and reopens authorization at every cal
   keySpeedModes = { 'chosen-model': [] }
   await ultraModel.doGenerate({ prompt: [] })
   assert.equal((callOpts.at(-1) as { providerOptions?: unknown }).providerOptions, undefined)
+
+  // OpenAI BYOK Daybreak re-verifies provider and live Daybreak entitlement on every call.
+  keyProvider = 'custom'
+  keyDaybreak = { checkedAt: '2026-11-26T00:00:00.000Z', granted: ['chosen-model'], tiers: ['red'], grants: [{ tier: 'red', granted: ['chosen-model'] }] }
+  await assert.rejects(async () => resolveApiKeyChatModel({ type: 'api_key', ownerId: 'owner', workspaceId: 'workspace',
+    keyId: 'key', modelId: 'chosen-model', coordinator: true } as never, undefined, false, 'daybreak_red'), /model_daybreak_unavailable/)
+  keyProvider = 'openai'
+  const daybreakModel = await resolveApiKeyChatModel({ type: 'api_key', ownerId: 'owner', workspaceId: 'workspace',
+    keyId: 'key', modelId: 'chosen-model', coordinator: true } as never, undefined, false, 'daybreak_red')
+  if (typeof daybreakModel !== 'object' || daybreakModel.specificationVersion !== 'v4') throw Error('Expected a model')
+  await daybreakModel.doGenerate({ prompt: [] })
+  assert.equal((credentials.at(-1) as { cyberAccessProgram?: string }).cyberAccessProgram, 'daybreak_red')
+  keyDaybreak = { checkedAt: '2026-11-26T00:00:00.000Z', granted: [] }
+  await assert.rejects(async () => daybreakModel.doGenerate({ prompt: [] }), /model_daybreak_unavailable/)
 })

@@ -26,7 +26,7 @@ Before auditing, record exact public `Mikka` and private `mikka-hosted-ui` sourc
 2. **External Benchmark Before Building or Passing**: Never judge a screen only against "old Mikka". Cross-check every audited or redesigned screen against:
    - Authoritative Mikka docs (`docs/design/decisions/`, `docs/design/glossary.md`, top products over paid blocks `2026-11-27-1409`).
    - Installed craft skills: `.hosted-ui/.claude/skills/kubai-design-tips/`, `ux-heuristics`, `ios-design`, `swiftui-expert-skill`.
-   - Real top-tier product references: **Mobbin MCP** (`search_screens` / `search_flows`) and unpacked reference **Electron frontend + backend** code (Codex, Capy, Cursor) to understand both UI anatomy **and** underlying workflow/data contracts.
+   - Real top-tier product references: **Mobbin MCP** (`search_screens` / `search_flows`) and the private research in `mikka-hosted-ui/docs/research/` for UI anatomy **and** underlying workflow/data contracts. Owner rule (2026-11-27): unpacked app or source evidence is consulted and recorded only privately in `mikka-hosted-ui`; never cite it (paths, bundle names, offsets, internal routes or fields) in this public repository.
 3. **Rendered Evidence Only (Never Code-Only Visual PASS)**: Do not claim visual, layout, contrast, glass, or spacing PASS from `.tsx` reading alone. Require compiled screenshots (Desktop + `390×844` Mobile, Light + Dark) compared side-by-side against reference benchmarks. Where native iOS shaders or physical-device gestures cannot run in Linux CI, explicitly label them `unverified-on-device` and attach a physical TestFlight checklist.
 4. **Walk Real Gestures, States, Scale (50+ Items) & Existing Capabilities**:
    - Trace interactive gesture bounds end-to-end (e.g., sidebar swipe-to-close must work on the sidebar surface itself, not only a thin edge strip) and verify tactile feedback (`expo-haptics` on iOS).
@@ -39,6 +39,6 @@ Before auditing, record exact public `Mikka` and private `mikka-hosted-ui` sourc
 
 ## Evidence and reporting
 
-Run the [domain workflow](../../../docs/design/ux-quality-audit.md#run-one-domain) from the public checkout. Attach the command results and observed interaction to the source-bound matrix. Statuses: `verified-missing`, `verified-broken`, `source-only-candidate`, `verified-intentional`, `verified-fixed`, `not-tested`. Never treat an empty result list or an AST pass as full functional coverage.
+Run the [domain workflow](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/ux-quality-audit.md#run-one-domain) from the public checkout. Attach the command results and observed interaction to the source-bound matrix. Statuses: `verified-missing`, `verified-broken`, `source-only-candidate`, `verified-intentional`, `verified-fixed`, `not-tested`. Never treat an empty result list or an AST pass as full functional coverage.
 
 No general browser E2E CI gate, product polling, Vercel preview or new paid UI source. An audit does not authorize production data writes or publishing. If production/physical-device acceptance is unavailable, record the exact remaining gate; continue unrelated actionable work without declaring the entire goal finished.

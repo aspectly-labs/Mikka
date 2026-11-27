@@ -31,7 +31,7 @@ test('personal workspaces', { skip: !dbUrl }, async t => {
     const scoped = new Pool({ connectionString: dbUrl, options: `-c search_path=${schema}`, max: 1 })
     try {
       // The tables as they were before the migration, with existing rows.
-      await scoped.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, "userId" text NOT NULL, name varchar(120) NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now());
+      await scoped.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, "userId" text NOT NULL, name varchar(120) NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT now(), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
         CREATE TABLE mikka_workspace_members ("workspaceId" uuid NOT NULL, "userId" text NOT NULL, status text NOT NULL DEFAULT 'active', PRIMARY KEY ("workspaceId","userId"));
         CREATE TABLE mikka_workspace_invitations (id uuid PRIMARY KEY, "workspaceId" uuid NOT NULL, status text NOT NULL)`)
       const seed = async (user: string, id: string, members: Array<[string, string]>, invite = false) => {
@@ -230,9 +230,14 @@ test('personal workspaces', { skip: !dbUrl }, async t => {
     // A subscription serves its owner only (decision 2026-11-17): only the owner's own run holds it.
     const ownRun = await runOn(owner)
     assert.equal(await usable(ownRun), true)
+    // 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): members' own subscriptions no longer serve runs here.
     await policy.setMemberSubscriptionPolicy({ id: admin, name: 'Admin' }, team.id, false)
-    assert.equal(await usable(ownRun), true, 'the admin switch never stops the owner\'s own run')
+    assert.equal(await usable(ownRun), false, 'turning the switch off stops runs on members\' own subscriptions in this workspace')
+    const { runMayUseCredentialSql } = await import('../lib/personal-policy')
+    const mayUse = async () => (await pool.query(`SELECT ${runMayUseCredentialSql('$1', '$1', '$2')} AS ok`, [owner, team.id])).rows[0].ok
+    assert.equal(await mayUse(), false, 'off: every credential access and renewal refuses the own subscription here')
     await policy.setMemberSubscriptionPolicy({ id: admin, name: 'Admin' }, team.id, true)
+    assert.equal(await mayUse(), true, 'on: the owner\'s own subscription serves again')
     const beforeLeaving = await runOn(owner)
     await members.removeMember(admin, team.id, owner)
     assert.equal(await usable(beforeLeaving), false, 'leaving stops what ran on their subscription')

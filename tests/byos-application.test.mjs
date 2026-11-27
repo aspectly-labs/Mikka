@@ -1,9 +1,10 @@
 // Linux acceptance: actual HTTP handlers -> owner binding -> private Go worker
-// -> actual CPA Store -> TLS Infisical fake -> real isolated Postgres.
+// -> actual CPA Store -> real isolated Postgres. Chat-only mode uses the
+// production read-only access projection. The wider custody suite uses TLS Infisical fixtures.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, rm, chmod, mkdir } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createServer as httpsServer } from 'node:https'
@@ -20,28 +21,34 @@ import { subscriptionNativeHTTP } from '../lib/subscription-native-http.ts'
 import { SubscriptionWorkerClient } from '../packages/daemon/src/subscription-worker-client.ts'
 import { resolveAgentSubscription } from '../lib/agent-subscription.ts'
 import { resolveAgentModel } from '../lib/agent-model.ts'
-import { hostedSubscriptionLauncher } from '../packages/daemon/src/subscription-launcher.ts'
-import { buildChildEnv } from '../packages/daemon/src/env.ts'
-import { NoSandbox } from '../packages/daemon/src/agents/sandbox.ts'
-import { ToolApprovalGate } from '../packages/daemon/src/agents/tool-approval.ts'
-import { createLogger } from '../packages/daemon/src/log.ts'
+import { startSubscriptionChatProcess } from './support/subscription-chat-process.mjs'
+import { authorizeSubscriptionUse } from '../lib/subscription-runtime.ts'
+import { authorizedAccessName } from '../lib/subscription-access-snapshot.ts'
+import { readSubscriptionQuota } from '../packages/daemon/src/subscription-quota.ts'
+import { signSubscriptionChat, verifySubscriptionChat } from '../lib/subscription-chat-ticket.ts'
+import { runNativeCliThroughGateway, startNativeLiteLlm } from './support/native-cli-litellm.mjs'
 import { seedFixtureWorkspace } from './helpers/task-workspace.ts'
 
 const workspaceId = '20000000-0000-4000-8000-000000000001'
 const root = resolve(import.meta.dirname, '..')
-test('new OAuth consent, owner-bound streaming/tool use and native launches reuse one durable connection', { timeout: 90000 }, async () => {
+const chatOnly = process.env.MIKKA_BYOS_CHAT_ONLY === '1'
+const scenario = chatOnly
+  ? 'scripted subscription chat crosses LiteLLM and private CPA with unique usage and owner isolation'
+  : 'new OAuth consent, owner-bound streaming/tool use and native launches reuse one durable connection'
+test(scenario, { timeout: 90_000 }, async t => {
   assert.equal(process.platform, 'linux')
   const databaseUrl = process.env.MIKKA_BYOS_TEST_DATABASE_URL
   assert.ok(databaseUrl && new URL(databaseUrl).hostname === '127.0.0.1' && new URL(databaseUrl).pathname.endsWith('_e2e'))
+  if (chatOnly) assert.ok(process.env.MIKKA_BYOS_LITELLM_BINARY, 'Chat-only process acceptance requires MIKKA_BYOS_LITELLM_BINARY')
   const binary = process.env.MIKKA_BYOS_FIXTURE_BINARY
   assert.ok(binary, 'build acceptance-only worker first; no production fallback')
   const directory = await mkdtemp(join(tmpdir(), 'mikka-byos-app-'))
-  const sessions = []
   const pool = new Pool({ connectionString: databaseUrl, max: 4 })
   const secrets = new Map()
   const secretMethods = []
   const blockedDeletes = new Set()
   let providerCalls = 0
+  let unexpectedExternalRequests = 0
   const devices = new Map()
   const deviceVerifier = 'v'.repeat(43)
   const deviceChallenge = (await import('node:crypto')).createHash('sha256').update(deviceVerifier).digest('base64url')
@@ -72,17 +79,22 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
   async function nativeProvider(request, response) {
     providerCalls++
     assert.equal(request.headers['user-agent'], 'Mikka/1.0')
+    assert.ok(!request.headers['x-litellm-api-key'])
     assert.ok(request.headers.authorization.startsWith('Bearer fixture-'))
     const chunks = []; for await (const chunk of request) chunks.push(chunk)
     const body = JSON.parse(Buffer.concat(chunks).toString())
+    if (request.url.endsWith('/count')) {
+      response.writeHead(200, { 'content-type': 'application/json' }).end('{"input_tokens":13}')
+      return
+    }
     assert.equal(body.stream, true)
-    assert.ok(!Object.hasOwn(body, 'metadata'), 'no synthetic native identity metadata')
+    if (!process.env.MIKKA_NATIVE_LITELLM_BIN) assert.ok(!Object.hasOwn(body, 'metadata'), 'no synthetic native identity metadata')
     const provider = request.url.endsWith('/codex') ? 'codex' : 'claude'
     if (provider === 'codex') { assert.equal(body.store, false); assert.equal(request.headers.originator, 'Mikka'); assert.equal(request.headers['chatgpt-account-id'], 'fixture-account') }
     const raw = JSON.stringify(body)
     const toolResult = provider === 'codex' ? body.input.some(item => item.type === 'function_call_output') : body.messages.some(message => Array.isArray(message.content) && message.content.some(item => item.type === 'tool_result'))
     response.writeHead(200, { 'content-type': 'text/event-stream' })
-    const emit = event => response.write(`data: ${JSON.stringify(event)}\n\n`)
+    const emit = event => response.write(`${provider === 'claude' ? 'event: ' + event.type + '\n' : ''}data: ${JSON.stringify(event)}\n\n`)
     if (raw.includes('ERROR')) { emit({ type: 'error', error: { message: 'fixture-access private diagnostic' } }); response.end(); return }
     const text = raw.includes('HANG') ? 'partial' : toolResult ? 'tool result accepted' : 'subscription fixture'
     const asksTool = raw.includes('TOOL') && !toolResult
@@ -103,9 +115,14 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
         emit({ type: 'response.function_call_arguments.delta', item_id: item.id, output_index: 0, delta: item.arguments })
         emit({ type: 'response.function_call_arguments.done', item_id: item.id, output_index: 0, arguments: item.arguments })
         emit({ type: 'response.output_item.done', output_index: 0, item })
-      } else emit({ type: 'response.output_text.delta', output_index: 0, content_index: 0, item_id: 'fixture-text', delta: text })
+      } else {
+        emit({ type: 'response.output_item.added', output_index: 0, item: { type: 'message', id: 'fixture-text', role: 'assistant', status: 'in_progress', content: [] } })
+        emit({ type: 'response.output_text.delta', output_index: 0, content_index: 0, item_id: 'fixture-text', delta: text })
+        if (!raw.includes('HANG')) emit({ type: 'response.output_item.done', output_index: 0, item: { type: 'message', id: 'fixture-text', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text }] } })
+      }
       if (raw.includes('HANG')) return
-      emit({ type: 'response.completed', response: { ...base, status: 'completed', output: asksTool ? [item] : [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } })
+      emit({ type: 'response.completed', response: { ...base, status: 'completed', output: asksTool ? [item] : [],
+        ...(raw.includes('NO_USAGE') ? {} : { usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } }) } })
     }
     response.end()
   }
@@ -114,6 +131,11 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', privateKey, '-out', certificate, '-days', '1', '-subj', '/CN=BYOS synthetic fixture', '-addext', 'subjectAltName=IP:127.0.0.1', '-addext', 'basicConstraints=critical,CA:TRUE'], { stdio: 'ignore' })
   const infisical = httpsServer({ key: await readFile(privateKey), cert: await readFile(certificate) }, async (request, response) => {
     try {
+      if (chatOnly && !request.url.startsWith('/provider/')) {
+        unexpectedExternalRequests++
+        response.writeHead(404).end()
+        return
+      }
       if (request.url.startsWith('/quota/')) { assert.ok(request.headers.authorization.startsWith('Bearer fixture-'));response.end(JSON.stringify(request.url.endsWith('/codex') ? {credits:{has_credits:false,unlimited:false},rate_limit:{primary_window:{used_percent:20,limit_window_seconds:18000}}} : {extra_usage:{is_enabled:false},five_hour:{utilization:20}}));return }
       if (request.url.startsWith('/oauth/')) { await oauthProvider(request, response); return }
       if (request.url.startsWith('/provider/')) { await nativeProvider(request, response); return }
@@ -141,12 +163,43 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
   })
   await new Promise(resolve => infisical.listen(0, '127.0.0.1', resolve))
   const origin = `https://127.0.0.1:${infisical.address().port}`
+  let nativeLiteLlm
+  try {
+    nativeLiteLlm = await startNativeLiteLlm(root, directory, origin, certificate)
+  } catch (error) {
+    infisical.closeAllConnections()
+    await new Promise(resolve => infisical.close(resolve))
+    await pool.end()
+    throw error
+  }
+  if (nativeLiteLlm) t.after(nativeLiteLlm.close)
   const repository = new SubscriptionRepository(pool)
   let workerStarts = 0
-  const service = new SubscriptionService(repository, scope => {
+  let service
+  const chat = await startSubscriptionChatProcess(t, () => service).catch(async error => {
+    await new Promise(resolve => infisical.close(resolve))
+    await pool.end()
+    await rm(directory, { recursive: true, force: true })
+    throw error
+  })
+  const projections = new Map()
+  service = new SubscriptionService(repository, scope => {
     workerStarts++
-    return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token' })
-  }, { ready: () => true, nativeIsolation: 'verified_runtime', oauth: { codex: true, claude: true } }, undefined, async (_owner, workspace) => assert.equal(workspace, workspaceId))
+    if (chatOnly) {
+      const snapshot = async (_signal, use, revision) => {
+        const name = await authorizedAccessName(pool, scope, use, revision)
+        const value = projections.get(name)
+        assert.ok(value)
+        return { accessSnapshot: { name, value } }
+      }
+      return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } },
+        { scope, databaseUrl, accessPath: '/scripted-access' }, (executionOnly, ...args) => {
+          assert.equal(executionOnly, true, 'scripted chat uses the real read-only access projection, not the vault')
+          return snapshot(...args)
+        }, snapshot)
+    }
+    return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token', ...(nativeLiteLlm ? { nativeLiteLlmUrl: nativeLiteLlm.url, nativeLiteLlmKey: nativeLiteLlm.key } : {}) })
+  }, { ready: () => true, nativeIsolation: 'verified_runtime', oauth: { codex: true, claude: true } }, undefined, chatOnly ? authorizeSubscriptionUse : async (_owner, workspace) => assert.equal(workspace, workspaceId), undefined, undefined, undefined, chat.fixtureTransport)
   const dependencies = {
     session: async request => {
       const value = request.headers.get('cookie')?.match(/fixture=([a-z-]+)/)?.[1]
@@ -167,6 +220,43 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
     }
     return post({ action: 'callback', connectionId, state: attempt.state, callbackUrl: `http://localhost:54545/callback?code=fixture-grant&state=${attempt.state}` })
   }
+  const assertChat = async (model, use) => {
+    const before = chat.captured.length
+    const traced = await chat.traceModel(() => streamText({ model, prompt: 'HELLO', maxRetries: 0 }).text)
+    assert.equal(traced.result, 'subscription fixture')
+    assert.equal(chat.captured.length, before + 1)
+    const request = chat.captured.at(-1)
+    const callId = verifySubscriptionChat(request)?.callId
+    assert.equal(typeof callId, 'string')
+    const parent = traced.spans.find(span => span.name === 'scripted.subscription.chat')
+    const worker = traced.spans.find(span => span.name === 'model.subscription.cpa' && span.attributes['mikka.model.call_id'] === callId)
+    assert.ok(parent && worker)
+    assert.equal(worker.spanContext().traceId, parent.spanContext().traceId)
+    assert.ok(!/fixture-access|fixture-refresh|fixture-workload-token/.test(JSON.stringify(worker.attributes)), 'provider credentials reached the trace')
+    const gatewayCall = await pool.query('SELECT "generationId" FROM hosted_usage WHERE id=$1', [callId])
+    if (chat.realLiteLLM) {
+      assert.match(gatewayCall.rows[0].generationId, /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/)
+      assert.notEqual(gatewayCall.rows[0].generationId, callId)
+      assert.ok(traced.spans.some(span => span.spanContext().traceId === parent.spanContext().traceId
+        && span.attributes['mikka.litellm.call_id'] === gatewayCall.rows[0].generationId), 'LiteLLM receipt is linked to the trace')
+    }
+    const usage = await pool.query(`SELECT "executionOwnerId","usageWorkspaceId","billingSource",state,
+      "costMicroUsd","inputTokens","outputTokens" FROM hosted_usage WHERE id=$1`, [callId])
+    assert.deepEqual(usage.rows, [{ executionOwnerId: 'alice', usageWorkspaceId: workspaceId, billingSource: 'subscription',
+      state: 'settled', costMicroUsd: null, inputTokens: '1', outputTokens: '1' }])
+    const providerBeforeReplay = providerCalls
+    const replay = await chat.send(JSON.stringify(request))
+    assert.equal(replay.status, 409)
+    await replay.body?.cancel()
+    const wrongUser = await signSubscriptionChat({ ...use, ownerId: 'bob' }, 'fixture-model', request.payload)
+    const denied = await chat.send(wrongUser.body)
+    const deniedBody = await denied.text()
+    assert.match(deniedBody, /binding_required|binding_mismatch/)
+    assert.ok(!/fixture-access|fixture-refresh|fixture-workload-token/.test(deniedBody), 'provider credentials reached the denied response')
+    assert.equal(providerCalls, providerBeforeReplay)
+    assert.equal((await pool.query('SELECT id FROM hosted_usage WHERE id=$1', [wrongUser.callId])).rowCount, 0)
+    assert.equal((await pool.query('SELECT id FROM hosted_usage WHERE id=$1', [callId])).rowCount, 1)
+  }
   let browserServer
   let browser
   try {
@@ -174,6 +264,43 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
     // member, while readCliRunPolicy initializes the real Coordinator policy.
     await pool.query(`INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES ('alice','BYOS fixture','alice@byos-fixture.invalid',true,now(),now()) ON CONFLICT (id) DO NOTHING`)
     await seedFixtureWorkspace(pool, 'alice', 'team', workspaceId)
+    if (chatOnly) {
+      for (const provider of ['codex', 'claude']) {
+        const ownerId = 'alice'
+        const consumerId = randomUUID(), connectionId = await repository.create(ownerId, workspaceId, provider)
+        const name = 'mikka-byos-' + randomUUID()
+        const value = JSON.stringify({ schema: 1, ownerId, workspaceId, connectionId, provider, payload: {
+          type: provider, access_token: 'fixture-access', expired: new Date(Date.now() + 7_200_000).toISOString(),
+          ...(provider === 'codex' ? { account_id: 'fixture-account' } : { account_uuid: 'fixture-account', organization_uuid: 'fixture-org' }),
+        } })
+        projections.set(name, value)
+        const quota = readSubscriptionQuota(provider, { status: 200, body: provider === 'codex'
+          ? { credits: { has_credits: false, unlimited: false }, rate_limit: { primary_window: { used_percent: 20, limit_window_seconds: 18000 } } }
+          : { extra_usage: { is_enabled: false }, five_hour: { utilization: 20 } },
+        })
+        await pool.query(`UPDATE byos_connections SET state='connected',"credentialVersion"=1,"secretName"=$2,"secretDigest"=$3,
+            "accessSecretName"=$4,"accessDigest"=$5,"providerSubject"='fixture-account',quota=$6 WHERE id=$1`,
+        [connectionId, 'mikka-byos-' + randomUUID(), '0'.repeat(64), name, createHash('sha256').update(value).digest('hex'), quota])
+        const bindingId = await repository.bind(ownerId, workspaceId, consumerId, connectionId, 1, provider + '_cpa', 'fixture-model')
+        const use = { ownerId, workspaceId, consumerId, bindingId, execution: 'model' }
+        const model = await resolveAgentModel({ type: 'subscription', bindingId }, {
+          defaultModel: () => { throw new Error('paid fallback invoked') },
+          subscriptionModel: id => resolveAgentSubscription(ownerId, consumerId, id, service, authorizeSubscriptionUse),
+        })
+        await assertChat(model, use)
+        if (provider === 'codex') {
+          assert.equal(await streamText({ model, prompt: 'HELLO_NO_USAGE', maxRetries: 0 }).text, 'subscription fixture')
+          const noUsageCall = verifySubscriptionChat(chat.captured.at(-1))?.callId
+          assert.ok(noUsageCall)
+          assert.deepEqual((await pool.query('SELECT state,"costMicroUsd" FROM hosted_usage WHERE id=$1', [noUsageCall])).rows,
+            [{ state: 'unknown', costMicroUsd: null }])
+        }
+        t.diagnostic(`${provider}: real LiteLLM and Go CPA preserved trace, unique usage, and tenant isolation`)
+      }
+      assert.equal(providerCalls, 3)
+      assert.equal(unexpectedExternalRequests, 0, 'scripted chat uses only the synthetic read-only access projection')
+      return
+    }
     assert.equal((await http(new Request('http://localhost/api/subscriptions', { method: 'POST' }))).status, 401)
     assert.equal((await http(new Request('http://localhost/api/subscriptions', { method: 'POST', headers: { 'sec-fetch-site': 'cross-site' } }))).status, 403)
     assert.equal((await post({ action: 'connect', workspaceId, provider: 'codex', accessToken: 'never-import' })).status, 409)
@@ -229,9 +356,10 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
         const remembered = await repository.defaultModelBinding('alice', consumerId)
         assert.equal(remembered, bound.body.bindingId)
         const model = await resolveAgentModel({ type: 'subscription', bindingId: remembered }, { defaultModel: () => { throw new Error('paid fallback invoked') }, subscriptionModel: bindingId => resolveAgentSubscription('alice', consumerId, bindingId, service, dependencies.workspace) })
-        assert.equal(await streamText({ model, prompt: 'HELLO', maxRetries: 0 }).text, 'subscription fixture')
+        await assertChat(model, use)
       }
       assert.equal(secretMethods.filter(method => method === 'POST').length, initialSecretCreates, 'task reuse must not log in or store credentials again')
+      if (chat.realLiteLLM) t.diagnostic(`${provider}: pinned LiteLLM preserved CPA trace, unique usage, and owner isolation`)
       let toolCalls = 0
       const model = await service.model(use)
       const result = streamText({ model, prompt: 'TOOL', maxRetries: 0, stopWhen: isStepCount(3), tools: { weather: tool({ description: 'fixture weather', inputSchema: z.object({ city: z.string() }), execute: async ({ city }) => { toolCalls++; return { city, weather: 'snow' } } }) } })
@@ -268,7 +396,12 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
         assert.equal(contextResponse.status,200)
         const metadata=await contextResponse.json();assert.equal(metadata.route,nativeRoute);assert.equal(metadata.revision,revision);assert.ok(!JSON.stringify(metadata).includes('accessToken'));assert.ok(!JSON.stringify(metadata).includes('fixture-access'))
         const payload={path:provider==='codex'?'/responses':'/v1/messages',headers:{'user-agent':'Mikka/1.0',originator:'Mikka',authorization:'Bearer caller-placeholder'},body:provider==='codex'?{model:'fixture-model',stream:true,store:false,input:[{role:'user',content:'HELLO'}]}:{model:'fixture-model',stream:true,max_tokens:16,messages:[{role:'user',content:'HELLO'}]}}
-        const nativeResponse=await nativePost(runId,{action:'request',payload});assert.equal(nativeResponse.status,200);const output=await nativeResponse.text();assert.ok(output.includes('subscription fixture'));assert.ok(!output.includes('fixture-access'))
+        if (nativeLiteLlm && task === 0) await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model', metadata, bindingId: agentBinding.body.bindingId, consumerId: agentId })
+        const callsBeforeRetiredRoute = providerCalls
+        const retired = await nativePost(runId, { action: 'request', payload })
+        assert.equal(retired.status, 410)
+        assert.deepEqual(await retired.json(), { error: 'subscription_gateway_required' })
+        assert.equal(providerCalls, callsBeforeRetiredRoute)
         const before=providerCalls
         await pool.query('update devices set enabled=false where id=$1',[deviceId])
         assert.equal((await nativePost(runId,{action:'context'})).status,409)
@@ -277,7 +410,6 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
         await pool.query('update devices set harnesses=$2::jsonb where id=$1',[deviceId,nativeHarnesses])
         assert.equal((await nativePost(runId,{action:'context'},'fixture-other')).status,409)
         assert.equal((await nativePost(runId,{action:'context'},'fixture-device',randomUUID())).status,409)
-        assert.equal((await nativePost(runId,{action:'request',payload:{...payload,body:{...payload.body,model:'another-model'}}})).status,409)
         await pool.query('update agent_runs set "stopRequestedAt"=now() where id=$1',[runId])
         assert.equal((await nativePost(runId,{action:'context'})).status,409)
         assert.equal(providerCalls,before)
@@ -285,27 +417,7 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
       }
       assert.equal(secretMethods.filter(method=>method==='POST').length,noLoginCreates,'hosted tasks must reuse the original OAuth connection')
       await pool.query('delete from agents where id=$1',[agentId]);await pool.query('delete from devices where id=$1',[deviceId])
-      const native = await post({ action: 'bind', connectionId, revision, consumerId, route: nativeRoute, modelId: 'fixture-model' })
-      const runtime = join(directory, `native-${provider}`); await mkdir(runtime)
-      const cwd = join(runtime, 'project'); await mkdir(cwd)
-      execFileSync('git', ['init', '-q', cwd])
-      const binaryPath = resolve(root, `packages/daemon/test/fakes/fake-${provider === 'codex' ? 'codex' : 'claude'}-subscription.mjs`); await chmod(binaryPath, 0o755)
-      const options = { runId: randomUUID(), cwd, prompt: provider === 'codex' ? 'REFRESH' : 'HANG', env: buildChildEnv({ host: { PATH: process.env.PATH, HOME: runtime } }), log: createLogger({ level: 'silent' }) }
-      // This case exercises account custody with synthetic CLIs. Install a
-      // host-scoped gate without approving any tool operation; production
-      // assignments obtain their gate from the authenticated server link.
-      options.toolApproval = new ToolApprovalGate(options.runId, { permission: () => 'deny', ask: async () => 'deny', isLive: () => true })
-      const launched = await service.launchNative('alice', consumerId, native.body.bindingId, hostedSubscriptionLauncher(options, { stateDir: runtime, sandbox: new NoSandbox(), codexBinary: binaryPath, claudeBinary: binaryPath }))
-      sessions.push(launched)
-      if (provider === 'claude') {
-        assert.equal((await post({ action: 'disconnect', connectionId, revision })).status, 200)
-        // The server stops the run and pushes a run control; the daemon's push invalidates the gate (no poll).
-        options.toolApproval.invalidate()
-      }
-      const events = []; for await (const event of launched.events()) events.push(event)
-      assert.equal(events.at(-1).outcome, provider === 'codex' ? 'succeeded' : 'cancelled')
-      assert.ok(!JSON.stringify(events).includes('fixture-access'))
-      if (provider === 'codex') assert.equal((await post({ action: 'disconnect', connectionId, revision })).status, 200)
+      assert.equal((await post({ action: 'disconnect', connectionId, revision })).status, 200)
       await assert.rejects(service.model(use), { code: 'disconnected' })
       const stateAfter = await repository.connection('alice', connectionId)
       assert.equal(stateAfter.accountLabel, 'fixture@example.invalid', 'a disconnected row keeps its email')
@@ -364,6 +476,7 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
     assert.ok(!(await listedIds()).includes(abandoned.body.connectionId), '移除 left the row listed')
     const gone = await pool.query('select state,"removedAt" from byos_connections where id=$1', [abandoned.body.connectionId])
     assert.equal(gone.rows[0].state, 'disconnected'); assert.ok(gone.rows[0].removedAt)
+    if (chat.realLiteLLM) t.diagnostic('Scripted chat crossed pinned LiteLLM, the signed CPA callback and real PostgreSQL')
     if (process.env.MIKKA_BYOS_BACKEND_ONLY === '1') { console.log('Backend-only acceptance complete; browser acceptance intentionally not run'); return }
     const hostedUiConfig = resolve(root, '.hosted-ui/tsconfig.json')
     // Actual Settings component in Chromium, synthetic session/provider only.
@@ -440,7 +553,6 @@ test('new OAuth consent, owner-bound streaming/tool use and native launches reus
     console.log('BYOS browser acceptance: actual Settings -> CPA device pending/complete + registered Claude callback URL handoff -> owner-bound persistence -> disconnect; synthetic providers only')
 
   } finally {
-    for (const session of sessions) await session.cancel().catch(() => {})
     if (browser) await browser.close()
     if (browserServer) await new Promise(resolve => browserServer.close(resolve))
     await new Promise(resolve => infisical.close(resolve))

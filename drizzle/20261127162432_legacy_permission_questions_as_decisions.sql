@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3393 rewrites only factory_questions rows with kind permission (and their stored handoff kind) to decision, which every reader already treats the same, and is idempotent: a rerun matches zero rows
 -- Agents never ask a human for permission (ADR 2026-11-27-1615): an execution
 -- question has no `permission` kind any more. A question stored with it reads
 -- as an ordinary decision, in its column and in the handoff kept for replay

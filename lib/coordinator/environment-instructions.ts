@@ -33,7 +33,7 @@ export async function readScopedPromptInstructionsForBot(userId: string, botId: 
     if (bot.environmentId) {
       const { rows: [env] } = await tx.execute<{ id: string; instructions: string }>(
         sql`select id, instructions from workspace_environments
-          where id=${bot.environmentId} and "workspaceId"=${bot.workspaceId} and "archivedAt" is null`,
+          where id=${bot.environmentId} and "workspaceId"=${bot.workspaceId} and "archivedAt" is null and scope='workspace'`,
       )
       if (env) {
         activeEnvironmentId = env.id

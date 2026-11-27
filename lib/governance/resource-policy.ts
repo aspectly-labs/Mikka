@@ -55,18 +55,15 @@ export async function configureOrganizationResourcePolicy(organizationId: string
   return readOrganizationResourcePolicy(organizationId, userId)
 }
 
-const approvalInput = z.object({ workspaceId: z.uuid(), kind: z.enum(['subscription', 'api_key', 'mcp', 'skill']), resourceId: z.string().min(1).max(200) }).strict()
+// No 'mcp' or 'api_key': a personal MCP server or model key is never shared, so there is nothing to approve (decisions 2026-11-27-1700, 2026-11-27-1740).
+const approvalInput = z.object({ workspaceId: z.uuid(), kind: z.enum(['subscription', 'skill']), resourceId: z.string().min(1).max(200) }).strict()
 export async function requestOrganizationResourceApproval(organizationId: string, userId: string, input: unknown) {
   const value = approvalInput.parse(input)
   if (value.kind === 'subscription') {
     if (value.resourceId !== userId) throw new GovernanceError('access_denied')
   } else {
     z.uuid().parse(value.resourceId)
-    const owned = value.kind === 'mcp'
-      ? await pool.query('select 1 from personal_mcp_servers where id=$1 and user_id=$2', [value.resourceId, userId])
-      : value.kind === 'skill'
-        ? await pool.query('select 1 from personal_skills where id=$1 and user_id=$2', [value.resourceId, userId])
-        : await pool.query('select 1 from model_api_keys where id=$1 and "ownerId"=$2', [value.resourceId, userId])
+    const owned = await pool.query('select 1 from personal_skills where id=$1 and user_id=$2', [value.resourceId, userId])
     if (!owned.rowCount) throw new GovernanceError('access_denied')
   }
   return workspaceDb.transaction(async tx => {
@@ -108,16 +105,14 @@ export async function decideOrganizationResourceApproval(organizationId: string,
 export async function retryOrganizationPolicyOutbox(organizationId?: string) {
   const { workspacePool } = await import('@/lib/workspace-db')
   const { rows } = await workspacePool.query<{ id: string; organizationId: string; workspaceIds: string[]; changes: { modelCredentials: boolean; mcp: boolean; modelProviders: boolean } }>('select id,"organizationId","workspaceIds",changes from mikka_organization_policy_outbox where "deliveredAt" is null and ($1::uuid is null or "organizationId"=$1) order by "createdAt",id limit 50', [organizationId ?? null])
-  const { stopRunsUsingApiKeys } = await import('@/lib/model-api-key-runs')
   const { workspaceResourcePolicy } = await import('./resource-access')
   const { stopRunsForPolicyChange, notifyStoppedPolicyRuns } = await import('@/lib/run-policy-stop')
   for (const receipt of rows) {
     for (const workspaceId of receipt.workspaceIds) {
       const policy = await workspaceResourcePolicy(workspaceId).catch(() => null)
       if (!policy || policy.organizationId !== receipt.organizationId) continue
-      if (receipt.changes.modelCredentials) {
-        await stopRunsUsingApiKeys(pool, { workspaceId, othersOnly: true })
-      }
+      // receipt.changes.modelCredentials stops nothing: no run holds another member's
+      // API key since decision 2026-11-27-1740, and subscriptions serve their owner only.
       if (receipt.changes.mcp) {
         const stopped = await pool.query<{ id: string; deviceId: string; stopped: boolean }>(`update agent_runs r set "stopRequestedAt"=clock_timestamp(),"leaseExpiresAt"=least(r."leaseExpiresAt",clock_timestamp()),"updatedAt"=clock_timestamp()
         where r."workspaceId"=$1 and r."stopRequestedAt" is null and r.status in ('queued','preparing','running','paused','waiting_input','finishing')

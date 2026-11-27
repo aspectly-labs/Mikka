@@ -51,10 +51,10 @@ Node 24 only ([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-n
 the original Node 24 protected-check names stay unchanged.
 
 ## Focused governance acceptance and superseded PR runs
-Merge queue autopilot checks the PR head after CI or Browser gate completes.
-It adds an eligible same-repository PR to the end of the queue once all required
-checks pass. Stacks and PRs included in an open batch follow their owner's merge
-flow. The GitHub App installation token lets queue candidates trigger CI.
+Nothing enqueues a PR on its own. A PR joins the merge queue only when its
+owner turns on GitHub auto-merge ("Merge when ready"); GitHub then queues it once
+the required checks pass. Turning auto-merge off or converting the PR to a draft
+keeps it out. The integration promotion workflow keeps its own gated enqueue path.
 
 A pull request that changes the interface must include a screenshot or
 recording in its description. `UI policy (strict)` requires it, and
@@ -290,8 +290,8 @@ retry only failed candidate/gate jobs: cleanup has removed their candidates.
 
 After the candidate and receipt checks pass, the workflow makes the candidates
 public and keeps the
-release report (all three IDs, their official base kinds, worker digest, source
-commit and original candidate evidence) as an immutable artifact for the private Cloudflare
+release report (all template IDs, their official base kinds, observed hardware,
+worker digest, source commit and original candidate evidence) as an immutable artifact for the private Cloudflare
 API deployment. Old template IDs and aliases are never updated or deleted. A
 failure before publication leaves the selected release unchanged. Publication
 verifies the candidate's source, run, attempt and report digests. The private
@@ -299,6 +299,15 @@ Cloudflare deployment selects the verified IDs under the #1954 release owner;
 publishing IDs alone does not change production selection. Rollback follows
 that owner's existing procedure and a normal rollback PR when code changes,
 preserving matched application/worker sources and the current admission gates.
+
+The builder creates independently sized Claude and Codex templates and compares
+the CPU and memory on a disposable E2B sandbox against each release tier.
+The default ceiling is 8 GiB. Set the repository variable
+`MIKKA_E2B_CONFIRMED_MEMORY_GIB` to `16` or `32` only after E2B confirms
+that quota for the release account. Both build and promotion enforce the
+ceiling. The Desktop template uses the medium tier. The release catalogue
+records only the successfully verified template IDs and their hardware.
+[E2B billing and limits](https://docs.e2b.dev/billing.md)
 
 PR runs use no release credentials. Main builds read the existing `E2B_API_KEY`
 from the existing Infisical `prod:/vercel` path. That retained secret location
@@ -540,5 +549,5 @@ rollout and flag deadlines follow the [production acceptance decision](../../doc
 1. **`plan` (read-only metadata)**: Resolves the exact integration branch tip (`vars.MIKKA_INTEGRATION_BRANCH`, default `claude/affectionate-einstein-s235cb`) via `branches/<ref>`, checks ahead/behind counts and Ready child PRs (verifying any open `chore/auto-sync-main-*` PR includes both current `main` and the current integration base tip), reads the current approved `overlaySource` pin from `mikka-cloud/main` (`docs/operations/releases/deploy-build-inputs.json`) via the existing read-only source App, and checks whether a coordinated Ready integration PR exists on `mikka-hosted-ui`.
 2. **`auto-sync` (conflict-free `main` back-merge)**: Whenever the integration branch has commits ahead of `main` (`ahead_by > 0`), is behind `main` (`behind_by > 0`), and has zero open Ready feature child PRs, opens or forward-merges a clean `chore/auto-sync-main-*` PR targeting the non-`main` integration branch (never force-pushing, `-c core.hooksPath=/dev/null --no-verify`, refreshing both `main` and the integration base if either advanced, replacing a stale sync PR cleanly if only the stale intermediate sync tree conflicts while the live tips merge cleanly, and aborting cleanly on genuine live-tip conflicts), records verified `CI` evidence once aggregator checks pass, re-verifies live base-tip identity immediately before writing, and merges via a normal merge commit (`--merge --delete-branch --match-head-commit`).
 3. **`verify-overlay-pairing` (network-isolated cross-repo compatibility probe)**: Stages `integration-promotion-probe.mjs` strictly from `main`, scrubs all App/OIDC credentials, pre-installs separate `integration/` and `main/` checkouts (`--frozen-lockfile --ignore-scripts`), stages each candidate overlay as an independent local Git checkout in `integration/.hosted-ui` installed with `--prod --ignore-scripts --frozen-lockfile` (matching `scripts/release/service-build-ci.mjs`), and executes the official Web build (`apps/frontend/scripts/build.mjs web`), UI action/read-cache contract, release audit (`scripts/release/hosted-ui.mjs audit`), and zero-regression `tsrs --noEmit --incremental false` delta against the separate read-only `main/` checkout inside a digest-pinned `node:24.22.1-trixie` container (`--network none --cap-drop ALL --security-opt no-new-privileges`, read-only `.git` mounts, allowlist-only environment with zero `GITHUB_*`, `ACTIONS_*`, or `RUNNER_*` access). Emits strictly public-safe booleans, counts, and TS error codes — zero private overlay paths or source lines — and deletes `.hosted-ui` and build output in `always()`.
-4. **`promote` (clean metadata-only merge-queue promotion)**: `merge-queue-autopilot.yml` explicitly excludes the configured integration branch so `integration-to-main-promotion.yml` is the sole automated enqueue path. Only a compatible approved `pinned_overlay` (`deploy-build-inputs.json`) authorizes creating or enqueueing a `main` promotion PR by default (a passing `coordinated_ui_pr` is reported as readiness evidence only unless explicitly authorized via `vars.MIKKA_INTEGRATION_ALLOW_COORDINATED_UNPINNED_PROMOTE=true`; an explicit probe bypass requires `vars.MIKKA_INTEGRATION_SKIP_OVERLAY_PROBE=true`, never legacy `MIKKA_INTEGRATION_PROMOTE_TO_MAIN`; emergency pause uses `vars.MIKKA_INTEGRATION_PROMOTE_FREEZE=true`). Immediately before `create_pr` and `enqueue_pr`, `promote` re-verifies that live `main`, the integration branch tip, `behind_by == 0`, and open Ready child PR count did not drift during the overlay probe, then enqueues strictly via `enqueuePullRequest` (preserving full `merge_group` PostgreSQL coverage).
+4. **`promote` (clean metadata-only merge-queue promotion)**: `integration-to-main-promotion.yml` is the only automated enqueue path. Only a compatible approved `pinned_overlay` (`deploy-build-inputs.json`) authorizes creating or enqueueing a `main` promotion PR by default (a passing `coordinated_ui_pr` is reported as readiness evidence only unless explicitly authorized via `vars.MIKKA_INTEGRATION_ALLOW_COORDINATED_UNPINNED_PROMOTE=true`; an explicit probe bypass requires `vars.MIKKA_INTEGRATION_SKIP_OVERLAY_PROBE=true`, never legacy `MIKKA_INTEGRATION_PROMOTE_TO_MAIN`; emergency pause uses `vars.MIKKA_INTEGRATION_PROMOTE_FREEZE=true`). Immediately before `create_pr` and `enqueue_pr`, `promote` re-verifies that live `main`, the integration branch tip, `behind_by == 0`, and open Ready child PR count did not drift during the overlay probe, then enqueues strictly via `enqueuePullRequest` (preserving full `merge_group` PostgreSQL coverage).
 

@@ -4,6 +4,7 @@ import type { RepositoryGitTiming } from './repository-git-timing'
 // them directly; Mikka-specific facts travel as `data-*` parts.
 import type { RunPublish, RunState, StopReason } from "@mikka/protocol"
 import type { PlanSection } from "@mikka/protocol/plan"
+import type { AvailableCommandsChunkData, SystemEventData } from "@mikka/protocol/slash-commands"
 import type { UIMessage, UIMessageChunk } from "ai"
 import type { DaemonPreparationTiming, DaemonStartupTiming } from "./tracing"
 
@@ -32,6 +33,10 @@ export type MikkaDataTypes = {
   "run-stage": { stage: RunStage; ms: number; ok: boolean; startupTiming?: DaemonStartupTiming; preparationTiming?: DaemonPreparationTiming; repositoryTiming?: RepositoryGitTiming }
   /** A real task is attached to this Bot's desktop, not to an agent identity. */
   computer: { botId: string; runId: string; task: string; state: 'working' }
+  /** Runtime-reported slash commands for this thread (ACP AvailableCommand shape, #3333). */
+  "available-commands": AvailableCommandsChunkData
+  /** System event lines streamed from the harness (local command output, compact status/boundary, blocked command notice, #3333). */
+  "system-event": SystemEventData
   /**
    * The spec a `plan` run wrote (ADR ORV-205). `specId` is the row the server
    * stores, so the card reads the spec's live status from there.

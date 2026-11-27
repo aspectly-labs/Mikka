@@ -2,7 +2,7 @@ import { withDeviceRoute } from '@/lib/device-route'
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm'
 import { runPatchSchema } from '@mikka/protocol/device'
-import { db } from '@/lib/db'
+import { db, pool } from '@/lib/db'
 import { agentRuns, devices } from '@/lib/db/schema'
 import { authenticateDevice } from '@/lib/device-link'
 import { maskFor, maskForRun } from '@/lib/secrets/runtime'
@@ -57,7 +57,13 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ run
         .set({ error: patch.error, updatedAt: new Date() })
         .where(and(eq(agentRuns.id, runId), isNull(agentRuns.error), inArray(agentRuns.status, [...LIVE_STATES, 'paused', 'failed'])))
         .returning({ id: agentRuns.id })
-      if (changed.length) { await runListChanged(db, runId); await runChanged(db, runId) }
+      if (changed.length) {
+        if (caller.scopeDeviceId && caller.scopeWorkspaceId) {
+          const { finishTaskEnvironmentPreparation } = await import('@/lib/project-resources/cloudflare-environment-snapshot')
+          await finishTaskEnvironmentPreparation(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId }, runId, caller.tokenId, 'failed').catch(() => undefined)
+        }
+        await runListChanged(db, runId); await runChanged(db, runId)
+      }
     }
     return new RouteResponse(null, { status: 204 })
   }
@@ -78,7 +84,13 @@ async function handlePATCH(request: Request, { params }: { params: Promise<{ run
     .returning({ id: agentRuns.id })
   // Supervisor state transitions use this route. Its periodic device lease
   // heartbeat and streaming chunks have separate writers and send no list key.
-  if (changed.length) { await runListChanged(db, runId); await runChanged(db, runId) }
+  if (changed.length) {
+    if (patch.state === 'running' && patch.worktree && caller.scopeDeviceId && caller.scopeWorkspaceId) {
+      const { finishTaskEnvironmentPreparation } = await import('@/lib/project-resources/cloudflare-environment-snapshot')
+      await finishTaskEnvironmentPreparation(pool, { userId: caller.userId, workspaceId: caller.scopeWorkspaceId }, runId, caller.tokenId, 'ready').catch(() => undefined)
+    }
+    await runListChanged(db, runId); await runChanged(db, runId)
+  }
   return new RouteResponse(null, { status: 204 })
 }
 
