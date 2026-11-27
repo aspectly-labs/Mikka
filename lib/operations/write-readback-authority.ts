@@ -23,6 +23,12 @@ export function createReadbackAuthority(main: Pick<Pool, 'query'>, workspace: Pi
   return async ({ ownerId, workspaceId, accountId }) => {
     const connection = await main.query<{ userId: string; revoked: boolean }>('SELECT "userId", "needsReconnectAt" IS NOT NULL AS revoked FROM composio_accounts WHERE "accountId"=$1', [accountId])
     const known = connection.rows[0]
+    // A missing row is not a revocation: composio_accounts is Mikka's notes, not
+    // a registry. Rows appear at connect time and are filled for older accounts
+    // only a few per integrations-page load (app/api/integrations/composio,
+    // backfillComposioEmails), so an active account connected before it may have
+    // none. Composio then decides: the adapter re-checks ACTIVE and ownership
+    // before it reads (integrationAccountUnavailable closes the receipt too).
     if (known && (known.userId !== ownerId || known.revoked)) return null
     if (!workspaceId) return {}
     const member = await workspace.query('SELECT 1 FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2 AND status=\'active\'', [workspaceId, ownerId])

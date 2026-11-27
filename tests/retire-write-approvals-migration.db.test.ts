@@ -11,8 +11,9 @@ import { orderMigrations } from '../scripts/migration-order.mjs'
 // fully migrated database, including a workspace whose account deletion is in
 // progress (its policy row rejects every write), and is safe to run twice.
 const MIGRATION = '20261127162323_retire_write_approvals.sql'
-// Runs after it: the readback-attempt column and the scrub of retired browser actions' mutations.
-const FOLLOW_UP = '20261127173451_pending_actions_readback_attempt.sql'
+// Run after it, each in its own transaction: the readback-attempt column, then the scrub of
+// retired browser actions' mutations (kept apart so the column's ACCESS EXCLUSIVE lock never spans a scan).
+const FOLLOW_UPS = ['20261127173451_pending_actions_readback_attempt.sql', '20261127175244_retired_browser_mutation_scrub.sql']
 const url = process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1') assert.ok(url, 'REQUIRE_DB=1 needs PostgreSQL')
 if (url) assert.ok(disposableDatabase(process.env, url), 'loopback *_e2e only')
@@ -27,10 +28,12 @@ test('retiring write approvals closes waiting proposals, rewrites ask to allow, 
     pool = new Pool({ connectionString: target.toString(), max: 1 })
     const directory = new URL('../drizzle/', import.meta.url)
     const files = orderMigrations((await readdir(directory)).filter(file => file.endsWith('.sql')))
-    assert.ok(files.includes(MIGRATION) && files.includes(FOLLOW_UP))
-    assert.ok(files.indexOf(MIGRATION) < files.indexOf(FOLLOW_UP))
-    for (const file of files.filter(file => file !== MIGRATION && file !== FOLLOW_UP)) await pool.query(await readFile(new URL(file, directory), 'utf8'))
-    const migrations = [await readFile(new URL(MIGRATION, directory), 'utf8'), await readFile(new URL(FOLLOW_UP, directory), 'utf8')]
+    const ordered = [MIGRATION, ...FOLLOW_UPS]
+    assert.ok(ordered.every(file => files.includes(file)))
+    const positions = ordered.map(file => files.indexOf(file))
+    assert.deepEqual(positions, [...positions].sort((a, b) => a - b), 'the runner applies them in this order')
+    for (const file of files.filter(file => !ordered.includes(file))) await pool.query(await readFile(new URL(file, directory), 'utf8'))
+    const migrations = await Promise.all(ordered.map(file => readFile(new URL(file, directory), 'utf8')))
     const run = async () => {
       for (const migration of migrations) {
         const client = await pool!.connect()

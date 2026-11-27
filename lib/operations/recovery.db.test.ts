@@ -265,7 +265,7 @@ async function sentAndEnded(f: Awaited<ReturnType<typeof fixture>>, transport: '
 }
 const effects = async (origin: string) => (await fetch(origin + '/stats')).json()
 
-test('generic: receipts no readback can settle do not starve a newer receipt that can be read back', { timeout: 30_000 }, async () => {
+test('generic: receipts no readback can settle do not starve a newer receipt, and a receipt just tried waits five minutes', { timeout: 30_000 }, async () => {
   const f = await fixture()
   try {
     const sent = await sentAndEnded(f, 'generic')
@@ -274,21 +274,32 @@ test('generic: receipts no readback can settle do not starve a newer receipt tha
     const tried: string[] = []
     const readback = async (owner: string, id: string) => {
       tried.push(id)
-      if (stuck.includes(id)) throw Error('fixture provider readback unavailable')
+      if (stuck.includes(id)) throw Error('fixture provider readback unavailable: secret-token-never-reported')
       return sent.service.readback(owner, id)
     }
-    assert.deepEqual(await sweepWriteReceipts(f.pool, readback, { limit: 3 }), { retired: 0, readBack: 3, outcomes: { unavailable: 3 } })
+    const first = await sweepWriteReceipts(f.pool, readback, { limit: 3 })
+    assert.deepEqual(first, { retired: 0, readBack: 3, outcomes: { unavailable: 3 }, failures: { Error: 3 } })
+    assert.ok(!JSON.stringify(first).includes('secret'), 'a failure is reported by name or code, never its message')
     assert.deepEqual(tried, stuck, 'the oldest untried receipts first')
     const attempts = (await f.pool.query('SELECT id,status,"readbackAttemptAt" FROM pending_actions')).rows
     for (const row of attempts) {
       assert.equal(row.status, 'running', 'a failed readback never closes a receipt')
       assert.equal(Boolean(row.readbackAttemptAt), stuck.includes(row.id), 'each pick is stamped before its readback')
     }
-    // The next sweep reads the untried receipt before retrying the failed ones.
+    // The next sweep, even at once, reads the untried receipt and skips the ones just tried.
     tried.length = 0
-    assert.deepEqual(await sweepWriteReceipts(f.pool, readback, { limit: 3 }), { retired: 0, readBack: 3, outcomes: { done: 1, unavailable: 2 } })
-    assert.deepEqual(tried, [stuck[0], stuck[1], sent.receipt.id], 'the receipt never tried, then the ones tried longest ago, in creation order')
+    assert.deepEqual(await sweepWriteReceipts(f.pool, readback, { limit: 3 }), { retired: 0, readBack: 1, outcomes: { done: 1 } })
+    assert.deepEqual(tried, [sent.receipt.id])
     assert.deepEqual(await sent.status(sent.receipt.id), { status: 'done', error: null })
+    // Once five minutes have passed, the one tried longest ago goes first; one tried since still waits.
+    await f.pool.query(`UPDATE pending_actions SET "readbackAttemptAt"=now()-interval '30 minutes' WHERE id=$1`, [stuck[2]])
+    await f.pool.query(`UPDATE pending_actions SET "readbackAttemptAt"=now()-interval '20 minutes' WHERE id=$1`, [stuck[0]])
+    tried.length = 0
+    assert.deepEqual(await sweepWriteReceipts(f.pool, readback, { limit: 1 }), { retired: 0, readBack: 1, outcomes: { unavailable: 1 }, failures: { Error: 1 } })
+    assert.deepEqual(tried, [stuck[2]])
+    tried.length = 0
+    assert.deepEqual(await sweepWriteReceipts(f.pool, readback, { limit: 3 }), { retired: 0, readBack: 1, outcomes: { unavailable: 1 }, failures: { Error: 1 } })
+    assert.deepEqual(tried, [stuck[0]], 'stuck[1] and stuck[2] were tried within five minutes')
     for (const id of stuck) assert.equal((await sent.status(id)).status, 'running')
     assert.equal(sent.lookups(), 1)
     assert.deepEqual(await effects(f.origin), { posts: 1, effects: 1 })
