@@ -7809,7 +7809,12 @@
     "newBot": "新建 Bot",
     "workspaceAll": "{name} 全部任务",
     "search": "搜索任务",
-    "switchWorkspace": "切换工作区"
+    "switchWorkspace": "切换工作区",
+    "joinOrCreateWorkspace": "加入或新建工作区",
+    "help": "帮助",
+    "helpDocs": "文档",
+    "helpShortcuts": "快捷键",
+    "helpFeedback": "反馈"
   },
   "Governance": {
     "plan": {
@@ -11571,7 +11576,9 @@
       "app": "连一个应用",
       "device": "连这台电脑",
       "invite": "邀请成员"
-    }
+    },
+    "skip": "跳过",
+    "skipItem": "跳过 {item}"
   },
   "ServerStatus": {
     "database": "数据库",

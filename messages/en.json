@@ -7809,7 +7809,12 @@
     "newBot": "New bot",
     "workspaceAll": "{name} — all tasks",
     "search": "Search tasks",
-    "switchWorkspace": "Switch workspace"
+    "switchWorkspace": "Switch workspace",
+    "joinOrCreateWorkspace": "Join or create workspace",
+    "help": "Help",
+    "helpDocs": "Documentation",
+    "helpShortcuts": "Keyboard shortcuts",
+    "helpFeedback": "Send feedback"
   },
   "Governance": {
     "plan": {
@@ -11571,7 +11576,9 @@
       "app": "Connect an app",
       "device": "Connect this computer",
       "invite": "Invite teammates"
-    }
+    },
+    "skip": "Skip",
+    "skipItem": "Skip {item}"
   },
   "ServerStatus": {
     "database": "Database",
