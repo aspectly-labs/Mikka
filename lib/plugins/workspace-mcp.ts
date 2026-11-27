@@ -96,28 +96,6 @@ export class WorkspaceMcpStore {
     return { workspaceId, workspaceKind: workspace.kind, canShare: workspace.kind === 'team' && policy.mcpSharing !== 'deny', servers, count: servers.length }
   }
 
-  /**
-   * Whether `userId` may switch tools on a connection shared to `workspaceId` they do not own.
-   * A connection shared to a team workspace is that workspace's (Capy's organisation-owned
-   * servers), so its active admins manage its tools; ordinary members only use them. `false`
-   * when the connection is visible here but the user is not an admin; `mcpNotFound` when it is
-   * not shared to this workspace at all, so its existence is not revealed.
-   */
-  async canManageSharedTools(userId: string, serverId: string, workspaceId: string, query: Query = this.pool): Promise<boolean> {
-    const page = await this.available(userId, workspaceId, query)
-    const row = page.find(server => server.id === serverId)
-    if (!row || row.user_id === userId || !row.grant_id) throw new PluginError('mcpNotFound', 404)
-    return this.workspaceAdmin(userId, workspaceId)
-  }
-
-  /** An active admin of a team workspace (a personal workspace shares nothing). */
-  async workspaceAdmin(userId: string, workspaceId: string): Promise<boolean> {
-    const { rows: [admin] } = await (await this.members()).query<{ ok: number }>(`SELECT 1 AS ok FROM mikka_workspace_members m
-      JOIN mikka_workspaces w ON w.id=m."workspaceId" AND w.kind='team'
-      WHERE m."workspaceId"=$1 AND m."userId"=$2 AND m.status='active' AND m.role='admin'`, [workspaceId, userId])
-    return Boolean(admin)
-  }
-
   /** Same owner/member boundary as API-key sharing. Only fresh-session HTTP calls invoke this mutation. */
   async share(userId: string, input: { serverId: string; workspaceId: string; shared: boolean }): Promise<McpWorkspacePage> {
     if ((await this.workspace(userId, input.workspaceId)).kind !== 'team') throw new PluginError('workspaceAccessDenied', 403)
