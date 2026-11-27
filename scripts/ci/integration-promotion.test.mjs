@@ -28,11 +28,11 @@ const SHA = '1111111111111111111111111111111111111111'
 const SHA2 = '2222222222222222222222222222222222222222'
 const SHA3 = '3333333333333333333333333333333333333333'
 
-test('no workflow besides the integration promotion enqueues PRs on its own', () => {
+test('no workflow besides the integration promotion enqueues PRs or turns on auto-merge on its own', () => {
   const dir = new URL('../../.github/workflows/', import.meta.url)
   for (const name of readdirSync(dir).filter(file => /\.ya?ml$/.test(file))) {
     if (name === 'integration-to-main-promotion.yml') continue
-    assert.doesNotMatch(readFileSync(new URL(name, dir), 'utf8'), /enqueuePullRequest/, `${name} must not enqueue PRs`)
+    assert.doesNotMatch(readFileSync(new URL(name, dir), 'utf8'), /enqueuePullRequest|enablePullRequestAutoMerge|pr merge[^\n]*--auto/, `${name} must not enqueue PRs or turn on auto-merge`)
   }
 })
 
