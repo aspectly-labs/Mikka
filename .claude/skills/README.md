@@ -15,9 +15,11 @@ A skill audit
 never changes the shell layout (R-35), and the generated gradient avatar for
 people is intentional (R-36). The example
 code and copy in a skill are illustrations, not Mikka's components or wording.
-No skill restyles a paid block or component (BoardUI Pro, affectUI, beUI Pro):
-their token, icon-set, font and polish rules apply to Mikka's own UI only
-(`docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md`).
+No skill outranks the top-product reference: a paid block or component
+(BoardUI Pro, affectUI, beUI Pro) is edited to match ChatGPT / Codex, Claude /
+Claude Code, Capy or Linear, and a skill's token, icon-set, font and polish
+rules apply only where that reference is silent
+(`docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md`).
 
 Vendored on 2026-10-29, unmodified, from these pinned commits:
 
@@ -72,7 +74,7 @@ text is at [`../skill-licenses/anthropic-frontend-design/LICENSE`](../skill-lice
   two passes (a token/type/layout plan reviewed against the brief, then build
   and self-critique) and its catalogue of generated-page tells are the
   checklist. Where it asks for a new aesthetic direction, Mikka's answer is
-  already `docs/design/` plus the affected paid block's shipped look; the
+  already `docs/design/` plus the top-product reference for the surface; the
   skill judges the page, it does not re-theme the product.
 - **AI-looking UI**: `unslop` as an audit list (`references/signs.md`). Mikka
   already has a direction (`docs/design/`), so use its polish mode: fix the

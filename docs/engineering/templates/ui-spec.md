@@ -20,9 +20,9 @@ Copy this template before coding UI. Every UI PR must reference the completed sp
 
 List every part of the screen and the exact existing primitive it reuses (`docs/design/design-system.md` §2, `docs/design/components.md`, `mikka-hosted-ui/components/mikka/list-page/`):
 
-| Surface part | Existing primitive / paid block | Notes (data/copy only if paid block) |
+| Surface part | Existing primitive / paid block | Notes (top-product reference if paid block) |
 | --- | --- | --- |
-| `<Header / toolbar / list / strip / card>` | `<CapyListPage / ChatStatusStrip / TakeoverCard / BoardUI as-shipped>` | `<notes>` |
+| `<Header / toolbar / list / strip / card>` | `<CapyListPage / ChatStatusStrip / TakeoverCard / paid block edited to the reference>` | `<notes>` |
 
 - **New primitive justification (omit if none):** Explain why no existing primitive fits and confirm `docs/design/components.md` updates in the same PR.
 - **Zero patch-on-patch check:** Confirm no additional CSS/patch layer is stacked onto an existing paid-block override (`mikka-hosted-ui/patches/*.patch`).

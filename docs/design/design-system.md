@@ -2,7 +2,7 @@
 
 **Audience:** Frontend, mobile, and design contributors shipping UI in `mikka-hosted-ui` (Web and Desktop) and `apps/mobile` (iOS).
 **Scope:** Visual tokens, restricted UI primitives, chat layout and viewport budgets, the 7-state interaction contract, copy density limits, and automated enforcement across Web, Desktop, and iOS.
-**Out of scope:** Backend orchestration (`orchestration.md`), domain terminology definitions (`glossary.md`), and restyling shipped paid blocks (BoardUI Pro, affectUI, beUI Pro keep their shipped visuals under [2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+**Out of scope:** Backend orchestration (`orchestration.md`) and domain terminology definitions (`glossary.md`). Paid blocks (BoardUI Pro, affectUI, beUI Pro) are in scope as raw material: they are edited in place in `mikka-hosted-ui` to match the reference product ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 
 **Visual authority ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)):**
 - **ChatGPT / Codex + Claude Code** govern chat chrome, transcript typography, composer, inline status/quota strips, and quiet error presentation.
@@ -62,7 +62,7 @@ Quota, rate-limit, and model-unavailable strips default to a **neutral `--card` 
 
 ## 2. Restricted Primitives and TypeScript Slot Contracts
 
-Build Mikka's own surfaces from a small, closed set of primitives so layout, density, and escape hatches are enforced at compile time rather than by code review alone. Paid blocks (BoardUI Pro, affectUI, beUI Pro) stay as shipped (R-90) and are tracked by `mikka-hosted-ui/scripts/paid-overrides.mjs`.
+Build Mikka's own surfaces from a small, closed set of primitives so layout, density, and escape hatches are enforced at compile time rather than by code review alone. Paid blocks (BoardUI Pro, affectUI, beUI Pro) are raw material: edit their source in place to match the reference product rather than layering overrides on top ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)); `mikka-hosted-ui/scripts/paid-sources.mjs` keeps the paid-source list and patch ledger consistent.
 
 | Primitive | Purpose | Mandatory TypeScript Contract & Constraints |
 | --- | --- | --- |
@@ -144,7 +144,7 @@ Every pillar above maps to a concrete compile-time or CI check across public `as
 | Pillar / Rule | TypeScript / Code Mechanism | Automated Check / CI Gate |
 | --- | --- | --- |
 | **1. Tokens & WCAG AA contrast (T1–T3, R-30..R-38, R-104)** | Single token bridge `mikka-hosted-ui/styles/palette.css` | `mikka-hosted-ui/scripts/design-system-geometry.test.mjs` (Playwright computed contrast `>= 4.5:1` for effective `styles/palette.css` readable text tokens and all 6 `--status-*` text/surface pairs in Light & Dark, plus structural hairline `--rule` token verification), `scripts/contrast.test.mjs` (base `core/app/globals.css` `--tertiary` token), `scripts/ui-policy.mjs` (`lint:ui`) |
-| **2. Restricted primitives & paid-block boundary (R-39, R-90)** | Typed props on `ChatStatusStrip`, `TakeoverCard` (required `onDefer`), `AlertRow`; `WhyDisabled` | `mikka-hosted-ui/scripts/paid-overrides.mjs` (ratcheted drift ceiling), `scripts/ui-policy.mjs` (`style/nested-frame`, `style/secondary-button-fill`, `style/search-input`) |
+| **2. Restricted primitives & paid-source boundary (R-39, R-90)** | Typed props on `ChatStatusStrip`, `TakeoverCard` (required `onDefer`), `AlertRow`; `WhyDisabled` | `mikka-hosted-ui/scripts/paid-sources.mjs` (paid-source list and patch ledger), `mikka-hosted-ui/scripts/pr-visual-evidence-check.mjs` (top-product reference per UI PR), `scripts/ui-policy.mjs` (`style/nested-frame`, `style/secondary-button-fill`, `style/search-input`) |
 | **3. Layout & viewport budget (Chat `>=55%`/`>=50%`, `<=1` takeover, `<=104px` ground strip)** | `ChatBottomSlotProvider` single-slot priority state machine, `TakeoverCard` `max-h-[min(42dvh,320px)]`, `TodoList` default collapsed | `mikka-hosted-ui/scripts/design-system-geometry.test.mjs` (Playwright `1280×760`, `960×720`, `375×812` Light/Dark), `mikka-hosted-ui/scripts/right-column-narrow.test.mjs`, `scripts/control-size-policy.mjs`, `scripts/motion-policy.mjs`, `scripts/split-pane-policy.mjs` |
 | **4. 7-state interaction contract** | Synchronous pending ref, `try/finally`, `InlineLoadError`, `AlertDialog` R-102, `@media (hover: hover)` + `pointer-coarse:opacity-100` | `scripts/interaction-policy.mjs`, `scripts/icon-button-policy.mjs`, `scripts/navigation-policy.mjs`, `scripts/polling-policy.mjs`, `scripts/error-cause-policy.mjs`, `mikka-hosted-ui/scripts/core-ui.test.mjs` |
 | **5. Copy & density budget (R-40..R-44, C-01..C-09)** | `messages/{zh-CN,en}.json`, `ChatStatusStrip` single-CTA prop | `scripts/check-i18n.mjs` (`pnpm i18n:check`), `scripts/check-copy.mjs`, `scripts/copy-policy.mjs`, `mikka-hosted-ui/scripts/copy-budget.test.mjs` |
