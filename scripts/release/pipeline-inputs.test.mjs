@@ -368,8 +368,9 @@ test('promotion by the owner or the merge queue scans staging history and select
     assert.equal(state.scanned, true)
     state.scanned = false
     const queued = await selectPromotion({ env: { ...env, GITHUB_ACTOR_ID: String(bot.id), GITHUB_ACTOR: bot.login }, api, npmLatest })
-    // The automatic path refuses a candidate whose daemon floor is above npm latest, too.
-    await assert.rejects(selectPromotion({ env, api, npmLatest: async () => '0.0.455' }), /pipeline_daemon_latest_behind/)
+    // The automatic path holds back a candidate whose daemon floor is above npm latest, too.
+    assert.deepEqual(await selectPromotion({ env, api, npmLatest: async () => '0.0.455' }),
+      { status: 'not-ready', source, reason: 'pipeline_daemon_latest_behind', detail: '' })
     assert.equal(queued.status, 'selected')
     assert.equal(queued.source, source)
     assert.equal(state.scanned, true)
@@ -383,9 +384,16 @@ test('an automatic promotion re-reads the policy and needs its production checks
   const passed = await automaticPromotion(t, { productionChecks: [e2e], checkRuns: passing })
   assert.equal((await selectPromotion({ env: passed.env, api: passed.api, npmLatest: passed.npmLatest })).status, 'selected')
   assert.ok(passed.state.calls.some(path => path.includes(`/commits/${source}/check-runs?`)), 'the check reads the candidate commit')
+  // Evidence that has not arrived yet holds production back without failing the run.
+  for (const checkRuns of [[{ ...passing[0], conclusion: 'failure' }], [{ ...passing[0], status: 'in_progress', conclusion: null }], []]) {
+    const f = await automaticPromotion(t, { productionChecks: [e2e], checkRuns })
+    assert.deepEqual(await selectPromotion({ env: f.env, api: f.api, npmLatest: f.npmLatest }),
+      { status: 'not-ready', source, reason: 'pipeline_required_check_failed', detail: 'releaseChecks:checkRunMissing' }, JSON.stringify(checkRuns))
+    assert.equal(await f.read(), '', 'A held-back promotion exports nothing to later steps')
+    assert.equal((await readdir(f.env.RUNNER_TEMP)).includes('deploy-production'), false, 'nor writes deployment inputs')
+  }
   for (const [change, code] of [
-    [{ productionChecks: [e2e], checkRuns: [{ ...passing[0], conclusion: 'failure' }] }, /pipeline_required_check_failed/],
-    [{ productionChecks: [e2e], checkRuns: [] }, /pipeline_required_check_failed/],
+    // A check the policy cannot run is a misconfiguration, not a pending result: it fails the run.
     [{ productionChecks: [{ name: 'mobile-smoke', kind: 'builtin' }] }, /pipeline_required_check_failed/],
     // The switch the staging job read must still be on at the operations commit this run deploys.
     [{ policy: { version: 1, autoProduction: false, mobileProduction: false, promoters: [], requiredChecks: { production: [], desktop: [], mobile: [] } } }, /pipeline_auto_production_disabled/],
@@ -395,7 +403,7 @@ test('an automatic promotion re-reads the policy and needs its production checks
     const f = await automaticPromotion(t, change)
     await assert.rejects(selectPromotion({ env: f.env, api: f.api, npmLatest: f.npmLatest }), code, JSON.stringify(change))
     assert.equal(await f.read(), '', 'A refused promotion exports nothing to later steps')
-    assert.equal(await readdir(f.env.RUNNER_TEMP).then(names => names.includes('deploy-production')), false, 'nor writes deployment inputs')
+    assert.equal((await readdir(f.env.RUNNER_TEMP)).includes('deploy-production'), false, 'nor writes deployment inputs')
   }
 })
 
@@ -648,13 +656,51 @@ test('a manual promotion refuses other actors, missing or mismatched inputs, unf
   }
 })
 
-test('one failed production check refuses automatic and manual promotion alike, before any input is written', async t => {
+test('a pending production check holds an automatic promotion back and refuses a manual one, before any input is written', async t => {
   const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e', workflow: '.github/workflows/browser-gate.yml' }
-  const failed = { productionChecks: [e2e], checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'completed', conclusion: 'failure' }] }
-  for (const fixture of [automaticPromotion, manualPromotion]) {
-    const f = await fixture(t, failed)
-    await assert.rejects(selectPromotion({ env: f.env, api: f.api, npmLatest: f.npmLatest }), /pipeline_required_check_failed/, fixture.name)
-    assert.equal(await f.read(), '', fixture.name)
-    assert.equal((await readdir(f.env.RUNNER_TEMP)).includes('deploy-production'), false, fixture.name)
+  const pending = { productionChecks: [e2e], checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'in_progress', conclusion: null }] }
+  const automatic = await automaticPromotion(t, pending)
+  assert.equal((await selectPromotion({ env: automatic.env, api: automatic.api, npmLatest: automatic.npmLatest })).status, 'not-ready')
+  const manual = await manualPromotion(t, pending)
+  await assert.rejects(selectPromotion({ env: manual.env, api: manual.api, npmLatest: manual.npmLatest }), /pipeline_required_check_failed/)
+  for (const f of [automatic, manual]) {
+    assert.equal(await f.read(), '')
+    assert.equal((await readdir(f.env.RUNNER_TEMP)).includes('deploy-production'), false)
   }
+})
+
+test('a staging run whose automatic promotion was held back for a pending check stays promotable by hand once it passes', async t => {
+  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e', workflow: '.github/workflows/browser-gate.yml' }
+  const pendingRun = { name: 'Browser e2e', head_sha: source, status: 'in_progress', conclusion: null }
+  // 1. The merge-triggered run stages, then its production job finds the required check still running.
+  const automatic = await automaticPromotion(t, { productionChecks: [e2e], checkRuns: [pendingRun] })
+  const held = await selectPromotion({ env: automatic.env, api: automatic.api, npmLatest: automatic.npmLatest })
+  assert.equal(held.status, 'not-ready')
+  assert.equal(await automatic.read(), '')
+  // 2. The production job succeeds with every writer step skipped, so the run concludes successfully,
+  //    and the production record job (which files failure issues) does not run for it.
+  const heldJobs = [{ id: 7199, name: 'pipeline', status: 'completed', conclusion: 'success', steps: [
+    { name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'success' },
+    { name: 'Upload pipeline receipts', status: 'completed', conclusion: 'success' }] },
+    { id: 7201, name: 'pipeline-production', status: 'completed', conclusion: 'success', steps: [
+      { name: 'Select the verified staging result and production baseline', status: 'completed', conclusion: 'success' },
+      { name: 'Promote and verify the staged service manifest', status: 'completed', conclusion: 'skipped' },
+      { name: 'Upload production receipts', status: 'completed', conclusion: 'skipped' }] }]
+  // 3. The check passes on the same commit; a promoter dispatches pipeline-promote naming that staging run.
+  const passed = [{ name: 'Browser e2e', head_sha: source, status: 'completed', conclusion: 'success', app: { id: 15368 },
+    details_url: 'https://github.com/alexj11324/Mikka/actions/runs/601/job/1' }]
+  for (const production of [false, true]) {
+    const manual = await manualPromotion(t, { production, productionChecks: [e2e], checkRuns: passed, stageJobs: heldJobs,
+      stageRun: { conclusion: 'success' } })
+    const result = await selectPromotion({ env: manual.env, api: manual.api, npmLatest: manual.npmLatest })
+    assert.equal(result.status, 'selected')
+    assert.equal(result.source, source)
+    const variables = Object.fromEntries((await manual.read()).trim().split('\n').map(line => line.split('=')))
+    assert.equal(variables.MIKKA_STAGE_RUN_ID, '199')
+    // The held-back production job is not mistaken for a production writer: the baseline is still the earlier one.
+    assert.equal(variables.MIKKA_PRODUCTION_RELEASE_RUN_ID, production ? '90' : undefined)
+  }
+  // Before the fix the automatic refusal failed the run, and a failed staging run is never promotable.
+  const failedRun = await manualPromotion(t, { productionChecks: [e2e], checkRuns: passed, stageJobs: heldJobs, stageRun: { conclusion: 'failure' } })
+  await assert.rejects(selectPromotion({ env: failedRun.env, api: failedRun.api, npmLatest: failedRun.npmLatest }), /pipeline_run_unsuccessful/)
 })

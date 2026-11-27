@@ -339,12 +339,24 @@ unpromotable); it staged exactly `promote_source` and the producer's manifest;
 `cloud_source_sha` is current private `main`; the candidate contains what
 production serves (no downgrade); and every `requiredChecks.production` entry
 passes. The private publisher re-checks the promoters, the staging evidence
-(`stagingEvidence`) and the downgrade rule before any write. An automatic
-(`workflow_run`) promotion passes the same evidence gate in the public selector:
-it re-reads and validates the policy at the operations commit it deploys,
-requires `autoProduction: true` there, and runs every `requiredChecks.production`
-entry against the candidate's `sourceCommit` before any deployment input is
-exported or credential read.
+(`stagingEvidence`) and the downgrade rule before any write.
+
+Production (automatic, `workflow_run`): the public selector re-reads and
+validates the policy at the operations commit it deploys, requires
+`autoProduction: true` there, and applies the same daemon floor and
+`requiredChecks.production` gates to the candidate's `sourceCommit` before any
+deployment input is exported or credential read. Two manual gates are not run:
+the current-staging-baseline check and the downgrade comparison. Both hold by
+construction, because the workflow-level `cloudflare-application-deployment`
+concurrency group runs this run's staging and production jobs with no other
+deployment in between (so its own staging result is the current baseline), and
+the candidate was `main` when staging selected it inside that group, and `main`
+(protected, never rewritten) contains every commit production can already serve. If a required check has no successful run yet
+(pending, failed, or not started) or npm `latest` is below the daemon floor,
+the selector reports `not-ready` instead of failing: production is skipped, the
+run still succeeds, no failure issue is filed, and a promoter can dispatch
+`pipeline-promote` for that staging run once the evidence exists. A malformed
+policy or an unknown check still fails the run.
 
 Desktop (a `desktop-release.yml` dispatch): the dispatcher and re-run actor are
 promoters; the receipt is verified as before (a manual `pipeline:` receipt must

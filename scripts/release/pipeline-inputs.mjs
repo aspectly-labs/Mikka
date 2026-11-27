@@ -370,7 +370,7 @@ async function daemonFloorReached(api, sourceCommit, npmLatest) {
 }
 
 /** The private release policy at one operations commit, fully validated; anything else is unreadable. */
-async function productionPolicy(api, operations) {
+async function readProductionPolicy(api, operations) {
   return checkedReleasePolicy(policyFromContents(await api(`alexj11324/mikka-cloud/contents/${POLICY_PATH}?ref=${operations}`)).policy)
 }
 
@@ -395,7 +395,7 @@ async function manualStage(api, env) {
   if (env.INPUT_CLOUD_SOURCE) assert.equal(env.INPUT_CLOUD_SOURCE, cloud.object.sha, 'pipeline_operations_source_must_be_current_main')
   let policy
   try {
-    policy = await productionPolicy(api, cloud.object.sha)
+    policy = await readProductionPolicy(api, cloud.object.sha)
     requirePromoters(policy, { actor: current.actor, triggeringActor: current.triggering_actor })
     requireCommittedPromoters(policy)
   } catch (cause) {
@@ -436,7 +436,12 @@ async function manualStage(api, env) {
  * run, and only while the private policy's `autoProduction` is true at the operations commit it
  * deploys (the workflow skips it otherwise, and this re-reads it); a manual dispatch by a listed
  * promoter promotes the named staging run instead. Either way the policy's production
- * `requiredChecks` must pass on the candidate's source commit before anything is exported. */
+ * `requiredChecks` must pass on the candidate's source commit before anything is exported.
+ *
+ * An automatic run whose candidate is merely not ready yet (a required check still pending or
+ * failed, or npm `latest` below its daemon floor) returns `not-ready` instead of failing: nothing
+ * has been written, production is skipped, and the run still concludes successfully so a promoter
+ * can later dispatch `pipeline-promote` for this exact staging run, which re-runs every gate. */
 export async function selectPromotion({ env = process.env, api = github, npmLatest = npmLatestDaemon } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
   assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')
@@ -458,20 +463,25 @@ export async function selectPromotion({ env = process.env, api = github, npmLate
     assert.equal(String(stage.artifact.id), env.INPUT_STAGE_ARTIFACT, 'pipeline_stage_artifact_mismatch')
     operations = env.INPUT_OPERATIONS_SOURCE
     // The same file the staging job's switch read, at the operations commit this run deploys.
-    try { policy = await productionPolicy(api, operations) } catch (cause) { throw new Error('pipeline_policy_unreadable', { cause }) }
+    try { policy = await readProductionPolicy(api, operations) } catch (cause) { throw new Error('pipeline_policy_unreadable', { cause }) }
     assert.equal(policy.autoProduction, true, 'pipeline_auto_production_disabled')
   }
   assert.deepEqual(stage.files['release-manifest.json'], selected.manifest, 'pipeline_stage_manifest_mismatch')
-  // Every promotion, automatic or manual: npm latest must already satisfy the candidate's daemon floor.
-  await daemonFloorReached(api, selected.manifest.sourceCommit, npmLatest)
   assert.equal(stage.files['pipeline-summary.json']?.status, 'passed', 'pipeline_stage_incomplete')
   assert.equal(stage.files['pipeline-summary.json'].target, 'staging', 'pipeline_stage_target_mismatch')
   assert.equal(stage.files['pipeline-summary.json'].rollback, undefined, 'pipeline_stage_rollback_rejected')
-  // Every promotion, automatic or manual, needs the policy's production evidence on the exact commit.
   try {
-    await runReleaseChecks('production', { checks: policy.requiredChecks.production, sourceCommit: selected.manifest.sourceCommit,
-      read: path => api(`${repository}/${path}`), builtin: {} })
-  } catch (cause) { throw new Error('pipeline_required_check_failed', { cause }) }
+    // Every promotion, automatic or manual: npm latest must already satisfy the candidate's daemon floor,
+    await daemonFloorReached(api, selected.manifest.sourceCommit, npmLatest)
+    // and the policy's production evidence must pass on the exact commit.
+    try {
+      await runReleaseChecks('production', { checks: policy.requiredChecks.production, sourceCommit: selected.manifest.sourceCommit,
+        read: path => api(`${repository}/${path}`), builtin: {} })
+    } catch (cause) { throw new Error('pipeline_required_check_failed', { cause }) }
+  } catch (error) {
+    if (manual || !notReady(error)) throw error
+    return { status: 'not-ready', source: selected.manifest.sourceCommit, reason: selectionError(error), detail: refusalDetail(error) }
+  }
   const prior = await priorDeployment(api, env.GITHUB_RUN_ID, undefined, 'production')
   const previousOrigin = prior && baselineOrigin(prior.summary, 'production')
   const previous = previousOrigin && await historicalRelease(api, previousOrigin.runId, previousOrigin.runAttempt)
@@ -510,15 +520,33 @@ export function selectionError(error) {
   return /^pipeline_[a-z_]+$/.test(code) ? code : 'pipeline_selection_failed'
 }
 
+// Refusals an automatic run treats as "not yet": evidence that can still arrive for the same commit,
+// a required check run with no successful result yet (pending, failed and re-runnable, or not started)
+// or npm latest below the daemon floor. A misconfigured check or policy still fails the run.
+function notReady(error) {
+  const reason = selectionError(error)
+  return reason === 'pipeline_daemon_latest_behind'
+    || (reason === 'pipeline_required_check_failed' && refusalDetail(error) === 'releaseChecks:checkRunMissing')
+}
+
+/** The cause's own code (`releaseChecks:checkRunMissing`, `releasePolicy:…`), never free text. */
+export function refusalDetail(error) {
+  const cause = error?.cause instanceof Error ? error.cause.message.split('\n', 1)[0] : ''
+  return /^[A-Za-z]+:[A-Za-z]+$/.test(cause) ? cause : ''
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
     assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === 'promote'), 'pipeline_usage_invalid')
     const output = await (process.argv[2] === 'promote' ? selectPromotion() : selectPipeline())
     if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
       Object.entries(output).map(([key, value]) => `${key}=${value}\n`).join(''))
+    if (output.status === 'not-ready') console.log(`::warning title=Production promotion not ready::${output.reason}`
+      + `${output.detail ? ` (${output.detail})` : ''}: staging stands; a promoter can dispatch pipeline-promote for this run once it is ready.`)
     console.log(JSON.stringify({ status: output.status, source: output.source }))
   } catch (error) {
-    console.error(selectionError(error))
+    const detail = refusalDetail(error)
+    console.error(selectionError(error) + (detail ? ` (${detail})` : ''))
     process.exitCode = 1
   }
 }
