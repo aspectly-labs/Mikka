@@ -30,7 +30,7 @@ protected UI check.
   `Browser tests (before merge)` and passes at once; delete it once that name
   is removed from the required checks in the repository settings.
 - `GitGuardian Security Checks` is a separate external required check.
-- The protected `UI policy (strict)` source stage also runs the waiting-issue check, so no separate required check name is needed for `waiting-issues.yml`.
+- The protected `UI policy (strict)` source stage also runs the waiting-issue check, so `waiting-issues.yml` only reopens a waited issue on `issues: closed`.
 - **`CI OK`** (job `ci-ok` in `ui-policy.yml`) is the single aggregate, as in
   Orca: it needs every CI job, runs on pull requests, merge groups, main pushes
   and the daily schedule, and fails if any needed job failed or was cancelled.
@@ -486,7 +486,10 @@ from the actual reused web source and private overlay SHA. Missing exact-source
 publication fails the job. The evidence audit must pass before reports upload.
 This proves the local scripted composition, not a live model or deployment.
 
-`production-smoke.yml` resolves the API's serving source through the anonymous
+`production-smoke.yml` runs daily at 14:17 UTC, on dispatch and after each
+`Cloudflare application deployment` run (`workflow_run`) whose
+`pipeline-production` job succeeded, that is, a run that promoted production;
+it no longer wakes for every `deployment_status` event. It resolves the API's serving source through the anonymous
 version endpoint and reads that immutable main commit's generated route list.
 Its route probe uses undeclared methods, checking dispatch status and `Allow`
 without credentials or business handlers; a missing route or 5xx fails before

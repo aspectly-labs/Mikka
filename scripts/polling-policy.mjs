@@ -172,10 +172,6 @@ export const pollingAllowlist = {
     "bounded production acceptance waits for its explicitly created group conversation result",
     1,
   ),
-  "scripts/ops/issues-1516-welcome-acceptance.mjs": harness(
-    "bounded acceptance cleanup verifies only its owned bot and work state",
-    1,
-  ),
   "scripts/ops/posthog-export-evidence.mjs": external(
     "bounded wait for an explicit third-party PostHog export job to finish",
     1,

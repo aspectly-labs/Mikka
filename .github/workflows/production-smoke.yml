@@ -4,7 +4,13 @@ on:
   schedule:
     - cron: '17 14 * * *'
     - cron: '*/15 * * * *'
-  deployment_status:
+  # After a deployment run, not on every deployment_status event: those fired
+  # about 740 times a day for every environment job and nearly all skipped.
+  # production-promotion below keeps the smoke to runs that promoted production.
+  workflow_run:
+    workflows: [Cloudflare application deployment]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       audit_auth_sha:
@@ -219,9 +225,33 @@ jobs:
           path: production-auth-audit-report/report.json
           retention-days: 14
 
+  production-promotion:
+    # A deployment run that promoted production: its pipeline-production job
+    # succeeded (pipeline-record then writes the Production deployment).
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.id == github.event.repository.id
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      promoted: ${{ steps.check.outputs.promoted }}
+    steps:
+      - name: Did this deployment run promote production?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          count="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" --jq '[.jobs[] | select(.name == "pipeline-production" and .conclusion == "success")] | length')"
+          if [ "$count" = 1 ]; then promoted=true; else promoted=false; fi
+          echo "promoted=$promoted" >> "$GITHUB_OUTPUT"
+          echo "Deployment run $RUN_ID attempt $RUN_ATTEMPT promoted production: $promoted" >> "$GITHUB_STEP_SUMMARY"
+
   smoke:
-    # Only finished production deployments, plus the schedule and manual runs.
-    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && (github.event_name != 'workflow_dispatch' || (inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight'))) && (github.event_name != 'schedule' || github.event.schedule == '17 14 * * *') && (github.event_name != 'deployment_status' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production'))
+    # Only deployment runs that promoted production, plus the schedule and manual runs.
+    needs: production-promotion
+    if: ${{ !cancelled() && (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && (github.event_name != 'workflow_dispatch' || (inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight'))) && (github.event_name != 'schedule' || github.event.schedule == '17 14 * * *') && (github.event_name != 'workflow_run' || needs.production-promotion.outputs.promoted == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -271,7 +301,8 @@ jobs:
 
   deployment-comparison:
     # No browser/install/wait loop: quarter-hour follow-ups read the same fixed windows.
-    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && (github.event_name != 'workflow_dispatch' || (inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight'))) && (github.event_name != 'deployment_status' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')) && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    needs: production-promotion
+    if: ${{ !cancelled() && (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && (github.event_name != 'workflow_dispatch' || (inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight'))) && (github.event_name != 'workflow_run' || needs.production-promotion.outputs.promoted == 'true') && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
