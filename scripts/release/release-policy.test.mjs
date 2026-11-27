@@ -134,7 +134,7 @@ test('the desktop route guard must run, with the hosted checkout, for the exact 
   assert.throws(() => desktopRouteGuard({ root, env, run: fake({ [root]: source }, tap(3)) }), /hostedCheckoutRequired/)
   // The root package defines the script the guard runs.
   assert.equal(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).scripts['test:desktop-release-guard'],
-    'node --import tsx --test --test-reporter=tap apps/desktop/src/main/bundled-routes.test.ts')
+    'node --experimental-strip-types --test --test-reporter=tap scripts/ui-api-routes.test.mjs apps/desktop/scripts/renderer-requests.test.mjs')
   assert.throws(() => desktopRouteGuard({ root, env: { ...env, MIKKA_UI_OVERLAY_SHA: '' }, run: fake(heads, tap(3)) }), /desktopPairingRequired/)
 })
 

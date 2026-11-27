@@ -5,7 +5,7 @@ import { isBatchReadAction } from '@/lib/desktop-rpc/read-batch-contract'
 import { localeOf, type Locale } from './location'
 import { setTransportState } from './transport-state'
 import { DesktopTransportError, enqueueRead, isSnapshotReadAction } from './read-batch'
-import { hostedApiUpgrade } from '@mikka/protocol/version'
+import { DESKTOP_SESSION_ACTIVE_HEADER, hostedApiUpgrade } from '@mikka/protocol/version'
 
 export { DesktopTransportError, resetReadBatchScope } from './read-batch'
 
@@ -52,6 +52,15 @@ export async function callRemoteAction<T = unknown>(action: string, args: unknow
     throw new DesktopTransportError('desktop_backend_unreachable', { cause })
   }
   assertCurrent(undefined, response)
+  if (response.status === 401 && transport.endpoint === '/api/desktop/rpc' && response.headers.get(DESKTOP_SESSION_ACTIVE_HEADER) === '1') {
+    // Main asked the session endpoint and the login still holds: the server
+    // refused this one operation. The session and its caches stay; the
+    // server's own code travels as the cause, never as an expiry.
+    const refused = await response.json().catch(() => null) as { error?: { code?: unknown } } | null
+    assertCurrent(undefined, response)
+    const code = typeof refused?.error?.code === 'string' ? refused.error.code : undefined
+    throw new DesktopTransportError('desktop_rpc_request_rejected', { status: response.status, ...(code ? { cause: { code } } : {}) })
+  }
   if (response.status === 401) {
     setTransportState('unauthenticated')
     throw new DesktopTransportError('desktop_session_expired', { status: response.status })
