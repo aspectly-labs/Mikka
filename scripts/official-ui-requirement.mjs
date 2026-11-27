@@ -2,8 +2,10 @@
 // MIKKA_UI_OVERLAY_DIR or .hosted-ui). Without the checkout such a test skips: a public or fork build has no
 // interface to read. The CI lane that mounts the checkout sets MIKKA_REQUIRE_OFFICIAL_UI=1, and then a missing
 // checkout is an error instead of a skip, so a suite that silently skipped cannot report green.
-// Every `needsOfficialUi` (scripts/official-ui-tree.mjs, apps/desktop/scripts/official-ui.mjs,
-// apps/frontend/scripts/application-test-build.mjs, apps/desktop/src/main/*.test.ts) comes from officialUiSkip.
+// Every test that reads the checkout skips through officialUiSkip: the shared `needsOfficialUi`
+// (scripts/official-ui-tree.mjs, apps/desktop/scripts/official-ui.mjs, apps/frontend/scripts/application-test-build.mjs),
+// the UI API route contract (scripts/ui-api-routes.test.mjs, also `test:desktop-release-guard`) and the tests that read
+// one .hosted-ui file directly. scripts/official-ui-requirement.test.mjs fails on a test that skips on its own.
 
 export const REQUIRE_OFFICIAL_UI = 'MIKKA_REQUIRE_OFFICIAL_UI'
 

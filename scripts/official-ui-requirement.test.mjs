@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { REQUIRE_OFFICIAL_UI, officialUiRequired, officialUiSkip } from './official-ui-requirement.mjs'
 
@@ -63,4 +65,17 @@ test('a fixture repository run from another directory is not held to the require
     { cwd: fileURLToPath(new URL('./ci/fixtures/', import.meta.url)), env: { ...inherited, [REQUIRE_OFFICIAL_UI]: '1' }, encoding: 'utf8', timeout: 60_000 })
   assert.equal(result.status, 0, result.stderr)
   assert.match(JSON.parse(result.stdout.trim()), /^needs the official UI checkout/)
+})
+
+test('no test skips on a missing official UI checkout on its own', () => {
+  // A hand-written skip bypasses the switch: under MIKKA_REQUIRE_OFFICIAL_UI=1 it would still pass by skipping.
+  const listed = spawnSync('git', ['ls-files', '-z', '*.test.*'], { cwd: repository, encoding: 'utf8' })
+  assert.equal(listed.status, 0, listed.stderr)
+  const offenders = []
+  for (const file of listed.stdout.split('\0').filter(Boolean)) {
+    if (file.startsWith('scripts/official-ui-requirement')) continue
+    const source = readFileSync(join(repository, file), 'utf8')
+    if (/skip\(\s*['"`][^'"`]*hosted-ui not checked out/.test(source) || /MIKKA_REQUIRE_OFFICIAL_UI\s*===?/.test(source)) offenders.push(file)
+  }
+  assert.deepEqual(offenders, [], 'route these through officialUiSkip')
 })
