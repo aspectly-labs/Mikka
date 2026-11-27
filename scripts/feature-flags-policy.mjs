@@ -1,4 +1,4 @@
-// Feature-flag rule as code (docs/design/decisions/2026-11-27-0330-staged-rollout-release-flags.md).
+// Feature-flag rule as code (mikka-hosted-ui/docs/design/decisions/2026-11-27-0330-staged-rollout-release-flags.md).
 //
 // 1. Every release flag in `releaseFlags` (lib/feature-flags.ts) has an owner,
 //    a description, an `added` date, an optional `fullAt` date (set at 100%) and

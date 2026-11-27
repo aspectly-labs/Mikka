@@ -44,7 +44,7 @@ export const gatedFeatures = {
 
 export type GatedFeature = keyof typeof gatedFeatures
 
-/** A staged rollout of a risky change (docs/design/decisions/2026-11-27-0330-staged-rollout-release-flags.md). */
+/** A staged rollout of a risky change (mikka-hosted-ui/docs/design/decisions/2026-11-27-0330-staged-rollout-release-flags.md). */
 export interface ReleaseFlagDefinition {
   /** Who widens the stages and deletes the flag. */
   owner: string
