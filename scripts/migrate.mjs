@@ -13,7 +13,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { Pool } from 'pg'
 import { sessionDatabaseURL } from './postgres-connection.mjs'
 import { alreadyApplied, orderMigrations } from './migration-order.mjs'
-import { applyMigration, planMigration } from './migration-steps.mjs'
+import { applyMigration, ENVIRONMENT_SCOPE_LIMITS, planMigration, setLocalLimits } from './migration-steps.mjs'
 import { migrationTargets } from './migration-targets.mjs'
 import { migrationGuard, migrationRequested } from './migration-guard.mjs'
 import { scopeMigrationBeforeCommit, validateScopeMigrationHistory, validateScopeMigrationSources } from './scope-migration-history.mjs'
@@ -86,9 +86,11 @@ try {
           const acl = await states.find(state => state.target === 'MIKKA_DATABASE_URL').pool.connect()
           try {
             await acl.query('BEGIN')
+            await setLocalLimits(acl, ENVIRONMENT_SCOPE_LIMITS.acl)
             const shared = await acl.query(`SELECT id,"workspaceId" FROM resource_access_policies
               WHERE kind='project' AND visibility='shared' AND "parentId" IS NULL FOR SHARE`)
             await client.query('BEGIN')
+            await setLocalLimits(client, ENVIRONMENT_SCOPE_LIMITS.migration)
             await client.query("SELECT set_config('mikka.shared_project_backfill',$1,true)", [JSON.stringify(shared.rows)])
             await applyMigration(client, name, plan)
             await client.query('COMMIT')
