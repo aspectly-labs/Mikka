@@ -10,13 +10,26 @@ import { actionDecidedEvent } from '@/lib/coordinator-events'
 import { db, pool } from '@/lib/db'
 import { pendingActions } from '@/lib/db/schema'
 import { actionOutcome, PENDING_ACTION_TTL_MS } from '@/lib/pending-action-view'
+import { decisionNote, pendingActionRuleMatch } from '@/lib/operations/approval-rules'
+import { rememberApproval } from '@/lib/operations/approval-rule-store'
+
+/**
+ * Optional parts of a decision (decision 2026-11-27-1500-remembered-approvals).
+ * `remember` with an approval stores 「始终同意」 for this card's Bot, action and
+ * target, derived here from the stored card; the caller sends no pattern.
+ * `note` is the person's own words, sent to the Coordinator with the outcome:
+ * on a decline, what to do instead.
+ */
+export interface PendingDecisionOptions { remember?: boolean; note?: string | null }
 
 /**
  * The person approves or declines one proposal. Approving runs exactly the
  * input they saw; the status moves off `pending` first, so a double click or a
  * second tab cannot run it twice. The Coordinator hears the outcome.
  */
-export async function decidePendingAction(userId: string, id: string, approve: boolean) {
+export async function decidePendingAction(userId: string, id: string, approve: boolean, options: PendingDecisionOptions = {}) {
+  const note = decisionNote(options.note)
+  let remembered = false
   const claim = async (executor: Pick<typeof db, 'update' | 'insert' | 'execute'>) => {
     const [row] = await executor.update(pendingActions)
       .set({ status: approve ? 'running' : 'declined', decidedAt: new Date() })
@@ -25,7 +38,7 @@ export async function decidePendingAction(userId: string, id: string, approve: b
     if (!row || (!isApprovalAction(row.action) && row.action !== 'browser_operation' && row.action !== APP_TOOL_ACTION)) throw new ActionFailureError('pendingActionUnavailable')
     await pendingActionsChanged(executor, row.id, userId)
     if (!approve) {
-      await recordCoordinatorEvent(executor, actionDecidedEvent(row, { status: 'declined', error: null, outcome: {} }, { botId: row.botId }))
+      await recordCoordinatorEvent(executor, actionDecidedEvent(row, { status: 'declined', error: null, outcome: {}, note }, { botId: row.botId }))
       return row.action === 'browser_operation' ? { ...row, action: row.action } as const : null
     }
     return { ...row, action: row.action } as const
@@ -33,10 +46,16 @@ export async function decidePendingAction(userId: string, id: string, approve: b
   // A plain decline and its notification can commit together. Browser
   // reviews still see the claimed decision before their own cleanup.
   const row = approve ? await claim(db) : await db.transaction(claim)
-  if (!row) return { status: 'declined' as const, error: null }
+  if (!row) return { status: 'declined' as const, error: null, remembered }
   if (!approve && row.action === 'browser_operation') {
     await (await import('@/lib/cloud-computer/action-reviews')).scrubBrowserMutation(pool, row.id)
-    return { status: 'declined' as const, error: null }
+    return { status: 'declined' as const, error: null, remembered }
+  }
+  // Remembered once the person's approval is claimed, whatever this run's outcome:
+  // the rule is their answer to the card, as Codex amends its policy on approval.
+  if (approve && options.remember) {
+    const match = pendingActionRuleMatch(row)
+    if (match) remembered = await rememberApproval(pool, { ownerId: userId, botId: row.botId, match, sourceActionId: row.id })
   }
 
   if (row.action === 'browser_operation' && Date.now() - row.createdAt.getTime() > 5 * 60_000) {
@@ -70,8 +89,8 @@ export async function decidePendingAction(userId: string, id: string, approve: b
   }
   await db.update(pendingActions).set({ status, error, result: outcome }).where(eq(pendingActions.id, row.id))
   if (row.action === 'browser_operation') await (await import('@/lib/cloud-computer/action-reviews')).scrubBrowserMutation(pool, row.id)
-  await recordCoordinatorEvent(db, actionDecidedEvent({ id: row.id, userId, action: row.action, input: row.action === 'browser_operation' ? { summary: (row.input as Record<string, unknown>).summary } : row.input }, { status, error, outcome }, { botId: row.botId }))
-  return { status, error }
+  await recordCoordinatorEvent(db, actionDecidedEvent({ id: row.id, userId, action: row.action, input: row.action === 'browser_operation' ? { summary: (row.input as Record<string, unknown>).summary } : row.input }, { status, error, outcome, note }, { botId: row.botId }))
+  return { status, error, remembered }
 }
 
 /**

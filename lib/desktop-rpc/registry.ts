@@ -35,6 +35,7 @@ import * as actions18 from '@/app/actions/model-api-keys'
 import * as actions19 from '@/app/actions/model-order'
 import * as actions20 from '@/app/actions/onboarding'
 import * as actions21 from '@/app/actions/pending-actions'
+import * as approvalRuleActions from '@/app/actions/approval-rules'
 import * as actions22 from '@/app/actions/personal-policy'
 import * as actions23 from '@/app/actions/preferences'
 import * as actions24 from '@/app/actions/projects'
@@ -339,6 +340,8 @@ const functions = {
   'onboarding.dismissSetupChecklist': actions20.dismissSetupChecklist,
   'onboarding.restoreSetupChecklist': actions20.restoreSetupChecklist,
   'pending-actions.decidePendingAction': actions21.decidePendingAction,
+  'approval-rules.listApprovalRules': approvalRuleActions.listApprovalRules,
+  'approval-rules.revokeApprovalRule': approvalRuleActions.revokeApprovalRule,
   'personal-policy.getSharePolicy': actions22.getSharePolicy,
   'personal-policy.updateSharePolicy': actions22.updateSharePolicy,
   'personal-policy.getCreditShare': actions22.getCreditShare,

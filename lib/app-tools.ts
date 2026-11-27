@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { OWN_INTEGRATIONS, TOOLKIT_SLUG } from '@/lib/composio-accounts'
 import type { ComposioAccountChoice } from '@/lib/composio-actions'
 import type { NativeWriteReview } from '@/lib/operations/native-write-review'
+import { destructiveAppTool } from '@/lib/operations/approval-rules'
 
 // Any app a person connected from the 插件 store, through the tools Composio
 // lists for that toolkit; nothing is written per app (decision 2026-10-31).
@@ -62,6 +63,8 @@ export type AppToolDeps = {
   propose: (call: AppToolCall, accountId: string | null) => Promise<unknown>
   /** An app with nothing to connect (Composio no-auth): its tools need no account. */
   noAuth?: (toolkit: string) => Promise<boolean>
+  /** Whether the owner remembered an approval for this exact tool and account from this Bot. */
+  remembered?: (call: AppToolCall, accountId: string | null) => Promise<boolean>
 }
 
 export const isReadOnlyTool =(tool: Pick<AppTool, 'tags'>) => Array.isArray(tool.tags) && tool.tags.includes('readOnlyHint')
@@ -136,7 +139,9 @@ export async function callAppTool(deps: AppToolDeps, raw: unknown, native?: { ow
     ? await native.review('allow', { ownerId: native.ownerId, botId: native.botId, action: 'app_tool_call', input: call, accountId: ready.accountId, version: call.version, policy: null })
     : 'allow'
   if (decision === 'deny') return { error: 'integrationActionDenied' }
-  if (decision === 'ask') return deps.propose(call, ready.accountId)
+  // A remembered 「始终同意」 for this tool and account from this Bot answers the
+  // ask; a tool the provider tags destructive always asks (approval-rules.ts).
+  if (decision === 'ask' && !(deps.remembered && !destructiveAppTool(tool.slug, tool.tags) && await deps.remembered(call, ready.accountId))) return deps.propose(call, ready.accountId)
   if (!isReadOnlyTool(tool)) return runRecorded(deps, call, ready.accountId)
   try {
     const result = await deps.execute(call, ready.accountId)

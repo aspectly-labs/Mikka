@@ -2028,7 +2028,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "ef44a580f40197a779816de5b84010bc593b0b7cabdde9a96d2e29b21f1a2d28"
+      "sourceHash": "8f88c004ee94eb622adf9086b076b56e48d778937abdb2c8c58b8168718aef27"
     },
     {
       "path": "/mikka/api/mobile/preferences",

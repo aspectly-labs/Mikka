@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
-import { ApprovedWriteClientError, decideApprovedWrite, loadApprovedWriteAvailability, loadUnresolvedWrites, readApprovedWrite } from './write-client'
+import { ApprovedWriteClientError, decideApprovedWrite, decideApprovedWriteDetail, loadApprovedWriteAvailability, loadUnresolvedWrites, readApprovedWrite } from './write-client'
 
 const originalFetch = globalThis.fetch
 afterEach(() => { globalThis.fetch = originalFetch })
@@ -49,4 +49,17 @@ test('a lost decision response is uncertain and is never retried by the client',
   assert.equal(sends, 2)
   globalThis.fetch = async () => Response.json({ error: 'writeDenied' }, { status: 409 })
   await assert.rejects(decideApprovedWrite('send_slack_message', 'same-action', true), error => error instanceof ApprovedWriteClientError && !error.uncertain)
+})
+
+test('a decision may carry 「始终同意」 and the person\'s words; old calls send neither', async () => {
+  const calls: Record<string, unknown>[] = []
+  globalThis.fetch = async (_url, options) => { const body = JSON.parse(String(options?.body)); calls.push(body); return Response.json({ status: body.approve ? 'done' : 'declined', error: null, remembered: body.remember === true }) }
+  assert.deepEqual(await decideApprovedWriteDetail('send_slack_message', 'a1', true, { remember: true }), { status: 'done', remembered: true })
+  assert.equal(await decideApprovedWrite('send_slack_message', 'a2', false, { note: '  post in #team instead  ' }), 'declined')
+  assert.equal(await decideApprovedWrite('send_slack_message', 'a3', false, { note: '   ', remember: false }), 'declined')
+  assert.deepEqual(calls, [
+    { op: 'decide', action: 'send_slack_message', id: 'a1', approve: true, remember: true },
+    { op: 'decide', action: 'send_slack_message', id: 'a2', approve: false, note: 'post in #team instead' },
+    { op: 'decide', action: 'send_slack_message', id: 'a3', approve: false },
+  ])
 })

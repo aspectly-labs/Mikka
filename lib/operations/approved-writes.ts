@@ -13,6 +13,8 @@ import { DIRECT_APP_WRITE_VERSION } from './write-policy'
 import { withWritePolicy } from './policy-authorization'
 import { snapshotDigest as digest } from './write-target'
 import { approvedWriteChanged } from '../live/approved-writes'
+import { approvedWriteRuleMatch, decisionNote, ruleBotId } from './approval-rules'
+import { hasRememberedApproval, rememberApproval } from './approval-rule-store'
 
 export interface StoredWriteProposal { id: string; userId: string; action: string; input: Record<string, unknown>; status: string; operationBinding: z.infer<typeof bindingSchema>; intentKey: string; context: Record<string, unknown> | null; createdAt: Date }
 type Proposal = StoredWriteProposal
@@ -30,9 +32,17 @@ export interface ApprovedWriteView {
   status: 'pending' | 'running' | 'done' | 'declined'
   error: 'operationUncertain' | null
   outcome?: ApprovedWriteOutcome
+  /** True when the card may offer 「始终同意」: a Bot's run proposed it and its action and target can be remembered. Absent otherwise. */
+  rememberable?: boolean
 }
 export interface ApprovedWriteOutcome { id: string; url?: string }
-export interface ApprovedWriteDecision { status: 'done' | 'running' | 'declined'; error: string | null; outcome?: ApprovedWriteOutcome }
+export interface ApprovedWriteDecision { status: 'done' | 'running' | 'declined'; error: string | null; outcome?: ApprovedWriteOutcome; /** 「始终同意」 was kept for this write's Bot, action, account and target. */ remembered?: boolean }
+/** Optional parts of a decision (decision 2026-11-27-1500-remembered-approvals); both are optional so older callers keep working. */
+export interface ApprovedWriteDecisionOptions { remember?: boolean; note?: string | null }
+/** The remembered-approval match for one stored proposal: action, provider, account and the ledger target, never the text. */
+const ruleMatch = (p: Pick<Proposal, 'action' | 'input' | 'operationBinding'>) => WRITE_ACTIONS.includes(p.action as WriteActionName) && parseWriteInput(p.action as WriteActionName, p.input)
+  ? approvedWriteRuleMatch({ action: p.action, provider: p.operationBinding.provider, accountId: p.operationBinding.accountId, target: writeTarget(p.action as WriteActionName, p.input) })
+  : null
 const writeOutcome = (receipt: NonNullable<OperationRecord['receipt']>): ApprovedWriteOutcome => ({ id: receipt.providerObjectId, ...(receipt.providerObjectUrl ? { url: receipt.providerObjectUrl } : {}) })
 // #204 acts in a person's own account, not a team workspace. Explicit personal
 // scope avoids inventing a workspace DB relationship or using a browser cookie.
@@ -56,6 +66,7 @@ export function projectApprovedWriteView(p: StoredWriteProposal, execution: (Ope
     account: { provider: p.operationBinding.provider, accountId: p.operationBinding.accountId, version: p.operationBinding.version },
     createdAt: created.data.toISOString(), approvalExpiresAt: new Date(created.data.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     status, error: status === 'running' ? 'operationUncertain' : null,
+    ...(ruleBotId(p.operationBinding.run?.botId) && ruleMatch(p) ? { rememberable: true } : {}),
     ...(status === 'done' && execution?.receipt ? { outcome: writeOutcome(execution.receipt) } : {}),
   }
 }
@@ -67,7 +78,7 @@ async function bounded<T>(call: (signal: AbortSignal) => Promise<T>, requestSign
   finally { clearTimeout(timer) }
 }
 
-export function createApprovedWrites(pool: Pool, provider: WriteProvider, action: WriteActionName, context: WriteRequestContext = {}, notifyDecision?: (proposal: StoredWriteProposal, result: ApprovedWriteDecision) => Promise<void>) {
+export function createApprovedWrites(pool: Pool, provider: WriteProvider, action: WriteActionName, context: WriteRequestContext = {}, notifyDecision?: (proposal: StoredWriteProposal, result: ApprovedWriteDecision, note?: string | null) => Promise<void>) {
   function transaction<T>(work: (tx: PoolClient) => Promise<T>, actor: WriteActor | undefined = context.actor) {
     return writeTransaction(pool, work, { signal: context.signal, guard: context.guard, ...(actor ? { authorizeCommit: (tx: PoolClient) => requireOperationSession(tx, actor, actor.userId) } : {}) })
   }
@@ -206,7 +217,9 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
           if (existing) return existing
           const policy = await lockWritePolicy(tx, { ...run, action }, { direct: true })
           const binding = bindingSchema.parse({ ...prepareWriteBinding(provider.name, selected, input), run: { runId: run.runId, botId: run.botId, workspaceId: run.workspaceId, policyVersion: policy.version, decision: policy.decision } })
-          const nativeDecision = context.nativeWriteReview ? await context.nativeWriteReview('allow', nativeBinding(run.ownerId, action, input, binding, selected.context ?? null)) : 'allow'
+          let nativeDecision = context.nativeWriteReview ? await context.nativeWriteReview('allow', nativeBinding(run.ownerId, action, input, binding, selected.context ?? null)) : 'allow'
+          // The owner's 「始终同意」 for this Bot, action, account and target answers an ask, never a deny.
+          if (nativeDecision === 'ask' && await hasRememberedApproval(tx, { ownerId: run.ownerId, botId: run.botId, match: ruleMatch({ action, input, operationBinding: binding }) })) nativeDecision = 'allow'
           if (nativeDecision === 'deny') throw new OperationError('writeDenied')
           if (nativeDecision === 'ask') {
             await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [JSON.stringify(['approved-write-pending-owner', run.ownerId])])
@@ -224,8 +237,10 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
       if (proposal.operationBinding.run?.decision !== 'allow' && !context.nativeWriteReview) return { status:proposal.status, actionId:proposal.id }
       return { ...(await execute(proposal)), actionId:proposal.id }
     },
-    async decide(actor: { userId: string; sessionId: string }, id: string, approve: boolean) {
+    async decide(actor: { userId: string; sessionId: string }, id: string, approve: boolean, options: ApprovedWriteDecisionOptions = {}): Promise<ApprovedWriteDecision> {
       z.uuid().parse(id)
+      const note = decisionNote(options.note)
+      let remembered = false
       // All paths use ledger -> session -> proposal. Revocation waits for an
       // in-flight invoke and never reports cancellation of an already sent effect.
       const decision = await transaction(async tx => {
@@ -260,11 +275,14 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
           await tx.query("UPDATE pending_actions SET status='running',\"decidedAt\"=clock_timestamp() WHERE id=$1", [id])
           await approvedWriteChanged(tx, id, actor.userId)
         }
+        // Kept in the same transaction as the person's approval of their own card.
+        const match = options.remember ? ruleMatch(row) : null
+        if (match) remembered = await rememberApproval(tx, { ownerId: actor.userId, botId: row.operationBinding.run?.botId ?? null, match, sourceActionId: row.id })
         return { proposal: row, readbackOnly, declined: false }
       }, actor)
       const result = decision.declined ? { status: 'declined' as const, error: null } : await execute(decision.proposal, actor, decision.readbackOnly)
-      await notifyDecision?.(decision.proposal, result)
-      return result
+      await notifyDecision?.(decision.proposal, result, note)
+      return { ...result, remembered }
     },
   }
 }

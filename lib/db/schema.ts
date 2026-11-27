@@ -1400,6 +1400,19 @@ export const pendingActions = pgTable('pending_actions', {
   decidedAt: timestamp('decidedAt', { withTimezone: true }),
 }, table => [index('pending_actions_user_status_idx').on(table.userId, table.status, table.createdAt)])
 
+/** A person's remembered approval for one Bot: 「始终同意」 on a card (drizzle/20261127145325, lib/operations/approval-rules.ts). */
+export const approvalRules = pgTable('approval_rules', {
+  id: uuid('id').primaryKey(),
+  ownerId: text('ownerId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  botId: uuid('botId').notNull().references(() => bots.id, { onDelete: 'cascade' }),
+  action: text('action').notNull(),
+  match: jsonb('match').$type<Record<string, unknown>>().notNull(),
+  matchKey: text('matchKey').notNull(),
+  sourceActionId: uuid('sourceActionId'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp('lastUsedAt', { withTimezone: true }),
+}, table => [uniqueIndex('approval_rules_owner_bot_match_key').on(table.ownerId, table.botId, table.matchKey), index('approval_rules_bot_idx').on(table.botId)])
+
 /** The right column's per-thread layout, kept per viewer (#2935). */
 export const threadPanelStates = pgTable('thread_panel_states', {
   userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),

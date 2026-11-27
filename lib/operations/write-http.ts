@@ -9,7 +9,8 @@ import { humanSessionHeaders } from '@/lib/desktop-rpc/handler'
 
 const requestSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('propose'), action: z.enum(WRITE_ACTIONS), input: z.unknown(), intentId: z.uuid() }).strict(),
-  z.object({ op: z.literal('decide'), action: z.enum(WRITE_ACTIONS), id: z.uuid(), approve: z.boolean() }).strict(),
+  // remember / note: decision 2026-11-27-1500-remembered-approvals. Optional, so older clients keep working.
+  z.object({ op: z.literal('decide'), action: z.enum(WRITE_ACTIONS), id: z.uuid(), approve: z.boolean(), remember: z.boolean().optional(), note: z.string().max(4000).optional() }).strict(),
   z.object({ op: z.literal('view'), action: z.enum(WRITE_ACTIONS), id: z.uuid() }).strict(),
   discoveryInput.extend({ op: z.literal('list') }).strict(),
 ])
@@ -42,7 +43,7 @@ export function approvedWriteHandler(auth: { api: { getSession: (args: { headers
         ? await service.propose(session.user.id, input, body.intentId)
         : body.op === 'view'
           ? await service.view({ userId: session.user.id, sessionId: session.session.id }, body.id)
-          : await service.decide({ userId: session.user.id, sessionId: session.session.id }, body.id, body.approve)
+          : await service.decide({ userId: session.user.id, sessionId: session.session.id }, body.id, body.approve, { remember: body.remember, note: body.note })
       return json(body.op === 'view' ? { ...result, observedAt: new Date().toISOString() } : result)
     } catch (error) {
       if (error instanceof MailboxError) return json({ error: error.commitState === 'unconfirmed' ? 'writeCommitUnconfirmed' : error.commitState === 'committed' ? 'writeCommitFinalizationFailed' : error.message === 'writeTransactionCleanupUncertain' ? 'writeTransactionCleanupUncertain' : 'writeTransactionCancelled', ...(error.commitState ? { commitState: error.commitState } : {}) }, error.status)

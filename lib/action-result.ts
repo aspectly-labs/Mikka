@@ -120,6 +120,7 @@ export const ACTION_ERROR_CODES = [
   'submissionConflict',
   'threadSubmissionOutcomeUnconfirmed',
   'pendingActionUnavailable',
+  'approvalRuleUnavailable',
   'deviceSaveFailed',
   'tokenCreateFailed',
   'documentPending',

@@ -261,12 +261,13 @@ export function artifactSubmittedEvent(
 /** The person approved or declined something an agent proposed in their accounts (lib/pending-actions.ts). */
 export function actionDecidedEvent(
   action: { id: string; userId: string; action: string; input: Record<string, unknown> },
-  decision: { status: 'done' | 'failed' | 'declined' | 'running'; error: string | null; outcome: Record<string, string> },
+  /** `note`: the person's own words with the decision (on a decline, what to do instead). */
+  decision: { status: 'done' | 'failed' | 'declined' | 'running'; error: string | null; outcome: Record<string, string>; note?: string | null },
   chat: { botId: string | null } & ({ eventId: string; issueId: string | null } | { eventId?: undefined; issueId?: undefined }),
 ): CoordinatorEventInput {
   const task = chat.eventId !== undefined ? chat as { eventId: string; botId: string | null; issueId: string | null } : undefined
   return {
     userId: action.userId, botId: chat.botId, kind: 'action_decided', dedupeKey: `action_decided:${action.id}${task ? ':' + task.eventId : ''}`, issueId: task?.issueId ?? null, runId: null,
-    payload: { actionId: action.id, action: action.action, input: action.input, status: decision.status, ...(task ? { requestEventId: task.eventId } : {}), ...(decision.error ? { error: decision.error } : {}), outcome: decision.outcome },
+    payload: { actionId: action.id, action: action.action, input: action.input, status: decision.status, ...(task ? { requestEventId: task.eventId } : {}), ...(decision.error ? { error: decision.error } : {}), outcome: decision.outcome, ...(decision.note ? { note: decision.note } : {}) },
   }
 }

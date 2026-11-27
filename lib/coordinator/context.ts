@@ -254,6 +254,9 @@ export function eventPrompt(event: { kind: CoordinatorEventKind; issueId: string
           : payload.status === 'declined' ? `[Event] The person declined ${what}. It did not happen.`
             : `[Event] Proposal ${payload.actionId} has status ${String(payload.status ?? 'unknown')}. This is not evidence of user approval.`,
         `What it was: ${JSON.stringify(payload.input ?? null).slice(0, 2000)}`,
+        typeof payload.note === 'string' && payload.note ? (payload.status === 'declined'
+          ? `The person said what to do instead, in their own words: ${JSON.stringify(payload.note)}. Follow it; do not propose the same action again unless they ask.`
+          : `The person added, in their own words: ${JSON.stringify(payload.note)}`) : null,
         note,
       ].filter(Boolean).join('\n')
     }

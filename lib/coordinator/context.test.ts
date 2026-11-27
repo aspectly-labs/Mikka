@@ -128,6 +128,19 @@ test('unknown approved external writes require readback and prohibit another sen
   assert.doesNotMatch(prompt, /it is done|but it failed/)
 })
 
+test('a declined card carries the person\'s words to the Coordinator as what to do instead', () => {
+  const declined = eventPrompt({ kind: 'action_decided', issueId: null, runId: null, payload: {
+    action: 'send_email', actionId: 'proposal', status: 'declined', input: {}, note: 'Send it to the team list instead',
+  } })
+  assert.match(declined, /declined send_email/)
+  assert.match(declined, /what to do instead, in their own words: "Send it to the team list instead"/)
+  assert.match(declined, /do not propose the same action again/)
+  const approved = eventPrompt({ kind: 'action_decided', issueId: null, runId: null, payload: { action: 'send_email', actionId: 'p', status: 'done', input: {}, note: 'cc me next time' } })
+  assert.match(approved, /The person added, in their own words: "cc me next time"/)
+  const plain = eventPrompt({ kind: 'action_decided', issueId: null, runId: null, payload: { action: 'send_email', actionId: 'p', status: 'declined', input: {} } })
+  assert.doesNotMatch(plain, /own words/)
+})
+
 test('token estimate counts Chinese closer to a token a character', () => {
   assert.ok(estimateTokens([{ role: 'user', content: '你好世界你好世界' }]) > estimateTokens([{ role: 'user', content: 'hello wo' }]))
 })

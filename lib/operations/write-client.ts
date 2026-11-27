@@ -54,8 +54,20 @@ export async function readApprovedWrite(action: WriteActionName, id: string): Pr
   return { ...result, requestedAt } as unknown as ApprovedWriteView
 }
 
-export async function decideApprovedWrite(action: WriteActionName, id: string, approve: boolean): Promise<'done' | 'declined' | 'running'> {
-  const result = await request({ op: 'decide', action, id, approve }, true)
+/**
+ * One explicit decision. `decision.remember` with an approval is 「始终同意」 (the
+ * server derives the rule from the stored write); `decision.note` is the
+ * person's words, sent to the Agent with the outcome (decision
+ * 2026-11-27-1500-remembered-approvals). Both are optional; the status return
+ * is unchanged, and `decideApprovedWriteDetail` also reports `remembered`.
+ */
+export async function decideApprovedWrite(action: WriteActionName, id: string, approve: boolean, decision?: { remember?: boolean; note?: string }): Promise<'done' | 'declined' | 'running'> {
+  return (await decideApprovedWriteDetail(action, id, approve, decision)).status
+}
+
+export async function decideApprovedWriteDetail(action: WriteActionName, id: string, approve: boolean, decision?: { remember?: boolean; note?: string }): Promise<{ status: 'done' | 'declined' | 'running'; remembered: boolean }> {
+  const note = decision?.note?.trim()
+  const result = await request({ op: 'decide', action, id, approve, ...(decision?.remember ? { remember: true } : {}), ...(note ? { note } : {}) }, true)
   if (!['done', 'declined', 'running'].includes(String(result.status))) throw new ApprovedWriteClientError(true)
-  return result.status as 'done' | 'declined' | 'running'
+  return { status: result.status as 'done' | 'declined' | 'running', remembered: result.remembered === true }
 }

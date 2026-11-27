@@ -1,13 +1,24 @@
 import 'server-only'
 import { pendingActionsChanged } from './live/pending-actions'
-import { and, desc, eq, gt } from 'drizzle-orm'
+import { and, desc, eq, gt, sql } from 'drizzle-orm'
 import { appToolCallSchema, APP_TOOL_ACTION, type AppToolCall } from '@/lib/app-tools'
 import { isApprovalAction, parseActionInput } from '@/lib/composio-actions'
 import { resolveActionAccount, runComposioAction } from '@/lib/composio'
-import { db } from '@/lib/db'
+import { db, pool } from '@/lib/db'
 import { pendingActions } from '@/lib/db/schema'
 import { actionOutcome, calendarEventSummary, PENDING_ACTION_TTL_MS, type PendingActionView } from '@/lib/pending-action-view'
 import type { NativeWriteReview } from './operations/native-write-review'
+import { pendingActionRuleMatch, ruleBotId } from './operations/approval-rules'
+import { hasRememberedApproval } from './operations/approval-rule-store'
+
+/**
+ * Whether the owner said 「始终同意」 to exactly this action and target from this
+ * Bot (decision 2026-11-27-1500-remembered-approvals). Checked only where the
+ * review answered `ask`, before a card is stored; it never overrides a deny.
+ */
+function rememberedAccountAction(userId: string, botId: string | null, action: string, input: unknown, accountId: string | null) {
+  return hasRememberedApproval(pool, { ownerId: userId, botId, match: pendingActionRuleMatch({ action, input, connectedAccountId: accountId }) })
+}
 
 /** Most proposals one person can have waiting at once. */
 const MAX_PENDING = 20
@@ -30,7 +41,7 @@ export async function writeAccountAction(userId: string, action: string, input: 
   const result = await runComposioAction(userId, action, parsed, selectedAccountId, async (accountId, tool) => {
     const decision = review ? await review('allow', { ownerId: userId, botId, action, input: parsed, accountId, version: tool.version ?? '', policy: null }) : 'allow'
     if (decision === 'deny') return { error: 'integrationActionDenied' }
-    if (decision === 'ask') return { error: 'integrationApprovalRequired' }
+    if (decision === 'ask' && !await rememberedAccountAction(userId, botId, action, parsed, accountId)) return { error: 'integrationApprovalRequired' }
     await db.insert(pendingActions).values({ id, userId, botId, action, input: parsed, connectedAccountId: accountId, status: 'running' })
     recorded = true
     return null
@@ -90,10 +101,13 @@ export async function proposeAppToolCall(userId: string, call: AppToolCall, acco
 /** The person's proposals still waiting for them, newest first. */
 export async function listPendingActions(userId: string): Promise<PendingActionView[]> {
   // Rendering existing cards must remain compatible before the account-binding
-  // migration runs. Only proposal creation/execution needs the new column.
+  // migration runs. Only proposal creation/execution needs the new column, so
+  // the two read for 「始终同意」 come through the row's JSON: absent, they are null.
   const rows = await db.select({
     id: pendingActions.id, action: pendingActions.action, input: pendingActions.input,
     context: pendingActions.context, status: pendingActions.status, createdAt: pendingActions.createdAt,
+    botId: sql<string | null>`to_jsonb(${pendingActions})->>'botId'`,
+    connectedAccountId: sql<string | null>`to_jsonb(${pendingActions})->>'connectedAccountId'`,
   }).from(pendingActions)
     .where(and(eq(pendingActions.userId, userId), eq(pendingActions.status, 'pending'), gt(pendingActions.createdAt, new Date(Date.now() - PENDING_ACTION_TTL_MS))))
     .orderBy(desc(pendingActions.createdAt)).limit(MAX_PENDING)
@@ -105,9 +119,10 @@ export async function listPendingActions(userId: string): Promise<PendingActionV
     // Historical credential_operation approval rows are never shown: a saved
     // login is the consent, and its running receipt is not an approval card.
     if (row.action === 'credential_operation') return []
-    if (row.action === APP_TOOL_ACTION) return appToolCallSchema.safeParse(row.input).success ? [{ id: row.id, action: APP_TOOL_ACTION, input: row.input, context: null, status: row.status, createdAt: row.createdAt.toISOString() }] : []
+    const rememberable = ruleBotId(row.botId) && pendingActionRuleMatch(row) ? { rememberable: true } : {}
+    if (row.action === APP_TOOL_ACTION) return appToolCallSchema.safeParse(row.input).success ? [{ id: row.id, action: APP_TOOL_ACTION, input: row.input, context: null, status: row.status, createdAt: row.createdAt.toISOString(), ...rememberable }] : []
     // A repository push card from before decision 2026-11-01-1215 is no longer shown: pushing needs no approval (decision 2026-11-02-1600).
     if (!isApprovalAction(row.action)) return []
-    return [{ id: row.id, action: row.action as PendingActionView['action'], input: row.input, context: row.context as PendingActionView['context'], status: row.status, createdAt: row.createdAt.toISOString() }]
+    return [{ id: row.id, action: row.action as PendingActionView['action'], input: row.input, context: row.context as PendingActionView['context'], status: row.status, createdAt: row.createdAt.toISOString(), ...rememberable }]
   })
 }

@@ -55,9 +55,9 @@ export function personalWriteRuntime() {
     discovery: createApprovedWriteDiscovery(pool),
     operations: (action: WriteActionName, context?: WriteRequestContext) => {
       const client = getComposio()
-      return createApprovedWrites(pool, composioWriteProvider(client, action, composioConditionalCalendarDelete(client), undefined, composioSlackConversationReader(client), composioSlackDelivery(client)), action, { ...context, guardForRun }, async (proposal, result) => {
+      return createApprovedWrites(pool, composioWriteProvider(client, action, composioConditionalCalendarDelete(client), undefined, composioSlackConversationReader(client), composioSlackDelivery(client)), action, { ...context, guardForRun }, async (proposal, result, note) => {
         const { recordCoordinatorEvent } = await import('@/lib/coordinator-event-store')
-        await recordCoordinatorEvent(db, approvedWriteDecisionEvent(proposal, result))
+        await recordCoordinatorEvent(db, approvedWriteDecisionEvent(proposal, result, note))
       })
     },
   }

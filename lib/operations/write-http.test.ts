@@ -93,6 +93,23 @@ test('session identity and durable IDs reach service; unknown stays unresolved o
   assert.equal(decisions, 2)
 })
 
+test('remember and note reach the service; a client-supplied pattern or scope is refused', async () => {
+  const seen: unknown[] = []
+  const handler = approvedWriteHandler({ api: { getSession: async () => session } }, () => ({
+    propose: async () => { throw Error('unexpected propose') }, view: async () => { throw Error('unexpected view') },
+    decide: async (_actor, _id, approve, options) => { seen.push(options); return approve ? { status: 'done' as const, error: null, remembered: true } : { status: 'declined' as const, error: null, remembered: false } },
+  }))
+  const ok = await handler(request({ op: 'decide', action: proposal.action, id, approve: true, remember: true }))
+  assert.deepEqual(await ok.json(), { status: 'done', error: null, remembered: true })
+  assert.equal((await handler(request({ op: 'decide', action: proposal.action, id, approve: false, note: 'use #team' }))).status, 200)
+  assert.equal((await handler(request({ op: 'decide', action: proposal.action, id, approve: true }))).status, 200)
+  assert.deepEqual(seen, [{ remember: true, note: undefined }, { remember: undefined, note: 'use #team' }, { remember: undefined, note: undefined }])
+  for (const extra of [{ match: { target: '*' } }, { scope: 'workspace' }, { remember: 'yes' }, { note: 'x'.repeat(4001) }]) {
+    assert.equal((await handler(request({ op: 'decide', action: proposal.action, id, approve: true, ...extra }))).status, 400)
+  }
+  assert.equal(seen.length, 3)
+})
+
 test('real HTTP envelope passes request signal/actor and preserves unconfirmed vs committed without diagnostics',async()=>{
  const req=request(proposal);let seen=false
  const service=approvedWriteHandler({api:{getSession:async()=>session}},(_action,context)=>{

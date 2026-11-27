@@ -95,7 +95,7 @@ test('an unknown dispatched outcome keeps the consumed proposal running instead 
   actionError = 'operationUncertain'
   try {
     const result = await actions.decidePendingAction('u', 'unknown', true)
-    assert.deepEqual(result, { status: 'running', error: 'operationUncertain' })
+    assert.deepEqual(result, { status: 'running', error: 'operationUncertain', remembered: false })
     assert.equal(row.status, 'running')
     assert.equal(row.error, 'operationUncertain')
   } finally { actionError = null }
@@ -202,7 +202,7 @@ test('an existing approved card ignores historical action settings', async () =>
   workspacePolicy = { gmail: 'deny' }
   try {
     const result = await actions.decidePendingAction('u', 'stale', true)
-    assert.deepEqual(result, { status: 'done', error: null })
+    assert.deepEqual(result, { status: 'done', error: null, remembered: false })
     assert.equal(calls.length, 1)
     assert.equal(calls[0][3], 'account-a')
   } finally { workspacePolicy = null }
@@ -214,7 +214,7 @@ test('an approved card still respects current workspace app admission', async ()
   appAllowed = false
   try {
     const result = await actions.decidePendingAction('u', 'fresh', true)
-    assert.deepEqual(result, { status: 'failed', error: 'integrationBlockedByWorkspace' })
+    assert.deepEqual(result, { status: 'failed', error: 'integrationBlockedByWorkspace', remembered: false })
     assert.deepEqual(calls, [])
   } finally { appAllowed = true }
 })

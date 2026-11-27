@@ -1,6 +1,6 @@
 import 'server-only'
 import { eq } from 'drizzle-orm'
-import { callAppTool, listAppTools, type AppTool, type AppToolCall, type AppToolDeps, type AppToolExecution } from '@/lib/app-tools'
+import { APP_TOOL_ACTION, callAppTool, listAppTools, type AppTool, type AppToolCall, type AppToolDeps, type AppToolExecution } from '@/lib/app-tools'
 import { resolveComposioAccount } from '@/lib/composio-actions'
 import { chosenComposioDefault } from '@/lib/composio-account-store'
 import { getComposio } from '@/lib/composio'
@@ -8,6 +8,8 @@ import { db, pool } from '@/lib/db'
 import { activeExecutionIdentity } from '@/lib/execution-identity'
 import { pendingActions } from '@/lib/db/schema'
 import { proposeAppToolCall } from '@/lib/pending-action-store'
+import { pendingActionRuleMatch } from '@/lib/operations/approval-rules'
+import { hasRememberedApproval } from '@/lib/operations/approval-rule-store'
 import { isToolkitSlug, OWN_INTEGRATIONS } from '@/lib/composio-accounts'
 import { composioToolkitLister, isNoAuthToolkit } from '@/lib/plugins/catalog'
 import { MAX_RUN_APP_TOOLS, runAppCall, runAppTool, type RunAppScope } from '@/lib/run-app-mcp'
@@ -40,6 +42,7 @@ export function appToolDeps(userId: string, botId: string | null, client: Client
       await db.update(pendingActions).set({ status: outcome.status, error: outcome.error ?? null, result: outcome.result ?? null }).where(eq(pendingActions.id, id))
     },
     propose: (call, accountId) => proposeAppToolCall(userId, call, accountId, botId),
+    remembered: (call, accountId) => hasRememberedApproval(pool, { ownerId: userId, botId, match: pendingActionRuleMatch({ action: APP_TOOL_ACTION, input: call, connectedAccountId: accountId }) }),
   }
 }
 

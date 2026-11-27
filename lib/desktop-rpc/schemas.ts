@@ -54,6 +54,8 @@ const object = z.strictObject
 const oneId = tuple(uuid)
 const none = tuple()
 const inWorkspace = tuple(workspace)
+/** An approval card's optional 「始终同意」 and the person's words (decision 2026-11-27-1500-remembered-approvals). */
+const decisionOptions = object({ remember: bool.optional(), note: text(4000).optional() }).optional()
 /** Bot Profile's settings (lib/bot-settings.ts); the server checks each again. */
 const botSettingFields = { alias: text(64).nullable().optional(), environmentId: uuid.nullable().optional(), crewTarget: taskDestinationSchema.nullable().optional(),
   defaultAgent: z.enum(BOT_DEFAULT_AGENTS).nullable().optional(), defaultProfileId: uuid.nullable().optional(), runsOn: botRunsOnSchema.nullable().optional(),
@@ -427,7 +429,9 @@ export const desktopActionSchemas = {
   'onboarding.setupChecklist': tuple(uuid),
   'onboarding.dismissSetupChecklist': tuple(uuid),
   'onboarding.restoreSetupChecklist': tuple(uuid),
-  'pending-actions.decidePendingAction': tuple(uuid, bool),
+  'pending-actions.decidePendingAction': tuple(uuid, bool, decisionOptions),
+  'approval-rules.listApprovalRules': none,
+  'approval-rules.revokeApprovalRule': oneId,
   'personal-policy.getSharePolicy': inWorkspace,
   'personal-policy.updateSharePolicy': tuple(bool, workspace),
   'personal-policy.getCreditShare': inWorkspace,

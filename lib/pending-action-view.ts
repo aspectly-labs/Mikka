@@ -10,6 +10,12 @@ export interface PendingActionView {
   context: { summary?: string; start?: string; end?: string } | null
   status: PendingActionStatus
   createdAt: string
+  /**
+   * True when the card may offer 「始终同意」 (absent otherwise): a Bot proposed it and its action and
+   * target can be remembered (lib/operations/approval-rules.ts). As in Claude
+   * Code, the option is shown only when the rule covers just what the card shows.
+   */
+  rememberable?: boolean
 }
 
 /** How long a proposal waits for the person before it no longer shows. */

@@ -4709,7 +4709,8 @@
     "chatRevisionUnavailable": "这条消息已不能编辑或重新生成。",
     "chatRevisionBusy": "等回复结束后再试。",
     "threadWorking": "线程还在工作，先停下它",
-    "referenceBroken": "消息里的引用已删除或无权查看，删掉后再发送。"
+    "referenceBroken": "消息里的引用已删除或无权查看，删掉后再发送。",
+    "approvalRuleUnavailable": "这项始终同意已取消。"
   },
   "DeviceAuthorization": {
     "failed": "连接失败",
@@ -8916,7 +8917,11 @@
       "failed": "失败"
     },
     "olderFailed": "加载失败，重试",
-    "readFullOptions": "查看完整选项"
+    "readFullOptions": "查看完整选项",
+    "alwaysApprove": "始终同意",
+    "insteadPlaceholder": "想让它做什么？",
+    "permissionMultiTag": "共 {count} 项",
+    "declineWith": "{decline}。{text}"
   },
   "Board": {
     "scrollRight": "向右滚动看板",

@@ -102,3 +102,24 @@ test('an app that needs no connection runs on the person alone; any other app st
   // Still gated by the Bot's app policy.
   assert.deepEqual(await callAppTool({ ...d, appAllowed: async () => false }, { toolkit: 'hackernews', tool: hn.slug, arguments: {} }), { error: 'integrationBlockedByWorkspace' })
 })
+
+test('a remembered approval answers an ask for its own tool only; a deny or a destructive tool still stops', async () => {
+  const review = (choice: 'ask' | 'deny') => ({ ownerId: 'owner', botId: 'bot', review: async () => choice })
+  const asked: string[] = []
+  const remembered = async (c: { tool: string }, accountId: string | null) => { asked.push(`${c.tool}@${accountId}`); return c.tool === 'HUBSPOT_CREATE_CONTACT' || c.tool === 'HUBSPOT_DELETE_CONTACT' }
+  const ran = deps({ remembered })
+  assert.equal((await callAppTool(ran.deps, call('HUBSPOT_CREATE_CONTACT'), review('ask')) as { status: string }).status, 'done')
+  assert.deepEqual(ran.calls, ['record:HUBSPOT_CREATE_CONTACT', 'execute:HUBSPOT_CREATE_CONTACT:20261030_00', 'end:done'])
+  assert.deepEqual(asked, ['HUBSPOT_CREATE_CONTACT@ca_own'])
+  // A different tool in the same app has no rule: it asks.
+  const other = deps({ remembered })
+  assert.deepEqual(await callAppTool(other.deps, call('SLACK_SEND_MESSAGE', 'slack'), review('ask')), { status: 'awaiting_approval', actionId: 'card_1' })
+  // The provider tags it destructive: never answered by a rule, even a stored one.
+  const destructive = deps({ remembered })
+  assert.deepEqual(await callAppTool(destructive.deps, call('HUBSPOT_DELETE_CONTACT'), review('ask')), { status: 'awaiting_approval', actionId: 'card_1' })
+  // A deny is never turned into an allow, and the rule is not consulted.
+  asked.length = 0
+  const denied = deps({ remembered })
+  assert.deepEqual(await callAppTool(denied.deps, call('HUBSPOT_CREATE_CONTACT'), review('deny')), { error: 'integrationActionDenied' })
+  assert.deepEqual(asked, [])
+})

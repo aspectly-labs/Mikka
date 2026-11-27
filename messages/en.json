@@ -4709,7 +4709,8 @@
     "chatRevisionUnavailable": "This message can no longer be edited or regenerated.",
     "chatRevisionBusy": "Wait for the reply to finish, then try again.",
     "threadWorking": "The thread is still working. Stop it first.",
-    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again."
+    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again.",
+    "approvalRuleUnavailable": "This approval is no longer remembered."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",
@@ -8916,7 +8917,11 @@
       "failed": "failed"
     },
     "olderFailed": "Couldn't load. Retry",
-    "readFullOptions": "Read full options"
+    "readFullOptions": "Read full options",
+    "alwaysApprove": "Always approve",
+    "insteadPlaceholder": "What should it do?",
+    "permissionMultiTag": "{count, plural, one {# request} other {# requests}}",
+    "declineWith": "{decline}. {text}"
   },
   "Board": {
     "scrollRight": "Scroll board right",
