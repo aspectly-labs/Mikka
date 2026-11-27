@@ -86,8 +86,9 @@ export class McpConnectionStore {
 
   /**
    * Turn one tool on or off, as Capy's per-tool switches do. Only the connection's owner may:
-   * a shared connection runs on the owner's credential, so no workspace member or admin can
-   * widen (or narrow) what it may do, and one switch applies to every run that uses it.
+   * it runs on the owner's credential and is never shared (decision 2026-11-27-1700), so no
+   * workspace member or admin can widen (or narrow) what it may do, and one switch applies to
+   * every run that uses it.
    * The connection itself does not change, so its revision stays and running tasks keep it:
    * every call re-reads the switch (`createPersonalMcpRuntime`), so a tool turned off is refused
    * from the next call and one turned on works from the next call. `expectedEnabled` is the

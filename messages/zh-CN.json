@@ -3177,8 +3177,8 @@
       },
       "tightenNote": "收紧后，已不符合策略的共享会被撤回，相关运行会停止。",
       "mcpSharing": {
-        "note": "成员共享个人 MCP 服务。",
-        "label": "MCP 服务"
+        "note": "成员共享个人技能。个人 MCP 服务只给主人自己用。",
+        "label": "技能"
       },
       "revision": "策略第 {revision} 版",
       "retention": {
