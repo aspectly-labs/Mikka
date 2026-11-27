@@ -71,7 +71,8 @@ test(scenario, { timeout: 90_000 }, async t => {
     const codex = request.url.includes('/codex/')
     const body = codex ? Object.fromEntries(new URLSearchParams(raw)) : JSON.parse(raw)
     assert.equal(body.code, 'fixture-grant'); assert.equal(body.grant_type, 'authorization_code')
-    assert.equal(body.redirect_uri, codex ? 'https://auth.openai.com/deviceauth/callback' : 'http://localhost:54545/callback')
+    const validRedirect = codex ? ['https://auth.openai.com/deviceauth/callback'] : ['http://localhost:54545/callback', 'https://platform.claude.com/oauth/code/callback']
+    assert.ok(validRedirect.includes(body.redirect_uri))
     assert.equal(body.code_verifier.length, 43)
     if (!codex) assert.equal(body.state.length, 43)
     const claims = Buffer.from(JSON.stringify({ email: 'fixture@example.invalid', 'https://api.openai.com/auth': { chatgpt_account_id: 'fixture-account', chatgpt_plan_type: 'plus' } })).toString('base64url')
@@ -506,14 +507,19 @@ test(scenario, { timeout: 90_000 }, async t => {
     assert.equal(gone.rows[0].state, 'disconnected'); assert.ok(gone.rows[0].removedAt)
     if (chat.realLiteLLM) t.diagnostic('Scripted chat crossed pinned LiteLLM, the signed CPA callback and real PostgreSQL')
     if (process.env.MIKKA_BYOS_BACKEND_ONLY === '1') { console.log('Backend-only acceptance complete; browser acceptance intentionally not run'); return }
+    await pool.query(`INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES ('browser-owner','Browser fixture','browser-owner@byos-fixture.invalid',true,now(),now())`)
+    await pool.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role,status) VALUES ($1,'browser-owner','Browser fixture','browser-owner@byos-fixture.invalid','admin','active')`, [workspaceId])
     const hostedUiConfig = resolve(root, '.hosted-ui/tsconfig.json')
     // Actual Settings component in Chromium, synthetic session/provider only.
     const require = createRequire(import.meta.url)
     const esbuild = require(require.resolve('esbuild', { paths: [require.resolve('tsx')] }))
     const bundle = join(directory, 'browser.js')
-    await esbuild.build({ stdin: { contents: `import React from 'react';import{createRoot}from'react-dom/client';import{NextIntlClientProvider}from'@/lib/intl/i18n-client';import{SubscriptionSettings}from'@hosted/web/components/settings/subscription-settings';import messages from '@/messages/en.json';createRoot(document.getElementById('root')).render(<NextIntlClientProvider locale="en" messages={messages}><SubscriptionSettings userKey="browser-owner" workspaceId="${workspaceId}"/></NextIntlClientProvider>);`, resolveDir: root, loader: 'tsx' }, outfile: bundle, bundle: true, platform: 'browser', format: 'iife', tsconfig: hostedUiConfig, define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '""' }, plugins: [{
-      name: 'stub-model-order-server-action',
+    await esbuild.build({ stdin: { contents: `import React from 'react';import{createRoot}from'react-dom/client';import{NextIntlClientProvider}from'@/lib/intl/i18n-client';import{SubscriptionSettings}from'@hosted/web/components/settings/subscription-settings';import messages from '@/messages/en.json';createRoot(document.getElementById('root')).render(<NextIntlClientProvider locale="en" messages={messages}><SubscriptionSettings workspaceId="${workspaceId}"/></NextIntlClientProvider>);`, resolveDir: root, loader: 'tsx' }, outfile: bundle, bundle: true, platform: 'browser', format: 'iife', tsconfig: hostedUiConfig, define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '""' }, plugins: [{
+      name: 'settings-browser-fixture',
       setup(build) {
+        // The public root and the separately installed hosted overlay must
+        // share the React runtime, as in the official renderer build.
+        build.onResolve({ filter: /^(react|react-dom)(\/.*)?$/ }, args => ({ path: require.resolve(args.path) }))
         build.onResolve({ filter: /^@\/app\/actions\/model-order$/ }, () => ({ path: 'model-order-action', namespace: 'fixture' }))
         build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export async function refreshSubscriptionModels() { return { error: "fixture-only" } }', loader: 'js' }))
       }
@@ -539,7 +545,7 @@ test(scenario, { timeout: 90_000 }, async t => {
     const context = await browser.newContext()
     await context.addCookies([{ name: 'fixture', value: 'browser-owner', url: browserOrigin }])
     let authorizations = 0
-    let claudeCallback
+    let claudeCode
     await context.route('https://auth.openai.com/**', async route => {
       authorizations++; assert.equal(route.request().url(), 'https://auth.openai.com/codex/device')
       await route.fulfill({ body: '<html><body>Official device page fixture: enter ABCD-EFGH</body></html>' })
@@ -547,38 +553,46 @@ test(scenario, { timeout: 90_000 }, async t => {
     await context.route('https://claude.ai/**', async route => {
       authorizations++
       const query = new URL(route.request().url()).searchParams
-      assert.equal(query.get('redirect_uri'), 'http://localhost:54545/callback')
-      claudeCallback = `http://localhost:54545/callback?code=fixture-grant&state=${query.get('state')}`
+      assert.equal(query.get('redirect_uri'), 'https://platform.claude.com/oauth/code/callback')
+      claudeCode = `fixture-grant#${query.get('state')}`
       await route.fulfill({ body: '<html><body>Official authorization fixture; registered loopback callback would appear in address bar.</body></html>' })
     })
     const page = await context.newPage()
     const errors = []; page.on('pageerror', error => errors.push(error.message))
     await page.goto(browserOrigin)
     assert.equal((await subscriptionCallback(new Request(`${browserOrigin}/api/subscriptions/callback?code=fixture-grant&state=${'x'.repeat(43)}`), dependencies)).status, 410)
-    await page.getByRole('button', { name: 'Connect subscription' }).first().click()
-    await page.getByLabel('Device authorization code').waitFor()
-    const popupPromise = context.waitForEvent('page')
-    await page.getByRole('link', { name: 'Open official sign-in page' }).click()
-    const popup = await popupPromise; await popup.waitForLoadState(); await popup.close()
-    await page.waitForTimeout(5200)
-    await page.getByRole('button', { name: 'Check authorization' }).click()
-    await page.getByRole('status').waitFor()
-    await page.waitForTimeout(5200)
-    await page.getByRole('button', { name: 'Check authorization' }).click()
-    await page.getByText('Connected', { exact: true }).waitFor()
-    await page.getByRole('button', { name: 'Disconnect', exact: true }).click()
-    await page.getByRole('button', { name: 'Connect subscription' }).last().click()
-    const claudePopupPromise = context.waitForEvent('page')
-    await page.getByRole('link', { name: 'Open official sign-in page' }).click()
-    const claudePopup = await claudePopupPromise; await claudePopup.waitForLoadState(); await claudePopup.close()
-    assert.ok(claudeCallback)
-    await page.getByLabel('Complete callback URL').fill(claudeCallback)
-    await page.getByRole('button', { name: 'Check authorization' }).click()
-    await page.getByText('Connected', { exact: true }).waitFor()
+    async function openProvider(address) {
+      try {
+        const connect = page.getByRole('button', { name: 'Connect', exact: true }).first()
+        await connect.waitFor({ timeout: 5000 })
+        const [popup] = await Promise.all([context.waitForEvent('page'), connect.click({ timeout: 5000 })])
+        await popup.waitForURL(address)
+        await popup.close()
+      } catch (error) {
+        t.diagnostic(JSON.stringify({ errors, settings: (await page.locator('main').innerText()).slice(0, 1500) }))
+        throw error
+      }
+    }
+    const connected = page.getByRole('switch', { name: 'Use fixture@example.invalid', checked: true })
+    async function disconnectProvider() {
+      await connected.waitFor({ state: 'attached' })
+      await page.getByRole('button', { name: 'More for fixture@example.invalid' }).click()
+      await page.getByRole('menuitem', { name: 'Disconnect', exact: true }).click()
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Disconnect', exact: true }).press('Enter')
+      await connected.waitFor({ state: 'detached' })
+    }
+    await openProvider('https://auth.openai.com/codex/device')
+    await page.getByText('ABCD-EFGH', { exact: true }).waitFor()
+    await disconnectProvider()
+    await openProvider('https://claude.ai/**')
+    assert.ok(claudeCode)
+    await page.getByLabel('Authorization code', { exact: true }).fill(claudeCode)
+    await page.getByRole('button', { name: 'Complete connection' }).click()
+    await connected.waitFor({ state: 'attached' })
     assert.equal(authorizations, 2); assert.deepEqual(errors, [])
     await page.screenshot({ path: '/tmp/mikka-byos-oauth-review-browser.png', fullPage: true })
-    await page.getByRole('button', { name: 'Disconnect', exact: true }).click()
-    console.log('BYOS browser acceptance: actual Settings -> CPA device pending/complete + registered Claude callback URL handoff -> owner-bound persistence -> disconnect; synthetic providers only')
+    await disconnectProvider()
+    console.log('BYOS browser acceptance: Settings -> Codex device polling and Claude web code handoff -> owner-bound persistence -> disconnect; synthetic providers only')
 
   } finally {
     if (browser) await browser.close()
