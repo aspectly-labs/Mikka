@@ -528,14 +528,17 @@ export function runScript(command, args, options) {
   })
 }
 
-const blockingStdio = fileURLToPath(new URL('./ci/blocking-stdio.mjs', import.meta.url))
+const blockingStdio = fileURLToPath(new URL('./ci/blocking-stdio.cjs', import.meta.url))
 
-// Force-exit can return before libc/libuv flushes the TAP summary. A single
-// node --test command gets a blocking stdio handle so the summary is in the
-// pipe before exit. Shell chains stay on pnpm so each command keeps its flags.
+// Force-exit can exit the `node --test` orchestrator while its piped stdout
+// still queues the end of the report and the summary. A single node --test
+// command gets a blocking stdio handle so the summary is in the pipe before
+// exit. It is a `--require` preload because the orchestrator, whose stdout this
+// runner reads, does not evaluate `--import` modules. Shell chains stay on pnpm
+// so each command keeps its flags.
 export function launch(script, command) {
   if (typeof command === 'string' && command.startsWith('node ') && command.includes('--test-force-exit') && !/['"\\&|;]/.test(command)) {
-    return [process.execPath, ['--import', blockingStdio, ...command.slice(5).trim().split(/\s+/)]]
+    return [process.execPath, ['--require', blockingStdio, ...command.slice(5).trim().split(/\s+/)]]
   }
   return ['pnpm', ['-s', script]]
 }
