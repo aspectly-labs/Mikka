@@ -97,6 +97,8 @@ export async function releaseDepartingMember(workspaceId: string, userId: string
   await releasePaymentDesignation(workspaceId, userId)
   await db.transaction(async main => {
     await main.execute(sql`delete from personal_skill_workspace_shares g using personal_skills s where g.skill_id=s.id and s.user_id=${userId} and g.workspace_id=${workspaceId}`)
+    // Their own account on the workspace's "member" MCP servers goes with them; every use also checks membership.
+    await main.execute(sql`delete from workspace_mcp_oauth o using workspace_mcp_servers s where o.server_id=s.id and s.workspace_id=${workspaceId} and o.user_id=${userId}`)
     // Their credits stop paying for the team at once (lib/credit-shares.ts).
     await main.execute(sql`delete from workspace_credit_shares where "userId" = ${userId} and "workspaceId" = ${workspaceId}`)
     const archived = await main.update(bots).set({ archivedAt: new Date(), updatedAt: new Date() })

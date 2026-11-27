@@ -4847,6 +4847,8 @@
     "mcpCatalogUnavailable": "The MCP catalog is unavailable.",
     "mcpCatalogRemoteUnavailable": "The MCP catalog source could not be reached.",
     "mcpCatalogMismatch": "This catalog entry no longer matches the server.",
+    "mcpServerKeyTaken": "Another server in this workspace already uses this key. Choose another key.",
+    "mcpConnectionModeUnavailable": "Only a server that signs in with OAuth can ask each member to connect their own account.",
     "restoreExpired": "The restore window has passed.",
     "chatRevisionUnavailable": "This message can no longer be edited or regenerated.",
     "chatRevisionBusy": "Wait for the reply to finish, then try again.",
