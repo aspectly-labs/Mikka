@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { conversationUsage } from './context-usage'
+import { officialUiSkip } from '../../scripts/official-ui-requirement.mjs'
 
 // This rendering cannot run here: `react-dom/server` and `next-intl` are not
 // installed in the environment this test was written in, and installing them
@@ -43,7 +44,8 @@ test('the panel never presents the figure as a measurement or a window share', (
 const componentPath = new URL('../../.hosted-ui/web/components/coordinator/coordinator-context-usage.tsx', import.meta.url)
 
 test('the component reads its figures from the usage, never recomputes them', t => {
-  if (!existsSync(componentPath)) { t.skip('.hosted-ui not checked out'); return }
+  const missing = officialUiSkip(existsSync(componentPath), '.hosted-ui')
+  if (missing) { t.skip(missing); return }
   const source = readFileSync(componentPath, 'utf8')
   // The constants live in one place (lib/coordinator/context.ts via context-usage.ts);
   // a second copy in the view is how the two drift apart.
@@ -57,7 +59,8 @@ test('the component reads its figures from the usage, never recomputes them', t 
 })
 
 test('the view uses semantic tokens, never a raw palette class', t => {
-  if (!existsSync(componentPath)) { t.skip('.hosted-ui not checked out'); return }
+  const missing = officialUiSkip(existsSync(componentPath), '.hosted-ui')
+  if (missing) { t.skip(missing); return }
   const source = readFileSync(componentPath, 'utf8')
   // BoardUI rule: every colour rides a token, which is also what makes dark mode work.
   assert.doesNotMatch(source, /\b(?:text|bg|border)-(?:gray|neutral|slate|zinc|white|black)-\d+/, 'raw palette class')

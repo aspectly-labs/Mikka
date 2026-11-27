@@ -66,7 +66,12 @@ function fixture({ navigate = true, target = 'chosen', error, protocolError, pen
   }
   return page
 }
-const run = (page, selection = 'chosen') => selectBundledServer(page, selection, 'chosen', { timeout: 20 })
+// The deadline is checked against a clock between steps. A real clock made these tests depend on the machine: under
+// load more than 20ms of wall time can pass before the selection is dispatched, and the selector then correctly
+// refuses to dispatch (calls 0, or a timeout where success was expected). Here the clock only moves when a test
+// moves it, so each run reaches its dispatch and only the deadline timer (or a test's own step) ends it.
+const frozen = () => 0
+const run = (page, selection = 'chosen') => selectBundledServer(page, selection, 'chosen', { timeout: 20, now: frozen })
 const clean = page => {
   assert.equal(page.listenerCount('framenavigated'), 0)
   assert.equal(page.listenerCount('domcontentloaded'), 0)
@@ -150,20 +155,22 @@ test('late dispatch rejection after timeout is handled and cannot reopen the lis
 })
 
 test('invalid deadlines fail before any dispatch or listener', async () => {
-  for (const timeout of [0, -1, Infinity, NaN]) {
+  for (const options of [{ timeout: 0 }, { timeout: -1 }, { timeout: Infinity }, { timeout: NaN }, { timeout: 20, now: 0 }]) {
     const page = fixture()
-    await assert.rejects(selectBundledServer(page, null, 'chosen', { timeout }), /OPTIONS_INVALID/)
+    await assert.rejects(selectBundledServer(page, null, 'chosen', options), /OPTIONS_INVALID/)
     assert.equal(page.calls, 0)
     for (const event of ['domcontentloaded', 'close', 'crash', 'framenavigated']) assert.equal(page.listenerCount(event), 0)
   }
 })
 
-test('preflight completing after the total deadline cannot dispatch or add a listener', async () => {
+test('preflight completing after the total deadline cannot dispatch or add a listener', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
   const page = fixture({ preflightDelay: 45 })
-  const started = performance.now()
-  await assert.rejects(canonicalSelect(page, 'chosen', 'chosen', { timeout: 15 }), /NATIVE_SERVER_CHOICE_TIMEOUT/)
-  assert.ok(performance.now() - started < 150, 'one bounded deadline covers preflight')
-  await new Promise(resolve => setTimeout(resolve, 55))
+  const pending = canonicalSelect(page, 'chosen', 'chosen', { timeout: 15, now: () => Date.now() }).then(() => null, error => error)
+  t.mock.timers.tick(15)
+  assert.match((await pending).message, /NATIVE_SERVER_CHOICE_TIMEOUT/, 'one bounded deadline covers preflight')
+  t.mock.timers.tick(30)
+  await new Promise(setImmediate)
   assert.equal(page.calls, 0); assert.equal(page.reads, 0)
   for (const event of ['domcontentloaded', 'close', 'crash', 'framenavigated']) assert.equal(page.listenerCount(event), 0)
 })
@@ -190,9 +197,9 @@ test('the final immutable target read is covered by the same deadline', async ()
   assert.equal(page.reads, 1); clean(page)
 })
 test('deadline budget is positive and cannot restart after slow preflight', async t => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
   const page = fixture({ preflightDelay: 35, pending: true })
-  const pending = selectBundledServer(page, null, 'chosen', { timeout: 60 }).then(() => null, error => error)
+  const pending = selectBundledServer(page, null, 'chosen', { timeout: 60, now: () => Date.now() }).then(() => null, error => error)
   t.mock.timers.tick(35)
   await new Promise(setImmediate)
   assert.deepEqual(page.selections, [null])
@@ -202,7 +209,9 @@ test('deadline budget is positive and cannot restart after slow preflight', asyn
   assert.deepEqual(page.selections, [null]); clean(page)
 })
 
-test('page close after the next DCL still rejects a pending reply or target read', async () => {
+test('page close after the next DCL still rejects a pending reply or target read', async t => {
+  // The deadline timer must not fire while the test waits for the run to reach its pending step.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   for (const options of [{ pending: true }, { readPending: true }]) {
     const page = fixture(options)
     const pending = run(page).then(() => null, error => error)
@@ -211,4 +220,13 @@ test('page close after the next DCL still rejects a pending reply or target read
     assert.match((await pending).message, /NATIVE_SERVER_CHOICE_PAGE_CLOSED/)
     clean(page)
   }
+})
+test('a deadline the clock passed before dispatch refuses to dispatch, even if no timer has fired yet', async () => {
+  // The guard the frozen clock above keeps out of the other tests: a stalled process wakes past its deadline.
+  const page = fixture()
+  let time = 0
+  page.waitForURL = async () => { time = 25 }
+  await assert.rejects(selectBundledServer(page, 'chosen', 'chosen', { timeout: 20, now: () => time }), /NATIVE_SERVER_CHOICE_TIMEOUT/)
+  assert.equal(page.calls, 0); assert.equal(page.reads, 0)
+  for (const event of ['domcontentloaded', 'close', 'crash', 'framenavigated']) assert.equal(page.listenerCount(event), 0)
 })
