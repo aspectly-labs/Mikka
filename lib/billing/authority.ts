@@ -41,21 +41,28 @@ export async function withBillingAuthority<T>(actorId: string, workspaceId: stri
   })
 }
 
-/** Requires the actor to own the workspace or its designated organization billing account. */
-export async function requireAccountOwner(actorId: string, accountWorkspaceId: string): Promise<string> {
+/** Holds the Workspace owner row lock across account-level billing policy writes. */
+export async function withAccountOwnerLock<T>(
+  actorId: string,
+  accountWorkspaceId: string,
+  work: (actorName: string) => Promise<T>,
+): Promise<T> {
   return workspaceDb.transaction(async ws => {
     const [workspace] = await ws.select({ id: workspaces.id, ownerId: workspaces.userId }).from(workspaces)
       .where(eq(workspaces.id, accountWorkspaceId)).for('update').limit(1)
     if (!workspace) throw new WorkspaceError('workspaceAccessDenied')
     const [account] = await ws.select().from(organizationBillingAccounts)
       .where(eq(organizationBillingAccounts.workspaceId, accountWorkspaceId)).limit(1)
+    let actorName: string
     if (account) {
       const { membership } = await requireOrganizationAdmin(ws, account.organizationId, actorId)
       if (membership.role !== 'owner') throw new WorkspaceError('workspaceAccessDenied')
-      return membership.name
+      actorName = membership.name
+    } else {
+      const { membership } = await requireWorkspace(ws, accountWorkspaceId, actorId, true)
+      if (workspace.ownerId !== actorId) throw new WorkspaceError('workspaceAccessDenied')
+      actorName = membership.name
     }
-    const { membership } = await requireWorkspace(ws, accountWorkspaceId, actorId, true)
-    if (workspace.ownerId !== actorId) throw new WorkspaceError('workspaceAccessDenied')
-    return membership.name
+    return work(actorName)
   })
 }

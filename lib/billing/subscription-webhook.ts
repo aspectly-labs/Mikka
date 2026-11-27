@@ -26,6 +26,8 @@ const subscriptionSchema = z.object({
   }).loose()) }).loose(),
 }).loose()
 const invoiceSchema = z.object({ id: stripeId, customer: expandableId, status: z.string().nullable(), amount_paid: z.number().int().nonnegative(),
+  total_excluding_tax: z.number().int().nonnegative().nullish(),
+  subtotal_excluding_tax: z.number().int().nonnegative().nullish(),
   payment_intent: expandableId.nullish(),
   currency: z.string(), billing_reason: z.string().nullable(), hosted_invoice_url: z.url().nullish(),
   metadata: z.record(z.string(), z.unknown()).nullish(),
@@ -33,6 +35,8 @@ const invoiceSchema = z.object({ id: stripeId, customer: expandableId, status: z
     price: z.object({ id: stripeId }).loose().nullish(),
     pricing: z.object({ price_details: z.object({ price: expandableId }).loose().nullish() }).loose().nullish(),
     proration: z.boolean().optional(),
+    amount: z.number().int().optional(),
+    amount_excluding_tax: z.number().int().nullish(),
     parent: z.object({ subscription_item_details: z.object({ proration: z.boolean() }).loose().nullish() }).loose().nullish(),
     quantity: z.number().int().nullish(), period: z.object({ start: z.number().int().positive(), end: z.number().int().positive() }),
   }).loose()) }).loose(),
@@ -197,7 +201,13 @@ export async function applySubscriptionEvent(tx: Transaction, event: { id: strin
       if (!prorationLines.length) throw new Error('billing_resource_invoice_period_invalid')
       const periodStart = Math.min(...prorationLines.map(line => line.period.start))
       const periodEnd = Math.max(...prorationLines.map(line => line.period.end))
-      const grantPoints = Math.floor((invoice.data.amount_paid * POINTS_PER_USD) / 100)
+      const hasPreTaxLines = prorationLines.some(line => line.amount_excluding_tax != null || line.amount != null)
+      const linesNetCents = hasPreTaxLines
+        ? Math.max(0, prorationLines.reduce((sum, line) => sum + (line.amount_excluding_tax ?? line.amount ?? 0), 0))
+        : null
+      const preTaxCap = invoice.data.total_excluding_tax ?? invoice.data.subtotal_excluding_tax ?? invoice.data.amount_paid
+      const netCents = linesNetCents !== null ? Math.min(linesNetCents, preTaxCap) : preTaxCap
+      const grantPoints = Math.floor((netCents * POINTS_PER_USD) / 100)
       if (grantPoints > 0) {
         await grantPlanInvoice(invoice.data, grantPoints, periodStart, periodEnd)
       }

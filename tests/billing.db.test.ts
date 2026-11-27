@@ -479,7 +479,7 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
     const seatInvUpdate = id('in')
     const seatPiUpdate = id('pi')
     payments.set(seatPiCreate, { id: seatPiCreate, amount_received: 6000, currency: 'usd', metadata: {} })
-    payments.set(seatPiUpdate, { id: seatPiUpdate, amount_received: 1000, currency: 'usd', metadata: {} })
+    payments.set(seatPiUpdate, { id: seatPiUpdate, amount_received: 1080, currency: 'usd', metadata: {} })
     invoices.set(seatInvCreate, {
       id: seatInvCreate,
       customer: seatCus,
@@ -497,10 +497,11 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
       subscription: seatSubId,
       payment_intent: seatPiUpdate,
       status: 'paid',
-      amount_paid: 1000,
+      amount_paid: 1080,
+      total_excluding_tax: 1000,
       currency: 'usd',
       billing_reason: 'subscription_update',
-      lines: { has_more: false, data: [{ price: { id: 'price_seat_pro' }, quantity: 4, proration: true, period: { start, end } }] },
+      lines: { has_more: false, data: [{ price: { id: 'price_seat_pro' }, quantity: 4, proration: true, amount_excluding_tax: 1000, period: { start, end } }] },
     })
     const seatSub = {
       id: seatSubId,
@@ -548,12 +549,22 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
       [randomUUID(), teamWs.id, `topup:${randomUUID()}`],
     )
     const store = new HostedUsageStore(pool)
+    const { hostedPointsRefusal, hostedPointsHere } = await import('../lib/points-fallback')
     // Consume all 7000 plan credits (70,000,000 microUSD)
     const fullPlanCall = `call-${randomUUID()}`
     await store.reserve(teamWs.id, 'fixture/model', fullPlanCall, {}, 70_000_000)
     await store.settle(fullPlanCall, 70_000_000, 10, 10)
     await assert.rejects(store.canUseMikkaPaid(teamWs.id), { code: 'usage_budget_exhausted' })
     await assert.rejects(store.reserve(teamWs.id, 'fixture/model', `blocked-${randomUUID()}`, {}, 100_000), { code: 'usage_budget_exhausted' })
+    assert.equal(await hostedPointsRefusal(teamWs.id, id => store.canUseMikkaPaid(id)), 'usage_budget_exhausted')
+    if (process.env.MIKKA_EDITION === 'cloud') {
+      assert.deepEqual(await hostedPointsHere(teamWs.id), { points: 0 })
+    }
+
+    // Past-due status within paid-through billingExpiresAt still enforces disabled overage
+    await pool.query('UPDATE workspace_billing SET status=\'past_due\' WHERE "workspaceId"=$1', [teamWs.id])
+    await assert.rejects(store.canUseMikkaPaid(teamWs.id), { code: 'usage_budget_exhausted' })
+    await pool.query('UPDATE workspace_billing SET status=\'active\' WHERE "workspaceId"=$1', [teamWs.id])
 
     // Enable overage with monthly cap of 500 credits (= 5,000,000 microUSD)
     const updatedOverage = await saveOveragePolicy(teamAdmin, teamWs.id, { enabled: true, monthlyCapPoints: 500, expectedRevision: 0 })
@@ -562,8 +573,14 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
     assert.equal(updatedOverage.revision, 1)
 
     const okOverage = `ovg-${randomUUID()}`
-    await store.reserve(teamWs.id, 'fixture/model', okOverage, {}, 5_000_000)
-    await store.settle(okOverage, 5_000_000, 10, 10)
+    await store.reserve(teamWs.id, 'fixture/model', okOverage, {}, 4_600_000)
+    await store.settle(okOverage, 4_600_000, 10, 10)
+    const overrunOverage = `ovg-overrun-${randomUUID()}`
+    await store.reserve(teamWs.id, 'fixture/model', overrunOverage, {}, 100_000)
+    await store.settle(overrunOverage, 900_000, 10, 10)
+    const overrunRow = (await pool.query('SELECT "costMicroUsd"::int AS cost,"purchasedMicroUsd"::int AS p,"unpaidMicroUsd"::int AS u FROM hosted_usage WHERE id=$1', [overrunOverage])).rows[0]
+    assert.deepEqual(overrunRow, { cost: 900_000, p: 400_000, u: 500_000 })
+    assert.equal((await store.balance(teamWs.id)).purchased, 45_000_000)
     await assert.rejects(store.reserve(teamWs.id, 'fixture/model', `ovg-cap-${randomUUID()}`, {}, 100_000), { code: 'usage_budget_exhausted' })
   })
 })

@@ -680,4 +680,26 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     const afterExpiry = await store.balance(workspaceId)
     assert.equal(afterExpiry.purchased, 250_000)
   })
+  await t.test('linked refund after FIFO purchased consumption claws back deficit from other purchases', async () => {
+    const workspaceId = randomUUID()
+    const g1 = randomUUID()
+    const g2 = randomUUID()
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"expiresAt") VALUES ($1,$2,1000,'purchased',now() + interval '365 days')`,
+      [g1, workspaceId],
+    )
+    const callId = `usage-${randomUUID()}`
+    await store.reserve(workspaceId, 'fixture/model', callId, {}, 10_000_000)
+    await store.settle(callId, 10_000_000, 100, 50)
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"expiresAt") VALUES ($1,$2,1000,'purchased',now() + interval '365 days')`,
+      [g2, workspaceId],
+    )
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"parentGrantId","expiresAt") VALUES ($1,$2,-1000,'purchased',$3,now() + interval '365 days')`,
+      [randomUUID(), workspaceId, g1],
+    )
+    assert.equal((await store.balance(workspaceId)).purchased, 0)
+  })
 })

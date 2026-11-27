@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3366 Grandfather positive hosted_allowances.remaining into non-expiring purchased workspace_credit_grants and zero hosted_allowances.remaining idempotently.
 -- target: MIKKA_DATABASE_URL
 -- Additive migration for #3328 new pricing credits:
 --   1. Per-grant FIFO tracking for purchased top-up credits (12-month expiry).

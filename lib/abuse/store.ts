@@ -144,6 +144,8 @@ export class HostedUsageStore {
         FROM workspace_credit_grants g WHERE g."workspaceId"=$1 AND g.bucket='plan' AND g."parentGrantId" IS NULL AND g.points>0 AND (g."periodStart" IS NULL OR g."periodStart"<=$3) AND (g."expiresAt" IS NULL OR g."expiresAt">$3)),0) AS plan,
       COALESCE((SELECT sum(GREATEST(0,(g.points::bigint+COALESCE((SELECT sum(r.points) FROM workspace_credit_grants r WHERE r."parentGrantId"=g.id),0))*$2::bigint-COALESCE((SELECT sum(${jsonbSafeBigIntExprSql('u."purchasedAllocations"->>g.id::text')}) FROM hosted_usage u WHERE u."workspaceId"=$1),0)))
         FROM workspace_credit_grants g WHERE g."workspaceId"=$1 AND g.bucket='purchased' AND g."parentGrantId" IS NULL AND g.points>0 AND (g."expiresAt" IS NULL OR g."expiresAt">$3)),0)
+      -COALESCE((SELECT sum(GREATEST(0,COALESCE((SELECT sum(${jsonbSafeBigIntExprSql('u."purchasedAllocations"->>g.id::text')}) FROM hosted_usage u WHERE u."workspaceId"=$1),0)-(g.points::bigint+COALESCE((SELECT sum(r.points) FROM workspace_credit_grants r WHERE r."parentGrantId"=g.id),0))*$2::bigint))
+        FROM workspace_credit_grants g WHERE g."workspaceId"=$1 AND g.bucket='purchased' AND g."parentGrantId" IS NULL AND g.points>0),0)
       -COALESCE((SELECT sum(GREATEST(0,u."purchasedMicroUsd"-COALESCE((SELECT sum(${jsonbSafeBigIntExprSql('v.value')}) FROM jsonb_each_text(COALESCE(u."purchasedAllocations",'{}'::jsonb)) v),0))+CASE WHEN u.state IN ('pending','unknown') THEN u."reservedPurchased" ELSE 0 END) FROM hosted_usage u WHERE u."workspaceId"=$1),0)
       -COALESCE((SELECT sum(-points::bigint)*$2::bigint FROM workspace_credit_grants WHERE "workspaceId"=$1 AND bucket='purchased' AND "parentGrantId" IS NULL AND points<0),0) AS purchased)
       SELECT verified,GREATEST(0,free+LEAST(0,purchased+plan))::float8 AS free,
@@ -169,6 +171,33 @@ export class HostedUsageStore {
     return rows.every(row => row.limit - row.spent > 0 && row.limit - row.spent >= estimate)
       && resourceBudgetAdmission(tx, workspaceId, this.attribution(workspaceId), estimate, requireCompleteAttribution)
   }
+  private async activePaidOveragePolicy(tx: Query, workspaceId: string): Promise<{
+    overageEnabled: boolean
+    overageMonthlyCapPoints: number | null
+  } | null> {
+    const { rows: [meta] } = await tx.query<{ available: boolean }>(`SELECT to_regclass('workspace_billing') IS NOT NULL AS available`)
+    if (!meta?.available) return null
+    const billing = (await tx.query<{
+      billingModel: string
+      billingExpiresAt: Date | null
+      overageEnabled: boolean
+      overageMonthlyCapPoints: number | null
+    }>(
+      `SELECT "billingModel","billingExpiresAt","overageEnabled","overageMonthlyCapPoints"
+       FROM workspace_billing WHERE "workspaceId"=$1`,
+      [workspaceId],
+    )).rows[0]
+    if (
+      !billing
+      || billing.billingModel !== 'resource_v1'
+      || !billing.billingExpiresAt
+      || billing.billingExpiresAt.getTime() <= Date.now()
+    ) return null
+    return {
+      overageEnabled: billing.overageEnabled,
+      overageMonthlyCapPoints: billing.overageMonthlyCapPoints,
+    }
+  }
   private async overageRefusal(
     tx: Query,
     workspaceId: string,
@@ -177,30 +206,11 @@ export class HostedUsageStore {
     estimate: number,
     isPrepaid = false,
   ): Promise<'usage_budget_exhausted' | 'points_exhausted' | null> {
-    const { rows: [meta] } = await tx.query<{ available: boolean }>(`SELECT to_regclass('workspace_billing') IS NOT NULL AS available`)
-    if (!meta?.available) return null
-    const billing = (await tx.query<{
-      status: string
-      billingModel: string
-      billingExpiresAt: Date | null
-      overageEnabled: boolean
-      overageMonthlyCapPoints: number | null
-    }>(
-      `SELECT status,"billingModel","billingExpiresAt","overageEnabled","overageMonthlyCapPoints"
-       FROM workspace_billing WHERE "workspaceId"=$1`,
-      [workspaceId],
-    )).rows[0]
-    const hasActivePaidPlan = Boolean(
-      billing
-      && billing.status === 'active'
-      && billing.billingModel === 'resource_v1'
-      && billing.billingExpiresAt
-      && billing.billingExpiresAt.getTime() > Date.now(),
-    )
-    if (!hasActivePaidPlan) return null
+    const billing = await this.activePaidOveragePolicy(tx, workspaceId)
+    if (!billing) return null
     const planBudget = isPrepaid ? balance.plan : balance.free + balance.plan
     const planHeadroom = planBudget - flightHeld
-    const spillsPastPlan = planBudget <= 0 || (isPrepaid ? planHeadroom < estimate : (flightHeld > 0 && planHeadroom < estimate))
+    const spillsPastPlan = planBudget <= 0 || planHeadroom < estimate
     if (!spillsPastPlan) return null
     if (!billing.overageEnabled) {
       return balance.purchased > 0 ? 'usage_budget_exhausted' : 'points_exhausted'
@@ -476,17 +486,35 @@ export class HostedUsageStore {
     const remainingPlan = Math.min(cost - free, available.plan)
     const { allocated: plan, allocations } = await this.allocateBucketGrants(tx, row.workspaceId, 'plan', remainingPlan, row.createdAt)
     if (plan !== remainingPlan) throw new Error('billing_plan_allocation_changed')
-    const purchased = cost - free - plan
+    const excess = cost - free - plan
+    const overagePolicy = excess > 0 ? await this.activePaidOveragePolicy(tx, row.workspaceId) : null
+    let maxOverage = excess
+    if (overagePolicy) {
+      if (!overagePolicy.overageEnabled) {
+        maxOverage = 0
+      } else if (overagePolicy.overageMonthlyCapPoints !== null) {
+        const capMicroUsd = overagePolicy.overageMonthlyCapPoints * MICRO_USD_PER_POINT
+        const confirmedSpent = Number((await tx.query<{ n: string }>(
+          `SELECT COALESCE(sum("purchasedMicroUsd"),0)::text AS n
+           FROM hosted_usage WHERE "workspaceId"=$1 AND state<>'failed' AND COALESCE("billingSource",'credits')='credits'
+             AND "createdAt">=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+          [row.workspaceId],
+        )).rows[0].n)
+        maxOverage = Math.max(0, capMicroUsd - confirmedSpent)
+      }
+    }
+    const purchased = Math.min(excess, maxOverage)
+    const unauthorizedOverage = excess - purchased
     const allocatablePurchased = Math.min(purchased, Number(row.reservedPurchased) + available.purchased)
     const { allocations: purchasedAllocations } = await this.allocateBucketGrants(tx, row.workspaceId, 'purchased', allocatablePurchased, row.createdAt)
     const unpaid =
-      useFree
+      (useFree
         ? free +
           Math.max(
             0,
             purchased - available.purchased - Number(row.reservedPurchased),
           )
-        : 0 // Any one-call overrun stays as debt; never erase it.
+        : 0) + unauthorizedOverage // Any one-call overrun stays as debt; unauthorized overage never drains protected purchased credits.
     // "unpaidMicroUsd" counts free credit and debt together for the platform's daily cap, so it cannot
     // say who paid. The platform funded `free` alone; plan, purchased and debt are charged.
     await tx.query(

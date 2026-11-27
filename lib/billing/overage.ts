@@ -6,7 +6,7 @@ import { workspaceBilling } from '@/lib/db/schema'
 import { MICRO_USD_PER_POINT } from '@/lib/abuse/policy'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { recordAudit } from '@/lib/audit/write'
-import { requireAccountOwner } from './authority'
+import { withAccountOwnerLock } from './authority'
 import type { OveragePolicyView } from './contract'
 import { overageInputSchema } from './overage-schema'
 
@@ -47,13 +47,12 @@ export function overagePolicy(
 export async function saveOveragePolicy(actorId: string, accountWorkspaceId: string, raw: unknown): Promise<OveragePolicyView> {
   const value = overageInputSchema.parse(raw)
   z.uuid().parse(accountWorkspaceId)
-  const actorName = await requireAccountOwner(actorId, accountWorkspaceId)
   if (value.enabled && (value.monthlyCapPoints === null || value.monthlyCapPoints <= 0)) {
     throw new WorkspaceError('billingOverageCapRequired')
   }
   const normalizedCap = value.monthlyCapPoints === 0 ? null : value.monthlyCapPoints
   if (value.enabled && normalizedCap === null) throw new WorkspaceError('billingOverageCapRequired')
-  const saved = await db.transaction(async tx => {
+  const saved = await withAccountOwnerLock(actorId, accountWorkspaceId, async actorName => db.transaction(async tx => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`billing:${accountWorkspaceId}`},0))`)
     const [prior] = await tx.select().from(workspaceBilling).where(eq(workspaceBilling.workspaceId, accountWorkspaceId)).for('update').limit(1)
     if ((prior?.overageRevision ?? 0) !== value.expectedRevision) throw new WorkspaceError('billingPolicyChanged')
@@ -77,6 +76,6 @@ export async function saveOveragePolicy(actorId: string, accountWorkspaceId: str
       },
     })
     return next
-  })
+  }))
   return overagePolicy(saved, await readMonthlyOverageMicroUsd(accountWorkspaceId))
 }
