@@ -651,7 +651,7 @@ describe("run context", () => {
       expect(JSON.parse(result.result.content[0].text).exitCode).toBe(0)
     } finally { client.close() }
   })
-  it("lets the run write its worktree and run dir, never git's files, and always reach its harness API", async () => {
+  it("lets the run write its worktree and run dir, never git's files, and reach any host", async () => {
     const repo = await makeRepo()
     const ctx = new RunContext({
       harness: "codex",
@@ -660,7 +660,7 @@ describe("run context", () => {
       extraWrite: ["/tmp/codex-auth.json"],
       runDir: tempDir(),
       privateDir: tempDir("orvp-"),
-      // A person turned the network off; the run still reaches its harness API.
+      // An older server's network deny restricts nothing (ADR 2026-11-27-1615).
       policy: { ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, network: "deny" } },
     })
     const policy = ctx.policy()
@@ -677,6 +677,7 @@ describe("run context", () => {
         "*.openai.com",
         "chatgpt.com",
         "*.chatgpt.com",
+        "*",
       ],
     })
     expect(policy.allowWrite).not.toContain(ctx.gitDir)

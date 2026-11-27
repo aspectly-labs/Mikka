@@ -1,16 +1,16 @@
-// Agent permissions and guidance (ADR 0009, ADR 0028). One table shared by
-// the server (which stores the workspace's choices and sends them with every
-// run), the desktop app (设置 › 功能 › Agents) and the daemon (which applies
-// them in the sandbox, the CLIs' own permission rules and its own push).
+// A run's policy and guidance (ADR 0009, ADR 0028), shared by the server
+// (which sends it with every run) and the daemon (which applies it in the
+// sandbox, the CLIs' own permission rules and its own push).
 //
-// Agents never ask a human for permission (ADR 2026-11-27-1615): every action
-// is `allow` unless a workspace owner or admin explicitly chose `deny`. There
-// is no `ask`; a stored or sent `ask` from an older build reads as `allow`.
-// Some actions are hard rules, never configurable: the run's worktree is the
-// agent's to read and write, project scripts and setup recipes run there, and
-// a repo has to be on the device's allow-list before anything starts.
+// Agents run with full access and never ask a human for permission (ADR
+// 2026-11-27-1615). No workspace, team, project or person restricts a run:
+// there is no `ask`, no admin `deny`, no network list and no read-only mode.
+// Stored choices from older builds still parse and restrict nothing. What
+// remains is set by the host only: a read-only independent check (ADR 0046),
+// whether the daemon itself pushes a task branch, and the computer grant.
+// The run's worktree, the sandbox's read-only outside and the device's repo
+// allow-list are boundaries, not choices.
 import { z } from "zod"
-import { networkDomainsWithin } from "./network-bounds"
 export { intersectNetworkDomains, networkDomainsWithin } from "./network-bounds"
 
 export const PERMISSION_ACTIONS = [
@@ -35,81 +35,36 @@ const legacyDecision = z
   .enum(["allow", "ask", "deny"])
   .transform((value): PermissionDecision => value === "ask" ? "allow" : value)
 
-/** Actions a workspace may set, each with the decisions it may pick. */
-export const CONFIGURABLE_PERMISSIONS = {
-  install_dependency: ["allow", "deny"],
-  // Everything outside the worktree stays read-only in the sandbox either way
-  // (ADR 0009, Stage 1 isolation); this choice only changes what the agent is told.
-  write_outside_repo: ["allow", "deny"],
-  // Stored for older rows; it never withholds the agent's own push with the
-  // person's own GitHub credential (decision 2026-11-02-1600).
-  git_push: ["allow", "deny"],
-  network: ["allow", "deny"],
-  computer_use: ["allow", "deny"],
-} as const satisfies Partial<
-  Record<PermissionAction, readonly PermissionDecision[]>
->
-export type ConfigurableAction = keyof typeof CONFIGURABLE_PERMISSIONS
-export const CONFIGURABLE_ACTIONS = Object.keys(
-  CONFIGURABLE_PERMISSIONS
-) as ConfigurableAction[]
+/** The permission fields a run policy carries on the wire. Only the host
+ * fills them; released daemons still require every field. */
+export const RUN_POLICY_ACTIONS = [
+  "install_dependency",
+  "write_outside_repo",
+  "git_push",
+  "network",
+  "computer_use",
+] as const satisfies readonly PermissionAction[]
+export type RunPolicyAction = (typeof RUN_POLICY_ACTIONS)[number]
 
-/** Hard rules: shown read-only, never stored. */
-export const FIXED_PERMISSIONS = {
+/** What a run gets unless the host says otherwise. */
+export const PERMISSION_DEFAULTS: Readonly<
+  Record<PermissionAction, PermissionDecision>
+> = {
   read_in_worktree: "allow",
   write_in_worktree: "allow",
   run_project_script: "allow",
   // A repo's setup recipe runs as configured; nobody approves it first.
   run_setup_recipe: "allow",
-} as const satisfies Partial<Record<PermissionAction, PermissionDecision>>
-export type FixedAction = keyof typeof FIXED_PERMISSIONS
-
-export const PERMISSION_DEFAULTS: Readonly<
-  Record<PermissionAction, PermissionDecision>
-> = {
-  ...FIXED_PERMISSIONS,
   install_dependency: "allow",
   write_outside_repo: "allow",
   // Whether the daemon itself pushes a run's verified task branch: the server
   // sends allow for a run with a task branch. The agent's own git push is never
   // withheld (decision 2026-11-02-1600).
   git_push: "deny",
-  // Agents reach the open internet unless a person restricts it in settings
-  // (decision 2026-11-01-1230-network-open-by-default).
   network: "allow",
+  // The computer grant is the host's (workspace computer policy, the device's
+  // own consent); a run without one gets none from this default.
   computer_use: "allow",
-}
-
-/**
- * A stored layer's `git_push`, read back as it was stored. Since decision
- * 2026-11-02-1600 it restricts nothing; unset or a legacy ask reads as allow.
- */
-export function gitPushRestriction(permissions: unknown): "allow" | "deny" {
-  return permissions !== null && typeof permissions === "object" &&
-    (permissions as Record<string, unknown>).git_push === "deny" ? "deny" : "allow"
-}
-
-export function isConfigurableAction(
-  action: string
-): action is ConfigurableAction {
-  return Object.hasOwn(CONFIGURABLE_PERMISSIONS, action)
-}
-
-/** Whether `decision` is one of the choices the action offers. */
-export function permissionChoiceAllowed(
-  action: ConfigurableAction,
-  decision: string
-): decision is PermissionDecision {
-  return (CONFIGURABLE_PERMISSIONS[action] as readonly string[]).includes(
-    decision
-  )
-}
-
-/** A stored choice for `action`, a legacy `ask` read as `allow`; null when it
- * is not one of the action's choices. */
-function storedChoice(action: ConfigurableAction, value: unknown): PermissionDecision | null {
-  const decision = value === "ask" ? "allow" : value
-  return typeof decision === "string" && permissionChoiceAllowed(action, decision) ? decision : null
 }
 
 /**
@@ -144,9 +99,11 @@ export const networkAllowSchema = z
   .max(MAX_NETWORK_DOMAINS)
   .transform(normalizeDomains)
 
-/** Stored permission choices (`agent_settings.permissions`), all optional.
- * A stored `ask` predates ADR 2026-11-27-1615 (git_push: decision
- * 2026-11-01-1215) and reads as allow. */
+/** Permission choices an older build stored (`agent_settings.permissions`,
+ * CLI policy layers), all optional. They still parse so old rows load, and
+ * restrict nothing (ADR 2026-11-27-1615); a stored `ask` reads as allow. Only
+ * a workspace `computer_use` choice still applies, through the computer
+ * grant. */
 export const storedPermissionsSchema = z
   .strictObject({
     install_dependency: legacyDecision,
@@ -161,34 +118,9 @@ export type StoredPermissions = z.infer<typeof storedPermissionsSchema>
 export const guidanceSchema = z.string().max(MAX_GUIDANCE_LENGTH)
 
 /**
- * The workspace's default network allow-list when it has set none (ADR
- * 0009: "workspace default, for example npm, GitHub"). Package registries
- * come with "install dependencies: allow", not with this list.
- */
-export const DEFAULT_NETWORK_ALLOW: readonly string[] = [
-  "github.com",
-  "*.github.com",
-  "*.githubusercontent.com",
-]
-
-/** Reachable when installing dependencies is allowed. */
-export const PACKAGE_REGISTRY_DOMAINS: readonly string[] = [
-  "registry.npmjs.org",
-  "registry.yarnpkg.com",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "crates.io",
-  "static.crates.io",
-  "index.crates.io",
-  "proxy.golang.org",
-  "sum.golang.org",
-  "rubygems.org",
-]
-
-/**
- * Actions a read-only run (ADR 0046: the acceptance check) may never take,
- * whatever the workspace chose. Reading the worktree is all it does; it
- * reports what it found through its submit and changes nothing.
+ * Actions a read-only run (ADR 0046: an independent check) may never take.
+ * Reading the worktree is all it does; it reports what it found through its
+ * submit and changes nothing.
  */
 export const READ_ONLY_DENIED: readonly PermissionAction[] = [
   "write_in_worktree",
@@ -213,9 +145,9 @@ export const runPolicySchema = z.strictObject({
     // Older servers omit this field: the host sent no computer for the run.
     computer_use: legacyDecision.optional(),
   }),
-  /** The workspace layer of the domain allow-list (ADR 0009). */
+  /** Legacy domain allow-list: sent empty, ignored (network is open). */
   networkAllow: z.array(z.string().min(1).max(253)).max(MAX_NETWORK_DOMAINS),
-  /** Host-derived worker/workspace ceiling; even network=allow cannot widen it. */
+  /** Legacy domain ceiling from stored CLI layers: no longer sent, ignored. */
   networkCeiling: z.array(networkDomainSchema).max(MAX_NETWORK_DOMAINS).optional(),
   /**
    * The run only reads: the worktree is not writable (ADR 0046). It keeps the
@@ -291,19 +223,14 @@ export function modelForHarness(
 }
 
 /**
- * A per-person or per-scope mode (设置 › Agent personalization):
- *
- * - `read_only`: the run reads and reports but changes nothing — the policy
- *   the read-only acceptance check already gets (ADR 0046), applied to every
- *   run this person's or scope's work goes through.
- * - `ask`: the legacy spelling of "no mode" (the scope's policy, unchanged).
- *   It never asked anyone, and there are no approvals (ADR 2026-11-27-1615);
- *   it is still accepted so stored rows parse and a settings write can clear
- *   `read_only`.
+ * A per-person or per-scope "approval mode" (`ask` / `read_only`) an older
+ * build stored. Old rows still parse; the value restricts nothing (ADR
+ * 2026-11-27-1615). Read-only is a run role — independent checks, ADR 0046 —
+ * not a workspace, team, project or personal setting.
  */
-export const APPROVAL_MODES = ["ask", "read_only"] as const
-export type ApprovalMode = (typeof APPROVAL_MODES)[number]
-export const approvalModeSchema = z.enum(APPROVAL_MODES)
+export const LEGACY_APPROVAL_MODES = ["ask", "read_only"] as const
+export type LegacyApprovalMode = (typeof LEGACY_APPROVAL_MODES)[number]
+export const legacyApprovalModeSchema = z.enum(LEGACY_APPROVAL_MODES)
 
 /** Most permissive first: a stricter decision has the lower number. */
 const DECISION_RANK: Record<PermissionDecision, number> = {
@@ -319,7 +246,7 @@ const DECISION_RANK: Record<PermissionDecision, number> = {
  */
 export function readOnlyRunPolicy(policy: RunPolicy): RunPolicy {
   const permissions = { ...policy.permissions }
-  for (const action of CONFIGURABLE_ACTIONS) {
+  for (const action of RUN_POLICY_ACTIONS) {
     if (READ_ONLY_DENIED.includes(action)) permissions[action] = "deny"
   }
   return { ...policy, permissions, readOnly: true }
@@ -332,9 +259,8 @@ export function readOnlyRunPolicy(policy: RunPolicy): RunPolicy {
  * out (an older server's `computer_use`) counts as allow.
  */
 export function isNoLooserThan(base: RunPolicy, next: RunPolicy): boolean {
-  if (base.networkCeiling && (!next.networkCeiling || !networkDomainsWithin(next.networkCeiling, base.networkCeiling))) return false
   if (base.readOnly === true && next.readOnly !== true) return false
-  return CONFIGURABLE_ACTIONS.every(
+  return RUN_POLICY_ACTIONS.every(
     (action) =>
       DECISION_RANK[next.permissions[action] ?? "allow"] <=
       DECISION_RANK[base.permissions[action] ?? "allow"]
@@ -350,6 +276,7 @@ export interface StoredUserAgentPreference {
   instructions?: string | null
   defaultHarness?: string | null
   modelByHarness?: unknown
+  /** Legacy (`LEGACY_APPROVAL_MODES`): read and ignored. */
   approvalMode?: string | null
 }
 
@@ -366,32 +293,15 @@ export function resolveDefaultHarness(stored: unknown): ModelHarness | null {
 
 /** A settings row as stored; null fields inherit (team rows) or default. */
 export interface StoredAgentSettings {
+  /** Legacy (`storedPermissionsSchema`): only `computer_use` still applies. */
   permissions?: unknown
+  /** Legacy: ignored. */
   networkAllow?: unknown
   guidance?: string | null
 }
 
 /** Only the authenticated host selects the execution environment. */
 export type ExecutionEnvironment = 'local' | 'cloud'
-
-/** Permissions with defaults; an invalid stored choice falls back, a legacy
- * `ask` reads as allow. */
-export function resolvePermissions(stored: unknown, _environment: ExecutionEnvironment = 'local'): RunPermissions {
-  const out = {} as Record<ConfigurableAction, PermissionDecision>
-  const record =
-    stored && typeof stored === "object"
-      ? (stored as Record<string, unknown>)
-      : {}
-  for (const action of CONFIGURABLE_ACTIONS)
-    out[action] = storedChoice(action, record[action]) ?? PERMISSION_DEFAULTS[action]
-  return out as RunPermissions
-}
-
-export function resolveNetworkAllow(stored: unknown): string[] {
-  if (stored === null || stored === undefined) return [...DEFAULT_NETWORK_ALLOW]
-  const parsed = networkAllowSchema.safeParse(stored)
-  return parsed.success ? parsed.data : [...DEFAULT_NETWORK_ALLOW]
-}
 
 export interface ResolvedAgentSettings {
   policy: RunPolicy
@@ -401,27 +311,38 @@ export interface ResolvedAgentSettings {
   guidanceFrom: "team" | "workspace" | null
 }
 
+/** A stored `computer_use` choice: the computer grant's workspace side. */
+function storedComputerUse(stored: unknown): PermissionDecision {
+  const value = stored && typeof stored === "object" ? (stored as Record<string, unknown>).computer_use : undefined
+  return value === "deny" ? "deny" : "allow"
+}
+
 /**
- * The settings a run gets: the workspace row (or defaults), with the team's
- * guidance in place of the workspace's when the team set its own. A team's
- * empty guidance means "none for this team"; null inherits.
+ * The settings a run gets: full access (ADR 2026-11-27-1615), with the
+ * team's guidance in place of the workspace's when the team set its own. A
+ * team's empty guidance means "none for this team"; null inherits. Stored
+ * permissions and network lists restrict nothing; only the workspace's
+ * `computer_use` choice is kept for the computer grant.
  */
 export function resolveAgentSettings(
   workspace: StoredAgentSettings | null | undefined,
   team?: StoredAgentSettings | null,
-  environment: ExecutionEnvironment = 'local'
+  _environment: ExecutionEnvironment = 'local'
 ): ResolvedAgentSettings {
-  // A workspace network allow-list no longer narrows a cloud run to that list
-  // (that was network `ask`); host and scope ceilings still bound it.
-  const permissions = resolvePermissions(workspace?.permissions, environment)
   const teamGuidance = team?.guidance
   const workspaceGuidance = workspace?.guidance ?? null
   const fromTeam = teamGuidance !== null && teamGuidance !== undefined
   const text = (fromTeam ? teamGuidance : workspaceGuidance)?.trim() ?? ""
   return {
     policy: {
-      permissions,
-      networkAllow: resolveNetworkAllow(workspace?.networkAllow),
+      permissions: {
+        install_dependency: PERMISSION_DEFAULTS.install_dependency,
+        write_outside_repo: PERMISSION_DEFAULTS.write_outside_repo,
+        git_push: PERMISSION_DEFAULTS.git_push,
+        network: PERMISSION_DEFAULTS.network,
+        computer_use: storedComputerUse(workspace?.permissions),
+      },
+      networkAllow: [],
     },
     guidance: text ? text : null,
     guidanceFrom: text ? (fromTeam ? "team" : "workspace") : null,

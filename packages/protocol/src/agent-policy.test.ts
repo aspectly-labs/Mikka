@@ -1,34 +1,29 @@
 import { describe, expect, it } from "vitest"
 
 import {
-  APPROVAL_MODES,
-  approvalModeSchema,
+  LEGACY_APPROVAL_MODES,
   defaultRunPolicy,
-  runPolicyDigestInput,
-  runPolicySchema,
-  CONFIGURABLE_ACTIONS,
-  CONFIGURABLE_PERMISSIONS,
-  DEFAULT_NETWORK_ALLOW,
-  FIXED_PERMISSIONS,
-  gitPushRestriction,
-  READ_ONLY_DENIED,
-  PERMISSION_ACTIONS,
-  PERMISSION_DEFAULTS,
-  readOnlyRunPolicy,
   isNoLooserThan,
+  legacyApprovalModeSchema,
   modelForHarness,
   networkAllowSchema,
+  PERMISSION_ACTIONS,
+  PERMISSION_DEFAULTS,
+  READ_ONLY_DENIED,
+  readOnlyRunPolicy,
   resolveAgentSettings,
   resolveDefaultHarness,
   resolveInstructions,
   resolveModelByHarness,
-  resolvePermissions,
+  RUN_POLICY_ACTIONS,
+  runPolicyDigestInput,
+  runPolicySchema,
   storedPermissionsSchema,
 } from "./agent-policy"
 import { runAssignmentSchema } from "./device"
 
 describe("run policy compatibility", () => {
-  it("rejects unsupported policy fields and actions instead of dropping restrictions", () => {
+  it("rejects unsupported policy fields and actions", () => {
     const policy = defaultRunPolicy()
     expect(runPolicySchema.safeParse(policy).success).toBe(true)
     expect(runPolicySchema.safeParse({ ...policy, schemaVersion: 999 }).success).toBe(false)
@@ -36,15 +31,8 @@ describe("run policy compatibility", () => {
   })
 })
 
-describe("agent policy table (ADR 0009)", () => {
-  it("splits every action into fixed or configurable", () => {
-    const fixed = Object.keys(FIXED_PERMISSIONS)
-    expect([...fixed, ...CONFIGURABLE_ACTIONS].sort()).toEqual(
-      [...PERMISSION_ACTIONS].sort()
-    )
-  })
-
-  it("keeps unattended sandbox defaults while preserving publication and computer authority", () => {
+describe("full access (ADR 2026-11-27-1615)", () => {
+  it("allows every action by default; only the daemon's own push waits for the host", () => {
     expect(PERMISSION_DEFAULTS).toEqual({
       read_in_worktree: "allow",
       write_in_worktree: "allow",
@@ -56,81 +44,49 @@ describe("agent policy table (ADR 0009)", () => {
       network: "allow",
       computer_use: "allow",
     })
+    expect(RUN_POLICY_ACTIONS.every(action => PERMISSION_ACTIONS.includes(action))).toBe(true)
   })
 
-  it("has no ask (ADR 2026-11-27-1615): a stored or sent ask reads as allow, an explicit deny stays", () => {
-    for (const action of CONFIGURABLE_ACTIONS)
-      expect(CONFIGURABLE_PERMISSIONS[action]).toEqual(["allow", "deny"])
-    expect(Object.values(PERMISSION_DEFAULTS)).not.toContain("ask")
-    expect(storedPermissionsSchema.parse({
-      install_dependency: "ask", write_outside_repo: "ask", network: "ask", computer_use: "ask",
-    })).toEqual({ install_dependency: "allow", write_outside_repo: "allow", network: "allow", computer_use: "allow" })
-    expect(storedPermissionsSchema.parse({ network: "deny", install_dependency: "deny" })).toEqual({ network: "deny", install_dependency: "deny" })
-    const sent = runPolicySchema.parse({ permissions: { install_dependency: "ask", write_outside_repo: "ask", git_push: "allow", network: "ask", computer_use: "ask" }, networkAllow: [] })
-    expect(sent.permissions).toEqual({ install_dependency: "allow", write_outside_repo: "allow", git_push: "allow", network: "allow", computer_use: "allow" })
-    expect(resolvePermissions({ install_dependency: "ask", network: "ask", computer_use: "ask", write_outside_repo: "ask" })).toEqual(resolvePermissions({}))
-    expect(resolveAgentSettings({ permissions: { network: "deny" } }).policy.permissions.network).toBe("deny")
+  it("reads every stored choice and network list as no restriction", () => {
+    const stored = { install_dependency: "deny", write_outside_repo: "deny", git_push: "deny", network: "deny" }
+    // Old rows still parse, including a legacy ask.
+    expect(storedPermissionsSchema.safeParse(stored).success).toBe(true)
+    expect(storedPermissionsSchema.parse({ network: "ask" })).toEqual({ network: "allow" })
+    for (const environment of ["local", "cloud"] as const) {
+      const { policy } = resolveAgentSettings({ permissions: stored, networkAllow: ["only.example.com"] }, undefined, environment)
+      expect(policy).toEqual({ permissions: { install_dependency: "allow", write_outside_repo: "allow", git_push: "deny", network: "allow", computer_use: "allow" }, networkAllow: [] })
+    }
   })
 
-  it("never asks for a push: stored ask reads as allow, a run policy's ask carries no authority (decision 2026-11-01-1310)", () => {
-    expect(CONFIGURABLE_PERMISSIONS.git_push).toEqual(["allow", "deny"])
-    expect(storedPermissionsSchema.parse({ git_push: "ask" })).toEqual({ git_push: "allow" })
-    expect(storedPermissionsSchema.parse({ git_push: "deny" })).toEqual({ git_push: "deny" })
-    const policy = runPolicySchema.parse({ permissions: { install_dependency: "allow", write_outside_repo: "ask", git_push: "ask", network: "ask" }, networkAllow: [] })
-    expect(policy.permissions.git_push).toBe("deny")
-    // Unset resolves to no push; a stored layer can only restrict the server's grant.
-    expect(resolvePermissions({}).git_push).toBe("deny")
-    expect(gitPushRestriction({})).toBe("allow")
-    expect(gitPushRestriction({ git_push: "ask" })).toBe("allow")
-    expect(gitPushRestriction({ git_push: "deny" })).toBe("deny")
+  it("keeps only the workspace's computer choice, for the computer grant", () => {
+    expect(resolveAgentSettings({ permissions: { computer_use: "deny" } }).policy.permissions.computer_use).toBe("deny")
+    expect(resolveAgentSettings({ permissions: { computer_use: "ask" } }).policy.permissions.computer_use).toBe("allow")
+    expect(resolveAgentSettings(null).policy.permissions.computer_use).toBe("allow")
   })
 
-  it("refuses choices an action does not offer", () => {
-    expect(
-      storedPermissionsSchema.safeParse({ write_outside_repo: "maybe" }).success
-    ).toBe(false)
-    expect(
-      storedPermissionsSchema.safeParse({ read_in_worktree: "deny" }).success
-    ).toBe(false)
-    expect(
-      storedPermissionsSchema.safeParse({ git_push: "deny", network: "allow" })
-        .success
-    ).toBe(true)
+  it("reads an older server's ask as allow, and its push ask as no push", () => {
+    const sent = runPolicySchema.parse({ permissions: { install_dependency: "ask", write_outside_repo: "ask", git_push: "ask", network: "ask", computer_use: "ask" }, networkAllow: [] })
+    expect(sent.permissions).toEqual({ install_dependency: "allow", write_outside_repo: "allow", git_push: "deny", network: "allow", computer_use: "allow" })
   })
 
-  it("falls back to defaults for stored values that are not allowed", () => {
-    expect(
-      resolvePermissions({ write_outside_repo: "maybe", git_push: "deny" })
-    ).toEqual({
-      install_dependency: "allow",
-      write_outside_repo: "allow",
-      git_push: "deny",
-      network: "allow",
-      computer_use: "allow",
-    })
-    expect(resolvePermissions({ computer_use: "unknown" }).computer_use).toBe("allow")
-    expect(storedPermissionsSchema.safeParse({ computer_use: "unknown" }).success).toBe(false)
+  it("still parses stored approval modes, which change nothing", () => {
+    expect(LEGACY_APPROVAL_MODES).toEqual(["ask", "read_only"])
+    expect(legacyApprovalModeSchema.parse("read_only")).toBe("read_only")
+    expect(legacyApprovalModeSchema.safeParse("autonomous").success).toBe(false)
   })
 
-  it("normalizes the domain list and refuses a bare wildcard", () => {
+  it("normalizes a legacy domain list and refuses a bare wildcard", () => {
     expect(
       networkAllowSchema.parse([" NPMJS.org ", "*.github.com", "npmjs.org"])
     ).toEqual(["npmjs.org", "*.github.com"])
     expect(networkAllowSchema.safeParse(["*"]).success).toBe(false)
-    expect(networkAllowSchema.safeParse(["http://x.com"]).success).toBe(false)
-    expect(networkAllowSchema.safeParse(["localhost:5432"]).success).toBe(true)
   })
 })
 
 describe("resolveAgentSettings", () => {
-  it("uses the defaults without a row", () => {
-    const resolved = resolveAgentSettings(null)
-    expect(resolved.policy.networkAllow).toEqual(DEFAULT_NETWORK_ALLOW)
-    expect(resolved.guidance).toBeNull()
-  })
-
   it("lets a team replace the workspace guidance, or clear it", () => {
     const workspace = { guidance: "Write tests.", networkAllow: [] }
+    expect(resolveAgentSettings(null).guidance).toBeNull()
     expect(resolveAgentSettings(workspace).guidance).toBe("Write tests.")
     expect(resolveAgentSettings(workspace, { guidance: null })).toMatchObject({
       guidance: "Write tests.",
@@ -143,108 +99,50 @@ describe("resolveAgentSettings", () => {
       guidance: null,
       guidanceFrom: null,
     })
-    expect(resolveAgentSettings(workspace).policy.networkAllow).toEqual([])
   })
 
-  it("travels in the run assignment", () => {
-    const policy = resolveAgentSettings({
-      permissions: { network: "deny" },
-    }).policy
-    const parsed = runAssignmentSchema.parse({
-      runId: "r1",
-      issueId: "i1",
-      deviceId: "d1",
-      repoId: "p1",
-      baseBranch: "main",
-      harness: "mock",
-      prompt: "x",
-      policy,
-    })
-    expect(parsed.policy?.permissions.network).toBe("deny")
-  })
-
-  it("keeps computer permission in new assignments and accepts an older assignment without granting allow", () => {
-    const policy = resolveAgentSettings({ permissions: { computer_use: "allow" } }).policy
+  it("travels in the run assignment, and an older assignment without computer_use grants nothing new", () => {
+    const policy = resolveAgentSettings(null).policy
     const assignment = { runId: "r1", issueId: "i1", deviceId: "d1", repoId: "p1", baseBranch: "main", harness: "mock", prompt: "x" }
-    expect(runAssignmentSchema.parse({ ...assignment, policy }).policy?.permissions.computer_use).toBe("allow")
+    expect(runAssignmentSchema.parse({ ...assignment, policy }).policy).toEqual(policy)
     const legacy = { ...policy, permissions: { ...policy.permissions } }
     delete legacy.permissions.computer_use
     expect(runAssignmentSchema.parse({ ...assignment, policy: legacy }).policy?.permissions.computer_use).toBeUndefined()
-    expect(resolveAgentSettings(null).policy.permissions.computer_use).toBe("allow")
   })
 })
 
-describe("a person's approval mode (ADR 0060)", () => {
-  const workspace = resolveAgentSettings({
-    permissions: { install_dependency: "allow", network: "allow" },
-    networkAllow: ["example.com"],
-  }).policy
+describe("the read-only check role (ADR 0046)", () => {
+  const workspace = resolveAgentSettings(null).policy
 
-  it("takes the changing actions away on read_only, and never gives any back", () => {
+  it("takes the changing actions away and keeps network open", () => {
     const readOnly = readOnlyRunPolicy(workspace)
     expect(readOnly.permissions).toEqual({
       install_dependency: "deny",
       write_outside_repo: "deny",
       git_push: "deny",
-      // Network stays as the workspace set it: a read-only run still has to
-      // reach its model's API (ADR 0046).
       network: "allow",
       computer_use: "deny",
     })
     expect(readOnly.readOnly).toBe(true)
-    expect(readOnly.networkAllow).toEqual(["example.com"])
   })
 
-  it("read_only is task intent: it does not take the push with the person's own credential away", () => {
+  it("does not take the push with the person's own credential away", () => {
     const allowed = { ...workspace, permissions: { ...workspace.permissions, git_push: "allow" as const } }
     expect(READ_ONLY_DENIED).not.toContain("git_push")
     expect(readOnlyRunPolicy(allowed).permissions.git_push).toBe("allow")
   })
 
-  it("read_only is no looser than the workspace, whatever it chose", () => {
-    // Every workspace the policy table can produce, including the loosest.
-    const policies = [
-      resolveAgentSettings(null).policy,
-      workspace,
-      resolveAgentSettings({
-        permissions: {
-          install_dependency: "allow",
-          write_outside_repo: "deny",
-          git_push: "allow",
-          network: "deny",
-        },
-      }).policy,
-    ]
-    for (const policy of policies) {
+  it("is never looser than the policy it narrows", () => {
+    for (const policy of [workspace, { ...workspace, permissions: { ...workspace.permissions, git_push: "allow" as const } }]) {
       expect(isNoLooserThan(policy, readOnlyRunPolicy(policy))).toBe(true)
       expect(isNoLooserThan(policy, policy)).toBe(true)
     }
   })
 
   it("catches a policy that does loosen one, so the check above means something", () => {
-    const looser = {
-      ...workspace,
-      permissions: { ...workspace.permissions, git_push: "allow" as const },
-    }
-    expect(
-      isNoLooserThan(
-        {
-          ...workspace,
-          permissions: { ...workspace.permissions, git_push: "deny" },
-        },
-        looser
-      )
-    ).toBe(false)
-    expect(isNoLooserThan({ ...workspace, readOnly: true }, workspace)).toBe(
-      false
-    )
-  })
-
-  it("stored modes still parse; ask is only the legacy spelling of no mode", () => {
-    expect(APPROVAL_MODES).toEqual(["ask", "read_only"])
-    expect(approvalModeSchema.parse("ask")).toBe("ask")
-    expect(approvalModeSchema.parse("read_only")).toBe("read_only")
-    expect(approvalModeSchema.safeParse("autonomous").success).toBe(false)
+    const looser = { ...workspace, permissions: { ...workspace.permissions, git_push: "allow" as const } }
+    expect(isNoLooserThan({ ...workspace, permissions: { ...workspace.permissions, git_push: "deny" } }, looser)).toBe(false)
+    expect(isNoLooserThan({ ...workspace, readOnly: true }, workspace)).toBe(false)
   })
 })
 
@@ -318,22 +216,4 @@ it("canonicalizes resolved execution policy independent of object key order", ()
   } }
   expect(runPolicyDigestInput(reordered)).toBe(runPolicyDigestInput(policy))
   expect(runPolicyDigestInput({ ...policy, readOnly: true })).not.toBe(runPolicyDigestInput(policy))
-})
-
-it('opens the network by default everywhere and keeps the choices a person made', () => {
-  expect(resolveAgentSettings(null, undefined, 'cloud').policy.permissions.network).toBe('allow')
-  expect(resolveAgentSettings(null).policy.permissions.network).toBe('allow')
-  for (const environment of ['cloud', 'local'] as const) for (const network of ['allow','deny'] as const) {
-    expect(resolveAgentSettings({ permissions:{network} },undefined,environment).policy.permissions.network).toBe(network)
-  }
-  expect(resolveAgentSettings({permissions:{install_dependency:'deny',git_push:'deny'}},undefined,'cloud').policy.permissions).toMatchObject({install_dependency:'deny',git_push:'deny'})
-})
-
-it('cannot widen a worker/workspace egress ceiling with a frozen assignment', () => {
-  const base={...defaultRunPolicy(),networkCeiling:['*.github.com:443']}
-  expect(isNoLooserThan(base,{...base,networkCeiling:['api.github.com:443']})).toBe(true)
-  expect(isNoLooserThan(base,{...base,networkCeiling:['api.github.com']})).toBe(false)
-  expect(isNoLooserThan(base,defaultRunPolicy())).toBe(false)
-  // A workspace list no longer narrows a cloud run to that list (it was network ask).
-  expect(resolveAgentSettings({networkAllow:['registry.example.com']},undefined,'cloud').policy.permissions.network).toBe('allow')
 })

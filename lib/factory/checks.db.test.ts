@@ -21,7 +21,6 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import {
   defaultRunPolicy,
-  DEFAULT_NETWORK_ALLOW,
   type RunPolicy,
 } from "@mikka/protocol/agent-policy";
 import { Pool } from "pg";
@@ -1641,9 +1640,8 @@ test(
             );
             assert.equal(extras.baseBranch, sha);
             assert.equal(extras.verifyCommand, command);
-            assert.deepEqual((extras.policy as any).networkAllow, [
-              ...DEFAULT_NETWORK_ALLOW,
-            ]);
+            // No domain list: network access is open (ADR 2026-11-27-1615).
+            assert.deepEqual((extras.policy as any).networkAllow, []);
             await tx.query("ROLLBACK");
           } finally {
             await tx.query("ROLLBACK");

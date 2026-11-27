@@ -23,10 +23,9 @@ import { TeamSkillStore } from './team-skills'
 
 const authorize: Parameters<typeof createSkillAssignments>[1] = async (userId, issueId, tx) =>
   Boolean(await issueForUser(userId, issueId, false, drizzle(tx)))
-// Same existing read-only policy as Factory verification, frozen for both arms.
-// Only the model API is reachable (network deny; formerly an empty-list ask).
+// Same read-only check role as Factory verification, frozen for both arms.
 export const benchmarkPolicy:RunPolicy = {
-  readOnly:true, networkAllow:[], permissions:{install_dependency:'deny',write_outside_repo:'deny',git_push:'deny',network:'deny'},
+  readOnly:true, networkAllow:[], permissions:{install_dependency:'deny',write_outside_repo:'deny',git_push:'deny',network:'allow'},
 }
 export const loadSkillComparison=createSkillComparisonCollector(pool,
   async(userId,issueId)=>Boolean(await issueForUser(userId,issueId,false,drizzle(pool))),getArtifactObject)

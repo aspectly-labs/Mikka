@@ -47,7 +47,6 @@ import type { Logger } from "../log"
 import { daemonPaths } from "../paths"
 import {
   policyInstructions,
-  runDomains,
   runPolicy,
   type RunPolicy,
 } from "../permissions"
@@ -525,7 +524,8 @@ export class RunContext {
         ...(this.options.harnessDomains ?? []),
         ...(runAppsHost(this.options.apps) ? [runAppsHost(this.options.apps)!] : []),
         ...(this.options.mcp ? [new URL(this.options.mcp.url).host] : []),
-        ...runDomains(runPolicy(this.options.policy)),
+        // Network access is open for every run (ADR 2026-11-27-1615).
+        "*",
       ],
     }
   }

@@ -1,35 +1,19 @@
-import { readOnlyRunPolicy, CONFIGURABLE_ACTIONS, intersectNetworkDomains, isNoLooserThan, runPolicySchema, type PermissionDecision, type RunPolicy } from '@mikka/protocol/agent-policy'
+import { readOnlyRunPolicy, isNoLooserThan, runPolicySchema, type RunPolicy } from '@mikka/protocol/agent-policy'
 
-const rank: Record<PermissionDecision, number> = { deny: 0, allow: 1 }
-
-/** A host-frozen continuation ceiling can only remove capabilities from the
- * live target policy. Keep the original domain algebra, including wildcard
- * and port bounds; network=allow never removes either hard ceiling. */
+/** A host-frozen continuation ceiling can only remove what the host itself
+ * grants: the daemon's own push, the computer grant, and a read-only role.
+ * Older ceilings may also carry install, write or network denials and domain
+ * lists a workspace once set; those restrict nothing (ADR 2026-11-27-1615). */
 export function intersectRunPolicy(current: RunPolicy, frozen: unknown): RunPolicy {
   if (frozen === undefined) return current
   const ceiling = runPolicySchema.parse(frozen)
   const permissions = { ...current.permissions }
-  for (const action of CONFIGURABLE_ACTIONS) {
-    // The parsed push policy has only allow/deny; preserve that narrower type.
-    if (action === 'git_push') {
-      if (ceiling.permissions.git_push === 'deny') permissions.git_push = 'deny'
-      continue
-    }
-    const limit = ceiling.permissions[action]
-    // Computer authority is separately granted by the broker. A CLI-only
-    // ceiling omits it; a read-only or independent-check ceiling can deny it.
-    if (limit && rank[limit] < rank[permissions[action] ?? 'allow']) permissions[action] = limit
-  }
-  const networkCeiling = current.networkCeiling === undefined ? ceiling.networkCeiling
-    : ceiling.networkCeiling === undefined ? current.networkCeiling : intersectNetworkDomains(current.networkCeiling, ceiling.networkCeiling)
-  let networkAllow = current.permissions.network === 'allow' ? [...ceiling.networkAllow]
-    : ceiling.permissions.network === 'allow' ? [...current.networkAllow] : intersectNetworkDomains(current.networkAllow, ceiling.networkAllow)
-  if (current.permissions.network === 'allow' && ceiling.permissions.network === 'allow') networkAllow = [...current.networkAllow]
-  if (networkCeiling !== undefined) networkAllow = intersectNetworkDomains(networkAllow, networkCeiling)
-  const policy: RunPolicy = { ...current, permissions, networkAllow,
-    ...(networkCeiling !== undefined ? { networkCeiling: [...networkCeiling] } : {}),
-    ...(current.readOnly || ceiling.readOnly ? { readOnly: true } : {}) }
-  return policy.readOnly ? readOnlyRunPolicy(policy) : policy
+  if (ceiling.permissions.git_push === 'deny') permissions.git_push = 'deny'
+  // Computer authority is separately granted by the broker. A CLI-only
+  // ceiling omits it; a read-only or independent-check ceiling can deny it.
+  if (ceiling.permissions.computer_use === 'deny') permissions.computer_use = 'deny'
+  const policy: RunPolicy = { ...current, permissions }
+  return current.readOnly || ceiling.readOnly ? readOnlyRunPolicy(policy) : policy
 }
 
 /** A frozen check/benchmark may narrow the live policy, never replace a denial.
@@ -38,7 +22,6 @@ export function intersectRunPolicy(current: RunPolicy, frozen: unknown): RunPoli
 export function constrainedAssignmentPolicy(current: RunPolicy, frozen: unknown): RunPolicy {
   if (frozen === undefined) return current
   const next = runPolicySchema.parse(frozen)
-  if (!isNoLooserThan(current, next) || next.networkAllow.some(domain => !current.networkAllow.includes(domain)))
-    throw new Error('Frozen assignment policy exceeds the current policy')
+  if (!isNoLooserThan(current, next)) throw new Error('Frozen assignment policy exceeds the current policy')
   return next
 }
