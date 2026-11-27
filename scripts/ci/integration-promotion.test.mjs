@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -23,50 +23,17 @@ const promotionWorkflow = readFileSync(
   new URL('../../.github/workflows/integration-to-main-promotion.yml', import.meta.url),
   'utf8',
 )
-const autopilotWorkflow = readFileSync(
-  new URL('../../.github/workflows/merge-queue-autopilot.yml', import.meta.url),
-  'utf8',
-)
 
 const SHA = '1111111111111111111111111111111111111111'
 const SHA2 = '2222222222222222222222222222222222222222'
 const SHA3 = '3333333333333333333333333333333333333333'
 
-test('merge-queue-autopilot excludes integration promotion PRs while keeping normal Ready PRs', () => {
-  assert.match(autopilotWorkflow, /INTEGRATION_BRANCH:\s*\$\{\{\s*vars\.MIKKA_INTEGRATION_BRANCH\s*\}\}/)
-  assert.match(autopilotWorkflow, /select\(\$pr\.head\.ref != \$integration_branch\)/)
-  const filterMatch = autopilotWorkflow.match(/jq -c[\s\S]*?'([\s\S]*?)' <<< "\$prs"/)
-  assert.ok(filterMatch, 'autopilot jq candidate filter must exist')
-  const filter = filterMatch[1]
-  const runJq = (prs, branch, integrationBranch = 'claude/affectionate-einstein-s235cb') =>
-    execFileSync('jq', [
-      '-c',
-      '--arg', 'head', SHA,
-      '--arg', 'branch', branch,
-      '--arg', 'repo', 'aspectly-labs/Mikka',
-      '--arg', 'integration_branch', integrationBranch,
-      filter,
-    ], { input: JSON.stringify(prs), encoding: 'utf8' }).trim()
-
-  const promotionPr = [[{
-    number: 4001,
-    node_id: 'PR_promo',
-    state: 'open',
-    draft: false,
-    base: { ref: 'main' },
-    head: { sha: SHA, ref: 'claude/affectionate-einstein-s235cb', repo: { full_name: 'aspectly-labs/Mikka' } },
-  }]]
-  assert.equal(runJq(promotionPr, 'claude/affectionate-einstein-s235cb'), '', 'autopilot must never enqueue the integration promotion PR')
-
-  const normalPr = [[{
-    number: 4002,
-    node_id: 'PR_normal',
-    state: 'open',
-    draft: false,
-    base: { ref: 'main' },
-    head: { sha: SHA, ref: 'feat/regular-fix', repo: { full_name: 'aspectly-labs/Mikka' } },
-  }]]
-  assert.deepEqual(JSON.parse(runJq(normalPr, 'feat/regular-fix')), { id: 'PR_normal', number: 4002 })
+test('no workflow besides the integration promotion enqueues PRs on its own', () => {
+  const dir = new URL('../../.github/workflows/', import.meta.url)
+  for (const name of readdirSync(dir).filter(file => /\.ya?ml$/.test(file))) {
+    if (name === 'integration-to-main-promotion.yml') continue
+    assert.doesNotMatch(readFileSync(new URL(name, dir), 'utf8'), /enqueuePullRequest/, `${name} must not enqueue PRs`)
+  }
 })
 
 test('promotion workflow parses cleanly as YAML with four isolated jobs and strict security boundaries', () => {
