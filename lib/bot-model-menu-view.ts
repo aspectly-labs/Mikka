@@ -58,7 +58,7 @@ export interface BotModelMenuOption {
 
 /**
  * The connection a menu option runs through. `credits` is Mikka 额度 (no connection); `subscription` is a
- * byos_connections id; `byok` is a model_api_keys id, the person's own or a teammate's shared key.
+ * byos_connections id; `byok` is a model_api_keys id, the person's own or the workspace's key.
  * `label` names the connection as the person knows it (account label, key name and masked suffix); empty for credits.
  */
 export interface BotModelRoute {
@@ -79,7 +79,7 @@ export interface BotModelMenuGroup {
   provider?: string
   /** The subscription's plan, e.g. `Max`, when the provider reports one. */
   plan?: string | null
-  /** For a shared credential: the name of the member it belongs to. */
+  /** For a `shared` group (a workspace's own key, decision 2026-11-27-1740): the workspace's name. */
   owner?: string
   /** Account label or key name and masked suffix; never a credential value. */
   credentialLabel?: string

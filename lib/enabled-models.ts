@@ -6,7 +6,8 @@ import { reconcileSubscriptionModels, type ModelSettings } from './enabled-model
 import { modelDisplayName } from './model-display-name'
 import { jsonbFlagIsNotFalseSql } from './primitives/jsonb-predicates'
 
-type Scope = { ownerId: string; workspaceId: string }
+/** `manageWorkspaceKeys`: an admin of a team workspace, who also lists and changes the workspace's own keys (decision 2026-11-27-1740). */
+type Scope = { ownerId: string; workspaceId: string; manageWorkspaceKeys?: boolean }
 export type ModelSourceKind = 'subscription' | 'api_key' | 'hosted'
 export interface EnabledModelsSource {
   id: string; kind: ModelSourceKind
@@ -30,7 +31,9 @@ async function sources(query: Pick<Pool | PoolClient, 'query'>, scope: Scope): P
     "modelSettings"->>'refreshedAt' AS "refreshedAt",NULL AS "refreshError" FROM byos_connections
     WHERE "ownerId"=$1 AND "removedAt" IS NULL ORDER BY "createdAt",id`, [scope.ownerId])
   const keys = await query.query<SourceRow>(`SELECT id::text,'api_key' AS kind,models AS ids,"modelSettings" AS settings,
-    "modelSettings"->>'refreshedAt' AS "refreshedAt","modelsError" AS "refreshError" FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`, [scope.ownerId])
+    "modelSettings"->>'refreshedAt' AS "refreshedAt","modelsError" AS "refreshError" FROM model_api_keys
+    WHERE "ownerId"=$1 OR ($3::boolean AND "workspaceId"=$2::uuid) ORDER BY ("ownerId" IS NULL),"createdAt",id`,
+  [scope.ownerId, z.uuid().safeParse(scope.workspaceId).success ? scope.workspaceId : null, scope.manageWorkspaceKeys === true])
   const hosted = await query.query<{ enabled: boolean }>('SELECT "hostedModelEnabled" AS enabled FROM "user" WHERE id=$1', [scope.ownerId])
   const { creditsModels } = await import('./credits-models')
   const hostedIds = (await creditsModels(scope.ownerId)).map(model => model.id)
@@ -56,7 +59,7 @@ const changeInput = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('all'), enabled: z.boolean() }), z.strictObject({ kind: z.literal('auto'), enabled: z.boolean() }),
   z.strictObject({ kind: z.literal('seen') }),
 ])
-/** Only the credential owner can change its catalogue, including when shared.
+/** Only the credential owner can change its catalogue: a person's own, or a workspace key through the workspace's admin.
  * Every mutation/refresh serializes on the same credential row. Runs already
  * frozen on a credential are neither stopped nor rewritten. */
 export async function changeEnabledModels(pool: Pool, scope: Scope, sourceId: string, input: ModelSettingsChange) {
@@ -71,7 +74,8 @@ export async function changeEnabledModels(pool: Pool, scope: Scope, sourceId: st
       const subscription = await client.query('SELECT id FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND "removedAt" IS NULL FOR UPDATE', [sourceId, scope.ownerId])
       kind = subscription.rowCount ? 'subscription' : 'api_key'
       if (!subscription.rowCount) {
-        const key = await client.query('SELECT id FROM model_api_keys WHERE id=$1 AND "ownerId"=$2 FOR UPDATE', [sourceId, scope.ownerId])
+        const key = await client.query(`SELECT id FROM model_api_keys WHERE id=$1 AND ("ownerId"=$2 OR ($4::boolean AND "workspaceId"=$3::uuid)) FOR UPDATE`,
+          [sourceId, scope.ownerId, z.uuid().safeParse(scope.workspaceId).success ? scope.workspaceId : null, scope.manageWorkspaceKeys === true])
         if (!key.rowCount) throw new WorkspaceError('executionModelUnknown')
       }
     }
@@ -92,7 +96,8 @@ export async function changeEnabledModels(pool: Pool, scope: Scope, sourceId: st
     } else {
       // The table name is selected solely from this closed, server-derived set.
       const table = kind === 'subscription' ? 'byos_connections' : 'model_api_keys'
-      await client.query(`UPDATE ${table} SET "modelSettings"=$3::jsonb WHERE id=$1 AND "ownerId"=$2`, [sourceId, scope.ownerId, JSON.stringify(settings)])
+      // The row was locked above under the same owner rule; the id alone names it.
+      await client.query(`UPDATE ${table} SET "modelSettings"=$2::jsonb WHERE id=$1`, [sourceId, JSON.stringify(settings)])
       const disabled = Object.entries(settings.models).filter(([, item]) => !item.enabled).map(([id]) => id)
       await client.query('DELETE FROM model_order_entries WHERE "sourceKind"=$1 AND "sourceId"=$2::uuid AND model=ANY($3::text[])', [kind, sourceId, disabled])
     }
