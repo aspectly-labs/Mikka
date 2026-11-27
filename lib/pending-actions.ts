@@ -51,13 +51,6 @@ export async function decidePendingAction(userId: string, id: string, approve: b
     await (await import('@/lib/cloud-computer/action-reviews')).scrubBrowserMutation(pool, row.id)
     return { status: 'declined' as const, error: null, remembered }
   }
-  // Remembered once the person's approval is claimed, whatever this run's outcome:
-  // the rule is their answer to the card, as Codex amends its policy on approval.
-  if (approve && options.remember) {
-    const match = pendingActionRuleMatch(row)
-    if (match) remembered = await rememberApproval(pool, { ownerId: userId, botId: row.botId, match, sourceActionId: row.id })
-  }
-
   if (row.action === 'browser_operation' && Date.now() - row.createdAt.getTime() > 5 * 60_000) {
     await db.update(pendingActions).set({ status: 'failed', error: 'browserActionExpired' }).where(eq(pendingActions.id, row.id))
     await (await import('@/lib/cloud-computer/action-reviews')).scrubBrowserMutation(pool, row.id)
@@ -90,7 +83,21 @@ export async function decidePendingAction(userId: string, id: string, approve: b
   await db.update(pendingActions).set({ status, error, result: outcome }).where(eq(pendingActions.id, row.id))
   if (row.action === 'browser_operation') await (await import('@/lib/cloud-computer/action-reviews')).scrubBrowserMutation(pool, row.id)
   await recordCoordinatorEvent(db, actionDecidedEvent({ id: row.id, userId, action: row.action, input: row.action === 'browser_operation' ? { summary: (row.input as Record<string, unknown>).summary } : row.input }, { status, error, outcome, note }, { botId: row.botId }))
+  // Only after the card's outcome is recorded, so a failed save never strands
+  // it in `running`. A blocked or failed call is not remembered.
+  if (approve && options.remember && status !== 'failed') remembered = await rememberCard(userId, row)
   return { status, error, remembered }
+}
+
+/** 「始终同意」 for this card's Bot, action and target. A failed save leaves the decision as it is and reports nothing remembered. */
+async function rememberCard(userId: string, row: { id: string; action: string; input: unknown; connectedAccountId: string | null; botId: string | null }): Promise<boolean> {
+  const match = pendingActionRuleMatch(row)
+  if (!match) return false
+  try { return await rememberApproval(pool, { ownerId: userId, botId: row.botId, match, sourceActionId: row.id }) }
+  catch (failure) {
+    console.error('Approval rule not saved: the decision stands', { action: row.action, cause: failure instanceof Error ? failure.name : 'unknown' })
+    return false
+  }
 }
 
 /**

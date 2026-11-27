@@ -1409,9 +1409,13 @@ export const approvalRules = pgTable('approval_rules', {
   match: jsonb('match').$type<Record<string, unknown>>().notNull(),
   matchKey: text('matchKey').notNull(),
   sourceActionId: uuid('sourceActionId'),
+  /** The Bot as it was when the person answered: a check matches only while these are unchanged. */
+  workspaceId: uuid('workspaceId').notNull(),
+  botOwnerId: text('botOwnerId'),
+  botFingerprint: text('botFingerprint').notNull(),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   lastUsedAt: timestamp('lastUsedAt', { withTimezone: true }),
-}, table => [uniqueIndex('approval_rules_owner_bot_match_key').on(table.ownerId, table.botId, table.matchKey), index('approval_rules_bot_idx').on(table.botId)])
+}, table => [uniqueIndex('approval_rules_owner_bot_match_key').on(table.ownerId, table.botId, table.matchKey), index('approval_rules_bot_idx').on(table.botId), index('approval_rules_owner_workspace_idx').on(table.ownerId, table.workspaceId)])
 
 /** The right column's per-thread layout, kept per viewer (#2935). */
 export const threadPanelStates = pgTable('thread_panel_states', {

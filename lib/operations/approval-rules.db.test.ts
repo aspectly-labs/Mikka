@@ -51,9 +51,9 @@ test('remembered approvals: owner and Bot isolation, exact match, revoke, and th
     const { decidePendingAction } = await import('../pending-actions')
 
     const alice = `alice-${randomUUID()}`, bob = `bob-${randomUUID()}`
-    const bots: Record<string, string> = {}
+    const bots: Record<string, string> = {}, homes: Record<string, string> = {}
     for (const userId of [alice, bob]) {
-      const workspaceId = randomUUID()
+      const workspaceId = randomUUID(); homes[userId] = workspaceId
       await db.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,\'Rule fixture\',$2,true,now(),now())', [userId, `${userId}@example.invalid`])
       await db.query('INSERT INTO mikka_workspaces(id,"userId",name,kind) VALUES($1,$2,\'Rule fixture\',\'personal\')', [workspaceId, userId])
       await db.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,\'Rule fixture\',$3,\'admin\',\'active\')', [workspaceId, userId, `${userId}@example.invalid`])
@@ -79,7 +79,7 @@ test('remembered approvals: owner and Bot isolation, exact match, revoke, and th
       assert.equal(await hasRememberedApproval(db, { ownerId: alice, botId: null, match }), false, 'no Bot, no rule')
       assert.equal(await rememberApproval(db, { ownerId: alice, botId: null, match }), false)
       const [rule] = await listApprovalRules(db, alice)
-      assert.deepEqual({ ...rule, createdAt: undefined, lastUsedAt: undefined, id: undefined }, { id: undefined, botId: aliceBot, action: 'send_email', match, createdAt: undefined, lastUsedAt: undefined })
+      assert.deepEqual({ ...rule, createdAt: undefined, lastUsedAt: undefined, id: undefined }, { id: undefined, botId: aliceBot, action: 'send_email', match, createdAt: undefined, lastUsedAt: undefined, active: true })
       assert.ok(rule.lastUsedAt, 'a use is recorded')
       assert.deepEqual(await listApprovalRules(db, bob), [])
       assert.equal(await revokeApprovalRule(db, bob, rule.id), false, 'another person cannot revoke it')
@@ -127,11 +127,13 @@ test('remembered approvals: owner and Bot isolation, exact match, revoke, and th
     await t.test('a decline carries the person\'s words to the Agent and remembers nothing', async () => {
       const card = await writeAccountAction(alice, 'send_email', email(['dana@acme.dev']), undefined, aliceBot, ask)
       const id = (card as { actionId: string }).actionId
-      const result = await decidePendingAction(alice, id, false, { remember: true, note: '  Send it to the team list instead.  ' })
+      const token = 'ghp_' + 'b'.repeat(36)
+      const result = await decidePendingAction(alice, id, false, { remember: true, note: `  Send it to the team list instead. Use ${token}  ` })
       assert.deepEqual(result, { status: 'declined', error: null, remembered: false })
       const event = await db.query('SELECT payload,"botId" FROM coordinator_events WHERE "dedupeKey"=$1', [`action_decided:${id}`])
       assert.equal(event.rows[0].payload.status, 'declined')
-      assert.equal(event.rows[0].payload.note, 'Send it to the team list instead.')
+      assert.match(event.rows[0].payload.note, /^Send it to the team list instead\. Use /)
+      assert.ok(!JSON.stringify(event.rows[0].payload).includes(token), 'a pasted credential is masked before it is stored')
       assert.equal(event.rows[0].botId, aliceBot)
       assert.equal(await hasRememberedApproval(db, { ownerId: alice, botId: aliceBot, match: { action: 'send_email', account: 'ca_mail', recipients: ['dana@acme.dev'] } }), false)
       // An older caller (no options) still works and sends no note.
@@ -146,6 +148,85 @@ test('remembered approvals: owner and Bot isolation, exact match, revoke, and th
       const id = (card as { actionId: string }).actionId
       assert.equal((await listPendingActions(alice)).find(item => item.id === id)?.rememberable, undefined)
       assert.deepEqual(await decidePendingAction(alice, id, true, { remember: true }), { status: 'done', error: null, remembered: false })
+    })
+
+    await t.test('the Coordinator\'s own path (no review) sends at once: there is no ask for a rule to answer', async () => {
+      // workflows/coordinator/steps.ts accountWrite calls writeAccountAction with no review.
+      const before = sent.length, cards = await pending(alice)
+      const direct = await writeAccountAction(alice, 'send_email', email(['hal@acme.dev']), undefined, aliceBot)
+      assert.equal((direct as { status: string }).status, 'done')
+      assert.equal(sent.length, before + 1); assert.equal(await pending(alice), cards)
+    })
+
+    await t.test('remembering a card that is no longer waiting is refused', async () => {
+      const card = await writeAccountAction(alice, 'send_email', email(['ivy@acme.dev']), undefined, aliceBot, ask)
+      const id = (card as { actionId: string }).actionId
+      assert.equal((await decidePendingAction(alice, id, true)).status, 'done')
+      await assert.rejects(decidePendingAction(alice, id, true, { remember: true }), /pendingActionUnavailable/)
+      assert.equal(await hasRememberedApproval(db, { ownerId: alice, botId: aliceBot, match: { action: 'send_email', account: 'ca_mail', recipients: ['ivy@acme.dev'] } }), false)
+    })
+
+    await t.test('a failed rule save never strands the card: the outcome is recorded first', async () => {
+      const card = await writeAccountAction(alice, 'send_email', email(['jo@acme.dev']), undefined, aliceBot, ask)
+      const id = (card as { actionId: string }).actionId
+      await db.query(`CREATE FUNCTION reject_approval_rule() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN IF NEW."sourceActionId"='${id}' THEN RAISE EXCEPTION 'fixture rule store down'; END IF; RETURN NEW; END $$`)
+      await db.query('CREATE TRIGGER reject_approval_rule BEFORE INSERT ON approval_rules FOR EACH ROW EXECUTE FUNCTION reject_approval_rule()')
+      try {
+        assert.deepEqual(await decidePendingAction(alice, id, true, { remember: true }), { status: 'done', error: null, remembered: false })
+        assert.equal((await db.query('SELECT status FROM pending_actions WHERE id=$1', [id])).rows[0].status, 'done')
+        assert.equal((await db.query('SELECT payload FROM coordinator_events WHERE "dedupeKey"=$1', [`action_decided:${id}`])).rows[0].payload.status, 'done')
+      } finally {
+        await db.query('DROP TRIGGER IF EXISTS reject_approval_rule ON approval_rules')
+        await db.query('DROP FUNCTION IF EXISTS reject_approval_rule()')
+      }
+    })
+
+    await t.test('a rule stops answering once its Bot is re-instructed, redefined or paused', async () => {
+      const match = { action: 'send_email' as const, account: 'ca_bind', recipients: ['kai@acme.dev'] }
+      const answers = () => hasRememberedApproval(db, { ownerId: alice, botId: aliceBot, match })
+      const active = async () => (await listApprovalRules(db, alice)).find(rule => rule.match.action === 'send_email' && (rule.match as { account: string }).account === 'ca_bind')?.active
+      assert.equal(await rememberApproval(db, { ownerId: alice, botId: aliceBot, match }), true)
+      assert.equal(await answers(), true)
+      await db.query('UPDATE bots SET instructions=$2 WHERE id=$1', [aliceBot, 'Always cc the team.'])
+      assert.equal(await answers(), false, 'new instructions'); assert.equal(await active(), false)
+      await db.query('UPDATE bots SET instructions=\'\' WHERE id=$1', [aliceBot])
+      assert.equal(await answers(), true, 'the same Bot again')
+      // A new Agent definition version for this person and Bot.
+      await db.query('INSERT INTO agent_kit_heads(owner_id,bot_key,bot_id,workspace_id) VALUES($1,$2,$3,$4)', [alice, aliceBot, aliceBot, homes[alice]])
+      const version = randomUUID()
+      await db.query('INSERT INTO agent_kit_versions(id,owner_id,bot_key,version,definition,digest,source,request_key) VALUES($1,$2,$3,1,\'{}\'::jsonb,$4,\'user\',$5)', [version, alice, aliceBot, 'a'.repeat(64), randomUUID()])
+      await db.query('UPDATE agent_kit_heads SET active_version=$1 WHERE owner_id=$2 AND bot_key=$3', [version, alice, aliceBot])
+      assert.equal(await answers(), false, 'a new definition')
+      assert.equal(await rememberApproval(db, { ownerId: alice, botId: aliceBot, match }), true, 'answering again binds the new definition')
+      assert.equal(await answers(), true)
+      await db.query('UPDATE bots SET "archivedAt"=now() WHERE id=$1', [aliceBot])
+      assert.equal(await answers(), false, 'a paused Bot')
+      assert.equal(await rememberApproval(db, { ownerId: alice, botId: aliceBot, match }), false, 'no rule for a paused Bot')
+      await db.query('UPDATE bots SET "archivedAt"=NULL WHERE id=$1', [aliceBot])
+      assert.equal(await answers(), true)
+    })
+
+    await t.test('handing a Bot over or leaving the workspace deletes the rules', async () => {
+      const { transferBots, releaseDepartingMember } = await import('../workspace-admin/members')
+      const { db: drizzle } = await import('../db')
+      const mail = (to: string) => ({ action: 'send_email' as const, account: 'ca_move', recipients: [to] })
+      assert.equal(await rememberApproval(db, { ownerId: alice, botId: aliceBot, match: mail('lu@acme.dev') }), true)
+      assert.equal(await rememberApproval(db, { ownerId: bob, botId: aliceBot, match: mail('lu@acme.dev') }), true, 'a member using the Bot')
+      const kept = randomUUID()
+      await db.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,\'Rule fixture kept\')', [kept, alice, homes[alice]])
+      assert.equal(await rememberApproval(db, { ownerId: alice, botId: kept, match: mail('mo@acme.dev') }), true)
+      await drizzle.transaction(tx => transferBots(tx, homes[alice], alice, bob, [aliceBot]))
+      assert.equal(Number((await db.query('SELECT count(*) FROM approval_rules WHERE "botId"=$1', [aliceBot])).rows[0].count), 0, 'every rule on the handed-over Bot')
+      assert.equal(await hasRememberedApproval(db, { ownerId: alice, botId: kept, match: mail('mo@acme.dev') }), true, 'other Bots keep theirs')
+      // Bob, a member of Alice's workspace, leaves it: his rules there go; his rules elsewhere stay.
+      assert.equal(await rememberApproval(db, { ownerId: bob, botId: kept, match: mail('ned@acme.dev') }), true)
+      assert.equal(await rememberApproval(db, { ownerId: bob, botId: bobBot, match: mail('ned@acme.dev') }), true)
+      await releaseDepartingMember(homes[alice], bob)
+      assert.equal(await hasRememberedApproval(db, { ownerId: bob, botId: kept, match: mail('ned@acme.dev') }), false)
+      assert.equal(Number((await db.query('SELECT count(*) FROM approval_rules WHERE "ownerId"=$1 AND "workspaceId"=$2', [bob, homes[alice]])).rows[0].count), 0)
+      assert.equal(await hasRememberedApproval(db, { ownerId: bob, botId: bobBot, match: mail('ned@acme.dev') }), true)
+      assert.equal(await hasRememberedApproval(db, { ownerId: alice, botId: kept, match: mail('mo@acme.dev') }), true)
     })
 
     await t.test('deleting the Bot removes its rules', async () => {
@@ -175,11 +256,12 @@ test('remembered approved writes: one Bot, one page; another page or Bot still a
     const db = pool
     // The tables the write path reads, as write-policy-chain.db.test.ts builds them, plus the two the rule table references.
     await db.query(`create table "session" (id text primary key, "userId" text not null, "expiresAt" timestamptz not null);
-      create table agent_kit_heads (owner_id text, bot_key text, workspace_id uuid, active_version uuid, primary key (owner_id,bot_key));
+      create table agent_kit_heads (owner_id text, bot_key text, bot_id uuid, workspace_id uuid, active_version uuid, primary key (owner_id,bot_key));
       create table agent_kit_versions (owner_id text, bot_key text, id uuid, definition jsonb, digest text);
       create table agent_kit_executions (owner_id text, bot_key text, id uuid, status text, snapshot jsonb, version_id uuid);
       create table "user" (id text primary key);
-      create table bots (id uuid primary key);
+      create table bots (id uuid primary key, "ownerId" text, "workspaceId" uuid not null, instructions text not null default '', "archivedAt" timestamptz);
+      create table coordinator_bots ("botId" uuid primary key);
       create function mikka_account_guard_insert() returns trigger language plpgsql as $$ begin return new; end $$;`)
     for (const file of ['20261025043000_pending_actions.sql', '20261028143920_operation_ledger.sql', '20261028143921_approved_write_binding.sql', '20261027164515_workspace_computer_policy.sql', '20261029010447_workspace_computer_policy_allow.sql', '20261029043646_agent_external_write_policy.sql', '20261029043647_workspace_external_write_policy.sql', '20261030204751_workspace_computer_policy_default_allow.sql', '20261127145325_approval_rules.sql']) {
       await db.query(await readFile(new URL('../../drizzle/' + file, import.meta.url), 'utf8'))
@@ -192,8 +274,8 @@ test('remembered approved writes: one Bot, one page; another page or Bot still a
     const runs: Record<string, { ownerId: string; botId: string; workspaceId: string; runId: string }> = {}
     for (const key of ['one', 'two']) {
       const botId = randomUUID(), workspaceId = randomUUID(), runId = randomUUID(), revision = randomUUID()
-      await db.query('insert into bots values ($1)', [botId])
-      await db.query('insert into agent_kit_heads(owner_id,bot_key,workspace_id,active_version) values($1,$2,$3,$4)', [owner, botId, workspaceId, revision])
+      await db.query('insert into bots(id,"ownerId","workspaceId") values ($1,$2,$3)', [botId, owner, workspaceId])
+      await db.query('insert into agent_kit_heads(owner_id,bot_key,bot_id,workspace_id,active_version) values($1,$2,$3,$4,$5)', [owner, botId, botId, workspaceId, revision])
       await db.query('insert into agent_kit_versions values($1,$2,$3,$4,$5)', [owner, botId, revision, definition, digest(definition)])
       await db.query('insert into agent_kit_executions values($1,$2,$3,$4,$5,$6)', [owner, botId, runId, 'running', makeSnapshot(revision, 1, definition, 'host', { harness: 'ai_sdk', model: 'openai/gpt-6-luna' }), revision])
       runs[key] = { ownerId: owner, botId, workspaceId, runId }
@@ -231,6 +313,30 @@ test('remembered approved writes: one Bot, one page; another page or Bot still a
     assert.deepEqual(await decide(otherBot.actionId, { approve: false }), { status: 'declined', error: null, remembered: false })
     assert.deepEqual(notices.at(-1), { status: 'declined', note: null })
     assert.equal(Number((await db.query('select count(*) from approval_rules')).rows[0].count), 1)
+
+    // A decided write cannot be remembered afterwards.
+    const decidedAgain = await handler(new Request('https://fixture.invalid/api/approved-writes', { method: 'POST', headers: { origin: 'https://fixture.invalid', cookie: 'fixture=1' }, body: JSON.stringify({ op: 'decide', action, id: first.actionId, approve: true, remember: true }) }))
+    assert.equal(decidedAgain.status, 409)
+    assert.deepEqual(await decidedAgain.json(), { error: 'pendingActionUnavailable' })
+
+    // A failed rule save rolls back to its savepoint: the approval and its write stand.
+    const thirdPage = randomUUID()
+    const failing = await asking('one').proposeFromRun({ page_id: thirdPage, text: 'fifth' }, randomUUID())
+    assert.equal(failing.status, 'awaiting_approval')
+    await db.query(`create function reject_rule() returns trigger language plpgsql as $$ begin raise exception 'fixture rule store down'; end $$`)
+    await db.query('create trigger reject_rule before insert on approval_rules for each row execute function reject_rule()')
+    try {
+      const saved = await decide(failing.actionId, { approve: true, remember: true })
+      assert.equal(saved.status, 'done'); assert.equal(saved.remembered, false); assert.equal(writes, 3)
+    } finally { await db.query('drop trigger reject_rule on approval_rules'); await db.query('drop function reject_rule()') }
+
+    // A new Agent definition for the Bot: the rule no longer answers.
+    const redefined = randomUUID()
+    await db.query('update agent_kit_heads set active_version=$1 where owner_id=$2 and bot_key=$3', [redefined, owner, runs.one.botId])
+    await db.query('insert into agent_kit_versions values($1,$2,$3,$4,$5)', [owner, runs.one.botId, redefined, definition, digest(definition)])
+    const afterChange = await asking('one').proposeFromRun({ page_id: page, text: 'sixth' }, randomUUID())
+    assert.equal(afterChange.status, 'awaiting_approval', 'a redefined Bot asks again')
+    assert.equal(writes, 3)
   } finally {
     await pool?.end()
     await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`).catch(() => undefined)

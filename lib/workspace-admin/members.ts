@@ -70,6 +70,8 @@ export async function transferBots(tx: MainTransaction, workspaceId: string, fro
   if (detached.rows.length) (await import('../coding-workspace/review-sessions'))
     .reviewSessionsRevoked(notificationExecutor, { runIds: detached.rows.map(row => row.runId) }, 'run_changed')
   await tx.execute(sql`delete from agent_kit_heads where bot_id in ${ids}`)
+  // Remembered approvals were given for the Bot as its previous owner ran it (decision 2026-11-27-1500-remembered-approvals).
+  await tx.execute(sql`delete from approval_rules where "botId" in ${ids}`)
   // A bot handed over runs on its new owner's resources, never on the previous owner's credentials.
   await tx.update(bots).set({ ownerId: toUserId, archivedAt: null, updatedAt: new Date() }).where(and(inArray(bots.id, ids), eq(bots.workspaceId, workspaceId), ownedBy))
   // The Bot's access policy follows its owner, so the new owner can manage and share it and the old one no longer can.
@@ -101,6 +103,8 @@ export async function releaseDepartingMember(workspaceId: string, userId: string
     // Their credits stop paying for the team at once (lib/credit-shares.ts).
     await main.execute(sql`delete from workspace_credit_shares where "userId" = ${userId} and "workspaceId" = ${workspaceId}`)
     await main.execute(sql`delete from model_api_key_shares s using model_api_keys k where k.id = s."keyId" and k."ownerId" = ${userId} and s."workspaceId" = ${workspaceId}`)
+    // Their remembered approvals there end with their membership (decision 2026-11-27-1500-remembered-approvals).
+    await main.execute(sql`delete from approval_rules where "ownerId" = ${userId} and "workspaceId" = ${workspaceId}`)
     const archived = await main.update(bots).set({ archivedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(bots.workspaceId, workspaceId), eq(bots.ownerId, userId), isNull(bots.archivedAt))).returning({ id: bots.id })
     for (const { id } of archived) await botListChanged(main, id)

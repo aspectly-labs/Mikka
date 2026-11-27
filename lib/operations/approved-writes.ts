@@ -66,7 +66,8 @@ export function projectApprovedWriteView(p: StoredWriteProposal, execution: (Ope
     account: { provider: p.operationBinding.provider, accountId: p.operationBinding.accountId, version: p.operationBinding.version },
     createdAt: created.data.toISOString(), approvalExpiresAt: new Date(created.data.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     status, error: status === 'running' ? 'operationUncertain' : null,
-    ...(ruleBotId(p.operationBinding.run?.botId) && ruleMatch(p) ? { rememberable: true } : {}),
+    // Offered only while the card waits for the person.
+    ...(status === 'pending' && ruleBotId(p.operationBinding.run?.botId) && ruleMatch(p) ? { rememberable: true } : {}),
     ...(status === 'done' && execution?.receipt ? { outcome: writeOutcome(execution.receipt) } : {}),
   }
 }
@@ -240,7 +241,6 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
     async decide(actor: { userId: string; sessionId: string }, id: string, approve: boolean, options: ApprovedWriteDecisionOptions = {}): Promise<ApprovedWriteDecision> {
       z.uuid().parse(id)
       const note = decisionNote(options.note)
-      let remembered = false
       // All paths use ledger -> session -> proposal. Revocation waits for an
       // in-flight invoke and never reports cancellation of an already sent effect.
       const decision = await transaction(async tx => {
@@ -255,7 +255,7 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
           if (!closed.rows.length) throw new OperationError('pendingActionUnavailable')
           await approvedWriteChanged(tx, id, actor.userId)
           await requireOperationSession(tx, actor, actor.userId)
-          return { proposal: closed.rows[0], readbackOnly: false, declined: true }
+          return { proposal: closed.rows[0], readbackOnly: false, declined: true, remembered: false }
         }
         const row = await owned(tx, actor.userId, id)
         // An effect that was already sent may be read back after its worker
@@ -271,18 +271,31 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
         const valid = await tx.query(`SELECT id FROM pending_actions WHERE id=$1 AND (status IN ('running','done') OR "createdAt">clock_timestamp()-interval '7 days')`, [id])
         if (!valid.rows.length) throw new OperationError('pendingActionUnavailable')
         if (!['pending', 'running', 'done'].includes(row.status)) throw new OperationError('pendingActionUnavailable')
+        // 「始终同意」 answers a card that is still waiting; a decided one is only read back.
+        if (options.remember && row.status !== 'pending') throw new OperationError('pendingActionUnavailable')
         if (row.status === 'pending') {
           await tx.query("UPDATE pending_actions SET status='running',\"decidedAt\"=clock_timestamp() WHERE id=$1", [id])
           await approvedWriteChanged(tx, id, actor.userId)
         }
-        // Kept in the same transaction as the person's approval of their own card.
+        // In the approval's transaction, behind a savepoint: a failed save
+        // leaves the approval standing and reports nothing remembered.
         const match = options.remember ? ruleMatch(row) : null
-        if (match) remembered = await rememberApproval(tx, { ownerId: actor.userId, botId: row.operationBinding.run?.botId ?? null, match, sourceActionId: row.id })
-        return { proposal: row, readbackOnly, declined: false }
+        let remembered = false
+        if (match) {
+          await tx.query('SAVEPOINT approval_rule')
+          try {
+            remembered = await rememberApproval(tx, { ownerId: actor.userId, botId: row.operationBinding.run?.botId ?? null, match, sourceActionId: row.id })
+            await tx.query('RELEASE SAVEPOINT approval_rule')
+          } catch (failure) {
+            await tx.query('ROLLBACK TO SAVEPOINT approval_rule')
+            console.error('Approval rule not saved: the approval stands', { action, cause: failure instanceof Error ? failure.name : 'unknown' })
+          }
+        }
+        return { proposal: row, readbackOnly, declined: false, remembered }
       }, actor)
       const result = decision.declined ? { status: 'declined' as const, error: null } : await execute(decision.proposal, actor, decision.readbackOnly)
       await notifyDecision?.(decision.proposal, result, note)
-      return { ...result, remembered }
+      return { ...result, remembered: decision.declined ? false : decision.remembered }
     },
   }
 }

@@ -29,17 +29,31 @@ test('calendar rules bind the account, the attendees and, for a change, the even
   assert.notEqual(approvalRuleKey(pendingActionRuleMatch({ action: 'update_calendar_event', input: { event_id: 'e1', attendees: ['y@acme.dev'] }, connectedAccountId: 'ca_cal' })!), approvalRuleKey(update!))
 })
 
-test('an app tool rule is one tool in one app on one account; destructive tools are never remembered', () => {
-  const call = (tool: string, toolkit = 'hubspot') => ({ action: 'app_tool_call', input: { toolkit, tool, name: tool, version: 'v1', arguments: { a: 1 } }, connectedAccountId: 'ca_h' })
-  const rule = pendingActionRuleMatch(call('HUBSPOT_CREATE_CONTACT'))
-  assert.deepEqual(rule, { action: 'app_tool_call', toolkit: 'hubspot', tool: 'HUBSPOT_CREATE_CONTACT', account: 'ca_h' })
-  assert.notEqual(approvalRuleKey(pendingActionRuleMatch(call('HUBSPOT_UPDATE_CONTACT'))!), approvalRuleKey(rule!))
-  for (const slug of ['HUBSPOT_DELETE_CONTACT', 'GITHUB_MERGE_A_PULL_REQUEST', 'STRIPE_CREATE_REFUND', 'GOOGLEDRIVE_SHARE_FILE', 'HUBSPOT_BATCH_ARCHIVE']) {
-    const toolkit = slug.split('_')[0].toLowerCase()
-    assert.equal(pendingActionRuleMatch(call(slug, toolkit)), null, slug)
+test('an app tool is rememberable only on the allow-list, with its exact target in the rule', () => {
+  const call = (tool: string, args: Record<string, unknown>, toolkit = tool.split('_')[0].toLowerCase()) => ({ action: 'app_tool_call', input: { toolkit, tool, name: tool, version: 'v1', arguments: args }, connectedAccountId: 'ca_x' })
+  const mail = (args: Record<string, unknown>) => call('GMAIL_SEND_EMAIL', { recipient_email: 'Kim@acme.dev', subject: 'Hi', body: 'One', ...args })
+  const rule = pendingActionRuleMatch(mail({}))
+  assert.deepEqual(rule, { action: 'app_tool_call', toolkit: 'gmail', tool: 'GMAIL_SEND_EMAIL', account: 'ca_x', target: { recipient_email: 'kim@acme.dev', extra_recipients: null, cc: null, bcc: null, user_id: null } })
+  // Text may differ; the recipients may not.
+  assert.equal(approvalRuleKey(pendingActionRuleMatch(mail({ subject: 'Other', body: 'Two' }))!), approvalRuleKey(rule!))
+  for (const other of [mail({ recipient_email: 'lee@acme.dev' }), mail({ cc: ['boss@acme.dev'] }), mail({ extra_recipients: ['x@acme.dev'] }), { ...mail({}), connectedAccountId: 'ca_other' }]) {
+    assert.notEqual(approvalRuleKey(pendingActionRuleMatch(other)!), approvalRuleKey(rule!))
   }
-  assert.equal(pendingActionRuleMatch(call('SLACK_SEND_MESSAGE', 'hubspot')), null, 'a tool outside its app is never remembered')
-  assert.equal(destructiveAppTool('HUBSPOT_CREATE_CONTACT', ['destructiveHint']), true)
+  assert.equal(pendingActionRuleMatch(mail({ attachment: { name: 'x' } })), null, 'an argument the rule does not name')
+  assert.equal(pendingActionRuleMatch(mail({ body: { html: 'x' } })), null)
+  const slack = pendingActionRuleMatch(call('SLACK_SEND_MESSAGE', { channel: 'C1', text: 'x' }))
+  assert.notEqual(approvalRuleKey(pendingActionRuleMatch(call('SLACK_SEND_MESSAGE', { channel: 'C2', text: 'x' }))!), approvalRuleKey(slack!))
+  assert.equal(pendingActionRuleMatch(call('SLACK_SEND_MESSAGE', { text: 'x' })), null, 'no target, nothing to bind')
+  assert.equal(pendingActionRuleMatch(call('GMAIL_SEND_EMAIL', { recipient_email: 'a@acme.dev' }, 'hubspot')), null, 'a tool outside its app')
+  // Off the allow-list: never, whatever the name sounds like.
+  for (const slug of ['HUBSPOT_CREATE_CONTACT', 'HUBSPOT_DELETE_CONTACT', 'GITHUB_MERGE_A_PULL_REQUEST', 'STRIPE_CREATE_REFUND', 'GITHUB_ADD_A_REPOSITORY_COLLABORATOR', 'GITHUB_SET_REPOSITORY_VISIBILITY', 'GITHUB_CREATE_OR_UPDATE_A_REPOSITORY_SECRET', 'GITHUB_UPDATE_A_REFERENCE', 'GMAIL_CREATE_FILTER', 'GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE', 'VERCEL_CREATE_DEPLOYMENT', 'GITHUB_CREATE_A_WORKFLOW_DISPATCH_EVENT', 'GOOGLESHEETS_CLEAR_VALUES']) {
+    assert.equal(pendingActionRuleMatch(call(slug, { channel: 'C1', recipient_email: 'a@acme.dev' })), null, slug)
+  }
+  // The banned names stay an extra layer under the allow-list.
+  for (const slug of ['GITHUB_ADD_A_REPOSITORY_COLLABORATOR', 'GITHUB_SET_REPOSITORY_VISIBILITY', 'GITHUB_CREATE_OR_UPDATE_A_REPOSITORY_SECRET', 'GITHUB_UPDATE_A_REFERENCE', 'GMAIL_CREATE_FILTER', 'GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE', 'VERCEL_CREATE_DEPLOYMENT', 'GITHUB_CREATE_A_WORKFLOW_DISPATCH_EVENT', 'GOOGLESHEETS_CLEAR_VALUES']) {
+    assert.equal(destructiveAppTool(slug), true, slug)
+  }
+  assert.equal(destructiveAppTool('GMAIL_SEND_EMAIL', ['destructiveHint']), true)
   assert.equal(destructiveAppTool('SLACK_SEND_MESSAGE'), false)
 })
 
@@ -66,4 +80,6 @@ test('rules are scoped to a Bot and notes are trimmed and bounded', () => {
   assert.equal(decisionNote(' use the team page '), 'use the team page')
   assert.equal(decisionNote('x'.repeat(5000))!.length, 2000)
   assert.equal(decisionNote(42), null)
+  const masked = decisionNote('use this token instead ghp_' + 'a'.repeat(36))!
+  assert.doesNotMatch(masked, /ghp_a{36}/, 'a pasted credential never reaches the event or the prompt')
 })
