@@ -253,8 +253,8 @@ and promotion remain with #2897/#1954.
 
 ## Production promotion switch
 
-**Paused: production promotion and Desktop publication need a human
-(Alex, 2026-11-27).** Staging still deploys every merge to `main`.
+**Paused: production promotion, Desktop publication and production mobile OTA
+need a human (Alex, 2026-11-27).** Staging still deploys every merge to `main`.
 
 Why: from about 18:00 UTC on 2026-11-26, every merge to `main` staged, then
 promoted production (`pipeline-production`), and that promotion started a
@@ -264,9 +264,10 @@ CI became browser-free (hosted #385) and the Desktop route-allowlist guard skips
 when it has no hosted checkout. Desktop `2026.10000.1939` shipped broken to every
 user. Continuous deployment comes back once the gates listed below exist.
 
-**The switch** is `autoProduction` in private `mikka-cloud`
-`docs/operations/releases/deploy-pipeline.json` on `main`. There is no second,
-public switch.
+**The switches** are two fields of one reviewed file, private `mikka-cloud`
+`docs/operations/releases/deploy-pipeline.json` on `main`: `autoProduction` for
+production and Desktop, `mobileProduction` for the mobile OTA. Both are `false`
+now. There is no public switch.
 
 | `autoProduction` | Staging | Production | Desktop |
 | --- | --- | --- | --- |
@@ -289,10 +290,11 @@ While paused, these do not move production:
   the current `overlaySource`, so after the pin moves, stage again first.
 - `integration-to-main-promotion.yml` runs only on `workflow_dispatch`
   (`dry_run` by default, #3363). Merging into `main` only stages.
-- Mobile OTA has its own flag, `mobileProduction`, which this pause does not
-  change.
-- A legacy owner dispatch of `gateway-observe` still starts a Desktop release
-  by itself; that dispatch is itself a manual production action.
+- Desktop never starts by itself from an owner deployment dispatch, including
+  the legacy `gateway-observe` and a manual `pipeline-promote`: the trigger
+  ignores them and a chained Desktop run refuses their receipts. Only an
+  automatic `pipeline-production` promotion (`autoProduction: true`) chains
+  Desktop; otherwise the owner dispatches `desktop-release.yml`.
 
 Production at the pause is deployment run 45913824441 (`main` `0e259f65f`,
 services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back.
@@ -327,6 +329,14 @@ services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back
    promotion never starts Desktop by itself, and a chained Desktop run refuses
    its receipt.
 
+The Desktop and runtime verifiers read `https://app.aspectlylabs.com/mikka/api/version`.
+It is a known flake: on 2026-11-27 it briefly answered
+`{"error":"deploymentVersionUnavailable"}` (HTTP 200) before answering build
+`01a4a7dcd076`, overlay `24d3aa2a` again. The verifier
+(`readProductionVersion` in `scripts/release/cloudflare-promoted-web.mjs`)
+retries only that unavailability or a non-200, four reads with 2, 4 and 8
+second backoff, then fails closed; an answer that names a build is final.
+
 ### Before setting `autoProduction` back to `true`
 
 Each of these must exist and pass, with its evidence linked in the
@@ -337,6 +347,39 @@ Each of these must exist and pass, with its evidence linked in the
 - browser end-to-end tests run on hosted UI pull requests;
 - a smoke test of the signed Desktop build runs before publication;
 - a Desktop beta channel with staged rollout.
+
+### Mobile OTA while paused
+
+`mobile-next-update.yml` (dispatch only) has three phases. It reads
+`mobileProduction` the same fail-closed way, with a read-only `mikka-cloud`
+contents token, right before it reads `EXPO_TOKEN`:
+
+| Phase | Who | Needs | Publishes to |
+| --- | --- | --- | --- |
+| `stage` (default) | any repository writer | nothing from the policy | EAS branch `next-staging`, which neither the `next` nor the `production` channel may serve; uploads `mobile-ota-stage-<run>-<attempt>` |
+| `publish` | any repository writer | `mobileProduction: true` | `next` users directly; refused now |
+| `promote` | the owner only | a readable policy and a successful `stage` run | republishes that run's exact update group to `next` |
+
+To ship an OTA while paused:
+
+1. Dispatch `phase: stage` with `hosted_ui_ref: <exact mikka-hosted-ui main SHA>`.
+   The run verifies the app config, typecheck and tests as before, publishes to
+   `next-staging` and records the update group in its stage receipt. Check the
+   staged update yourself.
+2. As the owner, dispatch `phase: promote`, `stage_run: <that run id>` and the
+   same `hosted_ui_ref`. The job refuses any other actor; a stage run that is
+   not a successful dispatch of this workflow on `main`; a receipt that is
+   missing, for another run, branch, platform or runtime, or for another commit;
+   and an unreadable policy. It re-verifies that app revision, then runs
+   `eas update:republish --group <staged group> --destination-branch <next branch>`.
+
+Before setting `mobileProduction` back to `true`, these must exist and pass,
+with evidence linked in the `mikka-cloud` PR that flips it:
+
+- an end-to-end mobile smoke test on the release build, run against the staged
+  update before it reaches `next`;
+- a staged OTA rollout channel (`--rollout-percentage` on the `next` channel, or
+  an equivalent staged channel) with a documented stop/rollback step.
 
 ## What current docs are authoritative?
 

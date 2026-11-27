@@ -4,14 +4,24 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
+import { createHash } from 'node:crypto'
 import {
   formatStepSummary,
   formatUpdateMessage,
+  mobilePolicyMode,
   parseEasUpdateOutput,
+  readOperationsPolicy,
+  requireOwnerPromotion,
+  requirePhaseAllowed,
+  stageReceipt,
+  STAGING_BRANCH,
   validateHostedUiRef,
+  validatePhase,
+  verifiedStage,
   verifyChannelMapping,
   verifyMobileNextConfig,
   verifyResolvedExpoConfig,
+  verifyStagingTarget,
 } from './mobile-next-update.mjs'
 
 const WORKFLOW_URL = new URL('../../.github/workflows/mobile-next-update.yml', import.meta.url)
@@ -575,4 +585,173 @@ test('mobile-next-update.yml enforces fail-closed repo/main guard, pinned action
   assert.ok(cleanup.includes("echo 'HOSTED_UI_READ_KEY='"))
   assert.ok(cleanup.includes("echo 'EXPO_TOKEN='"))
   assert.ok(cleanup.includes('expo-config.json'))
+})
+
+const channel = (name, branches) => JSON.stringify({ currentPage: { id: 'ch-' + name, name,
+  branchMapping: JSON.stringify({ version: 0, data: branches.map(branch => ({ branchId: 'b-' + branch, branchMappingLogic: 'true' })) }),
+  updateBranches: branches.map(branch => ({ id: 'b-' + branch, name: branch })) } })
+
+test('mobileProduction false pauses direct OTA publication: only staging and an owner promotion remain', () => {
+  assert.equal(mobilePolicyMode({ version: 1, autoProduction: false, mobileProduction: true }), 'automatic')
+  assert.equal(mobilePolicyMode({ version: 1, autoProduction: false, mobileProduction: false }), 'manual')
+  for (const policy of [null, {}, [], { version: 1 }, { version: 2, mobileProduction: true }, { version: 1, mobileProduction: 'true' }])
+    assert.equal(mobilePolicyMode(policy), 'unreadable', JSON.stringify(policy))
+  assert.equal(validatePhase(undefined), 'stage')
+  assert.equal(validatePhase(''), 'stage')
+  assert.throws(() => validatePhase('production'), /invalidPhase/)
+  for (const mode of ['automatic', 'manual', 'unreadable']) requirePhaseAllowed('stage', mode)
+  requirePhaseAllowed('publish', 'automatic')
+  assert.throws(() => requirePhaseAllowed('publish', 'manual'), /productionOtaPaused/)
+  assert.throws(() => requirePhaseAllowed('publish', 'unreadable'), /productionPolicyUnreadable/)
+  requirePhaseAllowed('promote', 'automatic')
+  requirePhaseAllowed('promote', 'manual')
+  assert.throws(() => requirePhaseAllowed('promote', 'unreadable'), /productionPolicyUnreadable/)
+  requireOwnerPromotion({ GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_ACTOR_ID: '183887963' })
+  for (const env of [{ GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_ACTOR_ID: '118344674' }, { GITHUB_EVENT_NAME: 'push', GITHUB_ACTOR_ID: '183887963' }, {}])
+    assert.throws(() => requireOwnerPromotion(env), /promoteNeedsOwner/)
+})
+
+test('the release policy is read from private main and every read failure counts as unreadable', async () => {
+  const record = (policy, patch = {}) => {
+    const bytes = Buffer.from(JSON.stringify(policy))
+    return { type: 'file', path: 'docs/operations/releases/deploy-pipeline.json', encoding: 'base64', size: bytes.length,
+      content: bytes.toString('base64'), sha: createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex'), ...patch }
+  }
+  const seen = []
+  const serve = (body, status = 200) => async (url, init) => {
+    seen.push([url, init.headers.authorization])
+    return Response.json(body, { status })
+  }
+  const token = 'ghs_fixture_token_value'
+  const paused = { version: 1, autoProduction: false, mobileProduction: false }
+  assert.equal((await readOperationsPolicy({ owner: 'aspectly-labs', token, fetchImpl: serve(record(paused)) })).mode, 'manual')
+  assert.deepEqual(seen[0], ['https://api.github.com/repos/aspectly-labs/mikka-cloud/contents/docs/operations/releases/deploy-pipeline.json?ref=main', 'Bearer ' + token])
+  assert.equal((await readOperationsPolicy({ owner: 'alexj11324', token, fetchImpl: serve(record({ ...paused, mobileProduction: true })) })).mode, 'automatic')
+  for (const fetchImpl of [serve(record(paused, { sha: '0'.repeat(40) })), serve(record(paused, { size: 1 })), serve(record(paused), 404),
+    serve(record(paused, { type: 'dir' })), serve({ ...record(paused), content: Buffer.from('{nope').toString('base64'), size: 5,
+      sha: createHash('sha1').update('blob 5\0').update('{nope').digest('hex') }), async () => { throw new Error('network') }])
+    assert.equal((await readOperationsPolicy({ owner: 'aspectly-labs', token, fetchImpl })).mode, 'unreadable')
+  seen.length = 0
+  for (const options of [{ owner: 'someone-else', token }, { owner: 'aspectly-labs', token: '' }, { owner: 'aspectly-labs' }])
+    assert.equal((await readOperationsPolicy({ ...options, fetchImpl: serve(record(paused)) })).mode, 'unreadable')
+  assert.equal(seen.length, 0, 'no request without an allowed owner and token')
+  // The CLI exits non-zero for publish without a readable policy, and allows a stage with none.
+  const cli = phase => execFileSync(process.execPath, [HELPER_PATH, 'policy', phase], { env: { PATH: process.env.PATH }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' })
+  assert.throws(() => cli('publish'))
+  assert.throws(() => cli('promote'))
+  assert.deepEqual(JSON.parse(cli('stage')), { phase: 'stage', mode: 'unreadable' })
+})
+
+test('a staged update lands only on a branch that no user channel serves', () => {
+  assert.deepEqual(verifyStagingTarget(channel('next', ['next']), channel('production', ['production'])), { branch: STAGING_BRANCH, nextBranch: 'next' })
+  assert.throws(() => verifyStagingTarget(channel('next', [STAGING_BRANCH]), channel('production', ['production'])), /stagingBranchServesUsers/)
+  assert.throws(() => verifyStagingTarget(channel('next', ['next']), channel('production', ['production', STAGING_BRANCH])), /stagingBranchServesUsers/)
+  assert.throws(() => verifyStagingTarget(channel('next', ['production']), channel('production', ['production'])))
+  const summary = { updateGroupId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', branch: STAGING_BRANCH, platform: 'ios', runtimeVersion: 'mikka-next-1', overlaySha: SHA }
+  assert.deepEqual(stageReceipt(summary, { runId: '77', runAttempt: '1' }), { version: 1, phase: 'stage', runId: '77', runAttempt: '1',
+    branch: STAGING_BRANCH, platform: 'ios', runtimeVersion: 'mikka-next-1', overlaySha: SHA, updateGroupId: summary.updateGroupId })
+  assert.throws(() => stageReceipt({ ...summary, branch: 'next' }, { runId: '77', runAttempt: '1' }), /stageBranchMismatch/)
+})
+
+function stageFixture(change = {}) {
+  const repository = { id: 1427517699, full_name: 'aspectly-labs/Mikka', fork: false }
+  const run = { id: 77, run_attempt: 1, path: '.github/workflows/mobile-next-update.yml', event: 'workflow_dispatch', head_branch: 'main',
+    status: 'completed', conclusion: 'success', head_sha: 'c'.repeat(40), repository, head_repository: repository, ...change.run }
+  const receipt = { version: 1, phase: 'stage', runId: '77', runAttempt: '1', branch: STAGING_BRANCH, platform: 'ios',
+    runtimeVersion: 'mikka-next-1', overlaySha: SHA, updateGroupId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', ...change.receipt }
+  const bytes = execFileSync('python3', ['-c', 'import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z: z.writestr("receipt.json",sys.argv[1])\nsys.stdout.buffer.write(b.getvalue())', JSON.stringify(receipt)])
+  const artifact = { id: 901, name: change.artifactName ?? 'mobile-ota-stage-77-1', expired: false, size_in_bytes: bytes.length,
+    digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
+    workflow_run: { id: 77, head_sha: run.head_sha, head_branch: 'main', repository_id: 1427517699, head_repository_id: 1427517699 } }
+  const read = async path => {
+    if (path === 'actions/runs/77') return run
+    if (path === 'actions/runs/77/artifacts?per_page=100') return { total_count: 1, artifacts: [artifact] }
+    if (path === 'actions/artifacts/901/zip') return bytes
+    assert.fail('unexpected read ' + path)
+  }
+  return { read, stageRun: change.stageRun ?? '77', hostedUiRef: change.hostedUiRef ?? SHA }
+}
+
+test('an owner promotion republishes only an update group a successful stage run staged from that exact commit', async () => {
+  assert.deepEqual(await verifiedStage(stageFixture()), { runId: '77', runAttempt: '1', updateGroupId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    runtimeVersion: 'mikka-next-1', overlaySha: SHA })
+  for (const [change, code] of [
+    [{ stageRun: '' }, /stageRunRequired/],
+    [{ hostedUiRef: 'main' }, /promoteNeedsExactSha/],
+    [{ hostedUiRef: 'f'.repeat(40) }, /stageOverlayMismatch/],
+    [{ run: { conclusion: 'failure' } }, /stageRunUnsuccessful/],
+    [{ run: { status: 'in_progress' } }, /stageRunUnsuccessful/],
+    [{ run: { head_branch: 'feature' } }, /stageRunUnsuccessful/],
+    [{ run: { path: '.github/workflows/mobile-next-ios.yml' } }, /stageRunUnsuccessful/],
+    [{ run: { event: 'push' } }, /stageRunUnsuccessful/],
+    [{ run: { repository: { id: 1, full_name: 'fork/Mikka', fork: true } } }, /stageRunRepository/],
+    [{ artifactName: 'mobile-ota-stage-76-1' }, /stageReceiptMissing/],
+    [{ receipt: { phase: 'publish' } }, /stageReceiptInvalid/],
+    [{ receipt: { branch: 'next' } }, /stageReceiptInvalid/],
+    [{ receipt: { runId: '76' } }, /stageReceiptInvalid/],
+    [{ receipt: { runtimeVersion: 'mikka-1' } }, /stageReceiptInvalid/],
+  ]) await assert.rejects(verifiedStage(stageFixture(change)), code, JSON.stringify(change))
+})
+
+test('workflow phases: staging never reaches users, publish needs the policy, promote is owner-only and republishes the staged group', t => {
+  const guard = /if:\s*>-\n\s+([^\n]+)\n\s+([^\n]+)/.exec(workflowText)
+  const allowed = new Function('github', 'inputs', `return ${guard[1]} ${guard[2]}`)
+  const github = { repository: 'aspectly-labs/Mikka', repository_owner_id: '359279274', repository_id: '1427517699', ref: 'refs/heads/main' }
+  assert.equal(allowed({ ...github, actor_id: '158243242' }, { phase: 'stage' }), true)
+  assert.equal(allowed({ ...github, actor_id: '158243242' }, { phase: 'publish' }), true)
+  assert.equal(allowed({ ...github, actor_id: '158243242' }, { phase: 'promote' }), false)
+  assert.equal(allowed({ ...github, actor_id: '183887963' }, { phase: 'promote' }), true)
+  assert.ok(workflowText.includes("MOBILE_OTA_PHASE: ${{ inputs.phase || 'stage' }}"), 'a dispatch without a phase only stages')
+
+  const order = name => { const index = workflowText.indexOf(`- name: ${name}`); assert.ok(index >= 0, name); return index }
+  // The staged-update check runs before any credential; the policy read precedes the Expo credential.
+  assert.ok(order('Verify the staged update before credential access') < order('Read existing HOSTED_UI_READ_KEY through OIDC'))
+  assert.ok(order('Verify mobile-next resolved config, typecheck and tests') < order('Require the reviewed mobile production policy'))
+  assert.ok(order('Require the reviewed mobile production policy') < order('Read existing EXPO_TOKEN through OIDC'))
+  assert.match(stepBlock('Verify the staged update before credential access'), /if: env\.MOBILE_OTA_PHASE == 'promote'/)
+  assert.match(stepBlock('Require the reviewed mobile production policy'), /if: env\.MOBILE_OTA_PHASE != 'stage'/)
+  assert.match(stepBlock('Mint a short-lived read-only release policy token'), /repositories: mikka-cloud\n\s+permission-contents: read/)
+  assert.match(stepBlock('Publish EAS Update to next channel'), /if: env\.MOBILE_OTA_PHASE == 'publish'/)
+  assert.match(stepBlock('Stage EAS Update on the staging branch'), /if: env\.MOBILE_OTA_PHASE == 'stage'/)
+  assert.match(stepBlock('Promote the staged update to next channel'), /if: env\.MOBILE_OTA_PHASE == 'promote'/)
+  assert.match(stepBlock('Upload the public-safe stage receipt'), /name: mobile-ota-stage-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/)
+
+  const run = (name, mode, extraEnv = {}) => {
+    const dir = mkdtempSync(join(tmpdir(), 'mobile-next-phase-'))
+    t.after(() => rmSync(dir, { recursive: true, force: true }))
+    const bin = join(dir, 'bin'), temp = join(dir, 'temp'), log = join(dir, 'npx.log')
+    execFileSync('mkdir', ['-p', bin, temp])
+    writeFileSync(join(bin, 'npx'), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${log}"
+if [[ "$*" == *"channel:view next"* ]]; then echo '${mode === 'staging-serves' ? channel('next', [STAGING_BRANCH]) : channel('next', ['next'])}'; exit 0; fi
+if [[ "$*" == *"channel:view production"* ]]; then echo '${channel('production', ['production'])}'; exit 0; fi
+if [[ "$*" == *"update:republish"* ]]; then echo '[{"id":"11111111-2222-4333-8444-555555555555","group":"ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee","runtimeVersion":"mikka-next-1","platform":"ios","branch":"next"}]'; exit 0; fi
+if [[ "$*" == *" update "* ]]; then echo '[{"id":"11111111-2222-4333-8444-555555555555","group":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","runtimeVersion":"mikka-next-1","platform":"ios","branch":"${STAGING_BRANCH}"}]'; exit 0; fi
+exit 99
+`)
+    chmodSync(join(bin, 'npx'), 0o755)
+    const exec = () => execFileSync('bash', ['--noprofile', '--norc', '-c', extractStepRun(name)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      env: { PATH: `${bin}:${dirname(process.execPath)}:/usr/bin:/bin`, RUNNER_TEMP: temp, GITHUB_WORKSPACE: new URL('../../', import.meta.url).pathname,
+        EAS_CHANNEL: 'next', EAS_CLI_VERSION: '27.2.0', MOBILE_OTA_RUNTIME_VERSION: 'mikka-next-1', OVERLAY_SHA: SHA, UPDATE_MESSAGE: '',
+        GITHUB_RUN_ID: '77', GITHUB_RUN_ATTEMPT: '1', ...extraEnv } })
+    return { exec, calls: () => readFileSync(log, 'utf8'), temp }
+  }
+  const staged = run('Stage EAS Update on the staging branch', 'ok')
+  const receipt = JSON.parse(staged.exec().trim())
+  assert.equal(receipt.branch, STAGING_BRANCH)
+  assert.ok(staged.calls().includes(`update --branch ${STAGING_BRANCH} --platform ios`))
+  assert.ok(!/update --branch next /.test(staged.calls()), 'staging never publishes to the next branch')
+  assert.deepEqual(JSON.parse(readFileSync(join(staged.temp, 'mobile-ota-stage/receipt.json'), 'utf8')), receipt)
+  const serving = run('Stage EAS Update on the staging branch', 'staging-serves')
+  assert.throws(serving.exec)
+  assert.ok(!serving.calls().includes(' update '), 'no staging publish when a user channel serves the staging branch')
+
+  const promoted = run('Promote the staged update to next channel', 'ok', { STAGED_UPDATE_GROUP: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', STAGED_RUNTIME_VERSION: 'mikka-next-1' })
+  assert.equal(JSON.parse(promoted.exec().trim()).branch, 'next')
+  assert.ok(promoted.calls().includes('update:republish --group aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee --destination-branch next --platform ios'))
+  const unverified = run('Promote the staged update to next channel', 'ok', { STAGED_UPDATE_GROUP: '', STAGED_RUNTIME_VERSION: 'mikka-next-1' })
+  assert.throws(unverified.exec)
+  const otherRuntime = run('Promote the staged update to next channel', 'ok', { STAGED_UPDATE_GROUP: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', STAGED_RUNTIME_VERSION: 'mikka-next-2' })
+  assert.throws(otherRuntime.exec)
+  for (const blocked of [unverified, otherRuntime]) assert.throws(blocked.calls, /ENOENT/, 'no EAS call before the staged group is verified')
 })

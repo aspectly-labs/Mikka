@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { actionsMikkaRepository, officialMikkaRepository, publicRepositoryId } from '../cloudflare-source.mjs'
 import { isValidDeploymentId } from '../../lib/deployment-id.mjs'
 import { artifactFor, readArtifactMembers } from './pipeline-inputs.mjs'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { containsDesktopSource, githubRead, PRODUCTION_VERSION_URL } from './web-deploy.mjs'
 
 const ownerId = 183887963
@@ -179,10 +180,10 @@ export async function readWebAuthority(fetchImpl = fetch) {
   return { provider: 'cloudflare', sha: build }
 }
 
-async function liveProof(record, raw, fetchImpl) {
+async function liveProof(record, raw, fetchImpl, options) {
   const [dns] = await Promise.all([
     publicRead(anchorUrl, 'application/dns-json', fetchImpl).then(r => r.json()),
-    liveServingRelease(record, fetchImpl),
+    liveServingRelease(record, fetchImpl, options),
   ])
   const answers = dns.Answer
   requireProof(dns.Status === 0 && !dns.TC && Array.isArray(answers) && answers.length === 1 && answers[0].type === 16
@@ -190,15 +191,36 @@ async function liveProof(record, raw, fetchImpl) {
     && answers[0].data === '"mikka-release-v1=sha256:' + digest(raw) + '"', 'dnsAnchor')
 }
 
-async function liveServingRelease(record, fetchImpl) {
+/** Production's version endpoint occasionally answers `{"error":"deploymentVersionUnavailable"}` or a
+ * transient non-200 for a few seconds (seen 2026-11-27). Retry only that unavailability, with exponential
+ * backoff; an answer that names a build is final, so a real mismatch still fails at once. */
+export async function readProductionVersion(fetchImpl = fetch, { wait = sleep, attempts = 4, baseMs = 2000 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    let failure
+    try {
+      const response = await publicRead(PRODUCTION_VERSION_URL, 'application/json', fetchImpl)
+      let body
+      try { body = await response.json() } catch { body = null }
+      if (present(body?.build, sha)) return { headers: response.headers, body }
+      failure = Error('cloudflareWeb:productionSource')
+    } catch (error) {
+      if (error?.message !== 'cloudflareWeb:publicUnavailable') throw error
+      failure = error
+    }
+    if (attempt >= attempts) throw failure
+    await wait(baseMs * 2 ** (attempt - 1))
+  }
+}
+
+async function liveServingRelease(record, fetchImpl, { wait = sleep } = {}) {
   const [version, shell] = await Promise.all([
-    publicRead(PRODUCTION_VERSION_URL, 'application/json', fetchImpl),
+    readProductionVersion(fetchImpl, { wait }),
     publicRead(new URL('/mikka/en/sign-in', PRODUCTION_VERSION_URL).href, 'text/html', fetchImpl),
   ])
   const gateway = version.headers.get('x-mikka-gateway-version-sha256')
   requireProof(!version.headers.has('x-vercel-id') && version.headers.has('cf-ray')
     && (record.gatewayVersionSha256 ? gateway === record.gatewayVersionSha256 : present(gateway, hash)), 'gatewayVersion')
-  const body = await version.json()
+  const body = version.body
   const expectedBuild = record.servedBuild ?? record.product
   requireProof(body.build === expectedBuild && body.overlaySha === record.overlay
     && (!record.apiBuild || body.apiBuild === record.apiBuild)
@@ -330,17 +352,17 @@ async function pipelineObservation(ref, api, { manual = false } = {}) {
 
 /** Re-read the original release decision at its issuance and the currently
  * served gateway, shell and DNS. This read-only check grants no release rights. */
-export async function readServingPromotion(pin, {token, fetchImpl=fetch, now=Date.now()}={}) {
+export async function readServingPromotion(pin, {token, fetchImpl=fetch, now=Date.now(), wait=sleep}={}) {
   const observed = observationRef.exec(pin)
   if (observed) {
     const record = await servingObservation(observed, { token, fetchImpl })
-    await liveServingRelease(record, fetchImpl)
+    await liveServingRelease(record, fetchImpl, { wait })
     return record
   }
   const piped = pipelineRef.exec(pin)
   if (piped) {
     const record = await pipelineObservation(piped, { token, fetchImpl })
-    await liveServingRelease(record, fetchImpl)
+    await liveServingRelease(record, fetchImpl, { wait })
     return record
   }
   const match=/^([1-9][0-9]{0,15})-([a-f0-9]{64})$/.exec(pin)
@@ -355,7 +377,7 @@ export async function readServingPromotion(pin, {token, fetchImpl=fetch, now=Dat
     approval.overlay===record.overlay && approval.evidence?.inventoryAndRollback?.sha256===record.inventorySha256 &&
     /^https:\/\/github\.com\/alexj11324\/mikka-cloud\/issues\/4#issuecomment-[1-9][0-9]*$/.test(approval.evidence.inventoryAndRollback.url) &&
     Date.parse(approval.from)<=issued && issued<Date.parse(approval.until) && issued<=now,'approval')
-  await liveProof(record,raw,fetchImpl)
+  await liveProof(record,raw,fetchImpl,{wait})
   return record
 }
 
@@ -367,7 +389,7 @@ export function verifyDesktopPromotedWeb(options) {
   return verifyPromotion(desktopWorkflow, options)
 }
 
-async function verifyPromotion(workflow, { env = process.env, event, fetchImpl = fetch, now = Date.now } = {}) {
+async function verifyPromotion(workflow, { env = process.env, event, fetchImpl = fetch, now = Date.now, wait = sleep } = {}) {
   const pin = /^([1-9][0-9]*)-([a-f0-9]{64})$/.exec(env.CLOUDFLARE_RECEIPT ?? '')
   const observed = observationRef.exec(env.CLOUDFLARE_RECEIPT ?? '')
   const piped = workflow === desktopWorkflow ? pipelineRef.exec(env.CLOUDFLARE_RECEIPT ?? '') : null
@@ -378,6 +400,9 @@ async function verifyPromotion(workflow, { env = process.env, event, fetchImpl =
   requireProof((pin || automated) && actionsMikkaRepository(env) && env.GITHUB_REF === 'refs/heads/main'
     && (env.GITHUB_EVENT_NAME === 'workflow_dispatch' || chained && automated) && present(env.GITHUB_SHA, sha)
     && present(env.GITHUB_RUN_ID, decimal) && present(env.GITHUB_RUN_ATTEMPT, decimal), 'dispatch')
+  // Desktop starts by itself only after an automatic pipeline-production promotion. A gateway
+  // observation (a manual production action) never chains Desktop; the owner dispatches it.
+  requireProof(!(workflow === desktopWorkflow && chained && observed), 'dispatchSource')
   if (chained) {
     const source = (event ?? await readEvent(env)).workflow_run
     requireProof(String(source?.id) === automated[1] && String(source?.run_attempt) === automated[2]
@@ -441,8 +466,8 @@ async function verifyPromotion(workflow, { env = process.env, event, fetchImpl =
       }
     }
   }
-  if (automated) await liveServingRelease(record, fetchImpl)
-  else await liveProof(record, raw, fetchImpl)
+  if (automated) await liveServingRelease(record, fetchImpl, { wait })
+  else await liveProof(record, raw, fetchImpl, { wait })
   // Desktop and the runtime publish the served commit; it must already be part of main.
   // Later merges to main neither replace it nor block its publication.
   requireProof(await servedOnMain(record.product, api), 'servedOnMain')
@@ -475,9 +500,10 @@ async function readEvent(env) {
 }
 
 /** Decide whether a finished Cloudflare deployment run should start a consumer release.
- * Only a successful gateway observation (or, for Desktop, an automatic pipeline-production
- * promotion) whose served product is on main qualifies; anything else is a quiet no-op. */
-export async function promotionTrigger(consumer, { env = process.env, event, fetchImpl = fetch } = {}) {
+ * The runtime release starts from a successful gateway observation; Desktop starts only from an
+ * automatic pipeline-production promotion. Their served product must be on main; anything else
+ * (including any owner-dispatched deployment phase, for Desktop) is a quiet no-op. */
+export async function promotionTrigger(consumer, { env = process.env, event, fetchImpl = fetch, wait = sleep } = {}) {
   requireProof([runtimeWorkflow, desktopWorkflow].includes(consumer), 'consumer')
   const source = (event ?? await readEvent(env)).workflow_run
   const api = { token: env.GITHUB_TOKEN, fetchImpl }
@@ -487,6 +513,9 @@ export async function promotionTrigger(consumer, { env = process.env, event, fet
     || source.status !== 'completed' || source.conclusion !== 'success' || source.head_branch !== 'main'
     || !officialRepository(source.repository) || !present(String(source.id), decimal) || !present(String(source.run_attempt), decimal)) {
     return { ready: false, reason: 'not a successful Cloudflare deployment run on main' }
+  }
+  if (consumer === desktopWorkflow && !pipelineEvent) {
+    return { ready: false, reason: 'Desktop starts only from an automatic production promotion or an explicit desktop-release.yml dispatch' }
   }
   const path = '/actions/runs/' + source.id + '/attempts/' + source.run_attempt + '/jobs?per_page=100'
   const listing = await githubRead(path, api)
@@ -503,7 +532,7 @@ export async function promotionTrigger(consumer, { env = process.env, event, fet
     }
     receipt = 'actions:' + source.id + ':' + source.run_attempt
   }
-  const record = await readServingPromotion(receipt, { token: env.GITHUB_TOKEN, fetchImpl })
+  const record = await readServingPromotion(receipt, { token: env.GITHUB_TOKEN, fetchImpl, wait })
   const main = await githubRead('/git/ref/heads/main', api)
   requireProof(main.object?.type === 'commit' && present(main.object.sha, sha), 'mainRef')
   if (consumer === desktopWorkflow ? !await servedOnMain(record.product, api) : record.product !== main.object.sha || record.product !== env.GITHUB_SHA) {

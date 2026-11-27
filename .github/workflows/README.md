@@ -162,9 +162,10 @@ product regression. Main pushes and merge groups continue normal full coverage.
 - `publish-daemon.yml` uses daemon/package-input path filters.
   `desktop-release.yml` also watches the shared frontend, UI and API inputs.
   On a push it builds nothing and leaves a note in the run summary. The
-  installer is built when the Cloudflare deployment workflow's serving-release
-  observation or automatic `pipeline-production` promotion shows current main,
-  or from a dispatch carrying `cloudflare_receipt`. While production promotion
+  installer is built by itself only after an automatic `pipeline-production`
+  promotion that serves current main, or from a dispatch carrying
+  `cloudflare_receipt` (an owner `gateway-observe` or `pipeline-promote`
+  dispatch never starts it). While production promotion
   is paused (private `deploy-pipeline.json` `autoProduction: false`), the owner
   promotes with a `pipeline-promote` dispatch and then dispatches Desktop by
   hand ([promotion switch](../../docs/operations/build-source-of-truth.md#production-promotion-switch)). A Markdown file under a
@@ -200,6 +201,11 @@ product regression. Main pushes and merge groups continue normal full coverage.
   channel→branch mapping before publishing explicitly to that dedicated branch (never `production`), keeps
   private logs in `$RUNNER_TEMP`, and reports only public-safe update metadata (update group ID, runtime
   version, channel, branch, and resolved `mikka-hosted-ui` SHA).
+  It has three phases: `stage` (default) publishes only to the `next-staging` branch and uploads a stage
+  receipt; `publish` goes straight to `next` and needs private `mobileProduction: true`; `promote` lets the
+  owner republish a successful stage run's update group to `next`. While mobile OTA is paused
+  (`mobileProduction: false`), only `stage` then owner `promote` reach users
+  ([promotion switch](../../docs/operations/build-source-of-truth.md#mobile-ota-while-paused)).
 
 ## Cloud worker template release
 

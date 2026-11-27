@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { verifyPromotedWeb, verifyDesktopPromotedWeb, readServingPromotion, promotionTrigger } from './cloudflare-promoted-web.mjs'
+import { verifyPromotedWeb, verifyDesktopPromotedWeb, readServingPromotion, readProductionVersion, promotionTrigger } from './cloudflare-promoted-web.mjs'
 
 const digest = value => createHash('sha256').update(value).digest('hex')
 const product = 'abc1234'.padEnd(40, '5'), overlay = 'c'.repeat(40), releasePin = 'abc1234-902-1'
@@ -228,7 +228,7 @@ test('Desktop and E2B accept only an original successful protected serving obser
   }
 })
 
-test('a successful gateway observation that serves current main starts both releases by itself', async () => {
+test('a successful gateway observation starts the runtime release by itself, but never Desktop', async () => {
   const repository = { id:1427517699, full_name:repo, fork:false }
   const actor = { id:183887963 }
   const run = { repository, head_repository:repository, path:'.github/workflows/cloudflare-app-deploy.yml', head_branch:'main',
@@ -242,15 +242,20 @@ test('a successful gateway observation that serves current main starts both rele
   const started = fixture({ observation, event, env })
   assert.deepEqual(await started.trigger(workflow), { ready:true, receipt:'actions:99:1', product,
     reason:'Cloudflare serves ' + product + ' on main' })
-  assert.equal((await fixture({ observation, event, env }).trigger(desktop)).ready, true)
-  // Desktop builds the served commit: a later merge to main does not hold it back; a commit off main does.
-  assert.equal((await fixture({ observation, event, env, main:'a'.repeat(40) }).trigger(desktop)).ready, true)
-  assert.equal((await fixture({ observation, event, env, served:{ status:'diverged' } }).trigger(desktop)).ready, false)
+  // An owner gateway-observe dispatch is a manual production action: Desktop waits for its own explicit dispatch.
+  for (const change of [{}, { main:'a'.repeat(40) }, { served:{ status:'diverged' } }, { latestRelease:{ target_commitish:'f'.repeat(40) } }]) {
+    const desktopTrigger = await fixture({ observation, event, env, ...change }).trigger(desktop)
+    assert.deepEqual(desktopTrigger, { ready:false,
+      reason:'Desktop starts only from an automatic production promotion or an explicit desktop-release.yml dispatch' })
+  }
 
   // The started consumer verifies exactly that observation, under its own workflow_run identity.
   const chainedEnv = { ...env, CLOUDFLARE_RECEIPT:'actions:99:1' }, consumer = { actor, triggering_actor:actor, event:'workflow_run' }
   assert.deepEqual(await fixture({ observation, event, env:chainedEnv, run:consumer }).verify(), { product, releasePin })
-  assert.deepEqual(await fixture({ observation, event, env:chainedEnv, run:{ ...consumer, path:desktop } }).desktop(), { product, overlay, releasePin })
+  // A chained Desktop run refuses the observation receipt; the owner's own Desktop dispatch accepts it.
+  await assert.rejects(fixture({ observation, event, env:chainedEnv, run:{ ...consumer, path:desktop } }).desktop(), /dispatchSource/)
+  assert.deepEqual(await fixture({ observation, event, env:{ ...chainedEnv, GITHUB_EVENT_NAME:'workflow_dispatch' },
+    run:{ actor, triggering_actor:actor, event:'workflow_dispatch', path:desktop } }).desktop(), { product, overlay, releasePin })
   for (const change of [{ event:{ workflow_run:{ ...run, id:98 } } }, { event:{ workflow_run:{ ...run, run_attempt:2 } } },
     { run:{ ...consumer, event:'workflow_dispatch' } }, { env:{ ...chainedEnv, CLOUDFLARE_RECEIPT:'81-' + 'f'.repeat(64) } }]) {
     await assert.rejects(fixture({ observation, event, env:chainedEnv, run:consumer, ...change }).verify(), /dispatch|runIdentity/)
@@ -271,8 +276,6 @@ test('a successful gateway observation that serves current main starts both rele
     assert.equal(result.ready, false)
     assert.match(result.reason, reason)
   }
-  const released = await fixture({ observation, event, env, latestRelease:{ target_commitish:product } }).trigger(desktop)
-  assert.deepEqual(released, { ready:false, reason:'Desktop for ' + product + ' is already released' })
   assert.equal((await fixture({ observation, event, env, latestRelease:{ target_commitish:product } }).trigger(workflow)).ready, true)
   // A gateway that no longer serves the observed pins fails loudly.
   await assert.rejects(fixture({ observation, event, env, headers:{ 'x-mikka-gateway-version-sha256':'1'.repeat(64) } }).trigger(workflow))
@@ -435,6 +438,12 @@ function pipelineFixture(change = {}) {
     if (u.href === overlayAssetLocation && latestOverlayAsset) return new Response(latestOverlayAsset, { status: 200 })
     assert.equal(u.origin, 'https://app.aspectlylabs.com')
     if (u.pathname === '/mikka/api/version') {
+      if (change.versionFlakes > 0) {
+        change.versionFlakes--
+        change.versionReads = (change.versionReads ?? 0) + 1
+        return Response.json({ error: 'deploymentVersionUnavailable' }, { headers: { 'cf-ray': 'edge' } })
+      }
+      change.versionReads = (change.versionReads ?? 0) + 1
       return Response.json({ build: webSha, overlaySha: overlay, apiBuild: apiSha, apiOverlaySha: overlay, ...change.version }, {
         headers: { 'cf-ray': 'edge', 'x-mikka-gateway-version-sha256': 'e'.repeat(64), ...change.headers },
       })
@@ -445,7 +454,7 @@ function pipelineFixture(change = {}) {
   return {
     head, owner, mergeQueue, desktop,
     trigger: consumer => promotionTrigger(consumer, { env: { ...env, CLOUDFLARE_RECEIPT: '' }, event, fetchImpl }),
-    desktopVerify: () => verifyDesktopPromotedWeb({ env, event, fetchImpl }),
+    desktopVerify: () => verifyDesktopPromotedWeb({ env, event, fetchImpl, wait: change.wait }),
     runtimeVerify: () => verifyPromotedWeb({ env, event, fetchImpl }),
     observe: () => readServingPromotion('pipeline:101:1', { token: env.GITHUB_TOKEN, fetchImpl }),
   }
@@ -628,7 +637,7 @@ test('a paused production keeps Desktop manual: an owner pipeline-promote dispat
   // The finished manual promotion does not trigger a Desktop release.
   const trigger = await pipelineFixture(promoted).trigger('.github/workflows/desktop-release.yml')
   assert.equal(trigger.ready, false)
-  assert.match(trigger.reason, /does not change what is served/)
+  assert.match(trigger.reason, /explicit desktop-release\.yml dispatch/)
   // A chained (workflow_run) Desktop and the read-only witness both refuse the manual receipt.
   await assert.rejects(pipelineFixture(promoted).desktopVerify(), /pipelineRun/)
   await assert.rejects(pipelineFixture(promoted).observe(), /pipelineRun/)
@@ -640,4 +649,43 @@ test('a paused production keeps Desktop manual: an owner pipeline-promote dispat
     [{ deployRun: { ...promoted.deployRun, triggering_actor: { id: 7, login: 'outsider' } } }, 'pipelineRun'],
     [{ jobs: manualJobs('success') }, 'pipelineJobs'],
   ]) await assert.rejects(pipelineFixture({ ...promoted, ...byHand, ...change }).desktopVerify(), new RegExp(code), code)
+})
+
+test('the production version endpoint is retried with backoff only while it reports itself unavailable', async () => {
+  const version = { build: 'a'.repeat(40), overlaySha: 'b'.repeat(40) }
+  const responses = script => async url => {
+    assert.equal(new URL(url).pathname, '/mikka/api/version')
+    const next = script.shift()
+    if (next === 503) return new Response('busy', { status: 503 })
+    return Response.json(next, { headers: { 'cf-ray': 'edge' } })
+  }
+  const waits = []
+  const wait = async ms => { waits.push(ms) }
+  const unavailable = { error: 'deploymentVersionUnavailable' }
+  // Two transient answers (the 2026-11-27 flake and a non-200), then the real version: backoff 2s, 4s.
+  const read = await readProductionVersion(responses([unavailable, 503, version]), { wait })
+  assert.deepEqual(read.body, version)
+  assert.deepEqual(waits, [2000, 4000])
+  // Persistent unavailability fails closed after four reads (2s, 4s, 8s).
+  waits.length = 0
+  await assert.rejects(readProductionVersion(responses([unavailable, unavailable, unavailable, unavailable, version]), { wait }), /productionSource/)
+  assert.deepEqual(waits, [2000, 4000, 8000])
+  waits.length = 0
+  await assert.rejects(readProductionVersion(responses([503, 503, 503, 503]), { wait }), /publicUnavailable/)
+  assert.equal(waits.length, 3)
+  // An answer that names a build is final: no retry, so a real mismatch is reported at once.
+  waits.length = 0
+  assert.deepEqual((await readProductionVersion(responses([{ ...version, build: 'c'.repeat(40) }]), { wait })).body.build, 'c'.repeat(40))
+  assert.deepEqual(waits, [])
+
+  // End to end: a Desktop dispatch rides out the flake, while a mismatched build still fails without waiting.
+  const owner = { id: 183887963, login: 'alexj11324' }
+  const byHand = { env: { GITHUB_EVENT_NAME: 'workflow_dispatch' }, consumerRun: { event: 'workflow_dispatch', actor: owner, triggering_actor: owner } }
+  const flaky = { ...byHand, versionFlakes: 2, wait }
+  waits.length = 0
+  assert.deepEqual(await pipelineFixture(flaky).desktopVerify(), { product: 'b'.repeat(40), releasePin, overlay })
+  assert.ok(waits.length >= 2)
+  waits.length = 0
+  await assert.rejects(pipelineFixture({ ...byHand, wait, version: { build: '1'.repeat(40) } }).desktopVerify(), /productionSource/)
+  assert.deepEqual(waits, [])
 })
