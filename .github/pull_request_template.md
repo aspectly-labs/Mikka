@@ -14,7 +14,7 @@
 - Review page (Artifact):
 - Accepted Figma frames:
 - Rules touched (docs/design/rules.md ids):
-- Uses a paid block/component? Attach a side-by-side of library demo vs ours (private page); list any visual difference beyond data and text, with its reason (docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md):
+- Top-product reference per changed surface (ChatGPT / Codex, Claude / Claude Code, Capy, Linear: a Mobbin link or the unpacked app/source path), with every remaining difference and its reason; paid screenshots on a private page (docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md):
 - [ ] `docs/review-checklist.md` passes
 - [ ] Docs updated in this PR (rules / components / decisions / glossary / spec), or not needed
 

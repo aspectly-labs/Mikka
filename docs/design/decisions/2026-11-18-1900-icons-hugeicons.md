@@ -1,6 +1,6 @@
 # 图标统一用 affectUI 的 Hugeicons
 
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-27-1409-top-products-over-paid-blocks](2026-11-27-1409-top-products-over-paid-blocks.md)（仅「付费库原样保留」一条；其余仍有效）
 
 2026-11-18：Alex 的原话是「Unify the icons on affectUI's icons, except the task status icons.」，中文原话是「统一 affectui 里面的 icon，除开任务的 status 的 icon 以外」。
 

@@ -31,7 +31,7 @@ new rule it needs. A new rule needs Alex's decision and a file in `decisions/`.
 
 ## Components
 
-A paid block or component is listed as used as shipped (data and text only), with its library demo for the side-by-side ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+A paid block or component is listed with the top-product surface it is edited to match (a Mobbin link or the unpacked app or source path) and every difference that remains, with its reason ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 
 What it is built from, one line per part: the existing component
 (`components.md`, the live screen for the same job, or `components/reui/`,

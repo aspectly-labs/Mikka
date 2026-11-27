@@ -7,8 +7,8 @@ defaults, repository automation and the existing execution boundaries.
 
 Each section is a small heading over one card of rows, as in
 Comma's 「模型与 API」 (decision 2026-10-30). This is the open-source default
-settings surface; the hosted settings are affectUI screens used as shipped
-([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+settings surface; the hosted settings are affectUI screens edited to match the reference product
+([2026-11-27-1409](design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 `components/settings/primitives.tsx` owns the shapes; product code only
 supplies content.
 

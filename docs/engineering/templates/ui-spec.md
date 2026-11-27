@@ -6,7 +6,7 @@
 - **Target surface(s):** Web | Desktop | iOS (`mikka-hosted-ui` / `apps/mobile`)
 - **Visual reference target (mandatory before coding):**
   - Figma file & frame ID: `<for example, zPe5LKycb2XuT1ivCLRw07 node XX:YY>` OR
-  - Governing reference screen: `<ChatGPT / Codex | Claude Code | Capy 0.9.2 (exact asset/route) | Linear | Apple HIG | Paid block demo>`
+  - Governing reference screen: `<ChatGPT / Codex | Claude / Claude Code | Capy 0.9.2 (exact asset/route) | Linear | Apple HIG (native mobile UI and desktop window chrome only)>` with a Mobbin screen link or unpacked app/source path (a paid block demo is not a reference: [2026-11-27-1409](../../design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md))
 
 Copy this template before coding UI. Every UI PR must reference the completed spec and attach side-by-side visual evidence (`## 视觉对照`).
 
@@ -20,9 +20,9 @@ Copy this template before coding UI. Every UI PR must reference the completed sp
 
 List every part of the screen and the exact existing primitive it reuses (`docs/design/design-system.md` §2, `docs/design/components.md`, `mikka-hosted-ui/components/mikka/list-page/`):
 
-| Surface part | Existing primitive / paid block | Notes (data/copy only if paid block) |
+| Surface part | Existing primitive / paid block | Notes (top-product reference if paid block) |
 | --- | --- | --- |
-| `<Header / toolbar / list / strip / card>` | `<CapyListPage / ChatStatusStrip / TakeoverCard / BoardUI as-shipped>` | `<notes>` |
+| `<Header / toolbar / list / strip / card>` | `<CapyListPage / ChatStatusStrip / TakeoverCard / paid block edited to the reference>` | `<notes>` |
 
 - **New primitive justification (omit if none):** Explain why no existing primitive fits and confirm `docs/design/components.md` updates in the same PR.
 - **Zero patch-on-patch check:** Confirm no additional CSS/patch layer is stacked onto an existing paid-block override (`mikka-hosted-ui/patches/*.patch`).
@@ -73,7 +73,7 @@ Copy this table into the PR body and complete every row before merging:
 | `<Header / toolbar / row / drawer / contrast / budget>` | `<Implemented or justified delta>` | `[ ] Verified` | `[ ] Verified` |
 
 - [ ] Targeted local screenshots captured and visually inspected in cloud Linux (`pnpm --dir mikka-hosted-ui visual:local --target <slug>`, 0 horizontal overflow, 0 console/page errors).
-- [ ] `mikka-hosted-ui` static `Cloudflare UI Policy` (`paid-overrides`, `oxlint`, `frontend-policy`, unit tests) and `Cloudflare UI Fast Gate` (official Web build + `bundle-budget`) passed.
+- [ ] `mikka-hosted-ui` static `Cloudflare UI Policy` (`paid-sources`, `oxlint`, `frontend-policy`, unit tests) and `Cloudflare UI Fast Gate` (official Web build + `bundle-budget`) passed.
 - [ ] `docs/review-checklist.md` passed end to end.
 
 ## 8. Out of scope
