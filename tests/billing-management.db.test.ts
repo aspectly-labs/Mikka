@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import test, { mock } from 'node:test'
 import { dbUrl, seedAgent, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import type { BillingManagementView } from '../lib/billing/management-contract'
+import type { OveragePolicyView } from '../lib/billing/contract'
 
 let actor: string | null = null
 mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async (options: { query?: { disableCookieCache?: boolean } }) => {
@@ -287,5 +288,40 @@ test('billing management HTTP preserves independent tenants, owners and immutabl
       assert.equal(called, false)
       await pool.query('update mikka_workspace_members set status=\'active\' where "workspaceId"=$1 and "userId"=$2', [first.id, owner])
     } finally { await independent.end() }
+  })
+
+  await t.test('owner-only overage policy requires positive monthly cap when enabled and preserves optimistic revision', async () => {
+    actor = owner
+    const initialView = await (await get(first.id)).json() as BillingManagementView
+    assert.ok(initialView.billing)
+    assert.deepEqual(initialView.billing.overage, { enabled: false, monthlyCapPoints: null, spentOveragePoints: 250, remainingOveragePoints: null, revision: 0 })
+
+    // Missing or non-positive cap is rejected when enabling overage
+    const badCap = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: true, monthlyCapPoints: null, expectedRevision: 0 } }, first.id)
+    assert.equal(badCap.status, 409)
+    assert.deepEqual(await badCap.json(), { error: 'billingOverageCapRequired' })
+    const zeroCap = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: true, monthlyCapPoints: 0, expectedRevision: 0 } }, first.id)
+    assert.equal(zeroCap.status, 409)
+    assert.deepEqual(await zeroCap.json(), { error: 'billingOverageCapRequired' })
+
+    // Admin without owner authority cannot mutate overage
+    actor = admin
+    const adminRes = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: true, monthlyCapPoints: 2500, expectedRevision: 0 } }, first.id)
+    assert.equal(adminRes.status, 403)
+
+    // Owner enables overage with positive monthly cap
+    actor = owner
+    const enabledRes = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: true, monthlyCapPoints: 2500, expectedRevision: 0 } }, first.id)
+    assert.equal(enabledRes.status, 200)
+    const enabledView = await enabledRes.json() as OveragePolicyView
+    assert.deepEqual(enabledView, { enabled: true, monthlyCapPoints: 2500, spentOveragePoints: 250, remainingOveragePoints: 2250, revision: 1 })
+
+    // Stale revision conflicts
+    const staleRes = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: false, monthlyCapPoints: 2500, expectedRevision: 0 } }, first.id)
+    assert.equal(staleRes.status, 409)
+
+    // Audit event recorded
+    const audit = (await pool.query(`select action from workspace_audit_events where "workspaceId"=$1 and action='billing.overage_changed'`, [first.id])).rows
+    assert.equal(audit.length, 1)
   })
 })

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -48,6 +49,7 @@ func bindNativeRunFixture(t *testing.T, w *Worker, revision int64, route string)
 		t.Fatal(err)
 	}
 	w.Use.ConsumerID, w.Use.RunID = agent, run
+	w.NativeLiteLLMURL, w.NativeLiteLLMKey = "http://127.0.0.1:40123", "fixture-llm-proxy"
 	return run
 }
 
@@ -72,18 +74,18 @@ func TestNativeBrokerUsesAccessOnlyCredentialsWithoutExportOrEndpointSelection(t
 			var calls atomic.Int32
 			w.NativeClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				calls.Add(1)
-				expected := "https://chatgpt.com/backend-api/codex/responses"
+				expected := w.NativeLiteLLMURL + "/v1/mikka/subscription/codex/responses"
 				if provider == "claude" {
-					expected = "https://api.anthropic.com/v1/messages?beta=true"
+					expected = w.NativeLiteLLMURL + "/v1/mikka/subscription/claude/messages"
 				}
-				if r.URL.String() != expected || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer fixture-"+provider+"-access-") || r.Header.Get("Cookie") != "" || r.Header.Get("X-Api-Key") != "" {
+				if r.URL.String() != expected || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer fixture-"+provider+"-access-") || r.Header.Get("x-litellm-api-key") != "Bearer fixture-llm-proxy" || r.Header.Get("Cookie") != "" || r.Header.Get("X-Api-Key") != "" {
 					t.Error("native forwarding changed destination/authority")
 				}
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: {\"native\":true}\n\n"))}, nil
 			})}
 			request := NativeRequest{Path: path, Headers: map[string]string{"authorization": "Bearer caller-placeholder", "cookie": "foreign", "x-api-key": "foreign", "user-agent": "actual-official-cli-fixture"}, Body: json.RawMessage(`{"model":"fixture-model","stream":true}`)}
 			var output bytes.Buffer
-			if err = w.NativeStream(context.Background(), initial.Revision, request, func(kind string) error {
+			if err = w.NativeStream(context.Background(), initial.Revision, request, func(kind string, generationID string) error {
 				if kind != "text/event-stream" {
 					t.Error("bad content type")
 				}
@@ -93,7 +95,7 @@ func TestNativeBrokerUsesAccessOnlyCredentialsWithoutExportOrEndpointSelection(t
 			}
 			before := access.reads
 			for _, bad := range []NativeRequest{{Path: "https://attacker.invalid/v1/messages", Body: request.Body}, {Path: path, Body: json.RawMessage(`{"model":"another-model"}`)}} {
-				if w.NativeStream(context.Background(), initial.Revision, bad, func(string) error { return nil }, func([]byte) error { return nil }) == nil {
+				if w.NativeStream(context.Background(), initial.Revision, bad, func(string, string) error { return nil }, func([]byte) error { return nil }) == nil {
 					t.Fatal("native request bypass")
 				}
 			}
@@ -123,11 +125,20 @@ func TestNativeBrokerMissingMIMEIsOnlyForCodexStreaming(t *testing.T) {
 			w.NativeClient = &http.Client{Transport: fixedTransport{status: 200, body: "data: {\"native\":true}\n\n"}}
 			body, _ := json.Marshal(map[string]any{"model": "fixture-model", "stream": test.stream})
 			head := false
-			err := w.NativeStream(context.Background(), initial.Revision, NativeRequest{Path: path, Body: body}, func(kind string) error { head = kind == "text/event-stream"; return nil }, func([]byte) error { return nil })
+			err := w.NativeStream(context.Background(), initial.Revision, NativeRequest{Path: path, Body: body}, func(kind string, generationID string) error { head = kind == "text/event-stream"; return nil }, func([]byte) error { return nil })
 			if (err != nil) != test.wantError || head == test.wantError {
 				t.Fatalf("err=%v, head=%v", err, head)
 			}
 		})
+	}
+}
+
+func TestNativeBrokerRefusesOversizedBodyBeforeCredentialOrProviderAccess(t *testing.T) {
+	w := Worker{Use: &RuntimeUse{RunID: "fixture"}}
+	body := make(json.RawMessage, nativeRequestMaxBytes+1)
+	err := w.NativeStream(context.Background(), 1, NativeRequest{Body: body}, func(string, string) error { return nil }, func([]byte) error { return nil })
+	if err != ErrPayloadTooLarge {
+		t.Fatal("oversized native payload did not return its typed refusal", err)
 	}
 }
 
@@ -139,12 +150,12 @@ func TestNativeBrokerRefusalsPreserveCauseWithoutEmittingProviderBody(t *testing
 		status int
 		want   string
 	}{
-		{401, "reconnect_required"}, {403, "provider_access_denied"}, {429, "subscription_rate_limited"}, {503, "provider_temporarily_unavailable"},
+		{400, "provider_request_rejected"}, {401, "reconnect_required"}, {403, "provider_access_denied"}, {429, "subscription_rate_limited"}, {503, "provider_temporarily_unavailable"},
 	} {
 		t.Run(fmt.Sprint(test.status), func(t *testing.T) {
 			w.NativeClient = &http.Client{Transport: fixedTransport{status: test.status, contentType: "application/json", body: `{"error":{"message":"fixture-private-provider-text"}}`}}
 			emitted := false
-			err := w.NativeStream(context.Background(), initial.Revision, NativeRequest{Path: "/v1/messages", Body: json.RawMessage(`{"model":"fixture-model","stream":true}`)}, func(string) error { emitted = true; return nil }, func([]byte) error { emitted = true; return nil })
+			err := w.NativeStream(context.Background(), initial.Revision, NativeRequest{Path: "/v1/messages", Body: json.RawMessage(`{"model":"fixture-model","stream":true}`)}, func(string, string) error { emitted = true; return nil }, func([]byte) error { emitted = true; return nil })
 			if err == nil || err.Error() != test.want || emitted {
 				t.Fatalf("refusal=%v emitted=%v", err, emitted)
 			}
@@ -165,7 +176,7 @@ func TestNativeBrokerFencesSilentRequestsOnDisconnectAndRefusesEchoedBearer(t *t
 	request := NativeRequest{Path: "/v1/messages", Body: json.RawMessage(`{"model":"fixture-model","stream":true}`)}
 	finished := make(chan error, 1)
 	go func() {
-		finished <- w.NativeStream(context.Background(), initial.Revision, request, func(string) error { return nil }, func([]byte) error { return nil })
+		finished <- w.NativeStream(context.Background(), initial.Revision, request, func(string, string) error { return nil }, func([]byte) error { return nil })
 	}()
 	<-entered
 	if _, err := w.Disconnect(context.Background(), initial.Revision); err != nil {
@@ -188,7 +199,7 @@ func TestNativeBrokerFencesSilentRequestsOnDisconnectAndRefusesEchoedBearer(t *t
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"echo":"` + token + `"}`))}, nil
 	})}
 	var output bytes.Buffer
-	err := w2.NativeStream(context.Background(), second.Revision, request, func(string) error { return nil }, func(part []byte) error { _, e := output.Write(part); return e })
+	err := w2.NativeStream(context.Background(), second.Revision, request, func(string, string) error { return nil }, func(part []byte) error { _, e := output.Write(part); return e })
 	if err != ErrIntegrity || strings.Contains(output.String(), "fixture-claude-access-") {
 		t.Fatal("upstream bearer echo escaped broker")
 	}
@@ -263,5 +274,52 @@ func TestNativeRunModelChoiceUsesFrozenServerSnapshot(t *testing.T) {
 	}
 	if w.authorizeRuntime(ctx, initial.Revision, "native", "cli-default-model") == nil {
 		t.Fatal("ended run retained model authority")
+	}
+}
+
+func TestNativeBrokerThroughRealLiteLLM(t *testing.T) {
+	proxy := os.Getenv("MIKKA_NATIVE_TEST_LITELLM_URL")
+	if proxy == "" {
+		t.Skip("Run deploy/litellm/native-subscription.test.py with a local LiteLLM binary")
+	}
+	for _, provider := range []string{"claude", "codex"} {
+		t.Run(provider, func(t *testing.T) {
+			w, _, _ := fixtureWorker(t, provider)
+			initial := mustAcquire(t, w)
+			route, path := "codex_cli", "/responses"
+			if provider == "claude" {
+				route, path = "claude_code_cli", "/v1/messages?beta=true"
+			}
+			bindNativeRunFixture(t, w, initial.Revision, route)
+			w.NativeLiteLLMURL, w.NativeLiteLLMKey = proxy, os.Getenv("LITELLM_MASTER_KEY")
+			run := func(path string, stream bool, expectedType, expectedBody string) {
+				t.Helper()
+				payload, _ := json.Marshal(map[string]any{"model": "fixture-model", "stream": stream, "system": "run safety instructions",
+					"messages": []map[string]string{{"role": "user", "content": strings.Repeat("a", 300<<10)}},
+					"input":    strings.Repeat("a", 300<<10)})
+				request := NativeRequest{Path: path, Headers: map[string]string{"authorization": "Bearer caller-placeholder", "cookie": "foreign", "x-api-key": "foreign"}, Body: payload}
+				var output bytes.Buffer
+				if err := w.NativeStream(context.Background(), initial.Revision, request, func(kind string, generationID string) error {
+					if !nativeGenerationID.MatchString(generationID) {
+						t.Error("missing actual LiteLLM call ID")
+					}
+					if kind != expectedType {
+						t.Errorf("unexpected response type %q", kind)
+					}
+					return nil
+				}, func(part []byte) error { _, err := output.Write(part); return err }); err != nil {
+					t.Fatal("native request through real LiteLLM failed", err)
+				}
+				if !strings.Contains(output.String(), expectedBody) || strings.Contains(output.String(), "fixture-"+provider+"-access-") {
+					t.Fatal("native usage receipt was missing or exposed a bearer")
+				}
+			}
+			if provider == "claude" {
+				run(path, true, "text/event-stream", "output_tokens")
+				run("/v1/messages/count_tokens", false, "application/json", "input_tokens")
+			} else {
+				run(path, true, "text/event-stream", "input_tokens")
+			}
+		})
 	}
 }

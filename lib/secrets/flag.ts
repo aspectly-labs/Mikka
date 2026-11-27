@@ -1,3 +1,5 @@
+import { isCloudEdition } from '../edition'
+
 // #438: the BYO flag and E2BKeyError, with no store/workspace-access imports, so runtime.ts and
 // e2b-runtime.ts can be imported on the hot paths (routes, workers) without loading the settings store.
 import { runtimeEnv } from '@/lib/env/server'
@@ -8,8 +10,8 @@ export class E2BKeyError extends Error {
   constructor(readonly code: E2BKeyErrorCode, readonly detail?: string) { super(code); this.name = 'E2BKeyError' }
 }
 
-/** Compatibility seam for existing settings callers. BYO is mandatory (#523); the old flag cannot enable platform spend. */
-export const byoE2BKeyEnabled = (_env: Readonly<Record<string, string | undefined>> = runtimeEnv()) => true
+/** Personal E2B credentials are a self-hosted setting. */
+export const byoE2BKeyEnabled = (env: Readonly<Record<string, string | undefined>> = runtimeEnv()) => !isCloudEdition(env)
 
 /** Storage cannot create secrets without this deployment encryption key. */
 export const workspaceSecretsConfigured = (env: Readonly<Record<string, string | undefined>> = runtimeEnv()) => Boolean(env.WORKSPACE_SECRETS_KEY?.trim())

@@ -56,30 +56,34 @@ Source: `SETTINGS_SECTIONS` in `lib/settings-sections.ts`.
 | `personal` | `security` | Security |
 | `personal` | `notifications` | Notifications |
 | `personal` | `shortcuts` | Shortcuts |
+| `personal` | `privacy` | Data and privacy |
 | `personal` | `logins` | Secrets and logins |
-| `agent` | `models` | Models and subscriptions |
-| `agent` | `environments` | Cloud environments |
-| `agent` | `computers` | Devices |
-| `agent` | `secrets` | Secrets & Credentials |
-| `agent` | `mcp` | Custom MCP |
-| `agent` | `connections` | Plugins |
+| `compute` | `models` | Models and subscriptions |
+| `compute` | `environments` | Cloud environments |
+| `compute` | `computers` | Devices |
+| `compute` | `secrets` | Secrets & Credentials |
+| `compute` | `integrations` | Integrations |
+| `compute` | `connections` | Connectors and MCP |
+| `compute` | `mcp` | Custom MCP |
+| `compute` | `developer` | API |
 | `agent` | `instructions` | Instructions |
 | `agent` | `team-skills` | Skills |
 | `agent` | `threads` | Threads |
 | `agent` | `git` | Git and pull requests |
+| `agent` | `agent-configs` | Agent configurations |
 | `agent` | `memory` | Memory |
 | `review` | `review-repositories` | Review repositories |
 | `review` | `review-config` | Review config |
 | `workspace` | `general` | Workspace general |
+| `workspace` | `identity` | Identity and access |
 | `workspace` | `issue-states` | Task states |
 | `workspace` | `members` | Members |
 | `workspace` | `teams` | Teams |
 | `workspace` | `permissions` | Team permissions |
-| `workspace` | `audit` | Audit log |
-| `workspace` | `developer` | API |
-| `workspace` | `activity` | Activity |
 | `workspace` | `billing` | Billing |
 | `workspace` | `usage` | Usage |
+| `workspace` | `activity` | Activity |
+| `workspace` | `audit` | Audit log |
 | `workspace` | `organization` | Organization |
 | `workspace` | `cloud` | Mikka Cloud |
 | `personal` | `referrals` | Referrals |

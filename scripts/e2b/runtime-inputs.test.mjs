@@ -80,6 +80,7 @@ function runtimeRepo() {
   const commit = () => { git(['add', '.']); git(['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'fixture']); return git(['rev-parse', 'HEAD']) }
   git(['init', '-q'])
   write('scripts/e2b/build-template.py', readFileSync(new URL('./build-template.py', import.meta.url)))
+  write('scripts/e2b/machine-sizes.json', readFileSync(new URL('./machine-sizes.json', import.meta.url)))
   write('scripts/e2b/official-files.py', '# recipe one')
   write('packages/daemon/worker.ts', 'worker one')
   write('package.json', JSON.stringify({ packageManager: 'pnpm@10.34.3', scripts: { build: 'one' }, dependencies: { eve: '1.0.0' } }))

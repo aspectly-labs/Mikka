@@ -180,7 +180,7 @@ export class MockAdapter implements AgentAdapter {
       name
     )
     const abort = new AbortController()
-    const inbox: string[] = []
+    const inbox: ({ kind: "text"; text: string } | { kind: "compact"; instructions?: string })[] = []
     const saveState = (next: number) =>
       writeJsonAtomic(this.stateFile(sessionId), { ...state, next })
     const speed = this.speed
@@ -214,12 +214,17 @@ export class MockAdapter implements AgentAdapter {
           return
         }
         while (inbox.length > 0) {
-          const text = inbox.shift() as string
+          const item = inbox.shift()!
+          if (item.kind === "compact") {
+            yield { type: "chunk", chunk: { type: "data-system-event", data: { kind: "status", status: "compacting" } } }
+            yield { type: "chunk", chunk: { type: "data-system-event", data: { kind: "compact_boundary", harness: "mock", trigger: "manual" } } }
+            continue
+          }
           const id = `ack-${randomUUID()}`
           yield { type: "chunk", chunk: { type: "text-start", id } }
           yield {
             type: "chunk",
-            chunk: { type: "text-delta", id, delta: `Noted: ${text}` },
+            chunk: { type: "text-delta", id, delta: `Noted: ${item.text}` },
           }
           yield { type: "chunk", chunk: { type: "text-end", id } }
         }
@@ -297,7 +302,10 @@ export class MockAdapter implements AgentAdapter {
       sessionId,
       events,
       async send(text) {
-        inbox.push(text)
+        inbox.push({ kind: "text", text })
+      },
+      async compact(instructions) {
+        inbox.push({ kind: "compact", instructions })
       },
       async cancel() {
         abort.abort()

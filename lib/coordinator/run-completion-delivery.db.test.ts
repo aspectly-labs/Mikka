@@ -22,7 +22,7 @@ test('owned run completion delivery against real PostgreSQL', { skip: !disposabl
   await admin.query(`CREATE SCHEMA ${schema}`)
   const pool = new Pool({ connectionString: target, options: `-c search_path=${schema}`, max: 16 })
   try {
-    await pool.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL,kind text NOT NULL);
+    await pool.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL,kind text NOT NULL, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid NOT NULL,"userId" text NOT NULL,status text NOT NULL,PRIMARY KEY ("workspaceId","userId"));
       CREATE TABLE bots (id uuid PRIMARY KEY,"ownerId" text NOT NULL,"workspaceId" uuid NOT NULL);
       CREATE TABLE agent_runs (id uuid PRIMARY KEY,"userId" text NOT NULL,"botId" uuid,"issueId" uuid,status text NOT NULL,"stopReason" text,"finishedAt" timestamptz);

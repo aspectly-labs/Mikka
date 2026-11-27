@@ -134,9 +134,8 @@ test('spec validation fails fast on invalid auth/origin/workspace combinations',
   )
   assert.throws(
     () =>
-      defineRoute(
-        // @ts-expect-error webhook routes require verifyWebhook
-        { auth: 'webhook-signature', origin: 'any', workspace: 'none' },
+      // @ts-expect-error webhook routes require verifyWebhook
+      defineRoute({ auth: 'webhook-signature', origin: 'any', workspace: 'none' },
         () => routeJson({ ok: true }),
       ),
     /requires a verifyWebhook function/,

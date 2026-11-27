@@ -34,6 +34,7 @@ services:
         required: false
     environment:
       LITELLM_MASTER_KEY: ${MIKKA_LITELLM_MASTER_KEY:?Set MIKKA_LITELLM_MASTER_KEY in .env}
+      MIKKA_SUBSCRIPTION_CPA_CHAT_URL: http://app:3000/mikka/api/internal/subscription/chat
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped

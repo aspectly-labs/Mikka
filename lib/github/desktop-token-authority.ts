@@ -1,4 +1,6 @@
 import 'server-only'
+import type { agentRuns } from '@/lib/db/schema'
+import { startupRepositories } from '@/lib/project-resources/startup-repositories'
 import { pool } from '@/lib/db'
 import { authenticateDevice } from '@/lib/device-link'
 import type { RunGitHubScope } from './run-token-exchange'
@@ -35,4 +37,18 @@ export async function authorizeDeviceRunGitHubToken(request: Request, deviceId: 
       AND r.status IN ('preparing','running','paused','waiting_input') AND r."stopRequestedAt" IS NULL AND r."leaseExpiresAt">now()`,
   [runId, deviceId, caller.userId, caller.scopeDeviceId ?? null])
   return run ? { runId, userId: caller.userId, ...(run.remoteKey?.startsWith('v2/github.com/') ? { remoteKey: run.remoteKey } : {}) } : null
+}
+
+/** A sibling checkout is independently authorized, before and after obtaining
+ * the read credential. The live run owns the immutable environment selection. */
+export async function authorizeEnvironmentRepositoryToken(request: Request, deviceId: string, runId: string, key: string) {
+  const primary = await authorizeDeviceRunGitHubToken(request, deviceId, runId)
+  if (!primary || !key.startsWith('v2/github.com/')) return null
+  const { rows: [run] } = await pool.query<Pick<typeof agentRuns.$inferSelect,
+    'userId' | 'workspaceId' | 'issueId' | 'deviceId' | 'deviceRepoId' | 'agentId' | 'botId' | 'baseBranch' | 'agentDefinition'>>(
+    `SELECT "userId","workspaceId","issueId","deviceId","deviceRepoId","agentId","botId","baseBranch","agentDefinition"
+      FROM agent_runs WHERE id=$1 AND "userId"=$2 AND "deviceId"=$3`, [runId, primary.userId, deviceId])
+  if (!run || !startupRepositories(run.agentDefinition?.projectExecution?.environment, primary.remoteKey ?? null).some(repo => repo.key === key)) return null
+  const { withRunProjectResources } = await import('@/lib/project-resources/run-lease')
+  return withRunProjectResources(pool, run, async () => ({ ...primary, remoteKey: key }))
 }

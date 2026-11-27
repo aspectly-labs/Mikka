@@ -752,6 +752,26 @@ with fixture.root_file_metadata():
         with self.assertRaisesRegex(ValueError, 'release_conservation_invalid desktop'):
             bt.verify_release_evidence(invalid)
 
+    def test_release_machine_sizes_require_quota_and_observed_hardware(self):
+        self.assertEqual(bt.available_sizes('claude', 8), ['small', 'medium'])
+        self.assertEqual(bt.available_sizes('codex', 16), ['small', 'medium', 'large'])
+        self.assertEqual(bt.available_sizes('claude', 32), ['small', 'medium', 'large', 'ultra'])
+        self.assertEqual(bt.available_sizes('desktop', 32), ['medium'])
+        with self.assertRaisesRegex(ValueError, 'e2b_confirmed_memory_invalid'):
+            bt.available_sizes('claude', 12)
+        observed = {'sandboxID': 'sandbox', 'templateID': 'candidate', 'cpuCount': 1, 'memoryMB': 4096}
+
+        def request(method, path, api_key):
+            self.assertEqual((method, path, api_key), ('GET', '/sandboxes/sandbox', 'fixture'))
+            return observed
+
+        bt.verify_sandbox_hardware('candidate', 'sandbox', 'small', 'fixture', request)
+        for field, mismatch in [('templateID', 'another'), ('cpuCount', True), ('memoryMB', 8192)]:
+            original, observed[field] = observed[field], mismatch
+            with self.assertRaisesRegex(ValueError, 'e2b_observed_hardware_mismatch'):
+                bt.verify_sandbox_hardware('candidate', 'sandbox', 'small', 'fixture', request)
+            observed[field] = original
+
     def test_publication_keeps_child_lifecycle_unknown_and_refuses_missing_or_overstated_observations(self):
         valid = mcp_timing('run-codex', 'codex')
         check = lambda value: bt.observed_mcp_business_evidence(value, valid['runIdHash'], 'codex')

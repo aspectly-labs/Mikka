@@ -326,3 +326,59 @@ export async function sendSuggestion(suggestionId: string): Promise<ActionResult
 export async function issueCreationAvailable(): Promise<boolean> {
   return issueMutationsEnabled()
 }
+
+/**
+ * Real Eve `/compact` (#3333 Bug 2): calls the Eve session's `…/compact` HTTP route
+ * (`ClientSession.compact()`) directly rather than sending a wrapped text message.
+ */
+export async function compactBotChat(botId: string | null = null): Promise<ActionResult<{ compacted: boolean }>> {
+  return runAction(async () => {
+    const user = await getUser()
+    const bot = await ownBot(user, botId)
+    if (!await coordinatorEnabled(user.id, bot.id)) throw new ActionFailureError('coordinatorUnavailable')
+    const { assertEveScope } = await import('@/lib/eve/scope')
+    const { eveInternalOrigin } = await import('@/lib/eve/server-client')
+    const { eveRetryHeaders } = await import('@/lib/eve/retry')
+    const { Client } = await import('eve/client')
+    const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
+    const base = new URL(eveInternalOrigin())
+    base.searchParams.set('botId', scope.botId)
+    const client = new Client({ baseUrl: base.toString(), headers: eveRetryHeaders(await headers()), redirect: 'manual' })
+    const { session } = await client.sessions.create()
+    const delivery = await session.compact()
+    const settled = await delivery.result()
+    return { compacted: settled.status !== 'failed' }
+  })
+}
+
+/**
+ * Real Eve `/clear` (#3333): clears the Eve session's conversation history via
+ * `ClientSession.clear()`.
+ */
+export async function clearBotChat(botId: string | null = null): Promise<ActionResult<{ cleared: boolean }>> {
+  return runAction(async () => {
+    const user = await getUser()
+    const bot = await ownBot(user, botId)
+    if (!await coordinatorEnabled(user.id, bot.id)) throw new ActionFailureError('coordinatorUnavailable')
+    const { assertEveScope } = await import('@/lib/eve/scope')
+    const { eveInternalOrigin } = await import('@/lib/eve/server-client')
+    const { eveRetryHeaders } = await import('@/lib/eve/retry')
+    const { Client } = await import('eve/client')
+    const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
+    const base = new URL(eveInternalOrigin())
+    base.searchParams.set('botId', scope.botId)
+    const client = new Client({ baseUrl: base.toString(), headers: eveRetryHeaders(await headers()), redirect: 'manual' })
+    const { session } = await client.sessions.create()
+    const delivery = await session.clear()
+    const settled = await delivery.result()
+    return { cleared: settled.status !== 'failed' }
+  })
+}
+
+/** Unified `/` commands for an Eve Bot / Coordinator chat (#3333). */
+export async function getBotCommands(botId: string | null = null) {
+  const user = await getUser()
+  await ownBot(user, botId)
+  const { readBotAvailableCommands } = await import('@/lib/thread-commands')
+  return readBotAvailableCommands(pool, user.id)
+}

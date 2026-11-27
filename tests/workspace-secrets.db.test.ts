@@ -6,6 +6,8 @@ import { dbUrl, seedAgent, seedPersonalWorkspace, seedUser, seedWorkspace } from
 
 test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
   const previousKey = process.env.WORKSPACE_SECRETS_KEY
+  const previousEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   const { Pool } = await import('pg')
   const pool = new Pool({ connectionString: dbUrl, max: 2 })
@@ -16,6 +18,7 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
   const { workspacePool } = await import('../lib/workspace-db')
   t.after(async () => {
     if (previousKey === undefined) delete process.env.WORKSPACE_SECRETS_KEY; else process.env.WORKSPACE_SECRETS_KEY = previousKey
+    if (previousEdition === undefined) delete process.env.MIKKA_EDITION; else process.env.MIKKA_EDITION = previousEdition
     await Promise.all([pool.end(), appPool.end(), workspacePool.end()])
   })
   const rejects = (promise: Promise<unknown>, code: string) => assert.rejects(promise, (error: unknown) => error instanceof WorkspaceError && error.code === code)
@@ -54,6 +57,74 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
         await rejects(e2b.getE2BKeyCapabilityForUser(member, other.id), 'workspaceAccessDenied')
       }
     } finally { if (previous === undefined) delete process.env.MIKKA_BYO_E2B_KEY; else process.env.MIKKA_BYO_E2B_KEY = previous }
+  })
+
+  await t.test('Cloud uses only its instance account and refuses legacy machines, cross-owner access and account changes', async t => {
+    const { bindE2BResource, e2bCreateAccount, e2bResourceAccount } = await import('../lib/secrets/e2b-resource')
+    const { environmentSnapshotScope } = await import('../lib/secrets/e2b-runtime')
+    const operation = randomUUID(), sandbox = randomUUID(), snapshot = randomUUID()
+    const previous = { ...process.env }
+    t.after(() => { for (const name of ['MIKKA_EDITION', 'E2B_API_KEY', 'E2B_TEAM_ID']) {
+      if (previous[name] === undefined) delete process.env[name]
+      else process.env[name] = previous[name]
+    } })
+    const personalKey = 'e2b_' + randomBytes(24).toString('hex')
+    process.env.MIKKA_EDITION = 'community'
+    await e2b.setE2BKey(member, ws.id, { apiKey: personalKey }, { verify: async () => ({ ok: true }) })
+    assert.equal((await e2bCreateAccount(member, randomUUID())).apiKey, personalKey)
+    process.env.MIKKA_EDITION = 'cloud'
+    delete process.env.E2B_API_KEY
+    await assert.rejects(e2bCreateAccount(member, operation), /e2b_key_missing/)
+    await rejects(e2b.setE2BKey(member, ws.id, { apiKey: personalKey }, { verify: async () => assert.fail('no provider verification') }), 'workspaceAccessDenied')
+    assert.equal((await e2b.getE2BKeyCapabilityForUser(member, ws.id)).byoEnabled, false)
+    process.env.E2B_API_KEY = 'synthetic-instance-key'
+    process.env.E2B_TEAM_ID = 'synthetic-team'
+    const created = await e2bCreateAccount(member, operation)
+    assert.equal(created.apiKey, process.env.E2B_API_KEY)
+    await bindE2BResource(member, 'sandbox', sandbox, created.scope)
+    await bindE2BResource(member, 'snapshot', snapshot, created.scope)
+    await assert.rejects(e2bResourceAccount(member, 'sandbox', randomUUID()), /e2b_unavailable/)
+    await assert.rejects(e2bResourceAccount(admin, 'sandbox', sandbox), /e2b_unavailable/)
+    process.env.E2B_API_KEY = 'synthetic-rotated-key'
+    assert.equal((await e2bResourceAccount(member, 'sandbox', sandbox)).apiKey, process.env.E2B_API_KEY)
+    process.env.E2B_TEAM_ID = 'another-team'
+    await assert.rejects(e2bResourceAccount(member, 'snapshot', snapshot), /e2b_unavailable/)
+    await assert.rejects(e2bCreateAccount(member, operation, environmentSnapshotScope()), /e2b_unavailable/)
+    process.env.MIKKA_EDITION = 'community'
+    assert.equal((await e2bCreateAccount(member, randomUUID())).apiKey, personalKey)
+    await e2b.removeE2BKey(member, ws.id)
+  })
+
+  await t.test('the resource migration distinguishes unallocated Bot placeholders from uncertain creates', async t => {
+    const operation = randomUUID(), attempted = randomUUID()
+    const { readFile } = await import('node:fs/promises')
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      for (const table of ['cloud_machines', 'thread_machines', 'sandbox_kill_retries', 'workspace_snapshots', 'e2b_resource_accounts'])
+        await client.query(`CREATE TEMP TABLE ${table} AS SELECT * FROM ${table} WITH NO DATA`)
+      await client.query(`INSERT INTO cloud_machines("ownerId","operationId",state,"runtimeReady")
+        VALUES($1,$2,'sleeping',false),($1,$3,'error',false)`, [admin, operation, attempted])
+      await client.query(await readFile(new URL('../drizzle/20261126034000_e2b_resource_accounts.sql', import.meta.url), 'utf8'))
+      const { rows } = await client.query('SELECT id,scope FROM e2b_resource_accounts')
+      assert.deepEqual(rows, [{ id: attempted, scope: 'personal' }])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+    const previous = { MIKKA_EDITION: process.env.MIKKA_EDITION, E2B_API_KEY: process.env.E2B_API_KEY }
+    t.after(() => {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    })
+    process.env.MIKKA_EDITION = 'cloud'
+    process.env.E2B_API_KEY = 'synthetic-cloud-instance-key'
+    const { bindE2BResource, e2bCreateAccount } = await import('../lib/secrets/e2b-resource')
+    await bindE2BResource(admin, 'operation', attempted, 'personal')
+    assert.equal((await e2bCreateAccount(admin, operation)).apiKey, 'synthetic-cloud-instance-key')
+    await assert.rejects(e2bCreateAccount(admin, attempted), /e2b_unavailable/)
   })
 
   await t.test('the recordAudit hook writes name-only rows inside the write transaction', async () => {
@@ -532,6 +603,8 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
 
   // ---- #436 QA round (cases from qa-pr436.db.test.ts) ----
   const crypto = await import('../lib/secrets/crypto')
+  const withoutDbSamples = (lines: string[]) => lines.filter(line =>
+    !line.includes('"msg":"db_sample"') && !line.includes('"msg":"db_transport_sample"'))
   const captureLogs = async <T>(work: () => Promise<T>) => {
     const lines: string[] = [], original = { log: console.log, info: console.info, warn: console.warn, error: console.error, debug: console.debug }
     for (const k of Object.keys(original) as (keyof typeof original)[]) console[k] = (...args: unknown[]) => { lines.push(args.map(a => a instanceof Error ? `${a.stack} ${JSON.stringify(a)} ${String((a as { cause?: unknown }).cause)}` : typeof a === 'string' ? a : JSON.stringify(a)).join(' ')) }
@@ -556,7 +629,8 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
     await pool.query('update workspace_secrets t set ciphertext=s.ciphertext, iv=s.iv from workspace_secrets s where s.id=$1 and t.id=$2', [source.id, crossWs.id])
     const { result, lines } = await captureLogs(() => store.listWorkspaceSecrets(admin, b.id))
     assert.ok('ok' in result && !JSON.stringify(result).includes(V))
-    assert.deepEqual(lines, [])
+    assert.ok(lines.every(line => !line.includes(V)))
+    assert.deepEqual(withoutDbSamples(lines), [])
     await assert.rejects(stored(crossWs.id), 'AAD binds the row: moved ciphertext does not open')
     assert.equal(await stored(source.id), V)
   })
@@ -570,7 +644,7 @@ test('workspace secrets and E2B key', { skip: !dbUrl }, async t => {
     const { result, lines } = await captureLogs(() => e2b.getUserE2BApiKey(thief, on))
     const error = (result as { error?: unknown }).error
     assert.ok(error instanceof e2b.E2BKeyError && error.code === 'e2b_unavailable', 'mapped, not the raw crypto Error')
-    assert.deepEqual(lines, [`[secrets] e2b_unavailable id=${thief}`])
+    assert.deepEqual(withoutDbSamples(lines), [`[secrets] e2b_unavailable id=${thief}`])
     assert.ok(!JSON.stringify([error, String((error as Error).stack), lines]).includes(K))
     await e2b.removeE2BKey(admin, a.id)
   })

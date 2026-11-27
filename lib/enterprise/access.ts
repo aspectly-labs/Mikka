@@ -1,15 +1,18 @@
 import 'server-only'
+import { currentRequestScope } from '@/apps/api/src/context'
+import { workspaceFactorJobMatches } from './workspace-factor-job'
 import { pool } from '@/lib/db'
 import { workspaceDb } from '@/lib/workspace-db'
 import { eq, inArray } from 'drizzle-orm'
 import type { PoolClient } from 'pg'
+import { workspaces as tenants } from '@/lib/db/workspace-schema'
 import { organizationWorkspaces } from '@/lib/db/governance-schema'
 import { actingContext } from '@/lib/activity-actor'
 import { WorkspaceError } from '@/lib/workspace-error'
 import { enterprisePrincipal, type EnterprisePrincipal, type EnterpriseReader } from './principal'
 import { enterpriseAccessAllowed, type EnterpriseAccessState } from './access-policy'
 import { currentExecutionAuthority } from './execution-authority'
-import { organizationTwoFactorAllowed } from './two-factor'
+import { organizationTwoFactorAllowed, twoFactorSessionState } from './two-factor'
 export { enterpriseAccessAllowed } from './access-policy'
 
 type AccessPrincipal = EnterprisePrincipal | { kind: 'execution'; credentialValid: boolean }
@@ -23,7 +26,7 @@ async function currentPrincipal(userId: string, workspaceId: string, explicit: E
   if (acting?.tokenWorkspaceId && acting.tokenWorkspaceId !== workspaceId) return undefined
   const execution = await currentExecutionAuthority(userId, workspaceId, query)
   if (execution !== undefined) return { kind: 'execution', credentialValid: execution }
-  if (acting) return undefined
+  if (acting || workspaceFactorJobMatches(userId, workspaceId) && !currentRequestScope()) return undefined
   const { getSession } = await import('@/lib/session')
   const session = await getSession()
   return session?.user.id === userId ? { kind: 'session', sessionId: session.session.id } : undefined
@@ -33,10 +36,24 @@ async function currentPrincipal(userId: string, workspaceId: string, explicit: E
 export type WorkspaceLinkExecutor = Pick<typeof workspaceDb, 'select'>
 export type EnterpriseAuthExecutor = Pick<PoolClient, 'query'>
 export async function enterpriseWorkspaceAllowed(userId: string, workspaceId: string, explicit?: EnterprisePrincipal, executor: WorkspaceLinkExecutor = workspaceDb, appExecutor: EnterpriseAuthExecutor = pool): Promise<boolean> {
-  const links = await executor.select({ organizationId: organizationWorkspaces.organizationId }).from(organizationWorkspaces).where(eq(organizationWorkspaces.workspaceId, workspaceId)).limit(1)
-  const organizationId = links[0]?.organizationId
-  if (!organizationId) return true
-  return organizationAccess(userId, workspaceId, organizationId, explicit, appExecutor)
+  const [link] = await executor.select({ organizationId: organizationWorkspaces.organizationId, factorAt: tenants.twoFactorRequiredAt })
+    .from(tenants).leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, tenants.id)).where(eq(tenants.id, workspaceId)).limit(1)
+  if (link?.factorAt && !await checkWorkspaceFactor(userId, workspaceId, explicit, appExecutor, link.factorAt)) return false
+  return !link?.organizationId || organizationAccess(userId, workspaceId, link.organizationId, explicit, appExecutor)
+}
+
+async function checkWorkspaceFactor(userId: string, workspaceId: string, explicit: EnterprisePrincipal | undefined, database: EnterpriseAuthExecutor, requiredAt: Date) {
+  const principal = await currentPrincipal(userId, workspaceId, explicit, database)
+  if (!principal) {
+    if (explicit || actingContext.getStore() || currentRequestScope() || !workspaceFactorJobMatches(userId, workspaceId)) return false
+    return (await twoFactorSessionState(userId, null, database)).enabled
+  }
+  if (principal.kind === 'execution' && !principal.credentialValid) return false
+  if (principal.kind !== 'session') return (await twoFactorSessionState(userId, null, database)).enabled
+  // Existing sessions retain access until the next sign-in.
+  const { rowCount } = await database.query(`SELECT 1 FROM session WHERE id=$1 AND "userId"=$2
+    AND "expiresAt">now() AND "createdAt"<$3`, [principal.sessionId, userId, requiredAt])
+  return Boolean(rowCount) || (await twoFactorSessionState(userId, principal.sessionId, database)).verified
 }
 async function organizationAccessState(userId: string, organizationId: string, appExecutor: EnterpriseAuthExecutor) {
   const { rows } = await appExecutor.query<{ enforceSso: boolean; allowMachineCredentials: boolean; managedRevoked: boolean; requireTwoFactor: boolean }>(`select
@@ -109,12 +126,14 @@ export async function requireEnterpriseOrganization(userId: string, organization
 export async function requireEnterpriseWorkspace(userId: string, workspaceId: string, principal?: EnterprisePrincipal, executor?: WorkspaceLinkExecutor, appExecutor?: EnterpriseAuthExecutor) {
   if (!await enterpriseWorkspaceAllowed(userId, workspaceId, principal, executor, appExecutor)) throw new WorkspaceError('workspaceAccessDenied')
 }
-async function filterWorkspaceOrganizations<T extends { id: string }>(reader: string | EnterpriseReader, workspaces: T[], organizations: ReadonlyMap<string, string | null>, appExecutor: EnterpriseAuthExecutor = pool): Promise<T[]> {
+async function filterWorkspaceOrganizations<T extends { id: string }>(reader: string | EnterpriseReader, workspaces: T[],
+  links: ReadonlyMap<string, { organizationId: string | null; factorAt: Date | null }>, appExecutor: EnterpriseAuthExecutor = pool): Promise<T[]> {
   const userId = typeof reader === 'string' ? reader : reader.id
   const principal = typeof reader === 'string' ? undefined : reader[enterprisePrincipal]
-  const checks = await Promise.all(workspaces.map(workspace => {
-    const organizationId = organizations.get(workspace.id)
-    return organizationId ? organizationAccess(userId, workspace.id, organizationId, principal, appExecutor) : true
+  const checks = await Promise.all(workspaces.map(async workspace => {
+    const link = links.get(workspace.id)
+    if (link?.factorAt && !(await checkWorkspaceFactor(userId, workspace.id, principal, appExecutor, link.factorAt))) return false
+    return link?.organizationId ? organizationAccess(userId, workspace.id, link.organizationId, principal, appExecutor) : true
   }))
   return workspaces.filter((_, index) => checks[index])
 }
@@ -123,12 +142,13 @@ async function filterWorkspaceOrganizations<T extends { id: string }>(reader: st
  * Workspace lock whose same-transaction link writes invalidate its projection.
  * Never pass request-supplied links. Session, directory and organization policy
  * are checked on every call, including reads under the same lock. */
-export function filterEnterpriseWorkspaceLinks<T extends { id: string; organizationId: string | null }>(reader: string | EnterpriseReader, workspaces: T[], appExecutor?: EnterpriseAuthExecutor): Promise<T[]> {
-  return filterWorkspaceOrganizations(reader, workspaces, new Map(workspaces.map(workspace => [workspace.id, workspace.organizationId])), appExecutor)
+export function filterEnterpriseWorkspaceLinks<T extends { id: string; organizationId: string | null; factorAt: Date | null }>(reader: string | EnterpriseReader, workspaces: T[], appExecutor?: EnterpriseAuthExecutor): Promise<T[]> {
+  return filterWorkspaceOrganizations(reader, workspaces, new Map(workspaces.map(workspace => [workspace.id, workspace])), appExecutor)
 }
 
 export async function filterEnterpriseWorkspaces<T extends { id: string }>(reader: string | EnterpriseReader, workspaces: T[], appExecutor?: EnterpriseAuthExecutor): Promise<T[]> {
   if (!workspaces.length) return workspaces
-  const links = await workspaceDb.select().from(organizationWorkspaces).where(inArray(organizationWorkspaces.workspaceId, workspaces.map(workspace => workspace.id)))
-  return filterWorkspaceOrganizations(reader, workspaces, new Map(links.map(link => [link.workspaceId, link.organizationId])), appExecutor)
+  const links = await workspaceDb.select({ workspaceId: tenants.id, organizationId: organizationWorkspaces.organizationId, factorAt: tenants.twoFactorRequiredAt })
+    .from(tenants).leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, tenants.id)).where(inArray(tenants.id, workspaces.map(workspace => workspace.id)))
+  return filterWorkspaceOrganizations(reader, workspaces, new Map(links.map(link => [link.workspaceId, link])), appExecutor)
 }

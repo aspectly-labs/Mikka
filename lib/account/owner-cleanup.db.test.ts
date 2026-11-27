@@ -75,6 +75,32 @@ test('account cleanup calls only owner-scoped adapters and retains unresolved ex
     assert.equal((await database.query('SELECT state FROM thread_machines WHERE "runId"=$1', [peerRun])).rows[0].state, 'running')
     assert.equal((await database.query('SELECT "sandboxId" FROM cloud_machines WHERE "workspaceId"=$1 AND "ownerId"=$2', [workspace.id, subject])).rows[0].sandboxId, botSandbox)
   })
+  await t.test('hosted account deletion discloses legacy external E2B custody and never requires a personal key', async t => {
+    const previousEdition = process.env.MIKKA_EDITION
+    process.env.MIKKA_EDITION = 'cloud'
+    t.after(() => { if (previousEdition === undefined) delete process.env.MIKKA_EDITION; else process.env.MIKKA_EDITION = previousEdition })
+    const subject = await seedUser(database, 'external-e2b-owner')
+    const workspace = await seedWorkspace(database, subject, [{ userId: subject, role: 'admin' }])
+    const botSandbox = randomUUID(), retrySandbox = randomUUID(), threadSandbox = randomUUID(), snapshot = randomUUID()
+    const operation = randomUUID(), threadOperation = randomUUID()
+    const agentId = await seedAgent(database, subject)
+    const runId = await seedRun(database, { userId: subject, agentId, workspaceId: workspace.id, status: 'succeeded' })
+    await database.query('INSERT INTO cloud_machines("workspaceId","ownerId","operationId","sandboxId") VALUES($1,$2,$3,$4)',
+      [workspace.id, subject, operation, botSandbox])
+    await database.query(`INSERT INTO thread_machines("runId","workspaceId","ownerId","sandboxId","snapshotId","filesystemSnapshotId","operationId",state)
+      VALUES($1,$2,$3,$4,'codex',$5,$6,'paused')`, [runId, workspace.id, subject, threadSandbox, snapshot, threadOperation])
+    await database.query('INSERT INTO sandbox_kill_retries("sandboxId","ownerId") VALUES($1,$2)', [retrySandbox, subject])
+    await database.query(`INSERT INTO e2b_resource_accounts(kind,id,"ownerId",scope)
+      SELECT kind,id,$1,'personal' FROM unnest($2::text[],$3::text[]) AS r(kind,id)`,
+      [subject, ['sandbox','sandbox','sandbox','snapshot','operation','operation'],
+        [botSandbox, retrySandbox, threadSandbox, snapshot, operation, threadOperation]])
+    const options = { mainPool: database, workspacePool: database }
+    const requested = await requestAccountDeletion(subject, `${subject}@example.invalid`, randomUUID(), options)
+    assert.ok(requested.ok)
+    const done = await resumeAccountDeletion(requested.id, options)
+    assert.equal(done.stage, 'completed', JSON.stringify([done.blockedReasons, done.blockerErrors]))
+    assert.ok(done.warnings.includes('e2b_external_resources_managed_at_provider'))
+  })
   await t.test('a live plan is cancelled while its workspace row still exists, and a cancel that cannot be confirmed aborts the deletion', async () => {
     // Stripe is the only party that can stop the charge, and the Customer Portal that could
     // cancel it goes with the workspace. Shared tenants keep the plan they pay for themselves.

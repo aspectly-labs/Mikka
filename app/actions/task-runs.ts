@@ -8,6 +8,7 @@ import { singleFlight } from '@/lib/single-flight'
 import { readCompactRunFailure, runFailureBrief, type CompactRunFailure } from '@/lib/run-failure-projection'
 
 import { createHash } from 'node:crypto'
+import { readEnv } from '@/lib/env/server'
 import { headers } from '@/lib/server-runtime/headers'
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { deviceOnlineStates, deviceSessionOpen } from '@/lib/device-presence'
@@ -512,15 +513,62 @@ export async function forkThread(runId: string, mode?: 'full' | 'summary'): Prom
   return run ? { runId: run.id } : { error: 'runNotFound' }
 }
 
-export async function updateThread(runId: string, input: { taskId?: string | null; tags?: string[] }): Promise<ActionResult<{ updated: true }, 'runNotFound' | 'taskNotFound' | 'validationGeneric'>> {
+export async function updateThread(runId: string, input: { taskId?: string | null; tags?: string[]; folder?: string | null }): Promise<ActionResult<{ updated: true }, 'runNotFound' | 'taskNotFound' | 'validationGeneric'>> {
   const { reader } = await conversationActor()
   const lc = await import('@/lib/thread-lifecycle')
   const taskId = input?.taskId === undefined ? undefined : input.taskId === null ? null : typeof input.taskId === 'string' && lc.isRunId(input.taskId) ? input.taskId : undefined
   const tags = input?.tags === undefined ? undefined : Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0 && tag.trim().length <= 60).slice(0, 20).map(tag => tag.trim()) : undefined
-  if (!lc.isRunId(runId) || (input?.taskId !== undefined && taskId === undefined) || (input?.tags !== undefined && tags === undefined) || (taskId === undefined && tags === undefined))
+  const ownerLc = await import('@/lib/thread-lifecycle-owner')
+  const folder = input?.folder === undefined ? undefined : ownerLc.normalizeThreadFolder(input.folder)
+  if (!lc.isRunId(runId) || (input?.taskId !== undefined && taskId === undefined) || (input?.tags !== undefined && tags === undefined) || (input?.folder !== undefined && folder === undefined) || (taskId === undefined && tags === undefined && folder === undefined))
     return { error: 'validationGeneric' }
-  const run = await lc.patchThread(reader, runId, { ...(taskId !== undefined ? { taskId } : {}), ...(tags ? { tags } : {}) })
+  const run = await lc.patchThread(reader, runId, { ...(taskId !== undefined ? { taskId } : {}), ...(tags ? { tags } : {}), ...(folder !== undefined ? { folder } : {}) })
   return run === 'forbidden' ? { error: 'taskNotFound' } : run ? { updated: true } : { error: 'runNotFound' }
+}
+
+/** Read or update a thread's folder (#3333 `/folder`). Owner only. */
+export async function threadFolder(runId: string, folder?: string | null): Promise<ActionResult<{ threadId: string; folder: string | null }, 'runNotFound' | 'validationGeneric'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const lifecycle = await import('@/lib/thread-lifecycle-owner')
+  const normalized = folder === undefined ? undefined : lifecycle.normalizeThreadFolder(folder)
+  if (folder !== undefined && normalized === undefined) return { error: 'validationGeneric' }
+  const { pool } = await import('@/lib/db')
+  const result = await lifecycle.threadFolder(pool, { ownerId, workspaceId, runId }, normalized)
+  if (!result) return { error: 'runNotFound' }
+  if (folder !== undefined) await threadListsChanged([result.threadId])
+  return result
+}
+
+/** Distinct thread folders for the owner in the active workspace (#3333 `/folder`). */
+export async function listThreadFolders(): Promise<{ folders: string[] }> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const { listWorkspaceThreadFolders } = await import('@/lib/thread-lifecycle-owner')
+  return { folders: await listWorkspaceThreadFolders(pool, ownerId, workspaceId) }
+}
+
+/** Connected Slack channels for composer `#` mentions (#3333); returns `{ connected: false, channels: [] }` when Slack is not connected. */
+export async function listComposerSlackChannels(expectedWorkspaceId?: string): Promise<{ connected: boolean; channels: { id: string; name: string; private: boolean }[] }> {
+  const { ownerId, workspaceId } = await conversationActor()
+  if (expectedWorkspaceId && expectedWorkspaceId !== workspaceId) throw new ActionFailureError('validationGeneric')
+  const app = readEnv('SLACK_APP_ID')
+  if (!app) return { connected: false, channels: [] }
+  const { slackInstallationChannels } = await import('@/lib/slack/automation-channels')
+  try {
+    const channels = await slackInstallationChannels(app, ownerId, workspaceId)
+    if (channels === null) return { connected: false, channels: [] }
+    return { connected: true, channels }
+  } catch {
+    return { connected: false, channels: [] }
+  }
+}
+
+export async function deleteAllThreads(input: { workspaceId: string; confirm: true }) {
+  if (input?.confirm !== true || !input.workspaceId) return { error: 'validationGeneric' } as const
+  const { currentWorkspaceActor } = await import('@/lib/workspace-admin/current')
+  const { userId: ownerId, workspaceId } = await currentWorkspaceActor(input.workspaceId)
+  const { deleteOwnedWorkspaceThreads } = await import('@/lib/settings/delete-threads')
+  return deleteOwnedWorkspaceThreads(ownerId, workspaceId)
 }
 
 export async function deleteThread(runId: string): Promise<ActionResult<{ recoveryDays: number }, 'runNotFound'>> {
@@ -568,10 +616,17 @@ export async function listConversationSidebar() {
 }
 
 /** A workspace switch between composing and searching invalidates the old picker. */
-export async function findThreadReferences(expectedWorkspaceId: string, query: string, kind?: 'task' | 'thread' | 'pr' | 'bot') {
+export async function findThreadReferences(
+  expectedWorkspaceId: string,
+  query: string,
+  kind?: 'task' | 'thread' | 'pr' | 'bot' | 'device' | 'subagent' | 'plugin',
+  runId?: string,
+) {
   const { reader, workspaceId } = await conversationActor()
+  const { isRunId } = await import('@/lib/thread-lifecycle')
   if (expectedWorkspaceId !== workspaceId || typeof query !== 'string' || query.length > 120 ||
-    (kind !== undefined && !['task', 'thread', 'pr', 'bot'].includes(kind))) throw new ActionFailureError('validationGeneric')
+    (kind !== undefined && !['task', 'thread', 'pr', 'bot', 'device', 'subagent', 'plugin'].includes(kind)) ||
+    (runId !== undefined && !isRunId(runId))) throw new ActionFailureError('validationGeneric')
   const { searchThreadReferences } = await import('@/lib/thread-reference-search')
-  return searchThreadReferences(reader, workspaceId, query.trim(), kind)
+  return searchThreadReferences(reader, workspaceId, query.trim(), kind, runId ? { runId } : undefined)
 }

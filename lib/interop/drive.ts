@@ -72,7 +72,8 @@ export async function resolveDriveTarget(principal: InteropPrincipal, input: { s
     case 'environment': {
       if (!uuid.safeParse(input.scopeId).success) denied()
       await memberWorkspace(principal)
-      const { rowCount } = await workspacePool.query('SELECT 1 FROM workspace_environments WHERE id=$1 AND "workspaceId"=$2 AND "archivedAt" IS NULL', [input.scopeId, workspaceId])
+      const { rowCount } = await workspacePool.query(`SELECT 1 FROM workspace_environments WHERE id=$1 AND "workspaceId"=$2 AND "archivedAt" IS NULL
+        AND (scope='workspace' OR "ownerId"=$3)`, [input.scopeId, workspaceId, principal.kind === 'bot' ? null : principalReader(principal)?.id])
       if (!rowCount) denied()
       return { scope: 'environment', driveScope: 'environment', scopeId: input.scopeId!, workspaceId, storageOwner: agentDriveOwner(workspaceId, 'environment', input.scopeId!) }
     }

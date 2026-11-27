@@ -292,3 +292,137 @@ test('slack binding attaches a Slack thread to this thread only for its owner', 
   assert.equal(bound.boundRunId, rootId)
   assert.equal(await bindSlackThread(outsider, rootId, { linkId, channelId: 'C1', threadTs: '1720.0001' }), null)
 })
+
+test('continuing a completed side thread preserves its side chain and leaves the primary Factory task unchanged', async () => {
+  const { rootId, workspace, agentId, issueId } = await fixture()
+  const deviceId = randomUUID(), repoId = randomUUID()
+  const remote = 'https://github.com/acme/side-cont.git'
+  await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,harnesses) VALUES ($1,$2,'local-side','local',true,'[{"harness":"codex","installed":true}]'::jsonb)`, [deviceId, owner.id])
+  await pool.query(`UPDATE agents SET "deviceId"=$2, harness='codex' WHERE id=$1`, [agentId, deviceId])
+  await pool.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath","remoteUrl") VALUES ($1,$2,$3,$4,$5)`, [repoId, deviceId, owner.id, remoteKey(remote), remote])
+  await pool.query(`UPDATE agent_runs SET "deviceId"=$2,"deviceRepoId"=$3,"agentDefinition"=$4::jsonb WHERE id=$1`, [
+    rootId, deviceId, repoId, JSON.stringify({ harness: 'codex', model: 'gpt-5.4' }),
+  ])
+
+  // Primary task has an active/passed Factory task and attempt referencing rootId.
+  const factoryTaskId = randomUUID(), attemptId = randomUUID(), primarySourceEventId = randomUUID()
+  const seedClient = await pool.connect()
+  try {
+    await seedClient.query('BEGIN')
+    await seedClient.query(
+      `INSERT INTO factory_tasks (id,"userId","workspaceId","issueId","sourceEventId",route,stage,status,"attemptId",reason)
+       VALUES ($1,$2,$3,$4,$5,'{}'::jsonb,'execute','passed',$6,'primary done')`,
+      [factoryTaskId, owner.id, workspace.id, issueId, primarySourceEventId, attemptId],
+    )
+    await seedClient.query(
+      `INSERT INTO factory_attempts (id,"taskId",stage,ordinal,position,status,"runId",reason)
+       VALUES ($1,$2,'execute',1,1,'passed',$3,'primary attempt')`,
+      [attemptId, factoryTaskId, rootId],
+    )
+    await seedClient.query('COMMIT')
+  } catch (error) { await seedClient.query('ROLLBACK'); throw error } finally { seedClient.release() }
+
+  const side = await spawnThread(owner, rootId, { relation: 'side', question: 'What does helper X do?' })
+  assert.ok(side)
+  kept.push(side.id)
+  await pool.query(`UPDATE agent_runs SET status='succeeded' WHERE id=$1`, [side.id])
+
+  const { sendThreadMessage } = await import('../lib/thread-continue.js')
+  const followUp = await sendThreadMessage(owner.id, side.id, 'Can you also check caller Y?', 'user', randomUUID())
+  assert.equal(followUp.continued, true)
+  assert.notEqual(followUp.runId, side.id)
+  kept.push(followUp.runId)
+
+  const { rows: [continuedRun] } = await pool.query<{ continuesRunId: string | null; threadRelation: string | null; status: string }>(
+    `SELECT "continuesRunId","threadRelation",status FROM agent_runs WHERE id=$1`,
+    [followUp.runId],
+  )
+  assert.equal(continuedRun.continuesRunId, side.id)
+  assert.equal(continuedRun.threadRelation, 'side')
+  assert.equal(continuedRun.status, 'queued')
+
+  // Primary Factory task's sourceEventId, attemptId, and status must stay completely untouched.
+  const { rows: [factoryAfter] } = await pool.query<{ sourceEventId: string; attemptId: string; status: string }>(
+    `SELECT "sourceEventId","attemptId",status FROM factory_tasks WHERE id=$1`,
+    [factoryTaskId],
+  )
+  assert.deepEqual(factoryAfter, { sourceEventId: primarySourceEventId, attemptId, status: 'passed' })
+  // Primary task latestTaskRun must still return rootId, never the side continuation.
+  const { latestTaskRun } = await import('../lib/thread-dispatch.js')
+  assert.equal((await latestTaskRun(pool, owner.id, issueId))?.id, rootId)
+  // Even if the side continuation switches models, latestThreadRunModel for the primary task retains rootId's model.
+  await pool.query(`UPDATE agent_runs SET "agentDefinition"=$2::jsonb WHERE id=$1`, [
+    followUp.runId, JSON.stringify({ harness: 'codex', model: 'gpt-5.4-pro' }),
+  ])
+  const { latestThreadRunModel } = await import('../lib/computer/run-model.js')
+  assert.equal((await latestThreadRunModel(pool, owner.id, issueId, agentId))?.model, 'gpt-5.4')
+})
+
+test('queued /compact preserves replay across jsonb key order, blocks Send Now without failing, and syncs control on edit', async () => {
+  const { rootId, agentId } = await fixture()
+  const deviceId = randomUUID(), repoId = randomUUID()
+  const remote = 'https://github.com/acme/queue-ctrl.git'
+  await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,harnesses) VALUES ($1,$2,'local-q','local',true,'[{"harness":"claude_code","installed":true}]'::jsonb)`, [deviceId, owner.id])
+  await pool.query(`UPDATE agents SET "deviceId"=$2, harness='claude_code' WHERE id=$1`, [agentId, deviceId])
+  await pool.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath","remoteUrl") VALUES ($1,$2,$3,$4,$5)`, [repoId, deviceId, owner.id, remoteKey(remote), remote])
+  await pool.query(`UPDATE agent_runs SET status='running',"deviceId"=$2,"deviceRepoId"=$3,"agentDefinition"=$4::jsonb WHERE id=$1`, [
+    rootId, deviceId, repoId, JSON.stringify({ harness: 'claude_code', model: 'claude-sonnet-4-6' }),
+  ])
+
+  const { readRunChain } = await import('../lib/run-chain.js')
+  const { queueThreadReply, readQueuedReplyReceipt, threadDeliveryView, deliverQueuedThreadReply, editQueuedThreadReply } = await import('../lib/thread-delivery-queue.js')
+  const chain = await readRunChain(pool, owner.id, rootId)
+  assert.ok(chain)
+
+  const reqId = randomUUID()
+  const control = { kind: 'compact' as const, instructions: 'Keep API decisions' }
+  await queueThreadReply(pool, owner.id, chain, '/compact Keep API decisions', reqId, rootId, control)
+
+  // Replay with keys in different JS order must match jsonb-stored control without submissionConflict.
+  const reordered = { instructions: 'Keep API decisions', kind: 'compact' as const }
+  const receipt = await readQueuedReplyReceipt(pool, owner.id, chain, '/compact Keep API decisions', reqId, rootId, reordered)
+  assert.equal(receipt?.runId, rootId)
+
+  // View exposes canSendNow: false for queued /compact.
+  const viewBefore = await threadDeliveryView(pool, owner.id, chain.rootRunId, chain.latestRunId)
+  assert.equal(viewBefore.queued.length, 1)
+  const queueId = viewBefore.queued[0]!.id
+  assert.equal(viewBefore.queued[0]!.canSendNow, false)
+
+  // Send Now on queued /compact rejects without marking the queue entry failed.
+  await assert.rejects(
+    () => deliverQueuedThreadReply(pool, owner.id, rootId, queueId),
+    (err: unknown) => err instanceof Error && 'code' in err && (err as { code?: string }).code === 'threadDeliveryUnavailable',
+  )
+  const { rows: [afterSendNow] } = await pool.query<{ status: string }>(`SELECT status FROM thread_queued_messages WHERE id=$1`, [queueId])
+  assert.equal(afterSendNow.status, 'queued')
+
+  // Editing into a blocked Claude slash command is refused without mutating text or control.
+  const blockedEdit = await editQueuedThreadReply(pool, owner.id, rootId, queueId, '/login')
+  assert.equal(blockedEdit, 'invalid')
+
+  // Editing into plain text clears the stale /compact control atomically and restores canSendNow.
+  const plainEdit = await editQueuedThreadReply(pool, owner.id, rootId, queueId, 'Summarize open questions')
+  assert.equal(plainEdit, 'edited')
+  const { rows: [controlAfter] } = await pool.query(`SELECT 1 FROM coordinator_events WHERE "userId"=$1 AND "dedupeKey"=$2`, [owner.id, `thread-queue-control:${queueId}`])
+  assert.equal(controlAfter, undefined)
+  const viewAfter = await threadDeliveryView(pool, owner.id, chain.rootRunId, chain.latestRunId)
+  assert.equal(viewAfter.queued[0]!.text, 'Summarize open questions')
+  assert.equal(viewAfter.queued[0]!.canSendNow, true)
+
+  // Editing a reply queued with Send as text (`client_composed`) preserves literal delivery even if text starts with `/compact`.
+  const literalReqId = randomUUID()
+  await queueThreadReply(pool, owner.id, chain, '/compact refers to the command', literalReqId, rootId, { kind: 'client_composed' })
+  const viewWithLiteral = await threadDeliveryView(pool, owner.id, chain.rootRunId, chain.latestRunId)
+  const literalRow = viewWithLiteral.queued.find(row => row.requestId === literalReqId)
+  assert.ok(literalRow)
+  assert.equal(literalRow.canSendNow, true)
+  const editedLiteral = await editQueuedThreadReply(pool, owner.id, rootId, literalRow.id, '/compact explains how compaction works')
+  assert.equal(editedLiteral, 'edited')
+  const { rows: [literalControl] } = await pool.query<{ kind: string }>(
+    `SELECT payload->'threadQueuedControl'->>'kind' AS kind FROM coordinator_events WHERE "userId"=$1 AND "dedupeKey"=$2`,
+    [owner.id, `thread-queue-control:${literalRow.id}`],
+  )
+  assert.equal(literalControl?.kind, 'client_composed')
+})
+

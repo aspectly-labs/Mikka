@@ -24,7 +24,7 @@ test('real PG: committed invalidations, savepoint rollback, and canonical owner/
     await pool.query(`CREATE TABLE issues (id uuid PRIMARY KEY,"userId" text,"workspaceId" uuid,"ownershipState" text NOT NULL,scope text NOT NULL);
       CREATE TABLE bots (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid);
       CREATE TABLE factory_tasks (id uuid PRIMARY KEY,"userId" text,"issueId" uuid,"botId" uuid,"workspaceId" uuid,status text);
-      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text,kind text);
+      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text,kind text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,status text);
       CREATE TABLE mikka_team_issues ("issueId" uuid PRIMARY KEY,"workspaceId" uuid);`)
     const personal = randomUUID(), a = randomUUID(), b = randomUUID()

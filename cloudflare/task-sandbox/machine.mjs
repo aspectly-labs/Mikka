@@ -5,6 +5,8 @@ import { machineGrant, sameGrant, workspaceName, liveUntil, verifyCheckpoint, WO
 import { TaskFiles } from './files.mjs'
 import { processOptions, taskProcess, stopTaskProcesses } from './process.mjs'
 import { TaskWorkspace } from './workspace.mjs'
+import { readComputeMeter, measuredComputeInterval } from './compute-meter.mjs'
+import { capturePortableWorkspace, readPortableWorkspace, deletePortableWorkspace, stagePortableWorkspace } from './portable-workspace.mjs'
 import { routeReviewBrowser, review, reviewBrowser } from './review-operations.mjs'
 import { captureReviewExit, prepareReviewGuest, restoreReviewExit } from './review-guest.mjs'
 
@@ -20,8 +22,11 @@ export default class TaskMachines extends WorkerEntrypoint {
   }
   open(identity) { return this.#endpoint(identity).open(identity) }
   park(identity) { return this.#endpoint(identity).park(identity) }
+  portableArchive(identity, operation, id) { return this.#endpoint(identity).portableArchive(identity, operation, id) }
+  stagePortableArchive(identity, bytes) { return this.#endpoint(identity).stagePortableArchive(identity, bytes) }
   review(identity, op) { return this.#endpoint(identity).review(identity, op) }
   status(identity) { return this.#endpoint(identity).status(identity) }
+  meter(identity, index, rollover) { return this.#endpoint(identity).meter(identity, index, rollover) }
   spawn(identity, options) { return this.#endpoint(identity).spawn(identity, options) }
   removePath(identity, path, options) { return this.#endpoint(identity).removePath(identity, path, options) }
   readFile(identity, path) { return this.#endpoint(identity).readFile(identity, path) }
@@ -97,6 +102,10 @@ export class TaskMachine extends DurableObject {
       const prior = await store.get('run')
       if (prior && sameGrant(prior.grant, grant)) {
         if (Boolean(prior.review) !== Boolean(review)) throw Error('Task machine run mismatch')
+        const portable = grant.portableWorkspace
+        const expected = prior.grant.portableWorkspace
+        if (portable && (!expected || portable.size !== expected.size || portable.sha256 !== expected.sha256 ||
+          portable.headSha !== expected.headSha)) throw Error('Task machine run mismatch')
         verifyCheckpoint(grant.requiredCheckpoint, this.ctx.id.toString(), prior.grant.requiredCheckpoint)
         verifyCheckpoint(prior.grant.requiredCheckpoint, this.ctx.id.toString(), grant.requiredCheckpoint)
         if (prior.settledAt || prior.stoppedAt) throw new Error('Task machine run already settled')
@@ -141,12 +150,13 @@ export class TaskMachine extends DurableObject {
       }
       try {
         await this.startImage(run)
+        if (grant.metered) await store.put('compute-meter:' + grant.operationId, { index: 0, sample: await readComputeMeter(this.ctx.container) })
         // The native product image must protect the kernel before importing
         // task files, registering the daemon or granting its first process.
         const reviewBoot = this.env.NATIVE_TASK_EGRESS === 'direct'
           ? await prepareReviewGuest(this.ctx.container)
           : undefined
-        const restored = await this.workspace.restore()
+        const restored = grant.portableWorkspace ? false : await this.workspace.restore()
         if (review) {
           if (!restored || !reviewBoot) throw Error('Original task review checkout unavailable')
           await restoreReviewExit(this.ctx.container, witness)
@@ -181,20 +191,25 @@ export class TaskMachine extends DurableObject {
       return this.receipt(run)
     })
   }
-  withMachine(identity, operation) {
+  withMachine(identity, operation, allowPortableCapture = false) {
     const grant = machineGrant(identity)
     return this.exclusive(async () => {
       const run = await this.current(grant)
       if (run.review) throw Error('Task workspace has an exclusive human reviewer')
-      liveUntil({ expiresAt: Math.min(grant.expiresAt, run.expiresAt) }, Date.now())
+      // Terminal capture is authorized for this exact released operation. It
+      // fences and quiesces the daemon before reading its final workspace.
+      const finalArchive = allowPortableCapture && grant.archiveOnly === true
+      liveUntil({ expiresAt: finalArchive ? run.expiresAt : Math.min(grant.expiresAt, run.expiresAt) }, Date.now())
       if (run.state !== 'running' || !this.ctx.container?.running) throw new Error('Task machine is not running')
-      if (await this.ctx.storage.get('nativeWriter')) throw new Error('Task workspace has an active native writer')
+      if (!finalArchive && await this.ctx.storage.get('nativeWriter')) throw new Error('Task workspace has an active native writer')
+      if (run.portableArchiveFence && !allowPortableCapture) throw Error('Task workspace is being archived')
       return operation(this.ctx.container, run)
     })
   }
   spawn(identity, options) {
     const checked = processOptions(options)
     return this.withMachine(identity, async (container, run) => {
+      if (run.grant.portableWorkspace && !run.portableStaged) throw Error('Portable task workspace is not staged')
       const nonce = crypto.randomUUID()
       // Persist the writer before external I/O. Restarting the object fences
       // this operation even if the provider started it before returning a handle.
@@ -210,6 +225,36 @@ export class TaskMachine extends DurableObject {
         await this.stop(run, 'interrupted', true)
         throw error
       }
+    })
+  }
+  portableArchive(identity, operation, id) {
+    return this.withMachine(identity, async (container, run) => {
+      const store = this.ctx.storage
+      const key = 'portable-archive:' + run.grant.operationId
+      if (operation === 'capture') {
+        const old = await store.get(key)
+        if (old && old !== id) await deletePortableWorkspace(container, old)
+        await store.put('run', { ...run, portableArchiveFence: true })
+        await stopTaskProcesses(container)
+        const receipt = await capturePortableWorkspace(container, run.grant.runId, id)
+        await store.put(key, id)
+        return receipt
+      }
+      if (!id || await store.get(key) !== id) throw Error('Portable task workspace is unavailable')
+      if (operation === 'read') return readPortableWorkspace(container, id)
+      if (operation !== 'delete') throw Error('Invalid portable task workspace operation')
+      await deletePortableWorkspace(container, id)
+      await store.delete(key)
+      return null
+    }, true)
+  }
+  stagePortableArchive(identity, bytes) {
+    return this.withMachine(identity, async (container, run) => {
+      if (!run.grant.portableWorkspace || !bytes) throw Error('Portable task workspace is unavailable')
+      if (run.portableStaged) { await bytes.cancel(); return run.grant.portableWorkspace }
+      await stagePortableWorkspace(container, run.grant.runId, run.grant.portableWorkspace, bytes)
+      await this.ctx.storage.put('run', { ...run, portableStaged: true })
+      return run.grant.portableWorkspace
     })
   }
   async transferNativeHistory(operation) {
@@ -244,7 +289,53 @@ export class TaskMachine extends DurableObject {
   }
   park(identity) {
     const grant = machineGrant(identity)
-    return this.exclusive(async () => this.stop(await this.current(grant), 'settled', true))
+    return this.exclusive(async () => {
+      await this.verifyScope(grant)
+      const store = this.ctx.storage
+      const run = await store.get('run')
+      if (run && sameGrant(run.grant, grant)) return this.stop(run, 'settled', true)
+      if (!(grant.metered && grant.expiresAt === 0)) throw Error('Task machine run mismatch')
+      // Fence the exact abandoned operation even if its open request has
+      // not arrived. Never disturb another run in the same workspace.
+      await store.put('closed-operation:' + grant.operationId, true)
+      return { state: 'absent' }
+    })
+  }
+  meter(identity, index, rollover) {
+    const grant = machineGrant(identity)
+    if (!Number.isSafeInteger(index) || index < 0 || typeof rollover !== 'boolean') throw Error('Invalid task compute meter request')
+    return this.exclusive(async () => {
+      await this.verifyScope(grant)
+      const store = this.ctx.storage, key = 'compute-receipt:' + grant.operationId + ':' + index
+      const prior = await store.get(key)
+      if (prior) return prior
+      if (!rollover) {
+        if (await store.get('closed-operation:' + grant.operationId)) {
+          const active = await store.get('compute-meter:' + grant.operationId)
+          if (!active || index > active.index || (active.final && index >= active.index)) return { notStarted: true }
+          if (index === active.index) return { measurementUnavailable: true }
+        }
+        return null
+      }
+      const run = await this.current(grant)
+      if (!run.grant.metered || run.stoppedAt || !this.ctx.container?.running) return null
+      return this.sealComputeMeter(run, index, false)
+    })
+  }
+  async sealComputeMeter(run, index, final) {
+    const { operationId } = run.grant
+    const store = this.ctx.storage, activeKey = 'compute-meter:' + operationId
+    const active = await store.get(activeKey)
+    if (!active || active.index !== index || active.final) return null
+    const sample = await readComputeMeter(this.ctx.container)
+    const measured = measuredComputeInterval(active.sample, sample)
+    if (!measured) return null
+    const receipt = { index, ...measured, observedAt: sample.observedAt }
+    await store.put({
+      ['compute-receipt:' + operationId + ':' + index]: receipt,
+      [activeKey]: { index: index + 1, sample, final },
+    })
+    return receipt
   }
   receipt(run) {
     return { state: run.state, outcome: run.outcome, ...(run.startFailure ? { startFailure: run.startFailure } : {}), admittedAt: run.admittedAt, settledAt: run.settledAt,
@@ -258,16 +349,25 @@ export class TaskMachine extends DurableObject {
       await store.put('run', run)
     }
     await store.setAlarm(Date.now() + 15_000)
-    if (save && !run.checkpoint && container?.running) {
-      const witness = run.reviewBoot && run.outcome === 'settled'
-        ? await captureReviewExit(container, run.grant.runId).catch(() => null) : null
-      const checkpoint = await store.get('nativeWriter') ? await this.saveNativeWorkspace(container) : await this.workspace.checkpoint()
-      run = { ...run, checkpoint }
-      await store.put({run, reviewCheckpoint:witness ? {...checkpoint, witness} : null})
+    const saveUntil = run.grant.metered ? run.settledAt + CHECKPOINT_TIME_MS : Infinity
+    if (save && !run.checkpoint && container?.running && Date.now() < saveUntil) {
+      try {
+        const witness = run.reviewBoot && run.outcome === 'settled'
+          ? await captureReviewExit(container, run.grant.runId).catch(() => null) : null
+        const checkpoint = await store.get('nativeWriter') ? await this.saveNativeWorkspace(container) : await this.workspace.checkpoint()
+        run = { ...run, checkpoint }
+        await store.put({run, reviewCheckpoint:witness ? {...checkpoint, witness} : null})
+      } catch (error) {
+        if (Date.now() < saveUntil) throw error
+      }
     }
-    if (save && !run.checkpoint && !container?.running) {
+    if (save && !run.checkpoint) {
       const saved = await store.get('checkpoint')
       run = { ...run, outcome: 'interrupted', checkpoint: saved ? { id: saved.id, bytes: saved.size, sha256: saved.sha256 } : null }
+    }
+    if (run.grant.metered && container?.running) {
+      const meter = await store.get('compute-meter:' + run.grant.operationId)
+      if (meter && !meter.final) await this.sealComputeMeter(run, meter.index, true).catch(() => null)
     }
     if (container?.running) await container.destroy()
     if (container?.running) throw new Error('Task machine stop unconfirmed')

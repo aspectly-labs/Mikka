@@ -77,7 +77,7 @@ func TestRPCFrameBudgetsCountCRBeforeLF(t *testing.T) {
 	for _, test := range []struct {
 		method string
 		limit  int
-	}{{"executeStream", 2097152}, {"nativeStream", 524287}} {
+	}{{"executeStream", 2097152}, {"nativeStream", nativeRPCFrameMaxBytes}} {
 		for _, size := range []int{test.limit, test.limit + 1} {
 			// CR belongs to the frame; only the final LF is the delimiter.
 			frame := append(paddedRPCFrame(t, test.method, size-1, false), '\r', '\n')
@@ -96,7 +96,7 @@ func TestRPCFrameBudgetsCountCRBeforeLF(t *testing.T) {
 
 func TestHostedModelBudgetDoesNotExpandAnyOtherRPCMethod(t *testing.T) {
 	w := Worker{ExecutionOnly: true}
-	for _, method := range []string{"execute", "nativeStream", "nativeContext", "prepare", "prepareStream", "quota", "models", "usage", "allowance", "cleanup", "oauthStart", "oauthResume", "oauthPoll", "oauthHandoff", "oauthComplete", "nativeAuth", "status", "acquire", "refresh", "recover", "disconnect", "unknown"} {
+	for _, method := range []string{"execute", "nativeContext", "prepare", "prepareStream", "quota", "models", "usage", "allowance", "cleanup", "oauthStart", "oauthResume", "oauthPoll", "oauthHandoff", "oauthComplete", "nativeAuth", "status", "acquire", "refresh", "recover", "disconnect", "unknown"} {
 		t.Run(method, func(t *testing.T) {
 			for _, size := range []int{524287, 524288} {
 				var out bytes.Buffer

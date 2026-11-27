@@ -27,7 +27,7 @@ test('model-required copy names the state beside the settings action in both cat
 
 test('missing preparation model keeps the installed discriminator with model settings recovery', () => {
   const failure = chatFailure({ working: false, error: 'executionModelUnknown' })!
-  assert.deepEqual(JSON.parse(JSON.stringify(failure)), { kind: 'failed', reason: 'modelRequired', raw: 'executionModelUnknown' })
+  assert.deepEqual(JSON.parse(JSON.stringify(failure)), { kind: 'failed', reason: 'modelRequired', rejection: 'not_connected', health: { reason: 'not_connected', action: 'connect' }, raw: 'executionModelUnknown' })
   assert.deepEqual(failureMessageKey(failure), { namespace: 'Coordinator', key: 'modelRequired' })
   assert.equal(chatFailure({ working: true, error: 'executionModelUnknown' }), null)
 })
@@ -41,7 +41,7 @@ test('generic failure references remain available to Details without changing kn
 
 test('known refusals keep their recovery and safe reference in Details', () => {
   for (const [code, expected] of [
-    ['reconnect_required', { kind: 'subscription', notice: 'reconnect' }],
+    ['reconnect_required', { kind: 'subscription', notice: 'reconnect', rejection: 'disconnected', health: { reason: 'signed_out', action: 'reconnect' } }],
     ['points_exhausted', { kind: 'hosted', code: 'points_exhausted' }],
     ['wake_exhausted', { kind: 'wake', code: 'wake_exhausted' }],
   ] as const) {
@@ -59,7 +59,7 @@ test('exhausted tool recovery has a stable friendly failure and retry',()=>{
 
 test('the observed model streaming balance refusal has safe copy and a model recovery without retry', () => {
   const failure = chatFailure({ working: false, error: balance })!
-  assert.deepEqual(failure, { kind: 'failed', reason: 'balance' })
+  assert.deepEqual(failure, { kind: 'failed', reason: 'balance', rejection: 'disconnected', health: { reason: 'out_of_usage', resetsAt: null } })
   assert.deepEqual(failureMessageKey(failure), { namespace: 'Coordinator', key: 'apiBalance' })
   assert.doesNotMatch(JSON.stringify(failure), /request_id|11111111|doStreamStep/)
   assert.equal(chatFailure({ working: true, error: balance }), null)
@@ -83,13 +83,13 @@ test('generic, quoted and tool errors never become a balance state from credit o
   ]) {
     assert.equal(chatBalanceRefusal(error), false, error)
     const failure = chatFailure({ working: false, error })!
-    assert.deepEqual(failure, chatBalanceRefusal(error) ? { kind: 'failed', reason: 'balance' } : { kind: 'failed', raw: error }, error)
+    assert.deepEqual(failure, chatBalanceRefusal(error) ? { kind: 'failed', reason: 'balance', rejection: 'disconnected', health: { reason: 'out_of_usage', resetsAt: null } } : { kind: 'failed', raw: error }, error)
   }
 })
 
 test('a failed reply is named by what the person can do, never the raw error', () => {
   assert.deepEqual(chatFailure({ working: false, error: 'Step "step//./workflows/coordinator/agent-kit-steps//botRuntime" failed after 3 retries: binding_required' }), { kind: 'subscription', notice: 'selectionChanged', raw: 'binding_required' })
-    assert.deepEqual(chatFailure({ working: false, error: 'Hook "turn.started" failed: executionModelUnknown' }), { kind: 'subscription', notice: 'modelRequired', raw: 'executionModelUnknown' })
+    assert.deepEqual(chatFailure({ working: false, error: 'Hook "turn.started" failed: executionModelUnknown' }), { kind: 'subscription', notice: 'modelRequired', rejection: 'not_connected', health: { reason: 'not_connected', action: 'connect' }, raw: 'executionModelUnknown' })
   assert.deepEqual(chatFailure({ working: false, error: 'Error: points_exhausted' }), { kind: 'hosted', code: 'points_exhausted', raw: 'points_exhausted' })
   assert.deepEqual(chatFailure({ working: false, error: 'wake_exhausted' }), { kind: 'wake', code: 'wake_exhausted', raw: 'wake_exhausted' })
   assert.deepEqual(chatFailure({ working: false, error: 'model timed out' }), { kind: 'failed', raw: 'model timed out' })
@@ -177,4 +177,19 @@ test('quoted cloud codes, tool bodies and other steps never become cloud recover
     assert.equal(failure.kind, 'failed', error)
     assert.equal(failure.kind === 'failed' ? failure.cloudCode : undefined, undefined, error)
   }
+})
+
+test('route health distinguishes a paused seat, a rejected key, and a quota reset', async () => {
+  const paused = chatFailure({ working: false, error: 'account_unavailable (account_paused)' })
+  assert.equal(paused?.rejection, 'disconnected')
+  assert.deepEqual(paused?.health, { reason: 'turned_off', action: 'turn_on' })
+
+  const diagnostics = captureRunFailure({ statusCode: 401, error: { code: 'invalid_api_key' } }, { credential: 'api_key' })
+  const rejected = chatFailure({ working: false, error: 'provider_operation_failed', failureDetails: diagnostics })
+  assert.deepEqual(rejected?.health, { reason: 'key_rejected', action: 'replace_key' })
+
+  const { modelRouteRejection } = await import('./model-route-rejection')
+  const until = '2026-12-01T01:00:00.000Z'
+  assert.deepEqual(modelRouteRejection('quota', until), { rejection: 'disconnected', health: { reason: 'out_of_usage', resetsAt: until } })
+  assert.equal(modelRouteRejection('noDevice'), undefined)
 })

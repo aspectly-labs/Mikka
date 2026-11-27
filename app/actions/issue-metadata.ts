@@ -18,7 +18,6 @@ import { requireIssueAccess, requireUser } from '@/lib/issue-access'
 import { listWorkspaceProjects } from '@/app/actions/projects'
 import { issueView } from '@/lib/task-identifier-server'
 import { assigneeSchema, delegateSchema, blockFlagSchema, labelSchema, pullRequestSchema, readIssueMetadata } from '@/lib/issue-metadata'
-import { scheduleIssueEffect } from '@/lib/issue-effects'
 import { issueAssignedEvent } from '@/lib/coordinator-events'
 import { recordCoordinatorEvent } from '@/lib/coordinator-event-store'
 import { activityActor } from '@/lib/activity-actor'
@@ -165,7 +164,6 @@ export async function updateIssueMetadata(input: { id: string; revision: number;
         }
         return { issue: view }
       })))
-      if ('issue' in result && result.issue?.linearSyncPolicy === 'explicit' && !result.issue.linearSyncBlocked && result.issue.linearTargetVerified) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
       return result
     } catch (error) {
       if (invalidTaskLabelReference(error)) return { error: 'issueMetadataInvalid' }

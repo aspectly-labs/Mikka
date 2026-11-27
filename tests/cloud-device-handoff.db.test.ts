@@ -26,7 +26,8 @@ test('admitted Cloud tasks park their real binding before normal local recovery'
   let appPool: Pool | undefined, workspacePool: Pool | undefined
   let machines: Awaited<ReturnType<typeof fakeThreadMachines>> | undefined
   const scoped = { MIKKA_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(),
-    MIKKA_DATABASE_URL_UNPOOLED: target.toString(), DATABASE_URL_UNPOOLED: target.toString(), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') }
+    MIKKA_DATABASE_URL_UNPOOLED: target.toString(), DATABASE_URL_UNPOOLED: target.toString(),
+    WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), E2B_API_KEY: 'synthetic-cloud-handoff-e2b-key' }
   const previous = Object.fromEntries(Object.keys(scoped).map(name => [name, process.env[name]]))
   Object.assign(process.env, scoped)
   try {
@@ -61,6 +62,7 @@ test('admitted Cloud tasks park their real binding before normal local recovery'
       await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())', [userId, `${userId}@example.invalid`])
       await pool.query('INSERT INTO issue_prefixes("userId",prefix) VALUES($1,\'CHOF\')', [userId])
       await pool.query('INSERT INTO mikka_workspaces(id,"userId",name,kind) VALUES($1,$2,\'Cloud handoff fixture\',\'team\')', [workspaceId, userId])
+      await pool.query('INSERT INTO mikka_workspace_entitlements("workspaceId",plan,source) VALUES($1,\'pro\',\'cloud\')', [workspaceId])
       await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,\'admin\',\'active\')', [workspaceId, userId, `${userId}@example.invalid`])
       await pool.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,\'Cloud handoff Bot\')', [botId, userId, workspaceId])
       for (const [device, agent, kind] of [[parentDevice, agentId, 'cloud'], [deviceB, agentB, 'local']]) {

@@ -10,13 +10,15 @@ mock.module(new URL('../../../../lib/github/app-config.ts', import.meta.url).hre
 const callbacks: Array<() => Promise<void>> = []
 const refresh = mock.fn(async (_event: string, _payload: unknown) => {})
 const wakeSuite = mock.fn(async (_suite: unknown) => 1)
+const wakePull = mock.fn(async (_event: unknown, _deliveryKey: string) => false)
 const notifications = [{ userId: 'owner', source: 'github', externalId: 'comment:7' }]
 const readNotifications = mock.fn(async (_event: string, _payload: unknown) => notifications)
 const ingest = mock.fn(async (_notifications: unknown[]) => {})
 mock.module('@/lib/server-runtime/server', { namedExports: { after: (callback: () => Promise<void>) => callbacks.push(callback) } })
-const heavyModules = ['lib/github/publication-webhook.ts', 'lib/github/ci-suite-wake.ts', 'lib/suggestions/sources.ts', 'lib/suggestions/store.ts']
+const heavyModules = ['lib/github/publication-webhook.ts', 'lib/github/ci-suite-wake.ts', 'lib/github/pull-request-wake.ts', 'lib/suggestions/sources.ts', 'lib/suggestions/store.ts']
 mock.module(new URL('../../../../lib/github/publication-webhook.ts', import.meta.url).href, { namedExports: { refreshPublishedPullRequest: refresh } })
 mock.module(new URL('../../../../lib/github/ci-suite-wake.ts', import.meta.url).href, { namedExports: { wakeLinkedCiSuite: wakeSuite } })
+mock.module(new URL('../../../../lib/github/pull-request-wake.ts', import.meta.url).href, { namedExports: { wakePullRequestThreads: wakePull } })
 mock.module(new URL('../../../../lib/suggestions/sources.ts', import.meta.url).href, { namedExports: { githubWebhookNotifications: readNotifications } })
 mock.module(new URL('../../../../lib/suggestions/store.ts', import.meta.url).href, { namedExports: { ingestNotifications: ingest } })
 // 自动化 event triggers: the schedule store is the database's; here it records what it was asked to queue.
@@ -41,6 +43,7 @@ beforeEach(() => {
   refresh.mock.mockImplementation(async () => {})
   wakeSuite.mock.resetCalls()
   wakeSuite.mock.mockImplementation(async () => 1)
+  wakePull.mock.resetCalls()
   readNotifications.mock.resetCalls()
   readNotifications.mock.mockImplementation(async () => notifications)
   ingest.mock.resetCalls()
@@ -174,8 +177,10 @@ test('signed completed suite is durably enqueued before webhook ACK, without per
   }
   assert.equal((await POST(request('check_suite', hint, 'sha256=invalid'))).status, 401)
   assert.equal(wakeSuite.mock.callCount(), 0)
+  assert.equal(wakePull.mock.callCount(), 0)
   assert.equal((await POST(request('check_suite', hint))).status, 202)
   assert.equal(wakeSuite.mock.callCount(), 1, 'persist before response, not in afterJob')
+  assert.equal(wakePull.mock.callCount(), 1)
   assert.equal(callbacks.length, 0, 'suite-only webhook does not schedule empty afterJob')
   assert.deepEqual(wakeSuite.mock.calls[0].arguments[0], {
     installationId: 7, repositoryId: 8, repository: 'acme/app', suiteId: 9,

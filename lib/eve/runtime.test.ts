@@ -272,5 +272,21 @@ test('explicit standard serviceTier omits Codex priority while fast and ultrafas
     await started({ data: { turnId: 'turn_fast' } }, context({ turnId: 'turn_fast' }))
     await modelForSession(context({ turnId: 'turn_fast' }))
     assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexServiceTier: 'priority', claudeSpeed: 'fast', apiKeyServiceTier: 'fast' } })
+
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'standard', cyberAccessProgram: 'daybreak_blue' }
+    await started({ data: { turnId: 'turn_daybreak_std' } }, context({ turnId: 'turn_daybreak_std' }))
+    await modelForSession(context({ turnId: 'turn_daybreak_std' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexCyberAccessProgram: 'daybreak_blue' } })
+
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'fast', cyberAccessProgram: 'daybreak_red' }
+    await started({ data: { turnId: 'turn_daybreak_fast' } }, context({ turnId: 'turn_daybreak_fast' }))
+    await modelForSession(context({ turnId: 'turn_daybreak_fast' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexServiceTier: 'priority', claudeSpeed: 'fast', apiKeyServiceTier: 'fast', codexCyberAccessProgram: 'daybreak_red' } })
+
+    const apiKeySelection = { type: 'api_key' as const, ownerId: 'owner', workspaceId: scope.workspaceId, keyId: serverId, modelId: 'gpt-6-cyber' }
+    runtime = { harness: 'ai_sdk', model: 'gpt-6-cyber', modelSelection: apiKeySelection, pro: true, cyberAccessProgram: 'daybreak_red' }
+    await started({ data: { turnId: 'turn_daybreak_pro' } }, context({ turnId: 'turn_daybreak_pro' }))
+    await modelForSession(context({ turnId: 'turn_daybreak_pro' }))
+    assert.deepEqual(modelCalls.at(-1), { selection: apiKeySelection, requestPolicy: { apiKeyPro: true, apiKeyCyberAccessProgram: 'daybreak_red' } })
   })
 })

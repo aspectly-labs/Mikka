@@ -224,7 +224,7 @@ export const bots = pgTable('bots', {
   publicRole: text('publicRole').notNull().default(''),
   /** Private standing instructions for this Bot (≤2000 chars); never exposed to group participants or mixed with agents.instructions. */
   instructions: text('instructions').notNull().default(''),
-  /** A bloub colour id, see components/nav/bot-avatar.tsx. */
+  /** The bot's look (`look:c=…;h=…`, lib/bot-shapes.ts parseBotLook) or a legacy bloub colour id; `shape` is a bot-avatars body or an old bloub id (botShapeOf). */
   color: text('color').notNull().default('encre'),
   shape: text('shape').notNull().default('cercle'),
   /** Model family a new bot starts with ('mikka' | 'codex' | 'claude'); copied from workspace_settings. */
@@ -295,6 +295,11 @@ export const botModelChoices = pgTable('bot_model_choices', {
   creditsModel:text('creditsModel'),
   /** Reasoning effort for the chat model (lib/model-routing.ts); null is the model's default. */
   effort:text('effort').$type<import('@/lib/model-routing').ModelRoutingEffort>(),
+  /** Serving speed for the chat (`standard`, `fast`, `ultrafast`); null is the workspace's default. Used only when the model's provider advertises it. */
+  pro: boolean('pro').notNull().default(false),
+  /** OpenAI Trusted Access for Cyber (Daybreak) opt-in for the chat model; used only when the selected route grants Daybreak. */
+  daybreak: boolean('daybreak').notNull().default(false),
+  serviceTier:text('serviceTier').$type<import('@/lib/model-routing').ModelServiceTier>(),
 }, table=>[primaryKey({columns:[table.ownerId,table.workspaceId,table.botKey]})])
 
 export const agentSessions = pgTable('agent_sessions', {
@@ -595,6 +600,8 @@ export const agentRuns = pgTable('agent_runs', {
   sourceMessageId: uuid('sourceMessageId'),
   /** The thread's own labels, kept on the chain's root run (#2936). */
   tags: jsonb('tags').$type<string[] | null>(),
+  /** The thread's optional folder name, kept on the chain's root run (#3333). */
+  folder: text('folder'),
   /** Soft delete: hidden from every list for 30 days, restorable inside them (#2936). */
   deletedAt: timestamp('deletedAt', { withTimezone: true }), deletedBy: text('deletedBy'),
   /** Sub-agent card fields (F #2939): the child's display name, its mark and the parent's one-line brief. */
@@ -1597,6 +1604,9 @@ export const workspaceBilling = pgTable('workspace_billing', {
   autoRechargeConsentBy: text('autoRechargeConsentBy'),
   autoRechargeConsentAt: timestamp('autoRechargeConsentAt', { withTimezone: true }),
   autoRechargeRevision: integer('autoRechargeRevision').notNull().default(0),
+  overageEnabled: boolean('overageEnabled').notNull().default(false),
+  overageMonthlyCapPoints: integer('overageMonthlyCapPoints'),
+  overageRevision: integer('overageRevision').notNull().default(0),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -1614,7 +1624,7 @@ export const billingCheckoutRequests = pgTable('billing_checkout_requests', {
   closedAt: timestamp('closedAt', { withTimezone: true }),
 }, table => [uniqueIndex('billing_checkout_requests_active_idx').on(table.workspaceId).where(sql`${table.closedAt} IS NULL`)])
 
-/** Credit grants: 'plan' per paid invoice (replaces the previous period's), 'purchased' never expires. */
+/** Credit grants: 'plan' per paid invoice (resets monthly), 'purchased' top-ups expire 12 months after purchase (grandfathered NULL never expires). */
 export const workspaceCreditGrants = pgTable('workspace_credit_grants', {
   id: uuid('id').primaryKey(),
   workspaceId: uuid('workspaceId').notNull(),

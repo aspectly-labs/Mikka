@@ -25,6 +25,7 @@ test('signed-out config uses public defaults without evaluating an anonymous ide
   const features = await desktopFeatures(undefined, { evaluate: async () => { throw new Error('anonymous flag evaluation') }, env: {} })
   assert.equal(features.cloudComputer, false)
   assert.equal(Object.keys(features.flags).length, CLIENT_FLAG_KEYS.length)
+  assert.equal(features.flags[gatedFeatures.environmentSnapshots.key], false)
   assert.ok(Object.values(features.flags).every(value => value === false))
 })
 
