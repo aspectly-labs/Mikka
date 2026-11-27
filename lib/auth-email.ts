@@ -11,6 +11,17 @@ import { readEnv, runtimeEnv } from './env/server'
 
 export const AUTH_EMAIL_TTL_SECONDS = 15 * 60
 const EMAIL_OTP_TTL_SECONDS = 5 * 60
+/** Per-address limits that span codes and IP addresses, stored as verification rows (durable, shared by every
+ * server). Better Auth's allowedAttempts resets with each new code; these do not. Past the failure budget an
+ * address cannot redeem codes until the window ends and must use the emailed link (or request a reset link). */
+export const OTP_LIMITS = {
+  failuresPerHour: 10, failuresPerDay: 20,
+  issuesPerHour: 5, issuesPerDay: 10,
+} as const
+/** Every code request and code redemption answers no sooner than this, whatever the address or outcome. */
+export const AUTH_EMAIL_RESPONSE_FLOOR_MS = 500
+const HOUR_MS = 60 * 60_000
+const DAY_MS = 24 * HOUR_MS
 export const AUTH_EMAIL_FROM = mailFrom()
 
 type VerificationStore = {
@@ -40,6 +51,33 @@ function invalidLink(stage = 'validation'): never {
     errorContract: toMikkaErrorContract({ code: 'INVALID_TOKEN', detail, status: 400 }),
   })
 }
+function attemptsExhausted(): never {
+  throw new APIError('TOO_MANY_REQUESTS', {
+    code: 'OTP_ATTEMPTS_EXHAUSTED',
+    message: 'Too many attempts. Use the link in your email, or request a password reset link.',
+    errorContract: toMikkaErrorContract({ code: 'OTP_ATTEMPTS_EXHAUSTED', status: 429 }),
+  })
+}
+function rateLimited(): never {
+  throw new APIError('TOO_MANY_REQUESTS', { code: 'RATE_LIMITED', message: 'Try again later' })
+}
+async function untilFloor(start: number | undefined) {
+  if (start === undefined) return
+  const remaining = AUTH_EMAIL_RESPONSE_FLOOR_MS - (Date.now() - start)
+  if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining))
+}
+/** Take one of `limit` numbered slots in the current fixed window, or null when all are taken. Each slot is a
+ * unique verification row, so concurrent requests on any server cannot both take the last one. */
+async function takeSlot(store: Pick<VerificationStore, 'reserveVerificationValue'>, prefix: string, limit: number, windowMs: number) {
+  const window = Math.floor(Date.now() / windowMs)
+  const expiresAt = new Date((window + 1) * windowMs + 60_000)
+  for (let slot = 1; slot <= limit; slot++) {
+    const identifier = `${prefix}:${window}:${slot}`
+    if (await store.reserveVerificationValue({ identifier, value: 'reserved', expiresAt })) return identifier
+  }
+  return null
+}
+
 function unavailable(): never {
   throw new APIError('SERVICE_UNAVAILABLE', {
     code: 'AUTH_EMAIL_DELIVERY_UNAVAILABLE',
@@ -65,6 +103,8 @@ export function createAuthEmail(options: {
   const verifyReturn = `${origin}/mikka/sign-in`
   const resetReturn = `${origin}/mikka/reset-password`
   const requestStart = new WeakMap<Request, number>()
+  // Failure-budget slots a code redemption holds; released only when the code was right.
+  const heldSlots = new WeakMap<Request, string[]>()
   const report = options.report ?? (event => {
     // Never pass errors, recipients, URLs, tokens, or provider response bodies to a logger.
     if (event.outcome === 'failed') console.error('auth_email_delivery_failed', { kind: event.kind })
@@ -184,7 +224,7 @@ export function createAuthEmail(options: {
       '/reset-password': { window: 60, max: 5 },
     } } satisfies BetterAuthOptions['rateLimit'],
     async before(ctx: HookContext) {
-      if (ctx.request && mailRequestPaths.includes(ctx.path ?? '')) requestStart.set(ctx.request, Date.now())
+      if (ctx.request && (mailRequestPaths.includes(ctx.path ?? '') || otpPurposeByPath.has(ctx.path ?? ''))) requestStart.set(ctx.request, Date.now())
       if ([...mailRequestPaths, '/reset-password', '/email-otp/reset-password', '/email-otp/verify-email', '/sign-in/email-otp'].includes(ctx.path ?? '') && ctx.request) {
         const requestOrigin = ctx.request.headers.get('origin')
         if ((requestOrigin && requestOrigin !== origin) || ctx.request.headers.get('sec-fetch-site') === 'cross-site') {
@@ -201,15 +241,30 @@ export function createAuthEmail(options: {
       if (mailRequestPaths.includes(ctx.path ?? '') && !mailConfigured(runtimeEnv(), options.apiKey())) unavailable()
       if (otpRequestPaths.includes(ctx.path ?? '') && typeof ctx.body?.email === 'string' && ctx.body.email.length <= 320) {
         const minute = Math.floor(Date.now() / 60_000)
+        const addressKey = digest(ctx.body.email.trim().toLowerCase())
         const allowed = await ctx.context.internalAdapter.reserveVerificationValue({
-          identifier: `mikka-otp-rate:${digest(ctx.body.email.trim().toLowerCase())}:${minute}`,
+          identifier: `mikka-otp-rate:${addressKey}:${minute}`,
           value: 'reserved', expiresAt: new Date(Date.now() + 120_000),
         })
-        if (!allowed) throw new APIError('TOO_MANY_REQUESTS', { code: 'RATE_LIMITED', message: 'Try again later' })
+        if (!allowed) rateLimited()
+        // Issuance caps per address over an hour and a day, for registered and unknown addresses alike.
+        if (!await takeSlot(ctx.context.internalAdapter, `mikka-otp-issue-h:${addressKey}`, OTP_LIMITS.issuesPerHour, HOUR_MS)) rateLimited()
+        if (!await takeSlot(ctx.context.internalAdapter, `mikka-otp-issue-d:${addressKey}`, OTP_LIMITS.issuesPerDay, DAY_MS)) rateLimited()
       }
       const purpose = otpPurposeByPath.get(ctx.path ?? '')
       if (purpose && typeof ctx.body?.email === 'string' && typeof ctx.body.otp === 'string') {
         const address = ctx.body.email.toLowerCase()
+        // Failure budget per address across every code and IP: each redemption holds a slot until it succeeds.
+        const store = ctx.context.internalAdapter
+        const budgetKey = digest(address.trim())
+        const hour = await takeSlot(store, `mikka-otp-fail-h:${budgetKey}`, OTP_LIMITS.failuresPerHour, HOUR_MS)
+        const day = hour && await takeSlot(store, `mikka-otp-fail-d:${budgetKey}`, OTP_LIMITS.failuresPerDay, DAY_MS)
+        if (!hour || !day) {
+          if (hour) await store.consumeVerificationValue(hour)
+          await untilFloor(ctx.request && requestStart.get(ctx.request))
+          attemptsExhausted()
+        }
+        if (ctx.request) heldSlots.set(ctx.request, [hour, day])
         const identifier = otpOwnerKey(ctx.context.secret, purpose, address, ctx.body.otp)
         const original = ctx.context.internalAdapter
         // Better Auth validates and spends the code before resolving the user.
@@ -327,16 +382,25 @@ export function createAuthEmail(options: {
         },
       } } } }
     },
+    /** After a code redemption: a right code gives back its failure-budget slots; every outcome, for a registered
+     * or an unknown address, answers no sooner than the response floor. */
+    async otpRedemptionResult(path: string | undefined, result: unknown, request?: Request) {
+      if (!otpPurposeByPath.has(path ?? '') || !request) return
+      const failed = result instanceof APIError || (result instanceof Response && !result.ok)
+      const slots = heldSlots.get(request)
+      heldSlots.delete(request)
+      if (!failed && slots) {
+        const store = (await options.context()).internalAdapter
+        for (const slot of slots) await store.consumeVerificationValue(slot)
+      }
+      await untilFloor(requestStart.get(request))
+    },
     async publicRequestResult(path: string | undefined, result: unknown, request?: Request) {
       if (!mailRequestPaths.includes(path ?? '')) return undefined
       const success = result && typeof result === 'object' && (('status' in result && result.status === true) || ('success' in result && result.success === true))
       const deliveryFailure = result instanceof APIError && result.body?.code === 'AUTH_EMAIL_DELIVERY_UNAVAILABLE'
       if (!success && !deliveryFailure) return undefined
-      const start = request && requestStart.get(request)
-      if (start !== undefined) {
-        const remaining = 500 - (Date.now() - start)
-        if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining))
-      }
+      await untilFloor(request && requestStart.get(request))
       // Same public outcome for unknown/verified/eligible addresses and delivery failures.
       // This is NOT a delivery receipt or a promise to retry. Failures are reported server-side.
       return { ...(otpRequestPaths.includes(path ?? '') ? { success: true } : {}), status: true, delivery: 'unconfirmed' as const, message: 'Request processed. This response does not confirm whether an email was sent.' }

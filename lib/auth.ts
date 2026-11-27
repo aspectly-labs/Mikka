@@ -93,6 +93,7 @@ const authCompletion: BetterAuthPlugin = {
         ctx.setHeader('referrer-policy', 'no-referrer')
         ctx.setHeader('cache-control', 'no-store')
       }
+      await email.otpRedemptionResult(ctx.path, ctx.context.returned, ctx.request)
       const otpError = publicOtpError(ctx.path, ctx.context.returned)
       if (otpError) return otpError
       const requestResult = await email.publicRequestResult(ctx.path, ctx.context.returned, ctx.request)
