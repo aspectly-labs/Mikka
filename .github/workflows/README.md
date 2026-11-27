@@ -32,7 +32,7 @@ protected UI check.
 - `GitGuardian Security Checks` is a separate external required check.
 - The protected `UI policy (strict)` source stage also runs the waiting-issue check, so `waiting-issues.yml` only reopens a waited issue on `issues: closed`.
 - **`CI OK`** (job `ci-ok` in `ui-policy.yml`) is the single aggregate, as in
-  Orca: it needs every CI job, runs on pull requests, merge groups, main pushes
+  Orca: it needs every CI job (except `nightly-journey` until its first green run), runs on pull requests, merge groups, main pushes
   and the daily schedule, and fails if any needed job failed or was cancelled.
   A skipped job passes only where its own `if:` (trusted selection and event)
   left it out; each `CI_OK_EXPECT_*` is that `if:` (`scripts/ci/ci-ok.mjs`,
@@ -490,9 +490,10 @@ inputs change on main; dispatch it to repopulate evicted or changed-image keys.
 ## Scheduled offline journeys and deployment route probes
 
 `nightly-journey.yml` runs `pnpm test:e2e:mvp --grep @journey` in the daily
-full CI run (03:23 UTC, `ui-policy.yml` job `nightly-journey`, whose result
-`CI OK` requires) and on manual dispatch, on `main` of the canonical repository
-only. Both guards use the repository id (`1427517699`), which survived the move
+full CI run (03:23 UTC, `ui-policy.yml` job `nightly-journey`) and on manual
+dispatch, on `main` of the canonical repository only. `CI OK` does not require
+it yet: the journeys have never passed, so it joins `ci-ok`'s `needs` after the
+first green scheduled run. Both guards use the repository id (`1427517699`), which survived the move
 from `alexj11324/Mikka`; the former name guard skipped every scheduled run. It uses a fresh local PostgreSQL 17
 `mikka_e2e` service and scripted LiteLLM, E2B, Slack and GitHub boundaries.
 It does not read model keys or create a preview database. The `@p0` tag

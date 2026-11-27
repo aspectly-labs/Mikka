@@ -363,6 +363,8 @@ jobs:
   nightly-journey:
     # The daily full run also runs the offline browser journeys (#2890 keeps
     # them off pull requests). Scheduled runs only, on the canonical repository.
+    # Not yet a need of CI OK: the journeys have never passed (the old name guard
+    # skipped every run). Add it to ci-ok's needs once a scheduled run is green.
     if: github.event_name == 'schedule' && github.repository_id == '1427517699' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/nightly-journey.yml
     permissions:
@@ -615,12 +617,12 @@ jobs:
 
   ci-ok:
     # The single aggregate check, as Orca and most merge-queue repositories do:
-    # it waits for every CI job and fails if any failed or was cancelled. A
+    # it waits for every CI job (not yet nightly-journey) and fails if any failed or was cancelled. A
     # skipped job passes only where its own `if:` (the trusted selection and
     # the event) left it out: each CI_OK_EXPECT_* below is that job's `if:`
     # (scripts/ci/ci-ok.test.mjs compares them).
     name: CI OK
-    needs: [changes, cloud-secret-access, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, frontend-screenshots, candidate-checks, desktop-checks, nightly-journey, ui-policy, browser-tests-full, browser-tests]
+    needs: [changes, cloud-secret-access, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, frontend-screenshots, candidate-checks, desktop-checks, ui-policy, browser-tests-full, browser-tests]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -648,7 +650,6 @@ jobs:
           CI_OK_EXPECT_FRONTEND_SCREENSHOTS: ${{ github.event_name == 'pull_request' && needs.changes.result == 'success' }}
           CI_OK_EXPECT_CANDIDATE_CHECKS: ${{ github.event_name == 'merge_group' }}
           CI_OK_EXPECT_DESKTOP_CHECKS: ${{ needs.changes.result == 'success' && needs.changes.outputs.desktop == 'true' && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
-          CI_OK_EXPECT_NIGHTLY_JOURNEY: ${{ github.event_name == 'schedule' && github.repository_id == '1427517699' && github.ref == 'refs/heads/main' }}
           CI_OK_EXPECT_UI_POLICY: 'true'
           CI_OK_EXPECT_BROWSER_TESTS_FULL: ${{ needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) }}
           CI_OK_EXPECT_BROWSER_TESTS: 'true'

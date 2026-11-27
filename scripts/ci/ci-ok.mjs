@@ -1,5 +1,5 @@
 // The single aggregate verdict of CI (.github/workflows/ui-policy.yml, job `ci-ok`, check name `CI OK`).
-// The job needs every other CI job. For each one the workflow states whether it was expected to run on this event
+// The job needs the CI jobs it gates on (ui-policy.yml lists them). For each one the workflow states whether it was expected to run on this event
 // and selection (`CI_OK_EXPECT_<JOB>`, the job's own `if:`). An expected job must succeed; an unexpected one must have
 // been skipped. Failure and cancellation always fail, and a skip is accepted only where the selector or the event
 // left the job out. Plain Node, no dependencies: it runs before any install.

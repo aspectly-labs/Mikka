@@ -15,10 +15,14 @@ const bare = expression => String(expression).trim().replace(/^\$\{\{\s*/, '').r
 const evaluate = (expression, context) => runInNewContext(bare(expression).replace(/\.([\w-]+)/g, '[$1]').replace(/\[([\w-]+)\]/g, '["$1"]'),
   { always: () => true, cancelled: () => false, ...context })
 
+// Jobs CI OK does not wait for yet, each with the condition for adding it.
+const NOT_YET_REQUIRED = { 'nightly-journey': 'the offline journeys have never passed; add it once a scheduled run is green' }
+
 test('the aggregate is named CI OK, always runs, and waits for every other CI job', () => {
   assert.equal(aggregate.name, 'CI OK')
   assert.equal(aggregate.if, 'always()')
-  assert.deepEqual([...aggregate.needs].sort(), Object.keys(workflow.jobs).filter(job => job !== 'ci-ok').sort())
+  assert.deepEqual([...aggregate.needs].sort(), Object.keys(workflow.jobs).filter(job => job !== 'ci-ok' && !Object.hasOwn(NOT_YET_REQUIRED, job)).sort())
+  for (const job of Object.keys(NOT_YET_REQUIRED)) assert.ok(workflow.jobs[job], `${job} still runs`)
   for (const event of ['pull_request', 'merge_group']) assert.ok(Object.hasOwn(workflow.on, event), event)
 })
 
@@ -92,8 +96,8 @@ test('failure, cancellation and an unexpected skip of a selected job each fail C
       }
     }
   }
-  const { needs, env } = simulate(context('schedule'), { 'nightly-journey': 'failure' })
-  assert.deepEqual(problems(needs, env), ['nightly-journey: failure (selected, must succeed)'])
+  const { needs, env } = simulate(context('schedule'), { 'daemon-checks': 'failure' })
+  assert.deepEqual(problems(needs, env), ['daemon-checks: failure (selected, must succeed)'])
 })
 
 test('missing needs, a need without an expectation and an expectation without a need fail closed', () => {

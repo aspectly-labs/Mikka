@@ -105,7 +105,7 @@ clones, template-bound serial lane, bootstrap, target binding, no skips/todos an
 TAP summary reconciliation remain intact. The first selected shard retains local
 runtime identity and thread privacy integration tests.
 
-`CI OK` (job `ci-ok`) is the single aggregate: it needs every CI job, and each
+`CI OK` (job `ci-ok`) is the single aggregate: it needs every CI job (the offline journeys join after their first green run), and each
 job's own `if:` is its expectation (`scripts/ci/ci-ok.mjs`). Until branch
 protection requires it, the required status names remain `UI policy (strict)`,
 `Production build and browser interactions`, `Browser tests (before merge)` and
