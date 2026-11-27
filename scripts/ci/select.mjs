@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { posix, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { filterAffected } from 'nx/src/project-graph/affected/affected-project-graph.js'
@@ -59,7 +59,9 @@ const runTokenCache = new Map(), workspaceCache = new Map()
 export function desktopRunPaths(root = process.cwd()) {
   return cached(runTokenCache, root, () => {
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
-    const workflow = yaml.load(readFileSync(resolve(root, '.github/workflows/desktop.yml'), 'utf8'))
+    // A tree without desktop.yml (a pull request deleting it, which DESKTOP_PATH selects anyway) runs nothing through it.
+    const file = resolve(root, '.github/workflows/desktop.yml')
+    const workflow = existsSync(file) ? yaml.load(readFileSync(file, 'utf8')) : {}
     // A step's paths resolve against its working-directory; root scripts run from the root.
     const scripts = [...Object.values(workflow.jobs ?? {}).flatMap(job => (job.steps ?? []).map(step => [step['working-directory'] ?? '', step.run ?? ''])),
       ...DESKTOP_ONLY_SCRIPTS.map(name => ['', manifest.scripts?.[name] ?? ''])]

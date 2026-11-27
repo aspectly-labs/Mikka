@@ -439,3 +439,11 @@ test('every file the application plugin and Vite config read by name is a Deskto
     for (const event of ['pull_request', 'merge_group']) assert.equal((await select(plan, [change(file)], { event })).desktop, true, `${file} on ${event}`)
   }
 })
+
+test('a tree without desktop.yml runs nothing through it instead of failing the selection', () => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-no-desktop-yml-'))
+  try {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: {} }))
+    assert.deepEqual(desktopRunPaths(root), [])
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
