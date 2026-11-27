@@ -1,5 +1,5 @@
 // i18n-ignore-file: Sample data for the mock backend, standing in for what the real API returns.
-import type { ComputerEvent, ComputerState, KnownHost, SetupStep, SetupStepState, ViewerGrant, ViewerMode } from './types'
+import type { ComputerEvent, ComputerState, SetupStep, SetupStepState, ViewerGrant, ViewerMode } from './types'
 
 /**
  * A stand-in for the cloud computer backend (#172) while it is being built,
@@ -69,14 +69,6 @@ export const mockComputer = {
     return () => { listeners.delete(listener) }
   },
 }
-
-export const MOCK_HOSTS: KnownHost[] = [
-  { alias: 'gpu-box', source: 'tailnet', configured: true },
-  { alias: 'aws-emr', hostName: 'ec2-3-91-12-4.compute-1.amazonaws.com', user: 'hadoop', source: 'ssh', configured: false },
-  { alias: 'build-01', hostName: '10.0.4.21', source: 'ssh', configured: false },
-  { alias: 'staging-db', hostName: 'staging-db.internal', source: 'ssh', configured: false },
-  { alias: 'mac-mini', hostName: 'mac-mini.local', source: 'ssh', configured: false },
-]
 
 /** Plays the five setup steps the SSH install streams, one every ~1.2s. */
 export async function mockSetup(onStep: (step: SetupStep, state: SetupStepState) => void, signal: AbortSignal) {

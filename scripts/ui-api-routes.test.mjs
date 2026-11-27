@@ -27,7 +27,6 @@ const overlay = join(repository, '.hosted-ui')
 const UNSERVED = {
   '/api/agents': 'the Eve client\'s base path; its requests go below it (/api/agents/eve/v1/…)',
   '/api/auth': 'the Better Auth client\'s base path',
-  '/api/devices/hosts': 'asked of a Mikka that may report SSH hosts; a 404 falls back to typing a host (lib/computer/client.ts listKnownHosts)',
 }
 
 const UUID = '84c182d1-661c-461b-bca2-10410cb646d4'
@@ -40,6 +39,33 @@ const matchers = routes.map(route => ({
   pattern: new RegExp(`^${route.template.split('/').map(segment => (segment.startsWith('[[...') ? '(.*)' : segment.startsWith('[...') ? '(.+)' : segment.startsWith('[') ? '([^/]+)' : escape(segment))).join('/').replace('/(.*)', '(?:/(.*))?')}$`),
 }))
 const serving = path => matchers.find(matcher => matcher.pattern.test(path))?.route
+
+/** The keys of an object literal `const <name> = {…}` in a route's source, one per line at two spaces. */
+function literalKeys(file, name) {
+  const source = readFileSync(join(repository, file), 'utf8')
+  const start = source.search(new RegExp(`\\bconst ${name}\\b[^\\n]*= \\{$`, 'm'))
+  assert.ok(start >= 0, `${file} has no const ${name} = {…}`)
+  const body = source.slice(start, source.indexOf('\n}', start))
+  return new Set([...body.matchAll(/^ {2}(?:'([^']+)'|([A-Za-z][\w-]*))\s*:/gm)].map(match => match[1] ?? match[2]))
+}
+
+/**
+ * Routes whose one handler dispatches on a path segment: the route table has
+ * `/api/settings/[read]`, but only the reads its READS table names exist, so
+ * `/api/settings/issue-statez` must fail here rather than 404 in the app.
+ * The catch-alls (`/api/auth/[...all]` is Better Auth's router,
+ * `/api/agents/[...path]` Eve's) dispatch in their libraries and are not
+ * checked below their base path.
+ */
+const DISPATCHED = {
+  '/api/settings/[read]': { segment: 3, values: literalKeys('app/api/settings/[read]/route.ts', 'READS') },
+}
+/** Whether a sample of the UI's path names something the route serves. A hole in the dispatched segment cannot be checked. */
+function dispatches(path, sample, route) {
+  const dispatch = DISPATCHED[route.template]
+  if (!dispatch) return true
+  return path.split('/')[dispatch.segment] === HOLE || dispatch.values.has(sample.split('/')[dispatch.segment])
+}
 
 /** The routes a path with holes could name: same depth, every literal segment equal. */
 function matching(path) {
@@ -84,22 +110,38 @@ function modules(target) {
   return graphs.get(target)
 }
 
+/** What the server does not serve of the requests the scan found. */
+function unserved(sites) {
+  const missing = []
+  for (const site of sites) {
+    if (!checkable(site.path) || UNSERVED[key(site.path)] !== undefined) continue
+    const served = samples(site.path).map(sample => [sample, serving(sample)]).filter(([sample, route]) => route && dispatches(site.path, sample, route)).map(([, route]) => route)
+    const where = `(${[...site.files].join(', ')})`
+    if (!served.length) { missing.push(`${site.bare ? 'ANY' : [...site.methods].join('|')} ${described(site.path)}: no route ${where}`); continue }
+    // A literal seen outside a request (a SWR key, a `…Path()` result) names a route but not its method.
+    if (site.bare) continue
+    const methods = new Set(served.flatMap(route => route.methods.includes('GET') ? [...route.methods, 'HEAD'] : route.methods))
+    for (const method of site.methods) if (!methods.has(method)) missing.push(`${method} ${described(site.path)}: the route has ${[...methods].join(', ')} ${where}`)
+  }
+  return missing
+}
+
 for (const target of ['desktop', 'web']) {
   test(`every API route the ${target} UI requests exists on the server with its method`, { skip }, () => {
-    const missing = []
-    for (const site of modules(target).sites.values()) {
-      if (!checkable(site.path) || UNSERVED[key(site.path)] !== undefined) continue
-      const served = samples(site.path).map(serving).filter(Boolean)
-      const where = `(${[...site.files].join(', ')})`
-      if (!served.length) { missing.push(`${site.bare ? 'ANY' : [...site.methods].join('|')} ${described(site.path)}: no route ${where}`); continue }
-      // A literal seen outside a request (a SWR key, a `…Path()` result) names a route but not its method.
-      if (site.bare) continue
-      const methods = new Set(served.flatMap(route => route.methods.includes('GET') ? [...route.methods, 'HEAD'] : route.methods))
-      for (const method of site.methods) if (!methods.has(method)) missing.push(`${method} ${described(site.path)}: the route has ${[...methods].join(', ')} ${where}`)
-    }
-    assert.deepEqual(missing, [], 'the UI requests these, but the server does not serve them: fix the UI or the route, or record in UNSERVED why the server does not serve it')
+    assert.deepEqual(unserved(modules(target).sites.values()), [], 'the UI requests these, but the server does not serve them: fix the UI or the route, or record in UNSERVED why the server does not serve it')
   })
 }
+
+test('a parameter-dispatched route serves only the values its handler names', () => {
+  // Needs no UI checkout: the check itself, on requests written here.
+  const reads = DISPATCHED['/api/settings/[read]'].values
+  for (const read of ['issue-states', 'activity', 'issue-prefix', 'audit']) assert.ok(reads.has(read), read)
+  assert.equal(reads.has('personal'), false, 'personal is its own route, not a READS entry')
+  const site = (path, method = 'GET') => ({ path, methods: new Set([method]), files: new Set(['test']), bare: false })
+  assert.deepEqual(unserved([site('/api/settings/issue-states'), site('/api/settings/personal', 'PATCH'), site(`/api/settings/${HOLE}`)]), [])
+  assert.deepEqual(unserved([site('/api/settings/issue-statez')]), ['GET /api/settings/issue-statez: no route (test)'])
+  assert.deepEqual(unserved([site('/api/settings/issue-states', 'POST')]), ['POST /api/settings/issue-states: the route has GET, HEAD (test)'])
+})
 
 test('the recorded literals are still in the UI', { skip }, () => {
   const named = new Set(['desktop', 'web'].flatMap(target => [...modules(target).sites.keys()].map(key)))
