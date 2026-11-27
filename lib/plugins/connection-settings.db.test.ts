@@ -167,6 +167,15 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       assert.deepEqual((await runtime(member, running, { serverId: installed.id }) as { tools: { name: string }[] }).tools.map(tool => tool.name), ['write_docs'])
       assert.ok(!('error' in await call('write_docs')))
       assert.equal(toolCalls, calls + 4)
+      // A switch made during the handshake applies to that same listing: it is filtered with the
+      // switches re-read after the server initialized, not the ones read before it.
+      let reads = 0
+      const handshake = createPersonalMcpRuntime({ mcpConnection: async (...args: Parameters<typeof personal.mcpConnection>) => {
+        const connection = await personal.mcpConnection(...args)
+        return reads++ === 0 ? { ...connection, disabledTools: [...connection.disabledTools, 'write_docs'] } : connection
+      } }, { transport })
+      assert.deepEqual((await handshake(member, running, { serverId: installed.id }) as { tools: { name: string }[] }).tools.map(tool => tool.name), ['write_docs'])
+      assert.equal(reads, 2)
       // One switch for every user of the connection: the owner's own runs see the same list.
       assert.deepEqual((await personal.mcpConnection(owner, installed.id)).disabledTools, ['read_docs'])
       await connections.setTool(owner, installed.id, 'read_docs', true)

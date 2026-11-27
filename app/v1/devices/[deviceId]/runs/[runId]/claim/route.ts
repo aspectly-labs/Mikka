@@ -27,7 +27,7 @@ import { liteLLMBaseUrl } from '@/lib/model-gateway/litellm-client'
 import { db, pool } from '@/lib/db'
 import { readRunChain } from '@/lib/run-chain'
 import { captureDatabaseQuery } from '@/lib/db/commit-effects'
-import { McpValidationError, PluginError, type NativeMcpAuthority } from '@/lib/plugins/contracts'
+import { McpValidationError, PluginError, type McpAuthority } from '@/lib/plugins/contracts'
 import { runChanged } from '@/lib/live/panels'
 import { agentRuns, agents, deviceRepos } from '@/lib/db/schema'
 import { authenticateDevice, ownedDeviceWithReport } from '@/lib/device-link'
@@ -117,6 +117,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   if (!run) return RouteResponse.json({ error: 'Run is not queued for this device.' }, { status: 409 })
   const taskMcpVersion = request.headers.get(TASK_MCP_HEADER)
   const previewToolFilters = taskMcpVersion === '2'
+  const mcpToolFilters = previewToolFilters || request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1'
   if (run.agentDefinition?.customMcp?.servers.length && taskMcpVersion !== TASK_MCP_VERSION && !previewToolFilters) {
     await failRunForDaemonUpgrade(runId,deviceId,caller.userId)
     return RouteResponse.json({error:'Upgrade the Mikka daemon before using native MCP servers.',code:'daemonUpgradeRequired',protocolVersion:DAEMON_PROTOCOL_VERSION,minVersion:MIN_DAEMON_VERSION,daemonVersions:await daemonVersions()},{status:409})
@@ -338,7 +339,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     return RouteResponse.json({ error: 'Upgrade the Mikka daemon before using protected task Secrets.', code: 'daemonUpgradeRequired', daemonVersions: await daemonVersions() }, { status: 409 })
   }
   let servers: TaskMcpServer[] = []
-  let mcpAuthority: NativeMcpAuthority | undefined
+  let mcpAuthority: McpAuthority | undefined
   if (run.agentDefinition?.customMcp && ['claude_code','codex','cursor'].includes(harness)) {
     try {
       const assignment = await (await import('@/lib/plugins/runtime')).personalPlugins.nativeMcpAssignment(caller.userId, run.agentDefinition.customMcp, run.agentDefinition.projectExecution?.environment?.id ?? null)
@@ -357,7 +358,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       }
       return RouteResponse.json({error:'MCP configuration unavailable.',code:'mcpUnavailable'},{status:409})
     }
-    const compatible = taskMcpForDaemon(servers, previewToolFilters || request.headers.get(TASK_MCP_TOOL_FILTER_HEADER) === '1')
+    const compatible = taskMcpForDaemon(servers, mcpToolFilters)
     if (compatible.length !== servers.length) {
       await failRunForDaemonUpgrade(runId, deviceId, caller.userId)
       return RouteResponse.json({ error: 'Upgrade the Mikka daemon before using MCP tool filters.', code: 'daemonUpgradeRequired', protocolVersion: DAEMON_PROTOCOL_VERSION, minVersion: MIN_DAEMON_VERSION, daemonVersions: await daemonVersions() }, { status: 409 })
@@ -647,8 +648,10 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
         || current.agentDefinition?.projectExecution?.workspaceId !== workspaceId)) return false
     if (mcpAuthority?.servers.length) {
       try {
-        const { lockNativeMcpAuthority } = await import('@/lib/plugins/workspace-mcp')
-        await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
+        const [{ lockNativeMcpAuthority }, { withLockedToolSwitches }] = await Promise.all([import('@/lib/plugins/workspace-mcp'), import('@/lib/plugins/native-mcp')])
+        const locked = await lockNativeMcpAuthority(captureDatabaseQuery(tx), current.userId, mcpAuthority)
+        // A tool switched since the export is delivered as it is now, never stale; the run is not refused.
+        if (mcp?.servers) mcp.servers = withLockedToolSwitches(mcp.servers, locked, mcpToolFilters)
       } catch (error) {
         if (!(error instanceof PluginError)) throw new McpValidationError('connection_lock', error)
         if (error.code !== 'mcpUnavailable') return false
