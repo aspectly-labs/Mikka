@@ -160,7 +160,11 @@ test('required checks: mandatory ones cannot be dropped, unknown ones fail, chec
   await assert.rejects(runReleaseChecks('mobile', { checks: [e2e], read: read(ok) }), /unknownCheck/)
   await assert.rejects(runReleaseChecks('production', { checks: undefined }), /checksRequired/)
   assert.equal((await publicCheckRun(e2e, sha, read(ok))).workflow, '.github/workflows/browser-gate.yml')
-  for (const runs of [[], [{ ...ok[0], conclusion: 'failure' }], [{ ...ok[0], head_sha: 'b'.repeat(40) }], [{ ...ok[0], status: 'in_progress' }],
+  // A check GitHub Actions finished unsuccessfully on the commit is told apart from one still pending.
+  for (const conclusion of ['failure', 'cancelled', 'timed_out'])
+    await assert.rejects(publicCheckRun(e2e, sha, read([{ ...ok[0], conclusion }])), error => error.message === 'releaseChecks:checkRunFailed' && error.check === 'browser-e2e', conclusion)
+  await assert.rejects(publicCheckRun(e2e, sha, read([{ ...ok[0], status: 'queued', conclusion: null }])), error => error.message === 'releaseChecks:checkRunMissing' && error.check === 'browser-e2e')
+  for (const runs of [[], [{ ...ok[0], head_sha: 'b'.repeat(40) }], [{ ...ok[0], status: 'in_progress' }],
     // Another app posting the same name, or a check run with no Actions run behind it, never counts.
     [{ ...ok[0], app: { id: 1 } }], [{ ...ok[0], app: undefined }], [{ ...ok[0], details_url: 'https://evil.example/actions/runs/9/job/77' }]])
     await assert.rejects(publicCheckRun(e2e, sha, read(runs)), /checkRunMissing/)
@@ -223,6 +227,10 @@ test('npm latest moves only for a promoter dispatch of a successful staged push 
   assert.ok(steps.indexOf('Verify the staged daemon run before publishing to latest') < steps.indexOf('Publish with npm trusted publishing and provenance'))
   assert.ok(steps.indexOf('Verify the staged daemon run before publishing to latest') < steps.indexOf('Prepare release version and check registry'))
   assert.ok(steps.indexOf('Read the reviewed release policy token') < steps.indexOf('Verify the staged daemon run before publishing to latest'))
+  // The release self-test runs in the job env, which a promotion sets to latest; it must pass under both.
+  const selfTest = daemon.jobs.publish.steps.find(step => step.name === 'Test the release script under both channels')
+  for (const channel of ['next', 'latest'])
+    assert.match(selfTest.run, new RegExp(`^MIKKA_DAEMON_CHANNEL=${channel} node --test packages/daemon/test/release\\.node-test\\.mjs$`, 'm'))
   const verify = daemon.jobs.publish.steps.find(step => step.name === 'Verify the staged daemon run before publishing to latest')
   assert.equal(verify.env.MIKKA_OPERATIONS_READ_TOKEN, '${{ steps.policy-token.outputs.token }}')
   for (const step of daemon.jobs.publish.steps.filter(step => step.uses?.startsWith('Infisical/') || step.uses?.startsWith('actions/create-github-app-token')))

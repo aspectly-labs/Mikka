@@ -217,6 +217,15 @@ test('the private autoProduction switch in manual mode leaves production to an o
   assert.equal(evaluate(production, { github, needs: { ...staged('true'), 'pipeline-record': { result: 'failure' } } }), false)
   // Staging still runs on every merge regardless of the switch.
   assert.equal(evaluate(workflow.jobs.pipeline.if, { github }), true)
+  // A held-back automatic promotion (selector status not-ready, job successful) skips every writer step
+  // and the production record job, which files failure issues; a real failure is still recorded.
+  const productionRecord = workflow.jobs['pipeline-production-record'].if
+  const outcome = (selected, result) => ({ 'pipeline-production': { result, outputs: { selected } } })
+  assert.equal(evaluate(productionRecord, { github, needs: outcome('not-ready', 'success') }), false)
+  assert.equal(evaluate(productionRecord, { github, needs: outcome('', 'failure') }), true)
+  assert.equal(evaluate(productionRecord, { github, needs: outcome('selected', 'success') }), true)
+  const afterSelect = workflow.jobs['pipeline-production'].steps.slice(workflow.jobs['pipeline-production'].steps.findIndex(step => step.id === 'select') + 1)
+  for (const step of afterSelect) assert.match(step.if ?? '', /steps\.select\.outputs\.status == 'selected'/, step.name ?? step.uses)
 
   // The manual path: a dispatch of pipeline-promote on main reaches the selector, which admits only
   // listed promoters on evidence (scripts/release/pipeline-inputs.test.mjs) before any deploy credential.
