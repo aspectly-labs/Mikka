@@ -32,12 +32,14 @@ The checkout's `core/` holds the interface that used to live here at the same re
 `core/lib/`, and the client application under `core/renderer/`. It imports this repository's runtime, API clients
 and contracts through `@/`; nothing here imports it, except the build glue and its tests.
 
-The official build also **runs** one file from the checkout: `apps/frontend/vite.config.mjs` loads
-`scripts/track-owner/vite-plugin.mjs` as a Vite plugin (`trackOwnerPlugins`). The plugin adds a
-`data-track-owner` attribute to the checkout's interactive JSX while Vite transforms it in memory and writes
-nothing back, so the checkout stays read-only; a build without the checkout, or a checkout without that file, loads
-no plugin. Its switch, `MIKKA_TRACK_OWNER`, lives inside the plugin: `1` turns it on and `0` off; unset, it is off for
-a production build and on for the dev server, so production ships no owners unless the deployment asks for them.
+Only with an explicit `MIKKA_TRACK_OWNER=1` does the build **run** a file from the checkout:
+`apps/frontend/vite.config.mjs` then loads `scripts/track-owner/vite-plugin.mjs` as a Vite plugin
+(`trackOwnerPlugins`), which adds a `data-track-owner` attribute to the checkout's interactive JSX while Vite
+transforms it in memory and writes nothing back. Without that switch (unset, `0` or anything else), no checkout code
+is imported or run in the build process, for a production build and the dev server alike. A build that holds signing
+or release credentials never sets it: the desktop release builds its renderer in a step before any credential is
+exported (`scripts/ci/desktop-release-overlay-guard.test.mjs`). The owners are read only by the owner-click analytics
+allowlist (`lib/track-owner-rule.ts`, `lib/analytics-policy.ts`).
 
 A build without the checkout only has to compile. Its server answers a browser with the headless page; the official
 clients connect to it. A dev-flavour desktop build without the checkout shows the same page so the native shell can

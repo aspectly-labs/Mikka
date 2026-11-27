@@ -142,14 +142,19 @@ test('without the official UI checkout the headless page builds for web and desk
   })
 })
 
-test('the UI checkout\'s data-track-owner plugin loads when the checkout has one, and not otherwise', async () => {
-  assert.deepEqual(await trackOwnerPlugins({ dir: null }), [])
+test('the UI checkout\'s data-track-owner plugin is imported only with an explicit MIKKA_TRACK_OWNER=1', async () => {
+  const on = { MIKKA_TRACK_OWNER: '1' }
+  assert.deepEqual(await trackOwnerPlugins({ dir: null }, on), [])
   const dir = await mkdtemp(join(tmpdir(), 'mikka-track-owner-'))
   try {
-    assert.deepEqual(await trackOwnerPlugins({ dir }), [])
+    assert.deepEqual(await trackOwnerPlugins({ dir }, on), [])
     await mkdir(join(dir, 'scripts/track-owner'), { recursive: true })
-    await writeFile(join(dir, 'scripts/track-owner/vite-plugin.mjs'), 'export const trackOwnerPlugin = ({ root }) => ({ name: "mikka-track-owner", root })\n')
-    const [plugin] = await trackOwnerPlugins({ dir })
+    // A module that throws on import proves it is never imported unless the switch is on.
+    await writeFile(join(dir, 'scripts/track-owner/vite-plugin.mjs'), 'if (!globalThis.__mikkaTrackOwnerAllowed) throw new Error("imported")\nexport const trackOwnerPlugin = ({ root }) => ({ name: "mikka-track-owner", root })\n')
+    for (const env of [{}, { MIKKA_TRACK_OWNER: '0' }, { MIKKA_TRACK_OWNER: 'true' }, { MIKKA_TRACK_OWNER: ' 1' }])
+      assert.deepEqual(await trackOwnerPlugins({ dir }, env), [], JSON.stringify(env))
+    globalThis.__mikkaTrackOwnerAllowed = true
+    const [plugin] = await trackOwnerPlugins({ dir }, on)
     assert.equal(plugin.name, 'mikka-track-owner')
     assert.equal(plugin.root, dir)
   } finally { await rm(dir, { recursive: true, force: true }) }

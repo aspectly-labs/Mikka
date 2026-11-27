@@ -31,10 +31,12 @@ function applicationBuild() {
   return resolvedApplicationBuild
 }
 
-/** The UI checkout's data-track-owner plugin (its scripts/track-owner/vite-plugin.mjs), when it has one. The plugin
- * decides whether it writes anything: MIKKA_TRACK_OWNER=1|0, else on for the dev server and off for a production
- * build, so production ships no owners unless analytics asks for them. */
-export async function trackOwnerPlugins(overlay) {
+/** The UI checkout's data-track-owner plugin (its scripts/track-owner/vite-plugin.mjs). Only an explicit
+ * MIKKA_TRACK_OWNER=1 loads it: otherwise no code from the checkout is imported or run in this build process (the
+ * checkout's JSX is still compiled, never executed here). A build that holds signing or release credentials must not
+ * set it (scripts/ci/desktop-release-overlay-guard.test.mjs). */
+export async function trackOwnerPlugins(overlay, env = runtimeEnv()) {
+  if (envValue('MIKKA_TRACK_OWNER', env) !== '1') return []
   const path = overlay.dir && resolve(overlay.dir, 'scripts/track-owner/vite-plugin.mjs')
   if (!path || !existsSync(path)) return []
   const { trackOwnerPlugin } = await import(pathToFileURL(path).href)
@@ -88,7 +90,7 @@ export async function frontendConfig({ target = 'web', command = 'build', outdir
       }),
       'process.env': '{}',
     },
-    plugins: [...await trackOwnerPlugins(overlay), await applicationPlugin(target, { deploymentId, overlay }), react(), await deploymentPlugin({ repository, deploymentId })],
+    plugins: [...await trackOwnerPlugins(overlay, env), await applicationPlugin(target, { deploymentId, overlay }), react(), await deploymentPlugin({ repository, deploymentId })],
     experimental: deploymentId ? { renderBuiltUrl: filename => pinnedUrl(`/mikka/${filename}`, deploymentId) } : {},
     // The official UI checkout (docs/ui-overlay.md) carries its own node_modules; React stays this repository's.
     resolve: { dedupe: ['react', 'react-dom'] },
