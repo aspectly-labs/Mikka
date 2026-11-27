@@ -190,7 +190,14 @@ export class PersonalPluginStore {
   /** Resolve the bot's existing runtime environment before freezing connection scope. */
   async snapshotForBot(userId: string, botId: string | null, workspaceId: string | null, client: Pick<PoolClient, 'query'> = this.pool) {
     const { rows: [bot] } = botId ? await client.query<{ environmentId: string | null }>('SELECT "environmentId" FROM bots WHERE id=$1 AND "ownerId"=$2 AND "workspaceId"=$3', [botId, userId, workspaceId]) : { rows: [] }
-    return this.snapshot(userId, client, workspaceId, bot?.environmentId)
+    let environmentId = bot?.environmentId ?? null
+    if (environmentId) {
+      const membership = this.membership ?? (await import('@/lib/workspace-db')).workspacePool
+      const { rowCount } = await membership.query(`SELECT 1 FROM workspace_environments WHERE id=$1 AND "workspaceId"=$2
+        AND "archivedAt" IS NULL AND scope='workspace'`, [environmentId, workspaceId])
+      if (!rowCount) environmentId = null
+    }
+    return this.snapshot(userId, client, workspaceId, environmentId)
   }
   /**
    * One enabled skill's body, for `read_personal_skill` (ALE-75).

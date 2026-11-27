@@ -33,9 +33,7 @@ export async function previewPersonalScope(userId: string, issueId: string) {
   }))
 }
 
-/** The DB trigger detaches the old link, queues its frozen archive request,
- * and cancels outgoing sync. Task ownership and admitted runs stay in place.
- * Provider IO stays in the existing outbox worker, after this transaction. */
+/** Preserve historical links as local detachment records when ownership policy changes. */
 export async function changeIssueScopeLocally(userId: string, input: { id: string; revision: number; scope: TaskScope }, options: { allowLinkedPersonal: boolean; confirmation?: string }) {
   const accessible = await issueForUser(userId, input.id)
   if (!accessible?.workspaceId) throw new ActionFailureError('issueNotFound')

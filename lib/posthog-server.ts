@@ -1,6 +1,6 @@
 import 'server-only'
 import { PostHog } from 'posthog-node'
-import { gatedFeatureEnabled, localFlagOverride, productionFlagDefault } from '@/lib/feature-flags'
+import { gatedFeatureEnabled, isTaskProviderFlagVariant, localFlagOverride, productionFlagDefault, taskProviderFlag, type TaskProviderFlagVariant } from '@/lib/feature-flags'
 import { posthogConfig } from '@/lib/posthog-config'
 import { registerTelemetryFlush } from '@/lib/tracing/flush'
 import { safeErrorAttributes } from '@mikka/protocol/tracing'
@@ -20,7 +20,7 @@ const CACHE_MAX = 5_000
 
 /** The part of the PostHog client this module uses, so tests can pass a fake. */
 export interface ServerPostHog {
-  getFeatureFlag(key: string, distinctId: string, options?: { sendFeatureFlagEvents?: boolean }): Promise<boolean | string | undefined>
+  getFeatureFlag(key: string, distinctId: string, options?: { sendFeatureFlagEvents?: boolean; groups?: Record<string, string>; personProperties?: Record<string, string> }): Promise<boolean | string | undefined>
   capture(message: { distinctId: string; event: string; properties?: Record<string, unknown>; timestamp?: Date }): void
   flush(): Promise<void>
 }
@@ -51,12 +51,12 @@ const flagCache = new Map<string, { enabled: boolean; at: number }>()
  */
 export async function serverFlagEnabled(key: string, userId: string, { posthog, now = Date.now(), timeoutMs = FLAG_TIMEOUT_MS }: { posthog?: ServerPostHog | null; now?: number; timeoutMs?: number } = {}): Promise<boolean> {
   const local = localFlagOverride(key)
-  if (local !== undefined) return local
+  if (typeof local === 'boolean') return local
   const cacheKey = `${key}|${userId}`
   const cached = flagCache.get(cacheKey)
   if (cached && now - cached.at < FLAG_CACHE_MS) return cached.enabled
   if (posthog === undefined) posthog = serverPostHog()
-  let enabled = posthog ? false : productionFlagDefault(key)
+  let enabled = !posthog && productionFlagDefault(key) === true
   if (posthog) {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
@@ -74,6 +74,29 @@ export async function serverFlagEnabled(key: string, userId: string, { posthog, 
   if (flagCache.size >= CACHE_MAX) flagCache.clear()
   flagCache.set(cacheKey, { enabled, at: now })
   return enabled
+}
+
+/** Admission evaluates the variant for this person and workspace once per new run. */
+export async function serverTaskProviderVariant(userId: string, workspaceId: string, options: { posthog?: ServerPostHog | null; timeoutMs?: number } = {}): Promise<TaskProviderFlagVariant | undefined> {
+  const override = localFlagOverride(taskProviderFlag)
+  if (isTaskProviderFlagVariant(override)) return override
+  const posthog = options.posthog === undefined ? serverPostHog() : options.posthog
+  if (!posthog) return undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const value = await Promise.race([
+      posthog.getFeatureFlag(taskProviderFlag, userId, {
+        groups: { workspace: workspaceId }, personProperties: { workspace_id: workspaceId }, sendFeatureFlagEvents: false,
+      }),
+      new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), options.timeoutMs ?? FLAG_TIMEOUT_MS) }),
+    ])
+    return isTaskProviderFlagVariant(value) ? value : undefined
+  } catch (error) {
+    console.error('PostHog task provider flag check failed', safeErrorAttributes(error))
+    return undefined
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /** Forgets cached flag values; for tests. */

@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { db } from '@/lib/db'
 import { workspaceCreditGrants } from '@/lib/db/schema'
-import { POINTS_PURCHASE_AMOUNTS } from './points'
+import { POINTS_PURCHASE_AMOUNTS, purchasedGrantExpiresAt } from './points'
 import { stripeConfig, stripeGet } from './stripe'
 import { hostedBillingChanged } from '@/lib/live/billing'
 
@@ -48,10 +48,12 @@ export async function applyPointsEvent(tx: Transaction, type: string, object: Re
     const payment = z.object({ latest_charge: chargeDetails.nullable() }).parse(await get(`payment_intents/${session.payment_intent}?expand%5B%5D=latest_charge.balance_transaction`))
     const charge = payment.latest_charge
     const fee = charge?.balance_transaction
+    const grantedAt = new Date()
     await tx.insert(workspaceCreditGrants).values({
       id: randomUUID(), workspaceId: session.metadata.workspaceId, bucket: 'purchased', points, reason: 'purchase', externalId: session.id,
       stripePaymentIntentId: session.payment_intent, amountCents: session.amount_total, currency: session.currency,
       receiptUrl: charge?.receipt_url ?? null, stripeFeeCents: typeof fee === 'object' && fee?.currency === 'usd' ? fee.fee : null,
+      createdAt: grantedAt, expiresAt: purchasedGrantExpiresAt(grantedAt),
     }).onConflictDoNothing({ target: workspaceCreditGrants.externalId })
     // The refused turn waiting on these points reads its balance again after COMMIT (#1212).
     await hostedBillingChanged(tx, session.metadata.workspaceId)
@@ -88,6 +90,7 @@ export async function applyPointsEvent(tx: Transaction, type: string, object: Re
       await tx.insert(workspaceCreditGrants).values({
         id: randomUUID(), workspaceId: purchase.workspaceId, bucket: 'purchased', points: -debit, reason: 'refund', externalId: item.id, parentGrantId: purchase.id,
         stripePaymentIntentId: charge.payment_intent, amountCents: -item.amount, currency: item.currency, receiptUrl: purchase.receiptUrl,
+        expiresAt: purchase.expiresAt,
       }).onConflictDoNothing({ target: workspaceCreditGrants.externalId })
       await hostedBillingChanged(tx, purchase.workspaceId)
     }

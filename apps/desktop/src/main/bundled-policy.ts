@@ -15,7 +15,6 @@ export const RENDERER_CSP = [
 const DRIVE_VOLUME_ID = 'vol_[0-9A-HJKMNP-TV-Z]{26}'
 /** The protocol streams this route's body instead of buffering it (bundled-protocol.ts). */
 export const DRIVE_BLOB_UPLOAD = new RegExp(`^/api/drive/volumes/${DRIVE_VOLUME_ID}/blobs$`)
-
 type ServerRoute = { template: string }
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 

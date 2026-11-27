@@ -12,10 +12,14 @@ export const GET = defineRoute<'session', 'pat-scoped'>(
     workspace: 'pat-scoped',
     workspaceId: ({ request }) => new URL(request.url).searchParams.get('workspace'),
   },
-  async ({ session, requestedWorkspaceId, assertWorkspaceAllowed }) => {
+  async ({ session, request, requestedWorkspaceId, assertWorkspaceAllowed }) => {
     const context = await loadWorkspaceContext(requestedWorkspaceId ?? undefined, session.user)
     assertWorkspaceAllowed(context.workspace.id)
-    const catalog = await resolveBillingCatalog({ workspaceId: context.workspace.id })
+    const includeE2BMachineSkus = new URL(request.url).searchParams.get('include') === 'e2b'
+    const catalog = await resolveBillingCatalog({
+      workspaceId: context.workspace.id,
+      includeE2BMachineSkus,
+    })
     return RouteResponse.json(catalog, { headers: NO_STORE_PRIVATE_HEADERS })
   },
 )

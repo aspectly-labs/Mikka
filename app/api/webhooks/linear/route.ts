@@ -1,12 +1,5 @@
-import { afterJob } from '@/lib/background'
-import { db } from '@/lib/db'
-import { linearSyncInbox } from '@/lib/db/schema'
-import { dispatchLinearWebhook } from '@/lib/linear-sync/dispatch'
 import { isLinearOAuthRevocation, parseLinearWebhookRequest } from '@/lib/linear-sync/webhook'
 import { processLinearOAuthRevocation } from '@/lib/linear-sync/oauth-revocation'
-import { linearWebhookNotifications } from '@/lib/suggestions/sources'
-import { ingestNotifications } from '@/lib/suggestions/store'
-import { linearSyncDisabledResponse, linearSyncEnabled, linearSyncState } from '@/lib/linear-sync/flags'
 import { defineRoute } from '@/lib/primitives/define-route'
 import { readEnv } from '@/lib/env/server'
 
@@ -34,32 +27,12 @@ export const POST = defineRoute<'webhook-signature', 'none', Record<string, stri
     const { fireLinearAutomations } = await import('@/lib/schedules/runtime')
     try { await fireLinearAutomations(parsed.deliveryId, parsed.payload) }
     catch { return Response.json({ error: 'Could not queue automations' }, { status: 503 }) }
-    const state = await linearSyncState()
-    if (state === 'disabled') {
-      if (!isLinearOAuthRevocation(parsed.payload)) return Response.json({ disabled: true })
-      try {
-        await processLinearOAuthRevocation(parsed.payload)
-        return new Response(null, { status: 200 })
-      } catch {
-        return linearSyncDisabledResponse()
-      }
+    if (!isLinearOAuthRevocation(parsed.payload)) return Response.json({ disabled: true })
+    try {
+      await processLinearOAuthRevocation(parsed.payload)
+      return new Response(null, { status: 200 })
+    } catch {
+      return Response.json({ error: 'Could not process revocation' }, { status: 503, headers: { 'retry-after': '60' } })
     }
-    if (state !== 'enabled') return linearSyncDisabledResponse()
-    const [saved] = await db.insert(linearSyncInbox).values({
-      deliveryId: parsed.deliveryId,
-      organizationId: parsed.organizationId,
-      eventType: parsed.eventType,
-      payload: parsed.payload,
-    }).onConflictDoNothing().returning({ deliveryId: linearSyncInbox.deliveryId })
-    if (saved) {
-      dispatchLinearWebhook(saved.deliveryId)
-      // The same delivery feeds the suggestions list; only a first delivery, so a retry is not judged twice.
-      afterJob('after:linear-webhook-suggestions', async () => {
-        if (!await linearSyncEnabled()) return
-        try { await ingestNotifications(await linearWebhookNotifications(parsed.organizationId, parsed.payload)) }
-        catch (error) { console.error('Linear suggestion ingest failed', error instanceof Error ? error.message : error) }
-      })
-    }
-    return new Response(null, { status: 200 })
   },
 )

@@ -1,7 +1,7 @@
 # Threads group in five, and an outcome judge decides resolved
 
 - Date: 2026-11-01
-- **Status:** Superseded in part by [2026-11-09-0045](2026-11-09-0045-no-attempt-word.md)
+- **Status:** Superseded in part by [2026-11-09-0045](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-0045-no-attempt-word.md)
 - Source: Alex, on the Coordinator's 已解决（16）holding ZHIX-2 README runs that
   failed or stalled ("Not logged in · Please run /login", "I couldn't open the
   PR", 「我没有创建 PR，gh 拿不到凭证」): 「这明明是 block，你为什么分到了 resolve
@@ -9,11 +9,11 @@
   里面。」 Then: 「应该是 5 档：Running、Blocked、Waiting for you、Idle、Resolved」.
   Relayed by the coordinator session.
 - Rule: R-52
-- Superseded in part by: [2026-11-09-0045](2026-11-09-0045-no-attempt-word.md) (no 「尝试」 in the UI: a task is one conversation; only an Agent switch gets a divider)
+- Superseded in part by: [2026-11-09-0045](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-0045-no-attempt-word.md) (no 「尝试」 in the UI: a task is one conversation; only an Agent switch gets a divider)
 - Superseded in part by: [2026-11-07-2045](2026-11-07-2045-tasks-only-threads-inside.md) (lists group tasks as 等待你, 进行中, 待办 and 已完成; outcome judgement remains).
 - Replaces: [decisions.md](../decisions.md) 2026-10-28 row "Thread lists group as
   等待回复 → 进行中 → 空闲 → 已解决 (… failed under 等待回复 …)", as to the groups
-- Superseded in part by: [2026-11-02-0300](2026-11-02-0300-waiting-for-you-first.md) (等待你 is the first group)
+- Superseded in part by: [2026-11-02-0300](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-02-0300-waiting-for-you-first.md) (等待你 is the first group)
 
 Thread lists, on the web and the phone, group as 进行中 · 受阻 · 等待你 · 空闲 ·
 已解决 (Running, Blocked, Waiting for you, Idle, Resolved); 已解决 stays collapsed.

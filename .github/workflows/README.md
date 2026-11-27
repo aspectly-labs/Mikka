@@ -290,8 +290,8 @@ retry only failed candidate/gate jobs: cleanup has removed their candidates.
 
 After the candidate and receipt checks pass, the workflow makes the candidates
 public and keeps the
-release report (all three IDs, their official base kinds, worker digest, source
-commit and original candidate evidence) as an immutable artifact for the private Cloudflare
+release report (all template IDs, their official base kinds, observed hardware,
+worker digest, source commit and original candidate evidence) as an immutable artifact for the private Cloudflare
 API deployment. Old template IDs and aliases are never updated or deleted. A
 failure before publication leaves the selected release unchanged. Publication
 verifies the candidate's source, run, attempt and report digests. The private
@@ -299,6 +299,15 @@ Cloudflare deployment selects the verified IDs under the #1954 release owner;
 publishing IDs alone does not change production selection. Rollback follows
 that owner's existing procedure and a normal rollback PR when code changes,
 preserving matched application/worker sources and the current admission gates.
+
+The builder creates independently sized Claude and Codex templates and compares
+the CPU and memory on a disposable E2B sandbox against each release tier.
+The default ceiling is 8 GiB. Set the repository variable
+`MIKKA_E2B_CONFIRMED_MEMORY_GIB` to `16` or `32` only after E2B confirms
+that quota for the release account. Both build and promotion enforce the
+ceiling. The Desktop template uses the medium tier. The release catalogue
+records only the successfully verified template IDs and their hardware.
+[E2B billing and limits](https://docs.e2b.dev/billing.md)
 
 PR runs use no release credentials. Main builds read the existing `E2B_API_KEY`
 from the existing Infisical `prod:/vercel` path. That retained secret location

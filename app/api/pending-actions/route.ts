@@ -1,16 +1,15 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
 import type { ApiSession } from '@/lib/api-auth'
-import { listPendingActions } from '@/lib/pending-action-store'
-import { pendingActionsOutsideToken } from '@/lib/tokens/scope'
+import type { PendingActionView } from '@/lib/pending-action-view'
 import { defineRoute } from '@/lib/primitives/define-route'
 
-// A plain authenticated GET: push invalidates this read without queuing behind
-// the app's own actions. Keep the array body for existing consumers.
+// Nothing waits for approval (ADR 2026-11-27-1615): the list is always empty.
+// Kept for one release with its array body and owner/read-time headers, because
+// the official UI still reads it; remove with the hosted follow-up.
 async function handleGET(session: ApiSession) {
   const observedAt = new Date().toISOString()
-  const listed = await listPendingActions(session.user.id)
-  const outside = await pendingActionsOutsideToken(session.user, listed.map(item => item.id))
-  return RouteResponse.json(listed.filter(item => !outside.has(item.id)), { headers: { 'Cache-Control': 'private, no-store', 'X-Mikka-Observed-At': observedAt, 'X-Mikka-Viewer': encodeURIComponent(session.user.id) } })
+  const listed: PendingActionView[] = []
+  return RouteResponse.json(listed, { headers: { 'Cache-Control': 'private, no-store', 'X-Mikka-Observed-At': observedAt, 'X-Mikka-Viewer': encodeURIComponent(session.user.id) } })
 }
 
 export const GET = defineRoute<'session', 'none'>(

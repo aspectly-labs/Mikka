@@ -115,7 +115,8 @@ export class McpConnectionStore {
     const sharing = new WorkspaceMcpStore(this.personal.pool, this.personal.membership)
     await sharing.workspace(userId, input.workspaceId)
     const members = await this.members()
-    const { rows } = await members.query<{ id: string }>('SELECT id FROM workspace_environments WHERE "workspaceId"=$1 AND id=ANY($2::uuid[]) AND "archivedAt" IS NULL', [input.workspaceId, input.environmentIds])
+    const { rows } = await members.query<{ id: string }>(`SELECT id FROM workspace_environments WHERE "workspaceId"=$1 AND id=ANY($2::uuid[]) AND "archivedAt" IS NULL
+      AND (scope='workspace' OR "ownerId"=$3)`, [input.workspaceId, input.environmentIds, userId])
     if (rows.length !== input.environmentIds.length) throw new PluginError('environmentAccessDenied', 403)
     await this.write(userId, serverId, async client => {
       await sharing.workspace(userId, input.workspaceId)

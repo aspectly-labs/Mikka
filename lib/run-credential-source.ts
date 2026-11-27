@@ -17,10 +17,12 @@ interface Binding { id: string; ownerId: string; connectionId: string; connectio
  * workspace its owner's own keys, then teammates' shared ones; with no bot
  * (the Coordinator), the owner's own keys only.
  */
-type RunKey = Pick<ApiKeyView, 'id' | 'provider' | 'protocol' | 'responsesApi' | 'models' | 'baseUrl'>
+type RunKey = Pick<ApiKeyView, 'id' | 'provider' | 'protocol' | 'responsesApi' | 'models' | 'baseUrl' | 'modelsError'>
 async function runKeys(query: Query, ownerId: string, botWorkspaceId: string | null): Promise<RunKey[]> {
-  if (botWorkspaceId) return usableApiKeys(query, ownerId, botWorkspaceId)
-  return (await query.query<RunKey>('SELECT id,provider,protocol,"responsesApi",models,"baseUrl" FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id', [ownerId])).rows
+  const keys = botWorkspaceId ? await usableApiKeys(query, ownerId, botWorkspaceId)
+    : (await query.query<RunKey>(`SELECT id,provider,protocol,"responsesApi",models,"baseUrl",to_jsonb(k)->>'modelsError' AS "modelsError"
+      FROM model_api_keys k WHERE "ownerId"=$1 ORDER BY "createdAt",id`, [ownerId])).rows
+  return keys.filter(key => key.modelsError !== 'invalid')
 }
 
 /**

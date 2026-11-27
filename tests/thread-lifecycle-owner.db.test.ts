@@ -133,3 +133,26 @@ test('thread lifecycle: delete, restore, tags, automation seed, fork context', {
     assert.equal(await forkNote(pool, teammate, chain, { runId: next }, 'full', 'x'), null)
   })
 })
+
+test('bulk deletion is atomic, audited, scoped by owner and workspace, and safe to retry', { skip: !dbUrl }, async t => {
+  const { Pool } = await import('pg')
+  const pool = new Pool({ connectionString: dbUrl })
+  t.after(() => pool.end())
+  const { deleteOwnedWorkspaceThreads } = await import('../lib/settings/delete-threads')
+  const user = await seedUser(pool, 'bulk-owner'), other = await seedUser(pool, 'bulk-member')
+  const ws = await seedWorkspace(pool, user, [{ userId: user, role: 'admin' }, { userId: other, role: 'member' }])
+  const elsewhere = await seedWorkspace(pool, user, [{ userId: user, role: 'admin' }])
+  const agent = await seedAgent(pool, user), otherAgent = await seedAgent(pool, other)
+  const run = async (owner: string, workspaceId: string, status: string) => seedRun(pool, {
+    userId: owner, agentId: owner === user ? agent : otherAgent, workspaceId, issueId: await seedIssue(pool, owner, workspaceId), status,
+  })
+  const completed = await run(user, ws.id, 'succeeded'), running = await run(user, ws.id, 'running')
+  const foreign = [await run(other, ws.id, 'succeeded'), await run(user, elsewhere.id, 'succeeded')]
+  assert.deepEqual(await deleteOwnedWorkspaceThreads(user, ws.id), { error: 'threadWorking' })
+  await pool.query("UPDATE agent_runs SET status='succeeded' WHERE id=$1", [running])
+  assert.equal((await deleteOwnedWorkspaceThreads(user, ws.id)).deleted, 2)
+  assert.equal((await deleteOwnedWorkspaceThreads(user, ws.id)).deleted, 0)
+  const { rows } = await pool.query('SELECT id FROM agent_runs WHERE id=ANY($1::uuid[]) AND "deletedAt" IS NOT NULL', [[completed, running, ...foreign]])
+  assert.deepEqual(rows.map(row => row.id).sort(), [completed, running].sort())
+  assert.equal((await pool.query('SELECT 1 FROM workspace_audit_events WHERE "workspaceId"=$1 AND action=$2', [ws.id, 'thread.bulk_deleted'])).rowCount, 1)
+})

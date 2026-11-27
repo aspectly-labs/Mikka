@@ -30,7 +30,7 @@ test('committed native outcomes deliver Telegram and existing phone Decisions on
   await admin.query(`CREATE SCHEMA ${schema}`)
   await app.query(`CREATE TABLE "user"(id text PRIMARY KEY);
    CREATE TABLE bots(id uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid);
-   CREATE TABLE mikka_workspaces(id uuid PRIMARY KEY,kind text,"userId" text);
+   CREATE TABLE mikka_workspaces(id uuid PRIMARY KEY,kind text,"userId" text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
    CREATE TABLE mikka_workspace_members("workspaceId" uuid,"userId" text,status text);
    CREATE TABLE coordinator_bots("ownerId" text,"workspaceId" uuid,"botId" uuid);
    CREATE TABLE eve_sessions(session_id text PRIMARY KEY,owner_id text,bot_id uuid,workspace_id uuid,surface text);

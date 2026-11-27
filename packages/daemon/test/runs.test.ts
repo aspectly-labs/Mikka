@@ -122,7 +122,6 @@ describe("mock runs", () => {
       return { ...assignment, remoteUrl: undefined }
     }
     link.nativeContext = async () => { throw new Error('Mock delivery must not request a model credential') }
-    link.nativeRequest = async () => { throw new Error('Mock delivery must not call a provider') }
     const daemon = await new Daemon({ dataDir, flavor: 'dev', agentSandbox: null, link, credential: 'cred-1',
       hostedSubscriptions: true, harnesses: [{ harness: 'mock', installed: true, version: 'test' }],
       harnessBinaries: { claude_code: resolve(import.meta.dirname, 'fakes/fake-claude-subscription.mjs') },
@@ -161,7 +160,6 @@ describe("mock runs", () => {
     const link = server.link()
     const claim = link.claimRun.bind(link)
     link.nativeContext = async () => { throw new Error('Mock file checks must not request a model credential') }
-    link.nativeRequest = async () => { throw new Error('Mock file checks must not call a provider') }
     // A no-repository cloud workspace has no remote URL. MemoryServer normally
     // supplies a file URL for local fixtures; reproduce the actual claim instead.
     link.claimRun = async (...args) => ({ ...await claim(...args), remoteUrl: undefined,
@@ -300,11 +298,13 @@ describe("mock runs", () => {
     const cases = [
       // Only the server's allow (an admitted GitHub App grant) fetches and pushes the issue branch; a local approval no longer stands in.
       { decision: "allow", approved: false, expected: true },
+      { decision: "allow", approved: false, expected: false, fresh: true },
       { decision: "ask", approved: true, expected: false },
       { decision: "ask", approved: false, expected: false },
       { decision: "deny", approved: true, expected: false },
     ] as const
-    for (const { decision, approved, expected } of cases) {
+    for (const item of cases) {
+      const { decision, approved, expected } = item
       const server = new MemoryServer(DEVICE)
       server.addRepo(DEVICE, { repoId: "repo-1", name: "fixture", path: origin, push: { approved, remote: "origin" } })
       const daemon = await boot(server, tempDir())
@@ -312,7 +312,7 @@ describe("mock runs", () => {
       const runId = server.queueRun(DEVICE, {
         issueId: `issue-${decision}-${approved}`, repoId: "repo-1",
         remoteUrl: pathToFileURL(origin).href, harness: "mock", prompt: "inspect",
-        pushBranch: "mikka/issue-1", fixture: "turn-ended",
+        pushBranch: "mikka/issue-1", fixture: "turn-ended", ...("fresh" in item ? { freshEnvironmentCheckout: true as const } : {}),
         // ask is what an older server could still send over the wire; it carries no push authority.
         policy: { ...defaults, permissions: { ...defaults.permissions, git_push: decision as "allow" | "deny" } },
       })
@@ -990,6 +990,27 @@ describe("follow-up runs", () => {
 // reason, and the issue gets a next owner or a named wait reason. Only a
 // submission whose verify passed goes to review.
 describe("run stops", () => {
+  it("publishes the local supervisor activity snapshot and final idle edge", async () => {
+    const { server, dataDir } = await setup()
+    const daemon = await boot(server, dataDir, Number.POSITIVE_INFINITY, 60_000)
+    const control = await connectDaemonInDataDir(dataDir, { name: "activity-control", version: "1" })
+    const watcher = await connectDaemonInDataDir(dataDir, { name: "activity-observer", version: "1" })
+    try {
+      const runId = queue(server, "stall")
+      await control.request("runs.start", { runId })
+      await waitFor(() => daemon.supervisor.activeRunIds().includes(runId))
+      const active: boolean[] = []
+      await watcher.watchRunActivity(value => active.push(value))
+      expect(active).toEqual([true])
+      await control.request("runs.cancel", { runId })
+      await waitFor(() => active.length === 2)
+      expect(active).toEqual([true, false])
+    } finally {
+      watcher.close()
+      control.close()
+    }
+  })
+
   it.each(['blocked', 'cancelled'] as const)('retains a clean repository-selection handoff only when it ended blocked (%s)', async stopReason => {
     const { repo, server, dataDir } = await setup()
     // The daemon clones this real local fixture into its own repository cache.

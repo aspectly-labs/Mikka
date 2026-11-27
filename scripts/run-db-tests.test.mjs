@@ -32,13 +32,16 @@ function runnerFixture(t, names = ['a', 'b', 'c']) {
   return { root, scripts: Object.keys(commands) }
 }
 
-test('the enterprise PostgreSQL command flushes every test record before exiting', async t => {
-  const command = JSON.parse(readFileSync('package.json', 'utf8')).scripts['test:enterprise-db']
+test('verbose PostgreSQL commands flush every test record before exiting', async t => {
+  const { scripts } = JSON.parse(readFileSync('package.json', 'utf8'))
+  for (const script of ['test:enterprise-db', 'test:pat-api-db']) {
+    assert.ok(!scripts[script].split(/\s+/).includes('--test-force-exit'), `${script}: forced exit can discard piped reports`)
+  }
+  const command = scripts['test:enterprise-db']
   const tokens = command.split(/\s+/)
   assert.equal(tokens.shift(), 'node')
   const flags = tokens.slice(0, tokens.indexOf('--test') + 1)
   assert.equal(flags.at(-1), '--test')
-  assert.ok(!flags.includes('--test-force-exit'), 'forced exit can discard piped reports, including entire test files')
   const directory = mkdtempSync(join(tmpdir(), 'enterprise-db-report-'))
   t.after(() => rmSync(directory, { recursive:true, force:true }))
   const fixtures = Array.from({ length:5 }, (_, index) => {
@@ -473,6 +476,42 @@ test('runner rejects invalid shards before execution and preserves per-shard sum
   assert.ok(errors.some(error => /test:b-db: 1 skipped/.test(error)))
 })
 
+test('verbose force-exit test files keep their test counts and status with separate file-backed reporters', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-db-report-files-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const childEnv = { ...process.env }
+  delete childEnv.NODE_TEST_CONTEXT
+  const files = Array.from({ length: 3 }, (_, index) => {
+    const file = `suite-${index}.test.mjs`
+    writeFileSync(join(root, file), `import test from 'node:test'
+      setInterval(() => {}, 60_000)
+      for (let item = 0; item < 8; item++) test('result-${index}-' + item, () => {
+        console.log('x'.repeat(32768))
+        console.error('stderr-${index}-' + item)
+      })`)
+    return file
+  })
+  const execute = files => {
+    const [bin, args] = launch('test:isolated-db', `node --test-force-exit --test-concurrency=2 --test ${files.join(' ')}`)
+    return runScript(bin, args, { cwd: root, env: childEnv, script: 'test:isolated-db' })
+  }
+  const complete = await execute(files)
+  const completeOutput = `${complete.stdout}\n${complete.stderr}`
+  const report = parseSummary(completeOutput)
+  assert.equal(complete.steps, files.length)
+  assert.equal(checkSummary('test:isolated-db', complete.status, report, { steps: complete.steps, summaries: parseSummaries(completeOutput) }), null)
+  assert.equal(report.tests, 24)
+  for (let index = 0; index < files.length; index++) {
+    assert.match(complete.stdout, new RegExp(`result-${index}-7`))
+    assert.match(complete.stderr, new RegExp(`stderr-${index}-7`))
+  }
+
+  writeFileSync(join(root, 'missing.test.mjs'), 'process.exit(0)')
+  const incomplete = await execute([files[0], 'missing.test.mjs'])
+  assert.equal(incomplete.status, 1)
+  assert.equal(parseSummary(incomplete.stdout).tests, 8, 'the other file reported all of its results')
+  assert.match(incomplete.stderr, /missing\.test\.mjs: no node:test summary found/)
+})
 // The runner reads the stdout of the `node --test` orchestrator, so the preload
 // must run there, not only in the per-file child processes. The orchestrator
 // skips `--import` modules (merge-queue failures "no node:test summary found",

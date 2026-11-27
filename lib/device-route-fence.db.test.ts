@@ -76,8 +76,8 @@ test('every device route refuses a token revoked after authentication before it 
       }
     }
     t.diagnostic(JSON.stringify({ routes: fenced.length }))
-    // The three routes that hand out credentials answer a revoked token as what it is, an authentication failure.
-    for (const route of ['POST app/v1/devices/[deviceId]/github-token/route.ts', 'GET app/v1/runs/[runId]/policy-snapshot/route.ts', 'POST app/v1/devices/[deviceId]/runs/[runId]/subscription-lease/route.ts']) {
+    // The routes that hand out credentials answer a revoked token as what it is, an authentication failure.
+    for (const route of ['POST app/v1/devices/[deviceId]/github-token/route.ts', 'GET app/v1/runs/[runId]/policy-snapshot/route.ts']) {
       assert.ok(fenced.includes(`${route} 401`), `${route} answered ${fenced.find(line => line.startsWith(route)) ?? 'nothing'}`)
     }
     assert.deepEqual(issued, [], 'nothing was issued for a revoked token')

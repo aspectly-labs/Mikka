@@ -160,6 +160,8 @@ export const daemonStatusSchema = z.object({
 })
 export type DaemonStatus = z.infer<typeof daemonStatusSchema>
 
+export const daemonRunActivity = { method: "daemon.runActivity", payload: z.object({ active: z.boolean() }).strict() } as const
+
 const empty = z.object({}).optional()
 const ok = z.object({ ok: z.literal(true) })
 
@@ -167,6 +169,7 @@ const ok = z.object({ ok: z.literal(true) })
 export const daemonRpc = {
   "daemon.hello": { params: helloParams, result: helloResult },
   "daemon.status": { params: empty, result: daemonStatusSchema },
+  "daemon.watchRunActivity": { params: empty, result: ok },
   /** Cached subscription snapshots. Does not start a vendor request. */
   "quota.snapshot": { params: empty, result: quotaSnapshotReportSchema },
   /** Stop accepting runs, journal active ones for resume, then exit. */

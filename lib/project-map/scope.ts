@@ -74,7 +74,7 @@ async function canonicalProject(reader: IssueReader, projectId: string, workspac
   if (tokenScope(reader) && tokenScope(reader) !== workspaceId) throw new ProjectMapError('PROJECT_NOT_FOUND', 404)
   const [row] = await executor.select({
     workspace: { kind: workspaces.kind, userId: workspaces.userId },
-    organizationId: organizationWorkspaces.organizationId,
+    organizationId: organizationWorkspaces.organizationId, factorAt: workspaces.twoFactorRequiredAt,
     project: { id: projects.id, userId: projects.userId, name: projects.name, revision: projects.revision,
       issueIds: projectTaskIds(bounded), createdAt: projects.createdAt },
   }).from(projects)
@@ -91,7 +91,7 @@ async function canonicalProject(reader: IssueReader, projectId: string, workspac
   const { filterEnterpriseWorkspaceLinks } = await import('@/lib/enterprise/access')
   const scopedReader: IssueReader = { ...(typeof reader === 'string' ? { id: reader } : reader), [tokenWorkspace]: workspaceId,
     [enterprisePrincipal]: typeof reader === 'string' ? undefined : reader[enterprisePrincipal] }
-  if (!(await filterEnterpriseWorkspaceLinks(scopedReader, [{ id: workspaceId, organizationId: row.organizationId }])).length)
+  if (!(await filterEnterpriseWorkspaceLinks(scopedReader, [{ id: workspaceId, organizationId: row.organizationId, factorAt: row.factorAt }])).length)
     throw new ProjectMapError('PROJECT_NOT_FOUND', 404)
   if (!Array.isArray(row.project.issueIds) || row.project.issueIds.some(id => !databaseUuid.test(id)))
     throw new ProjectMapError('PROJECT_SCOPE_CONFLICT', 409)

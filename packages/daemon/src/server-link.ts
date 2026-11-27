@@ -45,7 +45,7 @@ import type { RunMailbox } from './run-mailbox'
 import type { RunDrive } from './run-drive'
 import type { WorkspaceReadCommand, WorkspaceReadReceipt } from '@mikka/protocol/coding-workspace'
 import type { ChatFileDownload } from '@mikka/protocol/chat-attachments'
-import type { NativeBrokerContext, NativeBrokerRequest, NativeLease } from '@mikka/protocol/subscription'
+import type { NativeBrokerContext } from '@mikka/protocol/subscription'
 import { DeviceGatewayRequiredError, DeviceSessionRequiredError, RunNotPinnedHereError, ServerUnreachableError } from "./errors"
 import type { DeviceGatewaySocket } from "./device-gateway"
 
@@ -117,11 +117,8 @@ export interface ServerLink {
   validateSkillReceipt?(runId:string,receiptId:string):Promise<SkillReceiptRevalidation>
   /** Private hosted-run channel; these methods never return provider tokens. */
   nativeContext?(deviceId:string,runId:string,signal?:AbortSignal,requireModelCatalogue?:boolean):Promise<NativeBrokerContext>
-  nativeRequest?(deviceId:string,runId:string,payload:NativeBrokerRequest,signal?:AbortSignal):Promise<{contentType:string;body:ReadableStream<Uint8Array>}>
-  /** A device run's subscription access lease (never a refresh grant); asked again before it expires. */
-  nativeLease?(deviceId:string,runId:string,signal?:AbortSignal):Promise<NativeLease>
   /** Natural-expiry renewal only; initial GitHub credentials arrive with the claim. */
-  githubLease?(deviceId:string,runId:string,signal?:AbortSignal):Promise<{ token: string; expiresAt: string | null }>
+  githubLease?(deviceId:string,runId:string,signal?:AbortSignal,startupRepository?:string):Promise<{ token: string; expiresAt: string | null }>
   /**
    * Screenshots and recordings a run keeps as evidence (`@mikka/protocol/capture`).
    * Optional: links without them keep the files on this machine.

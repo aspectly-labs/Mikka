@@ -5,11 +5,12 @@ import { SubscriptionService } from './subscription-service'
 import { SubscriptionWorkflowModel } from './subscription-workflow-model'
 import { ExecutionSettings } from './execution-settings'
 import { subscriptionFixture } from '../tests/fixtures/subscription'
+import { fixtureSubscriptionChat } from '../tests/fixtures/subscription-chat'
 
 const priority = { codexServiceTier: 'priority' as const }
 const catalogue = (supported: boolean) => ({ revision: '1', models: ['fixture-model'], priorityVersion: 1, prioritySupport: { 'fixture-model': supported } })
 const encoder = new TextEncoder()
-type Policy = { codexServiceTier?: 'priority' | 'ultrafast'; claudeSpeed?: 'fast' }
+type Policy = { codexServiceTier?: 'priority' | 'ultrafast'; claudeSpeed?: 'fast'; codexCyberAccessProgram?: 'daybreak_blue' | 'daybreak_red' }
 function modelService(route: 'codex_cpa' | 'claude_cpa', catalog: unknown, policy: Policy = {}) {
   const { use, access } = subscriptionFixture(route)
   access.connection!.quota.observedAt = new Date().toISOString()
@@ -33,12 +34,12 @@ function modelService(route: 'codex_cpa' | 'claude_cpa', catalog: unknown, polic
       } })
     },
   }
-  const service = new SubscriptionService(repository, () => worker as never, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => { counts.memberships++ }, async () => { counts.admissions++ }, undefined, policy)
+  const service = new SubscriptionService(repository, () => worker as never, { ready: () => true, nativeIsolation: 'none' }, undefined, async () => { counts.memberships++ }, async () => { counts.admissions++ }, undefined, policy, fixtureSubscriptionChat(worker))
   return { service, use, row, counts, payloads }
 }
-async function request(f: ReturnType<typeof modelService>, providerOptions?: Record<string, Record<string, string>>) {
+async function request(f: ReturnType<typeof modelService>, providerOptions?: Record<string, Record<string, unknown>>) {
   const model = await f.service.model(f.use)
-  const result = await model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'unchanged' }] }], ...(providerOptions ? { providerOptions } : {}) })
+  const result = await model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'unchanged' }] }], ...(providerOptions ? { providerOptions: providerOptions as never } : {}) })
   await Array.fromAsync(result.stream as unknown as AsyncIterable<unknown>)
   assert.equal(f.counts.streams, 1)
   assert.equal(f.counts.workerCalls, 0)
@@ -156,4 +157,62 @@ test('codex ultrafast and claude fast only send when advertised by current-epoch
   assert.equal(claudeOk.speed, 'fast')
   const claudeBlocked = await request(modelService('claude_cpa', claudeNoFast, { claudeSpeed: 'fast' }))
   assert.equal(Object.hasOwn(claudeBlocked, 'speed'), false)
+})
+
+test('codex Daybreak forwards access_programs.cyber only when current-epoch catalogue grants that tier', async () => {
+  const withBlue = { ...catalogue(true), daybreakSupport: { 'fixture-model': ['blue'] } }
+  const staleEpoch = { ...catalogue(true), revision: '999', daybreakSupport: { 'fixture-model': ['blue', 'red'] } }
+
+  const blueOk = await request(modelService('codex_cpa', withBlue, { codexServiceTier: 'priority', codexCyberAccessProgram: 'daybreak_blue' }))
+  assert.equal(blueOk.service_tier, 'priority')
+  assert.deepEqual(blueOk.access_programs, { cyber: 'daybreak_blue' })
+
+  const redDenied = await request(modelService('codex_cpa', withBlue, { codexCyberAccessProgram: 'daybreak_red' }))
+  assert.equal(Object.hasOwn(redDenied, 'access_programs'), false)
+
+  const staleDenied = await request(modelService('codex_cpa', staleEpoch, { codexCyberAccessProgram: 'daybreak_blue' }))
+  assert.equal(Object.hasOwn(staleDenied, 'access_programs'), false)
+
+  const spoofed = await request(modelService('codex_cpa', withBlue), { mikkaSubscription: { access_programs: { cyber: 'daybreak_blue' } } })
+  assert.equal(Object.hasOwn(spoofed, 'access_programs'), false)
+
+  const claudeIgnored = await request(modelService('claude_cpa', withBlue, { codexCyberAccessProgram: 'daybreak_blue' }))
+  assert.equal(Object.hasOwn(claudeIgnored, 'access_programs'), false)
+
+  // Workflow serde preserves valid codexCyberAccessProgram and rejects arbitrary values.
+  const daybreakModel = new SubscriptionWorkflowModel(selection, { codexServiceTier: 'priority', codexCyberAccessProgram: 'daybreak_red' })
+  const serialized = SubscriptionWorkflowModel[WORKFLOW_SERIALIZE](daybreakModel)
+  assert.deepEqual(serialized, { selection, requestPolicy: { codexServiceTier: 'priority', codexCyberAccessProgram: 'daybreak_red' } })
+  assert.deepEqual(SubscriptionWorkflowModel[WORKFLOW_SERIALIZE](SubscriptionWorkflowModel[WORKFLOW_DESERIALIZE](JSON.parse(JSON.stringify(serialized)))), serialized)
+  assert.throws(() => SubscriptionWorkflowModel[WORKFLOW_DESERIALIZE]({ selection, requestPolicy: { codexCyberAccessProgram: 'daybreak_invalid' } }))
+
+  // nativeRequest re-checks current-epoch daybreakSupport on codex_cli and strips unapproved access_programs.
+  const forwarded: Record<string, unknown>[] = []
+  const nativeFixture = (catalog: unknown, route: 'codex_cli' | 'claude_code_cli' = 'codex_cli') => {
+    const base = modelService(route === 'codex_cli' ? 'codex_cpa' : 'claude_cpa', catalog)
+    base.row.provider = route === 'codex_cli' ? 'codex' : 'claude'
+    const repo = {
+      ...base.service.repository,
+      pool: { query: async () => ({ rows: [{ userId: base.use.ownerId, agentDefinition: { cliModelSelection: 'explicit', model: 'fixture-model' } }] }) },
+      binding: async () => ({ ...(await base.service.repository.binding(base.use.ownerId, base.use.bindingId)), route }),
+    }
+    const service = new SubscriptionService(repo as never, () => ({
+      forUse() { return this },
+      nativeRequest: async (_rev: number, req: { body: Record<string, unknown> }) => {
+        forwarded.push(req.body)
+        return { body: new ReadableStream({ start(c) { c.close() } }), contentType: 'text/event-stream' }
+      },
+    }) as never, { ready: () => true, nativeIsolation: 'verified_runtime' }, undefined, async () => {}, async () => {})
+    return { service, use: { ...base.use, execution: 'native' as const, runId: id(9) } }
+  }
+  const okNative = nativeFixture(withBlue)
+  await okNative.service.nativeRequest(okNative.use, { path: '/responses', headers: {}, body: { model: 'fixture-model', access_programs: { cyber: 'daybreak_blue' } } })
+  assert.deepEqual(forwarded.at(-1)?.access_programs, { cyber: 'daybreak_blue' })
+
+  await okNative.service.nativeRequest(okNative.use, { path: '/responses', headers: {}, body: { model: 'fixture-model', access_programs: { cyber: 'daybreak_red' } } })
+  assert.equal(Object.hasOwn(forwarded.at(-1)!, 'access_programs'), false)
+
+  const staleNative = nativeFixture(staleEpoch)
+  await staleNative.service.nativeRequest(staleNative.use, { path: '/responses', headers: {}, body: { model: 'fixture-model', access_programs: { cyber: 'daybreak_blue' } } })
+  assert.equal(Object.hasOwn(forwarded.at(-1)!, 'access_programs'), false)
 })

@@ -64,6 +64,7 @@ async function adoptWorkspaceKey(userId: string, env: Readonly<Record<string, st
 /** The caller's own key. `workspaceId` is the workspace the page shows; any member may hold a key of their own. */
 export async function getE2BKeyStatus(userId: string, workspaceId: string): Promise<E2BKeyStatus> {
   await requireSecretPermission(userId, workspaceId, 'e2b.status')
+  if (!byoE2BKeyEnabled()) return { configured: false, byoEnabled: false, lastErrorCode: null, lastErrorAt: null }
   await adoptWorkspaceKey(userId)
   return readE2BKeyStatus(userId)
 }
@@ -76,7 +77,7 @@ async function readE2BKeyStatus(userId: string): Promise<E2BKeyStatus> {
 
 /** Everyone edits only their own key. */
 export async function getE2BKeyCapabilityForUser(userId: string, workspaceId: string) {
-  return { canEdit: true, ...await getE2BKeyStatus(userId, workspaceId) }
+  return { canEdit: byoE2BKeyEnabled(), ...await getE2BKeyStatus(userId, workspaceId) }
 }
 
 /**
@@ -86,6 +87,7 @@ export async function getE2BKeyCapabilityForUser(userId: string, workspaceId: st
  */
 export async function setE2BKey(userId: string, workspaceId: string, input: unknown, options: { audit?: SecretAuditHook; verify?: (apiKey: string) => Promise<E2BVerifyResult>; now?: Date } = {}): Promise<E2BKeyStatus> {
   await requireSecretPermission(userId, workspaceId, 'e2b.status')
+  if (!byoE2BKeyEnabled()) throw new WorkspaceError('workspaceAccessDenied')
   const { apiKey } = e2bKeyInput.parse(input)
   const now = options.now ?? new Date()
   const sealed = sealKey(apiKey, userId) // fail closed before calling E2B
@@ -125,6 +127,7 @@ export async function recordE2BKeyError(userId: string, code: (typeof E2B_KEY_ER
  * E2BKeyError('e2b_key_missing'). Never another member's, never the platform key.
  */
 export async function getUserE2BApiKey(userId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Promise<string> {
+  if (!byoE2BKeyEnabled(env)) throw new E2BKeyError('e2b_unavailable', 'Personal E2B keys are disabled on Cloud')
   await adoptWorkspaceKey(userId, env)
   const [row] = await guardSecretsDb(() => db.select().from(userE2bKeys).where(eq(userE2bKeys.userId, userId)))
   if (!row) throw new E2BKeyError('e2b_key_missing')
@@ -150,6 +153,7 @@ export function e2bErrorCode(status: number): E2BKeyErrorCode {
  * its active members and a key saved here before keys were personal. Reads only; adopts nothing.
  */
 export async function maskableE2BKeys(workspaceId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Promise<string[]> {
+  if (!byoE2BKeyEnabled(env)) return env.E2B_API_KEY?.trim() ? [env.E2B_API_KEY.trim()] : []
   const { workspaceDb } = await import('@/lib/workspace-db')
   const { workspaceMembers } = await import('@/lib/db/workspace-schema')
   const members = (await workspaceDb.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
@@ -158,7 +162,7 @@ export async function maskableE2BKeys(workspaceId: string, env: Readonly<Record<
     members.length ? db.select().from(userE2bKeys).where(inArray(userE2bKeys.userId, members)) : Promise.resolve([]),
     db.select().from(workspaceE2bKeys).where(eq(workspaceE2bKeys.workspaceId, workspaceId)),
   ]))
-  const keys: string[] = []
+  const keys: string[] = env.E2B_API_KEY?.trim() ? [env.E2B_API_KEY.trim()] : []
   for (const row of own) { try { keys.push(openSecret(row, userE2bKeyAad(row.userId), env)) } catch { logSecretFailure('e2b_unavailable', row.userId) } }
   for (const row of legacy) { try { keys.push(openSecret(row, e2bKeyAad(row.workspaceId), env)) } catch { logSecretFailure('e2b_unavailable', row.workspaceId) } }
   return keys

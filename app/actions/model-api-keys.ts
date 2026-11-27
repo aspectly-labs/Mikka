@@ -6,7 +6,7 @@ import { pool } from '@/lib/db'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { requireUser } from '@/lib/issue-access'
 import type { ApiKeyView } from '@/lib/model-api-key-providers'
-import { addApiKey, listApiKeys, refreshApiKeyModels, removeApiKey, setApiKeyAfterQuota, setApiKeyFeatures, setApiKeyShare, updateApiKey as updateStoredApiKey, usableApiKeys, type ApiKeysPage, type UsableApiKey } from '@/lib/model-api-keys'
+import { addApiKey, listApiKeys, refreshApiKeyDaybreak, refreshApiKeyModels, removeApiKey, setApiKeyAfterQuota, setApiKeyFeatures, setApiKeyShare, updateApiKey as updateStoredApiKey, usableApiKeys, type ApiKeyDaybreakRefreshResult, type ApiKeysPage, type UsableApiKey } from '@/lib/model-api-keys'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { workspaceDb } from '@/lib/workspace-db'
 import { settingsWorkspaceAction, type SettingsActionResult } from '@/lib/workspace-admin/settings-action'
@@ -74,6 +74,16 @@ export async function refetchApiKeyModels(id: string, workspaceId?: string): Pro
     const { userId, workspace } = await actor(workspaceId)
     await refreshApiKeyModels(pool, userId, id)
     return readApiKeysPage(userId, workspace)
+  })
+}
+
+/** Refreshes OpenAI Trusted Access for Cyber (Daybreak) grants for one owned API key (#3315). */
+export async function refreshApiKeyDaybreakAction(id: string, workspaceId?: string): Promise<SettingsActionResult<ApiKeyDaybreakRefreshResult & { page: ApiKeysPage }>> {
+  return settingsWorkspaceAction(async () => {
+    const { userId, workspace } = await actor(workspaceId)
+    const refreshed = await refreshApiKeyDaybreak(pool, userId, id)
+    const page = await readApiKeysPage(userId, workspace)
+    return { ...refreshed, page }
   })
 }
 

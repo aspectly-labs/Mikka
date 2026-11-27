@@ -20,6 +20,7 @@ import { drainBillingEntitlements } from './entitlement-outbox'
 import { organizationBillingAccounts, organizationMembers } from '@/lib/db/governance-schema'
 import { requireOrganizationAdmin } from '@/lib/governance/organizations'
 import { autoRechargePolicy } from './auto-recharge'
+import { overagePolicy, readMonthlyOverageMicroUsd } from './overage'
 import { authTrustedOrigins } from '@/lib/auth-config'
 import { resourcePlanCheckout } from './plan-checkout'
 import { withBillingAuthority } from './authority'
@@ -72,7 +73,10 @@ export async function organizationBillingView(actorId: string, organizationId: s
 /** Internal read after an enclosing Workspace/Organization authority check. */
 export async function readBillingAccount(workspaceId: string, env: Env, members?: number): Promise<BillingView> {
   const [billing] = await db.select().from(workspaceBilling).where(eq(workspaceBilling.workspaceId, workspaceId)).limit(1)
-  const balance = await new HostedUsageStore(pool).balance(workspaceId)
+  const [balance, spentOverageMicroUsd] = await Promise.all([
+    new HostedUsageStore(pool).balance(workspaceId),
+    readMonthlyOverageMicroUsd(workspaceId),
+  ])
   const status = billing?.status ?? null
   return {
     configured: Boolean(stripeConfig(env)),
@@ -89,6 +93,7 @@ export async function readBillingAccount(workspaceId: string, env: Env, members?
     planPointsLimit: (await planGrantLimit(workspaceId)) / MICRO_USD_PER_POINT || null,
     purchasedPoints: balance.purchased / MICRO_USD_PER_POINT,
     autoRecharge: autoRechargePolicy(billing),
+    overage: overagePolicy(billing, spentOverageMicroUsd),
     receiptsManagedBy: 'stripe_portal',
     receipts: { receiptsManagedBy: 'stripe_portal', source: 'provider' },
   }
@@ -152,9 +157,10 @@ export async function planCheckoutUrl(actorId: string, workspaceId: string, back
       interval: 'month' as const,
       includedCreditCents: pointsToCreditCents(price.monthlyPoints),
       includedPoints: price.monthlyPoints,
-      seatModel: 'per_workspace' as const,
+      seatModel: price.seatModel,
       active: true,
     }
+    const quantity = price.seatModel === 'per_seat' ? Math.max(1, await activeMembers(workspaceId)) : 1
     const verifiedOffer = await prepareCheckoutOfferCandidate({
       plan: planEntry,
       planProductId: extractStripeProductId(configuredPrice),
@@ -180,6 +186,7 @@ export async function planCheckoutUrl(actorId: string, workspaceId: string, back
             preverifiedOffer: verifiedOffer,
           })
         : undefined,
+      quantity,
     ))
   }, { ownPlatformAccount: true })
 }

@@ -4,8 +4,8 @@ import type { PoolClient } from "pg";
 import {
   encodedIssueDocument,
   loadIssueDocument,
-  upsertLinearComment,
-} from "../linear-sync/document";
+  upsertThreadMessage,
+} from "../task-comments/issue-document";
 import type { MonitorNotice } from "./monitor";
 
 /** Existing issue comments + existing document trigger/outbox, never a second sync worker. */
@@ -26,7 +26,7 @@ export async function appendMonitorEvidence(
   );
   const doc = loadIssueDocument(document?.state ?? null, issue.content);
   try {
-    upsertLinearComment(doc, {
+    upsertThreadMessage(doc, {
       threadId: notice.incidentId ?? notice.taskId,
       messageId: notice.observationId,
       author: "Factory monitor",

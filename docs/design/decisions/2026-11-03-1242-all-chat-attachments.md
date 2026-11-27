@@ -24,4 +24,4 @@ attachment states: 「现在可以了，继续吧」. The following frames are *
 - Figma page: [`917:456`](https://www.figma.com/design/zPe5LKycb2XuT1ivCLRw07?node-id=917-456).
 - Proposal and coverage: [`../chat-attachments.md`](../chat-attachments.md).
 - New attachment UI follows the confirmation requirement in
-  [`2026-11-01-0330-ui-figma-and-skill-review-before-code.md`](2026-11-01-0330-ui-figma-and-skill-review-before-code.md).
+  [`2026-11-01-0330-ui-figma-and-skill-review-before-code.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md).
