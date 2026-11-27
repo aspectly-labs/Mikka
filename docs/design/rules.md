@@ -536,8 +536,10 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
   A task's status icon is the one exception: `ISSUE_STATUSES` keeps its own glyphs, drawn in the status
   registry `lib/state-mark.ts` / `components/workspace/state-mark.tsx`
   ([2026-11-19-1630](decisions/2026-11-19-1630-one-mark-registry.md)), and no
-  other family stands in for a status. A paid block's icons follow the
-  reference product, not the block ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
+  other family stands in for a status. Hugeicons is the one set everywhere,
+  inside paid blocks too: a paid block edited to match a reference takes the
+  Hugeicons glyph closest to the reference's, at its rendered size and stroke
+  weight ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
   A new glyph is a line in that file, not a new package (ui-policy
   `icons/glyph-set`). Priority is the one mark Mikka draws itself: low, normal
   and high are three bars on one baseline, rising one step each, in the set's

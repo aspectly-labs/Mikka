@@ -186,7 +186,7 @@ CI is the independent final merge gate, not the first debugging loop. Draft PRs 
 
 Per [2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md](../design/decisions/2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md) and [2026-11-01-1520-no-browser-tests-in-ci.md](../design/decisions/2026-11-01-1520-no-browser-tests-in-ci.md), automatic hosted-UI CI is browser-free and visual verification runs locally in cloud Linux against a real compiled build:
 
-1. **Zero known test failures:** `mikka-hosted-ui/scripts/known-test-failures.json` stays ratcheted at `0`. Automatic Cloudflare CI (`Cloudflare UI Policy` & `Workers Builds`) runs all non-browser hosted unit/policy tests, `paid-overrides`, `oxlint`, `frontend-best-practices-policy`, and `pr-visual-evidence-check` on Ready PRs and `main` pushes (Draft PRs launch zero CI containers).
+1. **Zero known test failures:** `mikka-hosted-ui/scripts/known-test-failures.json` stays ratcheted at `0`. Automatic Cloudflare CI (`Cloudflare UI Policy` & `Workers Builds`) runs all non-browser hosted unit/policy tests, `paid-sources` (paid-source list and patch ledger), `oxlint`, `frontend-best-practices-policy`, and `pr-visual-evidence-check` on Ready PRs and `main` pushes (Draft PRs launch zero CI containers).
 2. **Targeted local visual verification (`mikka-hosted-ui/scripts/local-visual-verify.mjs`):** Before marking a UI PR Ready, verify changed routes locally in cloud Linux via `pnpm --dir mikka-hosted-ui visual:local --target <slug>` against the real compiled build using local Chrome/Chromium (Desktop `1440×900` & Mobile `390×844`, Light & Dark). Inspect every rendered PNG directly for layout, contrast, horizontal overflow (`scrollWidth <= innerWidth`), tab/drawer geometry, and zero console/page errors.
 3. **PR `## 视觉对照` / `## Visual comparison` enforcement:**
    - On `Mikka`, `scripts/ci/frontend-screenshot-check.mjs` verifies that frontend PR descriptions include a screenshot/media link or an accepted opt-out reason.
@@ -210,7 +210,7 @@ Code merge, artifact build, staging qualification, and production promotion are 
 
 Because private `aspectly-labs/mikka-hosted-ui` cannot rely solely on GitHub branch protection, `mikka-cloud/scripts/verify-hosted-ui-gates.mjs` enforces fail-closed admission on every overlay sync (`mikka-cloud/.github/workflows/overlay-source-sync.yml`) and before every staging or production deployment (`mikka-cloud/operations/business-api/pipeline-preflight.mjs`):
 
-1. `Cloudflare UI Policy` (browser-free static UI policy, `paid-overrides`, `oxlint`, `frontend-policy`, and non-browser hosted unit tests; or legacy `ui-policy.yml`) reached `completed` + `success` on `main` for the exact `overlaySource` SHA (never exemptible).
+1. `Cloudflare UI Policy` (browser-free static UI policy, `paid-sources`, `oxlint`, `frontend-policy`, and non-browser hosted unit tests; or legacy `ui-policy.yml`) reached `completed` + `success` on `main` for the exact `overlaySource` SHA (never exemptible).
 2. `Cloudflare UI Fast Gate` / `Workers Builds` (official Web Vite build + `bundle-budget`; or legacy `pairs-with-public-main.yml`) reached `completed` + `success` on `main` for that exact SHA (exemptible only with an explicit audited break-glass reason).
 3. Remote CI screenshot archives (`ui-visual-evidence`) are not required for routine promotion; visual verification happens locally in cloud Linux before merge (operators may still opt in to strict artifact checks via `--require-visual-artifact` after a manual audit).
 

@@ -314,11 +314,16 @@ jobs:
       # graph, including apps/frontend and root UI/CSS build dependencies.
       - run: pnpm install --frozen-lockfile
       - name: Check the private UI's paid-source list and patch ledger
-        # The overlay's own check (scripts/paid-sources.mjs) runs before it is built in; an overlay revision older than
-        # the check has nothing to run. Paid blocks themselves are edited to match the top-product reference
+        # The overlay's own check runs before it is built in: scripts/paid-sources.mjs, or on a pinned overlay older than
+        # that, its predecessor scripts/paid-overrides.mjs. An overlay with neither has nothing to run (as before).
+        # Paid blocks themselves are edited to match the top-product reference
         # (docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md).
         run: |
-          if [ -f .hosted-ui/scripts/paid-sources.mjs ]; then node .hosted-ui/scripts/paid-sources.mjs; fi
+          if [ -f .hosted-ui/scripts/paid-sources.mjs ]; then
+            node .hosted-ui/scripts/paid-sources.mjs
+          elif [ -f .hosted-ui/scripts/paid-overrides.mjs ]; then
+            node .hosted-ui/scripts/paid-overrides.mjs
+          fi
       - name: Install private UI runtime dependencies without license scripts
         run: |
           if ! pnpm --dir .hosted-ui install --ignore-workspace --prod --ignore-scripts --frozen-lockfile > "$RUNNER_TEMP/private-ui-install.log" 2>&1; then

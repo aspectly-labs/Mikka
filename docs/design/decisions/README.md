@@ -21,7 +21,7 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `313` dated decision records carry verified `Status:` headers (`223` Accepted, `25` Superseded, `65` Superseded in part).
+All `313` dated decision records carry verified `Status:` headers (`222` Accepted, `25` Superseded, `66` Superseded in part).
 
 ### Key active architectural decisions
 
@@ -50,7 +50,7 @@ All `313` dated decision records carry verified `Status:` headers (`223` Accepte
 
 | Retired direction | Superseded ADR(s) | Active successor |
 | --- | --- | --- |
-| **Paid blocks used as shipped (「原样使用，只换数据」)** | [2026-11-09-0050-paid-blocks-as-shipped.md](2026-11-09-0050-paid-blocks-as-shipped.md), [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) (in part) | [2026-11-27-1409-top-products-over-paid-blocks.md](2026-11-27-1409-top-products-over-paid-blocks.md) |
+| **Paid blocks used as shipped (「原样使用，只换数据」), paid libraries keeping their own icons** | [2026-11-09-0050-paid-blocks-as-shipped.md](2026-11-09-0050-paid-blocks-as-shipped.md), [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) (in part), [2026-11-18-1900-icons-hugeicons.md](2026-11-18-1900-icons-hugeicons.md) (in part) | [2026-11-27-1409-top-products-over-paid-blocks.md](2026-11-27-1409-top-products-over-paid-blocks.md) |
 | **Comma typography/look & LobeHub action-bar overrides** | [2026-11-01-1204-type-follows-comma.md](2026-11-01-1204-type-follows-comma.md), [2026-11-22-2000-chat-look-as-lobehub.md](2026-11-22-2000-chat-look-as-lobehub.md) (in part) | [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) |
 | **5×5 dot-grid black icon artwork** | [2026-11-12-0449-browser-app-icon.md](2026-11-12-0449-browser-app-icon.md) (in part) | [2026-11-24-2235-new-mikka-ribbon-mark.md](2026-11-24-2235-new-mikka-ribbon-mark.md) |
 | **Public `@ui-slot/*` overlay & public UI pages** | [2026-11-06-2000-hosted-ui-overlay.md](2026-11-06-2000-hosted-ui-overlay.md), [2026-11-19-2120-slots-for-paid-surfaces.md](2026-11-19-2120-slots-for-paid-surfaces.md), [2026-11-22-2205-headless-public-engine-and-ui-decoupling.md](2026-11-22-2205-headless-public-engine-and-ui-decoupling.md) (in part) | [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) |

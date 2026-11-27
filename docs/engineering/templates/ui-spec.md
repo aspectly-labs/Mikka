@@ -73,7 +73,7 @@ Copy this table into the PR body and complete every row before merging:
 | `<Header / toolbar / row / drawer / contrast / budget>` | `<Implemented or justified delta>` | `[ ] Verified` | `[ ] Verified` |
 
 - [ ] Targeted local screenshots captured and visually inspected in cloud Linux (`pnpm --dir mikka-hosted-ui visual:local --target <slug>`, 0 horizontal overflow, 0 console/page errors).
-- [ ] `mikka-hosted-ui` static `Cloudflare UI Policy` (`paid-overrides`, `oxlint`, `frontend-policy`, unit tests) and `Cloudflare UI Fast Gate` (official Web build + `bundle-budget`) passed.
+- [ ] `mikka-hosted-ui` static `Cloudflare UI Policy` (`paid-sources`, `oxlint`, `frontend-policy`, unit tests) and `Cloudflare UI Fast Gate` (official Web build + `bundle-budget`) passed.
 - [ ] `docs/review-checklist.md` passed end to end.
 
 ## 8. Out of scope

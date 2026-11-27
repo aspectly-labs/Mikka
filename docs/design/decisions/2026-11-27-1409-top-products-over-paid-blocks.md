@@ -3,7 +3,8 @@
 - Date: 2026-11-27 14:09 UTC
 - **Status:** Accepted (Alex, 2026-11-25)
 - Source: Alex, effective 2026-11-25, restated 2026-11-27: anything not aligned with the top products must not stay.
-- Supersedes: [2026-11-09-0050-paid-blocks-as-shipped](2026-11-09-0050-paid-blocks-as-shipped.md) (「原样使用，只换数据」) in full, and the "Retains: Paid blocks as shipped" clause of [2026-11-24-1518-design-system-v2-chatgpt-cc-standard](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md). The rest of 2026-11-24-1518, including its precedence of reference products, stands.
+- Supersedes: [2026-11-09-0050-paid-blocks-as-shipped](2026-11-09-0050-paid-blocks-as-shipped.md) (「原样使用，只换数据」) in full, and the "Retains: Paid blocks as shipped" clause of [2026-11-24-1518-design-system-v2-chatgpt-cc-standard](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md). The rest of 2026-11-24-1518, including its precedence of reference products, stands. Supersedes in part: [2026-11-18-1900-icons-hugeicons](2026-11-18-1900-icons-hugeicons.md), its 「付费库原样保留」 bullet only (paid libraries keep their own icons); the rest of that decision, the task-status exception included, stands.
+- Icons source: owner, 2026-11-27: 「我们使用的 huge icons」.
 
 ## Decision
 
@@ -24,10 +25,22 @@
    the reference.
 3. **An element no top product has is removed** (for example a floating
    summary pill), unless Alex approves it by name.
-4. **Every UI PR cites its reference per changed surface** (a Mobbin link, or
+4. **One icon set: Hugeicons.** Hugeicons through `@/components/icons`
+   (`components/icons/index.tsx`) is Mikka's single icon set everywhere,
+   including inside a paid block when it is edited to match a reference. Pick
+   the Hugeicons glyph closest to the reference's glyph and match its rendered
+   size and stroke weight; a glyph the set lacks is a line added to
+   `components/icons/index.tsx`, not another package. Task status icons keep
+   their exception (`TaskStatusIcon`, `TaskRunMark`, `TaskStatusMark`,
+   [2026-11-18-1900](2026-11-18-1900-icons-hugeicons.md)). Paid source not yet
+   edited may still carry its library's icons until it is.
+5. **Every UI PR cites its reference per changed surface** (a Mobbin link, or
    the unpacked app or source path) in its `## Visual comparison` /
    `## 视觉对照` section, and lists the differences that remain, each with its
-   reason.
+   reason. In the hosted repository the `## Visual comparison` section carries
+   one line per changed surface in the form
+   `Reference: <ChatGPT|Codex|Claude|Claude Code|Capy|Linear> <surface> — <https://mobbin.com/screens/… | unpacked app/source path>`,
+   or `No rendered UI change: <reason>` when nothing rendered changes.
 
 ## Unchanged
 

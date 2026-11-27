@@ -40,21 +40,21 @@ source is now out of date and who owns it.
 | 2 | `glossary.md` | Words and the bot / chat / thread model |
 | 3 | `design-system.md` | Visual tokens, restricted primitives, viewport budgets, 7-state contract and copy density (wins over older visual clauses in `rules.md`) |
 | 4 | `rules.md` | Product behavior and domain-specific UI rules |
-| 5 | A Figma draft Alex is reviewing now | Layout: what goes where, sizes, order, grouping |
-| 6 | The running app on `main` ([decision 2026-11-01-0015](decisions/2026-11-01-0015-main-is-the-design.md)) | Layout everywhere else; it wins over any other Figma frame |
-| 7 | ChatGPT / Codex + Claude Code (chat, strips, composer) & Capy (right rail, sidebar, task panel) | Look, density, quiet chrome and interaction craft when Mikka's own spec is silent ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)) |
+| 5 | Top products: ChatGPT / Codex and Claude / Claude Code (chat, composer, approval/permission cards, status, errors), Capy (right rail, tab bar, sidebar work tree, task detail), Linear (issue/board semantics) | Look **and layout** of every surface one of them covers, paid blocks included; wins over rows 6 and 7 ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md), [2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)) |
+| 6 | A Figma draft Alex is reviewing now | Layout of a surface no top-product reference covers: what goes where, sizes, order, grouping |
+| 7 | The running app on `main` ([decision 2026-11-01-0015](decisions/2026-11-01-0015-main-is-the-design.md)) | Layout only where no top-product reference and no reviewed Figma draft covers the surface; it wins over any other Figma frame. It is never a reason to keep a difference from a reference |
 | 8 | reUI / shadcn defaults | Only what nothing above covers |
 
 A paid block or component (BoardUI Pro, affectUI, beUI Pro) has no rank of its
-own: it is raw material, edited in place to match the top product that row 7
-names for its surface (Linear for issue/board semantics), and its shipped look
+own: it is raw material, edited in place to match the top product that row 5
+names for its surface, and its shipped look
 is never a reason to keep a difference ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 
 Notes:
 
 - A Figma frame counts only if an active decision or the approved current design lists it as accepted. Frames on
   the 「归档」 page, or marked 已废弃, never count.
-- Figma decides layout, not look. `design-system.md` (ChatGPT / Codex + Claude Code + Capy standard) decides the look and interaction craft of Mikka's own UI; Comma is retired. Old Figma frames use
+- Figma decides layout only where no top-product reference covers the surface, and never look. `design-system.md` (ChatGPT / Codex + Claude Code + Capy standard) decides the look and interaction craft of Mikka's own UI; Comma is retired. Old Figma frames use
   zinc greys; the neutral tokens in `design-system.md` §1 win.
 - The vendored design skills `unslop` and `interface-design`
   (`.claude/skills/`) win over `rules.md` for product and visual rules in
