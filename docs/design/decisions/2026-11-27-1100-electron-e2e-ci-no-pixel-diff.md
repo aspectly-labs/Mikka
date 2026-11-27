@@ -11,7 +11,9 @@
 
 Hosted-UI CI (`mikka-cloud/cloudflare/hosted-ui-ci`, one Cloudflare Container per run) runs end-to-end tests in the real Electron app (Playwright `_electron` under Xvfb, Fixture Mode renderer, `e2e/electron/`), not a browser matrix. Assertions are DOM and behaviour only.
 
-| When | What runs | Check (each says only what ran) |
+**Rollout state.** This record is the decision; the hosted half lands with the hosted Electron CI change in `mikka-hosted-ui` and `mikka-cloud`. Until that change is on their `main`, only the Phase 1 row below runs, and the Electron E2E, Golden Smoke and Nightly checks do not exist yet. The public half is in place: the official-UI switch (`MIKKA_REQUIRE_OFFICIAL_UI`, `scripts/official-ui-requirement.mjs`) and the Desktop release's route contract, which already passes `MIKKA_REQUIRE_OFFICIAL_UI=1`.
+
+| When | What runs (once the hosted change lands) | Check (each says only what ran) |
 | --- | --- | --- |
 | Every Ready PR and `main` push | Phase 1: installs, builds, static policy, non-browser tests (`scripts/cloudflare-ci.mjs stages`, the same stage list Workers Builds runs) | `Cloudflare UI Fast Gate`, `Cloudflare UI Policy` (browser-free; the overlay promotion gate reads them) |
 | Ready PR | The Electron specs `e2e/electron/routes.json` routes the change to: a changed spec runs itself, a harness or shared/global path runs every spec, no match runs none | `Cloudflare Electron E2E`: `success`, `failure`, `skipped` when nothing is routed (the summary says why), `neutral` when the trigger policy is `manual` (not run) |
@@ -46,4 +48,4 @@ Plus one failure-path journey: the server answers 500 to a save, and the UI show
 
 ## Related
 
-- The desktop route guard (public `apps/desktop/src/main/bundled-routes.test.ts`) needs the official UI, so it runs in hosted CI (`scripts/core-ui.test.mjs`) with `MIKKA_REQUIRE_OFFICIAL_UI=1`, which makes a skip a failure.
+- The UI API route contract (public `scripts/ui-api-routes.test.mjs`, which replaced `apps/desktop/src/main/bundled-routes.test.ts`) and the other public tests that read the official UI skip through `scripts/official-ui-requirement.mjs`. With `MIKKA_REQUIRE_OFFICIAL_UI=1` a missing checkout fails them instead. The Desktop release (`test:desktop-release-guard`) sets it today. Hosted CI sets it when the hosted Electron CI change lands.
