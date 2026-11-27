@@ -533,6 +533,22 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
 
     assert.equal(await billing.applyStripeEvent(event('customer.subscription.updated', seatSub), { env: seatEnv, fetchImpl: seatFetch }), true)
     assert.equal(await billing.applyStripeEvent(event('invoice.paid', invoices.get(seatInvUpdate)!), { env: seatEnv, fetchImpl: seatFetch }), true)
+    // Seat-reduction credit invoice with negative total_excluding_tax succeeds without issuing credits.
+    const creditInv = {
+      id: id('in'),
+      customer: seatCus,
+      subscription: seatSubId,
+      payment_intent: null,
+      status: 'paid',
+      amount_paid: 0,
+      total_excluding_tax: -500,
+      subtotal_excluding_tax: -500,
+      currency: 'usd',
+      billing_reason: 'subscription_update',
+      lines: { has_more: false, data: [{ price: { id: 'price_seat_pro' }, quantity: 3, proration: true, amount_excluding_tax: -500, period: { start, end } }] },
+    }
+    invoices.set(creditInv.id, creditInv)
+    assert.equal(await billing.applyStripeEvent(event('invoice.paid', creditInv), { env: seatEnv, fetchImpl: seatFetch }), true)
 
     const grantRows = (await pool.query(
       'SELECT points, bucket, reason FROM workspace_credit_grants WHERE "workspaceId"=$1 ORDER BY "createdAt" ASC, id ASC',
@@ -550,10 +566,16 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
     )
     const store = new HostedUsageStore(pool)
     const { hostedPointsRefusal, hostedPointsHere } = await import('../lib/points-fallback')
-    // Consume all 7000 plan credits (70,000,000 microUSD)
-    const fullPlanCall = `call-${randomUUID()}`
-    await store.reserve(teamWs.id, 'fixture/model', fullPlanCall, {}, 70_000_000)
-    await store.settle(fullPlanCall, 70_000_000, 10, 10)
+    // Leave 5 credits (50,000 microUSD) < fixed 100,000 hold; a lone model call can consume the last 5 plan credits without touching top-ups.
+    const almostAllPlan = `call-${randomUUID()}`
+    await store.reserve(teamWs.id, 'fixture/model', almostAllPlan, {}, 69_950_000)
+    await store.settle(almostAllPlan, 69_950_000, 10, 10)
+    const lastPlanCall = `last-plan-${randomUUID()}`
+    await store.reserve(teamWs.id, 'fixture/model', lastPlanCall, {}, 100_000)
+    await store.settle(lastPlanCall, 120_000, 10, 10)
+    const lastPlanRow = (await pool.query('SELECT "planMicroUsd"::int AS plan,"purchasedMicroUsd"::int AS p,"unpaidMicroUsd"::int AS u FROM hosted_usage WHERE id=$1', [lastPlanCall])).rows[0]
+    assert.deepEqual(lastPlanRow, { plan: 50_000, p: 0, u: 70_000 })
+    assert.equal((await store.balance(teamWs.id)).purchased, 50_000_000)
     await assert.rejects(store.canUseMikkaPaid(teamWs.id), { code: 'usage_budget_exhausted' })
     await assert.rejects(store.reserve(teamWs.id, 'fixture/model', `blocked-${randomUUID()}`, {}, 100_000), { code: 'usage_budget_exhausted' })
     assert.equal(await hostedPointsRefusal(teamWs.id, id => store.canUseMikkaPaid(id)), 'usage_budget_exhausted')

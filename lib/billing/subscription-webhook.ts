@@ -26,8 +26,8 @@ const subscriptionSchema = z.object({
   }).loose()) }).loose(),
 }).loose()
 const invoiceSchema = z.object({ id: stripeId, customer: expandableId, status: z.string().nullable(), amount_paid: z.number().int().nonnegative(),
-  total_excluding_tax: z.number().int().nonnegative().nullish(),
-  subtotal_excluding_tax: z.number().int().nonnegative().nullish(),
+  total_excluding_tax: z.number().int().nullish(),
+  subtotal_excluding_tax: z.number().int().nullish(),
   payment_intent: expandableId.nullish(),
   currency: z.string(), billing_reason: z.string().nullable(), hosted_invoice_url: z.url().nullish(),
   metadata: z.record(z.string(), z.unknown()).nullish(),
@@ -205,7 +205,7 @@ export async function applySubscriptionEvent(tx: Transaction, event: { id: strin
       const linesNetCents = hasPreTaxLines
         ? Math.max(0, prorationLines.reduce((sum, line) => sum + (line.amount_excluding_tax ?? line.amount ?? 0), 0))
         : null
-      const preTaxCap = invoice.data.total_excluding_tax ?? invoice.data.subtotal_excluding_tax ?? invoice.data.amount_paid
+      const preTaxCap = Math.max(0, invoice.data.total_excluding_tax ?? invoice.data.subtotal_excluding_tax ?? invoice.data.amount_paid)
       const netCents = linesNetCents !== null ? Math.min(linesNetCents, preTaxCap) : preTaxCap
       const grantPoints = Math.floor((netCents * POINTS_PER_USD) / 100)
       if (grantPoints > 0) {

@@ -210,7 +210,7 @@ export class HostedUsageStore {
     if (!billing) return null
     const planBudget = isPrepaid ? balance.plan : balance.free + balance.plan
     const planHeadroom = planBudget - flightHeld
-    const spillsPastPlan = planBudget <= 0 || planHeadroom < estimate
+    const spillsPastPlan = planBudget <= 0 || ((isPrepaid || flightHeld > 0) && planHeadroom < estimate)
     if (!spillsPastPlan) return null
     if (!billing.overageEnabled) {
       return balance.purchased > 0 ? 'usage_budget_exhausted' : 'points_exhausted'

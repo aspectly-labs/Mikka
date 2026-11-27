@@ -182,7 +182,7 @@ Stripe 的 [幂等请求](https://docs.stripe.com/api/idempotent_requests) 明�
 
 1. **1.0× 套餐额度对等与团队按席位授额**：
    - `resourcePrice()` 默认以 Stripe `unit_amount`（美分，100 额度 = $1）作为月度额度，`mikka_monthly_points` 可选；当 `metadata.mikka_pricing_model = 'at_cost_v1'` 时，强制校验 `monthlyPoints === unit_amount`。
-   - `metadata.mikka_seat_model` 支持 `per_workspace`（默认）与 `per_seat`。`per_seat` 方案在 Checkout 时按当前工作区活跃成员数（`>= 1`）设定 `quantity`，在 `subscription_create` 与 `subscription_cycle` 发放 `monthlyPoints × seats` 的当期套餐额度，并在 `subscription_update` 的已支付按比例增席账单按 `amount_paid` 幂等追加当期共享额度。
+   - `metadata.mikka_seat_model` 支持 `per_workspace`（默认）与 `per_seat`。`per_seat` 方案在 Checkout 时按当前工作区活跃成员数（`>= 1`）设定 `quantity`，在 `subscription_create` 与 `subscription_cycle` 发放 `monthlyPoints × seats` 的当期套餐额度，并在 `subscription_update` 的已支付按比例增席账单按税前净实付金额（不含税）幂等追加当期共享额度（仅退费/减席的负净额账单不重复授额）。
 2. **加购额度 12 个月有效期与 FIFO 扣减**：
    - 每次加购在入账时写入 `expiresAt = createdAt + 12 个月`（UTC 日历月，闰日按月底对齐），并在 `CreditTransaction.expiresAt` 返回给界面；退款补偿行继承原授额的 `expiresAt`。
    - `HostedUsageStore` 通过 `hosted_usage."purchasedAllocations"` 按授额 `expiresAt ASC NULLS LAST, id` 先进先出扣减；过期授额不再计入可用余额，也不会抹除未过期的加购余额。
