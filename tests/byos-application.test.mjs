@@ -561,9 +561,11 @@ test(scenario, { timeout: 90_000 }, async t => {
     const errors = []; page.on('pageerror', error => errors.push(error.message))
     await page.goto(browserOrigin)
     assert.equal((await subscriptionCallback(new Request(`${browserOrigin}/api/subscriptions/callback?code=fixture-grant&state=${'x'.repeat(43)}`), dependencies)).status, 410)
-    async function openProvider(address) {
+    async function openProvider(provider, address) {
       try {
-        const connect = page.getByRole('button', { name: 'Connect', exact: true }).first()
+        const button = page.getByRole('button', { name: 'Connect', exact: true })
+        const row = page.locator('div').filter({ has: page.getByText(provider, { exact: true }) }).filter({ has: button }).last()
+        const connect = row.getByRole('button', { name: 'Connect', exact: true })
         await connect.waitFor({ timeout: 5000 })
         const [popup] = await Promise.all([context.waitForEvent('page'), connect.click({ timeout: 5000 })])
         await popup.waitForURL(address)
@@ -573,22 +575,25 @@ test(scenario, { timeout: 90_000 }, async t => {
         throw error
       }
     }
-    const connected = page.getByRole('switch', { name: 'Use fixture@example.invalid', checked: true })
+    const connected = page.getByRole('switch', { name: /^Use /, checked: true })
     async function disconnectProvider() {
       await connected.waitFor({ state: 'attached' })
-      await page.getByRole('button', { name: 'More for fixture@example.invalid' }).click()
+      const row = page.locator('[id^="subscription-"]').filter({ has: connected })
+      await row.getByRole('button', { name: /^More for / }).click()
       await page.getByRole('menuitem', { name: 'Disconnect', exact: true }).click()
       await page.getByRole('alertdialog').getByRole('button', { name: 'Disconnect', exact: true }).press('Enter')
       await connected.waitFor({ state: 'detached' })
     }
-    await openProvider('https://auth.openai.com/codex/device')
+    await openProvider('ChatGPT / Codex', 'https://auth.openai.com/codex/device')
     await page.getByText('ABCD-EFGH', { exact: true }).waitFor()
     await disconnectProvider()
-    await openProvider('https://claude.ai/**')
+    await openProvider('Claude', 'https://claude.ai/**')
     assert.ok(claudeCode)
     await page.getByLabel('Authorization code', { exact: true }).fill(claudeCode)
     await page.getByRole('button', { name: 'Complete connection' }).click()
     await connected.waitFor({ state: 'attached' })
+    const browserRows = await pool.query(`SELECT provider,state FROM byos_connections WHERE "ownerId"='browser-owner' ORDER BY provider`)
+    assert.deepEqual(browserRows.rows, [{ provider: 'claude', state: 'connected' }, { provider: 'codex', state: 'disconnected' }])
     assert.equal(authorizations, 2); assert.deepEqual(errors, [])
     await page.screenshot({ path: '/tmp/mikka-byos-oauth-review-browser.png', fullPage: true })
     await disconnectProvider()
