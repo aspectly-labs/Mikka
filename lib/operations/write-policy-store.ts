@@ -51,3 +51,17 @@ export async function lockWritePolicy(tx: PoolClient, input: WritePolicyScope, o
   const permissions = policy?.external_write_permissions ?? {}
   return { decision: resolveWritePermission(scope.action, [permissions]), version }
 }
+
+/** Readback only: binds an already-recorded write to its owner, Bot and
+ * workspace and to a run that exists, in any state. It grants no effect: the
+ * caller may only read the ledger and the provider's evidence. A run that has
+ * ended, a revoked tool or a moved policy version do not stop a readback. */
+export async function lockWriteRunBinding(tx: PoolClient, input: WritePolicyScope) {
+  const scope = scopeSchema.parse(input)
+  const key = scope.botId ?? 'coordinator'
+  const head = await tx.query<{ workspace_id: string | null }>('select workspace_id from agent_kit_heads where owner_id=$1 and bot_key=$2 for share', [scope.ownerId, key])
+  if (!head.rows[0] || head.rows[0].workspace_id !== scope.workspaceId) throw new OperationError('writePolicyUnavailable')
+  const execution = await tx.query<{ status: string }>('select status from agent_kit_executions where owner_id=$1 and bot_key=$2 and id=$3 for share', [scope.ownerId, key, scope.runId])
+  if (!execution.rows[0]) throw new OperationError('writeRunUnavailable')
+  return { running: execution.rows[0].status === 'running' }
+}

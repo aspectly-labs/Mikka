@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import pg from 'pg'
 import { createApprovedWrites } from './approved-writes'
+import { sweepWriteReceipts } from './write-receipt-sweep'
 import { createOperationLedger, type OperationIntent } from './ledger'
 import { DEFAULT_AGENT_DEFINITION } from '../agent-kit/builtin'
 import { digest, makeSnapshot } from '../agent-kit/definition'
@@ -151,6 +152,63 @@ for (const transport of ['generic', 'slack'] as const) test(`${transport}: after
     await f.pool.query("UPDATE agent_kit_executions SET status='failed' WHERE id=$1", [run])
     await assert.rejects(replay.writeFromRun(payload, intentKey), /writeRunUnavailable/)
     assert.equal(lookups, 1)
+    assert.deepEqual(await (await fetch(f.origin + '/stats')).json(), { posts: 1, effects: 1 })
+  } finally { if (worker) await stop(worker); await f.close() }
+})
+
+for (const transport of ['generic', 'slack'] as const) test(`${transport}: after its worker dies and its run ends, the sweep reads the effect back, never resends, and closes an unsent receipt`, { timeout: 30_000 }, async () => {
+  const f = await fixture()
+  let worker: ChildProcess | undefined
+  try {
+    const run = randomUUID(), revision = randomUUID(), intentKey = randomUUID(), page = randomUUID()
+    const action = transport === 'slack' ? 'send_slack_message' : 'append_notion_paragraph'
+    const payload = { ...(transport === 'slack' ? { channel: 'C12345678' } : { page_id: page }), text: 'Controlled local recovery effect' }
+    const ownerId = 'recovery-owner', actor = { userId: ownerId, sessionId: 'recovery-session' }
+    const definition = { ...DEFAULT_AGENT_DEFINITION, tools: [action] }
+    const snapshot = makeSnapshot(revision, 1, definition, 'controlled local fixture', { harness: 'ai_sdk', model: 'openai/gpt-6-luna' })
+    await f.pool.query('INSERT INTO "session" VALUES($1,$2,now()+interval \'1 hour\')', [actor.sessionId, ownerId])
+    await f.pool.query('INSERT INTO agent_kit_heads(owner_id,bot_key,active_version,external_write_permissions) VALUES($1,\'coordinator\',$2,$3)', [ownerId, revision, { [action]: 'allow' }])
+    await f.pool.query('INSERT INTO agent_kit_versions VALUES($1,\'coordinator\',$2,$3,$4)', [ownerId, revision, definition, digest(definition)])
+    await f.pool.query('INSERT INTO agent_kit_executions VALUES($1,\'coordinator\',$2,\'running\',$3,$4)', [ownerId, run, snapshot, revision])
+    worker = child('worker', { OPERATION_RECOVERY_SCHEMA: f.schema, OPERATION_RECOVERY_ORIGIN: f.origin, OPERATION_RECOVERY_RUN: run, OPERATION_RECOVERY_PAGE: page, OPERATION_RECOVERY_INTENT: intentKey, OPERATION_RECOVERY_PROVIDER: transport })
+    await message(worker, 'effect-applied')
+    await stop(worker)
+    // The run ends with the effect sent but unrecorded, and its settings change afterwards.
+    await f.pool.query("UPDATE agent_kit_executions SET status='failed' WHERE id=$1", [run])
+    await f.pool.query('UPDATE agent_kit_heads SET external_write_permissions=$1 WHERE owner_id=$2', [{ [action]: 'deny' }, ownerId])
+    const receipt = (await f.pool.query('SELECT id FROM pending_actions')).rows[0]
+    let lookups = 0, readbacks = 0
+    const provider = transport === 'slack' ? await recoverySlackProvider(f.origin) : recoveryHttpProvider(f.origin)
+    const counted = { ...provider, lookup: async (input: Parameters<typeof provider.lookup>[0]) => { lookups++; return provider.lookup(input) } }
+    const service = createApprovedWrites(f.pool, counted, action, {})
+    const readback = (owner: string, id: string) => { readbacks++; return service.readback(owner, id) }
+    const replay = createApprovedWrites(f.pool, counted, action, { modelRun: { ownerId, botId: null, workspaceId: null, runId: run } })
+    await assert.rejects(replay.writeFromRun(payload, intentKey), /writeRunUnavailable/)
+    assert.equal(lookups, 0)
+
+    // A receipt committed just before its run ended, with no ledger row: it was never sent.
+    const unsent = randomUUID()
+    await f.pool.query(`INSERT INTO pending_actions (id,"userId",action,input,"intentKey","operationBinding",context,status)
+      SELECT $1,"userId",action,input,$2,"operationBinding",context,'running' FROM pending_actions WHERE id=$3`, [unsent, randomUUID(), receipt.id])
+    // A late proposal from an older deployment during the rollout.
+    const late = randomUUID()
+    await f.pool.query(`INSERT INTO pending_actions (id,"userId",action,input,status) VALUES ($1,$2,'send_email','{}','pending')`, [late, ownerId])
+
+    const swept = await sweepWriteReceipts(f.pool, readback)
+    assert.deepEqual(swept, { retired: 1, readBack: 2, outcomes: { done: 1, failed: 1 } })
+    assert.equal(lookups, 1, 'one readback of the sent effect')
+    const status = async (id: string) => (await f.pool.query('SELECT status,error FROM pending_actions WHERE id=$1', [id])).rows[0]
+    assert.deepEqual(await status(receipt.id), { status: 'done', error: null })
+    assert.deepEqual(await status(unsent), { status: 'failed', error: 'writeRunEnded' })
+    assert.deepEqual(await status(late), { status: 'declined', error: 'approvalRetired' })
+    const ledger = (await f.pool.query('SELECT status,receipt FROM operation_ledger')).rows
+    assert.equal(ledger.length, 1); assert.equal(ledger[0].status, 'succeeded')
+    assert.equal((await service.view(actor, receipt.id)).status, 'done')
+    assert.equal((await service.view(actor, unsent)).status, 'declined', 'an unsent write reads as did-not-run')
+
+    // Idempotent: a second sweep finds nothing to do and sends nothing.
+    assert.deepEqual(await sweepWriteReceipts(f.pool, readback), { retired: 0, readBack: 0, outcomes: {} })
+    assert.equal(readbacks, 2); assert.equal(lookups, 1)
     assert.deepEqual(await (await fetch(f.origin + '/stats')).json(), { posts: 1, effects: 1 })
   } finally { if (worker) await stop(worker); await f.close() }
 })

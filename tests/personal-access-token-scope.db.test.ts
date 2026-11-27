@@ -253,7 +253,7 @@ test('API requests stay in their effective workspace on thread, evidence, propos
     }
   })
 
-  await t.test('pending proposals: nothing waits for approval, so the list is empty for every token', async () => {
+  await t.test('pending proposals: nothing waits for approval, so the list is empty and a decision decides nothing', async () => {
     const listRoute = await import('../app/api/pending-actions/route')
     const [own, others] = [randomUUID(), randomUUID()]
     const input = { summary: 'Sign in', origin: 'https://example.invalid', operation: 'login' }
@@ -263,6 +263,14 @@ test('API requests stay in their effective workspace on thread, evidence, propos
     const listed = await call(listRoute.GET, '/api/pending-actions', {})
     assert.equal(listed.status, 200)
     assert.deepEqual(listed.body, [])
+    // Older phone builds still post a decision: the one-release shim decides nothing.
+    const decide = await import('../app/api/mobile/pending-actions/[id]/route')
+    for (const id of [own, others]) {
+      const answer = await call(decide.POST, `/api/mobile/pending-actions/${id}`, { id }, { approve: true })
+      assert.equal(answer.status, 409)
+      assert.deepEqual(answer.body, { error: 'pendingActionUnavailable' })
+      assert.equal((await pool.query('SELECT status FROM pending_actions WHERE id=$1', [id])).rows[0].status, 'pending')
+    }
   })
 
   await t.test('chat reactions and a Bot chat preference', async () => {

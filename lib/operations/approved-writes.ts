@@ -8,8 +8,8 @@ import { createOperationLedger, lockOperation, OperationError, type OperationInt
 import { requireOperationSession } from './session-authorization'
 import type { WriteProvider } from './write-contract'
 import { writeBindingSchema as bindingSchema, prepareWriteBinding } from './write-binding'
-import { lockWritePolicy } from './write-policy-store'
-import { withWritePolicy } from './policy-authorization'
+import { lockWritePolicy, lockWriteRunBinding } from './write-policy-store'
+import { withReadbackBinding, withWritePolicy } from './policy-authorization'
 import { snapshotDigest as digest } from './write-target'
 import { approvedWriteChanged } from '../live/approved-writes'
 
@@ -43,10 +43,12 @@ const intent = (p: Proposal): OperationIntent => ({ ...identity(p), provider: p.
  * Shared by by-ID and discovery so status never depends on which endpoint is used. */
 export function projectApprovedWriteView(p: StoredWriteProposal, execution: (OperationRecord & { invokedAt: Date | string | null }) | null | undefined): ApprovedWriteView {
   const action = p.action as WriteActionName
-  if (!WRITE_ACTIONS.includes(action) || !z.uuid().safeParse(p.intentKey).success || !bindingSchema.safeParse(p.operationBinding).success || !parseWriteInput(action, p.input) || !['pending', 'running', 'done', 'declined'].includes(p.status)) throw new OperationError('operationBindingConflict')
+  if (!WRITE_ACTIONS.includes(action) || !z.uuid().safeParse(p.intentKey).success || !bindingSchema.safeParse(p.operationBinding).success || !parseWriteInput(action, p.input) || !['pending', 'running', 'done', 'declined', 'failed'].includes(p.status)) throw new OperationError('operationBindingConflict')
   if (digest(p.input) !== p.operationBinding.payloadDigest || digest(p.context) !== p.operationBinding.contextDigest || execution && digest(execution.binding) !== digest(intent(p))) throw new OperationError('operationBindingConflict')
-  if (p.status === 'declined' && execution?.invokedAt || p.status === 'done' && execution?.status !== 'succeeded') throw new OperationError('operationBindingConflict')
-  const status = p.status === 'declined' ? 'declined' : execution?.status === 'succeeded' ? 'done' : execution || p.status === 'running' ? 'running' : 'pending'
+  if (p.status === 'declined' && execution?.invokedAt || p.status === 'failed' && execution?.status === 'succeeded' || p.status === 'done' && execution?.status !== 'succeeded') throw new OperationError('operationBindingConflict')
+  // `failed` is a write closed unsent after its run ended (readback); to the
+  // existing four-state client contract that is "did not run", like declined.
+  const status = p.status === 'declined' || p.status === 'failed' ? 'declined' : execution?.status === 'succeeded' ? 'done' : execution || p.status === 'running' ? 'running' : 'pending'
   const created = z.coerce.date().safeParse(p.createdAt)
   if (!created.success) throw new OperationError('operationBindingConflict')
   return {
@@ -123,6 +125,14 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
         return { status: 'running' as const, error: 'operationUncertain' }
       }
   }
+  /** Never sent: the run ended before the ledger's invoke gate committed, and an ended run can never claim or invoke. */
+  async function closeUnsent(p: Proposal) {
+    return transaction(async tx => {
+      const closed = await tx.query("UPDATE pending_actions SET status='failed',error='writeRunEnded' WHERE id=$1 AND \"userId\"=$2 AND status='running'", [p.id, p.userId])
+      if (closed.rowCount) await approvedWriteChanged(tx, p.id, p.userId)
+      return { status: 'failed' as const, error: 'writeRunEnded' }
+    })
+  }
   return {
     async view(actor: { userId: string; sessionId: string }, id: string): Promise<ApprovedWriteView> {
       z.uuid().parse(id)
@@ -138,6 +148,28 @@ export function createApprovedWrites(pool: Pool, provider: WriteProvider, action
         await requireOperationSession(tx, actor, actor.userId)
         return view
       }, actor)
+    },
+    /** Trusted host sweep for a run-bound receipt still `running` after its run
+     * ended: read and reconcile only, never claim, invoke or resend. Evidence of
+     * the effect makes it `done`; a write whose invoke gate never committed is
+     * closed `failed` (writeRunEnded); an invoked write with no evidence stays
+     * `running` / operationUncertain. A run still running is left to the run. */
+    async readback(ownerId: string, id: string) {
+      z.uuid().parse(id)
+      const p = await transaction(tx => owned(tx, ownerId, id))
+      const run = p.operationBinding.run
+      if (!run) throw new OperationError('operationAuthorizationRequired')
+      if (p.status !== 'running') return { status: p.status, actionId: p.id }
+      const binding = await transaction(tx => lockWriteRunBinding(tx, { ownerId, botId: run.botId, workspaceId: run.workspaceId, runId: run.runId, action }))
+      if (binding.running) return { status: 'running' as const, error: 'operationUncertain', actionId: p.id }
+      const ledger = createOperationLedger(pool, withReadbackBinding(current), context)
+      let row: OperationRecord | null
+      try { row = await ledger.read(identity(p)) }
+      catch (error) { if (error instanceof OperationError && error.message === 'operationUnavailable') row = null; else throw error }
+      const invoked = Boolean(row && (row as OperationRecord & { invokedAt?: Date | string | null }).invokedAt)
+      if (!row || row.status === 'reserved' || (row.status === 'executing' && !invoked) || row.status === 'failed') return { ...await closeUnsent(p), actionId: p.id }
+      if (row.status === 'succeeded') return { ...await project(row), actionId: p.id }
+      return { ...await project(await ledger.reconcile(identity(p), record => bounded(signal => provider.lookup({ ownerId: p.userId, accountId: p.operationBinding.accountId, version: p.operationBinding.version, payload: p.input, idempotencyKey: record.idempotencyKey, signal }), context.signal))), actionId: p.id }
     },
     /** The receipt is written as `running` and the write dispatched in the same
      * call. A retry with the same intent replays the receipt and never resends. */

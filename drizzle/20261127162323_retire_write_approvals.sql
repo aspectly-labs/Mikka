@@ -14,6 +14,9 @@
 --    workspace policy, becomes "allow"; "deny" and "allow" are untouched. Their
 --    policy-version triggers move the version, so a receipt pinned to the old
 --    settings is refused as writePolicyChanged rather than run.
+--    A workspace whose account deletion is in progress is skipped: its row is
+--    guarded against every write (account_deletion_workspace_guard) and is about
+--    to go; a stored "ask" there already reads as allow at runtime.
 --
 -- Idempotent: a second run matches no rows. CLI run policy (cli_run_policy) and
 -- daemon permission questions (agent_tool_approvals) are not write approvals and
@@ -33,10 +36,27 @@ SET external_write_permissions = (
 WHERE jsonb_typeof(external_write_permissions) = 'object'
   AND EXISTS (SELECT 1 FROM jsonb_each_text(external_write_permissions) e WHERE e.value = 'ask');
 
-UPDATE workspace_computer_policies
-SET external_write_permissions = (
-  SELECT jsonb_object_agg(e.key, CASE WHEN e.value = '"ask"'::jsonb THEN '"allow"'::jsonb ELSE e.value END)
-  FROM jsonb_each(external_write_permissions) e
-)
-WHERE jsonb_typeof(external_write_permissions) = 'object'
-  AND EXISTS (SELECT 1 FROM jsonb_each_text(external_write_permissions) e WHERE e.value = 'ask');
+-- The deletion guard table lives with the workspace target (DATABASE_URL). In a
+-- split deployment, or before that target is migrated, it is absent here and
+-- so is the guard trigger; PL/pgSQL plans only the branch it runs.
+DO $$
+BEGIN
+  IF to_regclass('account_deletion_workspace_guards') IS NULL THEN
+    UPDATE workspace_computer_policies
+    SET external_write_permissions = (
+      SELECT jsonb_object_agg(e.key, CASE WHEN e.value = '"ask"'::jsonb THEN '"allow"'::jsonb ELSE e.value END)
+      FROM jsonb_each(external_write_permissions) e
+    )
+    WHERE jsonb_typeof(external_write_permissions) = 'object'
+      AND EXISTS (SELECT 1 FROM jsonb_each_text(external_write_permissions) e WHERE e.value = 'ask');
+  ELSE
+    UPDATE workspace_computer_policies
+    SET external_write_permissions = (
+      SELECT jsonb_object_agg(e.key, CASE WHEN e.value = '"ask"'::jsonb THEN '"allow"'::jsonb ELSE e.value END)
+      FROM jsonb_each(external_write_permissions) e
+    )
+    WHERE jsonb_typeof(external_write_permissions) = 'object'
+      AND EXISTS (SELECT 1 FROM jsonb_each_text(external_write_permissions) e WHERE e.value = 'ask')
+      AND NOT EXISTS (SELECT 1 FROM account_deletion_workspace_guards g WHERE g."workspaceId" = workspace_computer_policies."workspaceId");
+  END IF;
+END $$;

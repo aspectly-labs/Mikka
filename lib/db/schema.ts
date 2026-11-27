@@ -1383,7 +1383,10 @@ export const runCaptureShares = pgTable('run_capture_shares', {
  * stays `running` and is never resent. Nothing waits for approval
  * (ADR 2026-11-27-1615): `pending` and a `decidedAt` exist only on older rows,
  * and drizzle/20261127162323_retire_write_approvals.sql closed every `pending`
- * one as `declined` (error `approvalRetired`).
+ * one as `declined` (error `approvalRetired`); the reconcile sweep
+ * (lib/operations/write-receipt-sweep.ts) closes any late one the same way and
+ * reads back a run-bound receipt still `running` after its run ended (never
+ * resending it; unsent ones become `failed` / `writeRunEnded`).
  * `context` is the prepared context the write was bound to, such as the event being changed.
  */
 export const PENDING_ACTION_STATUSES = ['pending', 'running', 'done', 'failed', 'declined'] as const
