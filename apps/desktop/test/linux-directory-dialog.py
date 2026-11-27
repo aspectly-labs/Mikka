@@ -40,7 +40,11 @@ def read_labels():
     image = run("import", "-silent", "-window", window, "-resize", "200%", "png:-")
     words = run("tesseract", "stdin", "stdout", "--psm", "11", "tsv", data=image, env=SINGLE_THREAD)
     labels = {}
-    for row in csv.DictReader(io.StringIO(words.decode()), delimiter="\t"):
+    # Tesseract's TSV has no quoting: a recognised `"` (it reads one from the
+    # path bar once the dialog is inside the fixture, depending on the random
+    # folder name) would otherwise open a CSV quoted field that swallows every
+    # later row, leaving only the words before it (Recent).
+    for row in csv.DictReader(io.StringIO(words.decode()), delimiter="\t", quoting=csv.QUOTE_NONE):
         word = (row.get("text") or "").strip(" _|[]").casefold()
         if word in allowed:
             x = (int(row["left"]) + int(row["width"]) // 2) // 2
@@ -65,21 +69,11 @@ def click(point):
 
 
 def open_fixture():
-    # GTK loads the dialog's first view (Recent) asynchronously. On a busy
-    # machine that load can finish after the click on the bookmark and replace
-    # it, leaving the dialog on Recent. Navigate again only in that case: the
-    # dialog shows Recent and not the fixture's Source row.
-    for _ in range(3):
-        entries = wait_for("fixture")
-        # The bookmark is the left sidebar item, even if the current folder
-        # name also appears in the location bar.
-        click(min(entries["fixture"]))
-        try:
-            return wait_for("source")
-        except RuntimeError:
-            if "recent" not in read_labels():
-                raise
-    raise RuntimeError("NATIVE_FOLDER_FIXTURE_NAVIGATION_REPLACED")
+    entries = wait_for("fixture")
+    # The bookmark is the left sidebar item, even if the current folder
+    # name also appears in the location bar.
+    click(min(entries["fixture"]))
+    return wait_for("source")
 
 
 if sys.argv[1] == "choose":
