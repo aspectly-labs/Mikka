@@ -13,6 +13,19 @@ import type { BundledSessionChange } from './bundled-session-change'
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>
 
+/**
+ * Whether URL serialization kept a checked path (no controls, whitespace,
+ * backslashes or dot segments) as written. Serialization may only
+ * percent-encode the path set's characters and non-ASCII; `^` is compared
+ * either way, as URL parsers differ on it.
+ */
+export function sameUrlPath(serialized: string, path: string): boolean {
+  let expected: string
+  try { expected = path.replace(/[^\x21-\x7e]|["<>`{}]/gu, character => encodeURIComponent(character)) } catch { return false }
+  const caret = (value: string) => value.replace(/%5e/gi, '^')
+  return caret(serialized) === caret(expected)
+}
+
 export class BundledAuth {
   private current: StoredSession | null = null
   private readonly saved = new Map<string, StoredSession>()
@@ -162,10 +175,16 @@ export class BundledAuth {
   /** Main-only primitive; a stored account chooses authentication, never an IPC token.
    * Its token goes only to its own server; without an account, to the sign-in target. */
   private async fetchAs(path: string, init: RequestInit, account: StoredSession | null): Promise<Response> {
-    if (!path.startsWith('/api/') || path.includes('\\') || path.includes('#') || /%(?:2f|5c|2e|25)/i.test(path.split('?')[0]!)) throw new Error('Invalid backend path')
+    const pathname = path.split('?', 1)[0]!
+    // oxlint-disable-next-line no-control-regex -- URL construction strips TAB/CR/LF, so `.\n.` would become `..`.
+    if (!path.startsWith('/api/') || path.includes('\\') || path.includes('#') || /[\x00-\x20\x7f]/.test(path) || /%(?:2f|5c|2e|25)/i.test(pathname) || pathname.split('/').some(part => part === '.' || part === '..')) throw new Error('Invalid backend path')
     const base = remoteBase(account ? this.serverOf(account) : this.target)
-    const target = new URL(`${base.pathname.replace(/\/$/, '')}${path}`, base.origin)
+    const basePath = base.pathname.replace(/\/$/, '')
+    const target = new URL(`${basePath}${path}`, base.origin)
+    // The URL that leaves must be the one checked: the account's origin and
+    // exactly this path under the server's base path, nothing normalized away.
     if (target.origin !== base.origin) throw new Error('Invalid backend origin')
+    if (!target.pathname.startsWith(`${basePath}/api/`) || !sameUrlPath(target.pathname, `${basePath}${pathname}`)) throw new Error('Invalid backend path')
     const headers = new Headers(init.headers)
     headers.delete('cookie'); headers.delete('authorization'); headers.delete('proxy-authorization'); headers.delete(SESSION_CACHE_HEADER)
     headers.set('origin', base.origin)
@@ -188,8 +207,9 @@ export class BundledAuth {
 
   /**
    * Whether the server still knows this session, read fresh from the session
-   * endpoint. Only a definite answer says no — a 401/403, a null session or
-   * another user; a network failure or a 5xx keeps the session.
+   * endpoint. Only a definite answer says no — a 401, a null session or
+   * another user; a 403 (refused, not unknown), a network failure or a 5xx
+   * keeps the session.
    */
   private stillSignedIn(account: StoredSession): Promise<boolean> {
     const pending = this.revalidations.get(account.token)
@@ -197,7 +217,7 @@ export class BundledAuth {
     const check = (async () => {
       try {
         const response = await this.fetchAs('/api/auth/get-session?disableCookieCache=true', { signal: AbortSignal.timeout(15_000) }, account)
-        if (response.status === 401 || response.status === 403) return false
+        if (response.status === 401) return false
         if (!response.ok) return true
         const body: unknown = await response.json().catch(() => undefined)
         if (body === undefined) return true

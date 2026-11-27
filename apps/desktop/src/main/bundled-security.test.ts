@@ -7,9 +7,9 @@ import { join } from 'node:path'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { forwardableApiPath, normalizedRendererPath, RENDERER_CSP, RENDERER_URL, rendererAssetPath, safeAppNext } from './bundled-policy'
 import { isTrustedFrame, navigationDecision, originOf, trustedIpcSender } from './security'
-import { bundledProtocol } from './bundled-protocol'
+import { bundledProtocol, PROXIED_CSP, PROXIED_HTML_CSP } from './bundled-protocol'
 import { SessionVault, type EncryptedStorage, type StoredSession } from './session-vault'
-import { BundledAuth } from './bundled-auth'
+import { BundledAuth, sameUrlPath } from './bundled-auth'
 import { notifyBundledSessionChange, type BundledSessionChange } from './bundled-session-change'
 import { BundledLive } from './bundled-live'
 import { startBundledLoopback } from './bundled-loopback'
@@ -49,6 +49,11 @@ test('custom origin is explicit; opaque, lookalike, embedded and resource frames
 
 test('path policy rejects traversal, encoded delimiters and absolute targets', () => {
   for (const path of ['/mikka/../secret', '/mikka/%2e%2e/secret', '/mikka/%252e%252e/secret', '/mikka/%2fapi/auth/token', '/mikka/a\\b', '//evil.test/api', '/mikka/a%00b']) assert.equal(normalizedRendererPath(path), null, path)
+  // Decoded controls and whitespace: URL construction strips TAB/CR/LF, so `.%0A.` would become `..`.
+  for (const encoded of ['%09', '%0A', '%0a', '%0D', '%00', '%20', '%7F', '%0D%0A']) {
+    for (const path of [`/mikka/api/.${encoded}./x`, `/mikka/api/${encoded}../x`, `/mikka/api/..${encoded}/x`, `/mikka/api/x${encoded}`, `/mikka/api/.${encoded}./%41pi/x`, `/mikka/api/%E2%80%A4.${encoded}./x`]) assert.equal(normalizedRendererPath(path), null, path)
+  }
+  assert.equal(normalizedRendererPath('/mikka/api/%41b'), '/api/Ab')
   assert.equal(rendererAssetPath('/safe/root', '/mikka/assets/file.js'), '/safe/root/assets/file.js')
   assert.equal(normalizedRendererPath('/mikka'), '/')
   assert.equal(safeAppNext('//evil.test'), '/')
@@ -73,6 +78,11 @@ test('the proxy forwards any API path to the account server only, and nothing el
   ]) {
     const response = await trusted(path)
     assert.ok([400, 404].includes(response.status), `${path} -> ${response.status}`)
+  }
+  // Encoded controls that would decode to `.\n.` and be stripped into `..` by URL construction.
+  for (const path of ['/mikka/api/.%0A./.%0A./steal-me', '/mikka/api/.%09./x', '/mikka/api/x/.%0D./y', '/mikka/api/.%00./x', '/mikka/api/.%0A%41./x', '/mikka/api/%2E%0A./x', '/mikka/api/.%0A./%0A/evil.test/x']) {
+    const response = await trusted(path)
+    assert.equal(response.status, 400, `${path} -> ${response.status}`)
   }
   for (const href of ['https://evil.test/mikka/api/x', 'mikka://evil/mikka/api/x']) assert.equal((await serve(new Request(href))).status, 403, href)
   // A path outside /mikka/api is a local asset, never a request: it is not forwarded.
@@ -102,6 +112,22 @@ test('a response that echoes a session credential never reaches the renderer', a
   assert.equal((await trusted('/api/header')).status, 502)
   assert.equal(await (await trusted('/api/inbox')).text(), '{"ok":true,"tok_":"a prefix alone is fine"}')
   assert.deepEqual(reports, ['/api/auth/[...all] desktop_credential_withheld', 'unmatched desktop_credential_withheld'])
+})
+
+test('every proxied response is an opaque sandbox; only artifact HTML may run inline script', async t => {
+  const root = await fixture(t)
+  const types: Record<string, string | null> = { svg: 'image/svg+xml', xml: 'application/xml', xhtml: 'application/xhtml+xml', json: 'application/json', untyped: null, html: 'Text/HTML; charset=utf-8', pdf: 'application/pdf' }
+  const serve = bundledProtocol(root, { request: async path => {
+    const type = types[path.split('/').at(-1)!]
+    return new Response('<svg xmlns="http://www.w3.org/2000/svg"><script>parent.mikka</script></svg>', { headers: type ? { 'content-type': type, 'content-security-policy': "default-src *" } : { 'content-security-policy': "default-src *" } })
+  } })
+  for (const kind of Object.keys(types)) {
+    const response = await serve(Object.assign(new Request(`${RENDERER_URL}/api/files/${kind}`), { initiatorOrigin: 'mikka://app' }))
+    const csp = response.headers.get('content-security-policy')!
+    assert.equal(csp, kind === 'html' ? PROXIED_HTML_CSP : PROXIED_CSP, kind)
+    assert.match(csp, /^sandbox(;| allow-scripts;)/, kind)
+    if (kind !== 'html') assert.doesNotMatch(csp, /allow-scripts|script-src/, kind)
+  }
 })
 
 test('renderer CSP has no remote code, eval, inline scripts, external fetch, workers or object', () => {
@@ -149,7 +175,7 @@ test('proxy strips credentials, cookies, redirects and remote policy; preserves 
   assert.equal(response.headers.get('authorization'), null)
   assert.equal(response.headers.get('x-mikka-session-token'), null)
   assert.equal(response.headers.get('x-eve-stream-version'), '27')
-  assert.equal(response.headers.get('content-security-policy'), RENDERER_CSP)
+  assert.equal(response.headers.get('content-security-policy'), PROXIED_CSP)
   assert.match(await response.text(), /data: first/)
   for (const request of [new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'https://evil.test' } }), new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'null' } }), new Request(`${RENDERER_URL}/api/workspace`, { headers: { 'sec-fetch-site': 'cross-site' } })]) assert.equal((await serve(request)).status, 403)
   // Electron removes Origin:null before dispatch, but retains this trusted
@@ -255,6 +281,69 @@ test('a 401 from one route keeps the session when the session endpoint still kno
   assert.equal(auth.session(), null)
   assert.equal(await vault.load(), null)
   assert.equal(changes, 1)
+})
+
+test('a 403 from the session endpoint is a refusal, not a sign-out', async t => {
+  const vault = new SessionVault(await fixture(t), 'https://server.test/mikka', encryption())
+  await vault.save(stored)
+  let changes = 0
+  let session = () => new Response(null, { status: 403 })
+  const auth = new BundledAuth({ serverUrl: 'https://server.test/mikka', version: '0.1.2', vault, openExternal: async () => {}, changed: () => { changes++ }, returned: () => {}, fetch: async url => {
+    if (new URL(url).pathname === '/mikka/api/auth/get-session') return session()
+    return new Response(null, { status: 401 })
+  } })
+  await auth.restore()
+  await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })
+  assert.deepEqual(auth.session(), identity)
+  assert.equal(changes, 0)
+  // Only a 401, a null session or another user signs out.
+  session = () => Response.json({ user: { ...identity.user, id: '22222222-2222-4222-8222-222222222222' }, session: { id: 'other' } })
+  await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })
+  assert.equal(auth.session(), null)
+  assert.equal(changes, 1)
+})
+
+test('main sends only the checked path under the account server, including a base path', async t => {
+  for (const server of ['https://corp.example.test/mikka', 'https://api.example.test/']) {
+    await t.test(server, async t => {
+      const vault = new SessionVault(await fixture(t), server, encryption())
+      await vault.save({ ...stored, workspace: 'ws1' })
+      const sent: string[] = []
+      const auth = new BundledAuth({ serverUrl: server, version: '0.1.2', vault, openExternal: async () => {}, changed: () => {}, returned: () => {}, fetch: async (url, init = {}) => {
+        sent.push(`${init.method ?? 'GET'} ${url}`)
+        return Response.json({ ok: true })
+      } })
+      await auth.restore()
+      const base = server.replace(/\/$/, '')
+      const serve = bundledProtocol(await fixture(t), auth)
+      const trusted = (path: string) => serve(Object.assign(new Request(`mikka://app${path}`), { initiatorOrigin: 'mikka://app' }))
+      // The reviewer's escape: `.%0A.` decodes to `.\n.`, which URL construction turns into `..`.
+      for (const path of [
+        '/mikka/api/.%0A./.%0A./steal-me', '/mikka/api/.%0A./.%0A./other-app/admin', '/mikka/api/.%09./.%09./other-app/x?y=1',
+        '/mikka/api/x/.%0D./.%0D./y', '/mikka/api/.%00./x', '/mikka/api/.%0D%0A./x', '/mikka/api/%2E%0A./x', '/mikka/api/x%0D%0AHost:%20evil.test',
+      ]) {
+        const response = await trusted(path)
+        assert.ok([400, 403].includes(response.status), `${path} -> ${response.status}`)
+      }
+      assert.deepEqual(sent, [])
+      // Main's own primitive refuses the same paths, and dot segments, before any request.
+      for (const path of ['/api/.\n./.\n./steal-me', '/api/.\t./x', '/api/x/../../y', '/api/./x', '/api/x\r', '/api/x?a=\n']) await assert.rejects(auth.request(path), /Invalid backend path/, JSON.stringify(path))
+      assert.deepEqual(sent, [])
+      // Ordinary paths, encoded characters and non-ASCII still reach exactly the account server.
+      for (const path of ['/mikka/api/workspace', '/mikka/api/agents/%E4%B8%AD%E6%96%87', '/mikka/api/x?q=a%20b']) assert.equal((await trusted(path)).status, 200, path)
+      assert.deepEqual(sent, [`GET ${base}/api/workspace`, `GET ${base}/api/agents/%E4%B8%AD%E6%96%87`, `GET ${base}/api/x?q=a%20b`])
+    })
+  }
+})
+
+test('URL path comparison allows only the percent-encoding URL serialization adds', () => {
+  assert.equal(sameUrlPath(new URL('https://x/mikka/api/a"b{c}').pathname, '/mikka/api/a"b{c}'), true)
+  assert.equal(sameUrlPath(new URL('https://x/api/中😀').pathname, '/api/中😀'), true)
+  assert.equal(sameUrlPath(new URL('https://x/api/a^b').pathname, '/api/a^b'), true)
+  assert.equal(sameUrlPath('/api/a%5Eb', '/api/a^b'), true)
+  assert.equal(sameUrlPath(new URL('https://x/mikka/api/.\n./.\n./x').pathname, '/mikka/api/.\n./.\n./x'), false)
+  assert.equal(sameUrlPath('/x', '/mikka/api/../../x'), false)
+  assert.equal(sameUrlPath('/api/x', '/api/\ud800'), false)
 })
 
 test('loopback validates nonce/code exactly, ignores wrong attempts and accepts once on localhost', async t => {

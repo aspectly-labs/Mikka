@@ -15,6 +15,14 @@ const REQUEST_HEADERS = new Set(['accept', 'content-type', 'range', 'if-none-mat
 // viewer and conservatively anchor expiry. Session/cache credentials stay private.
 const RESPONSE_HEADERS = new Set(['content-type', 'content-disposition', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'x-mikka-viewer', 'x-mikka-observed-at', 'retry-after', 'x-eve-session-id', 'x-eve-stream-format', 'x-eve-stream-version', 'x-eve-stream-tail-index', 'x-eve-observation-key'])
 const MAX_UPLOAD = 32 * 1024 * 1024
+/** Artifact HTML runs as an opaque sandbox, even if opened as a top-level page. */
+export const PROXIED_HTML_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors mikka://app"
+/**
+ * Every other proxied response is an opaque sandbox with no scripts: an SVG,
+ * XML or untyped file opened as a document must not run in the app's origin,
+ * where the renderer CSP's script-src 'self' would allow another /api/ file.
+ */
+export const PROXIED_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data: blob: https:; media-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors mikka://app"
 
 function localHeaders(type?: string): Headers {
   return new Headers({ 'content-security-policy': RENDERER_CSP, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', ...(type ? { 'content-type': type } : {}) })
@@ -139,10 +147,7 @@ export function bundledProtocol(root: string, auth: Pick<BundledAuth, 'request'>
           await response.body?.cancel().catch(() => {})
           return refuse(502, 'desktop_credential_withheld')
         }
-        if (response.headers.get('content-type')?.includes('text/html')) {
-          // Artifact HTML is an opaque sandbox, even if opened as a top-level page.
-          output.set('content-security-policy', "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors mikka://app")
-        }
+        output.set('content-security-policy', response.headers.get('content-type')?.toLowerCase().includes('text/html') ? PROXIED_HTML_CSP : PROXIED_CSP)
         let stream = response.body
         if (stream && auth.scope && (response.headers.get('content-type')?.includes('text/event-stream') || response.headers.get('content-type')?.includes('application/x-ndjson'))) {
           const scope = auth.scope()

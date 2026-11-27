@@ -258,17 +258,30 @@ and confirm **Check for Updates…** finds the published version.
 - Permissions are denied except clipboard writes; system notifications come
   from main, not the renderer.
 - No auth token, device credential or arbitrary path crosses the bridge.
-- API requests: main forwards any normalized `/mikka/api/…` path from the
-  app's own main frame to the current account's server, and nowhere else; the
-  server's authorization (person, workspace, permission) decides, as on the
-  web. There is no client-side route list. Traversal, encoded separators,
-  absolute and protocol-relative targets, other origins (artifact and browser
-  frames) and non-API paths never reach the server, and a response that echoes
-  a session credential is cut off before the renderer sees it.
+- API requests: main forwards a normalized `/mikka/api/…` path from the app's
+  own origin (`mikka://app`; opaque artifact frames and browser frames are
+  other origins and are refused) to the current account's server, and nowhere
+  else; the server's authorization (person, workspace, permission) decides, as
+  on the web. There is no client-side route list.
+- The path is checked twice. The protocol rejects dot segments, backslashes,
+  encoded separators, dots and `%`, and every control or whitespace character
+  both before and after percent-decoding (`.%0A.` decodes to `.\n.`, which URL
+  parsing would strip into `..`). Then, just before sending, main checks that
+  the URL it built has the account's origin and exactly the checked path under
+  the server's base path (`https://corp.example/mikka` + `/api/…`), so nothing
+  can climb out of `/api/` or the base path.
+- Every proxied response carries a `sandbox` CSP: artifact HTML runs inline
+  script in an opaque origin, and anything else (SVG, XML, untyped files)
+  runs none. A response that echoes a credential main holds (a bearer token or
+  signed session cache) is cut off before the renderer sees it. Credentials
+  the server newly mints for the renderer (one-time tokens, live tickets,
+  device enrollment, viewer grants) reach it as on the web (hosted decision
+  `2026-11-27-1200-desktop-renderer-credential-parity`).
 - `scripts/ui-api-routes.test.mjs` checks that every route the official UI
   requests exists on the server with its method (web and desktop builds).
 - A 401 from one route is re-checked against the session endpoint; main signs
-  out only when that also says the session is gone.
+  out only when that answers 401, no session or another user (a 403, a 5xx or
+  a network failure keeps the session).
 - Telemetry and error reports go through main to the web's PostHog project,
   through the web's allowlist, only on the built-in server and only while
   Settings › 电脑 › 隐私 leaves sharing on

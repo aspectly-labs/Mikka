@@ -43,7 +43,10 @@ export function normalizedRendererPath(value: string): string | null {
   if (/%(?:2e|2f|5c|00|25)/i.test(raw) || raw.split('/').some(part => part === '.' || part === '..')) return null
   let decoded: string
   try { decoded = decodeURIComponent(raw) } catch { return null }
-  if (decoded.includes('\\') || decoded.split('/').some(part => part === '.' || part === '..')) return null
+  // Decoding can produce controls or whitespace (`.%0A.` is `.\n.`), which URL
+  // construction strips later (`..`), so the decoded path is checked again.
+  // oxlint-disable-next-line no-control-regex -- Reject decoded NUL, controls and URL whitespace.
+  if (decoded.includes('\\') || /[\x00-\x20\x7f]/.test(decoded) || decoded.split('/').some(part => part === '.' || part === '..')) return null
   return decoded === '/mikka' ? '/' : decoded.startsWith('/mikka/') ? decoded.slice(6) : null
 }
 
