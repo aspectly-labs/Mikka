@@ -726,16 +726,8 @@ dbTest('gitAuthorName and gitAuthorEmail persist, inherit, enforce write auth, a
   assert.ok(schemaJson.settings.some((entry: { key: string; page: string }) => entry.key === 'gitAuthorEmail' && entry.page === 'git'))
 })
 
-dbTest('workspace security and approval settings apply to the actual workspace policy', async () => {
-  const { workspaceApprovalMode } = await import('./workspace-approval')
+dbTest('workspace security settings apply to the actual workspace policy', async () => {
   const { readPersonalSecurity } = await import('../governance/organization-security')
-  const actor = { userId: owner, workspaceId }
-  assert.deepEqual(await workspaceApprovalMode(actor), { approvalMode: 'ask' })
-  await assert.rejects(workspaceApprovalMode({ userId: member, workspaceId }, 'read_only'))
-  assert.deepEqual(await workspaceApprovalMode(actor, 'read_only'), { approvalMode: 'read_only' })
-  const { rows: [policy] } = await pool.query('SELECT cli_run_policy FROM workspace_computer_policies WHERE "workspaceId"=$1', [workspaceId])
-  assert.equal(policy.cli_run_policy.approvalMode, 'read_only')
-  await workspaceApprovalMode(actor, 'ask')
   as(member)
   assert.equal((await workspace.PATCH(request('workspace', 'PATCH', patch({ requireTwoFactor: true })), context())).status, 403)
   as(owner)

@@ -11,7 +11,7 @@ export const SETTINGS_GROUPS = ['personal', 'compute', 'agent', 'review', 'works
 export type SettingsSectionId =
   | 'preferences' | 'appearance' | 'account' | 'security' | 'notifications' | 'shortcuts' | 'privacy'
   | 'models' | 'environments' | 'mcp' | 'connections' | 'integrations' | 'developer' | 'secrets' | 'logins' | 'computers'
-  | 'instructions' | 'team-skills' | 'threads' | 'git' | 'agent-configs' | 'agent-permissions' | 'memory'
+  | 'instructions' | 'team-skills' | 'threads' | 'git' | 'agent-configs' | 'memory'
   | 'identity'
   | 'review-repositories' | 'review-config'
   | 'general' | 'organization' | 'issue-states' | 'members' | 'teams'
@@ -48,7 +48,6 @@ export const SETTINGS_SECTION_STATUS: Readonly<Record<SettingsSectionId, Setting
   threads: 'available',
   git: 'available',
   'agent-configs': 'available',
-  'agent-permissions': 'available',
   memory: 'available',
   'review-repositories': 'skipped',
   'review-config': 'skipped',
@@ -189,8 +188,6 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'git', group: 'agent', title: 'Git and pull requests' },
   // R-S20: tasks and Bots both pick one, so it is its own entry, not part of 指令.
   { id: 'agent-configs', group: 'agent', title: 'Agent configurations' },
-  // R-S25: approval policy and templates (Codex Configuration, Claude Code permissions).
-  { id: 'agent-permissions', group: 'agent', title: 'Agent permissions', adminOnly: true },
   { id: 'memory', group: 'agent', title: 'Memory' },
   // Review (withheld)
   { id: 'review-repositories', group: 'review', title: 'Review repositories' },
@@ -202,7 +199,7 @@ const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] 
   { id: 'issue-states', group: 'workspace', title: 'Task states' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
-  // R-S02: 团队权限 is gone; each policy sits on the page of what it controls. Old links open Agent 权限.
+  // R-S02: 团队权限 is off the sidebar; each policy sits on the page of what it controls. Old links still open it.
   { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true, sidebar: false },
   { id: 'billing', group: 'workspace', title: 'Billing' },
   { id: 'usage', group: 'workspace', title: 'Usage' },
@@ -274,8 +271,6 @@ export function isSettingsSectionParam(section: string): boolean {
 export function resolveSettingsSection(pathname: string, section: string | null | undefined): SettingsSectionId {
   if (pathname.endsWith('/settings/members')) return 'members'
   if (pathname.endsWith('/settings/teams')) return 'teams'
-  // 团队权限's policies moved (R-S02); an old link opens Agent 权限, which holds its templates.
-  if (section === 'permissions') return 'agent-permissions'
   if (section && openable.has(section)) return section as SettingsSectionId
   if (section && Object.hasOwn(LEGACY, section)) return LEGACY[section]
   return 'preferences'

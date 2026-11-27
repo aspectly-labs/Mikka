@@ -71,7 +71,6 @@ Source: `SETTINGS_SECTIONS` in `lib/settings-sections.ts`.
 | `agent` | `threads` | Threads |
 | `agent` | `git` | Git and pull requests |
 | `agent` | `agent-configs` | Agent configurations |
-| `agent` | `agent-permissions` | Agent permissions |
 | `agent` | `memory` | Memory |
 | `review` | `review-repositories` | Review repositories |
 | `review` | `review-config` | Review config |

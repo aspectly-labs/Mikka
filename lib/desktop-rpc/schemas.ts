@@ -369,8 +369,6 @@ export const desktopActionSchemas = {
   'issue-states.setDefaultWorkspaceIssueState': tuple(setDefaultIssueStateInput),
   'issue-states.deleteWorkspaceIssueState': tuple(deleteIssueStateInput),
   'settings.getSettings': inWorkspace,
-  'settings.getWorkspaceApprovalPolicy': oneId,
-  'settings.setWorkspaceApprovalPolicy': tuple(uuid, z.enum(['ask', 'read_only'])),
   'settings.getWorkspaceSettings': oneId,
   'settings.patchPersonalSettings': tuple(settingsPatchInput, workspace),
   'settings.patchWorkspaceSettings': tuple(uuid, settingsPatchInput),

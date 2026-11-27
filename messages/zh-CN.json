@@ -374,10 +374,6 @@
         "title": "Agent 配置",
         "keywords": "Agent 配置 角色 模型 指令 Bot 任务"
       },
-      "agent-permissions": {
-        "title": "Agent 权限",
-        "keywords": "权限 审批 策略 模板 网络 操作电脑"
-      },
       "identity": {
         "title": "身份与访问",
         "keywords": "身份 访问 域名 单点登录 SSO SAML 两步验证"

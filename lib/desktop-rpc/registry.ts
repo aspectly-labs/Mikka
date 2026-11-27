@@ -59,8 +59,6 @@ import * as listViews from '@/app/actions/list-views'
 // This literal is the complete callable surface, independent of Next build IDs.
 const functions = {
   'settings.getSettings': settingsActions.getSettings,
-  'settings.getWorkspaceApprovalPolicy': settingsActions.getWorkspaceApprovalPolicy,
-  'settings.setWorkspaceApprovalPolicy': settingsActions.setWorkspaceApprovalPolicy,
   'settings.getWorkspaceSettings': settingsActions.getWorkspaceSettings,
   'settings.patchPersonalSettings': settingsActions.patchPersonalSettings,
   'settings.patchWorkspaceSettings': settingsActions.patchWorkspaceSettings,

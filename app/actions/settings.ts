@@ -7,12 +7,6 @@ import { settingsSchema } from '@/lib/settings/registry'
 import { requireUser } from '@/lib/issue-access'
 import { writeDeviceConcurrency } from '@/lib/settings/device-concurrency'
 
-export async function getWorkspaceApprovalPolicy(workspaceId: string) {
-  return settingsWorkspaceAction(async () => (await import('@/lib/settings/workspace-approval')).workspaceApprovalMode(await currentWorkspaceActor(workspaceId)))
-}
-export async function setWorkspaceApprovalPolicy(workspaceId: string, approvalMode: 'ask' | 'read_only') {
-  return settingsWorkspaceAction(async () => (await import('@/lib/settings/workspace-approval')).workspaceApprovalMode(await currentWorkspaceActor(workspaceId), approvalMode))
-}
 export async function getSettings(workspaceId?: string) {
   return settingsWorkspaceAction(async () => readSettings(await currentWorkspaceActor(workspaceId)))
 }

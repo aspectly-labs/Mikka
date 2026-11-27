@@ -374,10 +374,6 @@
         "title": "Agent configurations",
         "keywords": "agent configurations profiles roles model instructions bot task"
       },
-      "agent-permissions": {
-        "title": "Agent permissions",
-        "keywords": "permissions approval policy templates network computer use"
-      },
       "identity": {
         "title": "Identity & access",
         "keywords": "identity access domains single sign-on sso saml two-step verification"
