@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { turnChoiceShown, activityDurationSeconds, headerStatusBadgeShown, chainChunks, headerStopShown, runFailureText, runIsActive, runIsWorking, runStopTimeoutRemaining, runSummaryText, runSummaryView, threadItems, threadStepOutput } from './issue-run-conversation'
 import { createSecretMasker, withCredentialMasking } from './secrets/mask'
 import { maskStreamedChunks } from './secrets/stream-mask'
+import { officialUiSkip } from '../scripts/official-ui-requirement.mjs'
 
 async function resultStep(output: unknown, toolDurationMs?: unknown) {
   const [item] = await threadItems([
@@ -108,7 +109,8 @@ test('summary provenance preserves the exact report, error fallback and empty di
 test('the issue thread list reads on its live key, never on a timer', async t => {
   const { existsSync, readFileSync } = await import('node:fs')
   const file = '.hosted-ui/web/components/workspace/issue-threads.tsx'
-  if (!existsSync(file)) { t.skip('.hosted-ui not checked out'); return }
+  const missing = officialUiSkip(existsSync(file), '.hosted-ui')
+  if (missing) { t.skip(missing); return }
   const source = readFileSync(file, 'utf8')
   assert.match(source, /useLiveKey\('issue_threads',/)
   assert.doesNotMatch(source, /refreshInterval/)

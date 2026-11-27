@@ -1,10 +1,10 @@
 name: Waiting issues
 
+# Reopens a waited issue when it closes with follow-ups still open. The check
+# itself runs in CI's Source checks (`Check waiting issues`) on every PR, merge
+# group and main push that is not documentation-only; a docs-only change cannot
+# touch lib/feature-flags.ts, where the waits are declared.
 on:
-  pull_request:
-  push:
-    branches: [main]
-  merge_group:
   issues:
     types: [closed]
 
@@ -13,22 +13,7 @@ permissions:
   issues: write
 
 jobs:
-  check:
-    if: github.event_name != 'issues'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24.22.1
-      - run: node scripts/check-waiting-issues.mjs
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   reopen:
-    if: github.event_name == 'issues'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
