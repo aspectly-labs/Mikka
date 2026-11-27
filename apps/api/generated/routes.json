@@ -1727,7 +1727,7 @@
       "methods": [
         "PATCH"
       ],
-      "sourceHash": "20afbcedabca83365990ca593a9754ceb9957c039af8d0f0aa2641d489c843ee"
+      "sourceHash": "184070480536cce40217fc289d23ec59801988df3b71cb2335892ee369157851"
     },
     {
       "path": "/mikka/api/integrations/slack",

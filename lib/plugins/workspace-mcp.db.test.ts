@@ -175,7 +175,7 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
       assert.ok('error' in await runtime(requester, snapshot, command)); assert.equal(calls, before)
       await pool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, user])
     })
-    await t.test('the locked native claim fence rejects a committed MCP tool edit', async () => {
+    await t.test('the locked native claim fence keeps a tool switch and rejects a committed connection edit', async () => {
       const before = await personal.snapshot(requester, pool, workspace)
       assert.ok(before.mcpAuthority?.servers.length)
       const verify = async (authority: NonNullable<typeof before.mcpAuthority>) => {
@@ -191,9 +191,16 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
       await verify(before.mcpAuthority)
       const connections = new McpConnectionStore(personal)
       await pool.query('INSERT INTO mcp_server_tools(server_id,tool_name) VALUES($1,$2) ON CONFLICT DO NOTHING', [connection.id, 'echo'])
+      // A tool switch is not a connection change: the claim still exports the current switches.
       await connections.setTool(owner, connection.id, 'echo', false)
-      await assert.rejects(verify(before.mcpAuthority), /mcpUnavailable/)
+      await verify(before.mcpAuthority)
+      assert.deepEqual((await personal.nativeMcpConnections(requester, before.mcpAuthority)).flatMap(server => 'disabledTools' in server ? server.disabledTools ?? [] : []), ['echo'])
       await connections.setTool(owner, connection.id, 'echo', true)
+      await verify(before.mcpAuthority)
+      const renamed = await personal.updateMcp(owner, { id: connection.id, name: 'Renamed shared connection' })
+      await assert.rejects(verify(before.mcpAuthority), /mcpUnavailable/)
+      await personal.updateMcp(owner, { id: connection.id, name: before.mcpAuthority.servers.find(server => server.id === connection.id)!.name })
+      assert.ok(renamed.revision > before.mcpAuthority.servers.find(server => server.id === connection.id)!.revision)
       snapshot = await personal.snapshot(requester, pool, workspace)
       assert.ok(snapshot.mcpAuthority?.servers.length)
       await verify(snapshot.mcpAuthority)
