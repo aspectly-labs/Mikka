@@ -249,12 +249,16 @@ test('every manual deployment job is gated on the committed promoters list befor
     assert.equal(workflow.jobs[name].if.split(gate).length - 1, 1, name + ' must carry the promoter gate exactly once')
   const promoter = { repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main', event_name: 'workflow_dispatch' }
   const skipped = { pipeline: { result: 'skipped', outputs: {} }, 'pipeline-record': { result: 'skipped' } }
-  const cases = [['deploy-application', 'service-production'], ['deploy-application', 'production-web'], ['deploy-application', 'cloud-services-production'],
+  const breakGlass = ['service-production', 'production-web', 'production-api', 'production-migrate-database', 'cloud-services-production']
+  const cases = [...breakGlass.map(phase => ['deploy-application', phase]), ['deploy-application', 'stage-all'], ['deploy-application', 'gateway-observe'],
     ['pipeline', 'pipeline-stage'], ['pipeline', 'pipeline-rollback'], ['pipeline-production', 'pipeline-promote']]
   for (const [name, phase] of cases) {
     const run = github => evaluate(workflow.jobs[name].if, { github: { ...promoter, ...github }, inputs: { phase }, needs: skipped })
     assert.equal(run({ actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }), true, name + phase)
-    assert.equal(run({ actor_id: '158243242', actor: 'devin-ai-integration[bot]', triggering_actor: 'devin-ai-integration[bot]' }), true, name + phase)
+    // Break-glass phases carry no pipeline-promote evidence: owner only. Everything else: any promoter.
+    assert.equal(run({ actor_id: '158243242', actor: 'devin-ai-integration[bot]', triggering_actor: 'devin-ai-integration[bot]' }),
+      !breakGlass.includes(phase), name + phase)
+    if (breakGlass.includes(phase)) assert.equal(run({ actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'devin-ai-integration[bot]' }), false, 're-run ' + phase)
     // A non-listed writer, a re-run of a listed dispatch by someone else, a renamed account and merge automation never start the job.
     for (const github of [{ actor_id: '7', actor: 'outsider', triggering_actor: 'outsider' },
       { actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'outsider' },

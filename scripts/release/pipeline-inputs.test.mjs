@@ -483,7 +483,10 @@ async function manualPromotion(t, change = {}) {
     if (path.endsWith('/runs/101/attempts/2')) return run()
     if (path.endsWith('/runs/201/attempts/1')) return current
     if (path === 'alexj11324/mikka-cloud/contents/docs/operations/releases/deploy-pipeline.json?ref=' + 'f'.repeat(40)) return policyRecord
+    if (path.endsWith(`/contents/packages/protocol/src/device.ts?ref=${source}`))
+      return { encoding: 'base64', content: Buffer.from(`export const MIN_DAEMON_VERSION = '${change.daemonFloor ?? '0.0.456'}'\n`).toString('base64') }
     if (path.includes(`/commits/${source}/check-runs?`)) return { total_count: 1, check_runs: change.checkRuns ?? [] }
+    if (path.endsWith('/actions/runs/601')) return { id: 601, path: '.github/workflows/browser-gate.yml', head_sha: source, head_branch: 'main', status: 'completed', conclusion: 'success' }
     if (path.endsWith('/runs/90/attempts/1')) return oldRelease
     if (path.endsWith('/actions/runs/199')) return stageRun
     if (path.includes('/runs/199/attempts/1/jobs?')) return { total_count: stageJobs.length, jobs: stageJobs }
@@ -507,13 +510,13 @@ async function manualPromotion(t, change = {}) {
     if (path.includes('workflows/cloud-services-ci.yml/runs?')) return { total_count: 1, workflow_runs: [qualified] }
     assert.fail('Unexpected manual promotion request: ' + path)
   }
-  return { env, api, calls, read: () => readFile(env.GITHUB_ENV, 'utf8') }
+  return { env, api, calls, read: () => readFile(env.GITHUB_ENV, 'utf8'), npmLatest: async () => ('npmLatest' in change ? change.npmLatest : '0.0.500') }
 }
 
 test('a paused production promotes only the staging run and commit a listed promoter names in a dispatch', async t => {
   for (const production of [false, true]) {
     const f = await manualPromotion(t, { production })
-    const result = await selectPromotion({ env: f.env, api: f.api })
+    const result = await selectPromotion({ env: f.env, api: f.api, npmLatest: f.npmLatest })
     assert.deepEqual(result, { status: 'selected', source, operations: 'f'.repeat(40), report: join(f.env.RUNNER_TEMP, 'deploy-production') })
     const variables = Object.fromEntries((await f.read()).trim().split('\n').map(line => line.split('=')))
     assert.equal(variables.MIKKA_STAGE_RUN_ID, '199')
@@ -527,10 +530,11 @@ test('a paused production promotes only the staging run and commit a listed prom
   // An agent on the promoters list promotes exactly like the owner; a required production check must pass.
   const devin = { GITHUB_ACTOR_ID: '158243242', GITHUB_ACTOR: 'devin-ai-integration[bot]' }
   const agent = await manualPromotion(t, { env: devin })
-  assert.equal((await selectPromotion({ env: agent.env, api: agent.api })).status, 'selected')
-  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e' }
-  const passed = await manualPromotion(t, { productionChecks: [e2e], checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'completed', conclusion: 'success' }] })
-  assert.equal((await selectPromotion({ env: passed.env, api: passed.api })).status, 'selected')
+  assert.equal((await selectPromotion({ env: agent.env, api: agent.api, npmLatest: agent.npmLatest })).status, 'selected')
+  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e', workflow: '.github/workflows/browser-gate.yml' }
+  const passed = await manualPromotion(t, { productionChecks: [e2e], checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'completed',
+    conclusion: 'success', app: { id: 15368 }, details_url: 'https://github.com/alexj11324/Mikka/actions/runs/601/job/1' }] })
+  assert.equal((await selectPromotion({ env: passed.env, api: passed.api, npmLatest: passed.npmLatest })).status, 'selected')
 })
 
 test('a manual promotion refuses other actors, missing or mismatched inputs, unfinished staging and downgrades', async t => {
@@ -566,6 +570,10 @@ test('a manual promotion refuses other actors, missing or mismatched inputs, unf
     [{ stagedManifest: manifestFixture('d'.repeat(40)) }, /pipeline_stage_manifest_mismatch/],
     [{ production: true, compare: 'behind' }, /pipeline_promotion_downgrade_rejected/],
     [{ production: true, compare: 'diverged' }, /pipeline_promotion_downgrade_rejected/],
+    // A candidate whose daemon floor is above npm latest would refuse every installed daemon.
+    [{ daemonFloor: '0.0.501' }, /pipeline_daemon_latest_behind/],
+    [{ npmLatest: undefined, daemonFloor: '0.0.1' }, /pipeline_daemon_latest_behind/],
+    [{ daemonFloor: 'next' }, /pipeline_daemon_floor_unreadable/],
     // A rollback (or any later staging run) since the candidate staged makes it no longer promotable.
     [{ newerStaging: true }, /pipeline_stage_not_current/],
     [{ triggeringActor: { id: 158243242, login: 'devin-ai-integration[bot]' }, env: { GITHUB_TRIGGERING_ACTOR: 'alexj11324' } }, /pipeline_run_identity_mismatch/],
@@ -581,12 +589,12 @@ test('a manual promotion refuses other actors, missing or mismatched inputs, unf
     [{ policy: { version: 1, autoProduction: false, mobileProduction: false, promoters: [], requiredChecks: { production: [], desktop: [], mobile: [] } } }, /pipeline_actor_not_promoter/],
     [{ policy: { version: 1, autoProduction: false, mobileProduction: false, requiredChecks: { production: [], desktop: [], mobile: [] } } }, /pipeline_policy_unreadable/],
     [{ policy: '{not json' }, /pipeline_policy_unreadable/],
-    [{ productionChecks: [{ name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e' }],
+    [{ productionChecks: [{ name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e', workflow: '.github/workflows/browser-gate.yml' }],
       checkRuns: [{ name: 'Browser e2e', head_sha: source, status: 'completed', conclusion: 'failure' }] }, /pipeline_required_check_failed/],
     [{ productionChecks: [{ name: 'mobile-smoke', kind: 'builtin' }] }, /pipeline_required_check_failed/],
   ]) {
     const f = await manualPromotion(t, change)
-    await assert.rejects(selectPromotion({ env: f.env, api: f.api }), code, JSON.stringify(change))
+    await assert.rejects(selectPromotion({ env: f.env, api: f.api, npmLatest: f.npmLatest }), code, JSON.stringify(change))
     assert.equal(await f.read(), '', 'A refused promotion exports nothing to later steps')
   }
 })

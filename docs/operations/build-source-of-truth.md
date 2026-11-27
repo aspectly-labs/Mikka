@@ -278,7 +278,7 @@ One reviewed file, private `mikka-cloud`
 | `autoProduction` (`false` now) | `true`: a merge-triggered staging run promotes production and then chains Desktop. `false`: only a promoter's `pipeline-promote` dispatch promotes. |
 | `mobileProduction` (`false` now) | `true`: `mobile-next-update.yml` `publish` may write `next` directly. `false`: only `stage` then `promote`. |
 | `promoters` | `{id, login, note}` per GitHub identity allowed to dispatch a promotion. Both the stable id and the login must match. Missing or empty: nobody promotes. `github-merge-queue[bot]` and `github-actions[bot]` are refused even if listed. |
-| `requiredChecks` | Per target (`production`, `desktop`, `mobile`), extra evidence checks: `{name, kind: "builtin"}` (implemented in `scripts/release/release-checks.mjs`) or `{name, kind: "check-run", repository: "public", checkRun}` (a successful GitHub check run of that name on the released public commit). The Desktop route guard is mandatory in code whatever the list says. An unknown check fails the release. |
+| `requiredChecks` | Per target (`production`, `desktop`, `mobile`), extra evidence checks: `{name, kind: "builtin"}` (implemented in `scripts/release/release-checks.mjs`) or `{name, kind: "check-run", repository: "public", checkRun, workflow}` (a successful check run of that name on the released public commit, created by GitHub Actions, app id 15368, from a successful `main` run of exactly that workflow file). The Desktop route guard is mandatory in code whatever the list says. An unknown check fails the release. |
 
 Readers fail closed: a missing, unreadable or malformed file, or any field of the
 wrong type, admits no promotion. The private publisher also refuses an automatic
@@ -312,10 +312,17 @@ No Antigravity identity was found.
 
 ### What each promotion checks, in order
 
-Workflows only run on `refs/heads/main`; a promotion script also requires
-`GITHUB_WORKFLOW_REF` to be the workflow on `refs/heads/main` and
-`GITHUB_WORKFLOW_SHA == GITHUB_SHA`, so a branch with an edited workflow cannot
-skip the gates. The order of secrets is:
+Promotion jobs only start on `refs/heads/main`, and the promotion scripts also
+require `GITHUB_WORKFLOW_REF` to be the workflow on `refs/heads/main` and
+`GITHUB_WORKFLOW_SHA == GITHUB_SHA`. Those checks only prove that *main's own*
+workflow file is running; they do not stop a repository writer from pushing a
+branch with an edited workflow that leaves the checks out. The real boundary is
+the identity behind the secrets: the Infisical OIDC identity
+(`2cf9fa19-b9db-4c08-8ca0-b31859f2cbac`) must only trust tokens whose claims are
+`ref: refs/heads/main` (and, for deployment, the `cloudflare-runtime-release`
+environment and this workflow's `job_workflow_ref` on main). That binding is an
+**owner action** in Infisical; until it is verified, treat a branch-edited
+workflow as able to read the same secrets. The order of secrets is:
 
 1. Job `if`: repository, `main`, and the committed promoter gate. No secret yet.
 2. A read-only `mikka-cloud` contents token is minted from the existing source
@@ -337,10 +344,13 @@ passes. The private publisher re-checks the promoters, the staging evidence
 Desktop (a `desktop-release.yml` dispatch): the dispatcher and re-run actor are
 promoters; the receipt is verified as before (a manual `pipeline:` receipt must
 come from a promoter's `pipeline-promote`); then, after the hosted checkout and
-before any Apple credential, `release-checks.mjs desktop` runs the Desktop
-route-allowlist guard (`apps/desktop/src/main/bundled-routes.test.ts`) for the
-exact public commit and hosted SHA being packaged and fails on any failed or
-skipped test, followed by every listed Desktop check. Desktop never starts by
+before any Apple credential, `release-checks.mjs run desktop` runs the Desktop
+route-allowlist guard (`desktop-route-guard`): `pnpm run
+test:desktop-release-guard` from the product checkout being packaged, with
+`MIKKA_REQUIRE_OFFICIAL_UI=1`, after checking the exact public commit and hosted
+SHA. It fails unless the TAP summary shows at least three tests, all passed,
+none skipped, todo or cancelled; then every listed Desktop check runs. A product
+commit without that package script cannot be released. Desktop never starts by
 itself from an owner deployment dispatch (`gateway-observe`, `pipeline-promote`).
 
 Mobile (`mobile-next-update.yml` `promote`): see [Mobile OTA while paused](#mobile-ota-while-paused).
@@ -349,8 +359,13 @@ npm daemon (`publish-daemon.yml`): a main push publishes to the `next` dist-tag
 only. A promoter dispatch with `staged_run` publishes current main to `latest`
 only if that run is a successful push run of this workflow that published, is in
 main's history, and no daemon input path changed since
-(`scripts/release/daemon-promotion.mjs`); the package checks run again, and
-`latest` never moves backwards.
+(`scripts/release/daemon-promotion.mjs`), and the dispatcher and re-run actor
+are promoters on the private `main` list (read with the read-only token, which
+must equal the public copy); the package checks run again, and `latest` never
+moves backwards. **`latest` must move before production:** a production
+candidate whose `MIN_DAEMON_VERSION` (`packages/protocol/src/device.ts`) is above
+npm `latest` would refuse every installed daemon, so `pipeline-promote` refuses
+it (`pipeline_daemon_latest_behind`); promote the daemon to `latest` first.
 
 ### Break-glass phases that bypass the staging evidence
 
@@ -358,8 +373,12 @@ These `cloudflare-app-deploy.yml` `deploy-application` phases still write
 production without a staged pipeline run or the `autoProduction` flag:
 `service-production` (per-service release from `service-release.json`),
 `production-web`, `production-api`, `production-*` in general, and
-`cloud-services-production`. They run only for a listed promoter (job `if`, and
-the private operator for every dispatch) and on a reviewed operations commit.
+`cloud-services-production`. They carry none of the `pipeline-promote` evidence,
+so they stay **owner-only** (Alex, 2026-11-27): the job `if` and the private
+operator require `alexj11324` as both actor and re-run actor. Agents promote
+through `pipeline-promote`. Other manual phases (`stage-*`, `gateway-*`,
+`eve-retire`, `service-stage`, `cloud-services-stage`) need any promoter, on a
+reviewed operations commit.
 `gateway-observe` and `service-production` still chain the E2B runtime release
 by itself (not Desktop). Use them only for recovery, and record why.
 
@@ -414,7 +433,12 @@ evidence linked in the `mikka-cloud` PR that flips the flag:
   mandatory in `desktop-release.yml`);
 - browser end-to-end tests on hosted UI pull requests;
 - a smoke test of the signed Desktop build before publication;
-- a Desktop beta channel with staged rollout.
+- a Desktop beta channel with staged rollout;
+- the private publisher's own checks that the candidate is still the current
+  staging baseline and that every `requiredChecks.production` check run passed
+  (today only the public selector enforces these, before the private publisher
+  re-checks the promoters, the staging evidence and the downgrade rule);
+- the Infisical OIDC identity bound to `refs/heads/main` claims (owner action, above).
 
 ### Mobile OTA while paused
 

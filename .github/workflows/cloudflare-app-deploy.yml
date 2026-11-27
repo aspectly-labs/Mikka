@@ -60,8 +60,11 @@ env:
   MIKKA_PRIVATE_GITHUB_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
   MIKKA_HOSTED_UI_GITHUB_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER }}
 jobs:
+  # Manual phases need a promoter (config/release-promoters.json). The break-glass phases that write
+  # production without pipeline-promote evidence (production-*, service-production,
+  # cloud-services-production) stay owner-only; agents promote through pipeline-promote.
   deploy-application:
-    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !startsWith(inputs.phase, 'pipeline-') && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor))
+    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !startsWith(inputs.phase, 'pipeline-') && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor)) && (!(startsWith(inputs.phase, 'production-') || inputs.phase == 'service-production' || inputs.phase == 'cloud-services-production') || (github.actor_id == '183887963' && github.actor == 'alexj11324' && github.triggering_actor == 'alexj11324'))
     outputs:
       serving-release: ${{ steps.apply.outputs.serving-release }}
     runs-on: ubuntu-latest

@@ -38,11 +38,13 @@ function checkedCheck(entry, target) {
     return { name: entry.name, kind: 'builtin' }
   }
   if (entry.kind === 'check-run') {
-    // A successful GitHub check run with this exact name on the released public commit.
+    // A successful GitHub Actions check run with this exact name, from this exact main workflow file,
+    // on the released public commit.
     if (target === 'mobile') fail('checkUnsupported')
-    if (Object.keys(entry).sort().join() !== 'checkRun,kind,name,repository' || entry.repository !== 'public'
-      || typeof entry.checkRun !== 'string' || entry.checkRun.length < 1 || entry.checkRun.length > 200) fail('checkInvalid')
-    return { name: entry.name, kind: 'check-run', repository: 'public', checkRun: entry.checkRun }
+    if (Object.keys(entry).sort().join() !== 'checkRun,kind,name,repository,workflow' || entry.repository !== 'public'
+      || typeof entry.checkRun !== 'string' || entry.checkRun.length < 1 || entry.checkRun.length > 200
+      || !/^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/.test(entry.workflow ?? '')) fail('checkInvalid')
+    return { name: entry.name, kind: 'check-run', repository: 'public', checkRun: entry.checkRun, workflow: entry.workflow }
   }
   fail('checkInvalid')
 }
@@ -94,6 +96,16 @@ export function promoterGateExpression(promoters = committedPromoters()) {
   const ids = JSON.stringify(promoters.map(entry => String(entry.id)))
   const logins = JSON.stringify(promoters.map(entry => entry.login))
   return `(contains(fromJSON('${ids}'), github.actor_id) && contains(fromJSON('${logins}'), github.actor) && contains(fromJSON('${logins}'), github.triggering_actor))`
+}
+
+/** Break-glass phases write production without any pipeline-promote evidence: owner only (Alex, 2026-11-27).
+ * Agents promote through pipeline-promote, which carries the evidence gates. */
+export const BREAK_GLASS_OWNER = Object.freeze({ id: 183887963, login: 'alexj11324' })
+export const isBreakGlassPhase = phase => typeof phase === 'string'
+  && (phase.startsWith('production-') || phase === 'service-production' || phase === 'cloud-services-production')
+export function breakGlassGateExpression() {
+  const owner = `(github.actor_id == '${BREAK_GLASS_OWNER.id}' && github.actor == '${BREAK_GLASS_OWNER.login}' && github.triggering_actor == '${BREAK_GLASS_OWNER.login}')`
+  return `(!(startsWith(inputs.phase, 'production-') || inputs.phase == 'service-production' || inputs.phase == 'cloud-services-production') || ${owner})`
 }
 
 /** The private list is authoritative; a public gate that drifted from it admits nobody. */

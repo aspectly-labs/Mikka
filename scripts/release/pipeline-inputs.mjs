@@ -341,7 +341,34 @@ const forbiddenDispatchers = new Set([trustedActors.mergeQueue.id, '41898282'])
  * whoever started this attempt must be promoters on current private main, and the staged run, the
  * manifest, the no-downgrade rule and every required production check must hold. All of this runs
  * before any deployment credential is read; only the read-only private source token is used. */
-async function manualStage(api, env) {
+const daemonFloorPath = 'packages/protocol/src/device.ts'
+const plainVersion = /^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/
+const versionAtLeast = (version, floor) => {
+  const [a, b] = [version, floor].map(value => plainVersion.exec(value ?? '')?.slice(1).map(Number))
+  if (!a || !b) return false
+  for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index] > b[index]
+  return true
+}
+
+export async function npmLatestDaemon(fetchImpl = fetch) {
+  try {
+    const response = await fetchImpl('https://registry.npmjs.org/@aspectlylabs%2fmikka/latest', { signal: AbortSignal.timeout(15_000) })
+    if (!response.ok) return undefined
+    return (await response.json())?.version
+  } catch { return undefined }
+}
+
+/** A candidate that raises MIN_DAEMON_VERSION above npm `latest` would refuse every installed daemon:
+ * move `latest` first (publish-daemon.yml promotion), then promote production. */
+async function daemonFloorReached(api, sourceCommit, npmLatest) {
+  const file = await api(`${repository}/contents/${daemonFloorPath}?ref=${sourceCommit}`)
+  const text = file?.encoding === 'base64' ? Buffer.from(String(file.content ?? ''), 'base64').toString('utf8') : ''
+  const floor = /export const MIN_DAEMON_VERSION = '([0-9.]+)'/.exec(text)?.[1]
+  assert.match(floor ?? '', plainVersion, 'pipeline_daemon_floor_unreadable')
+  assert.ok(versionAtLeast(await npmLatest(), floor), 'pipeline_daemon_latest_behind')
+}
+
+async function manualStage(api, env, npmLatest) {
   assert.equal(env.MIKKA_DEPLOYMENT_PHASE, 'pipeline-promote', 'pipeline_deployment_phase_invalid')
   // Merge and Actions automation never promote, whatever the list says.
   assert.ok(!forbiddenDispatchers.has(String(env.GITHUB_ACTOR_ID)), 'pipeline_actor_untrusted')
@@ -391,6 +418,7 @@ async function manualStage(api, env) {
   const selected = await release(api, summary.origin.runId, summary.origin.runAttempt)
   assert.equal(selected.origin.artifactId, String(summary.origin.artifactId), 'pipeline_promotion_release_mismatch')
   assert.equal(selected.manifest.sourceCommit, env.INPUT_PROMOTE_SOURCE, 'pipeline_promotion_source_mismatch')
+  await daemonFloorReached(api, selected.manifest.sourceCommit, npmLatest)
   // The candidate must still be what staging serves: a later staging run or rollback replaces it.
   const latestStaging = await priorDeployment(api, env.GITHUB_RUN_ID, undefined, 'staging')
   assert.ok(latestStaging && String(latestStaging.run.id) === String(run.id) && String(latestStaging.run.run_attempt) === String(run.run_attempt)
@@ -406,7 +434,7 @@ async function manualStage(api, env) {
  * silently uses the staging baseline. An automatic run promotes the staging result of this same
  * run, and only while the private policy's `autoProduction` is true (the workflow skips it
  * otherwise); a manual dispatch by a listed promoter promotes the named staging run instead. */
-export async function selectPromotion({ env = process.env, api = github } = {}) {
+export async function selectPromotion({ env = process.env, api = github, npmLatest = npmLatestDaemon } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
   assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')
   const manual = env.GITHUB_EVENT_NAME === 'workflow_dispatch'
@@ -417,7 +445,7 @@ export async function selectPromotion({ env = process.env, api = github } = {}) 
     assert.match(env[key] ?? '', number, 'pipeline_promotion_input_required')
   if (!manual) assert.match(env.INPUT_OPERATIONS_SOURCE ?? '', sha, 'pipeline_operations_source_required')
   let selected, stage, stageRun, operations
-  if (manual) ({ selected, stage, stageRun, operations } = await manualStage(api, env))
+  if (manual) ({ selected, stage, stageRun, operations } = await manualStage(api, env, npmLatest))
   else {
     const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'))
     selected = await release(api, event.workflow_run?.id, event.workflow_run?.run_attempt)

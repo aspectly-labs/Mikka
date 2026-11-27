@@ -66,11 +66,76 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
+      # A dispatch to latest reads the authoritative promoters from private mikka-cloud main with a
+      # read-only contents token before anything is built or published.
+      - name: Select the source App before policy access
+        if: github.event_name == 'workflow_dispatch'
+        id: source-app
+        env:
+          SOURCE_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324' }}
+          ORG_SECRET_PATH: ${{ vars.MIKKA_ORG_GITHUB_SECRET_PATH }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs'
+          const owner = process.env.SOURCE_OWNER
+          if (!['alexj11324', 'aspectly-labs'].includes(owner)) throw Error('CI_SOURCE_APP_OWNER_REQUIRED')
+          const path = owner === 'aspectly-labs' ? process.env.ORG_SECRET_PATH?.trim() : '/github'
+          if (!path || /[\r\n]/.test(path)) throw Error('CI_SOURCE_APP_SECRET_PATH_REQUIRED')
+          appendFileSync(process.env.GITHUB_OUTPUT, `owner=${owner}\nsecret-path=${path}\napp-id=${owner === 'aspectly-labs' ? '5853576' : '4840908'}\n`)
+          JS
+      - name: Read the existing source App id
+        if: github.event_name == 'workflow_dispatch'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+      - name: Read the existing source App private key
+        if: github.event_name == 'workflow_dispatch'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+      - name: Verify the selected source App
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SOURCE_APP_ID: ${{ steps.source-app.outputs.app-id }}
+        run: node -e 'if (!process.env.EXPECTED_SOURCE_APP_ID || process.env.GITHUB_APP_ID !== process.env.EXPECTED_SOURCE_APP_ID) throw Error("CI_SOURCE_APP_ID_MISMATCH")'
+      - name: Read the reviewed release policy token
+        if: github.event_name == 'workflow_dispatch'
+        id: policy-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          repositories: mikka-cloud
+          permission-contents: read
+      - name: Remove App credentials before reading the policy
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
+          echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
       - name: Verify the staged daemon run before publishing to latest
         if: github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           STAGED_RUN: ${{ inputs.staged_run }}
+          MIKKA_OPERATIONS_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          MIKKA_OPERATIONS_READ_TOKEN: ${{ steps.policy-token.outputs.token }}
         run: node scripts/release/daemon-promotion.mjs
       - run: npm install --global npm@11.19.0
       - name: Prepare release version and check registry

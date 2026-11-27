@@ -2,14 +2,16 @@
 // top of the mandatory ones in release-policy.mjs. A new check is added by implementing it here and
 // listing it in the policy; the workflows only call `run <target>`. An unknown check fails the release.
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { appendFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { MANDATORY_CHECKS, TARGETS } from './release-policy.mjs'
 
 const SHA = /^[0-9a-f]{40}$/
-export const ROUTE_GUARD = 'apps/desktop/src/main/bundled-routes.test.ts'
+// The product checkout owns what the guard runs (package.json `test:desktop-release-guard`); this check
+// only binds it to the exact pairing and requires a complete, unskipped TAP result.
+export const ROUTE_GUARD_SCRIPT = 'test:desktop-release-guard'
+const GITHUB_ACTIONS_APP_ID = 15368
 
 function fail(code) {
   throw new Error('releaseChecks:' + code)
@@ -28,18 +30,20 @@ export function routeGuardSummary(tap) {
   return summary
 }
 
-/** The bundled-routes allowlist guard for this exact public + hosted pairing, with the hosted checkout present. */
+/** The bundled-routes allowlist guard for this exact public + hosted pairing, with the official UI required. */
 export function desktopRouteGuard({ root = process.cwd(), env = process.env, run = execFileSync } = {}) {
-  const git = (directory, args) => run('git', ['-C', directory, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  const git = (directory, args, code) => {
+    try { return run('git', ['-C', directory, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() }
+    catch { fail(code) }
+  }
   if (!SHA.test(env.MIKKA_DESKTOP_SOURCE ?? '') || !SHA.test(env.MIKKA_UI_OVERLAY_SHA ?? '')) fail('desktopPairingRequired')
-  if (!existsSync(join(root, '.hosted-ui', 'core')) || !existsSync(join(root, ROUTE_GUARD))) fail('hostedCheckoutRequired')
-  if (git(root, ['rev-parse', 'HEAD']) !== env.MIKKA_DESKTOP_SOURCE) fail('desktopSourceMismatch')
-  if (git(join(root, '.hosted-ui'), ['rev-parse', 'HEAD']) !== env.MIKKA_UI_OVERLAY_SHA) fail('desktopOverlayMismatch')
+  if (git(root, ['rev-parse', 'HEAD'], 'desktopSourceMismatch') !== env.MIKKA_DESKTOP_SOURCE) fail('desktopSourceMismatch')
+  if (git(join(root, '.hosted-ui'), ['rev-parse', 'HEAD'], 'hostedCheckoutRequired') !== env.MIKKA_UI_OVERLAY_SHA) fail('desktopOverlayMismatch')
   let tap
   try {
-    tap = run(process.execPath, ['--import', 'tsx', '--test', '--test-reporter=tap', ROUTE_GUARD], {
+    tap = run('pnpm', ['run', ROUTE_GUARD_SCRIPT], {
       cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 600_000, maxBuffer: 16 * 1024 * 1024,
-      env: { PATH: env.PATH, HOME: env.HOME, CI: '1' },
+      env: { PATH: env.PATH, HOME: env.HOME, CI: '1', MIKKA_REQUIRE_OFFICIAL_UI: '1' },
     })
   } catch (error) {
     tap = String(error?.stdout ?? '')
@@ -49,14 +53,23 @@ export function desktopRouteGuard({ root = process.cwd(), env = process.env, run
   return { publicSource: env.MIKKA_DESKTOP_SOURCE, overlaySha: env.MIKKA_UI_OVERLAY_SHA, ...routeGuardSummary(tap) }
 }
 
-/** A successful check run with this exact name on the released public commit. */
+/** A successful check run with this exact name on the released public commit, created by GitHub Actions
+ * (app 15368) from a run of exactly the listed main workflow file. A check run another app or a
+ * branch-edited workflow posts under the same name never counts. */
 export async function publicCheckRun(check, sourceCommit, read) {
   if (!SHA.test(sourceCommit ?? '')) fail('sourceCommitRequired')
   const listing = await read(`commits/${sourceCommit}/check-runs?check_name=${encodeURIComponent(check.checkRun)}&filter=latest&per_page=100`)
   const runs = Array.isArray(listing?.check_runs) ? listing.check_runs : []
-  if (!runs.some(item => item?.name === check.checkRun && item.head_sha === sourceCommit
-    && item.status === 'completed' && item.conclusion === 'success')) fail('checkRunMissing')
-  return { name: check.name, checkRun: check.checkRun, sourceCommit }
+  for (const item of runs) {
+    if (item?.name !== check.checkRun || item.head_sha !== sourceCommit || item.status !== 'completed'
+      || item.conclusion !== 'success' || item.app?.id !== GITHUB_ACTIONS_APP_ID) continue
+    const runId = /^https:\/\/github\.com\/[^/]+\/Mikka\/actions\/runs\/([1-9][0-9]{0,15})\/job\/[1-9][0-9]{0,15}$/.exec(item.details_url ?? '')?.[1]
+    if (!runId) continue
+    const origin = await read(`actions/runs/${runId}`)
+    if (origin?.path === check.workflow && origin.head_sha === sourceCommit && origin.head_branch === 'main'
+      && origin.status === 'completed' && origin.conclusion === 'success') return { name: check.name, checkRun: check.checkRun, workflow: check.workflow, sourceCommit }
+  }
+  fail('checkRunMissing')
 }
 
 const builtins = { 'desktop-route-guard': desktopRouteGuard }
@@ -93,7 +106,7 @@ async function publicActionsRead(path) {
 
 async function main() {
   const [command, target] = process.argv.slice(2)
-  if (command !== 'run' || !TARGETS.includes(target)) fail('usage')
+  if (command !== 'run' || !TARGETS.includes(target) || process.argv.length !== 4) fail('usage')
   let projection
   try { projection = JSON.parse(process.env.MIKKA_RELEASE_POLICY ?? '') } catch { fail('policyRequired') }
   const results = await runReleaseChecks(target, { checks: projection?.requiredChecks,

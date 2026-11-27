@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import test from 'node:test'
 import {
-  checkedReleasePolicy, committedPromoters, isPromoter, MANDATORY_CHECKS, policyFromContents, promoterGateExpression,
+  breakGlassGateExpression, checkedReleasePolicy, committedPromoters, isPromoter, MANDATORY_CHECKS, policyFromContents, promoterGateExpression,
   publicPolicy, readReleasePolicy, requireCommittedPromoters, requirePromoters,
 } from './release-policy.mjs'
 import { desktopRouteGuard, publicCheckRun, routeGuardSummary, runReleaseChecks } from './release-checks.mjs'
@@ -22,7 +23,7 @@ test('the policy schema: promoters by stable id and login, extensible checks, ev
   assert.deepEqual(checked.promoters, [owner, devin])
   assert.deepEqual(checked.requiredChecks.desktop, MANDATORY_CHECKS.desktop, 'the route guard holds even when the policy omits it')
   assert.deepEqual(checked.requiredChecks.production, [])
-  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e' }
+  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e', workflow: '.github/workflows/browser-gate.yml' }
   assert.deepEqual(checkedReleasePolicy(policy({ requiredChecks: { production: [e2e], desktop: [e2e], mobile: [] } })).requiredChecks.desktop,
     [...MANDATORY_CHECKS.desktop, e2e])
   for (const [patch, code] of [
@@ -38,8 +39,10 @@ test('the policy schema: promoters by stable id and login, extensible checks, ev
     [{ requiredChecks: undefined }, /requiredChecksInvalid/],
     [{ requiredChecks: { production: [], desktop: [] } }, /requiredChecksInvalid/],
     [{ requiredChecks: { production: [{ name: 'x', kind: 'shell', run: 'true' }], desktop: [], mobile: [] } }, /checkInvalid/],
+    [{ requiredChecks: { production: [{ name: 'x', kind: 'check-run', repository: 'public', checkRun: 'x' }], desktop: [], mobile: [] } }, /checkInvalid/],
+    [{ requiredChecks: { production: [{ name: 'x', kind: 'check-run', repository: 'public', checkRun: 'x', workflow: 'ci.yml' }], desktop: [], mobile: [] } }, /checkInvalid/],
     [{ requiredChecks: { production: [], desktop: [], mobile: [e2e] } }, /checkUnsupported/],
-    [{ requiredChecks: { production: [], desktop: [{ name: 'desktop-route-guard', kind: 'check-run', repository: 'public', checkRun: 'x' }], mobile: [] } }, /checkInvalid/],
+    [{ requiredChecks: { production: [], desktop: [{ name: 'desktop-route-guard', kind: 'check-run', repository: 'public', checkRun: 'x', workflow: '.github/workflows/x.yml' }], mobile: [] } }, /checkInvalid/],
   ]) assert.throws(() => checkedReleasePolicy(policy(patch)), code, JSON.stringify(patch))
 })
 
@@ -79,7 +82,9 @@ test('every promotion job carries exactly the committed promoter gate before any
     assert.doesNotMatch(readFileSync(new URL(`../../.github/workflows/${file}`, import.meta.url), 'utf8'), /github\.actor_id == '183887963'/, file)
   // The deployment workflow keeps the owner id only as the automatic merge-push identity, never for a dispatch.
   const deploy = workflow('cloudflare-app-deploy.yml')
-  for (const name of ['deploy-application', 'pipeline-production']) assert.doesNotMatch(deploy.jobs[name].if, /actor_id == '183887963'/, name)
+  assert.doesNotMatch(deploy.jobs['pipeline-production'].if, /actor_id == '183887963'/)
+  // Break-glass phases keep the owner-only gate, exactly once, on the deploy-application job.
+  assert.equal(deploy.jobs['deploy-application'].if.split(breakGlassGateExpression()).length - 1, 1)
   assert.match(deploy.jobs.pipeline.if, /github\.event_name == 'workflow_run' && \(github\.actor_id == '183887963' \|\|/)
   // Where the gate sits: Desktop gates only a hand dispatch, mobile everything but staging, npm only the latest dispatch.
   assert.match(workflow('desktop-release.yml').jobs.preflight.if, /\(github\.event_name != 'workflow_dispatch' \|\| \(contains/)
@@ -109,39 +114,56 @@ test('the desktop route guard must run, with the hosted checkout, for the exact 
   const source = 'a'.repeat(40), overlay = 'b'.repeat(40)
   const env = { MIKKA_DESKTOP_SOURCE: source, MIKKA_UI_OVERLAY_SHA: overlay, PATH: process.env.PATH }
   const root = new URL('../../', import.meta.url).pathname
-  const fake = (heads, output) => (command, args) => {
-    if (command === 'git') return heads[args[1]] + '\n'
+  const calls = []
+  const fake = (heads, output) => (command, args, options) => {
+    calls.push([command, args, options?.env?.MIKKA_REQUIRE_OFFICIAL_UI, options?.cwd])
+    if (command === 'git') { if (!(args[1] in heads)) throw new Error('not a git repository'); return heads[args[1]] + '\n' }
     if (output instanceof Error) throw output
     return output
   }
   const heads = { [root]: source, [root + '.hosted-ui']: overlay }
-  const exists = (await import('node:fs')).existsSync(root + '.hosted-ui/core')
-  if (exists) {
-    assert.equal(desktopRouteGuard({ root, env, run: fake(heads, tap(3)) }).pass, 3)
-    assert.throws(() => desktopRouteGuard({ root, env, run: fake({ ...heads, [root]: 'c'.repeat(40) }, tap(3)) }), /desktopSourceMismatch/)
-    assert.throws(() => desktopRouteGuard({ root, env, run: fake({ ...heads, [root + '.hosted-ui']: 'c'.repeat(40) }, tap(3)) }), /desktopOverlayMismatch/)
-    assert.throws(() => desktopRouteGuard({ root, env, run: fake(heads, tap(0, 0, 3)) }), /desktopRouteGuardFailed/)
-    assert.throws(() => desktopRouteGuard({ root, env, run: fake(heads, Object.assign(new Error('exit 1'), { stdout: tap(2, 1) })) }), /desktopRouteGuardFailed/)
-  }
+  assert.equal(desktopRouteGuard({ root, env, run: fake(heads, '> mikka@ test:desktop-release-guard\n' + tap(3)) }).pass, 3)
+  // The product checkout's own package script runs, with the official UI required.
+  assert.deepEqual(calls.at(-1), ['pnpm', ['run', 'test:desktop-release-guard'], '1', root])
+  assert.throws(() => desktopRouteGuard({ root, env, run: fake({ ...heads, [root]: 'c'.repeat(40) }, tap(3)) }), /desktopSourceMismatch/)
+  assert.throws(() => desktopRouteGuard({ root, env, run: fake({ ...heads, [root + '.hosted-ui']: 'c'.repeat(40) }, tap(3)) }), /desktopOverlayMismatch/)
+  assert.throws(() => desktopRouteGuard({ root, env, run: fake(heads, tap(0, 0, 3)) }), /desktopRouteGuardFailed/)
+  assert.throws(() => desktopRouteGuard({ root, env, run: fake(heads, Object.assign(new Error('exit 1'), { stdout: tap(2, 1) })) }), /desktopRouteGuardFailed/)
+  assert.throws(() => desktopRouteGuard({ root, env, run: fake(heads, Object.assign(new Error('missing script'), { stdout: '' })) }), /desktopRouteGuardFailed/)
   // Without the hosted checkout the guard fails instead of skipping.
-  assert.throws(() => desktopRouteGuard({ root: '/nonexistent', env, run: fake(heads, tap(3)) }), /hostedCheckoutRequired/)
+  assert.throws(() => desktopRouteGuard({ root, env, run: fake({ [root]: source }, tap(3)) }), /hostedCheckoutRequired/)
+  // The root package defines the script the guard runs.
+  assert.equal(JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).scripts['test:desktop-release-guard'],
+    'node --import tsx --test --test-reporter=tap apps/desktop/src/main/bundled-routes.test.ts')
   assert.throws(() => desktopRouteGuard({ root, env: { ...env, MIKKA_UI_OVERLAY_SHA: '' }, run: fake(heads, tap(3)) }), /desktopPairingRequired/)
 })
 
 test('required checks: mandatory ones cannot be dropped, unknown ones fail, check runs must have passed on the released commit', async () => {
   const sha = 'a'.repeat(40)
   const guard = async () => ({ pass: 3 })
-  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e' }
-  const read = runs => async path => { assert.match(path, new RegExp(`^commits/${sha}/check-runs\\?check_name=Browser%20e2e&`)); return { check_runs: runs } }
-  const ok = [{ name: 'Browser e2e', head_sha: sha, status: 'completed', conclusion: 'success' }]
+  const e2e = { name: 'browser-e2e', kind: 'check-run', repository: 'public', checkRun: 'Browser e2e', workflow: '.github/workflows/browser-gate.yml' }
+  const origin = { id: 9, path: '.github/workflows/browser-gate.yml', head_sha: sha, head_branch: 'main', status: 'completed', conclusion: 'success' }
+  const read = (runs, run = origin) => async path => {
+    if (path === 'actions/runs/9') return run
+    assert.match(path, new RegExp(`^commits/${sha}/check-runs\\?check_name=Browser%20e2e&`)); return { check_runs: runs }
+  }
+  const ok = [{ name: 'Browser e2e', head_sha: sha, status: 'completed', conclusion: 'success', app: { id: 15368 },
+    details_url: 'https://github.com/aspectly-labs/Mikka/actions/runs/9/job/77' }]
   assert.deepEqual((await runReleaseChecks('desktop', { checks: [...MANDATORY_CHECKS.desktop, e2e], sourceCommit: sha, read: read(ok),
     builtin: { 'desktop-route-guard': guard } })).map(result => result.name), ['desktop-route-guard', 'browser-e2e'])
   await assert.rejects(runReleaseChecks('desktop', { checks: [e2e], sourceCommit: sha, read: read(ok) }), /mandatoryCheckMissing/)
   await assert.rejects(runReleaseChecks('production', { checks: [{ name: 'mobile-smoke', kind: 'builtin' }], builtin: {} }), /unknownCheck/)
   await assert.rejects(runReleaseChecks('mobile', { checks: [e2e], read: read(ok) }), /unknownCheck/)
   await assert.rejects(runReleaseChecks('production', { checks: undefined }), /checksRequired/)
-  for (const runs of [[], [{ ...ok[0], conclusion: 'failure' }], [{ ...ok[0], head_sha: 'b'.repeat(40) }], [{ ...ok[0], status: 'in_progress' }]])
+  assert.equal((await publicCheckRun(e2e, sha, read(ok))).workflow, '.github/workflows/browser-gate.yml')
+  for (const runs of [[], [{ ...ok[0], conclusion: 'failure' }], [{ ...ok[0], head_sha: 'b'.repeat(40) }], [{ ...ok[0], status: 'in_progress' }],
+    // Another app posting the same name, or a check run with no Actions run behind it, never counts.
+    [{ ...ok[0], app: { id: 1 } }], [{ ...ok[0], app: undefined }], [{ ...ok[0], details_url: 'https://evil.example/actions/runs/9/job/77' }]])
     await assert.rejects(publicCheckRun(e2e, sha, read(runs)), /checkRunMissing/)
+  // The run behind it must be the listed workflow on main for that commit, and must have succeeded.
+  for (const run of [{ ...origin, path: '.github/workflows/other.yml' }, { ...origin, head_branch: 'feature' }, { ...origin, head_sha: 'b'.repeat(40) },
+    { ...origin, conclusion: 'failure' }])
+    await assert.rejects(publicCheckRun(e2e, sha, read(ok, run)), /checkRunMissing/)
 })
 
 test('npm latest moves only for a promoter dispatch of a successful staged push run with the same daemon inputs', async () => {
@@ -158,7 +180,13 @@ test('npm latest moves only for a promoter dispatch of a successful staged push 
     if (path === `compare/${staged}...${sha}`) return { status: 'ahead', merge_base_commit: { sha: staged }, files: [{ filename: 'apps/web/page.tsx' }], ...change.compare }
     assert.fail('unexpected read ' + path)
   }
-  assert.deepEqual(await verifyDaemonPromotion({ env: env(), read: reader() }), { stagedRun: '41', stagedSource: staged, source: sha })
+  const privatePolicy = (patch = {}) => async () => ({ policy: policy(patch), blob: 'f'.repeat(40) })
+  assert.deepEqual(await verifyDaemonPromotion({ env: env(), read: reader(), policy: privatePolicy() }), { stagedRun: '41', stagedSource: staged, source: sha })
+  // The authoritative private list is read first: unreadable or diverged from the public gate means no promotion.
+  await assert.rejects(verifyDaemonPromotion({ env: env(), read: reader(), policy: privatePolicy({ promoters: committed.slice(0, 1) }) }), /promotersDiverged/)
+  await assert.rejects(verifyDaemonPromotion({ env: env(), read: reader(), policy: async () => { throw new Error('releasePolicy:policyUnreadable') } }), /policyUnreadable/)
+  await assert.rejects(verifyDaemonPromotion({ env: env(), read: reader(), policy: privatePolicy({ requiredChecks: undefined }) }), /policyUnreadable/)
+  await assert.rejects(verifyDaemonPromotion({ env: env(), read: reader() }), /policyUnreadable/, 'no token: the default reader fails closed')
   for (const [patch, change, code] of [
     [{ GITHUB_ACTOR_ID: '7', GITHUB_ACTOR: 'outsider' }, {}, /dispatchNeedsPromoter/],
     [{ GITHUB_TRIGGERING_ACTOR: 'outsider' }, {}, /dispatchNeedsPromoter/],
@@ -172,7 +200,7 @@ test('npm latest moves only for a promoter dispatch of a successful staged push 
     [{}, { compare: { status: 'diverged' } }, /stagedRunOffMain/],
     [{}, { compare: { files: [{ filename: 'packages/daemon/src/index.ts' }] } }, /daemonInputsChanged/],
     [{}, { compare: { files: [{ filename: 'other', previous_filename: 'pnpm-lock.yaml' }] } }, /daemonInputsChanged/],
-  ]) await assert.rejects(verifyDaemonPromotion({ env: env(patch), read: reader(change) }), code, JSON.stringify({ patch, change }))
+  ]) await assert.rejects(verifyDaemonPromotion({ env: env(patch), read: reader(change), policy: privatePolicy() }), code, JSON.stringify({ patch, change }))
   // The input list is exactly the workflow's push filter, and the workflow publishes next unless dispatched.
   const daemon = workflow('publish-daemon.yml')
   assert.deepEqual(daemon.on.push.paths, DAEMON_INPUTS)
@@ -182,6 +210,11 @@ test('npm latest moves only for a promoter dispatch of a successful staged push 
   const steps = daemon.jobs.publish.steps.map(step => step.name ?? step.run ?? step.uses)
   assert.ok(steps.indexOf('Verify the staged daemon run before publishing to latest') < steps.indexOf('Publish with npm trusted publishing and provenance'))
   assert.ok(steps.indexOf('Verify the staged daemon run before publishing to latest') < steps.indexOf('Prepare release version and check registry'))
+  assert.ok(steps.indexOf('Read the reviewed release policy token') < steps.indexOf('Verify the staged daemon run before publishing to latest'))
+  const verify = daemon.jobs.publish.steps.find(step => step.name === 'Verify the staged daemon run before publishing to latest')
+  assert.equal(verify.env.MIKKA_OPERATIONS_READ_TOKEN, '${{ steps.policy-token.outputs.token }}')
+  for (const step of daemon.jobs.publish.steps.filter(step => step.uses?.startsWith('Infisical/') || step.uses?.startsWith('actions/create-github-app-token')))
+    assert.equal(step.if, "github.event_name == 'workflow_dispatch'", 'a push never reads the source App')
 })
 
 test('Desktop reads the policy before release, gates evidence before signing, and runs checks from the trusted verifier', () => {
@@ -196,6 +229,16 @@ test('Desktop reads the policy before release, gates evidence before signing, an
   assert.ok(checks > index('Install private UI runtime dependencies without license scripts'))
   assert.ok(checks < macos.findIndex(step => step.with?.['secret-name'] === 'APPLE_DEVELOPER_ID_P12_BASE64'))
   assert.ok(checks < index('Package signed macOS app'))
-  assert.equal(macos[checks].run, 'node "$RUNNER_TEMP/release-verifier/scripts/release/release-checks.mjs" desktop')
+  assert.equal(macos[checks].run, 'node "$RUNNER_TEMP/release-verifier/scripts/release/release-checks.mjs" run desktop')
+  // Run the CLI with exactly the workflow's arguments: it must reach the checks, not stop at its usage guard.
+  const argv = macos[checks].run.replace('node "$RUNNER_TEMP/release-verifier/scripts/release/release-checks.mjs" ', '').split(' ')
+  const cli = (args, env) => {
+    try { execFileSync(process.execPath, [new URL('./release-checks.mjs', import.meta.url).pathname, ...args],
+      { env: { PATH: process.env.PATH, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); return 'ok' }
+    catch (error) { return error.stderr.trim() }
+  }
+  assert.equal(cli(argv, {}), 'releaseChecks:policyRequired')
+  assert.equal(cli(argv, { MIKKA_RELEASE_POLICY: JSON.stringify({ requiredChecks: [] }) }), 'releaseChecks:mandatoryCheckMissing')
+  for (const args of [['desktop'], ['run'], ['run', 'desktop', 'extra'], ['run', 'web']]) assert.equal(cli(args, {}), 'releaseChecks:usage', args.join(' '))
   assert.equal(desktop.jobs.macos.env.MIKKA_RELEASE_POLICY, '${{ needs.preflight.outputs.policy }}')
 })

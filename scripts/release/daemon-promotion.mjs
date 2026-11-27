@@ -6,7 +6,7 @@
 import { appendFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { committedPromoters, isPromoter, isPromoterLogin } from './release-policy.mjs'
+import { checkedReleasePolicy, isPromoter, isPromoterLogin, readReleasePolicy, requireCommittedPromoters } from './release-policy.mjs'
 
 const SHA = /^[0-9a-f]{40}$/
 const DECIMAL = /^[1-9][0-9]{0,15}$/
@@ -23,9 +23,17 @@ function fail(code) {
 export const isDaemonInput = path => typeof path === 'string' && DAEMON_INPUTS.some(pattern =>
   pattern.endsWith('/**') ? path.startsWith(pattern.slice(0, -2)) : path === pattern)
 
-/** Every check before npm credentials: who dispatched, which main workflow runs, and the staged run's evidence. */
-export async function verifyDaemonPromotion({ env = process.env, read, promoters = committedPromoters() } = {}) {
-  const checked = { promoters }
+/** Every check before npm publication: who dispatched (against the authoritative private promoters, which
+ * must equal the public gate copy), which main workflow runs, and the staged run's evidence. */
+export async function verifyDaemonPromotion({ env = process.env, read, policy = () => readReleasePolicy({
+  owner: env.MIKKA_OPERATIONS_OWNER, token: env.MIKKA_OPERATIONS_READ_TOKEN }) } = {}) {
+  let checked
+  try {
+    checked = checkedReleasePolicy((await policy()).policy)
+    requireCommittedPromoters(checked)
+  } catch (error) {
+    fail(error?.message === 'releasePolicy:promotersDiverged' ? 'promotersDiverged' : 'policyUnreadable')
+  }
   if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || !isPromoter(checked, { id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR })
     || !isPromoterLogin(checked, env.GITHUB_TRIGGERING_ACTOR)) fail('dispatchNeedsPromoter')
   if (env.GITHUB_REF !== 'refs/heads/main' || env.GITHUB_WORKFLOW_REF !== env.GITHUB_REPOSITORY + '/' + WORKFLOW + '@refs/heads/main'
