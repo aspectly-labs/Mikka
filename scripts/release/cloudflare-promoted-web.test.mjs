@@ -687,6 +687,17 @@ test('the production version endpoint is retried with backoff only while it repo
   waits.length = 0
   await assert.rejects(readProductionVersion(responses([503, 503, 503, 503]), { wait }), /publicUnavailable/)
   assert.equal(waits.length, 3)
+  // With the live fetch, publicRead's own 503 retries would make each attempt up to three requests;
+  // the version read skips them, so four attempts are four requests in total.
+  const live = globalThis.fetch
+  let requests = 0
+  globalThis.fetch = async url => { requests++; assert.equal(new URL(url).pathname, '/mikka/api/version'); return new Response('busy', { status: 503 }) }
+  try {
+    waits.length = 0
+    await assert.rejects(readProductionVersion(undefined, { wait }), /publicUnavailable/)
+    assert.equal(requests, 4)
+    assert.deepEqual(waits, [2000, 4000, 8000])
+  } finally { globalThis.fetch = live }
   // An answer that names a build is final: no retry, so a real mismatch is reported at once.
   waits.length = 0
   assert.deepEqual((await readProductionVersion(responses([{ ...version, build: 'c'.repeat(40) }]), { wait })).body.build, 'c'.repeat(40))

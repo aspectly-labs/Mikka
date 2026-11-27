@@ -619,6 +619,8 @@ jobs:
         run: |
           echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
           echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+      # status=not-ready (automatic only: a required check or the daemon floor is not met yet) skips every
+      # step below without failing the run, so the staging run stays promotable by a pipeline-promote dispatch.
       - name: Select the verified staging result and production baseline
         id: select
         env:
