@@ -67,9 +67,10 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
       if (error.code === 'mcpUnavailable') throw new ExecutionMcpAuthorityError({ cause: error })
       throw new ExecutionIdentityError({ cause: error })
     })
-    // Validation admits only the requester's own servers (decision 2026-11-27-1700).
+    // Validation admits only the requester's own servers (decision 2026-11-27-1700) and the
+    // workspace's servers; a "member" workspace server uses the requester's own account.
     for (const grant of authority.servers) resourceBindings.push({ kind: 'mcp', id: grant.id, ownerId: grant.ownerId,
-      access: 'owner', revision: String(grant.revision), ...(authority.workspaceId ? { workspaceId: authority.workspaceId } : {}),
+      access: grant.source === 'workspace' ? 'workspace_share' : 'owner', revision: String(grant.revision), ...(authority.workspaceId ? { workspaceId: authority.workspaceId } : {}),
     })
   }
   let model: ExecutionIdentity['billingAccount']['model'] = { kind: 'native_login', ownerId: run.userId, resourceId: run.deviceId, amount: 'provider_unknown' }

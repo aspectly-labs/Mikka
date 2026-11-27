@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from 'pg'
 import { mcpAuthoritySchema, PluginError, type McpAuthority, type McpServerGrant, type McpWorkspacePage, type McpWorkspaceServerView } from './contracts'
+import { mcpServerKey } from './contracts'
+import { validateWorkspaceMcpGrants, workspaceMcpGrants } from './workspace-servers'
 
 type Query = Pick<Pool | PoolClient, 'query'>
 type Workspace = { id: string; kind: 'personal' | 'team'; name: string }
@@ -32,9 +34,13 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
   if (authority.workspaceId) await workspaceMember(membership ?? (await import('@/lib/workspace-db')).workspacePool, userId, authority.workspaceId)
   const ids = authority.servers.map(server => server.id)
   if (new Set(ids).size !== ids.length) throw unavailable()
-  const { rows } = await query.query<Row>(`SELECT ${columns} FROM personal_mcp_servers s WHERE s.id=ANY($1::uuid[]) AND s.user_id=$2`, [ids, userId])
-  const { rows: bindings } = await query.query<{ server_id: string; workspace_id: string; environment_id: string }>('SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [ids])
-  for (const grant of authority.servers) {
+  // Workspace servers: the requester is an active member (above) of the server's workspace.
+  const own = authority.servers.filter(server => server.source !== 'workspace')
+  await validateWorkspaceMcpGrants(query, authority, authority.servers.filter(server => server.source === 'workspace'))
+  const ownIds = own.map(server => server.id)
+  const { rows } = await query.query<Row>(`SELECT ${columns} FROM personal_mcp_servers s WHERE s.id=ANY($1::uuid[]) AND s.user_id=$2`, [ownIds, userId])
+  const { rows: bindings } = await query.query<{ server_id: string; workspace_id: string; environment_id: string }>('SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [ownIds])
+  for (const grant of own) {
     const scoped = bindings.filter(binding => binding.server_id === grant.id)
     if (scoped.length && !scoped.some(binding => binding.workspace_id === authority.workspaceId && binding.environment_id === authority.environmentId)) throw unavailable()
     const row = rows.find(server => server.id === grant.id)
@@ -45,7 +51,8 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
 
 /**
  * The native claim fence. Revalidates the frozen authority under its row locks and returns each
- * connection's disabled tools, read under `FOR SHARE` on its switch rows. A tool switch keeps the
+ * connection's disabled tools, read under `FOR SHARE` on its switch rows: `mcp_server_tools` for a
+ * person's own servers, `workspace_mcp_server_tools` for the workspace's. A tool switch keeps the
  * revision (running tasks re-read it per call), so the export's own read may be older: the claim
  * response must carry these lists (`withLockedToolSwitches`). A switch made while the lock is held
  * waits for the claim to commit, so the delivered list is the one current at commit.
@@ -53,10 +60,19 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
 export async function lockNativeMcpAuthority(query: Query, userId: string, authority: McpAuthority): Promise<Record<string, string[]>> {
   if (!authority.servers.length) return {}
   const ids = authority.servers.map(server => server.id)
-  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [ids])
-  const { rows: tools } = await query.query<{ server_id: string; tool_name: string; enabled: boolean }>(
-    'SELECT server_id,tool_name,enabled FROM mcp_server_tools WHERE server_id=ANY($1::uuid[]) ORDER BY server_id,tool_name FOR SHARE', [ids])
+  const own = authority.servers.filter(server => server.source !== 'workspace').map(server => server.id)
+  const shared = authority.servers.filter(server => server.source === 'workspace').map(server => server.id)
+  type Switch = { server_id: string; tool_name: string; enabled: boolean }
+  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [own])
+  if (shared.length) await query.query('SELECT id FROM workspace_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [shared])
+  // Every switch row is locked, not only the ones that are off: a switch turned off after this
+  // read would otherwise commit before the claim does.
+  const { rows: personal } = await query.query<Switch>(
+    'SELECT server_id,tool_name,enabled FROM mcp_server_tools WHERE server_id=ANY($1::uuid[]) ORDER BY server_id,tool_name FOR SHARE', [own])
+  const { rows: workspace } = shared.length ? await query.query<Switch>(
+    'SELECT server_id,tool_name,enabled FROM workspace_mcp_server_tools WHERE server_id=ANY($1::uuid[]) ORDER BY server_id,tool_name FOR SHARE', [shared]) : { rows: [] as Switch[] }
   await validateMcpAuthority(query, userId, authority)
+  const tools = [...personal, ...workspace]
   return Object.fromEntries(ids.map(id => [id, tools.filter(tool => tool.server_id === id && !tool.enabled).map(tool => tool.tool_name)]))
 }
 
@@ -103,9 +119,12 @@ export class WorkspaceMcpStore {
       .filter(row => row.enabled && !(row.oauth_enabled && row.connection_status === 'needs_connect')).slice(0, 64)
     const { rows: bindings } = await query.query<{ server_id: string; workspace_id: string; environment_id: string }>('SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [available.map(row => row.id)])
     const rows = available.filter(row => { const scoped = bindings.filter(binding => binding.server_id === row.id); return !scoped.length || scoped.some(binding => binding.workspace_id === workspaceId && binding.environment_id === environmentId) })
-    return { requester: userId, workspaceId, ...(environmentId ? { environmentId } : {}), servers: rows.map(row => ({
-      id: row.id, name: row.name, revision: row.revision, ownerId: row.user_id, grantId: null,
-    })) }
+    const personal: McpServerGrant[] = rows.map(row => ({ id: row.id, name: row.name, revision: row.revision, ownerId: row.user_id, grantId: null }))
+    // The workspace's servers join the requester's own (Capy: "a thread uses the organization's
+    // servers plus the private servers of the person who started it"); on a key clash the
+    // requester's own server wins. `available` already checked active membership.
+    const workspaceGrants = workspaceId ? await workspaceMcpGrants(query, userId, workspaceId, environmentId, new Set(rows.map(row => mcpServerKey(row.name)))) : []
+    return { requester: userId, workspaceId, ...(environmentId ? { environmentId } : {}), servers: [...personal, ...workspaceGrants].slice(0, 64) }
   }
 
   /** No grant discovery here: an old execution can use only the exact references frozen by its host. */
@@ -124,7 +143,15 @@ export async function scopedMcpAuthority(query: Query, authority: McpAuthority):
   if (!ids.length) return authority
   const { rows: bindings } = await query.query<{ server_id: string; workspace_id: string; environment_id: string }>(
     'SELECT server_id,workspace_id,environment_id FROM mcp_server_environments WHERE server_id=ANY($1::uuid[])', [ids])
+  const workspaceIds = authority.servers.filter(grant => grant.source === 'workspace').map(grant => grant.id)
+  const { rows: workspaceScopes } = workspaceIds.length ? await query.query<{ id: string; environment_id: string | null }>(
+    'SELECT id,environment_id FROM workspace_mcp_servers WHERE id=ANY($1::uuid[])', [workspaceIds]) : { rows: [] }
   return { ...authority, servers: authority.servers.filter(grant => {
+    if (grant.source === 'workspace') {
+      const scope = workspaceScopes.find(row => row.id === grant.id)
+      // A deleted server stays in the list, so validation reports it unavailable.
+      return !scope || scope.environment_id === null || scope.environment_id === (authority.environmentId ?? null)
+    }
     const scoped = bindings.filter(binding => binding.server_id === grant.id)
     return !scoped.length || scoped.some(binding => binding.workspace_id === authority.workspaceId && binding.environment_id === authority.environmentId)
   }) }

@@ -10,6 +10,7 @@ import type { McpAuthority } from './contracts'
 import type { McpOAuthStore } from './mcp-oauth'
 import { scopedMcpAuthority, singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
 import { nativeMcpName } from './native-mcp'
+import type { WorkspaceMcpServers } from './workspace-servers'
 
 type McpRow = Omit<McpServerView, 'authKind' | 'createdAt'> & {
   auth_header: string | null; ciphertext: string | null; iv: string | null; key_version: number | null; created_at: Date; oauth_enabled: boolean;
@@ -25,7 +26,10 @@ const stdioConfiguration = (row: McpRow, value: string) => taskMcpServerSchema.o
 
 export class PersonalPluginStore {
   constructor(readonly pool: Pool, readonly env: Readonly<Record<string, string | undefined>> = runtimeEnv(), readonly membership?: Pick<Pool | PoolClient, 'query'>,
-    private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>) {}
+    private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>, private readonly workspaceServers?: Pick<WorkspaceMcpServers, 'connection'>) {}
+  private async workspaceConnections() {
+    return this.workspaceServers ?? new (await import('./workspace-servers')).WorkspaceMcpServers(this.pool, this.env, this.membership)
+  }
   private async write<T>(userId: string, work: (client: PoolClient) => Promise<T>) {
     const client = await this.pool.connect()
     try {
@@ -90,8 +94,14 @@ export class PersonalPluginStore {
   }
   /** Called immediately before remote discovery/call. Never returned by an API. */
   async mcpConnection(userId: string, id: string, revision?: number, authority?: McpAuthority) {
-    // Only the requester's own server: validation refuses any other owner (decision 2026-11-27-1700).
+    // The requester's own server, or the workspace's: validation refuses any other person's (decision 2026-11-27-1700).
     const grant = authority ? (await new WorkspaceMcpStore(this.pool, this.membership).validate(userId, singleMcpAuthority(authority, id))).servers[0] : null
+    if (grant?.source === 'workspace') {
+      // Validation fixed requester === userId: a "member" server uses this person's account only.
+      const connection = await (await this.workspaceConnections()).connection(userId, authority!.workspaceId!, grant)
+      if (revision !== undefined && connection.revision !== revision) throw new PluginError('mcpUnavailable', 404)
+      return { ...connection, native: undefined }
+    }
     const row = (await this.pool.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true`, [id, userId])).rows[0]
     if (!row || revision !== undefined && row.revision !== revision) throw new PluginError('mcpUnavailable', 404)
     if (grant && row.revision !== grant.revision) throw new PluginError('mcpUnavailable', 404)

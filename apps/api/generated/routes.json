@@ -3997,6 +3997,64 @@
       "sourceHash": "419a66da8318bed3b525a41d0494f115f1847e24f0aa5dcdd6f3de4be5e55d1e"
     },
     {
+      "path": "/mikka/api/workspaces/[workspaceId]/mcp-servers",
+      "template": "/api/workspaces/[workspaceId]/mcp-servers",
+      "source": "app/api/workspaces/[workspaceId]/mcp-servers/route.ts",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "sourceHash": "9894680ca47b0a51e011773862a3d3b78dcc10da5a5c2b13069a22a3f51878ef"
+    },
+    {
+      "path": "/mikka/api/workspaces/[workspaceId]/mcp-servers/[serverId]",
+      "template": "/api/workspaces/[workspaceId]/mcp-servers/[serverId]",
+      "source": "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/route.ts",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH"
+      ],
+      "sourceHash": "42e51153fdbaf1e7309964bf7ff4df221db3b832f6dbdbe9a50b05d52e64e13d"
+    },
+    {
+      "path": "/mikka/api/workspaces/[workspaceId]/mcp-servers/[serverId]/check",
+      "template": "/api/workspaces/[workspaceId]/mcp-servers/[serverId]/check",
+      "source": "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/check/route.ts",
+      "methods": [
+        "POST"
+      ],
+      "sourceHash": "0121da303839af02392175c7c7c53d2388849e3d469d32fc954c19fb8afc6ca1"
+    },
+    {
+      "path": "/mikka/api/workspaces/[workspaceId]/mcp-servers/[serverId]/connection",
+      "template": "/api/workspaces/[workspaceId]/mcp-servers/[serverId]/connection",
+      "source": "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/connection/route.ts",
+      "methods": [
+        "DELETE",
+        "POST"
+      ],
+      "sourceHash": "d64ef0c8fddb69fbe6254d1e8592a5fbf7c203f607f21949c87a5ce2e1cdedd5"
+    },
+    {
+      "path": "/mikka/api/workspaces/[workspaceId]/mcp-servers/[serverId]/oauth/callback",
+      "template": "/api/workspaces/[workspaceId]/mcp-servers/[serverId]/oauth/callback",
+      "source": "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/oauth/callback/route.ts",
+      "methods": [
+        "GET"
+      ],
+      "sourceHash": "451fc2079e5c82be0b2454e9c9972c26c4b167bd84e2c1d84e4a8dd176e2fd92"
+    },
+    {
+      "path": "/mikka/api/workspaces/[workspaceId]/mcp-servers/[serverId]/tools/[name]",
+      "template": "/api/workspaces/[workspaceId]/mcp-servers/[serverId]/tools/[name]",
+      "source": "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/tools/[name]/route.ts",
+      "methods": [
+        "PATCH"
+      ],
+      "sourceHash": "ab22736bf293db470b343d129ea704a3c300fdd2f6e0e8c5b0408c82e6be6c32"
+    },
+    {
       "path": "/mikka/api/workspaces/[workspaceId]/model-admission",
       "template": "/api/workspaces/[workspaceId]/model-admission",
       "source": "app/api/workspaces/[workspaceId]/model-admission/route.ts",
