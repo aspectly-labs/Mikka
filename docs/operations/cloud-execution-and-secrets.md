@@ -10,15 +10,17 @@ Cloud execution authority stays on the task's machine ([2026-11-06-1800](../desi
 
 - **One task per E2B VM:** Official Claude Code and Codex CLIs keep their ordinary `HOME`, environment, and Git configuration. Deliver the short-lived Mikka model gateway token and any authorized GitHub credential needed by the run.
 - **No control-plane execution proxies:** Do not reintroduce shadow Git, isolated CLI `HOME` directories, or per-tool control-plane authorization proxies.
-- **LiteLLM-only managed model egress ([2026-11-20-0530](../design/decisions/2026-11-20-0530-litellm-only-model-egress.md)):** Mikka-managed inference for credits, BYOK and official subscriptions routes through LiteLLM. Official Claude Code and Codex use the run-bound gateway for subscription inference. Login, token refresh and quota probes keep their account endpoints. See the [subscription inference decision](../design/decisions/2026-11-26-0300-subscription-inference-through-litellm.md).
+- **Model egress** uses LiteLLM for BYOK and Managed Model requests. Official Claude Code and Codex subscriptions use the independent CPA worker. Native Threads authenticate with the run-bound gateway token. [Subscription inference decision](../design/decisions/2026-11-27-2304-official-subscription-cpa-egress.md)
 - **Protected third-party Secrets:** Do not inject unrelated user, workspace, or repository third-party API Secrets into Agent-readable environment variables or files. Protected Secrets use run-scoped sealed grants and non-readable egress/tool handling where supported; explicit direct delivery stays compatibility-only for existing env-dependent SDKs.
 - **Revocation and local daemon boundaries:** Revocation pushes stop and reclaim affected VMs while natural token renewal runs in the background. Local daemon safeguards preserve unrelated files on the host machine.
 
 ### Subscription chat release prerequisites
 
-On Cloudflare, the LiteLLM container sets `MIKKA_SUBSCRIPTION_CPA_CHAT_URL` to its intercepted private HTTPS origin whenever the reviewed `SUBSCRIPTION_API` service binding is configured. Its `/v1/mikka/subscription/chat` pass-through reaches the Business API's private callback RPC. Public ingress rejects that callback path. The application signs each call with a key derived from the application auth secret and binds its model, payload, scope and expiry. Eve and Business API use the same application secret. LiteLLM receives only its own service key. The callback rejects unsigned requests and rechecks subscription access before opening the private CPA worker stream. OAuth credentials stay with CPA.
-
-The private release pairs LiteLLM with the stage-matched Business API Worker and verifies its active version and private route configuration. Verify successful streaming, replay rejection and one linked usage receipt on the stage-matched runtime before the authorized cutover in [#1954](https://github.com/aspectly-labs/Mikka/issues/1954).
+Pair the Business API, Eve and private CPA worker at the candidate revision.
+On staging, verify both provider streams and the corresponding subscription
+usage receipts. Keep the signed private callback and LiteLLM pass-through
+bindings available for earlier application versions during the rollout.
+The production promotion follows the authorized release window. [Release coordination](https://github.com/aspectly-labs/Mikka/issues/1954)
 
 ## Native Task MCP delivery
 
