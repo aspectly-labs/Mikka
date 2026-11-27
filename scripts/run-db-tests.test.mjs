@@ -647,6 +647,7 @@ test('a chain step that loses its summary fails instead of dropping out of the t
   assert.deepEqual(testSteps('node scripts/run.mjs --test && node --import tsx --test a.test.ts'), ['node --import tsx --test a.test.ts'])
   assert.deepEqual(testSteps('X=1 node --test-reporter-destination="${DIR:?dir required}/out.xml" --import tsx --test a.test.ts').length, 1)
   assert.deepEqual(testSteps('node --test-force-exit=true --test a.test.mjs'), ['node --test-force-exit=true --test a.test.mjs'])
+  assert.deepEqual(testSteps('node --experimental-test-isolation none --test a.test.mjs').length, 1, 'an option value is not the script')
   const first = 'ℹ tests 3\nℹ pass 3\nℹ fail 0\n'
   const truncated = `${first}▶ second step\n  ✔ one (1ms)\n`
   // The totals alone still look like a passing suite.

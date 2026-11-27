@@ -287,7 +287,7 @@ const NODE_STEP = /^((?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*)node(\s.*)$/
 // Words of one shell step; a quoted part stays inside its word.
 const words = step => step.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []
 // Node options that take the next word as their value.
-const VALUE_OPTIONS = new Set(['--import', '--require', '-r', '--loader', '--experimental-loader', '--conditions', '-C', '--env-file', '--env-file-if-exists', '--input-type', '--test-reporter', '--test-reporter-destination', '--test-name-pattern', '--test-skip-pattern', '--test-concurrency', '--test-timeout', '--test-shard', '--test-isolation', '--test-global-setup', '--test-coverage-include', '--test-coverage-exclude', '--watch-path'])
+const VALUE_OPTIONS = new Set(['--import', '--require', '-r', '--loader', '--experimental-loader', '--conditions', '-C', '--env-file', '--env-file-if-exists', '--input-type', '--test-reporter', '--test-reporter-destination', '--test-name-pattern', '--test-skip-pattern', '--test-concurrency', '--test-timeout', '--test-shard', '--experimental-test-isolation', '--test-global-setup', '--test-coverage-include', '--test-coverage-exclude', '--watch-path'])
 // The options node itself reads in a step: those before the first positional
 // word (the script, or with --test the first file). Null for a non-node step.
 function nodeOptions(step) {
