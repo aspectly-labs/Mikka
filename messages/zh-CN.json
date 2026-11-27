@@ -10204,6 +10204,7 @@
     "tooLarge": "文件过大。",
     "deleteFileTitle": "删除 {name}？",
     "overviewEmpty": "还没有文件",
+    "archivedEmpty": "还没有已归档的文件夹",
     "overviewSub": "个人保存的文件和任务交付的成果。",
     "unarchiveFolder": "恢复文件夹",
     "accessUnavailable": "当前账号已无法访问这些文件。",
@@ -11452,6 +11453,7 @@
     "threadEntry": "Artifact · {count}",
     "retry": "重试",
     "empty": "还没有 Artifact",
+    "emptyHint": "Bot 和 Agent 在任务里交付的文档、网页、PR 和截图会出现在这里。",
     "title": "Artifact",
     "loading": "正在加载 Artifact"
   },

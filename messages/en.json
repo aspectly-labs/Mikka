@@ -10204,6 +10204,7 @@
     "tooLarge": "This file is too large.",
     "deleteFileTitle": "Delete {name}?",
     "overviewEmpty": "No files yet",
+    "archivedEmpty": "No archived folders",
     "overviewSub": "Files you keep and results from your tasks.",
     "unarchiveFolder": "Restore folder",
     "accessUnavailable": "These files are no longer available to this account.",
@@ -11452,6 +11453,7 @@
     "threadEntry": "Artifact · {count}",
     "retry": "Retry",
     "empty": "No artifacts yet",
+    "emptyHint": "Documents, pages, pull requests and screenshots created in tasks will appear here.",
     "title": "Artifacts",
     "loading": "Loading artifacts"
   },
