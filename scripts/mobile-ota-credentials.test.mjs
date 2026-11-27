@@ -44,3 +44,17 @@ test('mobile-next-ios.yml reads only canonical OIDC platform credentials without
     for (const text of ['uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d', 'method: oidc', 'identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac', 'oidc-audience: mikka-infisical', 'project-id: 89850d6a-f020-4936-863e-df77380dfe40', 'env-slug: prod', 'secret-path: /platform', marker, 'recursive: false', 'include-imports: false']) assert.ok(block.includes(text), name + ':' + text)
   }
 })
+
+test('mobile-next-update.yml reads the source App only to mint a read-only release policy token, never for staging', () => {
+  const source = readFileSync(new URL('../.github/workflows/mobile-next-update.yml', import.meta.url), 'utf8')
+  for (const name of ['GITHUB_APP_ID', 'GITHUB_APP_PRIVATE_KEY']) {
+    const at = source.indexOf('secret-name: ' + name); assert.ok(at >= 0, name)
+    const block = source.slice(source.lastIndexOf('\n      - ', at), source.indexOf('\n      - ', at))
+    for (const text of ["if: env.MOBILE_OTA_PHASE != 'stage'", 'method: oidc', 'secret-path: ${{ steps.source-app.outputs.secret-path }}', 'recursive: false', 'include-imports: false'])
+      assert.ok(block.includes(text), name + ':' + text)
+  }
+  const mint = source.slice(source.indexOf('- name: Mint a short-lived read-only release policy token'), source.indexOf('- name: Remove App credentials before reading the policy'))
+  assert.match(mint, /repositories: mikka-cloud\n\s+permission-contents: read\n/)
+  assert.doesNotMatch(mint, /permission-(?!contents)/)
+  assert.ok(source.indexOf("echo 'GITHUB_APP_PRIVATE_KEY=' >> \"$GITHUB_ENV\"") < source.indexOf('- name: Require the reviewed mobile production policy'))
+})
