@@ -12241,5 +12241,10 @@
       "web-search": "搜索网页",
       "dispatch": "派发任务"
     }
+  },
+  "DesktopTelemetry": {
+    "heading": "隐私",
+    "share": "共享使用情况和错误报告",
+    "failed": "操作失败，请重试"
   }
 }

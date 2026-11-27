@@ -131,6 +131,11 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
       select: url => ipcRenderer.invoke(BUNDLED_IPC.serverSelect, url),
       disconnect: url => ipcRenderer.invoke(BUNDLED_IPC.serverDisconnect, url),
     },
+    telemetry: {
+      state: () => ipcRenderer.invoke(BUNDLED_IPC.telemetryState),
+      setEnabled: enabled => ipcRenderer.invoke(BUNDLED_IPC.telemetrySet, enabled),
+      capture: (event, properties) => { ipcRenderer.send(BUNDLED_IPC.telemetryCapture, event, properties) },
+    },
     onSessionChanged: listener => {
       const handler = () => listener()
       ipcRenderer.on(BUNDLED_IPC.sessionChanged, handler)

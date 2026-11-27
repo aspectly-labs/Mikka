@@ -12241,5 +12241,10 @@
       "web-search": "Search the web",
       "dispatch": "Dispatch task"
     }
+  },
+  "DesktopTelemetry": {
+    "heading": "Privacy",
+    "share": "Share usage and error reports",
+    "failed": "That didn't work"
   }
 }

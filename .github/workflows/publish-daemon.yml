@@ -142,7 +142,11 @@ jobs:
         id: release
         run: node packages/daemon/scripts/release.mjs
       - run: pnpm install --frozen-lockfile
-      - run: node --test packages/daemon/test/release.node-test.mjs
+      # The self-test must pass in either job channel; a promotion runs it with latest in the job env.
+      - name: Test the release script under both channels
+        run: |
+          MIKKA_DAEMON_CHANNEL=next node --test packages/daemon/test/release.node-test.mjs
+          MIKKA_DAEMON_CHANNEL=latest node --test packages/daemon/test/release.node-test.mjs
       - run: pnpm --filter @mikka/daemon typecheck
       - name: Ensure FFmpeg for daemon recording regressions
         run: |

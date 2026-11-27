@@ -1,6 +1,14 @@
 import { scrubLocalString } from '@mikka/protocol/tracing'
 import { safeDomain, safeLabel, safeLanding } from './first-touch.ts'
 import { isTrackOwner } from './track-owner-rule.ts'
+import { analyticsOrigin, analyticsPath, analyticsTextPaths } from './analytics-path.ts'
+
+export { analyticsPath }
+
+/** A route or URL longer than this is cut before it is parsed: no route the app
+ * serves comes near it, and a hostile page cannot make the sanitizer slow. */
+const ROUTE_INPUT_LIMIT = 2048
+const RUM_ROUTE_LIMIT = 160
 
 const allowedEvents = new Set(['$pageview', '$identify', '$feature_flag_called', 'mikka_team_created', 'mikka_team_updated', 'mikka_live_socket', 'mikka_live_received', 'mikka_live_skipped', 'mikka_live_read'])
 const allowedProperties = new Set([
@@ -19,15 +27,11 @@ const allowedProperties = new Set([
  * sanitized route, while request/response content and credentials stay out. */
 export function redactReplayRequest<T extends { name: string }>(request: T): T | null {
   try {
-    const url = new URL(request.name)
-    const sanitized = { ...request, name: `${url.origin}${analyticsPath(url.pathname)}` }
+    const url = new URL(request.name.slice(0, ROUTE_INPUT_LIMIT))
+    const sanitized = { ...request, name: `${analyticsOrigin(url)}${analyticsPath(url.pathname)}` }
     for (const key of ['requestBody', 'responseBody', 'requestHeaders', 'responseHeaders']) Reflect.deleteProperty(sanitized, key)
     return sanitized
   } catch { return null }
-}
-
-export function analyticsPath(pathname: string) {
-  return pathname.replace(/^\/invite\/[^/]+/, '/invite/:token').replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=\/|$)/gi, '/:id')
 }
 
 /** Error levels an exception event may carry, from a closed set. */
@@ -39,7 +43,6 @@ const SAFE_BUILD_SHA = /^[a-zA-Z0-9._-]{0,64}$/
 const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const LONG_TOKEN_SEGMENT = /^(?=.*\d)[A-Za-z0-9_-]{16,}$/
 const NUMERIC_ID_SEGMENT = /^\d{5,}$/
-const EMAIL_LIKE_SEGMENT = /@/
 const viewportBuckets = new Set(['mobile', 'tablet', 'desktop', 'wide'])
 const runtimeErrorSources = new Set(['window_error', 'unhandled_rejection'])
 const rumFlushReasons = new Set(['visibility_hidden', 'pagehide', 'route_change'])
@@ -51,6 +54,22 @@ const EXCEPTION_FRAME_LIMIT = 32
 /** A credential echoed into a message. `scrubLocalString` masks URLs, webhook
  * keys, emails, IPs and home paths, but not a bare `Bearer …` or `sk-…`. */
 const CREDENTIAL = /(\b(?:authorization|bearer|token|secret|password|api[_-]?key|cookie)\b\s*[:=]?\s*["']?)[\w.~+/=-]{8,}|\b(?:sk|pk|rk|ghp|gho|ghs|ghu|phc|xox[abpsr])[-_][\w-]{8,}|\beyJ[\w-]{8,}\.[\w-]{8,}(?:\.[\w-]*)?/gi
+
+/** Which client and build sent an event: the desktop adds these in its main
+ * process (apps/desktop/src/main/telemetry.ts). Closed words, a version and
+ * two commit SHAs, never anything a person wrote. */
+const releaseTagPatterns: Record<string, RegExp> = {
+  platform: /^(?:desktop|web)$/,
+  app_version: /^\d{1,6}\.\d{1,8}\.\d{1,8}(?:[-+][0-9A-Za-z.-]{1,32})?$/,
+  public_sha: /^[0-9a-f]{7,40}$/,
+  overlay_sha: /^[0-9a-f]{7,40}$/,
+}
+function releaseTags(properties: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(releaseTagPatterns).flatMap(([key, pattern]) => {
+    const value = properties[key]
+    return typeof value === 'string' && pattern.test(value) ? [[key, value]] : []
+  }))
+}
 
 /** The SDK's bot classification, which is the only browser detail that stays:
  * its user agent, platform and screen never do. */
@@ -64,8 +83,8 @@ function browserClassification(properties: Record<string, unknown>) {
 function route(properties: Record<string, unknown>) {
   if (typeof properties.$current_url !== 'string') return {}
   try {
-    const url = new URL(properties.$current_url)
-    return { $current_url: `${url.origin}${analyticsPath(url.pathname)}`, $pathname: analyticsPath(url.pathname) }
+    const url = new URL(properties.$current_url.slice(0, ROUTE_INPUT_LIMIT))
+    return { $current_url: `${analyticsOrigin(url)}${analyticsPath(url.pathname)}`, $pathname: analyticsPath(url.pathname) }
   } catch { return {} }
 }
 
@@ -96,7 +115,7 @@ function source(properties: Record<string, unknown>) {
 function narrow<T extends { event: string; properties: Record<string, unknown> }>(event: T, kept: Record<string, unknown> = {}): T {
   const properties = {
     ...Object.fromEntries(Object.entries(event.properties).filter(([key]) => allowedProperties.has(key))),
-    ...browserClassification(event.properties), ...route(event.properties), ...source(event.properties), ...kept,
+    ...browserClassification(event.properties), ...route(event.properties), ...source(event.properties), ...releaseTags(event.properties), ...kept,
   }
   const narrowed = { ...event, properties }
   for (const key of ['$set', '$set_once', '$unset']) Reflect.deleteProperty(narrowed, key)
@@ -106,7 +125,7 @@ function narrow<T extends { event: string; properties: Record<string, unknown> }
 /** A message from this app, not the user's data: any credential it echoes is
  * masked, and so is everything `scrubLocalString` already covers. */
 function scrubMessage(value: unknown): string {
-  return typeof value === 'string' ? scrubLocalString(value).replace(CREDENTIAL, '$1[redacted]') : ''
+  return typeof value === 'string' ? analyticsTextPaths(scrubLocalString(value.slice(0, ROUTE_INPUT_LIMIT)).replace(CREDENTIAL, '$1[redacted]')) : ''
 }
 
 /** One frame this app can act on: the bundle the browser loaded, its line and
@@ -117,11 +136,12 @@ function scrubbedFrame(frame: unknown) {
   if (!frame || typeof frame !== 'object') return null
   const record = frame as Record<string, unknown>
   if (record.in_app !== true) return null
-  const filename = typeof record.filename === 'string' ? scrubLocalString(record.filename) : ''
+  // A frame's file is often the page's own URL (an inline script on a share page): its path goes through analyticsPath too.
+  const filename = typeof record.filename === 'string' ? analyticsTextPaths(scrubLocalString(record.filename.slice(0, ROUTE_INPUT_LIMIT))) : ''
   if (!filename) return null
   return {
     platform: 'web:javascript', in_app: true, filename,
-    function: typeof record.function === 'string' ? scrubLocalString(record.function).slice(0, 128) : '?',
+    function: typeof record.function === 'string' ? analyticsTextPaths(scrubLocalString(record.function.slice(0, ROUTE_INPUT_LIMIT))).slice(0, 128) : '?',
     ...(Number.isSafeInteger(record.lineno) ? { lineno: record.lineno } : {}),
     ...(Number.isSafeInteger(record.colno) ? { colno: record.colno } : {}),
   }
@@ -168,26 +188,20 @@ function sanitizeExceptionEvent<T extends { event: string; properties: Record<st
  * hashes, invite tokens, UUIDs, emails and opaque IDs can never pass through. */
 function sanitizeRumRoute(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined
-  let pathname = value.trim()
+  let pathname = value.slice(0, ROUTE_INPUT_LIMIT).trim()
   try {
     pathname = new URL(pathname, 'https://mikka.invalid').pathname
   } catch {
     pathname = pathname.split(/[?#]/, 1)[0] ?? '/'
   }
   if (!pathname.startsWith('/')) pathname = `/${pathname}`
-  const segments = pathname.split('/').filter(Boolean)
-  const clean: string[] = []
-  for (let index = 0; index < segments.length; index += 1) {
-    const raw = segments[index] ?? ''
-    if (index > 0 && segments[index - 1]?.toLowerCase() === 'invite') clean.push(':token')
-    else if (UUID_SEGMENT.test(raw)) clean.push(':id')
-    else if (EMAIL_LIKE_SEGMENT.test(raw)) clean.push(':redacted')
-    else if (LONG_TOKEN_SEGMENT.test(raw)) clean.push(':token')
-    else if (NUMERIC_ID_SEGMENT.test(raw)) clean.push(':id')
-    else clean.push(raw.slice(0, 48))
+  // Whole segments up to the limit, never a placeholder cut in half, so a second pass leaves the route as it is.
+  let normalized = ''
+  for (const segment of analyticsPath(`/${pathname.split('/').filter(Boolean).join('/')}`).split('/').slice(1)) {
+    if (normalized.length + 1 + segment.length > RUM_ROUTE_LIMIT) break
+    normalized += `/${segment}`
   }
-  const normalized = `/${clean.join('/')}`
-  return normalized.length > 160 ? normalized.slice(0, 160) : normalized
+  return normalized || '/'
 }
 
 function boundedMs(value: unknown): number | undefined {
@@ -249,11 +263,52 @@ function sanitizeOwnerClickEvent<T extends { event: string; properties: Record<s
   return narrow(event, { owner })
 }
 
+const desktopEvents = new Set(['desktop_api_error', 'desktop_main_error', 'desktop_process_gone'])
+/** A route template from apps/api/generated/routes.json (`/api/workspaces/[workspaceId]/task-labels`): never a concrete id. */
+const ROUTE_TEMPLATE = /^\/api(?:\/(?:[A-Za-z0-9._~-]{1,64}|\[{1,2}(?:\.{3})?[A-Za-z][A-Za-z0-9_]{0,63}\]{1,2})){1,16}$/
+/** Its literal segments are route words, never an id, token or number that slipped in. */
+function routeTemplate(value: string) {
+  return ROUTE_TEMPLATE.test(value) && value.split('/').every(segment => segment.startsWith('[') || !(UUID_SEGMENT.test(segment) || LONG_TOKEN_SEGMENT.test(segment) || NUMERIC_ID_SEGMENT.test(segment) || /^\d+$/.test(segment)))
+}
+const httpMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
+/** A short failure code such as `desktop_backend_unavailable`; never a message. */
+const ERROR_CODE = /^[a-z][a-z0-9_]{0,63}$/
+const mainErrorSources = new Set(['uncaught_exception', 'unhandled_rejection'])
+const processTypes = new Set(['renderer', 'gpu', 'utility', 'zygote', 'sandbox-helper', 'pepper-plugin', 'unknown'])
+const processGoneReasons = new Set(['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom', 'launch-failed', 'integrity-failure', 'memory-eviction'])
+
+/** The desktop main process's own reports: a refused or failed API call by
+ * route template, method, status and code; a main-process error's class; a
+ * child process that went away and why. Anything else they carry is dropped. */
+function sanitizeDesktopEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T): T | null {
+  const props = event.properties
+  const kept: Record<string, unknown> = {}
+  if (event.event === 'desktop_api_error') {
+    if (typeof props.route !== 'string' || !(props.route === 'unmatched' || routeTemplate(props.route))) return null
+    if (typeof props.method !== 'string' || !httpMethods.has(props.method)) return null
+    if (!Number.isInteger(props.status) || (props.status as number) < 100 || (props.status as number) > 599) return null
+    Object.assign(kept, { route: props.route, method: props.method, status: props.status })
+    if (typeof props.error_code === 'string' && ERROR_CODE.test(props.error_code)) kept.error_code = props.error_code
+    return narrow(event, kept)
+  }
+  if (event.event === 'desktop_main_error') {
+    if (typeof props.error_source !== 'string' || !mainErrorSources.has(props.error_source)) return null
+    kept.error_source = props.error_source
+    kept.error_name = typeof props.error_name === 'string' && EXCEPTION_TYPE.test(props.error_name) ? props.error_name : 'Error'
+    return narrow(event, kept)
+  }
+  if (typeof props.reason !== 'string' || !processGoneReasons.has(props.reason)) return null
+  kept.reason = props.reason
+  kept.process_type = typeof props.process_type === 'string' && processTypes.has(props.process_type) ? props.process_type : 'unknown'
+  return narrow(event, kept)
+}
+
 export function sanitizeAnalyticsEvent<T extends { event: string; properties: Record<string, unknown> }>(event: T | null): T | null {
   if (!event) return null
   if (event.event === '$exception') return sanitizeExceptionEvent(event)
   if (event.event === OWNER_CLICK_EVENT) return sanitizeOwnerClickEvent(event)
   if (frontendRumEvents.has(event.event)) return sanitizeFrontendRumEvent(event)
+  if (desktopEvents.has(event.event)) return sanitizeDesktopEvent(event)
   if (event.event !== '$snapshot' && !allowedEvents.has(event.event)) return null
   // rrweb masks the DOM before serialization (instrumentation-client.ts).
   // Its transport needs the opaque snapshot payload and session identifiers;
