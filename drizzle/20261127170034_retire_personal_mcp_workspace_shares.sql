@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3392 withdraws every personal MCP workspace grant, closes the retired table to inserts, and stops active runs whose frozen MCP authority names another owner's server
 -- target: MIKKA_DATABASE_URL
 -- Personal MCP servers are not shareable (decision 2026-11-27-1700-personal-mcp-not-shareable).
 -- 1. Every workspace grant of a personal MCP server is withdrawn, and a CHECK (false)

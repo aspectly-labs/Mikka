@@ -13,10 +13,11 @@ person who sent the latest message. A teammate who messages the owner's thread
 uses the owner's servers there; in the teammate's own threads, only the
 teammate's servers.
 
-Reference: Capy 0.10.0 groups MCP servers as organization-shared, each member
-connects, or "yours". A personal server is "visible only to you; members who
-message your threads can use it". There is no control that moves a person's
-server into the organization.
+Reference: like Capy, a person's MCP server is never shared to the workspace.
+A server is either the organization's, connected by each member, or one
+person's own; a person's own server serves that person and the members who
+message that person's threads, and nothing moves it into the organization.
+Evidence: mikka-hosted-ui `docs/research/2026-11-27-public-evidence.md`.
 
 What changes:
 
@@ -35,8 +36,8 @@ What changes:
 - Organization approvals no longer accept kind `mcp`; the `mcpSharing` policy
   now governs Skill sharing only.
 
-Follow-up, not built: Capy's per-server "Private threads only" switch, which
-hides a server from threads other members can message.
+Follow-up, not built: a per-server switch that keeps a person's server out of
+threads other members can message, as Capy offers.
 
 Cost if wrong: a team that relied on one member's MCP account must have each
 member connect their own, until organization-owned MCP connections exist.

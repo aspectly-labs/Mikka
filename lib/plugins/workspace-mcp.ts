@@ -43,10 +43,21 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
   return authority
 }
 
-export async function lockNativeMcpAuthority(query: Query, userId: string, authority: McpAuthority) {
-  if (!authority.servers.length) return
-  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [authority.servers.map(server => server.id)])
+/**
+ * The native claim fence. Revalidates the frozen authority under its row locks and returns each
+ * connection's disabled tools, read under `FOR SHARE` on its switch rows. A tool switch keeps the
+ * revision (running tasks re-read it per call), so the export's own read may be older: the claim
+ * response must carry these lists (`withLockedToolSwitches`). A switch made while the lock is held
+ * waits for the claim to commit, so the delivered list is the one current at commit.
+ */
+export async function lockNativeMcpAuthority(query: Query, userId: string, authority: McpAuthority): Promise<Record<string, string[]>> {
+  if (!authority.servers.length) return {}
+  const ids = authority.servers.map(server => server.id)
+  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [ids])
+  const { rows: tools } = await query.query<{ server_id: string; tool_name: string; enabled: boolean }>(
+    'SELECT server_id,tool_name,enabled FROM mcp_server_tools WHERE server_id=ANY($1::uuid[]) ORDER BY server_id,tool_name FOR SHARE', [ids])
   await validateMcpAuthority(query, userId, authority)
+  return Object.fromEntries(ids.map(id => [id, tools.filter(tool => tool.server_id === id && !tool.enabled).map(tool => tool.tool_name)]))
 }
 
 /**

@@ -11,7 +11,8 @@ const unguardedPATCH = freshSessionRoute((request: Request, ctx: Context) => plu
   const userId = await pluginActor(request, { humanOnly: true })
   const name = mcpToolName.safeParse((await ctx.params).name)
   if (!name.success) throw new PluginError('invalidPluginInput', 400)
-  return mcpConnections.setTool(userId, await pluginUuidParam(ctx, 'id'), name.data, (await pluginBody(request, mcpToolSetting)).enabled)
+  const { enabled, ...options } = await pluginBody(request, mcpToolSetting)
+  return mcpConnections.setTool(userId, await pluginUuidParam(ctx, 'id'), name.data, enabled, options)
 }))
 export const PATCH = defineRoute<'session','none',{ id: string; name: string }>(
   {
