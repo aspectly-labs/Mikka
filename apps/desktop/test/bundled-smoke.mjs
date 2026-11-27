@@ -43,6 +43,13 @@ let generatedWorkspaceName
 let passed = false
 let failure
 let selfHosted
+let page
+
+/** The renderer drew its page. Without the official UI that is headless.ts's heading and line, which in Chinese
+ * (the default locale) is shorter than the 30 characters an application page always has. */
+const rendered = target => target.waitForFunction(() => document.documentElement.dataset.mikkaHeadless === 'true'
+  ? Boolean(document.querySelector('h1')?.textContent?.trim() && document.querySelector('p')?.textContent?.trim())
+  : document.body.innerText.trim().length > 30)
 
 /** A port nothing listens on, for the unreachable probe. */
 async function unusedPort() {
@@ -89,7 +96,7 @@ try {
     env: { ...process.env, ...(picker ? { XDG_CONFIG_HOME: picker.config } : {}), MIKKA_DESKTOP_RENDERER: 'bundled', MIKKA_USER_DATA_DIR: profile },
     timeout: 90_000,
   })
-  const page = await application.firstWindow({ timeout: 90_000 })
+  page = await application.firstWindow({ timeout: 90_000 })
   page.setDefaultTimeout(30_000)
   page.on('pageerror', error => nativeErrors.push(error.name))
   await page.waitForLoadState('domcontentloaded')
@@ -118,8 +125,12 @@ try {
   assert.equal(blocked, true)
   check('local document CSP blocks external renderer fetches')
 
-  await page.waitForFunction(() => document.body.innerText.trim().length > 30)
-  await page.screenshot({ path: join(output, 'bundled-sign-in.png'), animations: 'disabled' })
+  await rendered(page)
+  // A build without the official UI checkout shows apps/frontend/src/headless.ts, which renders text and reads
+  // nothing. The shell around it is what this repository owns; the official renderer's own reads are covered
+  // where it is built in (hosted Electron CI).
+  const headless = await page.evaluate(() => document.documentElement.dataset.mikkaHeadless === 'true')
+  evidence.renderer = headless ? 'headless' : 'official'
 
   // #1557: the sign-in page's server. A self-hosted one is accepted only after
   // a probe; choosing it reloads the page, and the page's server and its
@@ -142,13 +153,24 @@ try {
   assert.equal(probed.server.name, 'Acceptance self-hosted')
   // Main may reload before evaluate replies; bind selection to its next completed document.
   await selectBundledServer(page, selfHosted.url, selfHosted.url)
-  await page.waitForFunction(() => document.body.innerText.trim().length > 30)
-  for (let attempt = 0; attempt < 100 && selfHosted.configReads() === 0; attempt++) await new Promise(done => setTimeout(done, 100))
-  assert.ok(selfHosted.configReads() > 0, 'the signed-out page must read the chosen server')
-  await page.screenshot({ path: join(output, 'bundled-sign-in-self-hosted.png'), animations: 'disabled' })
+  await rendered(page)
+  if (headless) {
+    // The read the official sign-in page makes (apps/desktop/src/renderer/bootstrap.ts readPublicConfiguration),
+    // made here explicitly through the same renderer transport: main must send it to the chosen server.
+    const before = selfHosted.configReads()
+    const read = await page.evaluate(async () => {
+      const response = await fetch('/mikka/api/desktop/config', { cache: 'no-store', credentials: 'omit' })
+      return { status: response.status, body: await response.json() }
+    })
+    assert.deepEqual(read, { status: 200, body: { googleEnabled: false, githubEnabled: false, emailEnabled: true } })
+    assert.equal(selfHosted.configReads(), before + 1, 'the renderer transport must reach the chosen server')
+  } else {
+    for (let attempt = 0; attempt < 100 && selfHosted.configReads() === 0; attempt++) await new Promise(done => setTimeout(done, 100))
+    assert.ok(selfHosted.configReads() > 0, 'the signed-out page must read the chosen server')
+  }
   await selectBundledServer(page, null, builtIn)
-  await page.waitForFunction(() => document.body.innerText.trim().length > 30)
-  check('server choice: probe states, probed-only selection, the page follows the chosen server and returns')
+  await rendered(page)
+  check(`server choice: probe states, probed-only selection, the ${headless ? 'renderer transport' : 'signed-out page'} follows the chosen server and returns`)
   browser = await chromium.launch({ headless: true })
   const context = await browser.newContext({ storageState: scope.owner.storageStatePath })
   const systemBrowser = await context.newPage()
@@ -179,7 +201,7 @@ try {
   assert.equal(publicSession.user.id, scope.owner.userId)
   assert.deepEqual(Object.keys(publicSession.session), ['id'])
   await scope.recordResource({ type: 'session', id: publicSession.session.id, ownerId: scope.owner.userId })
-  check('system browser shows the signed-in account, then loopback and single-use PKCE session handoff')
+  check(`system browser ${headless ? 'follows the signed-in account\'s continue link' : 'shows the signed-in account'}, then loopback and single-use PKCE session handoff`)
   assert.match(appLink ?? '', /^mikka-dev-auth:\/\/auth\/done\?id=[A-Za-z0-9_-]{32,64}$/)
   check('the callback page opens the Dev build\'s own app link')
   if (process.platform === 'darwin' && process.env.MIKKA_DESKTOP_EXECUTABLE) {
@@ -212,12 +234,11 @@ try {
   // A build without the official UI checkout shows the page that says so (apps/frontend/src/headless.ts); the shell
   // around it is what this repository owns, and the devices page is checked where the official UI is built in.
   if (await page.evaluate(() => document.documentElement.dataset.mikkaHeadless === 'true')) {
-    await page.waitForFunction(() => document.body.innerText.trim().length > 30)
+    await rendered(page)
     assert.equal(nativeErrors.length, 0, `renderer uncaught errors: ${nativeErrors.join(',')}`)
     check('settings deep link reaches the renderer (no official UI in this build)')
   } else {
     await page.getByText('Devices', { exact: true }).first().waitFor({ state: 'visible' })
-    await page.screenshot({ path: join(output, 'bundled-devices.png'), animations: 'disabled' })
     assert.equal(nativeErrors.length, 0, `renderer uncaught errors: ${nativeErrors.join(',')}`)
     check('settings deep link and shared devices page')
   }
@@ -228,6 +249,8 @@ try {
   passed = true
 } catch (error) {
   failure = error
+  // Screenshots only on failure: CI keeps no picture of a passing view.
+  if (page && !page.isClosed()) await page.screenshot({ path: join(output, 'failure.png'), animations: 'disabled', timeout: 10_000 }).catch(() => {})
 } finally {
   const cleanupErrors = []
   evidence.cleanupStages = []
