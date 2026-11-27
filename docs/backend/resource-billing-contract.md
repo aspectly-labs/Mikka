@@ -191,7 +191,7 @@ Stripe 的 [幂等请求](https://docs.stripe.com/api/idempotent_requests) 明�
    - 仅当前账户 Owner 可通过 `POST /api/workspaces/:id/billing`（`action: 'overage'`）、`POST /api/organizations/:id/billing`、`PUT/PATCH /api/workspaces/:id/billing/settings`（`{ overage }`）、`saveOveragePolicy` Server Action 或 `billing.saveOveragePolicy` Desktop RPC 修改。开启超额必须提供正数 `monthlyCapPoints`，否则返回 `billingOverageCapRequired`（409）。
    - 持有有效 `resource_v1` 付费套餐且当期套餐额度用尽时：超额关闭则拒绝溢出扣款（有加购余额返回 `usage_budget_exhausted`，无余额返回 `points_exhausted`）；超额开启则按当前 UTC 自然月已结算及在途超出消耗校验 `overageMonthlyCapPoints`。无有效套餐的纯充值工作区仍可自由消耗有效加购余额。
 4. **旧卡验证额度祖父迁移**：
-   - 迁移 `20261126233650_billing_new_pricing_credits.sql` 将既有 `hosted_allowances.remaining > 0` 幂等迁入永不过期的 `workspace_credit_grants`（`bucket = 'purchased'`、`reason = 'allowance_grandfather'`、`expiresAt = NULL`）并将原 `hosted_allowances.remaining` 归零，保证现有用户余额不缩水、不重复计算。
+   - 迁移 `20261126233650_billing_new_pricing_credits.sql` 将既有 `hosted_allowances.remaining > 0` 幂等迁入永不过期的 `workspace_credit_grants`（`bucket = 'purchased'`、`reason = 'allowance_grandfather'`、`expiresAt = NULL`）并在同一条语句中从 `hosted_allowances.remaining` 减去恰好被转换的数额；已有祖父授予的工作区不再转换，因此重跑不会把迁移之后记入的额度（例如退款）清零。保证现有用户余额不缩水、不重复计算。祖父授予 `amountCents = 0` 且没有 Stripe 支付标识，不计入收入，也不会被退款流程（按 Stripe 发票/支付意图匹配）选中。
 
 ## E2B 按活跃秒计量合同（#3328 Part 2）
 
