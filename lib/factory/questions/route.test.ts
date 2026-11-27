@@ -8,7 +8,7 @@ let enabled = false, sessions = 0, reads = 0;
 const verifiedUsers = new WeakSet<object>();
 const namedTaskId = "00000000-0000-4000-8000-000000000002";
 const namedQuestion = { id: "00000000-0000-4000-8000-000000000003", taskId: namedTaskId,
-  originRunId: "00000000-0000-4000-8000-000000000004", status: "open", kind: "permission",
+  originRunId: "00000000-0000-4000-8000-000000000004", status: "open", kind: "decision",
   question: "Continue the original task?", options: ["Continue"], reference: {} };
 mock.module("@/lib/api-auth", { namedExports: { auth: { api: { getSession: async () => { sessions++; const user = { id: "owner" }; verifiedUsers.add(user); return { user, session: { id: "question-fixture-session" } }; } } } } });
 // This unit preserves the actual credential, origin and Factory adapters.

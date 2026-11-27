@@ -1,7 +1,7 @@
 import {
-  applyApprovalMode,
   approvalModeSchema,
   gitPushRestriction,
+  readOnlyRunPolicy,
   networkAllowSchema,
   resolveAgentSettings,
   storedPermissionsSchema,
@@ -18,10 +18,10 @@ export function resolveTrustedRunPolicy(source: {
   const workspace = source.workspace
   if (workspace && workspace.permissions != null && !storedPermissionsSchema.safeParse(workspace.permissions).success) throw new Error('agentPolicyUnavailable')
   if (workspace && workspace.networkAllow != null && !networkAllowSchema.safeParse(workspace.networkAllow).success) throw new Error('agentPolicyUnavailable')
-  const personal = source.personalApprovalMode == null ? 'ask' : approvalModeSchema.parse(source.personalApprovalMode)
+  const personal = source.personalApprovalMode == null ? null : approvalModeSchema.parse(source.personalApprovalMode)
   const policy = resolveAgentSettings(workspace, undefined, source.environment).policy
   // A stored git_push is read back as stored; unset or an ask reads as allow.
   // It never withholds the agent's own push (decision 2026-11-02-1600).
   policy.permissions.git_push = gitPushRestriction(workspace?.permissions)
-  return applyApprovalMode(policy, personal)
+  return personal === 'read_only' ? readOnlyRunPolicy(policy) : policy
 }

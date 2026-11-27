@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { JSONContent } from '@tiptap/core'
 import { z } from 'zod'
-import { applyApprovalMode, approvalModeSchema, intersectNetworkDomains, CONFIGURABLE_ACTIONS, networkAllowSchema, runPolicySchema, storedPermissionsSchema, type ConfigurableAction, type PermissionDecision, type RunPolicy } from '@mikka/protocol/agent-policy'
+import { readOnlyRunPolicy, approvalModeSchema, intersectNetworkDomains, CONFIGURABLE_ACTIONS, networkAllowSchema, runPolicySchema, storedPermissionsSchema, type ConfigurableAction, type PermissionDecision, type RunPolicy } from '@mikka/protocol/agent-policy'
 import { runGitIdentitySchema, type RunGitIdentity } from '@mikka/protocol/device'
 import { resolveSettingValue } from '@/lib/settings/registry'
 import { resolveTrustedRunPolicy } from './policy-snapshot'
@@ -83,7 +83,7 @@ export const cliPolicyLayerSchema = cliPolicyValuesSchema.extend({ defaults: cli
 type CliPolicyValues = z.infer<typeof cliPolicyValuesSchema>
 // Defaults replace scalar/list fields; permission choices inherit per action.
 const mergeCliPolicyValues = (base: CliPolicyValues, next: CliPolicyValues): CliPolicyValues => ({ ...base, ...next, ...(next.permissions ? { permissions: { ...base.permissions, ...next.permissions } } : {}) })
-const rank = { deny: 0, ask: 1, allow: 2 } as const
+const rank = { deny: 0, allow: 1 } as const
 /** Caller identity is authenticated by the host. Workspace membership is
  * separately pinned by cliAgentPolicyGuard through transaction commit. */
 export async function lockCliAgentPolicy(tx: PoolClient, userId: string, agentId: string, botId: string | null, task?: CliTaskScope, runWorkspaceId?: string) {
@@ -284,14 +284,14 @@ export async function providerContinuationPolicy(tx: PoolClient, userId: string,
   // reauthorizes it, but an existing host ceiling (especially deny) survives.
   if (source.computerUse) policy.permissions.computer_use = source.computerUse
   else delete policy.permissions.computer_use
-  if (source.readOnly || policy.readOnly) policy = applyApprovalMode(policy, 'read_only')
+  if (source.readOnly || policy.readOnly) policy = readOnlyRunPolicy(policy)
   const { rows: assignments } = await tx.query<{ stage: string; policy: unknown }>(`SELECT a.stage,a.output->'check'->'policy' AS policy
     FROM factory_attempts a JOIN factory_tasks t ON t.id=a."taskId" AND t."attemptId"=a.id
     JOIN agent_runs r ON r.id=a."runId" AND r."issueId"=t."issueId" AND r."userId"=t."userId"
     WHERE r.id=$1 AND r."userId"=$2 AND a.stage IN ('review','verify','monitor')`, [sourceRunId, userId])
   for (const assignment of assignments) {
     if (assignment.stage !== 'monitor') policy = intersectRunPolicy(policy, runPolicySchema.parse(assignment.policy))
-    policy = applyApprovalMode(policy, 'read_only')
+    policy = readOnlyRunPolicy(policy)
   }
   return policy
 }

@@ -13,7 +13,7 @@ test('trusted workspace policy and personal read-only restrictions combine witho
   assert.equal(restricted.permissions.network, 'deny')
 })
 test('invalid stored decisions, domains or personal modes fail closed', () => {
-  assert.throws(() => resolveTrustedRunPolicy({ workspace:{ permissions:{ write_outside_repo:'allow' }, networkAllow:[] }, personalApprovalMode:'ask' }))
+  assert.throws(() => resolveTrustedRunPolicy({ workspace:{ permissions:{ write_outside_repo:'maybe' }, networkAllow:[] }, personalApprovalMode:'ask' }))
   assert.throws(() => resolveTrustedRunPolicy({ workspace:{ permissions:{}, networkAllow:['*'] }, personalApprovalMode:'ask' }))
   assert.throws(() => resolveTrustedRunPolicy({ workspace:null, personalApprovalMode:'bypassPermissions' }))
 })

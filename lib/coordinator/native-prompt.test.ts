@@ -8,7 +8,9 @@ test('personal instructions use clean Markdown presentation and forbid OpenUI DS
   const presentation = coordinatorPresentation()
   assert.match(instructions, /everyday life/)
   assert.match(instructions, /send_email/)
-  assert.match(instructions, /awaiting_approval/)
+  // Agents never ask for permission (ADR 2026-11-27-1615): no approval steering.
+  assert.doesNotMatch(instructions, /awaiting_approval|policy ask|missing permission/)
+  assert.match(instructions, /never ask for a separate yes/)
   assert.doesNotMatch(instructions, /host's real approval workflow/)
   assert.match(presentation, /^Presentation:\n/)
   assert.match(presentation, /Reply in clean, concise Markdown/)

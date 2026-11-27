@@ -466,7 +466,7 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
     try {
       await publish(b.run,'workspace',{...botOriginal.layers.workspace,defaults:{permissions:{network:'deny',git_push:'deny'},networkAllow:['bot-default.invalid'],approvalMode:'read_only'}})
       const workspace=await publish(subject.run,'workspace',{...original.layers.workspace,defaults:{permissions:{network:'ask',git_push:'ask'},networkAllow:['task-default.invalid'],approvalMode:'ask'}})
-      assert.equal(workspace.policy.permissions.network,'ask');assert.deepEqual(workspace.policy.networkAllow,['task-default.invalid'])
+      assert.equal(workspace.policy.permissions.network,'allow','a stored ask reads as allow');assert.deepEqual(workspace.policy.networkAllow,['task-default.invalid'])
       const teamDefaults={permissions:{network:'allow',git_push:'deny'},networkAllow:['team-default.invalid'],approvalMode:'read_only'}
       const team=await publish(subject.run,'team',{defaults:teamDefaults})
       assert.equal(team.policy.readOnly,true);assert.equal(team.policy.permissions.git_push,'deny')
@@ -482,7 +482,7 @@ test('task workspace policy applies to Coordinator and tenant-bound Bot runs', {
       assert.equal((await read(b.run)).policy.permissions.git_push,'deny','the other workspace retains its own forced ceiling')
       assert.deepEqual(inherited.policy.networkAllow,['project-default.invalid']);assert.equal(inherited.policy.readOnly,undefined)
       const explicit=await publish(subject.run,'workspace',{permissions:{network:'ask',git_push:'deny'},networkAllow:['explicit.invalid'],approvalMode:'ask'})
-      assert.equal(explicit.policy.permissions.network,'ask');assert.equal(explicit.policy.permissions.git_push,'deny');assert.deepEqual(explicit.policy.networkAllow,['explicit.invalid'])
+      assert.equal(explicit.policy.permissions.network,'allow');assert.equal(explicit.policy.permissions.git_push,'deny');assert.deepEqual(explicit.policy.networkAllow,['explicit.invalid'])
       await publish(subject.run,'team',{permissions:{network:'deny'},defaults:teamDefaults})
       const constrained=await publish(subject.run,'workspace',{permissions:{network:'allow',git_push:'allow'},networkAllow:['explicit.invalid']})
       // The team ceiling still wins on network. install_dependency is 'allow' because

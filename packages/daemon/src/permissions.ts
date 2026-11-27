@@ -4,7 +4,9 @@
 // (`RunAssignment.policy`). This file applies them: the decision for one
 // action, the domains a run may reach, whether the daemon pushes, the rules
 // a CLI that has its own permission model is given, and the lines that tell
-// the agent what it may do. Anything not listed is `ask`.
+// the agent what it may do. Agents never ask a human for permission (ADR
+// 2026-11-27-1615): anything not listed is `allow`; only an explicit admin
+// `deny` or a read-only run (ADR 0046) takes an action away.
 import { lstatSync, readlinkSync, realpathSync } from "node:fs"
 import {
   basename,
@@ -18,7 +20,6 @@ import {
 import {
   defaultRunPolicy,
   intersectNetworkDomains,
-  PACKAGE_REGISTRY_DOMAINS,
   PERMISSION_ACTIONS,
   PERMISSION_DEFAULTS,
   READ_ONLY_DENIED,
@@ -33,8 +34,6 @@ export { PERMISSION_ACTIONS, PERMISSION_DEFAULTS }
 export type { PermissionAction, PermissionDecision, RunPolicy }
 
 export interface PermissionContext {
-  /** Whether the user approved this repo's setup recipe. */
-  setupRecipeApproved?: boolean
   /** Trusted host assignment only, never model-supplied. Defaults when absent. */
   policy?: RunPolicy
 }
@@ -44,15 +43,14 @@ export function decide(
   context: PermissionContext = {}
 ): PermissionDecision {
   if (!Object.hasOwn(PERMISSION_DEFAULTS, action))
-    return context.policy?.readOnly ? "deny" : "ask"
+    return context.policy?.readOnly ? "deny" : "allow"
   const typed = action as PermissionAction
   // A read-only run (ADR 0046) changes nothing, whatever the workspace chose:
   // the check reads the worktree, reports, and stops.
   if (context.policy?.readOnly && READ_ONLY_DENIED.includes(typed))
     return "deny"
-  if (typed === "run_setup_recipe" && !context.setupRecipeApproved) return "ask"
   if (context.policy && isConfigurableAction(typed)) {
-    return context.policy.permissions[typed] ?? "ask"
+    return context.policy.permissions[typed] ?? "allow"
   }
   return PERMISSION_DEFAULTS[typed]
 }
@@ -64,8 +62,8 @@ export function runPolicy(sent: RunPolicy | undefined): RunPolicy {
 
 /** Project commands run inside the host-enforced sandbox. Publishing is a
  * separate daemon capability, never a prerequisite for building or testing.
- * An explicitly restricted installation profile retains file-only execution;
- * unconfigured sandbox work allows project dependencies. */
+ * A read-only check or an admin's explicit dependency-install deny keeps
+ * file-only execution; every other run has a shell. */
 export function rawCliShellAvailable(policy: RunPolicy): boolean {
   return !policy.readOnly && policy.permissions.install_dependency === 'allow'
 }
@@ -73,22 +71,12 @@ export function rawCliShellAvailable(policy: RunPolicy): boolean {
 /**
  * Domains a run may reach on top of its harness's model API (which is
  * always reachable). `allow` opens every host; `deny` closes non-model hosts
- * even when installs are allowed; `ask` is the workspace's
- * and the repo's lists, and any other host goes to the sandbox's ask
- * callback (denied until approval cards exist).
+ * even when installs are allowed. A host-derived `networkCeiling` bounds
+ * either.
  */
-export function runDomains(
-  policy: RunPolicy,
-  repoAllow: readonly string[] = []
-): string[] {
-  const registries =
-    policy.permissions.install_dependency === "allow"
-      ? PACKAGE_REGISTRY_DOMAINS
-      : []
+export function runDomains(policy: RunPolicy): string[] {
   if (policy.permissions.network === "deny") return []
-  const destinations = policy.permissions.network === "allow" ? ["*"]
-    : [...new Set([...policy.networkAllow, ...repoAllow, ...registries])]
-  return policy.networkCeiling === undefined ? destinations : intersectNetworkDomains(destinations, policy.networkCeiling)
+  return policy.networkCeiling === undefined ? ["*"] : intersectNetworkDomains(["*"], policy.networkCeiling)
 }
 
 /**
@@ -127,10 +115,10 @@ const INSTALL_COMMANDS: readonly (readonly [string, readonly string[]])[] = [
 
 /**
  * Claude Code permission rules for the run (`--settings` `permissions`).
- * The SDK handles asks through the run-bound host gate. A raw shell whose
- * configurable effects cannot be authorized is unavailable as a capability.
- * `git push` is the agent's own judgment, as with the person's own `gh auth
- * login` (decision 2026-11-02-1600): no rule withholds it.
+ * There are no ask rules: the run never waits for a person (ADR
+ * 2026-11-27-1615). Only an explicit `deny` or a read-only check names
+ * anything here. `git push` is the agent's own judgment, as with the
+ * person's own `gh auth login` (decision 2026-11-02-1600): no rule withholds it.
  */
 export function claudePermissionRules(policy: RunPolicy): {
   allow: string[]
@@ -147,7 +135,7 @@ export function claudePermissionRules(policy: RunPolicy): {
     : policy.permissions.install_dependency
   return {
     allow: [],
-    ask: decision === "ask" ? install : [],
+    ask: [],
     deny: [
       ...(!rawCliShellAvailable(policy) ? ['Bash','PowerShell','Monitor'] : []),
       ...(policy.readOnly ? READ_ONLY_TOOLS : []),
@@ -159,33 +147,37 @@ export function claudePermissionRules(policy: RunPolicy): {
 /** Tools that change the worktree, denied to a read-only run (ADR 0046). */
 const READ_ONLY_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit"]
 
-/** What the agent is told about this run's permissions. */
+/**
+ * What the agent is told about this run's permissions. It is never told to
+ * wait for or ask about permission (ADR 2026-11-27-1615); only an explicit
+ * admin `deny`, a host network ceiling or a read-only check is named.
+ */
 export function policyInstructions(policy: RunPolicy): string[] {
   const { permissions } = policy
   const lines: string[] = []
   if (policy.readOnly)
     lines.push(
-      "- This is a read-only check: you may read the worktree but not change it. Report what you found through `submit`; do not fix anything yourself."
+      "- This is a read-only check: you may read the worktree but not change it, and you have no shell. Report what you found through `submit`; do not fix anything yourself."
     )
-  if (!rawCliShellAvailable(policy)) lines.push('- Native shell execution is unavailable under the current dependency-installation policy. Use the available file tools; report a blocked operation when a shell is required. A chat response does not grant execution authority.')
+  else if (!rawCliShellAvailable(policy))
+    lines.push("- Native shell execution is turned off because a workspace admin does not allow installing dependencies. Use the available file tools.")
   lines.push(
-    permissions.network === "allow"
-      ? "- Network access is open for this workspace."
-      : permissions.network === "deny"
-        ? "- Network access is turned off (only your model API is reachable). Do not try to reach other hosts."
-        : "- Network access is limited to the workspace ceiling. Destinations within that ceiling are pre-authorized; destinations outside it remain unavailable. Do not work around a blocked request."
+    permissions.network === "deny"
+      ? "- Network access is turned off (only your model API is reachable). Do not try to reach other hosts."
+      : policy.networkCeiling !== undefined
+        ? "- Network access is open within the workspace's allowed destinations; other hosts are unreachable."
+        : "- Network access is open."
   )
-  lines.push(
-    permissions.install_dependency === "allow"
-      ? "- You may install or add dependencies when the task needs them."
-      : permissions.install_dependency === "deny"
-        ? "- Do not install or add dependencies; this workspace does not allow it. Work with what is installed, or call `report_blocked`."
-        : "- Dependency installation is unavailable through the native shell under this policy. Report the blocked operation; do not treat a chat reply as approval."
-  )
+  if (!policy.readOnly)
+    lines.push(
+      permissions.install_dependency === "deny"
+        ? "- Do not install or add dependencies; a workspace admin does not allow it. Work with what is installed."
+        : "- You may install or add dependencies when the task needs them."
+    )
   lines.push(
     permissions.write_outside_repo === "deny"
       ? "- Work only inside that worktree. Writing outside it is not allowed."
-      : "- Work only inside that worktree. Everything outside it remains read-only; a chat reply cannot expand the filesystem boundary."
+      : "- Work inside that worktree; everything outside it is read-only in this sandbox."
   )
   return lines
 }

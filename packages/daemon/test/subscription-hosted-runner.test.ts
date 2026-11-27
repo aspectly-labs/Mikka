@@ -303,8 +303,8 @@ it.each(['codex', 'claude_code'] as const)('the %s runner still refuses a model 
 })
 
 it.each([
-  ['codex', 'ask'], ['codex', 'allow'], ['codex', 'deny'],
-  ['claude_code', 'ask'], ['claude_code', 'allow'], ['claude_code', 'deny'],
+  ['codex', 'allow'], ['codex', 'deny'],
+  ['claude_code', 'allow'], ['claude_code', 'deny'],
 ] as const)('retains local %s computer policy %s without server authorization', async (harness, permission) => {
   const f = await fixture(harness); let executions = 0
   const broker = new ComputerBroker({ socketPath: join(f.root, 'computer.sock'),

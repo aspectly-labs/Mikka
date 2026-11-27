@@ -33,17 +33,14 @@ export function foldExternalWritePermissions(sources: readonly unknown[]): Recor
  * Workspace defaults are not a source here and are preserved by applyCliFold.
  */
 export function foldCliRunPolicy(sources: readonly unknown[]): z.infer<typeof cliPolicyLayerSchema> {
-  const permissions: Record<string, 'ask' | 'deny'> = {}
+  // A stored ask reads as allow (ADR 2026-11-27-1615); only deny folds.
+  const permissions: Record<string, 'deny'> = {}
   let networkAllow: string[] | undefined
   let readOnly = false
   for (const source of sources) {
     const layer = cliPolicyLayerSchema.parse(source ?? {})
-    for (const [action, decision] of Object.entries(layer.permissions ?? {})) {
-      if (decision === 'allow') continue
-      if (action === 'git_push' && decision === 'ask') continue
+    for (const [action, decision] of Object.entries(layer.permissions ?? {}))
       if (decision === 'deny') permissions[action] = 'deny'
-      else if (permissions[action] !== 'deny') permissions[action] = 'ask'
-    }
     if (layer.networkAllow !== undefined) networkAllow = networkAllow === undefined ? [...layer.networkAllow] : intersectNetworkDomains(networkAllow, layer.networkAllow)
     if (layer.approvalMode === 'read_only') readOnly = true
   }

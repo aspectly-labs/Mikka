@@ -9,7 +9,7 @@ import { join } from "node:path"
 import { execa } from "execa"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { defaultRunPolicy, PACKAGE_REGISTRY_DOMAINS } from "@mikka/protocol/agent-policy"
+import { defaultRunPolicy } from "@mikka/protocol/agent-policy"
 import { normalizeRepository } from "@mikka/protocol/repository"
 
 import { onLines } from "../src/agents/child"
@@ -660,8 +660,8 @@ describe("run context", () => {
       extraWrite: ["/tmp/codex-auth.json"],
       runDir: tempDir(),
       privateDir: tempDir("orvp-"),
-      // A person limited the network; the run still reaches its harness API.
-      policy: { ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, network: "ask" } },
+      // A person turned the network off; the run still reaches its harness API.
+      policy: { ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, network: "deny" } },
     })
     const policy = ctx.policy()
     expect(policy).toMatchObject({
@@ -677,11 +677,6 @@ describe("run context", () => {
         "*.openai.com",
         "chatgpt.com",
         "*.chatgpt.com",
-        // The workspace's default allow-list (ADR 0028), then the repo's.
-        "github.com",
-        "*.github.com",
-        "*.githubusercontent.com",
-        ...PACKAGE_REGISTRY_DOMAINS,
       ],
     })
     expect(policy.allowWrite).not.toContain(ctx.gitDir)

@@ -354,7 +354,9 @@ export const setupRecipeSchema = z.object({
   copyFiles: z.array(z.string().max(1_000)).max(200),
   /** Shell command run in the worktree, e.g. `bun install`. */
   command: z.string().max(2_000).optional(),
-  /** Approved once per repo by the user; unapproved recipes never run. */
+  /** Legacy: nobody approves a recipe (ADR 2026-11-27-1615) and the daemon
+   * runs it either way. Still sent, as true, for released daemons that skip
+   * a recipe whose flag is false. */
   approved: z.boolean(),
 })
 export type SetupRecipe = z.infer<typeof setupRecipeSchema>

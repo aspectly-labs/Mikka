@@ -525,10 +525,7 @@ export class RunContext {
         ...(this.options.harnessDomains ?? []),
         ...(runAppsHost(this.options.apps) ? [runAppsHost(this.options.apps)!] : []),
         ...(this.options.mcp ? [new URL(this.options.mcp.url).host] : []),
-        ...runDomains(
-          runPolicy(this.options.policy),
-          [...(this.options.networkAllow ?? []), ...(this.options.github ? ['github.com', 'api.github.com', new URL(this.options.github.endpoint).host] : [])],
-        ),
+        ...runDomains(runPolicy(this.options.policy)),
       ],
     }
   }
@@ -740,7 +737,7 @@ export function runInstructions(worktree: string, policy?: RunPolicy, github?: R
     ] : github ? [] : ["- Do not commit, push or switch branches. Mikka verifies, commits and pushes your work after you hand it in."]),
     "- Run every command in the foreground. Nothing keeps running after your turn: when your turn ends, the run ends.",
     "- When the task is done and checked, call the `submit` tool of the `mikka` MCP server with a short summary. That is the only way to finish successfully.",
-    "- First use the issue and existing facts. For missing task context call `request_help`: the Orchestrator checks known facts before involving the person. Call `ask_human` only for a genuinely unresolved product decision or missing permission. Call `report_blocked` for an external condition. These preserve a durable question and stop this run; an answer continues its original worktree/session. Never invent authorization or start another task while waiting.",
+    "- First use the issue and existing facts. For missing task context call `request_help`: the Orchestrator checks known facts before involving the person. Never ask anyone for permission or approval: within the rules above you have full access, so act. Call `ask_human` only for a genuinely unresolved product decision or missing information. Call `report_blocked` for a real external blocker (a service down, a quota, a sign-in only the person can supply). These preserve a durable question and stop this run; an answer continues its original worktree/session. Never invent authorization or start another task while waiting.",
     "- Ending your turn without calling one of these tools counts as unfinished work.",
   ].join("\n")
 }

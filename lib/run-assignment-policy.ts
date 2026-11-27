@@ -1,6 +1,6 @@
-import { applyApprovalMode, CONFIGURABLE_ACTIONS, intersectNetworkDomains, isNoLooserThan, runPolicySchema, type PermissionDecision, type RunPolicy } from '@mikka/protocol/agent-policy'
+import { readOnlyRunPolicy, CONFIGURABLE_ACTIONS, intersectNetworkDomains, isNoLooserThan, runPolicySchema, type PermissionDecision, type RunPolicy } from '@mikka/protocol/agent-policy'
 
-const rank: Record<PermissionDecision, number> = { deny: 0, ask: 1, allow: 2 }
+const rank: Record<PermissionDecision, number> = { deny: 0, allow: 1 }
 
 /** A host-frozen continuation ceiling can only remove capabilities from the
  * live target policy. Keep the original domain algebra, including wildcard
@@ -18,7 +18,7 @@ export function intersectRunPolicy(current: RunPolicy, frozen: unknown): RunPoli
     const limit = ceiling.permissions[action]
     // Computer authority is separately granted by the broker. A CLI-only
     // ceiling omits it; a read-only or independent-check ceiling can deny it.
-    if (limit && rank[limit] < rank[permissions[action] ?? 'ask']) permissions[action] = limit
+    if (limit && rank[limit] < rank[permissions[action] ?? 'allow']) permissions[action] = limit
   }
   const networkCeiling = current.networkCeiling === undefined ? ceiling.networkCeiling
     : ceiling.networkCeiling === undefined ? current.networkCeiling : intersectNetworkDomains(current.networkCeiling, ceiling.networkCeiling)
@@ -29,7 +29,7 @@ export function intersectRunPolicy(current: RunPolicy, frozen: unknown): RunPoli
   const policy: RunPolicy = { ...current, permissions, networkAllow,
     ...(networkCeiling !== undefined ? { networkCeiling: [...networkCeiling] } : {}),
     ...(current.readOnly || ceiling.readOnly ? { readOnly: true } : {}) }
-  return policy.readOnly ? applyApprovalMode(policy, 'read_only') : policy
+  return policy.readOnly ? readOnlyRunPolicy(policy) : policy
 }
 
 /** A frozen check/benchmark may narrow the live policy, never replace a denial.

@@ -17,11 +17,11 @@ test('external fold keeps deny/ask only and never copies an allow', () => {
   assert.throws(() => foldExternalWritePermissions([[]]))
 })
 
-test('cli fold is restrictive, intersects the network allow-list and carries read_only', () => {
+test('cli fold keeps explicit deny (a legacy ask reads as allow), intersects the network allow-list and carries read_only', () => {
   assert.deepEqual(foldCliRunPolicy([
     { permissions: { install_dependency: 'allow', network: 'ask', git_push: 'deny' }, networkAllow: ['a.com', 'b.com'], approvalMode: 'ask' },
     { permissions: { install_dependency: 'deny', network: 'allow', git_push: 'ask' }, networkAllow: ['b.com'], approvalMode: 'read_only' },
-  ]), { permissions: { install_dependency: 'deny', network: 'ask', git_push: 'deny' }, networkAllow: ['b.com'], approvalMode: 'read_only' })
+  ]), { permissions: { install_dependency: 'deny', git_push: 'deny' }, networkAllow: ['b.com'], approvalMode: 'read_only' })
   assert.deepEqual(foldCliRunPolicy([{ networkAllow: [] }, { networkAllow: ['a.com'] }]), { networkAllow: [] })
   // defaults are not a fold source; they are preserved by applyCliFold
   assert.deepEqual(foldCliRunPolicy([{ defaults: { permissions: { network: 'deny' } } }]), {})

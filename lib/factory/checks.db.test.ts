@@ -1583,7 +1583,7 @@ test(
         assert.deepEqual(await state(pending.task.id),pending);
         assert.deepEqual((await db.query('SELECT id FROM agent_runs WHERE "issueId"=$1 ORDER BY id',[pending.task.issueId])).rows,beforeRuns);
       });
-      for (const decision of ["allow", "ask", "deny"] as const)
+      for (const decision of ["allow", "deny"] as const)
         await t.test(
           `claim retains host network ${decision} and its frozen domain list`,
           async () => {

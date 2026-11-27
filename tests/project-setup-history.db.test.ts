@@ -81,7 +81,8 @@ test('Project setup history restores only the recipe after fresh binding and aut
   assert.equal(stored.name, 'Current name')
   assert.equal(stored.configuration.runtime, 'local')
   assert.deepEqual(stored.configuration.variables, { CURRENT_VALUE: 'now' })
-  assert.deepEqual(stored.configuration.setup, { command: 'node --version', copyFiles: ['fixture.txt'], approved: false })
+  // A restored recipe runs as configured (ADR 2026-11-27-1615); older daemons skip a false flag.
+  assert.deepEqual(stored.configuration.setup, { command: 'node --version', copyFiles: ['fixture.txt'], approved: true })
   await assert.rejects(store.rollbackProjectSetup(owner, { ...request, bindingSnapshot: shared.bindingSnapshot }), { code: 'projectResourceConflict' })
   assert.equal((await database.query("select count(*)::integer count from workspace_resource_events where kind='environment.setup_restored' and \"resourceId\"=$1", [env.id])).rows[0].count, 1)
   await database.query("update resource_access_policies set visibility='private' where kind='project' and id=$1", [other])

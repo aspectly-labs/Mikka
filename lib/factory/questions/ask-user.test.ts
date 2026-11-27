@@ -5,7 +5,7 @@ import { handleFactoryQuestionList, toAskUserQuestion } from "./ask-user";
 const base = { id: "q1", taskId: "t1", originRunId: "r1", status: "open", question: "Pick one", options: ["A"], reference: { questionId: "q1" } };
 
 test("headers are short chips for every question kind; options carry an empty description and value = label", () => {
-  for (const [kind, header] of [["context", "Context"], ["decision", "Decision"], ["permission", "Permission"], ["external", "External"], ["somethingverylong", "somethingver"]]) {
+  for (const [kind, header] of [["context", "Context"], ["decision", "Decision"], ["external", "External"], ["somethingverylong", "somethingver"]]) {
     const q = toAskUserQuestion({ ...base, kind });
     assert.equal(q.header, header);
     assert.ok(q.header.length <= 12);

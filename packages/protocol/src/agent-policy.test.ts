@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   APPROVAL_MODES,
+  approvalModeSchema,
   defaultRunPolicy,
   runPolicyDigestInput,
   runPolicySchema,
@@ -13,12 +14,11 @@ import {
   READ_ONLY_DENIED,
   PERMISSION_ACTIONS,
   PERMISSION_DEFAULTS,
-  applyApprovalMode,
+  readOnlyRunPolicy,
   isNoLooserThan,
   modelForHarness,
   networkAllowSchema,
   resolveAgentSettings,
-  resolveApprovalMode,
   resolveDefaultHarness,
   resolveInstructions,
   resolveModelByHarness,
@@ -51,11 +51,25 @@ describe("agent policy table (ADR 0009)", () => {
       run_project_script: "allow",
       run_setup_recipe: "allow",
       install_dependency: "allow",
-      write_outside_repo: "ask",
+      write_outside_repo: "allow",
       git_push: "deny",
       network: "allow",
-      computer_use: "ask",
+      computer_use: "allow",
     })
+  })
+
+  it("has no ask (ADR 2026-11-27-1615): a stored or sent ask reads as allow, an explicit deny stays", () => {
+    for (const action of CONFIGURABLE_ACTIONS)
+      expect(CONFIGURABLE_PERMISSIONS[action]).toEqual(["allow", "deny"])
+    expect(Object.values(PERMISSION_DEFAULTS)).not.toContain("ask")
+    expect(storedPermissionsSchema.parse({
+      install_dependency: "ask", write_outside_repo: "ask", network: "ask", computer_use: "ask",
+    })).toEqual({ install_dependency: "allow", write_outside_repo: "allow", network: "allow", computer_use: "allow" })
+    expect(storedPermissionsSchema.parse({ network: "deny", install_dependency: "deny" })).toEqual({ network: "deny", install_dependency: "deny" })
+    const sent = runPolicySchema.parse({ permissions: { install_dependency: "ask", write_outside_repo: "ask", git_push: "allow", network: "ask", computer_use: "ask" }, networkAllow: [] })
+    expect(sent.permissions).toEqual({ install_dependency: "allow", write_outside_repo: "allow", git_push: "allow", network: "allow", computer_use: "allow" })
+    expect(resolvePermissions({ install_dependency: "ask", network: "ask", computer_use: "ask", write_outside_repo: "ask" })).toEqual(resolvePermissions({}))
+    expect(resolveAgentSettings({ permissions: { network: "deny" } }).policy.permissions.network).toBe("deny")
   })
 
   it("never asks for a push: stored ask reads as allow, a run policy's ask carries no authority (decision 2026-11-01-1310)", () => {
@@ -73,7 +87,7 @@ describe("agent policy table (ADR 0009)", () => {
 
   it("refuses choices an action does not offer", () => {
     expect(
-      storedPermissionsSchema.safeParse({ write_outside_repo: "allow" }).success
+      storedPermissionsSchema.safeParse({ write_outside_repo: "maybe" }).success
     ).toBe(false)
     expect(
       storedPermissionsSchema.safeParse({ read_in_worktree: "deny" }).success
@@ -86,15 +100,15 @@ describe("agent policy table (ADR 0009)", () => {
 
   it("falls back to defaults for stored values that are not allowed", () => {
     expect(
-      resolvePermissions({ write_outside_repo: "allow", git_push: "deny" })
+      resolvePermissions({ write_outside_repo: "maybe", git_push: "deny" })
     ).toEqual({
       install_dependency: "allow",
-      write_outside_repo: "ask",
+      write_outside_repo: "allow",
       git_push: "deny",
       network: "allow",
-      computer_use: "ask",
+      computer_use: "allow",
     })
-    expect(resolvePermissions({ computer_use: "unknown" }).computer_use).toBe("ask")
+    expect(resolvePermissions({ computer_use: "unknown" }).computer_use).toBe("allow")
     expect(storedPermissionsSchema.safeParse({ computer_use: "unknown" }).success).toBe(false)
   })
 
@@ -156,7 +170,7 @@ describe("resolveAgentSettings", () => {
     const legacy = { ...policy, permissions: { ...policy.permissions } }
     delete legacy.permissions.computer_use
     expect(runAssignmentSchema.parse({ ...assignment, policy: legacy }).policy?.permissions.computer_use).toBeUndefined()
-    expect(resolveAgentSettings(null).policy.permissions.computer_use).toBe("ask")
+    expect(resolveAgentSettings(null).policy.permissions.computer_use).toBe("allow")
   })
 })
 
@@ -166,12 +180,8 @@ describe("a person's approval mode (ADR 0060)", () => {
     networkAllow: ["example.com"],
   }).policy
 
-  it("leaves the workspace's policy alone on ask", () => {
-    expect(applyApprovalMode(workspace, "ask")).toEqual(workspace)
-  })
-
   it("takes the changing actions away on read_only, and never gives any back", () => {
-    const readOnly = applyApprovalMode(workspace, "read_only")
+    const readOnly = readOnlyRunPolicy(workspace)
     expect(readOnly.permissions).toEqual({
       install_dependency: "deny",
       write_outside_repo: "deny",
@@ -188,10 +198,10 @@ describe("a person's approval mode (ADR 0060)", () => {
   it("read_only is task intent: it does not take the push with the person's own credential away", () => {
     const allowed = { ...workspace, permissions: { ...workspace.permissions, git_push: "allow" as const } }
     expect(READ_ONLY_DENIED).not.toContain("git_push")
-    expect(applyApprovalMode(allowed, "read_only").permissions.git_push).toBe("allow")
+    expect(readOnlyRunPolicy(allowed).permissions.git_push).toBe("allow")
   })
 
-  it("offers only modes that are no looser than the workspace, whatever it chose", () => {
+  it("read_only is no looser than the workspace, whatever it chose", () => {
     // Every workspace the policy table can produce, including the loosest.
     const policies = [
       resolveAgentSettings(null).policy,
@@ -206,10 +216,8 @@ describe("a person's approval mode (ADR 0060)", () => {
       }).policy,
     ]
     for (const policy of policies) {
-      for (const mode of APPROVAL_MODES) {
-        const applied = applyApprovalMode(policy, mode)
-        expect(isNoLooserThan(policy, applied)).toBe(true)
-      }
+      expect(isNoLooserThan(policy, readOnlyRunPolicy(policy))).toBe(true)
+      expect(isNoLooserThan(policy, policy)).toBe(true)
     }
   })
 
@@ -232,11 +240,11 @@ describe("a person's approval mode (ADR 0060)", () => {
     )
   })
 
-  it("reads back only a mode the protocol has", () => {
-    expect(resolveApprovalMode("read_only")).toBe("read_only")
-    expect(resolveApprovalMode("ask")).toBe("ask")
-    expect(resolveApprovalMode("autonomous")).toBe("ask")
-    expect(resolveApprovalMode(null)).toBe("ask")
+  it("stored modes still parse; ask is only the legacy spelling of no mode", () => {
+    expect(APPROVAL_MODES).toEqual(["ask", "read_only"])
+    expect(approvalModeSchema.parse("ask")).toBe("ask")
+    expect(approvalModeSchema.parse("read_only")).toBe("read_only")
+    expect(approvalModeSchema.safeParse("autonomous").success).toBe(false)
   })
 })
 
@@ -315,7 +323,7 @@ it("canonicalizes resolved execution policy independent of object key order", ()
 it('opens the network by default everywhere and keeps the choices a person made', () => {
   expect(resolveAgentSettings(null, undefined, 'cloud').policy.permissions.network).toBe('allow')
   expect(resolveAgentSettings(null).policy.permissions.network).toBe('allow')
-  for (const environment of ['cloud', 'local'] as const) for (const network of ['allow','ask','deny'] as const) {
+  for (const environment of ['cloud', 'local'] as const) for (const network of ['allow','deny'] as const) {
     expect(resolveAgentSettings({ permissions:{network} },undefined,environment).policy.permissions.network).toBe(network)
   }
   expect(resolveAgentSettings({permissions:{install_dependency:'deny',git_push:'deny'}},undefined,'cloud').policy.permissions).toMatchObject({install_dependency:'deny',git_push:'deny'})
@@ -326,5 +334,6 @@ it('cannot widen a worker/workspace egress ceiling with a frozen assignment', ()
   expect(isNoLooserThan(base,{...base,networkCeiling:['api.github.com:443']})).toBe(true)
   expect(isNoLooserThan(base,{...base,networkCeiling:['api.github.com']})).toBe(false)
   expect(isNoLooserThan(base,defaultRunPolicy())).toBe(false)
-  expect(resolveAgentSettings({networkAllow:['registry.example.com']},undefined,'cloud').policy.permissions.network).toBe('ask')
+  // A workspace list no longer narrows a cloud run to that list (it was network ask).
+  expect(resolveAgentSettings({networkAllow:['registry.example.com']},undefined,'cloud').policy.permissions.network).toBe('allow')
 })

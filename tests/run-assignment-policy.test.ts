@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { applyApprovalMode, defaultRunPolicy, runPolicyDigestInput } from '@mikka/protocol/agent-policy'
+import { readOnlyRunPolicy, defaultRunPolicy, runPolicyDigestInput } from '@mikka/protocol/agent-policy'
 import { constrainedAssignmentPolicy, intersectRunPolicy } from '../lib/run-assignment-policy'
 
 test('frozen checks preserve their exact evidence policy under the current ceiling', () => {
   const current = defaultRunPolicy()
-  const frozen = applyApprovalMode({ ...current, networkAllow: [] }, 'read_only')
+  const frozen = readOnlyRunPolicy({ ...current, networkAllow: [] })
   assert.equal(constrainedAssignmentPolicy(current, undefined), current)
   assert.equal(runPolicyDigestInput(constrainedAssignmentPolicy(current, frozen)), runPolicyDigestInput(frozen))
 })
 
 test('a frozen check cannot remove a newer denial or read-only ceiling', () => {
-  const frozen = applyApprovalMode(defaultRunPolicy(), 'read_only')
+  const frozen = readOnlyRunPolicy(defaultRunPolicy())
   const current = { ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, network: 'deny' as const } }
   assert.throws(() => constrainedAssignmentPolicy(current, frozen), /exceeds/)
   assert.throws(() => constrainedAssignmentPolicy(frozen, defaultRunPolicy()), /exceeds/)
@@ -19,14 +19,14 @@ test('a frozen check cannot remove a newer denial or read-only ceiling', () => {
 
 test('a frozen assignment cannot restore revoked network domains or malformed policy', () => {
   const current = { ...defaultRunPolicy(), networkAllow: [] }
-  assert.throws(() => constrainedAssignmentPolicy(current, applyApprovalMode(defaultRunPolicy(), 'read_only')), /exceeds/)
+  assert.throws(() => constrainedAssignmentPolicy(current, readOnlyRunPolicy(defaultRunPolicy())), /exceeds/)
   assert.throws(() => constrainedAssignmentPolicy(current, { permissions: {} }))
 })
 
 test('provider continuation keeps source denials after target publication and computer grants', () => {
   const broad = { ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, git_push: 'allow' as const, computer_use: 'allow' as const } }
-  const ceiling = applyApprovalMode({ ...defaultRunPolicy(), networkCeiling: ['api.example.invalid'],
-    permissions: { ...defaultRunPolicy().permissions, git_push: 'deny' as const, computer_use: 'deny' as const } }, 'read_only')
+  const ceiling = readOnlyRunPolicy({ ...defaultRunPolicy(), networkCeiling: ['api.example.invalid'],
+    permissions: { ...defaultRunPolicy().permissions, git_push: 'deny' as const, computer_use: 'deny' as const } })
   const before = structuredClone({ broad, ceiling })
   const effective = intersectRunPolicy(broad, ceiling)
   assert.equal(effective.readOnly, true)
@@ -41,9 +41,9 @@ test('provider continuation keeps source denials after target publication and co
 
 test('provider network ceilings intersect wildcard and port restrictions; a live target may narrow further', () => {
   const current = { ...defaultRunPolicy(), networkAllow: ['*.example.invalid'], networkCeiling: ['*.example.invalid:443'],
-    permissions: { ...defaultRunPolicy().permissions, network: 'ask' as const } }
+    permissions: { ...defaultRunPolicy().permissions, network: 'allow' as const } }
   const ceiling = { ...defaultRunPolicy(), networkAllow: ['api.example.invalid'], networkCeiling: ['api.example.invalid'],
-    permissions: { ...defaultRunPolicy().permissions, network: 'ask' as const, git_push: 'deny' as const } }
+    permissions: { ...defaultRunPolicy().permissions, network: 'allow' as const, git_push: 'deny' as const } }
   const next = intersectRunPolicy(current, ceiling)
   assert.deepEqual(next.networkCeiling, ['api.example.invalid:443'])
   assert.deepEqual(next.networkAllow, ['api.example.invalid:443'])
@@ -57,9 +57,8 @@ test('unrestricted network and broker defaults do not invent new restrictions wh
   const unrestricted = defaultRunPolicy()
   delete unrestricted.permissions.computer_use
   const scoped = { ...defaultRunPolicy(), networkAllow: ['api.example.invalid'],
-    permissions: { ...defaultRunPolicy().permissions, network: 'ask' as const, computer_use: 'allow' as const } }
+    permissions: { ...defaultRunPolicy().permissions, network: 'allow' as const, computer_use: 'allow' as const } }
   assert.deepEqual(intersectRunPolicy(scoped, unrestricted).networkAllow, scoped.networkAllow)
   assert.equal(intersectRunPolicy(scoped, unrestricted).permissions.computer_use, 'allow')
-  assert.deepEqual(intersectRunPolicy(unrestricted, scoped).networkAllow, scoped.networkAllow)
   assert.throws(() => intersectRunPolicy(scoped, { permissions: {} }))
 })

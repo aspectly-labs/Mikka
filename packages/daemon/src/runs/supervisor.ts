@@ -1430,11 +1430,10 @@ export class RunSupervisor {
         )
       }
       const policy = runPolicy(assignment.policy)
-      // Enforce workspace install_dependency policy on repository setup shell commands:
-      // strip setup.command when install_dependency !== 'allow' while keeping approved:false
-      // skip semantics and safe file-copy behavior intact.
+      // An admin's explicit install_dependency deny strips the repository setup
+      // shell command and keeps the safe file copies.
       const repoSetupCommandBlocked = Boolean(
-        repo.setup?.approved && repo.setup.command && policy.permissions.install_dependency !== 'allow'
+        repo.setup?.command && policy.permissions.install_dependency === 'deny'
       )
       if (repoSetupCommandBlocked) {
         log.warn({ runId, repoId: repo.repoId }, 'Skipping repository setup command because install_dependency is not allowed')
@@ -1444,8 +1443,8 @@ export class RunSupervisor {
         : repo.setup
       const effectiveRepo = effectiveRepoSetup === repo.setup ? repo : { ...repo, setup: effectiveRepoSetup }
       const setup = policy.readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree, effectiveRepo) : await this.deps.worktrees.bootstrap(worktree, repo.path, effectiveRepoSetup)
-      if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup?.approved) {
-        if (policy.permissions.install_dependency !== 'allow') throw new Error('Environment setup requires dependency-install permission')
+      if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup) {
+        if (policy.permissions.install_dependency === 'deny') throw new Error('Environment setup requires dependency-install permission')
         await this.deps.worktrees.bootstrap(worktree, repo.path, assignment.projectEnvironment.setup, assignment.taskEnv, { includeWorktreeFile: false })
       }
       log.info({ worktree, setup }, "worktree ready")

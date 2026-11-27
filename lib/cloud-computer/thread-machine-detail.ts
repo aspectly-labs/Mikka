@@ -108,7 +108,7 @@ export async function rerunThreadMachineSetup(pool: Pool, actor: Actor, runId: s
   if (!run?.worktreePath) throw new ComputerError(404, 'Thread machine unavailable')
   const environment = run.agentDefinition?.projectExecution?.environment
   const recipe = environment?.setup
-  if (!recipe?.approved || !recipe.command) throw new ComputerError(409, 'No approved setup recipe')
+  if (!recipe?.command) throw new ComputerError(409, 'No setup recipe')
 
   const machine = (await pool.query<{ sandboxId: string | null; snapshotId: string | null; state: string }>(
     `SELECT "sandboxId","snapshotId",state FROM thread_machines WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3`,

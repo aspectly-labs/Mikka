@@ -10,7 +10,7 @@ import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { and, eq, isNull } from 'drizzle-orm'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
-import { applyApprovalMode } from '@mikka/protocol/agent-policy'
+import { readOnlyRunPolicy } from '@mikka/protocol/agent-policy'
 import { readRepositorySettings } from '@/lib/device-repositories'
 import { daemonTestMode, repositoryBindingMatches } from '@mikka/protocol/repository'
 import { localExecutionHarnesses } from '@/lib/device-agents'
@@ -515,10 +515,12 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const push = publication && !cliPolicy.policy.readOnly && publication.policy.permissions.git_push === 'allow' ? 'allow' as const : 'deny' as const
   const resolvedPolicy = { ...cliPolicy.policy, permissions: { ...cliPolicy.policy.permissions, git_push: push } }
   // A read-only run cannot change its worktree.
-  const executionPolicy = run.agentDefinition?.readOnly ? applyApprovalMode(resolvedPolicy, 'read_only') : resolvedPolicy
+  const executionPolicy = run.agentDefinition?.readOnly ? readOnlyRunPolicy(resolvedPolicy) : resolvedPolicy
+  const claimedComputer = computer?.permission ?? localComputer?.permission
+  // A legacy computer grant of `ask` never waited for anyone; it reads as allow.
   const computerPermission = device.computerUseEnabled === false
     ? 'deny' as const
-    : (computer?.permission ?? localComputer?.permission)
+    : claimedComputer === 'ask' ? 'allow' as const : claimedComputer
   // Computer authority comes from its persisted claim; retain every trusted
   // CLI restriction and its revision when attaching that independent grant.
   const policy = computerPermission

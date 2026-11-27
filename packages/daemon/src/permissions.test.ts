@@ -5,7 +5,6 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 import {
-  PACKAGE_REGISTRY_DOMAINS,
   resolveAgentSettings,
   type RunPolicy,
 } from "@mikka/protocol/agent-policy"
@@ -30,26 +29,26 @@ describe("permission policy (ADR 0009)", () => {
     ["write_in_worktree", "allow"],
     ["run_project_script", "allow"],
     ["install_dependency", "allow"],
-    ["write_outside_repo", "ask"],
+    ["write_outside_repo", "allow"],
     // Push is what the GitHub App grants: only the server's explicit allow pushes.
     ["git_push", "deny"],
     ["network", "allow"],
-    ["computer_use", "ask"],
+    ["computer_use", "allow"],
   ] as const)("%s -> %s", (action, expected) => {
     expect(PERMISSION_DEFAULTS[action]).toBe(expected)
     expect(decide(action)).toBe(expected)
   })
 
-  it("allows the setup recipe only once approved", () => {
-    expect(decide("run_setup_recipe")).toBe("ask")
-    expect(decide("run_setup_recipe", { setupRecipeApproved: true })).toBe(
-      "allow"
-    )
+  it("runs the setup recipe without anyone approving it (ADR 2026-11-27-1615)", () => {
+    expect(decide("run_setup_recipe")).toBe("allow")
+    expect(decide("run_setup_recipe", { policy: policy({}) })).toBe("allow")
   })
 
-  it("asks for unknown actions", () => {
-    expect(decide("format_disk")).toBe("ask")
-    expect(decide("__proto__")).toBe("ask")
+  it("never asks: unknown actions are allowed, except in a read-only check", () => {
+    for (const action of ["format_disk", "__proto__", "run_setup_recipe", "computer_use"])
+      expect(decide(action)).not.toBe("ask")
+    expect(decide("format_disk")).toBe("allow")
+    expect(decide("__proto__")).toBe("allow")
     expect(decide("format_disk", { policy: { ...policy({}), readOnly: true } })).toBe("deny")
     expect(decide("__proto__", { policy: { ...policy({}), readOnly: true } })).toBe("deny")
   })
@@ -99,42 +98,30 @@ describe("applying the workspace's policy (ADR 0028)", () => {
     expect(decide("git_push", { policy: p })).toBe("allow")
     // Open by default (decision 2026-11-01-1230); a person's choice still holds.
     expect(decide("network", { policy: p })).toBe("allow")
-    expect(decide("network", { policy: policy({ network: "ask" }) })).toBe("ask")
+    expect(decide("network", { policy: policy({ network: "ask" } as never) })).toBe("allow")
     expect(decide("write_in_worktree", { policy: p })).toBe("allow")
-    expect(decide("run_setup_recipe", { policy: p })).toBe("ask")
+    expect(decide("run_setup_recipe", { policy: p })).toBe("allow")
   })
 
   it("uses only the run computer permission and makes read-only take precedence", () => {
-    for (const decision of ["allow", "ask", "deny"] as const) {
+    for (const decision of ["allow", "deny"] as const) {
       const p = policy({ computer_use: decision })
       expect(decide("computer_use", { policy: p })).toBe(decision)
       expect(decide("computer_use", { policy: { ...p, readOnly: true } })).toBe("deny")
     }
     const legacy = policy({})
     delete legacy.permissions.computer_use
-    expect(decide("computer_use", { policy: legacy })).toBe("ask")
+    expect(decide("computer_use", { policy: legacy })).toBe("allow")
     expect(decide("computer_use", { policy: { ...legacy, readOnly: true } })).toBe("deny")
   })
 
-  it("builds the run's domain list from network and install choices", () => {
-    // Unrestricted unless a person chose otherwise.
-    expect(runDomains(policy({}), ["npmjs.org"])).toEqual(["*"])
-    expect(runDomains(policy({ network: "ask" }), ["npmjs.org"])).toEqual([
-      "github.com",
-      "npmjs.org",
-      ...PACKAGE_REGISTRY_DOMAINS,
-    ])
-    expect(runDomains(policy({ network: "allow" }), ["npmjs.org"])).toEqual([
-      "*",
-    ])
-    expect(runDomains(policy({ network: "deny" }), ["npmjs.org"])).toEqual([])
-    expect(
-      runDomains(policy({ network: "deny", install_dependency: "allow" }))
-    ).toEqual([])
-    expect(runDomains(policy({ network: "ask", install_dependency: "allow" }))).toEqual([
-      "github.com",
-      ...PACKAGE_REGISTRY_DOMAINS,
-    ])
+  it("builds the run's domain list from the network choice", () => {
+    // Unrestricted unless a person chose otherwise; a legacy ask reads as allow.
+    expect(runDomains(policy({}))).toEqual(["*"])
+    expect(runDomains(policy({ network: "ask" } as never))).toEqual(["*"])
+    expect(runDomains(policy({ network: "allow" }))).toEqual(["*"])
+    expect(runDomains(policy({ network: "deny" }))).toEqual([])
+    expect(runDomains(policy({ network: "deny", install_dependency: "allow" }))).toEqual([])
   })
 
   it("pushes by the workspace's choice and the repo's approval", () => {
@@ -188,11 +175,9 @@ describe("applying the workspace's policy (ADR 0028)", () => {
     }
   })
 
-  it("gives Claude Code ask or deny rules for explicit install restrictions", () => {
-    expect(claudePermissionRules(policy({install_dependency: "ask"}))).toMatchObject({
-      ask: expect.arrayContaining(["Bash(npm install:*)"]),
-      deny: ['Bash','PowerShell','Monitor'],
-    })
+  it("gives Claude Code no ask rules, and deny rules only for an explicit install deny", () => {
+    // A legacy ask reads as allow: no ask rules, and the shell stays.
+    expect(claudePermissionRules(policy({install_dependency: "ask"} as never))).toEqual({ allow: [], ask: [], deny: [] })
     const denied = claudePermissionRules(policy({ install_dependency: "deny" }))
     expect(denied.ask).toEqual([])
     expect(denied.deny).toEqual(
@@ -260,14 +245,18 @@ describe("applying the workspace's policy (ADR 0028)", () => {
     const defaults = runInstructions("/wt")
     expect(defaults).toContain("Network access is open")
     expect(defaults).not.toContain("Native shell execution is unavailable")
-    const asked = runInstructions("/wt", policy({ network: "ask" }))
-    expect(asked).toContain("limited to the workspace ceiling")
-    expect(asked).toContain("pre-authorized")
+    // A legacy ask is open, and nothing tells the agent to ask or wait for approval.
+    const asked = runInstructions("/wt", policy({ network: "ask", install_dependency: "ask" } as never))
+    expect(asked).toContain("Network access is open")
+    expect(asked).toContain("You may install or add dependencies")
+    expect(asked).toContain("Never ask anyone for permission or approval")
+    expect(asked).not.toMatch(/missing permission|chat reply as approval|pre-authorized/)
   })
   it('keeps project shell execution independent of daemon publication permission', () => {
     for (const install of ['allow','ask','deny'] as const) for (const push of ['allow','deny'] as const) {
-      const value=policy({install_dependency:install,git_push:push})
-      expect(rawCliShellAvailable(value)).toBe(install==='allow')
+      const value=policy({install_dependency:install,git_push:push} as never)
+      // Only an explicit deny narrows the shell; a legacy ask reads as allow.
+      expect(rawCliShellAvailable(value)).toBe(install!=='deny')
       expect(rawCliShellAvailable({...value,readOnly:true})).toBe(false)
     }
   })
