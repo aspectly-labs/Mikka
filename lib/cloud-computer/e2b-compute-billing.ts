@@ -39,14 +39,15 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
       operationId: lease.operationId, index, size: lease.size, hourlyMicroUsd: lease.hourlyMicroUsd })
 
     // Settlement precedes activation. A lost response reuses this exact chunk;
-    // concurrent confirmations advance the paid deadline only once.
+    // concurrent confirmations advance the paid deadline only once. The provider's
+    // last confirmed timeout stays until the provider confirms the new one
+    // (useE2BKeepAlivePayment): until then the sandbox can only run to the old one.
     if (funded) {
       const activation = await pool.query(`UPDATE e2b_compute_leases SET "chunkIndex"=$2,"previousPaidUntil"="paidUntil",
         "previousActiveChunkIndex"="activeChunkIndex","activeChunkIndex"=$2,
         "previousActiveChunkStartedAt"="activeChunkStartedAt",
         "activeChunkStartedAt"=CASE WHEN "activeChunkIndex"=-1 THEN COALESCE("activeChunkStartedAt",now()) ELSE greatest(now(),"paidUntil") END,
         "paidUntil"=greatest(now(),"paidUntil")+$3::int*interval '1 millisecond',
-        "providerTimeoutAt"=NULL,
         "renewalReviewAt"=CASE WHEN "sandboxId" IS NOT NULL THEN clock_timestamp()+interval '30 seconds' ELSE NULL END,
         "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL,
         "pendingAt"=NULL,"pendingRunId"=NULL,"fundingOpenedAt"=NULL
@@ -78,7 +79,7 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
 async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment, observed = false, providerTimeoutAt?: Date) {
   if (!payment.operationId) return true
   const result = await query.query(`UPDATE e2b_compute_leases l SET "usedChunkIndex"=greatest("usedChunkIndex",$3),"renewalReviewAt"=NULL,
-      "providerTimeoutAt"=COALESCE($5::timestamptz,"providerTimeoutAt"),
+      "providerTimeoutAt"=$5::timestamptz,
       "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL
     WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND ($4::boolean OR "paidUntil">clock_timestamp())
       AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':'||$3::int
@@ -185,7 +186,7 @@ export async function reconcileE2BKeepAlivePayments() {
       if (observed.sandboxId !== row.sandboxId || !Number.isFinite(observed.endAt.getTime())) continue
       if (!row.renewalBaselineDeadline) continue
       if (observed.endAt.getTime() !== row.renewalBaselineDeadline.getTime()) {
-        await useE2BKeepAlivePayment(pool, ownerId, { operationId, index }, true)
+        await useE2BKeepAlivePayment(pool, ownerId, { operationId, index }, true, observed.endAt)
       } else if (observed.state !== 'running' && observed.state !== 'paused') {
         continue
       } else if (row.renewalUnchangedAt) {
@@ -287,10 +288,11 @@ export async function settleE2BAwakeInterval(
       previousActiveChunkIndex: number | null
       previousActiveChunkStartedAt: Date | null
       lastSettledChunkIndex: number
+      usedChunkIndex: number
       clockNow: Date
     }>(
       `SELECT "operationId","workspaceId","hourlyMicroUsd","paidUntil","providerTimeoutAt","activeChunkIndex","activeChunkStartedAt",
-        "previousPaidUntil","previousActiveChunkIndex","previousActiveChunkStartedAt","lastSettledChunkIndex",
+        "previousPaidUntil","previousActiveChunkIndex","previousActiveChunkStartedAt","lastSettledChunkIndex","usedChunkIndex",
         clock_timestamp() AS "clockNow"
        FROM e2b_compute_leases
        WHERE "ownerId"=$1 AND "sandboxId"=$2 AND "activeChunkIndex">"lastSettledChunkIndex" AND "paidUntil" IS NOT NULL
@@ -324,12 +326,30 @@ export async function settleE2BAwakeInterval(
       refundedMicroUsd += res.refundedMicroUsd
     }
 
+    let settledThrough = lease.lastSettledChunkIndex
     if (
       lease.previousActiveChunkIndex !== null
       && lease.previousActiveChunkIndex > lease.lastSettledChunkIndex
       && lease.previousActiveChunkIndex < lease.activeChunkIndex
     ) {
       await settleWindow(lease.previousActiveChunkIndex, lease.previousActiveChunkStartedAt, lease.previousPaidUntil)
+      settledThrough = lease.previousActiveChunkIndex
+    }
+    // A renewal the provider never confirmed (the timeout request failed, or the process
+    // stopped after funding it) bought no compute that is known to have run. Charge nothing
+    // for it here and leave it unsettled with its renewal review, so the reconciler can
+    // still refund it (or confirm it, and a later settlement bills its awake seconds).
+    // Chunk 0 is confirmed by the sandbox's creation.
+    if (lease.activeChunkIndex > 0 && lease.usedChunkIndex < lease.activeChunkIndex) {
+      await tx.query(
+        `UPDATE e2b_compute_leases
+         SET "lastSettledChunkIndex"=greatest("lastSettledChunkIndex",$3::int),
+           "paidUntil"=least("paidUntil",$4::timestamptz),
+           "previousPaidUntil"=least("previousPaidUntil",$4::timestamptz)
+         WHERE "operationId"=$1 AND "ownerId"=$2`,
+        [lease.operationId, ownerId, settledThrough, effectiveEnd],
+      )
+      return { settled: true, refundedMicroUsd }
     }
     const activeEndLimit = lease.providerTimeoutAt && lease.providerTimeoutAt.getTime() < lease.paidUntil.getTime()
       ? lease.providerTimeoutAt

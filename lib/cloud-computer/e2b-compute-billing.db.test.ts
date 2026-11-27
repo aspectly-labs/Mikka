@@ -680,7 +680,9 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
       `SELECT state,"costMicroUsd"::text AS cost FROM hosted_usage WHERE id=$1`, [`machine:e2b:${preRenewOp}:1`])).rows[0]
     assert.deepEqual(chunk1Row, { state: 'failed', cost: '0' })
 
-    // A stale prepareKeepAlive.cancel() / reconcile after pause must NOT revert paidUntil or activeChunkIndex.
+    // A renewal funded but never confirmed by the provider (its timeout request failed, or the process stopped)
+    // races the pause: the pause bills chunk 0's awake seconds and nothing for chunk 1, and the later cancel
+    // still refunds chunk 1 in full without moving paidUntil past the pause.
     const lateCancelOp = randomUUID()
     const lateCancelSb = `sb-${randomUUID()}`
     await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture'),('sandbox',$3,$2,'team:fixture')`,
@@ -697,13 +699,50 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
       inspect: async () => ({ sandboxId: lateCancelSb, templateId: templates.codex.templateId, cpuCount: 2, memoryMB: 8192, endAt: nearEnd }) as Awaited<ReturnType<typeof Sandbox.getInfo>>,
     })
     const settledPauseAt = new Date(nearEnd.getTime() - 10_000)
-    await settleE2BAwakeInterval(awakeOwnerId, lateCancelSb, settledPauseAt)
+    const usage = async (operation: string, index: number) => (await fixture.query<{ state: string; cost: string }>(
+      `SELECT state,"costMicroUsd"::text AS cost FROM hosted_usage WHERE id=$1`, [`machine:e2b:${operation}:${index}`])).rows[0]
+    assert.deepEqual(await settleE2BAwakeInterval(awakeOwnerId, lateCancelSb, settledPauseAt), { settled: true, refundedMicroUsd: 640 })
+    assert.deepEqual(await usage(lateCancelOp, 0), { state: 'settled', cost: String(290 * 64) })
+    assert.deepEqual(await usage(lateCancelOp, 1), { state: 'settled', cost: '19200' }, 'the unconfirmed chunk is neither charged nor settled')
     await prepared.cancel()
     const afterLateCancel = (await fixture.query<{ activeChunkIndex: number; lastSettledChunkIndex: number; paidUntil: Date }>(
       `SELECT "activeChunkIndex","lastSettledChunkIndex","paidUntil" FROM e2b_compute_leases WHERE "operationId"=$1`, [lateCancelOp])).rows[0]
-    assert.equal(afterLateCancel.activeChunkIndex, 1)
-    assert.equal(afterLateCancel.lastSettledChunkIndex, 1)
+    assert.equal(afterLateCancel.activeChunkIndex, 0)
+    assert.equal(afterLateCancel.lastSettledChunkIndex, 0)
     assert.equal(afterLateCancel.paidUntil.getTime(), settledPauseAt.getTime())
+    assert.deepEqual(await usage(lateCancelOp, 1), { state: 'failed', cost: '0' })
+    // Settling again charges nothing more.
+    assert.deepEqual(await settleE2BAwakeInterval(awakeOwnerId, lateCancelSb, new Date(settledPauseAt.getTime() + 60_000)), { settled: false, refundedMicroUsd: 0 })
+
+    // The same race when the process stopped after funding (no cancel ever runs): the pause charges nothing for the
+    // renewal, and the renewal reconciler refunds it, since no timeout request was ever dispatched.
+    const crashOp = randomUUID()
+    const crashSb = `sb-${randomUUID()}`
+    await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture'),('sandbox',$3,$2,'team:fixture')`,
+      [crashOp, awakeOwnerId, crashSb])
+    await e2bCreationTimeout(awakeOwnerId, 'team:fixture', crashOp, templates.codex.templateId, { workspaceId: awakeWorkspaceId, runId: awakeRunId }, 900_000,
+      { provider: 'e2b', size: 'medium', hourlyMicroUsd: 230_400, pricingVersion: '2026-11-26', cpuCount: 2, memoryMB: 8192 })
+    await recordE2BComputeSandbox(awakeOwnerId, crashOp, crashSb, new Date())
+    const crashNearEnd = new Date(Date.now() + 20_000)
+    await fixture.query(`UPDATE e2b_compute_leases SET "paidUntil"=$2,"activeChunkStartedAt"=$3 WHERE "operationId"=$1`,
+      [crashOp, crashNearEnd, new Date(crashNearEnd.getTime() - 300_000)])
+    await prepareE2BProviderTime(awakeOwnerId, crashSb, 900_000, {
+      providerScope: 'team:fixture',
+      inspect: async () => ({ sandboxId: crashSb, templateId: templates.codex.templateId, cpuCount: 2, memoryMB: 8192, endAt: crashNearEnd }) as Awaited<ReturnType<typeof Sandbox.getInfo>>,
+    })
+    const crashBalance = (await hostedUsage.balance(awakeWorkspaceId)).purchased
+    const crashPauseAt = new Date(crashNearEnd.getTime() - 10_000)
+    assert.deepEqual(await settleE2BAwakeInterval(awakeOwnerId, crashSb, crashPauseAt), { settled: true, refundedMicroUsd: 640 })
+    assert.deepEqual(await usage(crashOp, 1), { state: 'settled', cost: '19200' })
+    await fixture.query(`UPDATE e2b_compute_leases SET "renewalReviewAt"=clock_timestamp()-interval '1 second' WHERE "operationId"=$1`, [crashOp])
+    const { reconcileE2BKeepAlivePayments } = await import('./e2b-compute-billing')
+    await reconcileE2BKeepAlivePayments()
+    assert.deepEqual(await usage(crashOp, 1), { state: 'failed', cost: '0' })
+    assert.equal((await hostedUsage.balance(awakeWorkspaceId)).purchased, crashBalance + 640 + 19_200)
+    const afterCrash = (await fixture.query<{ activeChunkIndex: number; paidUntil: Date }>(
+      `SELECT "activeChunkIndex","paidUntil" FROM e2b_compute_leases WHERE "operationId"=$1`, [crashOp])).rows[0]
+    assert.equal(afterCrash.activeChunkIndex, 0)
+    assert.equal(afterCrash.paidUntil.getTime(), crashPauseAt.getTime())
 
     // Provider auto-pause at providerTimeoutAt (293s) observed late at 310s bills only 293s and refunds 7s (448 micro-USD),
     // even when activeChunkStartedAt is null (pre-migration chunk), and a paused machine with mismatched epoch still fences.
