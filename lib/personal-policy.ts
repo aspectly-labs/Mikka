@@ -10,12 +10,12 @@ import { workspaceResourcePolicy } from './governance/resource-access'
  * Decision 2026-11-01-2240: a person's own subscriptions and API keys always run
  * that person's own bots and runs, in every workspace they belong to.
  * Decision 2026-11-17: a Claude or Codex subscription serves its owner only; no
- * other member's bot or run can use it. The admin switch (团队权限 › 订阅与 API
- * Key) still decides whether other members may use shared API keys.
+ * other member's bot or run can use it. Decision 2026-11-27-1740: the same holds
+ * for API keys; a workspace adds its own keys instead.
  */
 type Query = Pick<Pool | PoolClient, 'query'>
 
-/** The admin switch over other members' use of shared API keys; an absent row means on. It never limits the owner's own use. */
+/** The admin switch 团队权限 › 订阅与 API Key; an absent row means on. It never limits the owner's own use and, with no shared keys left (decision 2026-11-27-1740), grants nothing. */
 export async function memberSubscriptionsAllowed(query: Query, workspaceId: string): Promise<boolean> {
   if ((await workspaceResourcePolicy(workspaceId)).modelCredentialSharing === 'deny') return false
   return readBatchSubscriptionPolicy(query, workspaceId, async () => {

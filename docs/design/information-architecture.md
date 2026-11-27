@@ -36,7 +36,7 @@ re-checked for this page.
 
 **A workspace is the tenant; team-only means "exists only between people".**
 Members, invitations, teams, roles and 团队权限, member audit, shared credits,
-card designation and seats, 分享给团队成员 for API keys (subscriptions are never shared, 2026-11-17-1400), bots of people who left, and
+card designation and seats, workspace API keys (工作区连接, added by admins; no personal credential is ever shared, 2026-11-17-1400 and 2026-11-27-1740), bots of people who left, and
 transfer are team-only (T2). Anything a single person needs to run their own
 bots and threads (secrets and environment, models and subscriptions, devices,
 connections, usage, billing) is present in a personal workspace too.
@@ -82,7 +82,7 @@ referenced by id (DDD).
 | Connection | Link to an outside app | Connection · account | `composio_accounts.userId` (`schema.ts:727-741`), `github_connections.userId` (`:399`), `linear_connections.userId` (`:169`), `telegram_links` | 插件 › an app | 插件, and 设置 › 连接 (same `PluginsView`) | 插件 rail page |
 | App policy | The workspace's allow/ask/deny per app; 团队权限 › 允许使用的应用 still narrows which apps a Bot may use | Workspace · workspace | `workspace_computer_policies.external_write_permissions` (legacy `workspace_app_policies.workspaceId` is still enforced) | — | 设置 › 应用与运行权限; 设置 › 团队权限 | 设置 › 应用与运行权限; 设置 › 团队权限 |
 | Secret / env var | Value injected into the workspace's runs | Secret · workspace | `workspace_secrets (workspaceId, scopeType, scopeRef, createdBy)` (`lib/db/secrets-schema.ts:8-23`); injected by `loadWorkspaceRuntimeSecrets` (`lib/secrets/runtime.ts:20`) | 设置 › 密钥与环境 (`lib/secrets/store.ts:124`) | 设置 › 密钥与环境 | 设置 › 密钥与环境 |
-| Model credential | Subscription login or API key | Credentials · account | `byos_connections.ownerId` (+ legacy `workspaceId`), `model_api_keys.ownerId`, `user_e2b_keys.userId`; shares `model_api_key_shares` (subscriptions are owner-only since 2026-11-17-1400; `workspace_subscription_shares` is retired) (drizzle `20261027164503`, `20261101021000`, `20261101020201`) | 设置 › 模型与订阅 | 设置 › 模型与订阅 (shares: team only) | 设置 › 模型与订阅; bot model chip (R-11) |
+| Model credential | Subscription login or API key | Credentials · account, or workspace for a workspace API key | `byos_connections.ownerId` (+ legacy `workspaceId`), `model_api_keys.ownerId` or `model_api_keys.workspaceId` (exactly one), `user_e2b_keys.userId`; no shares (subscriptions owner-only since 2026-11-17-1400; `workspace_subscription_shares` retired; `model_api_key_shares` emptied and closed by 2026-11-27-1740) (drizzle `20261027164503`, `20261101021000`, `20261101020201`, `20261127173719`) | 设置 › 模型与订阅 | 设置 › 模型与订阅 (工作区连接: team only, admins) | 设置 › 模型与订阅; bot model chip (R-11) |
 | Credits, allowance, billing | What a workspace spends and pays | Billing · workspace | `workspace_billing`, `workspace_credit_grants` (`schema.ts:1151-1180`), `hosted_allowances`, `hosted_usage` (drizzle `20261030230000`); `workspace_payment_designations`, `workspace_credit_shares` (team) | Stripe webhook (`lib/billing/service.ts:145`); allowance on verification | 设置 › 用量, 计费 | 设置 › 用量, 计费 |
 | Notifications | Pushes and alerts about runs and chats | Account · account | `user_preferences` switches (`components/settings/notifications-settings.tsx:9`), `mobile_push_tokens.userId` (`schema.ts:1071`) | — | 设置 › 通知 | Web: none; desktop: system notification and Dock badge for 等你 (`platforms.md`); phone: push |
 | Memory | Facts about the person | Account · account | `user_facts.userId` (`schema.ts:664`) | Extracted from chats | 设置 › 记忆与建议 | 设置 › 记忆与建议 |
@@ -140,7 +140,7 @@ per AGENTS.md triage is in brackets.
 | M5 | `app/actions/teams.ts:47-60` | Teams are team-only (T2) | `saveTeam` checks membership only: no admin check, no `kind` check | A personal workspace can hold a team through the API; UI hides it [2×3] | Refuse `kind = 'personal'` with `workspacePersonal`, as invitations do | P2 |
 | M6 | `lib/settings-sections.ts:46` vs `lib/secrets/permissions.ts:14-25` | Members may write repository-scoped secrets | The section is `adminOnly`, so members never reach it | Members' allowed action has no page [4×3] | Show 密钥与环境 to members with their scope only | P2 |
 | M7 | `lib/workspace-admin/members.ts:135`, `zh-CN.json:1160` | A member can leave (2225 rule 6) | No leave action; the error copy names 「离开工作区」 | Copy promises a missing action [3×3] | Build 离开工作区 on `releaseDepartingMember`, or drop the copy | P2 |
-| M8 | `components/settings/team-permissions-settings.tsx:55-58` | An admin can switch off only 分享给团队成员 (2240) | The row is 「允许成员使用个人订阅和 API Key」 (`workspace_personal_policies.subscriptions`) | Label claims a switch 2240 removed; behaviour not verified here [3×4] | Rename to what it does, or remove | P2 |
+| M8 | `components/settings/team-permissions-settings.tsx:55-58` | Nothing is shared any more (2026-11-27-1740) | The row is 「允许成员使用个人订阅和 API Key」 (`workspace_personal_policies.subscriptions`) | The switch grants and stops nothing [3×4] | Remove it (hosted follow-up of 2026-11-27-1740) | P2 |
 | M9 | `byos_connections.workspaceId` (drizzle `20261027164503`) | Subscriptions belong to the account (2225 rule 2, T6) | The binding row still carries a workspace | Two sources of truth for where a subscription runs [2×3] | Resolve by owner only; keep sharing in `workspace_subscription_shares` | P2 |
 | M10 | `lib/personal-workspace.ts:35-40` | Own credentials need no share (2240) | `ensurePersonalShare` writes a share row for the personal workspace | Redundant row; harmless [1×1] | Drop when the resolver no longer reads it | P2 |
 | M11 | `lib/workspace-admin/general.ts:114-134` | Transfer hands the workspace on | Only `workspaces.userId` changes; `cloud_machines.ownerId` and the Stripe customer stay with the old owner | Undefined who pays for the workspace's Mikka Cloud machine after transfer [2×4] | Decide with Alex; `cloud_machines` is one row per workspace while E2B keys are personal | P2 |
@@ -171,7 +171,7 @@ terms) and tenancy rule.
 | 通知 (`notifications`) | Account | Account | T6 | Account | The person's pushes |
 | 记忆与建议 (`memory`) | Account | Account (profile memory) | T6; 2310 | Account | Facts about the person |
 | 连接 (`connections`) | Account | Connection | T6; 2240 | Account | Runs only the owner's bots |
-| 模型与订阅 (`models`) | Account credentials; per-person workspace thread defaults; 分享给团队成员 for API keys, team-only (subscriptions are never shared) | Model credential; share | T6, T2 | Matches (`settings-view.tsx:153`) | Credential is the person's, the share is between people |
+| 模型与订阅 (`models`) | Account credentials (你的连接); per-person workspace thread defaults; the workspace's own API keys (工作区连接), team-only, managed by admins; nothing is shared between the two | Model credential | T6, T2 | Matches (`settings-view.tsx:153`) | A personal credential is the person's; a workspace key is the workspace's |
 | 密钥与登录 (`logins`) | Account | Account | T6 | Account | Saved logins are the person's |
 | 数据与隐私 (`privacy`) | Account | Account | T6 | Account | Export and deletion of the person |
 | 设备 (`computers`) | Account | Device | T6 | Account | The person's machines |
@@ -350,7 +350,7 @@ to `/task/:id?attempt=:runId`, then the task conversation
 | L6 | Settings group vs page vs menu | 账号 (group), 账户 (page), 「账户菜单」 (menu that also switches workspaces) | Menu label 账号菜单 |
 | L7 | `zh-CN.json` `Nav.workspace` (`components/nav-main.tsx:43`) | 工作空间 vs 工作区 | 工作区 (C-06) |
 | L8 | `Nav.inbox` / `Overview.followingTitle` | 收件箱 opens 关注的任务活动 | Name it for what it shows, or remove with G5 |
-| L9 | 团队权限 | 「允许成员使用个人订阅和 API Key」 vs 2240's 分享给团队成员 | M8 |
+| L9 | 团队权限 | 「允许成员使用个人订阅和 API Key」, which no longer governs anything (2026-11-27-1740) | M8 |
 | L10 | `docs/settings.md` § Sections | Profile, Workspace, Integrations vs 账户, 常规, 连接 | Use the UI names (C-06) |
 
 ## 7. Placement principles
@@ -358,7 +358,7 @@ to `/task/:id?attempt=:runId`, then the task conversation
 | # | Rule | From |
 | --- | --- | --- |
 | P1 | A setting is team-only only if it concerns another person. | T2; Linear, Notion, GitHub, Vercel keep members, roles and audit on the team or organization and give a single user the rest |
-| P2 | What is bound to the person is stored and shown once, at the account level, the same in every workspace; it enters a workspace only by an explicit share. | T6; ChatGPT and Claude (personal settings separate from workspace admin); GitHub (user PATs and SSH keys vs organization settings) |
+| P2 | What is bound to the person is stored and shown once, at the account level, the same in every workspace; it enters a workspace only by an explicit share, and a model credential never does: a workspace adds its own (2026-11-17-1400, 2026-11-27-1740). | T6; ChatGPT and Claude (personal settings separate from workspace admin); GitHub (user PATs and SSH keys vs organization settings) |
 | P3 | A capability a run needs (secrets, environment, Agent and model defaults) exists wherever runs exist, so in every workspace. | T5; GitHub repositories have Actions secrets and environments in personal and organization accounts alike; Vercel Hobby projects have environment variables |
 | P4 | Anything a person checks daily is one click from anywhere: in the window bar or the rail, never inside one bot's panel. | NAV "keep essentials visible"; PM:`persistent-nav`; Linear Inbox and My issues, Slack Activity, GitHub notifications in the header |
 | P5 | Every list a bot's panel shows has a global equivalent, except the bot's computer (R-04). | IA-5 (multiple paths); the iOS app's 任务 tab |

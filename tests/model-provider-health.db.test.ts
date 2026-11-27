@@ -255,16 +255,16 @@ test('provider health persists across dispatches without changing credential own
       const states = await order.credentialStates(pool, scope, [foreign], candidates, now, { probe: false })
       assert.deepEqual(states.get(foreign.id)?.credential, { usable: false, reason: 'missing' })
     }
-    await pool.query('INSERT INTO model_api_key_shares ("keyId","workspaceId") VALUES ($1,$2)', [theirs.id, scope.workspaceId])
-    await pool.query('UPDATE model_api_keys SET "modelsError"=NULL WHERE id=$1', [theirs.id])
+    // A person's key is never shared (decision 2026-11-27-1740); a key the workspace owns serves every member there.
+    await pool.query('UPDATE model_api_keys SET "modelsError"=NULL,"ownerId"=NULL,"workspaceId"=$2 WHERE id=$1', [theirs.id, scope.workspaceId])
     const shared = await read(scope)
     const sharedEntry = shared.entries.find(entry => entry.source.kind === 'api_key' && entry.source.keyId === theirs.id)!
     assert.ok(shared.states.get(sharedEntry.id)?.credential.usable)
     await run(scope, { kind: 'api_key', keyId: theirs.id }, { kind: 'balance', retryable: false }, now - 3_000, { snapshotWorkspace: false })
     assert.equal([...(await read(scope)).states.values()].some(state => !state.credential.usable && state.credential.reason === 'balance'), true, 'legacy snapshots use the owned bot workspace')
-    await pool.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1 AND "workspaceId"=$2', [theirs.id, scope.workspaceId])
+    await pool.query('UPDATE model_api_keys SET "workspaceId"=NULL,"ownerId"=$2 WHERE id=$1', [theirs.id, stranger.ownerId])
     const revoked = await order.credentialStates(pool, scope, [sharedEntry], shared.candidates, now, { probe: false })
-    assert.deepEqual(revoked.get(sharedEntry.id)?.credential, { usable: false, reason: 'missing' }, 'withdrawal takes precedence over remembered runtime health, even with old candidates')
+    assert.deepEqual(revoked.get(sharedEntry.id)?.credential, { usable: false, reason: 'missing' }, 'a key no longer the workspace\'s takes precedence over remembered runtime health, even with old candidates')
   })
 
   await t.test('subscription failures follow the frozen binding revision; pause and missing authority win', async () => {

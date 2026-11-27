@@ -4569,6 +4569,7 @@
     "artifactNotFound": "找不到这个成果。",
     "billingNoSubscription": "工作区还没有订阅。",
     "apiKeyNotFound": "这个 API Key 已不存在。",
+    "apiKeySharingRetired": "个人连接和工作区连接分开添加，密钥不能在两者之间移动。请在工作区连接中添加。",
     "botShareUnavailable": "个人工作区没有可以共享的成员。",
     "emailDeliveryFailed": "邮件没有发送成功。",
     "scheduleUserSourceRequired": "这个操作需要你本人发起。",

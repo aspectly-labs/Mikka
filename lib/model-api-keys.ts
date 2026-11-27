@@ -12,8 +12,7 @@ import { z } from 'zod'
 import { gatewayFeaturesSchema, parseGatewayFeatures, type GatewayFeatures } from './model-gateway/features'
 import { isPrivateAddress } from '@/lib/link-preview-parse'
 import { isLoopbackHost } from '@/lib/loopback'
-import { memberSubscriptionsAllowed } from '@/lib/personal-policy'
-import { organizationResourceAllowed, assertOrganizationResourceShare, assertOrganizationModelProvider } from '@/lib/governance/resource-access'
+import { assertOrganizationModelProvider } from '@/lib/governance/resource-access'
 import { stopRunsUsingApiKeys } from '@/lib/model-api-key-runs'
 import { openSecret, sealSecret, SecretsKeyMissingError } from '@/lib/secrets/crypto'
 import { WorkspaceError } from '@/lib/workspace-error'
@@ -24,10 +23,14 @@ import {
 
 /**
  * 「模型与订阅」 API keys and custom providers (orchestration.md § 1, § 2, § 6;
- * conflict C22). A key belongs to the account. It is checked against the
- * provider's read-only model list before it is saved, sealed with
- * WORKSPACE_SECRETS_KEY, and never returned: views carry its last four
- * characters only. Only the server opens it for each authorized model request.
+ * conflict C22). A key belongs to one person (你的连接) or to one workspace
+ * (工作区连接), never both, and is never shared from one to the other (decision
+ * 2026-11-27-1740). A person's key serves that person's own runs; a workspace's
+ * key serves every member's runs in that workspace and is managed by its
+ * admins. A key is checked against the provider's read-only model list before
+ * it is saved, sealed with WORKSPACE_SECRETS_KEY, and never returned: views
+ * carry its last four characters only. Only the server opens it for each
+ * authorized model request.
  */
 type Query = Pick<Pool | PoolClient, 'query'>
 type Env = Record<string, string | undefined>
@@ -68,8 +71,24 @@ export type ApiKeyVerifyResult =
   | { ok: true; models: string[]; speedModes?: Record<string, readonly ModelSpeedMode[]> }
   | { ok: false; code: 'invalid' | 'unavailable' }
 
-/** Binds a ciphertext to its row and owner: copied onto another row it will not open. */
-const keyAad = (id: string, ownerId: string) => ['model_api_key', id.toLowerCase(), ownerId].join('\u0000')
+/** Whose key it is: one person's, or one workspace's (decision 2026-11-27-1740). Never both. */
+export type ApiKeyOwner = { userId: string } | { workspaceId: string }
+const asOwner = (owner: string | ApiKeyOwner): ApiKeyOwner => typeof owner === 'string' ? { userId: owner } : owner
+/** The owner predicate's column and value; only these two closed column names are ever interpolated. */
+const ownedBy = (owner: ApiKeyOwner) => 'userId' in owner
+  ? { column: '"ownerId"', value: owner.userId }
+  : { column: '"workspaceId"', value: z.uuid().parse(owner.workspaceId) }
+
+/**
+ * Binds a ciphertext to its row and owner: copied onto another row, or onto the
+ * same row under another owner, it will not open. A person's key keeps the
+ * original binding; a workspace key is bound to the workspace, never to whoever
+ * added it.
+ */
+const keyAad = (id: string, owner: { ownerId: string | null; workspaceId: string | null }) => owner.workspaceId
+  ? ['model_api_key_workspace', id.toLowerCase(), owner.workspaceId.toLowerCase()].join('\u0000')
+  : ['model_api_key', id.toLowerCase(), owner.ownerId ?? ''].join('\u0000')
+const aadOwner = (owner: ApiKeyOwner) => 'userId' in owner ? { ownerId: owner.userId, workspaceId: null } : { ownerId: null, workspaceId: owner.workspaceId }
 
 /**
  * A custom provider's base URL: https on a public address. Loopback http is
@@ -122,8 +141,8 @@ export async function verifyApiKey(target: { modelsUrl: string; auth: ApiKeyProt
   } catch { return { ok: false, code: 'unavailable' } }
 }
 
-interface Row { id: string; ownerId: string; provider: ApiKeyProvider; name: string | null; baseUrl: string | null; protocol: ApiKeyProtocol; last4: string; models: string[]; modelsError: ApiKeyView['modelsError']; responsesApi: boolean; modelSettings?: ModelSettings | null; features?: unknown }
-const COLUMNS = 'id,"ownerId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features'
+interface Row { id: string; ownerId: string | null; workspaceId: string | null; provider: ApiKeyProvider; name: string | null; baseUrl: string | null; protocol: ApiKeyProtocol; last4: string; models: string[]; modelsError: ApiKeyView['modelsError']; responsesApi: boolean; modelSettings?: ModelSettings | null; features?: unknown }
+const COLUMNS = 'id,"ownerId","workspaceId"::text AS "workspaceId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features'
 const view = (row: Row): ApiKeyView => ({ id: row.id, provider: row.provider, name: row.name, baseUrl: row.baseUrl, protocol: row.protocol, last4: row.last4, models: row.models, modelsError: row.modelsError ?? null, responsesApi: row.responsesApi,
   ...(row.features ? { features: parseGatewayFeatures(row.features) } : {}) })
 /** Where a key's models are listed: the preset's list, or the custom provider's by its protocol. */
@@ -132,26 +151,37 @@ function modelsTarget(row: Pick<Row, 'provider' | 'baseUrl' | 'protocol'>): { mo
   const preset = API_KEY_PRESET_ENDPOINTS[row.provider]
   return { modelsUrl: preset.modelsUrl, auth: preset.modelsAuth }
 }
+const uuidOrNull = (value: string) => z.uuid().safeParse(value).success ? value : null
 
-/** The page's list: the owner's keys, teammates' workspace-shared keys, and whether keys can be shared here. */
+/**
+ * The page's list. `keys` are the person's own (`shared: false`) and, for an
+ * admin of a team workspace, the workspace's keys (`shared: true`), which the
+ * admin manages. A member who is not an admin gets the workspace's keys in
+ * `sharedKeys`, read-only. `canShare` means "may add and manage workspace
+ * connections" (a team workspace's admin). The `shared`/`sharedKeys`/`canShare`
+ * names stay for one release so the hosted settings page keeps working
+ * unchanged; nothing here shares a person's key (decision 2026-11-27-1740).
+ */
 export interface ApiKeysPage {
   keys: (ApiKeyView & { shared: boolean })[]
-  /** Teammates' keys shared into this workspace (read-only for borrowers, populated by workspace-aware callers). */
+  /** The workspace's own keys for a member who cannot manage them (populated by workspace-aware callers). */
   sharedKeys?: (UsableApiKey & { ownerName: string })[]
-  /** A team workspace where the admin allows members' credentials: the 分享给团队成员 switch shows. */
+  /** A team workspace's admin: 添加工作区连接 shows. */
   canShare: boolean
   apiKeyAfterQuota: boolean
 }
 
-export async function listApiKeys(query: Query, ownerId: string, workspace: { id: string; kind: 'personal' | 'team' }): Promise<ApiKeysPage> {
-  const [keys, shares, fallback, allowed] = await Promise.all([
+export async function listApiKeys(query: Query, ownerId: string, workspace: { id: string; kind: 'personal' | 'team' }, options: { admin?: boolean } = {}): Promise<ApiKeysPage> {
+  const manages = workspace.kind === 'team' && options.admin === true
+  const [keys, workspaceKeys, fallback] = await Promise.all([
     query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`, [ownerId]),
-    query.query<{ keyId: string }>('SELECT s."keyId" FROM model_api_key_shares s JOIN model_api_keys k ON k.id=s."keyId" WHERE k."ownerId"=$1 AND s."workspaceId"=$2', [ownerId, workspace.id]),
+    manages ? query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE "workspaceId"=$1 ORDER BY "createdAt",id`, [z.uuid().parse(workspace.id)]) : Promise.resolve({ rows: [] as Row[] }),
     apiKeyAfterQuota(query, ownerId),
-    workspace.kind === 'team' ? memberSubscriptionsAllowed(query, workspace.id) : Promise.resolve(false),
   ])
-  const shared = new Set(shares.rows.map(row => row.keyId))
-  return { keys: keys.rows.map(row => ({ ...view(row), shared: shared.has(row.id) })), canShare: allowed, apiKeyAfterQuota: fallback }
+  return {
+    keys: [...keys.rows.map(row => ({ ...view(row), shared: false })), ...workspaceKeys.rows.map(row => ({ ...view(row), shared: true }))],
+    canShare: manages, apiKeyAfterQuota: fallback,
+  }
 }
 
 function speedModesJson(discovered: Record<string, readonly ModelSpeedMode[]> | undefined): string | null {
@@ -176,17 +206,22 @@ function parseStoredSpeedModes(settings: ModelSettings | null | undefined): Reco
 }
 
 /**
- * Checks the key with the provider, then saves it sealed. Multiple keys per
- * preset or custom provider are supported (decision 2026-11-23); pass
- * `replaceId` to rotate an owned key in place while keeping its shares.
+ * Checks the key with the provider, then saves it sealed to its owner: a
+ * person (a string, or `{ userId }`) or a workspace (`{ workspaceId }`, with
+ * `addedBy` recorded). The caller has checked that a workspace's key is added
+ * by one of its admins. Multiple keys per preset or custom provider are
+ * supported (decision 2026-11-23); pass `replaceId` to rotate a key of the same
+ * owner in place.
  * Errors: apiKeyInvalid (401/403), apiKeyUnverifiable (anything else),
  * apiKeyBaseUrlInvalid, apiKeyNotFound, secretsUnavailable. The key is never logged.
  */
-export async function addApiKey(query: Query, ownerId: string, input: unknown, options: {
+export async function addApiKey(query: Query, ownerInput: string | ApiKeyOwner, input: unknown, options: {
   env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]>
-  /** Atomically admit and save workspace sharing alongside the key write (never mutates/deletes on share refusal). */
-  shareWorkspace?: { id: string; kind: 'personal' | 'team' }
+  /** Who added a workspace's key; it stays the workspace's when they leave. */
+  addedBy?: string
 } = {}): Promise<ApiKeyView> {
+  const owner = asOwner(ownerInput)
+  const where = ownedBy(owner)
   const parsed = addApiKeyInput.parse(input)
   const env = options.env ?? runtimeEnv()
   const custom = parsed.provider === 'custom' ? parsed : null
@@ -198,21 +233,15 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   let endpointChanged = false
   if (parsed.replaceId) {
     const existing = (await query.query<{ id: string; provider: ApiKeyProvider; baseUrl: string | null; protocol: ApiKeyProtocol }>(
-      'SELECT id,provider,"baseUrl",protocol FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [parsed.replaceId, ownerId])).rows[0]
+      `SELECT id,provider,"baseUrl",protocol FROM model_api_keys WHERE id=$1 AND ${where.column}=$2`, [parsed.replaceId, where.value])).rows[0]
     if (!existing || existing.provider !== parsed.provider) throw new WorkspaceError('apiKeyNotFound')
     id = existing.id
     endpointChanged = existing.provider === 'custom' && (baseUrl !== existing.baseUrl || protocol !== existing.protocol)
   } else {
     id = randomUUID()
   }
-  const shareWorkspace = options.shareWorkspace
-  if (shareWorkspace) {
-    if (shareWorkspace.kind !== 'team') throw new WorkspaceError('validationGeneric')
-    if (!(await memberSubscriptionsAllowed(query, shareWorkspace.id))) throw new WorkspaceError('workspaceAccessDenied')
-    await assertOrganizationResourceShare(shareWorkspace.id, 'api_key', id, ownerId)
-  }
   let sealed: ReturnType<typeof sealSecret>
-  try { sealed = sealSecret(parsed.apiKey, keyAad(id, ownerId), env) } catch (error) {
+  try { sealed = sealSecret(parsed.apiKey, keyAad(id, aadOwner(owner)), env) } catch (error) {
     if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     throw error
   }
@@ -225,56 +254,34 @@ export async function addApiKey(query: Query, ownerId: string, input: unknown, o
   // LiteLLM converts Chat Completions to Responses; no native inference probe.
   const responsesApi = true
   const name = parsed.name ?? null
-  const persist = async (q: Query) => {
-    if (shareWorkspace) {
-      if (!(await memberSubscriptionsAllowed(q, shareWorkspace.id))) throw new WorkspaceError('workspaceAccessDenied')
-      await assertOrganizationResourceShare(shareWorkspace.id, 'api_key', id, ownerId)
-    }
-    if (endpointChanged) {
-      await q.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1', [id])
-    }
-    const { rows: [saved] } = await q.query<Row>(`INSERT INTO model_api_keys (id,"ownerId",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi","modelSettings")
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13::jsonb)
-      ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=${SURGICAL_SPEED_MODES_SQL('$14', 'model_api_keys.')},"updatedAt"=now()
-      RETURNING ${COLUMNS}`,
-    [id, ownerId, parsed.provider, name, baseUrl, protocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi, initialSettings, speedJson])
-    if (shareWorkspace) {
-      await q.query('INSERT INTO model_api_key_shares ("keyId","workspaceId") VALUES ($1,$2) ON CONFLICT DO NOTHING', [saved.id, shareWorkspace.id])
-    }
-    return saved
-  }
-  let row: Row
-  if (shareWorkspace && 'connect' in query && typeof (query as Pool).connect === 'function') {
-    const client = await (query as Pool).connect()
-    try {
-      await client.query('BEGIN')
-      row = await persist(client)
-      await client.query('COMMIT')
-    } catch (error) {
-      await client.query('ROLLBACK').catch(() => {})
-      throw error
-    } finally {
-      client.release()
-    }
-  } else {
-    row = await persist(query)
-  }
-  if (endpointChanged) await stopRunsUsingApiKeys(query, { keyId: id, ownerId })
+  const personal = 'userId' in owner
+  // The conflict target is the row id; the WHERE keeps a rotation inside the same owner.
+  const { rows: [row] } = await query.query<Row>(`INSERT INTO model_api_keys (id,"ownerId","workspaceId","addedBy",provider,name,"baseUrl",protocol,ciphertext,iv,"keyVersion",last4,models,"responsesApi","modelSettings")
+    VALUES ($1,$2,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15::jsonb)
+    ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,"baseUrl"=EXCLUDED."baseUrl",protocol=EXCLUDED.protocol,ciphertext=EXCLUDED.ciphertext,iv=EXCLUDED.iv,"keyVersion"=EXCLUDED."keyVersion",last4=EXCLUDED.last4,models=EXCLUDED.models,"modelsError"=NULL,"responsesApi"=EXCLUDED."responsesApi","modelSettings"=${SURGICAL_SPEED_MODES_SQL('$16', 'model_api_keys.')},"updatedAt"=now()
+    WHERE model_api_keys."ownerId" IS NOT DISTINCT FROM EXCLUDED."ownerId" AND model_api_keys."workspaceId" IS NOT DISTINCT FROM EXCLUDED."workspaceId"
+    RETURNING ${COLUMNS}`,
+  [id, personal ? owner.userId : null, personal ? null : owner.workspaceId, personal ? null : options.addedBy ?? null, parsed.provider, name, baseUrl, protocol,
+    sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(models), responsesApi, initialSettings, speedJson])
+  if (!row) throw new WorkspaceError('apiKeyNotFound')
+  if (endpointChanged) await stopRunsUsingApiKeys(query, { keyId: id })
   return view(row)
 }
 
 /**
- * Updates an owned key's label, custom endpoint settings, or secret key in place.
- * Preserves enabled-model flags via surgical JSONB updates. When rotating the key
- * or changing a custom endpoint/protocol, revalidates DNS/SSRF and re-verifies
- * against the provider; changing a custom endpoint/protocol revokes workspace
- * shares and stops active runs so teammates never inherit an unapproved target.
+ * Updates a key's label, custom endpoint settings, or secret key in place, for
+ * its owner (a person, or a workspace through its admin). Preserves
+ * enabled-model flags via surgical JSONB updates. When rotating the key or
+ * changing a custom endpoint/protocol, revalidates DNS/SSRF and re-verifies
+ * against the provider; changing a custom endpoint/protocol stops the runs on
+ * the key so none continues against a target it did not start with.
  */
-export async function updateApiKey(query: Query, ownerId: string, id: string, input: unknown, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
+export async function updateApiKey(query: Query, ownerInput: string | ApiKeyOwner, id: string, input: unknown, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
   z.uuid().parse(id)
+  const where = ownedBy(asOwner(ownerInput))
   const parsed = updateApiKeyInput.parse(input)
   const env = options.env ?? runtimeEnv()
-  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE id=$1 AND "ownerId"=$2`, [id, ownerId])
+  const { rows: [row] } = await query.query<Row>(`SELECT ${COLUMNS} FROM model_api_keys WHERE id=$1 AND ${where.column}=$2`, [id, where.value])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
   const isCustom = row.provider === 'custom'
   if (!isCustom && (parsed.baseUrl !== undefined || parsed.protocol !== undefined || parsed.models !== undefined)) {
@@ -302,35 +309,32 @@ export async function updateApiKey(query: Query, ownerId: string, id: string, in
   } else if (isCustom && parsed.models !== undefined) {
     nextModels = [...new Set(parsed.models)]
   }
-  if (endpointChanged) {
-    await stopRunsUsingApiKeys(query, { keyId: id, ownerId })
-    await query.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1', [id])
-  }
+  if (endpointChanged) await stopRunsUsingApiKeys(query, { keyId: id })
   if (parsed.apiKey !== undefined) {
     let sealed: ReturnType<typeof sealSecret>
-    try { sealed = sealSecret(parsed.apiKey, keyAad(id, ownerId), env) } catch (error) {
+    try { sealed = sealSecret(parsed.apiKey, keyAad(id, row), env) } catch (error) {
       if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
       throw error
     }
     const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
       SET name=$3,"baseUrl"=$4,protocol=$5,ciphertext=$6,iv=$7,"keyVersion"=$8,last4=$9,models=$10::jsonb,"modelsError"=$11,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$12')},"updatedAt"=now()
-      WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-    [id, ownerId, nextName, nextBaseUrl, nextProtocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(nextModels), nextModelsError, speedJson])
+      WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+    [id, where.value, nextName, nextBaseUrl, nextProtocol, sealed.ciphertext, sealed.iv, sealed.keyVersion, parsed.apiKey.slice(-4), JSON.stringify(nextModels), nextModelsError, speedJson])
     if (!saved) throw new WorkspaceError('apiKeyNotFound')
     return view(saved)
   }
   if (needsVerify) {
     const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
       SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$8')},"updatedAt"=now()
-      WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-    [id, ownerId, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError, speedJson])
+      WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+    [id, where.value, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError, speedJson])
     if (!saved) throw new WorkspaceError('apiKeyNotFound')
     return view(saved)
   }
   const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys
     SET name=$3,"baseUrl"=$4,protocol=$5,models=$6::jsonb,"modelsError"=$7,"updatedAt"=now()
-    WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-  [id, ownerId, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError])
+    WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+  [id, where.value, nextName, nextBaseUrl, nextProtocol, JSON.stringify(nextModels), nextModelsError])
   if (!saved) throw new WorkspaceError('apiKeyNotFound')
   return view(saved)
 }
@@ -339,11 +343,13 @@ export async function updateApiKey(query: Query, ownerId: string, id: string, in
  * 重新获取模型: asks the provider's /models again with the stored key. A good
  * answer replaces the list (a custom provider that lists nothing keeps the
  * models it was added with); a failed one keeps the last list and records why,
- * for the key's row. Only the owner refreshes; the key is never returned.
+ * for the key's row. Only the key's owner refreshes (a workspace's, through its
+ * admin); the key is never returned.
  */
-export async function refreshApiKeyModels(query: Query, ownerId: string, id: string, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
+export async function refreshApiKeyModels(query: Query, ownerInput: string | ApiKeyOwner, id: string, options: { env?: Env; fetch?: typeof fetch; resolve?: (host: string) => Promise<string[]> } = {}): Promise<ApiKeyView> {
   z.uuid().parse(id)
-  const { rowCount } = await query.query('SELECT 1 FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [id, ownerId])
+  const where = ownedBy(asOwner(ownerInput))
+  const { rowCount } = await query.query(`SELECT 1 FROM model_api_keys WHERE id=$1 AND ${where.column}=$2`, [id, where.value])
   if (!rowCount) throw new WorkspaceError('apiKeyNotFound')
   const env = options.env ?? runtimeEnv()
   const { row, apiKey } = await openKey(query, id, env)
@@ -354,50 +360,34 @@ export async function refreshApiKeyModels(query: Query, ownerId: string, id: str
   const responsesApi = result.ok ? true : row.responsesApi
   if (result.ok) {
     const speedJson = speedModesJson(result.speedModes)
-    const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=NULL,"responsesApi"=$4,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$5')},"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-      [id, ownerId, JSON.stringify(models), responsesApi, speedJson])
+    const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=NULL,"responsesApi"=$4,"modelSettings"=${SURGICAL_SPEED_MODES_SQL('$5')},"updatedAt"=now() WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+      [id, where.value, JSON.stringify(models), responsesApi, speedJson])
     if (!saved) throw new WorkspaceError('apiKeyNotFound')
     return view(saved)
   }
-  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=$4,"responsesApi"=$5,"updatedAt"=now() WHERE id=$1 AND "ownerId"=$2 RETURNING ${COLUMNS}`,
-    [id, ownerId, JSON.stringify(models), result.code, responsesApi])
+  const { rows: [saved] } = await query.query<Row>(`UPDATE model_api_keys SET models=$3::jsonb,"modelsError"=$4,"responsesApi"=$5,"updatedAt"=now() WHERE id=$1 AND ${where.column}=$2 RETURNING ${COLUMNS}`,
+    [id, where.value, JSON.stringify(models), result.code, responsesApi])
   if (!saved) throw new WorkspaceError('apiKeyNotFound')
   return view(saved)
 }
 
-/** The owner removes their key; its shares go with it. */
-export async function removeApiKey(query: Query, ownerId: string, id: string): Promise<{ removed: boolean }> {
+/** The owner removes their key (a workspace's, through its admin). Runs on it stop first. */
+export async function removeApiKey(query: Query, ownerInput: string | ApiKeyOwner, id: string): Promise<{ removed: boolean }> {
   z.uuid().parse(id)
+  const where = ownedBy(asOwner(ownerInput))
+  const { rowCount: owned } = await query.query(`SELECT 1 FROM model_api_keys WHERE id=$1 AND ${where.column}=$2`, [id, where.value])
+  if (!owned) return { removed: false }
   // Runs handed this key stop first; the key is gone for them too.
-  await stopRunsUsingApiKeys(query, { keyId: id, ownerId })
-  const { rowCount } = await query.query('DELETE FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [id, ownerId])
+  await stopRunsUsingApiKeys(query, { keyId: id })
+  const { rowCount } = await query.query(`DELETE FROM model_api_keys WHERE id=$1 AND ${where.column}=$2`, [id, where.value])
   return { removed: Boolean(rowCount) }
 }
 
-/**
- * 分享给团队成员 for one key in one team workspace. The caller has checked
- * that the owner is an active member of it. Turning it on needs the admin's
- * 团队权限 › 订阅与 API Key (sharing with teammates); turning it off always works.
- */
-export async function setApiKeyShare(query: Query, ownerId: string, workspace: { id: string; kind: 'personal' | 'team' }, id: string, shared: boolean): Promise<void> {
-  z.uuid().parse(id)
-  if (workspace.kind !== 'team') throw new WorkspaceError('validationGeneric')
-  const { rowCount } = await query.query('SELECT 1 FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [id, ownerId])
-  if (!rowCount) throw new WorkspaceError('apiKeyNotFound')
-  if (!shared) {
-    await query.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1 AND "workspaceId"=$2', [id, workspace.id])
-    await stopRunsUsingApiKeys(query, { keyId: id, workspaceId: workspace.id, othersOnly: true })
-    return
-  }
-  if (!(await memberSubscriptionsAllowed(query, workspace.id))) throw new WorkspaceError('workspaceAccessDenied')
-  await assertOrganizationResourceShare(workspace.id, 'api_key', id, ownerId)
-  await query.query('INSERT INTO model_api_key_shares ("keyId","workspaceId") VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, workspace.id])
-}
-
-/** A member leaves a team: their key shares there go at once (orchestration.md § 6). */
-export async function removeMemberApiKeyShares(query: Query, ownerId: string, workspaceId: string) {
-  await query.query('DELETE FROM model_api_key_shares s USING model_api_keys k WHERE k.id=s."keyId" AND k."ownerId"=$1 AND s."workspaceId"=$2', [ownerId, workspaceId])
-  await stopRunsUsingApiKeys(query, { ownerId, workspaceId })
+/** Which owner a key id has, for an action that names a key by id alone. Never the key. */
+export async function apiKeyOwnerOf(query: Query, id: string): Promise<{ ownerId: string | null; workspaceId: string | null } | null> {
+  if (!z.uuid().safeParse(id).success) return null
+  const { rows: [row] } = await query.query<{ ownerId: string | null; workspaceId: string | null }>('SELECT "ownerId","workspaceId"::text AS "workspaceId" FROM model_api_keys WHERE id=$1', [id])
+  return row ?? null
 }
 
 /** 订阅额度用完后，自动改用 API Key. On unless the person turned it off. */
@@ -411,44 +401,42 @@ export async function setApiKeyAfterQuota(query: Query, ownerId: string, on: boo
 
 /** A key a person's runs may use in a workspace, as the model picker lists it. */
 export interface UsableApiKey extends ApiKeyView {
+  /** The person's id for their own key; the workspace's id for a workspace key. */
   ownerId: string
-  /** The person's own key, or a teammate's shared with 分享给团队成员. */
+  /** The person's own key. */
   mine: boolean
+  /** The workspace's own key (工作区连接), usable by every member there. Optional so older fixtures still type-check. */
+  workspace?: boolean
   /** Server-discovered speed modes per model id (from the provider's /models capability response). */
   modelSpeedModes?: Record<string, readonly ModelSpeedMode[]>
 }
 
 /**
- * The API keys a person's bots may use in a workspace, in the order of
- * orchestration.md § 2: their own first (when their credentials are allowed
- * there), then other members' keys shared with 分享给团队成员, oldest share
- * first. The model picker's 「API Key」 group reads this.
+ * The API keys a person's runs may use in a workspace, in the order of
+ * orchestration.md § 2 (like Capy, a person's own keys come first, then the
+ * workspace's): the person's own keys, then the workspace's own
+ * keys. Never another member's personal key (decision 2026-11-27-1740). The
+ * model picker's 「API Key」 group reads this.
  */
 export async function usableApiKeys(query: Query, userId: string, workspaceId: string, selectedKeyId?: string): Promise<UsableApiKey[]> {
-  // One after the other: a dispatch reads this on its transaction's client.
-  // The person's own keys always (decision 2026-11-01-2240); others' only while the admin allows member credentials.
-  const mine = (await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys WHERE "ownerId"=$1${selectedKeyId ? ' AND id=$2' : ''} ORDER BY "createdAt",id`, [userId, ...(selectedKeyId ? [selectedKeyId] : [])])).rows
-  const shared = (await query.query<Row>(`SELECT ${COLUMNS.split(',').map(column => `k.${column}`).join(',')},to_jsonb(k)->'modelSettings' AS "modelSettings" FROM model_api_key_shares s JOIN model_api_keys k ON k.id=s."keyId"
-    WHERE s."workspaceId"=$1 AND k."ownerId"<>$2${selectedKeyId ? ' AND k.id=$3' : ''} ORDER BY s."createdAt",k.id`, [workspaceId, userId, ...(selectedKeyId ? [selectedKeyId] : [])])).rows
-  // No borrowed key means no shared resource to authorize. Own keys retain
-  // their original policy; every actual borrowed key still gets fresh gates.
-  const others = shared.length && await memberSubscriptionsAllowed(query, workspaceId) ? shared : []
-  const grants = await Promise.all(others.map(row => organizationResourceAllowed(workspaceId, 'api_key', row.id, row.ownerId)))
-  const usable = (row: Row, mine: boolean) => {
+  const rows = (await query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys
+    WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid)${selectedKeyId ? ' AND id=$3' : ''} ORDER BY ("ownerId" IS NULL),"createdAt",id`,
+  [userId, uuidOrNull(workspaceId), ...(selectedKeyId ? [selectedKeyId] : [])])).rows
+  return rows.map(row => {
     const modelSpeedModes = parseStoredSpeedModes(row.modelSettings)
+    const mine = row.ownerId === userId
     return {
-      ...view(row), ownerId: row.ownerId, mine,
+      ...view(row), ownerId: mine ? userId : row.workspaceId!, mine, workspace: !mine,
       models: row.models.filter(id => modelEnabled(row.modelSettings, id)),
       ...(modelSpeedModes ? { modelSpeedModes } : {}),
     }
-  }
-  return [...mine.map(row => usable(row, true)), ...others.filter((_, index) => grants[index]).map(row => usable(row, false))]
+  })
 }
 
 async function openKey(query: Query, keyId: string, env: Env) {
   const { rows: [row] } = await query.query<Row & { ciphertext: string; iv: string; keyVersion: number }>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",ciphertext,iv,"keyVersion" FROM model_api_keys WHERE id=$1`, [keyId])
   if (!row) throw new WorkspaceError('apiKeyNotFound')
-  try { return { row, apiKey: openSecret(row, keyAad(row.id, row.ownerId), env) } } catch (error) {
+  try { return { row, apiKey: openSecret(row, keyAad(row.id, row), env) } } catch (error) {
     if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     console.error(`[model-api-keys] open_failed id=${row.id}`)
     throw new WorkspaceError('apiKeyNotFound', { cause: error })
@@ -467,12 +455,13 @@ export async function openGatewayApiKey(query: Query, keyId: string, env: Env = 
 }
 
 /** The owner turns request features off for a provider that rejects them (decision 2026-11-15-2000). */
-export async function setApiKeyFeatures(query: Query, ownerId: string, id: string, features: GatewayFeatures): Promise<void> {
+export async function setApiKeyFeatures(query: Query, ownerInput: string | ApiKeyOwner, id: string, features: GatewayFeatures): Promise<void> {
   z.uuid().parse(id)
+  const where = ownedBy(asOwner(ownerInput))
   const parsed = gatewayFeaturesSchema.parse(features)
   const off = Object.fromEntries(Object.entries(parsed).filter(([, on]) => on === false))
-  const { rowCount } = await query.query('UPDATE model_api_keys SET features=$3::jsonb WHERE id=$1 AND "ownerId"=$2',
-    [id, ownerId, Object.keys(off).length ? JSON.stringify(off) : null])
+  const { rowCount } = await query.query(`UPDATE model_api_keys SET features=$3::jsonb WHERE id=$1 AND ${where.column}=$2`,
+    [id, where.value, Object.keys(off).length ? JSON.stringify(off) : null])
   if (!rowCount) throw new WorkspaceError('apiKeyNotFound')
 }
 
@@ -508,41 +497,46 @@ export async function setBotApiKeyChoice(query: Query, scope: { ownerId: string;
 
 /**
  * The key and chat endpoint for one model call of a bot chat frozen on it.
- * Checked on every call, so a withdrawn share or a deleted key stops the
- * chat instead of switching (§ 2). Throws WorkspaceError('apiKeyNotFound').
+ * Checked on every call, so a deleted key, or leaving the workspace whose key it
+ * is, stops the chat instead of switching (§ 2). Throws WorkspaceError('apiKeyNotFound').
  */
 export async function openApiKeyForChat(query: Query, userId: string, workspaceId: string, keyId: string, env: Env = runtimeEnv()): Promise<{ apiKey: string; baseUrl: string; keyOwnerId: string; provider: ApiKeyProvider; protocol: ApiKeyProtocol; modelSpeedModes?: Record<string, readonly ModelSpeedMode[]> }> {
   await assertOrganizationModelProvider(workspaceId, 'api-key')
-  const usable = (await usableApiKeys(query, userId, workspaceId)).find(key => key.id === keyId)
+  z.uuid().parse(keyId)
+  const [usable] = await usableApiKeys(query, userId, workspaceId, keyId)
   const baseUrl = usable && apiKeyChatBaseUrl(usable)
   if (!usable || !baseUrl) throw new WorkspaceError('apiKeyNotFound')
-  const { rows: [owner] } = await query.query<{ ownerId: string }>('SELECT "ownerId" FROM model_api_keys WHERE id=$1', [keyId])
-  if (!owner || (owner.ownerId !== userId && !await executionMembersActive(workspaceId, [userId, owner.ownerId]))) throw new WorkspaceError('apiKeyNotFound')
+  // A workspace's key serves its active members only.
+  if (usable.workspace && !await executionMembersActive(workspaceId, [userId])) throw new WorkspaceError('apiKeyNotFound')
   const { row, apiKey } = await openKey(query, keyId, env)
   const modelSpeedModes = parseStoredSpeedModes(row.modelSettings)
-  return { apiKey, baseUrl, keyOwnerId: row.ownerId, provider: row.provider, protocol: row.protocol, ...(modelSpeedModes ? { modelSpeedModes } : {}) }
+  return { apiKey, baseUrl, keyOwnerId: row.ownerId ?? row.workspaceId!, provider: row.provider, protocol: row.protocol, ...(modelSpeedModes ? { modelSpeedModes } : {}) }
 }
 
 const ACTIVE_RUN = ['queued', 'preparing', 'running', 'paused', 'waiting_input', 'finishing']
 
-/** Authorize and record a run's current key without disclosing it to the machine. */
+/**
+ * Authorize and record a run's current key without disclosing it to the
+ * machine: the run owner's own key, or the key of the workspace the run is in
+ * while the owner is an active member there. Never another member's key.
+ */
 export async function validateRunApiKey(query: Query, runId: string, keyId: string): Promise<{ ownerId: string; workspaceId: string | null }> {
   z.uuid().parse(runId); z.uuid().parse(keyId)
   const { rows: [run] } = await query.query<{ userId: string; botId: string | null; deviceId: string | null; agentDefinition: WorkerDefinitionSnapshot | null; workspaceId: string | null; status: string; stopRequestedAt: Date | null }>(
-    'SELECT r."userId",r."botId",r."deviceId",r."agentDefinition",b."workspaceId"::text AS "workspaceId",r.status,r."stopRequestedAt" FROM agent_runs r LEFT JOIN bots b ON b.id=r."botId" WHERE r.id=$1', [runId])
+    `SELECT r."userId",r."botId",r."deviceId",r."agentDefinition",COALESCE(b."workspaceId"::text,r."workspaceId"::text) AS "workspaceId",r.status,r."stopRequestedAt"
+      FROM agent_runs r LEFT JOIN bots b ON b.id=r."botId" WHERE r.id=$1`, [runId])
   if (!run || run.stopRequestedAt || !ACTIVE_RUN.includes(run.status)) throw new WorkspaceError('apiKeyNotFound')
   if (run.workspaceId) await assertOrganizationModelProvider(run.workspaceId, 'api-key')
   if (run.agentDefinition && run.agentDefinition.apiKey?.keyId !== keyId) throw new WorkspaceError('apiKeyNotFound')
   try { await revalidateExecutionIdentity(query, run) }
   catch (error) { if (error instanceof ExecutionIdentityError) throw new WorkspaceError('apiKeyNotFound', { cause: error }); throw error }
-  const usable = run.workspaceId
-    ? (await usableApiKeys(query, run.userId, run.workspaceId)).some(key => key.id === keyId)
-    : Boolean((await query.query('SELECT 1 FROM model_api_keys WHERE id=$1 AND "ownerId"=$2', [keyId, run.userId])).rowCount)
-  if (!usable) throw new WorkspaceError('apiKeyNotFound')
-  const { rows: [owner] } = await query.query<{ ownerId: string }>('SELECT "ownerId" FROM model_api_keys WHERE id=$1', [keyId])
-  if (!owner || (owner.ownerId !== run.userId && (!run.agentDefinition?.apiKey || !run.workspaceId || !await executionMembersActive(run.workspaceId, [run.userId, owner.ownerId])))) throw new WorkspaceError('apiKeyNotFound')
-  // Recorded so withdrawing the key or its share stops this run (stopRunsUsingApiKeys).
+  const key = await apiKeyOwnerOf(query, keyId)
+  const own = key?.ownerId === run.userId
+  const workspaceKey = Boolean(key?.workspaceId && run.workspaceId && key.workspaceId === run.workspaceId && run.agentDefinition?.apiKey
+    && await executionMembersActive(run.workspaceId, [run.userId]))
+  if (!key || (!own && !workspaceKey)) throw new WorkspaceError('apiKeyNotFound')
+  // Recorded so removing the key stops this run (stopRunsUsingApiKeys).
   await query.query(`INSERT INTO model_api_key_runs ("runId","keyId","workspaceId") VALUES ($1,$2,$3)
     ON CONFLICT ("runId") DO UPDATE SET "keyId"=EXCLUDED."keyId","workspaceId"=EXCLUDED."workspaceId"`, [runId, keyId, run.workspaceId])
-  return { ownerId: owner.ownerId, workspaceId: run.workspaceId }
+  return { ownerId: own ? run.userId : key.workspaceId!, workspaceId: run.workspaceId }
 }

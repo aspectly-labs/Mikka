@@ -54,10 +54,8 @@ export async function providerHealthStates(query: Query, scope: Scope, candidate
       SELECT * FROM unnest($3::text[],$4::text[],$5::text[],$6::text[],$7::text[]) AS allowed(kind,id,owner,harness,model)
     ), sources AS (
       SELECT DISTINCT requested.kind,requested.id,requested.owner,k."updatedAt" AS "validAfter",NULL::bigint AS epoch
-      FROM requested JOIN model_api_keys k ON requested.kind='api_key' AND k.id::text=requested.id AND k."ownerId"=requested.owner
-      WHERE k."ownerId"=$1 OR (
-        EXISTS (SELECT 1 FROM model_api_key_shares sh WHERE sh."keyId"=k.id AND sh."workspaceId"::text=$2)
-        AND NOT EXISTS (SELECT 1 FROM workspace_personal_policies p WHERE p."workspaceId"::text=$2 AND NOT p.subscriptions))
+      FROM requested JOIN model_api_keys k ON requested.kind='api_key' AND k.id::text=requested.id AND COALESCE(k."ownerId",k."workspaceId"::text)=requested.owner
+      WHERE k."ownerId"=$1 OR k."workspaceId"::text=$2
       UNION ALL
       SELECT DISTINCT requested.kind,requested.id,requested.owner,NULL::timestamptz AS "validAfter",c.epoch
       FROM requested JOIN byos_connections c ON requested.kind='subscription' AND c.id::text=requested.id AND c."ownerId"=requested.owner

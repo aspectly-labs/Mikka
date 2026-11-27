@@ -2,13 +2,14 @@ import type { Pool, PoolClient } from 'pg'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import type { WorkerDefinitionSnapshot } from './agent-kit/worker'
-import { organizationResourceAllowed, assertOrganizationModelProvider } from './governance/resource-access'
+import { assertOrganizationModelProvider } from './governance/resource-access'
 import { McpValidationError, PluginError } from './plugins/contracts'
 
 /** Authority is host data, never a Decision/model argument. References only: no credentials. */
 const resource = z.object({
   kind: z.enum(['device', 'api_key', 'subscription', 'e2b', 'cloudflare_sponsored', 'mcp']), id: z.string().min(1), ownerId: z.string().min(1),
-  access: z.enum(['owner', 'workspace_share']), revision: z.string().optional(),
+  // 'workspace': the workspace's own resource (a workspace API key, decision 2026-11-27-1740); ownerId is the workspace id.
+  access: z.enum(['owner', 'workspace_share', 'workspace']), revision: z.string().optional(),
   grantId: z.uuid().optional(), workspaceId: z.uuid().optional(),
 })
 const account = z.object({
@@ -74,14 +75,14 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
   if (definition.apiKey && definition.subscription) return denied()
   if (definition.apiKey) {
     if (workspaceId) await assertOrganizationModelProvider(workspaceId, 'api-key', membership)
-    const { rows: [key] } = await query.query<{ ownerId: string; shared: boolean }>(`SELECT k."ownerId", EXISTS (
-      SELECT 1 FROM model_api_key_shares s WHERE s."keyId"=k.id AND s."workspaceId"=$2
-      AND NOT EXISTS (SELECT 1 FROM workspace_personal_policies p WHERE p."workspaceId"=$2 AND NOT p.subscriptions)) AS shared
-      FROM model_api_keys k WHERE k.id=$1`, [definition.apiKey.keyId, workspaceId])
-    if (!key || (key.ownerId !== run.userId && (!workspaceId || !key.shared || !await executionMembersActive(workspaceId, [run.userId, key.ownerId], membership)))) return denied()
-    if (key.ownerId !== run.userId && !await organizationResourceAllowed(workspaceId!, 'api_key', definition.apiKey.keyId, key.ownerId, membership)) return denied()
-    resourceBindings.push({ kind: 'api_key', id: definition.apiKey.keyId, ownerId: key.ownerId, access: key.ownerId === run.userId ? 'owner' : 'workspace_share' })
-    model = { kind: 'api_key', ownerId: key.ownerId, resourceId: definition.apiKey.keyId, amount: 'provider_unknown' }
+    // The run owner's own key, or the key of the workspace the run is in (decision 2026-11-27-1740). Never another member's key.
+    const { rows: [key] } = await query.query<{ ownerId: string | null; workspaceId: string | null }>('SELECT "ownerId","workspaceId"::text AS "workspaceId" FROM model_api_keys WHERE id=$1', [definition.apiKey.keyId])
+    const own = !!key && key.ownerId === run.userId
+    if (!key || (!own && (!workspaceId || key.workspaceId !== workspaceId || !await executionMembersActive(workspaceId, [run.userId], membership)))) return denied()
+    const keyOwner = own ? run.userId : workspaceId!
+    resourceBindings.push(own ? { kind: 'api_key', id: definition.apiKey.keyId, ownerId: keyOwner, access: 'owner' }
+      : { kind: 'api_key', id: definition.apiKey.keyId, ownerId: keyOwner, access: 'workspace', workspaceId: workspaceId! })
+    model = { kind: 'api_key', ownerId: keyOwner, resourceId: definition.apiKey.keyId, amount: 'provider_unknown' }
   } else if (definition.subscription) {
     const { rows: [binding] } = await query.query<{ ownerId: string; workspaceId: string; revision: string; modelId: string; route: string }>(`SELECT b."ownerId",b."workspaceId",b."connectionRevision"::text AS revision,b."modelId",b.route
       FROM byos_bindings b JOIN byos_connections c ON c.id=b."connectionId" AND c."ownerId"=b."ownerId"

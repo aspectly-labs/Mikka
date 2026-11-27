@@ -55,12 +55,13 @@ const owner = 'policy-fixture-owner'
 
 function policyReader(allowed: boolean | undefined = true) {
   const calls: string[] = []
-  const state: { allowed: boolean | undefined; error: Error | null; sharedKeys: boolean } = {
-    allowed, error: null, sharedKeys: true,
+  const state: { allowed: boolean | undefined; error: Error | null; workspaceKeys: boolean } = {
+    allowed, error: null, workspaceKeys: true,
   }
+  // The person's own key and the workspace's own key (decision 2026-11-27-1740); no other member's key exists here.
   const key = (mine: boolean) => ({
     id: mine ? '10000000-0000-4000-8000-000000000002' : '10000000-0000-4000-8000-000000000003',
-    ownerId: mine ? owner : 'policy-fixture-peer', provider: 'openai', protocol: 'openai', name: mine ? 'own' : 'shared',
+    ownerId: mine ? owner : null, workspaceId: mine ? null : workspace, provider: 'openai', protocol: 'openai', name: mine ? 'own' : 'workspace',
     baseUrl: null, last4: 'test', models: ['fixture-model'], modelsError: null, responsesApi: true,
   })
   const query = { async query(sql: string, values: unknown[]) {
@@ -70,11 +71,9 @@ function policyReader(allowed: boolean | undefined = true) {
       if (state.error) throw state.error
       return { rows: state.allowed === undefined ? [] : [{ subscriptions: state.allowed }] }
     }
-    if (sql.includes('FROM model_api_keys WHERE')) {
-      calls.push('own-keys'); assert.deepEqual(values, [owner]); return { rows: [key(true)] }
-    }
-    if (sql.includes('FROM model_api_key_shares')) {
-      calls.push('shared-keys'); assert.deepEqual(values, [workspace, owner]); return { rows: state.sharedKeys ? [key(false)] : [] }
+    if (sql.includes('FROM model_api_keys')) {
+      assert.ok(!sql.includes('model_api_key_shares'), 'no share table is read')
+      calls.push('keys'); assert.deepEqual(values, [owner, workspace]); return { rows: state.workspaceKeys ? [key(true), key(false)] : [key(true)] }
     }
     assert.fail('unexpected policy consumer query')
   } } as unknown as Pick<Pool, 'query'>
@@ -82,9 +81,11 @@ function policyReader(allowed: boolean | undefined = true) {
 }
 
 async function readPolicyConsumers(query: Pick<Pool, 'query'>) {
-  // Subscriptions serve their owner only (decision 2026-11-17); shared API keys still read the policy.
+  // Subscriptions serve their owner only (decision 2026-11-17) and API keys are a person's or the
+  // workspace's (decision 2026-11-27-1740): the key read no longer consults the policy, which is read once beside it.
   const keys = await usableApiKeys(query, owner, workspace)
-  return { keys: keys.map(key => ({ id: key.id, mine: key.mine })) }
+  const allowed = await memberSubscriptionsAllowed(query, workspace)
+  return { allowed, keys: keys.map(key => ({ id: key.id, mine: key.mine })) }
 }
 
 function batchConsumers(query: Pick<Pool, 'query'>) {
@@ -97,21 +98,21 @@ function batchConsumers(query: Pick<Pool, 'query'>) {
 test('a Native read batch shares its workspace policy across the real key and subscription readers', async () => {
   const f = policyReader()
   assert.deepEqual(await batchConsumers(f.query), [{ ok: true, result: {
-    keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }, { id: '10000000-0000-4000-8000-000000000003', mine: false }],
+    allowed: true, keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }, { id: '10000000-0000-4000-8000-000000000003', mine: false }],
   } }])
-  assert.equal(f.calls.filter(call => call === 'policy').length, 1, 'one actual policy SELECT for both consumers in this batch')
-  assert.deepEqual(f.calls.filter(call => call !== 'policy'), ['own-keys', 'shared-keys'], 'consumer guards and data reads still run')
+  assert.equal(f.calls.filter(call => call === 'policy').length, 1, 'one actual policy SELECT in this batch')
+  assert.deepEqual(f.calls.filter(call => call !== 'policy'), ['keys'], 'the key read still runs')
 })
 
-test('a refused batch policy still permits own keys and returns no borrowed credential', async () => {
+test('a refused batch policy changes no key: own and workspace keys are nobody\'s share', async () => {
   const f = policyReader(false)
   assert.deepEqual(await batchConsumers(f.query), [{ ok: true, result: {
-    keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }],
+    allowed: false, keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }, { id: '10000000-0000-4000-8000-000000000003', mine: false }],
   } }])
-  assert.deepEqual(f.calls, ['own-keys', 'shared-keys', 'policy'])
+  assert.deepEqual(f.calls, ['keys', 'policy'])
   f.state.allowed = undefined
   const [next] = await batchConsumers(f.query)
-  assert.equal(next.ok && (next.result as { keys: unknown[] }).keys.length, 2, 'the next request observes the original absent-policy default')
+  assert.equal(next.ok && (next.result as { allowed: boolean }).allowed, true, 'the next request observes the original absent-policy default')
   assert.equal(f.calls.filter(call => call === 'policy').length, 2, 'false is an observation, not a missing cache entry')
 })
 
@@ -199,16 +200,16 @@ test('bound after-work reads fresh after both fulfilled and rejected batch lifet
   }
 })
 
-test('only the policy is shared: credential shares and own-key reads remain fresh in the batch', async () => {
+test('only the policy is shared: key reads remain fresh in the batch', async () => {
   const f = policyReader()
   await withReadBatchContext(async () => {
     assert.equal((await readPolicyConsumers(f.query)).keys.length, 2)
-    f.state.sharedKeys = false
+    f.state.workspaceKeys = false
     assert.deepEqual(await readPolicyConsumers(f.query), {
-      keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }],
+      allowed: true, keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }],
     })
   })
-  for (const name of ['own-keys', 'shared-keys']) assert.equal(f.calls.filter(call => call === name).length, 2)
+  assert.equal(f.calls.filter(call => call === 'keys').length, 2)
   assert.equal(f.calls.filter(call => call === 'policy').length, 1)
 })
 
@@ -275,17 +276,17 @@ test('standalone read-only policy consumers share one observation and keep every
   const expected = await readPolicyConsumers(before.query)
   assert.equal(before.calls.filter(call => call === 'policy').length, 1, 'ordinary callers keep their existing fresh check')
   assert.deepEqual(await observePolicy(() => readPolicyConsumers(after.query)), expected)
-  assert.deepEqual(after.calls, ['own-keys', 'shared-keys', 'policy'])
+  assert.deepEqual(after.calls, ['keys', 'policy'])
 })
 
 test('standalone policy refusal and absence are observed again by the next read', async () => {
   const f = policyReader(false)
   assert.deepEqual(await observePolicy(() => readPolicyConsumers(f.query)), {
-    keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }],
+    allowed: false, keys: [{ id: '10000000-0000-4000-8000-000000000002', mine: true }, { id: '10000000-0000-4000-8000-000000000003', mine: false }],
   })
-  assert.deepEqual(f.calls, ['own-keys', 'shared-keys', 'policy'])
+  assert.deepEqual(f.calls, ['keys', 'policy'])
   f.state.allowed = undefined
-  assert.equal((await observePolicy(() => readPolicyConsumers(f.query))).keys.length, 2)
+  assert.equal((await observePolicy(() => readPolicyConsumers(f.query))).allowed, true)
   assert.equal(f.calls.filter(call => call === 'policy').length, 2)
 })
 

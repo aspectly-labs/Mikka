@@ -381,9 +381,8 @@ export async function credentialStates(query: Query, scope: OrderScope, entries:
   }
   const keys = new Map((keyOwners.size ? (await query.query<{ id: string; modelsError: string | null; provider: string }>(
     `SELECT k.id::text AS id,k."modelsError",k.provider FROM model_api_keys k
-      JOIN unnest($1::text[],$2::text[]) AS authorized(id,owner) ON k.id::text=authorized.id AND k."ownerId"=authorized.owner
-      WHERE k."ownerId"=$3 OR (EXISTS (SELECT 1 FROM model_api_key_shares sh WHERE sh."keyId"=k.id AND sh."workspaceId"::text=$4)
-        AND NOT EXISTS (SELECT 1 FROM workspace_personal_policies p WHERE p."workspaceId"::text=$4 AND NOT p.subscriptions))`,
+      JOIN unnest($1::text[],$2::text[]) AS authorized(id,owner) ON k.id::text=authorized.id AND COALESCE(k."ownerId",k."workspaceId"::text)=authorized.owner
+      WHERE k."ownerId"=$3 OR k."workspaceId"::text=$4`,
     [[...keyOwners.keys()], [...keyOwners.values()], scope.ownerId, scope.workspaceId])).rows : []).map(row => [row.id, row]))
   const health = await providerHealthStates(query, scope, authorizedCandidates, checkedAt)
   const states = new Map<string, { credential: CredentialState; provider: string; quotaCheckPending?: true }>()

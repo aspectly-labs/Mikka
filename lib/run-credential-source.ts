@@ -14,8 +14,8 @@ interface Binding { id: string; ownerId: string; connectionId: string; connectio
 
 /**
  * The keys a run may use, as `validateRunApiKey` checks them at claim: in a bot's
- * workspace its owner's own keys, then teammates' shared ones; with no bot
- * (the Coordinator), the owner's own keys only.
+ * workspace its owner's own keys, then the workspace's own keys (decision
+ * 2026-11-27-1740); with no bot (the Coordinator), the owner's own keys only.
  */
 type RunKey = Pick<ApiKeyView, 'id' | 'provider' | 'protocol' | 'responsesApi' | 'models' | 'baseUrl'>
 async function runKeys(query: Query, ownerId: string, botWorkspaceId: string | null): Promise<RunKey[]> {

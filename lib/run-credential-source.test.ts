@@ -193,10 +193,9 @@ function cloudQueueFixture() {
         assert.equal(args[0], id(23))
         return { rows: [{ ownerId: scope.ownerId, kind: 'cloud', enabled: true }], rowCount: 1 }
       }
-      if (sql.startsWith('SELECT k."ownerId"')) {
-        assert.equal(args[1], id(2))
+      if (sql.startsWith('SELECT "ownerId","workspaceId"::text AS "workspaceId" FROM model_api_keys WHERE id=$1')) {
         const selected = keys.find(key => key.id === args[0])
-        return { rows: selected ? [{ ownerId: selected.ownerId, shared: false }] : [], rowCount: Number(Boolean(selected)) }
+        return { rows: selected ? [{ ownerId: selected.workspace ? null : selected.ownerId, workspaceId: selected.workspace ? id(2) : null }] : [], rowCount: Number(Boolean(selected)) }
       }
       if (sql.startsWith('SELECT 1 FROM user_e2b_keys')) {
         assert.equal(args[0], scope.ownerId)

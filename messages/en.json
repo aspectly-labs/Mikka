@@ -4569,6 +4569,7 @@
     "artifactNotFound": "This artifact does not exist.",
     "billingNoSubscription": "This workspace has no subscription yet.",
     "apiKeyNotFound": "This API key no longer exists.",
+    "apiKeySharingRetired": "Personal and workspace connections are added separately; a key can’t move between them. Add it under Workspace connections.",
     "botShareUnavailable": "A personal workspace has no one to share with.",
     "emailDeliveryFailed": "The email wasn’t sent.",
     "scheduleUserSourceRequired": "You need to make this change yourself.",

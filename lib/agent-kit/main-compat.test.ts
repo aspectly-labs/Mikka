@@ -301,12 +301,10 @@ function cloudQueueFixture(instructions='Review',priorRun?:Record<string,unknown
    if(sql==='SELECT subscriptions FROM workspace_personal_policies WHERE "workspaceId"=$1'){
     assert.deepEqual(args,[workspace]);return fixtureRows([])
    }
-   const keyColumns='id,"ownerId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features'
-   if(sql===`SELECT ${keyColumns},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`){
-    assert.deepEqual(args,[owner]);return fixtureRows([])
-   }
-   if(sql===`SELECT ${keyColumns.split(',').map(column=>`k.${column}`).join(',')},to_jsonb(k)->'modelSettings' AS "modelSettings" FROM model_api_key_shares s JOIN model_api_keys k ON k.id=s."keyId" WHERE s."workspaceId"=$1 AND k."ownerId"<>$2 ORDER BY s."createdAt",k.id`){
-    assert.deepEqual(args,[workspace,owner]);return fixtureRows([])
+   // The person's own keys and the workspace's own keys, in one read (decision 2026-11-27-1740).
+   const keyColumns='id,"ownerId","workspaceId"::text AS "workspaceId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features'
+   if(sql===`SELECT ${keyColumns},to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid) ORDER BY ("ownerId" IS NULL),"createdAt",id`){
+    assert.equal(args[0],owner);return fixtureRows([])
    }
    const identity=identityFixtureQuery(sql,args);if(identity)return identity
    if(sql==='SELECT 1 FROM device_repos WHERE id=$1 AND "userId"=$2 AND "repoPath" LIKE \'v2/github.com/%\''){

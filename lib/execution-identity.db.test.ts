@@ -39,7 +39,7 @@ test('real claim, MCP tools, key disclosure and artifacts enforce the frozen exe
     appPool = (await import('./db')).pool; workspacePool = (await import('./workspace-db')).workspacePool
     const requester = 'requester', other = 'other', resourceOwner = 'resource-owner'
     for (const user of [requester, other, resourceOwner]) await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES ($1,$1,$2,true,now(),now())', [user, `${user}@example.invalid`])
-    const workspace = randomUUID(), bot = randomUUID(), device = randomUUID(), agent = randomUUID(), issue = randomUUID(), ownKey = randomUUID(), sharedKey = randomUUID(), runId = randomUUID()
+    const workspace = randomUUID(), bot = randomUUID(), device = randomUUID(), agent = randomUUID(), issue = randomUUID(), ownKey = randomUUID(), workspaceKey = randomUUID(), teammateKey = randomUUID(), runId = randomUUID()
     await pool.query('INSERT INTO mikka_workspaces(id,"userId",name) VALUES($1,$2,\'Identity fixture\')', [workspace, requester])
     for (const user of [requester, other, resourceOwner]) await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,\'member\',\'active\')', [workspace, user, `${user}@example.invalid`])
     await pool.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,\'Identity fixture\')', [bot, requester, workspace])
@@ -47,12 +47,17 @@ test('real claim, MCP tools, key disclosure and artifacts enforce the frozen exe
     await pool.query('INSERT INTO agents(id,"userId",name,harness,"deviceId") VALUES($1,$2,\'Identity fixture\',\'codex\',$3)', [agent, requester, device])
     await pool.query('INSERT INTO issues(id,"userId","workspaceId",title,content,status,priority) VALUES($1,$2,$3,\'Identity fixture\',\'{"type":"doc","content":[]}\',\'doing\',\'normal\')', [issue, requester, workspace])
     const env = { WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') }
-    for (const [id, owner] of [[ownKey, requester], [sharedKey, resourceOwner]]) {
+    for (const [id, owner] of [[ownKey, requester], [teammateKey, resourceOwner]]) {
       const sealed = sealSecret(`synthetic-${owner}-not-a-real-secret`, ['model_api_key', id, owner].join('\0'), env)
       await pool.query('INSERT INTO model_api_keys(id,"ownerId",provider,protocol,ciphertext,iv,"keyVersion",last4,models) VALUES($1,$2,\'openai\',\'openai\',$3,$4,$5,\'test\',\'["example-model"]\')', [id, owner, sealed.ciphertext, sealed.iv, sealed.keyVersion])
     }
-    await pool.query('INSERT INTO model_api_key_shares("keyId","workspaceId") VALUES($1,$2)', [sharedKey, workspace])
-    const definition = freezeWorkerDefinition({ harness: 'codex', instructions: '', prompt: 'Task', parent: null, executionId: null, model: 'example-model', apiKey: { keyId: sharedKey, model: 'example-model' } })
+    // Decision 2026-11-27-1740: the workspace's own key, added by a member, sealed to the workspace.
+    const workspaceSealed = sealSecret('synthetic-workspace-not-a-real-secret', ['model_api_key_workspace', workspaceKey, workspace].join('\0'), env)
+    await pool.query('INSERT INTO model_api_keys(id,"workspaceId","addedBy",provider,protocol,ciphertext,iv,"keyVersion",last4,models) VALUES($1,$2,$3,\'openai\',\'openai\',$4,$5,$6,\'test\',\'["example-model"]\')',
+      [workspaceKey, workspace, resourceOwner, workspaceSealed.ciphertext, workspaceSealed.iv, workspaceSealed.keyVersion])
+    const borrowed = freezeWorkerDefinition({ harness: 'codex', instructions: '', prompt: 'Task', parent: null, executionId: null, model: 'example-model', apiKey: { keyId: teammateKey, model: 'example-model' } })
+    await assert.rejects(() => freezeExecutionIdentity(pool, { userId: requester, botId: bot, deviceId: device, agentDefinition: borrowed }, pool), ExecutionIdentityError, 'another member\'s personal key never serves the requester')
+    const definition = freezeWorkerDefinition({ harness: 'codex', instructions: '', prompt: 'Task', parent: null, executionId: null, model: 'example-model', apiKey: { keyId: workspaceKey, model: 'example-model' } })
     definition.executionIdentity = await freezeExecutionIdentity(pool, { userId: requester, botId: bot, deviceId: device, agentDefinition: definition }, pool)
     await pool.query('INSERT INTO agent_runs(id,"userId","botId","deviceId","agentId","issueId",status,"agentDefinition","workspaceId") VALUES($1,$2,$3,$4,$5,$6,\'queued\',$7,$8)', [runId, requester, bot, device, agent, issue, JSON.stringify(definition), workspace])
     const claim = createExecutionClaim(pool, async () => true)
@@ -61,27 +66,34 @@ test('real claim, MCP tools, key disclosure and artifacts enforce the frozen exe
     const auth = () => verifyRunToken(new Request('http://127.0.0.1/mikka/api/mcp'), token)
     const reset = () => pool.query('UPDATE agent_runs SET status=\'queued\',"stopRequestedAt"=NULL WHERE id=$1', [runId])
 
-    await t.test('explicitly shared key charges its real owner, while Gmail and runtime retain the requester', async () => {
+    await t.test('the workspace key charges the workspace, while Gmail and runtime retain the requester', async () => {
       assert.equal((await claim(requester, device, runId, lease())).length, 1)
-      const credential = await validateRunApiKey(pool, runId, sharedKey)
-      assert.equal(credential.ownerId, resourceOwner)
+      const credential = await validateRunApiKey(pool, runId, workspaceKey)
+      assert.equal(credential.ownerId, workspace)
+      assert.deepEqual(definition.executionIdentity!.resourceBindings.find(binding => binding.kind === 'api_key'), { kind: 'api_key', id: workspaceKey, ownerId: workspace, access: 'workspace', workspaceId: workspace })
       const verified = await auth(); assert.ok(verified)
       let appUser = ''
       const scope = await authorizeRunApp(verified, 'gmail', async user => { appUser = user; return ['gmail'] })
       assert.equal(scope?.userId, requester); assert.equal(appUser, requester)
-      assert.equal(definition.executionIdentity!.billingAccount.model.ownerId, resourceOwner)
+      assert.equal(definition.executionIdentity!.billingAccount.model.ownerId, workspace)
       assert.equal(definition.executionIdentity!.billingAccount.runtime.ownerId, requester)
       await assert.rejects(() => validateRunApiKey(pool, runId, ownKey), /apiKeyNotFound/)
     })
-    await t.test('share withdrawal blocks the next claim, token use and key read even without stop propagation', async () => {
-      await reset(); await pool.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1', [sharedKey])
+    await t.test('a key no longer the workspace\'s blocks the next claim, token use and key read even without stop propagation', async () => {
+      await reset(); await pool.query('UPDATE model_api_keys SET "workspaceId"=$2 WHERE id=$1', [workspaceKey, randomUUID()])
       await assert.rejects(() => claim(requester, device, runId, lease()), ExecutionIdentityError)
       assert.equal(await auth(), undefined)
-      await assert.rejects(() => validateRunApiKey(pool, runId, sharedKey), /apiKeyNotFound/)
+      await assert.rejects(() => validateRunApiKey(pool, runId, workspaceKey), /apiKeyNotFound/)
       assert.equal((await pool.query('SELECT status FROM agent_runs WHERE id=$1', [runId])).rows[0].status, 'queued')
-      await pool.query('INSERT INTO model_api_key_shares("keyId","workspaceId") VALUES($1,$2)', [sharedKey, workspace])
+      await pool.query('UPDATE model_api_keys SET "workspaceId"=$2 WHERE id=$1', [workspaceKey, workspace])
     })
-    for (const user of [requester, resourceOwner]) await t.test(`suspending ${user} blocks an existing tool token and dispatch`, async () => {
+    await t.test('the member who added the workspace key leaving does not take it away', async () => {
+      await pool.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, resourceOwner])
+      assert.ok(await auth())
+      assert.equal((await validateRunApiKey(pool, runId, workspaceKey)).ownerId, workspace)
+      await pool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, resourceOwner])
+    })
+    for (const user of [requester]) await t.test(`suspending ${user} blocks an existing tool token and dispatch`, async () => {
       await pool.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace, user])
       assert.equal(await auth(), undefined)
       await assert.rejects(() => claim(requester, device, runId, lease()), ExecutionIdentityError)
@@ -234,7 +246,7 @@ test('real claim, MCP tools, key disclosure and artifacts enforce the frozen exe
     await t.test('preexisting runs keep the legacy own-resource path without fabricated history', async () => {
       await pool.query('UPDATE agent_runs SET "agentDefinition"=NULL WHERE id=$1', [runId])
       assert.ok(await auth())
-      await assert.rejects(() => validateRunApiKey(pool, runId, sharedKey), /apiKeyNotFound/)
+      await assert.rejects(() => validateRunApiKey(pool, runId, workspaceKey), /apiKeyNotFound/)
       assert.equal((await validateRunApiKey(pool, runId, ownKey)).ownerId, requester)
     })
   } finally {
