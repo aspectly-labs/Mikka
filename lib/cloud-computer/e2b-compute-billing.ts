@@ -46,6 +46,7 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
         "previousActiveChunkStartedAt"="activeChunkStartedAt",
         "activeChunkStartedAt"=CASE WHEN "activeChunkIndex"=-1 THEN COALESCE("activeChunkStartedAt",now()) ELSE greatest(now(),"paidUntil") END,
         "paidUntil"=greatest(now(),"paidUntil")+$3::int*interval '1 millisecond',
+        "providerTimeoutAt"=NULL,
         "renewalReviewAt"=CASE WHEN "sandboxId" IS NOT NULL THEN clock_timestamp()+interval '30 seconds' ELSE NULL END,
         "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL,
         "pendingAt"=NULL,"pendingRunId"=NULL,"fundingOpenedAt"=NULL
@@ -74,14 +75,15 @@ async function paidTimeout(lease: Lease, target: Target, requestedMs: number, re
   return seconds * 1_000
 }
 
-async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment, observed = false) {
+async function useE2BKeepAlivePayment(query: Pick<Pool, 'query'>, ownerId: string, payment: KeepAlivePayment, observed = false, providerTimeoutAt?: Date) {
   if (!payment.operationId) return true
   const result = await query.query(`UPDATE e2b_compute_leases l SET "usedChunkIndex"=greatest("usedChunkIndex",$3),"renewalReviewAt"=NULL,
+      "providerTimeoutAt"=COALESCE($5::timestamptz,"providerTimeoutAt"),
       "renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,"renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL
     WHERE "operationId"=$1 AND "ownerId"=$2 AND "activeChunkIndex"=$3 AND ($4::boolean OR "paidUntil">clock_timestamp())
       AND EXISTS (SELECT 1 FROM hosted_usage u WHERE u.id='machine:e2b:'||l."operationId"||':'||$3::int
         AND u."executionOwnerId"=$2 AND u."usageWorkspaceId"=l."workspaceId" AND u.state='settled')`,
-  [payment.operationId, ownerId, payment.index, observed])
+  [payment.operationId, ownerId, payment.index, observed, providerTimeoutAt ?? null])
   return result.rowCount === 1
 }
 
@@ -215,16 +217,24 @@ export async function e2bCreationTimeout(ownerId: string, providerScope: string,
   return MACHINE_CHUNK_MS
 }
 
-export async function recordE2BComputeSandbox(ownerId: string, operationId: string, sandboxId: string, startedAt?: Date) {
+export async function recordE2BComputeSandbox(ownerId: string, operationId: string, sandboxId: string, startedAt?: Date, endAt?: Date) {
   if (!isCloudEdition()) return
   const result = await pool.query(`UPDATE e2b_compute_leases SET "sandboxId"=$3,"creationMissingAt"=NULL,
     "activeChunkStartedAt"=CASE WHEN "sandboxId" IS NULL AND "chunkIndex"=0
       THEN COALESCE($4::timestamptz,least("activeChunkStartedAt",now()),now()) ELSE "activeChunkStartedAt" END,
+    "providerTimeoutAt"=CASE WHEN "sandboxId" IS NULL AND "chunkIndex"=0
+      THEN COALESCE($6::timestamptz,"providerTimeoutAt") ELSE "providerTimeoutAt" END,
     "paidUntil"=CASE WHEN "sandboxId" IS NULL AND "chunkIndex"=0 AND $4::timestamptz<=now()
       THEN greatest("paidUntil",$4::timestamptz+$5::int*interval '1 millisecond') ELSE "paidUntil" END
     WHERE "operationId"=$1
-    AND "ownerId"=$2 AND "paidUntil" IS NOT NULL AND ("sandboxId" IS NULL OR "sandboxId"=$3)`, [operationId, ownerId, sandboxId, startedAt ?? null, MACHINE_CHUNK_MS])
+    AND "ownerId"=$2 AND "paidUntil" IS NOT NULL AND ("sandboxId" IS NULL OR "sandboxId"=$3)`, [operationId, ownerId, sandboxId, startedAt ?? null, MACHINE_CHUNK_MS, endAt ?? null])
   if (result.rowCount !== 1) throw unavailable()
+}
+
+export type E2BAwakeSettleFence = {
+  runId?: string
+  expectedEpoch?: number
+  botWorkspaceId?: string
 }
 
 /**
@@ -237,14 +247,40 @@ export async function settleE2BAwakeInterval(
   sandboxId: string,
   endedAt?: Date,
   existingTx?: Pick<PoolClient, 'query'>,
+  fence?: E2BAwakeSettleFence,
 ): Promise<{ settled: boolean; refundedMicroUsd: number }> {
   if (!isCloudEdition() || !sandboxId) return { settled: false, refundedMicroUsd: 0 }
   const runInTx = async (tx: Pick<PoolClient, 'query'>) => {
+    const { rows: [meta] } = await tx.query<{ available: boolean }>(
+      `SELECT to_regclass('e2b_compute_leases') IS NOT NULL AND to_regclass('hosted_usage') IS NOT NULL AS available`,
+    )
+    if (!meta?.available) return { settled: false, refundedMicroUsd: 0 }
+
+    if (fence?.runId && fence.expectedEpoch !== undefined) {
+      const fenced = await tx.query(
+        `SELECT 1 FROM thread_machines
+         WHERE "runId"=$1 AND "ownerId"=$2 AND "sandboxId"=$3 AND epoch=$4 AND state='paused'
+         FOR SHARE`,
+        [fence.runId, ownerId, sandboxId, fence.expectedEpoch],
+      )
+      if (!fenced.rowCount) return { settled: false, refundedMicroUsd: 0 }
+    }
+    if (fence?.botWorkspaceId) {
+      const botFenced = await tx.query(
+        `SELECT 1 FROM cloud_machines
+         WHERE "workspaceId"=$1 AND "ownerId"=$2 AND state='sleeping' AND ("sandboxId" IS NULL OR "sandboxId"=$3)
+         FOR SHARE`,
+        [fence.botWorkspaceId, ownerId, sandboxId],
+      )
+      if (!botFenced.rowCount) return { settled: false, refundedMicroUsd: 0 }
+    }
+
     const { rows: [lease] } = await tx.query<{
       operationId: string
       workspaceId: string
       hourlyMicroUsd: number
       paidUntil: Date | null
+      providerTimeoutAt: Date | null
       activeChunkIndex: number
       activeChunkStartedAt: Date | null
       previousPaidUntil: Date | null
@@ -253,7 +289,7 @@ export async function settleE2BAwakeInterval(
       lastSettledChunkIndex: number
       clockNow: Date
     }>(
-      `SELECT "operationId","workspaceId","hourlyMicroUsd","paidUntil","activeChunkIndex","activeChunkStartedAt",
+      `SELECT "operationId","workspaceId","hourlyMicroUsd","paidUntil","providerTimeoutAt","activeChunkIndex","activeChunkStartedAt",
         "previousPaidUntil","previousActiveChunkIndex","previousActiveChunkStartedAt","lastSettledChunkIndex",
         clock_timestamp() AS "clockNow"
        FROM e2b_compute_leases
@@ -295,12 +331,16 @@ export async function settleE2BAwakeInterval(
     ) {
       await settleWindow(lease.previousActiveChunkIndex, lease.previousActiveChunkStartedAt, lease.previousPaidUntil)
     }
-    await settleWindow(lease.activeChunkIndex, lease.activeChunkStartedAt, lease.paidUntil)
+    const activeEndLimit = lease.providerTimeoutAt && lease.providerTimeoutAt.getTime() < lease.paidUntil.getTime()
+      ? lease.providerTimeoutAt
+      : lease.paidUntil
+    await settleWindow(lease.activeChunkIndex, lease.activeChunkStartedAt, activeEndLimit)
 
     await tx.query(
       `UPDATE e2b_compute_leases
        SET "lastSettledChunkIndex"="activeChunkIndex",
-         "paidUntil"=least("paidUntil",$3::timestamptz),
+         "paidUntil"=least("paidUntil",COALESCE("providerTimeoutAt","paidUntil"),$3::timestamptz),
+         "providerTimeoutAt"=NULL,
          "previousPaidUntil"=NULL,"previousActiveChunkIndex"=-1,"previousActiveChunkStartedAt"=NULL,
          "renewalReviewAt"=NULL,"renewalDispatchId"=NULL,"renewalDispatchUntil"=NULL,
          "renewalUnchangedAt"=NULL,"renewalBaselineDeadline"=NULL
@@ -446,7 +486,7 @@ export async function createPrepaidE2B<T>(ownerId: string, operationId: string, 
 }
 
 export async function verifyE2BAllocation(ownerId: string, operationId: string, sandboxId: string,
-  options: SandboxApiOpts, observed?: Pick<E2BComputeSpec, 'cpuCount' | 'memoryMB'> & { startedAt?: Date }) {
+  options: SandboxApiOpts, observed?: Pick<E2BComputeSpec, 'cpuCount' | 'memoryMB'> & { startedAt?: Date; endAt?: Date }) {
   if (!isCloudEdition()) return
   // An uncertain observation retains the prepayment and operation for reconciliation.
   const specs = observed ?? await Sandbox.getInfo(sandboxId, options)
@@ -456,7 +496,8 @@ export async function verifyE2BAllocation(ownerId: string, operationId: string, 
     throw new E2BKeyError('e2b_template_unavailable', 'E2B allocation did not match its verified hardware')
   }
   const startedAt = specs.startedAt && Number.isFinite(specs.startedAt.getTime()) ? specs.startedAt : undefined
-  await recordE2BComputeSandbox(ownerId, operationId, sandboxId, startedAt)
+  const endAt = specs.endAt && Number.isFinite(specs.endAt.getTime()) ? specs.endAt : undefined
+  await recordE2BComputeSandbox(ownerId, operationId, sandboxId, startedAt, endAt)
 }
 
 /** Historical create intents have no charge to verify. Their exact provider
@@ -535,7 +576,7 @@ export async function prepareE2BProviderTime(ownerId: string, sandboxId: string,
       const remaining = Math.floor((deadline - now) / 1_000) * 1_000
       if (remaining < 1) return null
       const result = await send(remaining)
-      await useE2BKeepAlivePayment(query, ownerId, payment, true)
+      await useE2BKeepAlivePayment(query, ownerId, payment, true, new Date(now + remaining))
       return { result, deadline }
     },
     cancel: () => releaseE2BKeepAlivePayment(ownerId, payment),

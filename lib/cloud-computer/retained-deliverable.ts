@@ -224,7 +224,7 @@ export function createRetainedDeliverableObserver(pool: Pool,
     if (failure && leased && (!connectAttempted || (connectConfirmed && confirmedPaused))) {
       await release().catch(() => undefined)
     }
-    if (confirmedPaused) {
+    if (confirmedPaused && runtime === defaultRuntime) {
       const { settleE2BAwakeInterval } = await import('./e2b-compute-billing')
       await settleE2BAwakeInterval(scope.ownerId, scope.sandboxId)
     }

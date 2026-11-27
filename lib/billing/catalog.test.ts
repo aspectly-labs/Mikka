@@ -238,6 +238,18 @@ test('resolveBillingCatalog falls back gracefully without fabricating prices whe
   assert.deepEqual(unconfigured.plans, [])
   assert.equal(unconfigured.activeOffer, null)
   assert.equal(unconfigured.machineSkus.length, selectableMachineSizeOptions().length)
+  assert.equal('e2bMachineSkus' in unconfigured, false)
+
+  const withE2B = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: { NODE_ENV: 'test', MIKKA_EDITION: 'community' },
+    fetchImpl: unexpectedFetch,
+    now: new Date('2026-11-15T12:00:00Z'),
+    activeOfferOverride: SAMPLE_OFFER,
+    checkOfferEligibility: () => true,
+    includeE2BMachineSkus: true,
+  })
+  assert.equal(withE2B.e2bMachineSkus?.length, 4)
 
   // Configured Stripe returning HTTP 503 fails gracefully with empty plans and null activeOffer.
   const failing = makeStripeFetch({ error: { message: 'secret_internal_detail' } }, 503)

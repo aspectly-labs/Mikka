@@ -35,7 +35,13 @@ export async function reconcileCloudMachines(pool: Pick<Pool, 'query'>, probe?: 
         AND "lastActiveAt"<now()-interval '1 hour'
         AND ("provisionLeaseUntil" IS NULL OR "provisionLeaseUntil"<now())`, [row.workspaceId, row.ownerId, row.sandboxId, ...(state === 'gone' ? [randomUUID()] : [])])
     changed += updated.rowCount ?? 0
-    if (updated.rowCount) await machineCommitted(pool, row.ownerId, row.workspaceId)
+    if (updated.rowCount) {
+      if (!probe && isCloudEdition()) {
+        const { settleE2BAwakeInterval } = await import('../cloud-computer/e2b-compute-billing')
+        await settleE2BAwakeInterval(row.ownerId, row.sandboxId, undefined, undefined, { botWorkspaceId: row.workspaceId })
+      }
+      await machineCommitted(pool, row.ownerId, row.workspaceId)
+    }
   }
   if (!probe && isCloudEdition()) {
     const { reconcileE2BKeepAlivePayments } = await import('../cloud-computer/e2b-compute-billing')

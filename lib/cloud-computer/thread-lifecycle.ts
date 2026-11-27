@@ -427,7 +427,10 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         await deps.park(pool, actor, runId, fenceOf(row))
     }
     if (provider?.state === 'paused' && !live(row.workerLeaseUntil, now) && row.state !== 'ended' && row.sandboxId) {
-      await settleE2BAwakeInterval(actor.userId, row.sandboxId, new Date(now))
+      await settleE2BAwakeInterval(actor.userId, row.sandboxId, new Date(now), undefined, {
+        runId: row.runId,
+        expectedEpoch: row.epoch,
+      })
     }
     const decision = threadMachineLifecycleDecision(row, provider, now)
     if (decision.action === 'retire') {

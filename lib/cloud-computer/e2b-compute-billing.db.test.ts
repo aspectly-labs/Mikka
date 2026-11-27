@@ -600,14 +600,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
   }, async timeoutMs => timeoutMs)
   assert.ok(existing > 270_000 && existing <= 300_000)
 
-  const afterMismatch = await receipts()
-  process.env.MIKKA_EDITION = 'community'
-  assert.equal(await e2bCreationTimeout(ownerId, 'personal', randomUUID(), 'codex', { workspaceId, runId }, 900_000), 900_000)
-  assert.equal(await resume(), 900_000)
-  assert.deepEqual(await receipts(), afterMismatch)
-
   await t.test('settles E2B awake seconds on pause/kill, refunds unused credits, and charges fresh chunk on resume', async () => {
-    process.env.MIKKA_EDITION = 'cloud'
     const awakeOwnerId = await seedUser(fixture, 'e2b-awake-sec')
     const { id: awakeWorkspaceId } = await seedWorkspace(fixture, awakeOwnerId, [{ userId: awakeOwnerId, role: 'admin' }])
     const awakeAgentId = await seedAgent(fixture, awakeOwnerId)
@@ -711,5 +704,32 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     assert.equal(afterLateCancel.activeChunkIndex, 1)
     assert.equal(afterLateCancel.lastSettledChunkIndex, 1)
     assert.equal(afterLateCancel.paidUntil.getTime(), settledPauseAt.getTime())
+
+    // Provider auto-pause at providerTimeoutAt (293s) observed late at 310s bills only 293s and refunds 7s (448 micro-USD),
+    // and a stale epoch fence after a newer wake refuses to touch the new wake chunk.
+    const capOp = randomUUID()
+    const capSb = `sb-${randomUUID()}`
+    const capStart = new Date(Date.now() - 320_000)
+    const capTimeout = new Date(capStart.getTime() + 293_000)
+    await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture'),('sandbox',$3,$2,'team:fixture')`,
+      [capOp, awakeOwnerId, capSb])
+    await e2bCreationTimeout(awakeOwnerId, 'team:fixture', capOp, templates.codex.templateId, { workspaceId: awakeWorkspaceId, runId: awakeRunId }, 900_000,
+      { provider: 'e2b', size: 'medium', hourlyMicroUsd: 230_400, pricingVersion: '2026-11-26', cpuCount: 2, memoryMB: 8192 })
+    await recordE2BComputeSandbox(awakeOwnerId, capOp, capSb, capStart, capTimeout)
+    await fixture.query(`INSERT INTO thread_machines ("runId","ownerId","workspaceId","sandboxId","operationId","snapshotId",state,epoch)
+      VALUES ($1,$2,$3,$4,$5,'verified-codex','running',2)
+      ON CONFLICT ("runId") DO UPDATE SET "sandboxId"=$4,"operationId"=$5,state='running',epoch=2`, [awakeRunId, awakeOwnerId, awakeWorkspaceId, capSb, capOp])
+    const staleFence = await settleE2BAwakeInterval(awakeOwnerId, capSb, new Date(capStart.getTime() + 310_000), undefined, {
+      runId: awakeRunId, expectedEpoch: 1,
+    })
+    assert.deepEqual(staleFence, { settled: false, refundedMicroUsd: 0 })
+    const capSettle = await settleE2BAwakeInterval(awakeOwnerId, capSb, new Date(capStart.getTime() + 310_000))
+    assert.deepEqual(capSettle, { settled: true, refundedMicroUsd: 7 * 64 })
   })
+
+  const afterMismatch = await receipts()
+  process.env.MIKKA_EDITION = 'community'
+  assert.equal(await e2bCreationTimeout(ownerId, 'personal', randomUUID(), 'codex', { workspaceId, runId }, 900_000), 900_000)
+  assert.equal(await resume(), 900_000)
+  assert.deepEqual(await receipts(), afterMismatch)
 })

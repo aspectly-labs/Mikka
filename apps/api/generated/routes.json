@@ -207,7 +207,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "73363edf84acfdab57251bae6aa27f009a034769af5f5a566f029eb699b33a1c"
+      "sourceHash": "1bf5d535da2129fe38fb783641ba25738ab40c4c273a996365451d4fef4b7244"
     },
     {
       "path": "/mikka/api/billing/stripe",
