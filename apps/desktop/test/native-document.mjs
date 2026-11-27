@@ -23,16 +23,17 @@ export async function waitForBundledDocument(page, { timeout = 60_000 } = {}) {
 
 /** A server change can replace its originating document before evaluate replies.
  * Arm the next main-frame DOMContentLoaded before selecting once, then verify
- * the completed bundled document's immutable preload target. */
-export async function selectBundledServer(page, selection, expectedServerUrl, { timeout = 30_000 } = {}) {
-  if (typeof expectedServerUrl !== 'string' || !expectedServerUrl || !Number.isFinite(timeout) || timeout <= 0) throw new Error('NATIVE_SERVER_CHOICE_OPTIONS_INVALID')
-  const expires = performance.now() + timeout
+ * the completed bundled document's immutable preload target. `now` is the clock the
+ * deadline is checked against between steps (a test passes a mocked one). */
+export async function selectBundledServer(page, selection, expectedServerUrl, { timeout = 30_000, now = () => performance.now() } = {}) {
+  if (typeof expectedServerUrl !== 'string' || !expectedServerUrl || !Number.isFinite(timeout) || timeout <= 0 || typeof now !== 'function') throw new Error('NATIVE_SERVER_CHOICE_OPTIONS_INVALID')
+  const expires = now() + timeout
   const timeoutError = new Error('NATIVE_SERVER_CHOICE_TIMEOUT')
   let timer, fail, onDocument, onClose, onCrash, finished = false
   const active = () => {
-    if (finished || performance.now() >= expires) throw timeoutError
+    if (finished || now() >= expires) throw timeoutError
   }
-  const remaining = () => { active(); return Math.max(1, expires - performance.now()) }
+  const remaining = () => { active(); return Math.max(1, expires - now()) }
   const deadline = new Promise((_, reject) => {
     fail = reject
     timer = setTimeout(() => reject(timeoutError), timeout)

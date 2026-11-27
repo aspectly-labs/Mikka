@@ -1,14 +1,21 @@
 """Choose a visible child folder in the smoke job's real, isolated X11 dialog."""
 import csv
 import io
+import os
 import subprocess
 import sys
 import time
 
 
-def run(*args, data=None):
-    return subprocess.run(args, input=data, stdout=subprocess.PIPE,
+def run(*args, data=None, env=None):
+    return subprocess.run(args, input=data, stdout=subprocess.PIPE, env=env,
                           stderr=subprocess.DEVNULL, timeout=8, check=True).stdout
+
+
+# Tesseract's OpenMP threads spin against every other process on a busy runner:
+# one small dialog frame then took from 0.1 s to past the 8 s limit. One thread
+# reads it in about 0.1 s every time.
+SINGLE_THREAD = {**os.environ, "OMP_THREAD_LIMIT": "1"}
 
 
 def xdo(*args):
@@ -31,7 +38,7 @@ allowed = {"fixture", "source", "cancel", "open", "choose", "select",
 
 def read_labels():
     image = run("import", "-silent", "-window", window, "-resize", "200%", "png:-")
-    words = run("tesseract", "stdin", "stdout", "--psm", "11", "tsv", data=image)
+    words = run("tesseract", "stdin", "stdout", "--psm", "11", "tsv", data=image, env=SINGLE_THREAD)
     labels = {}
     for row in csv.DictReader(io.StringIO(words.decode()), delimiter="\t"):
         word = (row.get("text") or "").strip(" _|[]").casefold()
@@ -57,12 +64,26 @@ def click(point):
     xdo("mousemove", "--window", window, str(point[0]), str(point[1]), "click", "1")
 
 
+def open_fixture():
+    # GTK loads the dialog's first view (Recent) asynchronously. On a busy
+    # machine that load can finish after the click on the bookmark and replace
+    # it, leaving the dialog on Recent. Navigate again only in that case: the
+    # dialog shows Recent and not the fixture's Source row.
+    for _ in range(3):
+        entries = wait_for("fixture")
+        # The bookmark is the left sidebar item, even if the current folder
+        # name also appears in the location bar.
+        click(min(entries["fixture"]))
+        try:
+            return wait_for("source")
+        except RuntimeError:
+            if "recent" not in read_labels():
+                raise
+    raise RuntimeError("NATIVE_FOLDER_FIXTURE_NAVIGATION_REPLACED")
+
+
 if sys.argv[1] == "choose":
-    entries = wait_for("fixture")
-    # The bookmark is the left sidebar item, even if the current folder name
-    # also appears in the location bar.
-    click(min(entries["fixture"]))
-    entries = wait_for("source")
+    entries = open_fixture()
     click(max(entries["source"], key=lambda p: p[1]))
     print("selected visible Source row in Fixture", flush=True)
 

@@ -30,10 +30,19 @@ protected UI check.
   `Browser tests (before merge)` and passes at once; delete it once that name
   is removed from the required checks in the repository settings.
 - `GitGuardian Security Checks` is a separate external required check.
-- The protected `UI policy (strict)` source stage also runs the waiting-issue check, so no separate required check name is needed for `waiting-issues.yml`.
-- All four existing required names remain intact. Do not silently replace
-  them with a new aggregate check until the GitHub branch-protection settings
-  have been migrated and verified.
+- The protected `UI policy (strict)` source stage also runs the waiting-issue check, so `waiting-issues.yml` only reopens a waited issue on `issues: closed`.
+- **`CI OK`** (job `ci-ok` in `ui-policy.yml`) is the single aggregate, as in
+  Orca: it needs every CI job (except `nightly-journey` until its first green run), runs on pull requests, merge groups, main pushes
+  and the daily schedule, and fails if any needed job failed or was cancelled.
+  A skipped job passes only where its own `if:` (trusted selection and event)
+  left it out; each `CI_OK_EXPECT_*` is that `if:` (`scripts/ci/ci-ok.mjs`,
+  compared by `scripts/ci/ci-ok.test.mjs`). The job runs main's copy of the
+  script, as the selector runs main's bootstrap, so a pull request cannot edit
+  the script that judges it; the workflow, its `needs` and the expectations are
+  still the pull request's own, checked by `ci-ok.test.mjs`. Draft PRs fail it
+  until Ready.
+- All four existing required names remain intact until branch protection
+  requires `CI OK` instead ([GitHub branch protection](#github-branch-protection-separate-repository-setting)).
 
 `local-device-node22.yml` now runs an actual app/Eve build and startup smoke
 on Node 24, retaining the daemon and installer tests. The core,
@@ -157,7 +166,10 @@ product regression. Main pushes and merge groups continue normal full coverage.
 - The special suites (`analytics-ssr`, `cloud-computer`, `desktop`,
   `e2b-byos`, `site-search`, `ssh-device-backend`, `unattended-sandbox`) run on
   pull requests only, selected by trusted dependencies or their existing path filters; each can still be run
-  by hand (`workflow_dispatch`). Production Web is promoted through the
+  by hand (`workflow_dispatch`). CI calls `desktop.yml` on ready PRs, merge
+  groups and the daily full run when the selector reports `desktop` (routed on
+  PRs, broad on merge groups); a main
+  push relies on the merge-queue run of the same commit. Production Web is promoted through the
   Cloudflare deployment workflow; Vercel publication was removed on 2026-11-17.
 - `publish-daemon.yml` uses daemon/package-input path filters. A push publishes to the npm `next` dist-tag only; `latest` moves only when a promoter dispatches it with a successful `staged_run` whose daemon inputs match main.
   `desktop-release.yml` also watches the shared frontend, UI and API inputs.
@@ -364,7 +376,28 @@ retained as workflow artifacts; credentials and raw task logs are excluded.
 
 Keep the existing protection and required checks. Read the effective repository
 settings; workflow YAML and a permission-denied administration API cannot
-establish them. Do not change protection to shorten a validation cycle. Follow
+establish them.
+
+Moving to the single aggregate is one settings change on the `main` ruleset (or
+classic branch protection), made by Alex or a promoter after `CI OK` has passed
+on a Ready PR and a merge group:
+
+1. Add the required status check **`CI OK`** (source: GitHub Actions).
+2. Remove **`UI policy (strict)`**, **`Production build and browser
+   interactions`** and **`Browser tests (before merge)`**. Keep **`GitGuardian
+   Security Checks`** and **`PR acceptance`** where they are required.
+3. In a follow-up PR, delete `browser-gate.yml` and the two legacy aggregate
+   jobs (`ui-policy`, `browser-tests`) once no ruleset names them. Move the
+   rule-as-code, Engineering Handbook and timing-summary steps of `ui-policy`
+   into a job `ci-ok` needs, and drop the two jobs from `ci-ok`'s `needs` and
+   expectations in the same PR.
+
+`CI` does not run on `pull_request: edited`, so editing a PR description does
+not re-run it: `CI OK` (like `UI policy (strict)` today) keeps the result of
+the last push, including `Frontend screenshots`, which reads the description.
+After fixing a description, push a commit or re-run the failed jobs.
+
+Do not change protection to shorten a validation cycle. Follow
 the single [merge procedure](../../docs/dev-workflow.md#5-ownership-and-merging):
 normally integrate `main` when protection requires it, a conflict exists or a
 relevant landed change requires verification, then validate that candidate.
@@ -439,12 +472,27 @@ unmapped/unsafe/global inputs expand coverage. Core/integration commands are
 scheduled by Nx; the existing strict database runner owns selected PG17 suites.
 When the immutable base predates the selector, full blocking coverage and
 shadow selection apply. A selector absent from that base cannot authorize a skip. Manual dispatch
-and Monday 03:23 UTC run complete CI. No Nx Cloud, remote test cache, browser E2E
+and the daily 03:23 UTC schedule run complete CI. No Nx Cloud, remote test cache, browser E2E
 or release credentials are added. See [policy and commands](../../docs/ci/incremental.md)
 and [measured results](../../docs/ci/1699-results.md).
 
 Selected reusable jobs consume CI's trusted decision without running another
-selector. The Analytics conclusion contributes to `UI policy (strict)`.
+selector, as Orca routes its checks by path. On a pull request the selector
+reports `desktop` only for a change that can reach the Desktop suite:
+`apps/desktop/**`, every workspace package `apps/desktop/package.json` links
+through `workspace:` (followed transitively, today `packages/config`,
+`packages/daemon` and `packages/protocol`), `desktop.yml`, `.npmrc`, a path
+`desktop.yml` runs directly (`test:platform`, its `node` scripts), even one the
+change deletes, any file in the Nx closure of `@mikka/desktop` and of those
+paths, `pnpm-workspace.yaml`/`nx.json`, and a
+`pnpm-lock.yaml` or root `package.json` change that alters Desktop's
+dependency closure or a root script it runs (`scripts/ci/desktop-inputs.mjs`).
+A global input alone (`scripts/`, other workflows, configs) does not select it.
+Merge groups and the daily run keep the broad rule, so a merge still runs
+Desktop for every global input. CI's `desktop-checks` job then calls
+`desktop.yml` with `selected: true` (`scripts/ci/select.test.mjs` dry-runs
+this route). The Analytics and Desktop
+conclusions contribute to `UI policy (strict)` and `CI OK`.
 The actual Analytics build, SSR checks and browser run own the `analytics-ssr`
 check name; no second runner summarizes that job. An absent or invalid trusted
 selection fails before setup, and the parent gate rejects selected runs that
@@ -462,8 +510,12 @@ inputs change on main; dispatch it to repopulate evicted or changed-image keys.
 
 ## Scheduled offline journeys and deployment route probes
 
-`nightly-journey.yml` runs `pnpm test:e2e:mvp --grep @journey` at 06:43 UTC
-and on manual dispatch, on `main` only. It uses a fresh local PostgreSQL 17
+`nightly-journey.yml` runs `pnpm test:e2e:mvp --grep @journey` in the daily
+full CI run (03:23 UTC, `ui-policy.yml` job `nightly-journey`) and on manual
+dispatch, on `main` of the canonical repository only. `CI OK` does not require
+it yet: the journeys have never passed, so it joins `ci-ok`'s `needs` after the
+first green scheduled run. Both guards use the repository id (`1427517699`), which survived the move
+from `alexj11324/Mikka`; the former name guard skipped every scheduled run. It uses a fresh local PostgreSQL 17
 `mikka_e2e` service and scripted LiteLLM, E2B, Slack and GitHub boundaries.
 It does not read model keys or create a preview database. The `@p0` tag
 identifies core journeys; it does not add browser execution to pull-request CI.
@@ -476,7 +528,10 @@ from the actual reused web source and private overlay SHA. Missing exact-source
 publication fails the job. The evidence audit must pass before reports upload.
 This proves the local scripted composition, not a live model or deployment.
 
-`production-smoke.yml` resolves the API's serving source through the anonymous
+`production-smoke.yml` runs daily at 14:17 UTC, on dispatch and after each
+`Cloudflare application deployment` run (`workflow_run`) whose
+`pipeline-production` job succeeded, that is, a run that promoted production;
+it no longer wakes for every `deployment_status` event. It resolves the API's serving source through the anonymous
 version endpoint and reads that immutable main commit's generated route list.
 Its route probe uses undeclared methods, checking dispatch status and `Allow`
 without credentials or business handlers; a missing route or 5xx fails before

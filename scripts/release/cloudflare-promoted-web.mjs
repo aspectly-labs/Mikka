@@ -7,6 +7,7 @@ import { artifactFor, readArtifactMembers } from './pipeline-inputs.mjs'
 import { isPromoter } from './release-policy.mjs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { containsDesktopSource, githubRead, PRODUCTION_VERSION_URL } from './web-deploy.mjs'
+import { isPipelineProductionPromoted } from './production-promotion.mjs'
 
 const ownerId = 183887963
 const mergeQueueId = 118344674
@@ -261,13 +262,6 @@ async function servingObservation(ref, api) {
 // dispatch, used while automatic promotion is paused, is accepted only by a Desktop release the
 // owner dispatches by hand with that receipt (`manual`).
 const pipelineRef = /^pipeline:([1-9][0-9]{0,15}):([1-9][0-9]{0,15})$/
-const isPipelineProductionPromoted = job => job.name === 'pipeline-production'
-  && job.status === 'completed' && job.conclusion === 'success'
-  && Array.isArray(job.steps)
-  && job.steps.some(step => step.name === 'Promote and verify the staged service manifest'
-    && step.status === 'completed' && step.conclusion === 'success')
-  && job.steps.some(step => step.name === 'Upload production receipts'
-    && step.status === 'completed' && step.conclusion === 'success')
 
 /** The release policy projection the workflow read from private main (release-policy.mjs read desktop). */
 function releasePromoters(env) {

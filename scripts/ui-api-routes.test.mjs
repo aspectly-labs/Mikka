@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { desktopAliases, desktopOverlayAliases } from '../apps/frontend/scripts/application-plugin.mjs'
 import { HOLE, rendererModules, rendererRequests } from '../apps/desktop/scripts/renderer-requests.mjs'
 import { CLIENT_FLAG_KEYS } from '../lib/feature-flags.ts'
+import { officialUiSkip } from './official-ui-requirement.mjs'
 import ts from 'typescript'
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -96,9 +97,9 @@ const checkable = path => !path.endsWith('/') && path.split('/').every((part, in
 const key = path => path.replaceAll(HOLE, '*')
 const described = path => path.replaceAll(HOLE, '${…}')
 
-const required = process.env.MIKKA_REQUIRE_OFFICIAL_UI === '1'
 const present = existsSync(join(overlay, 'core/renderer/index.tsx'))
-const skip = !present && !required && 'needs the official UI checkout at .hosted-ui (set MIKKA_REQUIRE_OFFICIAL_UI=1 to require it)'
+// With MIKKA_REQUIRE_OFFICIAL_UI=1 a missing checkout fails the file at import; a value other than 1 or 0 fails too.
+const skip = officialUiSkip(present, '.hosted-ui')
 
 const graphs = new Map()
 function modules(target) {
