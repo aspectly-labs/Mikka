@@ -385,6 +385,8 @@ test('main bearer never appears in public session and only validated workspace s
   const workspace = '29cd2c26-64cc-4e04-9339-a29610234ffe'
   let calls = 0; let changes = 0
   const auth = new BundledAuth({ serverUrl: 'https://server.test/mikka', version: '0.1.2', vault, openExternal: async () => {}, changed: () => { changes++ }, returned: () => {}, fetch: async (url, init) => {
+    // The 401 is re-checked against the session endpoint, which agrees the session is gone.
+    if (url === 'https://server.test/mikka/api/auth/get-session?disableCookieCache=true') return new Response(null, { status: 401 })
     assert.equal(url, 'https://server.test/mikka/api/desktop/rpc')
     const headers = new Headers(init?.headers)
     assert.equal(headers.get('authorization'), `Bearer ${secret}`)
@@ -401,6 +403,46 @@ test('main bearer never appears in public session and only validated workspace s
   await auth.request('/api/desktop/rpc')
   assert.equal((await vault.load())?.workspace, workspace)
   await auth.request('/api/desktop/rpc')
+  assert.equal(auth.session(), null)
+  assert.equal(await vault.load(), null)
+  assert.equal(changes, 1)
+})
+
+test('a 401 from one route keeps the session when the session endpoint still knows it', async t => {
+  const vault = new SessionVault(await fixture(t), 'https://server.test/mikka', encryption())
+  await vault.save(stored)
+  const calls: string[] = []
+  let switcher = 0, sessionReply: () => Response = () => Response.json({ user: identity.user, session: identity.session })
+  let changes = 0
+  const auth = new BundledAuth({ serverUrl: 'https://server.test/mikka', version: '0.1.2', vault, openExternal: async () => {}, changed: () => { changes++ }, returned: () => {}, fetch: async url => {
+    const path = new URL(url).pathname.replace('/mikka', '') + new URL(url).search
+    calls.push(path)
+    if (path === '/api/auth/get-session?disableCookieCache=true') return sessionReply()
+    if (path === '/api/workspace/switcher') return ++switcher === 1 ? new Response(null, { status: 401 }) : Response.json({ workspaces: [] })
+    if (path === '/api/desktop/rpc') return new Response(null, { status: 401 })
+    return new Response(null, { status: 404 })
+  } })
+  await auth.restore()
+  // A transient refusal: the session is still valid, so nobody is signed out and the read is asked again.
+  const read = await auth.request('/api/workspace/switcher')
+  assert.equal(read.status, 200)
+  assert.deepEqual(auth.session(), identity)
+  assert.equal(changes, 0)
+  assert.deepEqual(calls, ['/api/workspace/switcher', '/api/auth/get-session?disableCookieCache=true', '/api/workspace/switcher'])
+  // A write's 401 goes back to its caller without being repeated.
+  calls.length = 0
+  assert.equal((await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })).status, 401)
+  assert.deepEqual(calls, ['/api/desktop/rpc', '/api/auth/get-session?disableCookieCache=true'])
+  assert.deepEqual(auth.session(), identity)
+  // An unreachable session endpoint is no verdict either.
+  sessionReply = () => { throw new TypeError('fetch failed') }
+  await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })
+  assert.deepEqual(auth.session(), identity)
+  // Concurrent 401s ask once; the session endpoint saying "no session" signs out.
+  sessionReply = () => Response.json(null)
+  calls.length = 0
+  await Promise.all([auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' }), auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })])
+  assert.equal(calls.filter(path => path.startsWith('/api/auth/get-session')).length, 1)
   assert.equal(auth.session(), null)
   assert.equal(await vault.load(), null)
   assert.equal(changes, 1)

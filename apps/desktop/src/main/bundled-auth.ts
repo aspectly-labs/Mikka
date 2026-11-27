@@ -17,6 +17,8 @@ export class BundledAuth {
   private current: StoredSession | null = null
   private readonly saved = new Map<string, StoredSession>()
   private generation = 0
+  /** One re-validation per session at a time: a burst of 401s asks the server once. */
+  private readonly revalidations = new Map<string, Promise<boolean>>()
   private pendingStorage: Promise<void> = Promise.resolve()
   private restoration: Promise<void> | undefined
   private listener: LoopbackAuthServer | null = null
@@ -170,6 +172,28 @@ export class BundledAuth {
     return response
   }
 
+  /**
+   * Whether the server still knows this session, read fresh from the session
+   * endpoint. Only a definite answer says no — a 401/403, a null session or
+   * another user; a network failure or a 5xx keeps the session.
+   */
+  private stillSignedIn(account: StoredSession): Promise<boolean> {
+    const pending = this.revalidations.get(account.token)
+    if (pending) return pending
+    const check = (async () => {
+      try {
+        const response = await this.fetchAs('/api/auth/get-session?disableCookieCache=true', { signal: AbortSignal.timeout(15_000) }, account)
+        if (response.status === 401 || response.status === 403) return false
+        if (!response.ok) return true
+        const body: unknown = await response.json().catch(() => undefined)
+        if (body === undefined) return true
+        return publicSession(body)?.user.id === account.identity.user.id
+      } catch { return true }
+    })().finally(() => this.revalidations.delete(account.token))
+    this.revalidations.set(account.token, check)
+    return check
+  }
+
   /** Main-only primitive; callers supply known routes. Never accepts renderer credentials. */
   async request(path: string, init: RequestInit = {}, authenticated = true): Promise<Response> {
     await this.whenRestored()
@@ -197,10 +221,23 @@ export class BundledAuth {
       }
     }
     if (response.status === 401 && token && this.current?.token === token) {
-      this.saved.delete(this.current.identity.user.id)
-      this.current = null
-      await this.persist()
-      this.options.changed()
+      // One route's 401 is not the session's verdict: a transient refusal on
+      // /api/workspace/switcher used to sign the person out. Ask the session
+      // endpoint itself, and sign out only when it says the session is gone.
+      const account = this.current
+      const definitive = path.split('?')[0] === '/api/auth/get-session'
+      if (definitive || !await this.stillSignedIn(account)) {
+        if (this.current?.token === token) {
+          this.saved.delete(this.current.identity.user.id)
+          this.current = null
+          await this.persist()
+          this.options.changed()
+        }
+      } else if (this.current?.token === token && (!init.method || init.method === 'GET' || init.method === 'HEAD') && !init.signal?.aborted) {
+        // A read can safely be asked once more; a write's 401 goes back to its caller.
+        const retried = await this.fetchAs(path, init, this.current)
+        if (token === this.current?.token && scope === this.scope()) response = retried
+      }
     }
     // Password changes can rotate the current session. This private header is
     // never forwarded by the protocol and is accepted only for this exact RPC.
