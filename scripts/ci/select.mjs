@@ -11,10 +11,10 @@ import { lockfileTouchesDesktop, manifestTouchesDesktop } from './desktop-inputs
 
 export const GLOBAL = /^(?:\.github\/(?!workflows\/README\.md$)|scripts\/|tests\/(?:helpers|support)\/|patches\/|packages\/(?:config|protocol|subscription-worker)\/|services\/|cloudflare\/|(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|nx\.json|[^/]*config[^/]*|[^/]*lock[^/]*|Dockerfile|docker-compose[^/]*|\.dockerignore|\.npmrc)$|lib\/(?:db(?:\/|\.)|auth|api-auth|fresh-session|credentials\/|secrets\/|permissions|.*authorization|.*tenant|.*scope))/
 // Keep the expression readable without a trailing whitespace token.
-// On a pull request Desktop runs only for a change that can reach it, as Orca routes its e2e: the Desktop app, the
+// On a pull request Desktop runs only for a change that can reach it, as Orca routes its e2e: the Desktop app, its server API (app/api/desktop, lib/desktop-auth-server.ts), the
 // workspace packages it links (desktopWorkspaceRoots), the Desktop workflow, the registry settings its install reads,
 // and whatever the Nx graph says @mikka/desktop imports. GLOBAL does not select it.
-export const DESKTOP_PATH = /^(?:apps\/desktop\/|\.github\/workflows\/desktop\.yml$|\.npmrc$)/
+export const DESKTOP_PATH = /^(?:apps\/desktop\/|app\/api\/desktop\/|lib\/desktop-auth-server\.ts$|\.github\/workflows\/desktop\.yml$|\.npmrc$)/
 // What the Desktop renderer build reads without an import the Nx graph can see: the application plugin's virtual
 // modules (apps/frontend/scripts/application-plugin.mjs: `mikka:application` is headless.ts without the official UI,
 // each `@/app/actions/<name>` is generated from that file, the RPC registry is read as text) and Vite's own inputs.
@@ -174,7 +174,7 @@ export async function select(plan, changes, { force = false, event, desktopInput
     // Merge groups, main pushes and full runs keep the broad rule; a pull request takes the routed one.
     desktop: !docs && (event === 'pull_request' && !force && files.length
       ? desktopOnPullRequest(plan, changes, desktopInputs, root)
-      : full || selected.has('@mikka/desktop') || areas.includes('desktop') || files.some(file => DESKTOP_VIRTUAL_INPUT.test(file))),
+      : full || selected.has('@mikka/desktop') || areas.includes('desktop') || files.some(file => DESKTOP_PATH.test(file) || DESKTOP_VIRTUAL_INPUT.test(file))),
     analytics: !docs && (full || files.some(f => /analytics|posthog|instrumentation|^apps\/frontend\/|^app\/globals/.test(f))),
   }
   return { version: 1, full, docs_only: docs, areas, reasons, affected, units,

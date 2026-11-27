@@ -417,6 +417,11 @@ test('on a pull request Desktop follows every workspace package it links and eve
     assert.equal((await select(withoutCli, [deleted], { event: 'pull_request' })).desktop, true, status)
   }
   assert.equal((await pr([change('scripts/ci/select.mjs')])).desktop, false, 'a script desktop.yml does not run')
+
+  // The bundled smoke's main subject is Desktop's own server API end to end: sign-in, discovery, config and RPC.
+  for (const file of ['app/api/desktop/return/route.ts', 'app/api/desktop/rpc/route.ts', 'lib/desktop-auth-server.ts']) {
+    for (const event of ['pull_request', 'merge_group']) assert.equal((await select(plan, [change(file)], { event })).desktop, true, `${file} on ${event}`)
+  }
 })
 
 test('every file the application plugin and Vite config read by name is a Desktop input on pull requests and merge groups', async () => {
