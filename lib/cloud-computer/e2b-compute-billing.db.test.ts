@@ -706,7 +706,7 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     assert.equal(afterLateCancel.paidUntil.getTime(), settledPauseAt.getTime())
 
     // Provider auto-pause at providerTimeoutAt (293s) observed late at 310s bills only 293s and refunds 7s (448 micro-USD),
-    // and a stale epoch fence after a newer wake refuses to touch the new wake chunk.
+    // even when activeChunkStartedAt is null (pre-migration chunk), and a paused machine with mismatched epoch still fences.
     const capOp = randomUUID()
     const capSb = `sb-${randomUUID()}`
     const capStart = new Date(Date.now() - 320_000)
@@ -716,14 +716,18 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
     await e2bCreationTimeout(awakeOwnerId, 'team:fixture', capOp, templates.codex.templateId, { workspaceId: awakeWorkspaceId, runId: awakeRunId }, 900_000,
       { provider: 'e2b', size: 'medium', hourlyMicroUsd: 230_400, pricingVersion: '2026-11-26', cpuCount: 2, memoryMB: 8192 })
     await recordE2BComputeSandbox(awakeOwnerId, capOp, capSb, capStart, capTimeout)
+    await fixture.query(`UPDATE e2b_compute_leases SET "activeChunkStartedAt"=NULL,"paidUntil"=$2 WHERE "operationId"=$1`,
+      [capOp, new Date(capStart.getTime() + 300_000)])
     await fixture.query(`INSERT INTO thread_machines ("runId","ownerId","workspaceId","sandboxId","operationId","snapshotId",state,epoch)
-      VALUES ($1,$2,$3,$4,$5,'verified-codex','running',2)
-      ON CONFLICT ("runId") DO UPDATE SET "sandboxId"=$4,"operationId"=$5,state='running',epoch=2`, [awakeRunId, awakeOwnerId, awakeWorkspaceId, capSb, capOp])
+      VALUES ($1,$2,$3,$4,$5,'verified-codex','paused',2)
+      ON CONFLICT ("runId") DO UPDATE SET "sandboxId"=$4,"operationId"=$5,state='paused',epoch=2`, [awakeRunId, awakeOwnerId, awakeWorkspaceId, capSb, capOp])
     const staleFence = await settleE2BAwakeInterval(awakeOwnerId, capSb, new Date(capStart.getTime() + 310_000), undefined, {
       runId: awakeRunId, expectedEpoch: 1,
     })
     assert.deepEqual(staleFence, { settled: false, refundedMicroUsd: 0 })
-    const capSettle = await settleE2BAwakeInterval(awakeOwnerId, capSb, new Date(capStart.getTime() + 310_000))
+    const capSettle = await settleE2BAwakeInterval(awakeOwnerId, capSb, new Date(capStart.getTime() + 310_000), undefined, {
+      runId: awakeRunId, expectedEpoch: 2,
+    })
     assert.deepEqual(capSettle, { settled: true, refundedMicroUsd: 7 * 64 })
   })
 

@@ -334,7 +334,11 @@ export async function settleE2BAwakeInterval(
     const activeEndLimit = lease.providerTimeoutAt && lease.providerTimeoutAt.getTime() < lease.paidUntil.getTime()
       ? lease.providerTimeoutAt
       : lease.paidUntil
-    await settleWindow(lease.activeChunkIndex, lease.activeChunkStartedAt, activeEndLimit)
+    await settleWindow(
+      lease.activeChunkIndex,
+      lease.activeChunkStartedAt ?? new Date(lease.paidUntil.getTime() - MACHINE_CHUNK_MS),
+      activeEndLimit,
+    )
 
     await tx.query(
       `UPDATE e2b_compute_leases
