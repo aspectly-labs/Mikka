@@ -6,7 +6,7 @@ import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
 import { PluginError, type InstalledSkill, type McpServerView, type PersonalPluginSnapshot, type SkillContent, type createMcpSchema, type updateMcpSchema } from './contracts'
 import type { z } from 'zod'
 import { taskMcpServerSchema, type TaskMcpServer } from '../../packages/protocol/src/task-mcp'
-import type { McpAuthority } from './contracts'
+import type { McpAuthority, NativeMcpAuthority } from './contracts'
 import type { McpOAuthStore } from './mcp-oauth'
 import { scopedMcpAuthority, singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
 
@@ -111,15 +111,19 @@ export class PersonalPluginStore {
     return (await this.nativeMcpAssignment(userId, authority, environmentId)).servers
   }
 
-  async nativeMcpAssignment(userId: string, authority: McpAuthority, environmentId?: string | null) {
+  /** `authority.disabledTools` records the switches each exported server carries, for the claim
+   * fence (`lockNativeMcpAuthority`) to compare under lock. */
+  async nativeMcpAssignment(userId: string, authority: McpAuthority, environmentId?: string | null): Promise<{ authority: NativeMcpAuthority; servers: TaskMcpServer[] }> {
     const store = new WorkspaceMcpStore(this.pool,this.membership)
     const requested = environmentId === undefined ? authority : { ...authority, environmentId }
     const authorized = await store.validate(userId,await scopedMcpAuthority(this.pool,requested))
+    const disabledTools: Record<string, string[]> = {}
     const servers = await Promise.all(authorized.servers.map(async grant => {
       const connection = await this.mcpConnection(userId,grant.id,grant.revision,authorized)
+      disabledTools[grant.id] = connection.disabledTools
       return connection.native ?? taskMcpServerSchema.parse({ name:`mcp_${grant.id.replaceAll('-','')}`, transport:connection.transport,url:connection.url,headers:connection.headers,...(connection.disabledTools.length ? { disabledTools:connection.disabledTools } : {}) })
     }))
-    return { authority: authorized, servers }
+    return { authority: { ...authorized, disabledTools }, servers }
   }
 
   async listSkills(userId: string): Promise<InstalledSkill[]> {

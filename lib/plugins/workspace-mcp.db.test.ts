@@ -197,6 +197,38 @@ test('explicit workspace MCP sharing keeps requester, resource grants, tokens an
       assert.deepEqual((await personal.nativeMcpConnections(requester, before.mcpAuthority)).flatMap(server => 'disabledTools' in server ? server.disabledTools ?? [] : []), ['echo'])
       await connections.setTool(owner, connection.id, 'echo', true)
       await verify(before.mcpAuthority)
+
+      // A claim's export read the switches before the claim locked them. The owner turning a tool
+      // off in between refuses that claim (not the run: mcpConnectionChanged, never mcpUnavailable),
+      // and the next claim exports the new list and passes.
+      const exported = (await personal.nativeMcpAssignment(requester, before.mcpAuthority)).authority
+      assert.deepEqual(exported.disabledTools, { [connection.id]: [] })
+      await connections.setTool(owner, connection.id, 'echo', false)
+      await assert.rejects(verify(exported), (error: { code?: string; status?: number }) => error.code === 'mcpConnectionChanged' && error.status === 409)
+      const reclaimed = await personal.nativeMcpAssignment(requester, before.mcpAuthority)
+      assert.deepEqual(reclaimed.authority.disabledTools, { [connection.id]: ['echo'] })
+      assert.deepEqual(reclaimed.servers.flatMap(server => 'disabledTools' in server ? server.disabledTools ?? [] : []), ['echo'])
+      await verify(reclaimed.authority)
+      // Turning it back on also refuses the stale export, so a claim never runs with an old list.
+      await connections.setTool(owner, connection.id, 'echo', true)
+      await assert.rejects(verify(reclaimed.authority), /mcpConnectionChanged/)
+
+      // A switch made while a claim holds the fence waits for that claim to commit.
+      const current = (await personal.nativeMcpAssignment(requester, before.mcpAuthority)).authority
+      const claim = await pool.connect()
+      try {
+        await claim.query('BEGIN')
+        await lockNativeMcpAuthority(claim, requester, current)
+        let switched = false
+        const waiting = connections.setTool(owner, connection.id, 'echo', false).then(() => { switched = true })
+        await new Promise(resolve => setTimeout(resolve, 300))
+        assert.equal(switched, false)
+        await claim.query('COMMIT')
+        await waiting
+        assert.equal(switched, true)
+      } finally { claim.release() }
+      await assert.rejects(verify(current), /mcpConnectionChanged/)
+      await connections.setTool(owner, connection.id, 'echo', true)
       const renamed = await personal.updateMcp(owner, { id: connection.id, name: 'Renamed shared connection' })
       await assert.rejects(verify(before.mcpAuthority), /mcpUnavailable/)
       await personal.updateMcp(owner, { id: connection.id, name: before.mcpAuthority.servers.find(server => server.id === connection.id)!.name })

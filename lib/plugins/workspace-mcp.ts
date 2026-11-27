@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
-import { mcpAuthoritySchema, PluginError, type McpAuthority, type McpServerGrant, type McpWorkspacePage, type McpWorkspaceServerView } from './contracts'
+import { mcpAuthoritySchema, PluginError, type McpAuthority, type McpServerGrant, type McpWorkspacePage, type McpWorkspaceServerView, type NativeMcpAuthority } from './contracts'
 import { assertOrganizationResourceShare, organizationResourceAllowed, workspaceResourcePolicy } from '@/lib/governance/resource-access'
 
 type Query = Pick<Pool | PoolClient, 'query'>
@@ -48,10 +48,23 @@ export async function validateMcpAuthority(query: Query, userId: string, raw: Mc
   return authority
 }
 
-export async function lockNativeMcpAuthority(query: Query, userId: string, authority: McpAuthority) {
-  if (!authority.servers.length) return
-  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [authority.servers.map(server => server.id)])
-  await validateMcpAuthority(query, userId, authority)
+export async function lockNativeMcpAuthority(query: Query, userId: string, authority: NativeMcpAuthority) {
+  const { disabledTools: exported, ...frozen } = authority
+  if (!frozen.servers.length) return
+  const ids = frozen.servers.map(server => server.id)
+  await query.query('SELECT id FROM personal_mcp_servers WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE', [ids])
+  // A tool switch keeps the revision (running tasks re-read it per call), so the switches this
+  // claim exported are fenced here: a switch since the export refuses the claim and the run is
+  // claimed again with the current list; a switch while this lock is held waits for the commit.
+  const { rows: tools } = await query.query<{ server_id: string; tool_name: string; enabled: boolean }>(
+    'SELECT server_id,tool_name,enabled FROM mcp_server_tools WHERE server_id=ANY($1::uuid[]) ORDER BY server_id,tool_name FOR SHARE', [ids])
+  await validateMcpAuthority(query, userId, frozen)
+  if (!exported) return
+  const same = (left: readonly string[], right: readonly string[]) => left.length === right.length && [...left].sort().every((name, index) => name === [...right].sort()[index])
+  for (const id of ids) {
+    const current = tools.filter(tool => tool.server_id === id && !tool.enabled).map(tool => tool.tool_name)
+    if (!same(current, exported[id] ?? [])) throw new PluginError('mcpConnectionChanged', 409)
+  }
 }
 
 /** Existing workspace membership governs an explicit resource grant, never an implicit loan. */

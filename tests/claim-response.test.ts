@@ -379,6 +379,26 @@ test('a final MCP database failure ends the preparing claim with the native assi
   })
 })
 
+test('a tool switch since the native MCP export refuses the claim response without failing the run', async () => {
+  const probe = fixture()
+  const server = { id: 'fixture-mcp', ownerId: 'member', revision: 7, grantId: null }
+  const executionIdentity = localExecutionIdentity(workspaceId)
+  executionIdentity.resourceBindings.push({ kind: 'mcp', id: server.id, ownerId: server.ownerId, access: 'owner', revision: '7', workspaceId })
+  Object.assign(probe.run, { agentDefinition: { harness: 'codex', executionIdentity, customMcp: { workspaceId, servers: [server] } } })
+  probe.taskMcpToolFilter = true
+  probe.nativeMcpServers = [{ name: 'mcp_docs', transport: 'http', url: 'https://mcp.example.invalid', headers: {}, disabledTools: [] }]
+  const { PluginError } = await import('../lib/plugins/contracts')
+  probe.mcpErrors.fence.push(new PluginError('mcpConnectionChanged', 409))
+  const response = await claim(probe)
+  assert.equal(response.status, 409)
+  // The stale tool list never reaches the daemon. Like any other access change before the claim
+  // response, the run is not failed; its lease recovery claims it again with the current list.
+  assert.deepEqual(await response.json(), { error: 'Run access changed before claim response.' })
+  assert.deepEqual(probe.mcpChecks, ['identity', 'fence'])
+  assert.equal(probe.run.status, 'preparing')
+  assert.equal(probe.run.stopReason, null)
+})
+
 function validCheckpoint(): RunCheckpoint {
   return {baseCommit:'a'.repeat(40),patch:gzipSync(Buffer.alloc(0)).toString('base64'),files:0,takenAt:new Date().toISOString()}
 }
