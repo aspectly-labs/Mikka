@@ -25,7 +25,7 @@ async function moduleFrom({ entry, source, plugins = [], defines = {} }) {
 async function browser(callback) {
   const window = new Window({ url: 'mikka://app/mikka/en' })
   const saved = new Map()
-  for (const key of ['window', 'document', 'Event', 'MessageEvent', 'CloseEvent']) {
+  for (const key of ['window', 'document', 'Element', 'HTMLElement', 'Node', 'Event', 'MessageEvent', 'CloseEvent']) {
     saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key))
     Object.defineProperty(globalThis, key, { value: key === 'window' ? window : key === 'document' ? window.document : window[key], configurable: true, writable: true })
   }

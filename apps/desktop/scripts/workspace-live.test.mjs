@@ -28,6 +28,7 @@ const fixtureModules = new Map([
   ['@hosted/core/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
   ['@hosted/core/components/swr-defaults', `export const SWRDefaults = ${wrapper};`],
   ['@hosted/core/components/ui/sonner', 'export const Toaster = () => null;'],
+  ['@hosted/web/components/ui/context-menu', 'import { createElement } from "react"; export const ContextMenu = ({ children }) => children; export const ContextMenuTrigger = ({ children, ...p }) => createElement("div", p, children); export const ContextMenuContent = ({ children }) => createElement("div", null, children); export const ContextMenuItem = ({ children, ...p }) => createElement("button", p, children); export const ContextMenuSeparator = () => null;'],
   ['@hosted/core/components/ui/button', `export const Button = ${wrapper}; export const buttonVariants = () => '';`],
   ['@hosted/core/components/blocks/auth-19/components/auth', `export const Auth = ${wrapper};`],
   ['@hosted/core/components/blocks/auth-19/components/auth-card', `export const AuthCard = ${wrapper};`],
@@ -144,7 +145,7 @@ async function fixture(t, { path = '/mikka/en/', fetch: fetchResponse } = {}) {
     session: async () => state.identity,
     onSessionChanged(callback) { state.listeners.add(callback); return () => state.listeners.delete(callback) },
   }, app: { runtime: 'electron', serverUrl: state.server } }
-  const values = { window, document: window.document, navigator: window.navigator, HTMLElement: window.HTMLElement, Node: window.Node,
+  const values = { window, document: window.document, navigator: window.navigator, Element: window.Element, HTMLElement: window.HTMLElement, Node: window.Node,
     MutationObserver: window.MutationObserver, Event: window.Event, IS_REACT_ACT_ENVIRONMENT: true,
     fetch: async (path, init) => {
       const request = { path, action: init?.body ? JSON.parse(init.body).action : null, args: init?.body ? JSON.parse(init.body).args : null }
