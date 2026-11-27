@@ -3,6 +3,7 @@ import { extname, join, sep } from 'node:path'
 import { desktopRouteTemplate, DRIVE_BLOB_UPLOAD, forwardableApiPath, normalizedRendererPath, RENDERER_CSP, RENDERER_ORIGIN, rendererAssetPath } from './bundled-policy'
 import { DRIVE_MAX_FILE_BYTES } from '../../../../lib/drive/contract'
 import type { BundledAuth } from './bundled-auth'
+import { DESKTOP_SESSION_ACTIVE_HEADER } from '@mikka/protocol/version'
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -13,7 +14,7 @@ const TYPES: Record<string, string> = {
 const REQUEST_HEADERS = new Set(['accept', 'content-type', 'range', 'if-none-match', 'if-modified-since', 'x-mikka-submission-id'])
 // Approval reads use these public headers to bind the result to the current
 // viewer and conservatively anchor expiry. Session/cache credentials stay private.
-const RESPONSE_HEADERS = new Set(['content-type', 'content-disposition', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'x-mikka-viewer', 'x-mikka-observed-at', 'retry-after', 'x-eve-session-id', 'x-eve-stream-format', 'x-eve-stream-version', 'x-eve-stream-tail-index', 'x-eve-observation-key'])
+const RESPONSE_HEADERS = new Set(['content-type', 'content-disposition', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'x-mikka-viewer', 'x-mikka-observed-at', DESKTOP_SESSION_ACTIVE_HEADER, 'retry-after', 'x-eve-session-id', 'x-eve-stream-format', 'x-eve-stream-version', 'x-eve-stream-tail-index', 'x-eve-observation-key'])
 const MAX_UPLOAD = 32 * 1024 * 1024
 /** Artifact HTML runs as an opaque sandbox, even if opened as a top-level page. */
 export const PROXIED_HTML_CSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors mikka://app"

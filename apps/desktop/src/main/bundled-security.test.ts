@@ -254,7 +254,8 @@ test('a 401 from one route keeps the session when the session endpoint still kno
     calls.push(path)
     if (path === '/api/auth/get-session?disableCookieCache=true') return sessionReply()
     if (path === '/api/workspace/switcher') return ++switcher === 1 ? new Response(null, { status: 401 }) : Response.json({ workspaces: [] })
-    if (path === '/api/desktop/rpc') return new Response(null, { status: 401 })
+    // The server's own mark is never believed: only main sets it.
+    if (path === '/api/desktop/rpc') return Response.json({ version: 1, ok: false, error: { code: 'desktop_session_expired' } }, { status: 401, headers: { 'x-mikka-session-active': '1' } })
     return new Response(null, { status: 404 })
   } })
   await auth.restore()
@@ -264,23 +265,36 @@ test('a 401 from one route keeps the session when the session endpoint still kno
   assert.deepEqual(auth.session(), identity)
   assert.equal(changes, 0)
   assert.deepEqual(calls, ['/api/workspace/switcher', '/api/auth/get-session?disableCookieCache=true', '/api/workspace/switcher'])
-  // A write's 401 goes back to its caller without being repeated.
+  // A write's 401 goes back to its caller without being repeated, with its
+  // status and body, marked as a refusal the renderer must not read as expiry.
   calls.length = 0
-  assert.equal((await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })).status, 401)
+  const refused = await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })
+  assert.equal(refused.status, 401)
+  assert.equal(refused.headers.get('x-mikka-session-active'), '1')
+  assert.deepEqual(await refused.json(), { version: 1, ok: false, error: { code: 'desktop_session_expired' } })
   assert.deepEqual(calls, ['/api/desktop/rpc', '/api/auth/get-session?disableCookieCache=true'])
   assert.deepEqual(auth.session(), identity)
   // An unreachable session endpoint is no verdict either.
   sessionReply = () => { throw new TypeError('fetch failed') }
-  await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })
+  assert.equal((await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })).headers.get('x-mikka-session-active'), '1')
   assert.deepEqual(auth.session(), identity)
-  // Concurrent 401s ask once; the session endpoint saying "no session" signs out.
+  // Concurrent 401s ask once; the session endpoint saying "no session" signs
+  // out, and those 401s carry no mark, so the renderer sees the expiry.
   sessionReply = () => Response.json(null)
   calls.length = 0
-  await Promise.all([auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' }), auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })])
+  const expired = await Promise.all([auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' }), auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })])
+  for (const response of expired) assert.equal(response.headers.has('x-mikka-session-active'), false)
   assert.equal(calls.filter(path => path.startsWith('/api/auth/get-session')).length, 1)
   assert.equal(auth.session(), null)
   assert.equal(await vault.load(), null)
   assert.equal(changes, 1)
+})
+
+test('the protocol hands main\'s refused-operation mark to the renderer with the 401', async () => {
+  const serve = bundledProtocol('/unused', { request: async () => Response.json({ version: 1, ok: false, error: { code: 'unauthorized' } }, { status: 401, headers: { 'x-mikka-session-active': '1' } }) })
+  const response = await serve(new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))
+  assert.equal(response.status, 401)
+  assert.equal(response.headers.get('x-mikka-session-active'), '1')
 })
 
 test('a 403 from the session endpoint is a refusal, not a sign-out', async t => {

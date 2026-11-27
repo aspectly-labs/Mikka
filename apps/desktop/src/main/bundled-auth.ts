@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { BundledSession, BundledSignIn } from '@mikka/protocol/bridge'
-import { HOSTED_API_HEADERS } from '@mikka/protocol/version'
+import { DESKTOP_SESSION_ACTIVE_HEADER, HOSTED_API_HEADERS } from '@mikka/protocol/version'
 import { remoteBase, safeAppNext } from './bundled-policy'
 import { startBundledLoopback } from './bundled-loopback'
 import type { LoopbackAuthServer } from './loopback'
@@ -202,7 +202,8 @@ export class BundledAuth {
     if (startupBootstrap) markStartup('main.bootstrap.headers')
     if (account) await this.rememberCache(account, response.status === 401 ? '' : responseSessionCache(response.headers))
     if (startupBootstrap) markStartup('main.bootstrap.cache.end')
-    return response
+    // Only main says a 401 left the session intact; a server cannot.
+    return response.headers.has(DESKTOP_SESSION_ACTIVE_HEADER) ? withSessionActive(response, false) : response
   }
 
   /**
@@ -267,10 +268,15 @@ export class BundledAuth {
           await this.persist()
           this.options.changed()
         }
-      } else if (this.current?.token === token && (!init.method || init.method === 'GET' || init.method === 'HEAD') && !init.signal?.aborted) {
-        // A read can safely be asked once more; a write's 401 goes back to its caller.
-        const retried = await this.fetchAs(path, init, this.current)
-        if (token === this.current?.token && scope === this.scope()) response = retried
+      } else if (this.current?.token === token) {
+        if ((!init.method || init.method === 'GET' || init.method === 'HEAD') && !init.signal?.aborted) {
+          // A read can safely be asked once more; a write's 401 goes back to its caller.
+          const retried = await this.fetchAs(path, init, this.current)
+          if (token === this.current?.token && scope === this.scope()) response = retried
+        }
+        // The session holds, so this 401 refused the operation, not the login:
+        // the same status and body, marked so the renderer keeps its session.
+        if (response.status === 401 && token === this.current?.token) response = withSessionActive(response, true)
       }
     }
     // Password changes can rotate the current session. This private header is
@@ -495,4 +501,13 @@ export class BundledAuth {
     this.options.changed()
     await revocation
   }
+}
+
+/** The same response with main's session mark set or removed. */
+function withSessionActive(response: Response, active: boolean): Response {
+  const headers = new Headers(response.headers)
+  if (active) headers.set(DESKTOP_SESSION_ACTIVE_HEADER, '1')
+  else headers.delete(DESKTOP_SESSION_ACTIVE_HEADER)
+  const empty = response.status === 204 || response.status === 205 || response.status === 304
+  return new Response(empty ? null : response.body, { status: response.status, statusText: response.statusText, headers })
 }
