@@ -10,8 +10,12 @@ name: Desktop release
 # ASC_* names are mapped to the release tools' APPLE_* inputs inside the runner.
 
 on:
-  # A successful Cloudflare gateway observation that serves current main builds
-  # the installer for it; a push only notes what is waiting (docs/operations/web-deploy.md).
+  # A successful Cloudflare gateway observation, or an automatic pipeline-production promotion,
+  # that serves current main builds the installer for it; a push only notes what is waiting
+  # (docs/operations/web-deploy.md). While production promotion is manual (private
+  # deploy-pipeline.json autoProduction: false), nothing promotes automatically, so the owner
+  # dispatches this workflow by hand with the manual promotion's pipeline:RUN:ATTEMPT receipt
+  # (docs/operations/build-source-of-truth.md#production-promotion-switch).
   workflow_run:
     workflows: [Cloudflare application deployment]
     types: [completed]

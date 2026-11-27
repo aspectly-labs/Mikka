@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -415,4 +415,127 @@ test('selection failures report their pipeline code even when assert appends a d
   assert.equal(selectionError(new Error('pipeline_github_request_failed')), 'pipeline_github_request_failed')
   assert.equal(selectionError(new Error('The expression evaluated to a falsy value')), 'pipeline_selection_failed')
   assert.equal(selectionError('pipeline_not_an_error'), 'pipeline_selection_failed')
+})
+
+function zipped(files) {
+  return execFileSync('python3', ['-c',
+    'import io,json,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z:\n for name,value in json.loads(sys.argv[1]).items(): z.writestr(name,json.dumps(value))\nsys.stdout.buffer.write(b.getvalue())', JSON.stringify(files)])
+}
+
+// A paused production: the owner dispatches pipeline-promote naming staging run 199 and its commit.
+async function manualPromotion(t, change = {}) {
+  const directory = await mkdtemp(join(tmpdir(), 'mikka-manual-promotion-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const deploy = '.github/workflows/cloudflare-app-deploy.yml'
+  const bot = { id: 118344674, login: 'github-merge-queue[bot]' }
+  const env = { GITHUB_REPOSITORY: repo.full_name, GITHUB_REPOSITORY_ID: String(repo.id), GITHUB_REPOSITORY_OWNER_ID: '183887963',
+    GITHUB_REF: 'refs/heads/main', GITHUB_ACTOR_ID: '183887963', GITHUB_ACTOR: 'alexj11324', GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_ENV: join(directory, 'env'), RUNNER_TEMP: directory, GITHUB_RUN_ID: '201', GITHUB_RUN_ATTEMPT: '1',
+    MIKKA_DEPLOYMENT_PHASE: 'pipeline-promote', INPUT_PIPELINE_RUN: '199', INPUT_PROMOTE_SOURCE: source,
+    INPUT_CLOUD_SOURCE: 'f'.repeat(40), ...change.env }
+  await writeFile(env.GITHUB_ENV, '')
+  const manifest = manifestFixture()
+  const stageRun = { ...run(), id: 199, run_attempt: 1, path: deploy, event: 'workflow_run', actor: bot, triggering_actor: bot, ...change.stageRun }
+  const current = { ...run(), id: 201, run_attempt: 1, path: deploy, event: 'workflow_dispatch', status: 'in_progress', conclusion: null }
+  const qualified = { ...run(), id: 501, run_attempt: 1, path: '.github/workflows/cloud-services-ci.yml', event: 'workflow_dispatch' }
+  const packet = (origin, id, prefix, files, sha = source) => {
+    const bytes = zipped(files)
+    return { bytes, artifact: { id, name: `${prefix}-${origin.id}-${origin.run_attempt}`, expired: false, size_in_bytes: bytes.length,
+      digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'), workflow_run: {
+        id: origin.id, head_sha: sha, head_branch: 'main', repository_id: repo.id, head_repository_id: repo.id } } }
+  }
+  const summary = { version: 1, target: 'staging', status: 'passed', productionPromoted: false, verification: { status: 'pass' },
+    deployment: { runId: '199', runAttempt: '1' },
+    origin: { source, runId: '101', runAttempt: '2', artifactId: '301', event: 'push', archiveSha256: 'e'.repeat(64) }, ...change.summary }
+  const packets = { 101: packet(run(), 301, 'release-manifest', { 'release-manifest.json': manifest }),
+    199: packet(stageRun, 401, 'deploy-pipeline', { 'release-manifest.json': change.stagedManifest ?? manifest, 'pipeline-summary.json': summary }),
+    501: packet(qualified, 601, 'cloud-services-ci-receipt', { 'receipt.json': {} }) }
+  // The serving production baseline: an earlier automatic promotion of an older commit.
+  const older = 'c'.repeat(40)
+  const oldRelease = { ...run(), id: 90, run_attempt: 1, head_sha: older }
+  const production = { ...run(), id: 150, run_attempt: 1, path: deploy, event: 'workflow_run', head_sha: older }
+  packets[90] = packet(oldRelease, 290, 'release-manifest', { 'release-manifest.json': manifestFixture(older) }, older)
+  packets[150] = packet(production, 450, 'deploy-production', { 'release-manifest.json': manifestFixture(older), 'pipeline-summary.json': {
+    version: 1, target: 'production', status: 'passed', verification: { status: 'pass' }, deployment: { runId: '150', runAttempt: '1' },
+    origin: { runId: '90', runAttempt: '1', artifactId: '290' } } }, older)
+  const stageJobs = change.stageJobs ?? [{ name: 'pipeline', status: 'completed', conclusion: 'success', steps: [
+    { name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'success' },
+    { name: 'Upload pipeline receipts', status: 'completed', conclusion: 'success' }] },
+    { name: 'pipeline-production', status: 'completed', conclusion: 'skipped' }]
+  const calls = []
+  const api = async path => {
+    calls.push(path)
+    if (path.endsWith('/runs/101/attempts/2')) return run()
+    if (path.endsWith('/runs/90/attempts/1')) return oldRelease
+    if (path.endsWith('/actions/runs/199')) return stageRun
+    if (path.includes('/runs/199/attempts/1/jobs?')) return { total_count: stageJobs.length, jobs: stageJobs }
+    for (const [id, value] of Object.entries(packets)) {
+      if (path.includes(`/runs/${id}/artifacts?`)) return { total_count: 1, artifacts: [value.artifact] }
+      if (path.endsWith(`/artifacts/${value.artifact.id}/zip`)) return value.bytes
+    }
+    if (path.endsWith('mikka-cloud/git/ref/heads/main')) return { object: { sha: 'f'.repeat(40) } }
+    if (path.includes('workflows/cloudflare-app-deploy.yml/runs?'))
+      return { total_count: change.production ? 2 : 1, workflow_runs: [current, ...(change.production ? [production] : [])] }
+    if (path.includes('/runs/150/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 7150, name: 'pipeline-production', status: 'completed',
+      conclusion: 'success', steps: [{ name: 'Promote and verify the staged service manifest', conclusion: 'success' }] }] }
+    if (path.endsWith('/jobs/7150/logs')) return Buffer.from('Artifact deploy-production-150-1.zip successfully finalized.\nArtifact ID 450\n')
+    if (path.endsWith(`/compare/${older}...${source}`)) return { status: change.compare ?? 'ahead' }
+    if (path.includes('workflows/cloud-services-ci.yml/runs?')) return { total_count: 1, workflow_runs: [qualified] }
+    assert.fail('Unexpected manual promotion request: ' + path)
+  }
+  return { env, api, calls, read: () => readFile(env.GITHUB_ENV, 'utf8') }
+}
+
+test('a paused production promotes only the staging run and commit the owner names in a dispatch', async t => {
+  for (const production of [false, true]) {
+    const f = await manualPromotion(t, { production })
+    const result = await selectPromotion({ env: f.env, api: f.api })
+    assert.deepEqual(result, { status: 'selected', source, operations: 'f'.repeat(40), report: join(f.env.RUNNER_TEMP, 'deploy-production') })
+    const variables = Object.fromEntries((await f.read()).trim().split('\n').map(line => line.split('=')))
+    assert.equal(variables.MIKKA_STAGE_RUN_ID, '199')
+    assert.equal(variables.MIKKA_STAGE_RUN_ATTEMPT, '1')
+    assert.equal(variables.MIKKA_STAGE_ARTIFACT_ID, '401')
+    assert.equal(variables.MIKKA_RELEASE_RUN_ID, '101')
+    assert.equal(variables.MIKKA_CF_OPERATIONS_SHA, 'f'.repeat(40))
+    assert.equal(variables.MIKKA_PRODUCTION_RELEASE_RUN_ID, production ? '90' : undefined)
+    assert.equal(f.calls.some(path => path.includes('/compare/')), production)
+  }
+})
+
+test('a manual promotion refuses other actors, missing or mismatched inputs, unfinished staging and downgrades', async t => {
+  const untrusted = async () => assert.fail('An untrusted dispatch must not read GitHub')
+  for (const [env, code] of [
+    [{ GITHUB_ACTOR_ID: '118344674', GITHUB_ACTOR: 'github-merge-queue[bot]' }, /pipeline_actor_untrusted/],
+    [{ GITHUB_ACTOR_ID: '158243242', GITHUB_ACTOR: 'devin-ai-integration[bot]' }, /pipeline_actor_untrusted/],
+    [{ MIKKA_DEPLOYMENT_PHASE: 'pipeline-stage' }, /pipeline_deployment_phase_invalid/],
+    [{ INPUT_PIPELINE_RUN: '' }, /pipeline_promotion_stage_run_required/],
+    [{ INPUT_PIPELINE_RUN: '201' }, /pipeline_promotion_stage_run_required/],
+    [{ INPUT_PROMOTE_SOURCE: '' }, /pipeline_promotion_source_required/],
+    [{ GITHUB_EVENT_NAME: 'push' }, /pipeline_workflow_run_event_required/],
+  ]) {
+    const f = await manualPromotion(t, { env })
+    await assert.rejects(selectPromotion({ env: f.env, api: untrusted }), code, JSON.stringify(env))
+  }
+  const failedJob = [{ name: 'pipeline', status: 'completed', conclusion: 'failure', steps: [] }]
+  const rolledBack = { rollback: { status: 'passed' } }
+  for (const [change, code] of [
+    [{ env: { INPUT_PROMOTE_SOURCE: 'd'.repeat(40) } }, /pipeline_promotion_source_mismatch/],
+    [{ env: { INPUT_CLOUD_SOURCE: 'e'.repeat(40) } }, /pipeline_operations_source_must_be_current_main/],
+    [{ stageRun: { event: 'workflow_dispatch' } }, /pipeline_run_event_mismatch/],
+    [{ stageRun: { conclusion: 'failure' } }, /pipeline_run_unsuccessful/],
+    [{ stageRun: { actor: { id: 7, login: 'outsider' } } }, /pipeline_run_actor_untrusted/],
+    [{ stageJobs: failedJob }, /pipeline_stage_incomplete/],
+    [{ summary: rolledBack }, /pipeline_stage_rollback_rejected/],
+    [{ summary: { status: 'failed' } }, /pipeline_stage_incomplete/],
+    [{ summary: { target: 'production' } }, /pipeline_stage_target_mismatch/],
+    [{ summary: { verification: { status: 'fail' } } }, /pipeline_summary_verification_required/],
+    [{ summary: { deployment: { runId: '198', runAttempt: '1' } } }, /pipeline_deployment_summary_run_mismatch/],
+    [{ stagedManifest: manifestFixture('d'.repeat(40)) }, /pipeline_stage_manifest_mismatch/],
+    [{ production: true, compare: 'behind' }, /pipeline_promotion_downgrade_rejected/],
+    [{ production: true, compare: 'diverged' }, /pipeline_promotion_downgrade_rejected/],
+  ]) {
+    const f = await manualPromotion(t, change)
+    await assert.rejects(selectPromotion({ env: f.env, api: f.api }), code, JSON.stringify(change))
+    assert.equal(await f.read(), '', 'A refused promotion exports nothing to later steps')
+  }
 })

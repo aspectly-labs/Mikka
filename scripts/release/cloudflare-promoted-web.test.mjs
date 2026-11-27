@@ -613,3 +613,31 @@ test('pipeline-production verification rejects forged runs, artifacts, logs, sum
   }
 })
 
+
+test('a paused production keeps Desktop manual: an owner pipeline-promote dispatch never starts Desktop by itself', async () => {
+  const owner = { id: 183887963, login: 'alexj11324' }
+  const gate = { status: 'completed', head_sha: 'b'.repeat(40), run_id: 101, run_attempt: 1, completed_at: iso(0) }
+  const manualJobs = stage => ({ total_count: 2, jobs: [
+    { ...gate, id: 9000, name: 'pipeline', conclusion: stage },
+    { ...gate, id: 9001, name: 'pipeline-production', conclusion: 'success', steps: [
+      { name: 'Promote and verify the staged service manifest', status: 'completed', conclusion: 'success' },
+      { name: 'Upload production receipts', status: 'completed', conclusion: 'success' }] }] })
+  const promoted = { deployRun: { event: 'workflow_dispatch', actor: owner, triggering_actor: owner }, jobs: manualJobs('skipped') }
+  const byHand = { env: { GITHUB_EVENT_NAME: 'workflow_dispatch' }, consumerRun: { event: 'workflow_dispatch', actor: owner, triggering_actor: owner } }
+
+  // The finished manual promotion does not trigger a Desktop release.
+  const trigger = await pipelineFixture(promoted).trigger('.github/workflows/desktop-release.yml')
+  assert.equal(trigger.ready, false)
+  assert.match(trigger.reason, /does not change what is served/)
+  // A chained (workflow_run) Desktop and the read-only witness both refuse the manual receipt.
+  await assert.rejects(pipelineFixture(promoted).desktopVerify(), /pipelineRun/)
+  await assert.rejects(pipelineFixture(promoted).observe(), /pipelineRun/)
+  // The owner's own Desktop dispatch with that receipt is the release path.
+  assert.deepEqual(await pipelineFixture({ ...promoted, ...byHand }).desktopVerify(), { product: 'b'.repeat(40), releasePin, overlay })
+  // Only the owner's own promotion counts, and it must not have staged in the same run.
+  for (const [change, code] of [
+    [{ deployRun: { ...promoted.deployRun, actor: { id: 118344674, login: 'github-merge-queue[bot]' } } }, 'pipelineRun'],
+    [{ deployRun: { ...promoted.deployRun, triggering_actor: { id: 7, login: 'outsider' } } }, 'pipelineRun'],
+    [{ jobs: manualJobs('success') }, 'pipelineJobs'],
+  ]) await assert.rejects(pipelineFixture({ ...promoted, ...byHand, ...change }).desktopVerify(), new RegExp(code), code)
+})

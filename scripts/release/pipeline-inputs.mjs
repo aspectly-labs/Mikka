@@ -331,21 +331,67 @@ export async function selectPipeline({ env = process.env, api = github } = {}) {
   return output
 }
 
-/** Production consumes the completed staging artifact from this same run,
- * with its own serving baseline. It never silently uses the staging baseline. */
+/** A paused (manual) promotion: the owner dispatches `pipeline-promote` naming a completed
+ * merge-triggered staging run and the exact commit it staged. Nothing here runs automatically. */
+async function manualStage(api, env) {
+  assert.equal(env.MIKKA_DEPLOYMENT_PHASE, 'pipeline-promote', 'pipeline_deployment_phase_invalid')
+  // Only the owner in person; the merge queue and other repository writers cannot promote by hand.
+  assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, false), 'pipeline_actor_untrusted')
+  assert.match(env.INPUT_PIPELINE_RUN ?? '', number, 'pipeline_promotion_stage_run_required')
+  assert.match(env.INPUT_PROMOTE_SOURCE ?? '', sha, 'pipeline_promotion_source_required')
+  assert.notEqual(env.INPUT_PIPELINE_RUN, env.GITHUB_RUN_ID, 'pipeline_promotion_stage_run_required')
+  const run = checkedRun(await api(`${repository}/actions/runs/${env.INPUT_PIPELINE_RUN}`), deployment,
+    { event: 'workflow_run', automaticDeployment: true })
+  assert.equal(String(run.id), env.INPUT_PIPELINE_RUN, 'pipeline_promotion_stage_run_mismatch')
+  const jobs = await pages(api, `actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, 'jobs')
+  const staged = jobs.filter(job => job.name === 'pipeline')
+  const succeeded = name => staged[0]?.steps?.some(step => step.name === name && step.status === 'completed' && step.conclusion === 'success')
+  assert.ok(staged.length === 1 && staged[0].status === 'completed' && staged[0].conclusion === 'success'
+    && succeeded('Deploy and verify staged service manifest') && succeeded('Upload pipeline receipts'), 'pipeline_stage_incomplete')
+  const stage = await members(api, run, 'deploy-pipeline')
+  const summary = stage.files['pipeline-summary.json']
+  assert.equal(summary?.version, 1, 'pipeline_summary_version_required')
+  assert.equal(summary.target, 'staging', 'pipeline_stage_target_mismatch')
+  assert.equal(summary.status, 'passed', 'pipeline_stage_incomplete')
+  assert.equal(summary.rollback, undefined, 'pipeline_stage_rollback_rejected')
+  assert.equal(summary.verification?.status, 'pass', 'pipeline_summary_verification_required')
+  assert.equal(summary.deployment?.runId, String(run.id), 'pipeline_deployment_summary_run_mismatch')
+  assert.equal(summary.deployment.runAttempt, String(run.run_attempt), 'pipeline_deployment_summary_attempt_mismatch')
+  assert.equal(summary.origin?.event, 'push', 'pipeline_promotion_release_mismatch')
+  const selected = await release(api, summary.origin.runId, summary.origin.runAttempt)
+  assert.equal(selected.origin.artifactId, String(summary.origin.artifactId), 'pipeline_promotion_release_mismatch')
+  assert.equal(selected.manifest.sourceCommit, env.INPUT_PROMOTE_SOURCE, 'pipeline_promotion_source_mismatch')
+  const cloud = await api('alexj11324/mikka-cloud/git/ref/heads/main')
+  assert.match(cloud.object?.sha ?? '', sha, 'pipeline_operations_sha_required')
+  if (env.INPUT_CLOUD_SOURCE) assert.equal(env.INPUT_CLOUD_SOURCE, cloud.object.sha, 'pipeline_operations_source_must_be_current_main')
+  return { selected, stage, stageRun: run, operations: cloud.object.sha }
+}
+
+/** Production consumes a completed staging artifact with its own serving baseline. It never
+ * silently uses the staging baseline. An automatic run promotes the staging result of this same
+ * run, and only while the private policy's `autoProduction` is true (the workflow skips it
+ * otherwise); a manual owner dispatch promotes the named staging run instead. */
 export async function selectPromotion({ env = process.env, api = github } = {}) {
   assert.ok(actionsMikkaRepository(env), 'pipeline_repository_scope')
   assert.equal(env.GITHUB_REF, 'refs/heads/main', 'pipeline_main_ref_required')
-  assert.equal(env.GITHUB_EVENT_NAME, 'workflow_run', 'pipeline_workflow_run_event_required')
+  const manual = env.GITHUB_EVENT_NAME === 'workflow_dispatch'
+  if (!manual) assert.equal(env.GITHUB_EVENT_NAME, 'workflow_run', 'pipeline_workflow_run_event_required')
   // A merge through the merge queue promotes like the owner's own push (Alex 2026-11-24).
-  assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, true), 'pipeline_actor_untrusted')
-  for (const key of ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'INPUT_STAGE_ARTIFACT']) assert.match(env[key] ?? '', number, 'pipeline_promotion_input_required')
-  assert.match(env.INPUT_OPERATIONS_SOURCE ?? '', sha, 'pipeline_operations_source_required')
-  const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'))
-  const selected = await release(api, event.workflow_run?.id, event.workflow_run?.run_attempt)
-  const run = await api(`${repository}/actions/runs/${env.GITHUB_RUN_ID}/attempts/${env.GITHUB_RUN_ATTEMPT}`)
-  const stage = await members(api, run, 'deploy-pipeline')
-  assert.equal(String(stage.artifact.id), env.INPUT_STAGE_ARTIFACT, 'pipeline_stage_artifact_mismatch')
+  if (!manual) assert.ok(trustedActor({ id: env.GITHUB_ACTOR_ID, login: env.GITHUB_ACTOR }, true), 'pipeline_actor_untrusted')
+  for (const key of ['GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', ...(manual ? [] : ['INPUT_STAGE_ARTIFACT'])])
+    assert.match(env[key] ?? '', number, 'pipeline_promotion_input_required')
+  if (!manual) assert.match(env.INPUT_OPERATIONS_SOURCE ?? '', sha, 'pipeline_operations_source_required')
+  let selected, stage, stageRun, operations
+  if (manual) ({ selected, stage, stageRun, operations } = await manualStage(api, env))
+  else {
+    const event = JSON.parse(await readFile(env.GITHUB_EVENT_PATH, 'utf8'))
+    selected = await release(api, event.workflow_run?.id, event.workflow_run?.run_attempt)
+    stageRun = await api(`${repository}/actions/runs/${env.GITHUB_RUN_ID}/attempts/${env.GITHUB_RUN_ATTEMPT}`)
+    assert.ok(String(stageRun.id) === env.GITHUB_RUN_ID && String(stageRun.run_attempt) === env.GITHUB_RUN_ATTEMPT, 'pipeline_stage_run_mismatch')
+    stage = await members(api, stageRun, 'deploy-pipeline')
+    assert.equal(String(stage.artifact.id), env.INPUT_STAGE_ARTIFACT, 'pipeline_stage_artifact_mismatch')
+    operations = env.INPUT_OPERATIONS_SOURCE
+  }
   assert.deepEqual(stage.files['release-manifest.json'], selected.manifest, 'pipeline_stage_manifest_mismatch')
   assert.equal(stage.files['pipeline-summary.json']?.status, 'passed', 'pipeline_stage_incomplete')
   assert.equal(stage.files['pipeline-summary.json'].target, 'staging', 'pipeline_stage_target_mismatch')
@@ -353,17 +399,22 @@ export async function selectPromotion({ env = process.env, api = github } = {}) 
   const prior = await priorDeployment(api, env.GITHUB_RUN_ID, undefined, 'production')
   const previousOrigin = prior && baselineOrigin(prior.summary, 'production')
   const previous = previousOrigin && await historicalRelease(api, previousOrigin.runId, previousOrigin.runAttempt)
+  // A hand-picked candidate never moves production backwards: it must contain what production serves.
+  if (manual && previous) {
+    const compared = await api(`${repository}/compare/${previous.manifest.sourceCommit}...${selected.manifest.sourceCommit}`)
+    assert.ok(['identical', 'ahead'].includes(compared?.status), 'pipeline_promotion_downgrade_rejected')
+  }
   const qualification = await qualificationOrigin(api)
   const report = resolve(env.RUNNER_TEMP, 'deploy-production')
   await mkdir(report, { recursive: true, mode: 0o700 })
   const variables = { MIKKA_RELEASE_MANIFEST: resolve(report, 'release-manifest.json'),
     MIKKA_RELEASE_RUN_ID: selected.origin.runId, MIKKA_RELEASE_RUN_ATTEMPT: selected.origin.runAttempt,
     MIKKA_RELEASE_ARTIFACT_ID: selected.origin.artifactId,
-    MIKKA_CF_OPERATIONS_SHA: env.INPUT_OPERATIONS_SOURCE, MIKKA_CLOUD_SOURCE_SHA: env.INPUT_OPERATIONS_SOURCE,
+    MIKKA_CF_OPERATIONS_SHA: operations, MIKKA_CLOUD_SOURCE_SHA: operations,
     MIKKA_OPERATIONS_CI_RUN_ID: qualification.runId, MIKKA_OPERATIONS_CI_RUN_ATTEMPT: qualification.runAttempt,
     MIKKA_OPERATIONS_CI_ARTIFACT_ID: qualification.artifactId, MIKKA_PIPELINE_TARGET: 'production',
-    MIKKA_STAGE_RUN_ID: env.GITHUB_RUN_ID, MIKKA_STAGE_RUN_ATTEMPT: env.GITHUB_RUN_ATTEMPT,
-    MIKKA_STAGE_ARTIFACT_ID: env.INPUT_STAGE_ARTIFACT,
+    MIKKA_STAGE_RUN_ID: String(stageRun.id), MIKKA_STAGE_RUN_ATTEMPT: String(stageRun.run_attempt),
+    MIKKA_STAGE_ARTIFACT_ID: String(stage.artifact.id),
     MIKKA_PIPELINE_RECEIPT: resolve(env.RUNNER_TEMP, 'deploy-production-private.json'),
     MIKKA_PIPELINE_SUMMARY: resolve(report, 'pipeline-summary.json') }
   await writeFile(variables.MIKKA_RELEASE_MANIFEST, JSON.stringify(selected.manifest, null, 2) + '\n', { mode: 0o600 })
@@ -374,7 +425,7 @@ export async function selectPromotion({ env = process.env, api = github } = {}) 
   }
   for (const value of Object.values(variables)) assert.ok(!/[\r\n]/.test(value), 'pipeline_env_value_invalid')
   await appendFile(env.GITHUB_ENV, Object.entries(variables).map(([key, value]) => `${key}=${value}\n`).join(''))
-  return { status: 'selected', source: selected.manifest.sourceCommit, operations: env.INPUT_OPERATIONS_SOURCE, report }
+  return { status: 'selected', source: selected.manifest.sourceCommit, operations, report }
 }
 
 // Node 24 appends the assertion diff to a custom message; report only the code.

@@ -163,8 +163,11 @@ product regression. Main pushes and merge groups continue normal full coverage.
   `desktop-release.yml` also watches the shared frontend, UI and API inputs.
   On a push it builds nothing and leaves a note in the run summary. The
   installer is built when the Cloudflare deployment workflow's serving-release
-  observation shows current main, or from a dispatch carrying
-  `cloudflare_receipt`. A Markdown file under a
+  observation or automatic `pipeline-production` promotion shows current main,
+  or from a dispatch carrying `cloudflare_receipt`. While production promotion
+  is paused (private `deploy-pipeline.json` `autoProduction: false`), the owner
+  promotes with a `pipeline-promote` dispatch and then dispatches Desktop by
+  hand ([promotion switch](../../docs/operations/build-source-of-truth.md#production-promotion-switch)). A Markdown file under a
   watched directory still matches those release filters. Read the exact
   workflow paths before predicting release work.
 - The run-dispatch and Controlled Skill improvement suites run in the CI

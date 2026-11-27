@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
@@ -159,4 +162,72 @@ test('read-only migration admission precedes candidate preparation and deploymen
     assert.equal(upload.if, "always() && steps.select.outputs.status == 'selected'", 'a rejection must retain safe evidence')
   }
   assert.equal(workflow.jobs['deploy-application'].steps.some(step => step.run === command), false)
+})
+
+// GitHub expression subset used by these job conditions, evaluated with JavaScript semantics.
+function condition(expression) {
+  const body = expression.replace(/\.([A-Za-z_][A-Za-z0-9_]*-[A-Za-z0-9_-]+)/g, '["$1"]')
+  return new Function('github', 'inputs', 'needs', 'cancelled', 'always', 'startsWith', `return ${body}`)
+}
+const evaluate = (expression, { github, inputs = {}, needs = {} }) => condition(expression)(github, inputs, needs,
+  () => false, () => true, (value, prefix) => String(value ?? '').startsWith(prefix))
+
+// Runs the workflow's own inline policy reader against a fixture operations checkout.
+async function policyDecision(policy) {
+  const directory = await mkdtemp(join(tmpdir(), 'mikka-production-policy-'))
+  try {
+    if (policy !== undefined) {
+      await mkdir(join(directory, 'docs/operations/releases'), { recursive: true })
+      await writeFile(join(directory, 'docs/operations/releases/deploy-pipeline.json'), typeof policy === 'string' ? policy : JSON.stringify(policy))
+    }
+    const step = workflow.jobs.pipeline.steps.find(item => item.id === 'policy')
+    const script = /<<'JS'\n([\s\S]*)\nJS\s*$/.exec(step.run)[1]
+    const output = join(directory, 'output')
+    await writeFile(output, '')
+    execFileSync(process.execPath, ['--input-type=module'], { cwd: directory, input: script,
+      env: { PATH: process.env.PATH, GITHUB_OUTPUT: output }, stdio: ['pipe', 'pipe', 'pipe'] })
+    return /^enabled=(true|false)$/m.exec(await readFile(output, 'utf8'))[1]
+  } finally { await rm(directory, { recursive: true, force: true }) }
+}
+
+test('the private autoProduction switch in manual mode leaves production to an owner dispatch only', async () => {
+  // The policy reader fails closed without failing staging: only an exact true enables automatic promotion.
+  assert.equal(await policyDecision({ version: 1, autoProduction: true, mobileProduction: true }), 'true')
+  for (const policy of [{ version: 1, autoProduction: false, mobileProduction: true }, { version: 1 }, { version: 2, autoProduction: true },
+    { version: 1, autoProduction: 'true' }, '{not json', undefined]) assert.equal(await policyDecision(policy), 'false', JSON.stringify(policy))
+
+  const production = workflow.jobs['pipeline-production'].if
+  const bot = { actor_id: '118344674', actor: 'github-merge-queue[bot]', triggering_actor: 'github-merge-queue[bot]' }
+  const github = { repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main', ...bot,
+    event_name: 'workflow_run', event: { repository: { id: 1427517699 },
+      workflow_run: { event: 'push', head_branch: 'main', conclusion: 'success', head_repository: { id: 1427517699 } } } }
+  const staged = enabled => ({ pipeline: { result: 'success', outputs: { selected: 'selected', 'production-enabled': enabled } },
+    'pipeline-record': { result: 'success' } })
+  // Automatic promotion after a merge happens only while the switch reads true.
+  assert.equal(evaluate(production, { github, needs: staged('true') }), true)
+  assert.equal(evaluate(production, { github, needs: staged('false') }), false)
+  assert.equal(evaluate(production, { github, needs: staged('') }), false)
+  assert.equal(evaluate(production, { github, needs: { ...staged('true'), pipeline: { result: 'failure', outputs: { 'production-enabled': 'true' } } } }), false)
+  assert.equal(evaluate(production, { github, needs: { ...staged('true'), 'pipeline-record': { result: 'failure' } } }), false)
+  // Staging still runs on every merge regardless of the switch.
+  assert.equal(evaluate(workflow.jobs.pipeline.if, { github }), true)
+
+  // The manual path: only the owner's own dispatch of pipeline-promote on main reaches production.
+  const skipped = { pipeline: { result: 'skipped', outputs: {} }, 'pipeline-record': { result: 'skipped' } }
+  const owner = { ...github, event_name: 'workflow_dispatch', actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }
+  assert.equal(evaluate(production, { github: owner, inputs: { phase: 'pipeline-promote' }, needs: skipped }), true)
+  assert.equal(evaluate(workflow.jobs.pipeline.if, { github: owner, inputs: { phase: 'pipeline-promote' } }), false)
+  assert.equal(evaluate(workflow.jobs['deploy-application'].if, { github: owner, inputs: { phase: 'pipeline-promote' } }), false)
+  for (const phase of ['pipeline-stage', 'pipeline-rollback', 'service-production', 'gateway-observe', undefined])
+    assert.equal(evaluate(production, { github: owner, inputs: { phase }, needs: skipped }), false, String(phase))
+  for (const patch of [{ actor_id: '118344674', actor: 'github-merge-queue[bot]' }, { actor_id: '158243242', actor: 'devin-ai-integration[bot]' },
+    { ref: 'refs/heads/feature' }, { repository_id: '7' }, { repository_owner_id: '7' }])
+    assert.equal(evaluate(production, { github: { ...owner, ...patch }, inputs: { phase: 'pipeline-promote' }, needs: skipped }), false, JSON.stringify(patch))
+  // The dispatch carries the staging run and the exact commit to promote into the selector.
+  assert.ok(workflow.on.workflow_dispatch.inputs.phase.options.includes('pipeline-promote'))
+  assert.equal(workflow.on.workflow_dispatch.inputs.promote_source.type, 'string')
+  const select = workflow.jobs['pipeline-production'].steps.find(step => step.id === 'select')
+  assert.equal(select.env.INPUT_PIPELINE_RUN, '${{ inputs.pipeline_run }}')
+  assert.equal(select.env.INPUT_PROMOTE_SOURCE, '${{ inputs.promote_source }}')
+  assert.equal(select.env.INPUT_CLOUD_SOURCE, '${{ inputs.cloud_source_sha }}')
 })

@@ -251,6 +251,93 @@ bootstrap selection and a previous published manifest. A local diagnostic does
 not authorize deployment or migrate a shared database. Production migration
 and promotion remain with #2897/#1954.
 
+## Production promotion switch
+
+**Paused: production promotion and Desktop publication need a human
+(Alex, 2026-11-27).** Staging still deploys every merge to `main`.
+
+Why: from about 18:00 UTC on 2026-11-26, every merge to `main` staged, then
+promoted production (`pipeline-production`), and that promotion started a
+Desktop release by itself; the overlay-sync bot also moved the hosted UI build
+pin off the frozen `2ca0b543`. The gates did not catch a broken Desktop: hosted
+CI became browser-free (hosted #385) and the Desktop route-allowlist guard skips
+when it has no hosted checkout. Desktop `2026.10000.1939` shipped broken to every
+user. Continuous deployment comes back once the gates listed below exist.
+
+**The switch** is `autoProduction` in private `mikka-cloud`
+`docs/operations/releases/deploy-pipeline.json` on `main`. There is no second,
+public switch.
+
+| `autoProduction` | Staging | Production | Desktop |
+| --- | --- | --- | --- |
+| `true` | every merge | promoted after staging passes | built after that promotion |
+| `false` (current) | every merge | only the owner's dispatch of `pipeline-promote` | only the owner's dispatch of `desktop-release.yml` |
+
+It fails closed. `cloudflare-app-deploy.yml` promotes automatically only when
+it reads exactly `version: 1` and `autoProduction: true`; a missing, unreadable
+or different policy counts as `false`, and staging continues. The private
+publisher refuses an automatic (`workflow_run`) promotion unless
+`autoProduction` is `true`, and before every production write it re-reads the
+policy on private `main`: any change to the file stops a running promotion.
+
+While paused, these do not move production:
+
+- `deploy-build-inputs.json` `overlaySource` (the overlay-sync bot's PRs)
+  selects the hosted UI for upcoming builds, which is what staging receives.
+  Production serves the overlay in its promoted manifest and changes only
+  with a promotion. A promotion also requires the candidate's overlay to equal
+  the current `overlaySource`, so after the pin moves, stage again first.
+- `integration-to-main-promotion.yml` runs only on `workflow_dispatch`
+  (`dry_run` by default, #3363). Merging into `main` only stages.
+- Mobile OTA has its own flag, `mobileProduction`, which this pause does not
+  change.
+- A legacy owner dispatch of `gateway-observe` still starts a Desktop release
+  by itself; that dispatch is itself a manual production action.
+
+Production at the pause is deployment run 45913824441 (`main` `0e259f65f`,
+services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back.
+
+### Promote while paused
+
+1. Pick a successful merge-triggered run of `cloudflare-app-deploy.yml` whose
+   `pipeline` job staged the candidate (`pipeline-production` shows skipped),
+   and the commit it staged (the run's head SHA, also `sourceCommit` in its
+   `deploy-pipeline-*` artifact). Check staging yourself.
+2. As the owner, dispatch `cloudflare-app-deploy.yml` on `main` with
+   `phase: pipeline-promote`, `pipeline_run: <staging run id>`,
+   `promote_source: <commit>` and `cloud_source_sha: <current mikka-cloud main>`.
+   The form also requires `qualification_run` and `qualification_artifact`;
+   `pipeline-*` phases ignore them and find the qualification themselves.
+
+   ```sh
+   gh workflow run cloudflare-app-deploy.yml --repo aspectly-labs/Mikka --ref main \
+     -f phase=pipeline-promote -f pipeline_run=<run> -f promote_source=<commit> \
+     -f cloud_source_sha=<mikka-cloud main> -f qualification_run=0 -f qualification_artifact=0
+   ```
+
+3. `pipeline-production` refuses any other actor or phase; a staging run that
+   was not merge-triggered, failed, was rolled back or staged another commit;
+   a `cloud_source_sha` that is not current private `main`; and a commit that
+   does not contain what production serves (no downgrade). The private
+   publisher checks the staging evidence again before any write. Production
+   verification failures restore production as before.
+4. After production is verified, release Desktop by dispatching
+   `desktop-release.yml` on `main` with
+   `cloudflare_receipt: pipeline:<promotion run id>:<attempt>`. A manual
+   promotion never starts Desktop by itself, and a chained Desktop run refuses
+   its receipt.
+
+### Before setting `autoProduction` back to `true`
+
+Each of these must exist and pass, with its evidence linked in the
+`mikka-cloud` PR that flips the flag:
+
+- the Desktop route-allowlist guard runs in release CI with the hosted checkout
+  and fails when that checkout is missing;
+- browser end-to-end tests run on hosted UI pull requests;
+- a smoke test of the signed Desktop build runs before publication;
+- a Desktop beta channel with staged rollout.
+
 ## What current docs are authoritative?
 
 Read in this order for an active engineering operation: `AGENTS.md`, [documentation index](../README.md), this page, relevant active design/operations references, and **latest main source plus the actual current #1953/#1954 release selection**. Dated audits, archived screenshots, older handoffs and `docs/design/decisions.md` are historical context only. Remove obsolete records once their active references are replaced; preserve current security, migration, recovery and release evidence.

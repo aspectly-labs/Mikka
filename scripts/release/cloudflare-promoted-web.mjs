@@ -233,8 +233,11 @@ async function servingObservation(ref, api) {
   return { product: fields[1], overlay: fields[2], releasePin: fields[3], gatewayVersionSha256: fields[4], verifiedAt: jobs[0].completed_at }
 }
 
-// Automatic pipeline-production promotions upload an immutable receipt archive
-// bound to the exact run attempt, manifest digest, served Web/API builds and funded acceptance.
+// pipeline-production promotions upload an immutable receipt archive bound to the exact run
+// attempt, manifest digest, served Web/API builds and funded acceptance. An automatic promotion
+// (workflow_run) may start a Desktop release by itself; an owner's manual pipeline-promote
+// dispatch, used while automatic promotion is paused, is accepted only by a Desktop release the
+// owner dispatches by hand with that receipt (`manual`).
 const pipelineRef = /^pipeline:([1-9][0-9]{0,15}):([1-9][0-9]{0,15})$/
 const isPipelineProductionPromoted = job => job.name === 'pipeline-production'
   && job.status === 'completed' && job.conclusion === 'success'
@@ -244,7 +247,7 @@ const isPipelineProductionPromoted = job => job.name === 'pipeline-production'
   && job.steps.some(step => step.name === 'Upload production receipts'
     && step.status === 'completed' && step.conclusion === 'success')
 
-async function pipelineObservation(ref, api) {
+async function pipelineObservation(ref, api, { manual = false } = {}) {
   const [, runId, attempt] = ref
   const path = '/actions/runs/' + runId + '/attempts/' + attempt
   const [run, listing, artifactsPage] = await Promise.all([
@@ -254,15 +257,19 @@ async function pipelineObservation(ref, api) {
   ])
   requireProof([run.repository, run.head_repository].every(r => officialRepository(r) && r.fork === false)
     && run.path === deploymentWorkflow && run.head_branch === 'main' && present(run.head_sha, sha)
-    && run.event === 'workflow_run' && run.status === 'completed' && run.conclusion === 'success'
-    && isPipelineActor(run.actor) && isPipelineActor(run.triggering_actor)
+    && run.status === 'completed' && run.conclusion === 'success'
+    && (run.event === 'workflow_run' ? isPipelineActor(run.actor) && isPipelineActor(run.triggering_actor)
+      : manual && run.event === 'workflow_dispatch' && isOwnerActor(run.actor) && isOwnerActor(run.triggering_actor))
     && String(run.id) === runId && String(run.run_attempt) === attempt, 'pipelineRun')
+  const dispatched = run.event === 'workflow_dispatch'
   requireProof(Array.isArray(listing.jobs) && listing.total_count === listing.jobs.length, 'pipelineJobs')
   const completed = job => job.status === 'completed' && job.conclusion === 'success' && job.head_sha === run.head_sha
     && String(job.run_id) === runId && String(job.run_attempt) === attempt
   const prodJobs = listing.jobs.filter(job => job.name === 'pipeline-production')
   const stageJobs = listing.jobs.filter(job => job.name === 'pipeline')
-  requireProof(prodJobs.length === 1 && stageJobs.length === 1 && completed(prodJobs[0]) && completed(stageJobs[0])
+  // A manual promotion stages nothing itself: it promotes an earlier, separately verified staging run.
+  requireProof(prodJobs.length === 1 && stageJobs.length === 1 && completed(prodJobs[0])
+    && (dispatched ? stageJobs[0].conclusion === 'skipped' : completed(stageJobs[0]))
     && isPipelineProductionPromoted(prodJobs[0]) && present(String(prodJobs[0].id ?? ''), decimal), 'pipelineJobs')
   requireProof(Number.isFinite(Date.parse(prodJobs[0].completed_at)), 'pipelineTime')
   requireProof(Array.isArray(artifactsPage.artifacts) && Number.isSafeInteger(artifactsPage.total_count), 'pipelineArtifact')
@@ -295,8 +302,10 @@ async function pipelineObservation(ref, api) {
     && summary.deployment?.runId === runId && summary.deployment?.runAttempt === attempt
     && summary.manifestSha256 === digest(JSON.stringify(manifest)), 'pipelineSummary')
   const web = manifest.services?.web, apiService = manifest.services?.api
+  // An automatic run promotes the main push that triggered it; a manual dispatch runs on a later main and
+  // names its source, which must still be part of that main.
   requireProof(manifest.version === 1 && present(summary.sourceCommit, sha)
-    && summary.sourceCommit === manifest.sourceCommit && summary.sourceCommit === run.head_sha
+    && summary.sourceCommit === manifest.sourceCommit && (dispatched || summary.sourceCommit === run.head_sha)
     && present(manifest.overlayCommit, sha) && web && apiService
     && present(web.sourceCommit, sha) && present(web.overlayCommit, sha) && web.overlayCommit === manifest.overlayCommit
     && present(apiService.sourceCommit, sha) && present(apiService.overlayCommit, sha) && apiService.overlayCommit === manifest.overlayCommit
@@ -379,7 +388,7 @@ async function verifyPromotion(workflow, { env = process.env, event, fetchImpl =
   if (observed) {
     record = await servingObservation(observed, api)
   } else if (piped) {
-    record = await pipelineObservation(piped, api)
+    record = await pipelineObservation(piped, api, { manual: !chained })
   } else {
     raw = await readOwnerBody(pin[1], pin[2], 'MIKKA_CLOUDFLARE_WEB_PROMOTION_V1\n', api)
     record = parsePromotionRecord(raw)
