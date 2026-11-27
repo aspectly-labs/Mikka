@@ -27,7 +27,7 @@ if (flavor === 'prod' && parsed.protocol !== 'https:') {
 
 // Telemetry goes to the web's PostHog project (MIKKA_PUBLIC_POSTHOG_KEY, a
 // public ingestion key). A build without one sends nothing (src/main/telemetry.ts).
-// The host is POSTHOG_HOST (or the legacy NEXT_PUBLIC_POSTHOG_HOST, both read by
+// The host is POSTHOG_HOST (or its legacy name in lib/public-env.mjs, both read by
 // publicEnv), else the web's own default, DEFAULT_POSTHOG_API_HOST in
 // lib/env/public.ts. The release sets no host: Mikka Cloud's project is in the
 // US region (us.posthog.com), so the default is the right ingestion origin.
