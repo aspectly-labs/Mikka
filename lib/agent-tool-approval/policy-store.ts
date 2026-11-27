@@ -80,6 +80,9 @@ export const realCliMembershipGuard: CliMembershipGuard = async (workspaceId, us
  * schema remains for code that still moves legacy rows. */
 export const cliPolicyValuesSchema = z.strictObject({ permissions: storedPermissionsSchema.omit({ computer_use: true }).optional(), networkAllow: networkAllowSchema.optional(), approvalMode: legacyApprovalModeSchema.optional() })
 export const cliPolicyLayerSchema = cliPolicyValuesSchema.extend({ defaults: cliPolicyValuesSchema.optional() })
+type CliPolicyValues = z.infer<typeof cliPolicyValuesSchema>
+// Defaults replace scalar/list fields; permission choices inherit per action.
+export const mergeCliPolicyValues = (base: CliPolicyValues, next: CliPolicyValues): CliPolicyValues => ({ ...base, ...next, ...(next.permissions ? { permissions: { ...base.permissions, ...next.permissions } } : {}) })
 
 /** What every run gets: full access (ADR 2026-11-27-1615). The daemon's own
  * push is the claim's publication decision; the computer grant is attached

@@ -1,7 +1,7 @@
 # eve owns generic Agent behavior; tasks receive native MCP configuration
 
 - Date: 2026-11-11
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-27-1700-personal-mcp-not-shareable.md](2026-11-27-1700-personal-mcp-not-shareable.md) (no Workspace-shared personal connections; only the thread starter's own)
 - Source: [#1918](https://github.com/alexj11324/Mikka/issues/1918), Alex: 「我们的并不好用，所以 eve 有的功能，全部替换成他们的。」 Follow-up in the implementation conversation: 「mcp按照capy的办法去做，把1918和mcp的注入都实现了」。
 - Rule: Agent runtime, client protocol, MCP configuration and task credential exposure.
 - Replaces: retaining duplicated Mikka runtime/client features behind a thin eve model-loop wrapper. For **configured task MCP credentials only**, this also supersedes the protected/non-readable default in [credential exposure](2026-11-08-0240-credential-exposure-boundary.md). Other Secret classes retain that decision.

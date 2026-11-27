@@ -33,12 +33,13 @@ const fixtureModules = new Map([
   ['@hosted/core/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
   ['@hosted/core/components/swr-defaults', `export const SWRDefaults = ${wrapper};`],
   ['@hosted/core/components/ui/sonner', 'export const Toaster = () => null;'],
+  ['@hosted/web/components/ui/context-menu', 'import { createElement } from "react"; export const ContextMenu = ({ children }) => children; export const ContextMenuTrigger = ({ children, ...p }) => createElement("div", p, children); export const ContextMenuContent = ({ children }) => createElement("div", null, children); export const ContextMenuItem = ({ children, ...p }) => createElement("button", p, children); export const ContextMenuSeparator = () => null;'],
   ['@hosted/core/components/ui/button', `export const Button = ${wrapper}; export const buttonVariants = () => '';`],
   ['@hosted/core/components/blocks/auth-19/components/auth', `export const Auth = ${wrapper};`],
   ['@hosted/core/components/blocks/auth-19/components/auth-card', `export const AuthCard = ${wrapper};`],
   ['@hosted/core/components/workspace/workspace-loading', 'import { createElement } from "react"; export const WorkspaceLoading = () => createElement("div", { "data-loading": true });'],
   ['@hosted/core/components/workspace/create-workspace-form', 'export const CreateWorkspaceForm = () => null;'],
-  ['@hosted/core/components/workspace/invitation-card', `import { createElement } from 'react'; export const InvitationCard = () => createElement('div', { 'data-workspace-invitation': true }); export const OrganizationInvitationCard = () => createElement('div', { 'data-organization-invitation': true });`],
+  ['@hosted/core/components/workspace/invitation-card', `import { createElement } from 'react'; export const InvitationCard = () => createElement('div', { 'data-workspace-invitation': true }); export const OrganizationInvitationCard = () => createElement('div', { 'data-organization-invitation': true }); export const InvitationLanding = ({ kind }) => createElement('div', kind === 'workspace' ? { 'data-workspace-invitation': true } : { 'data-organization-invitation': true });`],
   ['@hosted/core/components/device-authorization', 'export const DeviceAuthorization = () => null;'],
   ['@hosted/core/components/plugins/github-settings', 'export const GitHubSettings = () => null;'],
   ['@hosted/core/components/app-shell/not-found', 'export default () => null;'],
@@ -51,8 +52,8 @@ const fixtureModules = new Map([
   ['@hosted/core/components/posthog-analytics', 'export const PostHogAnalytics = () => null;'],
   ['@hosted/core/components/plugins/github-settings', `import { createElement, useLayoutEffect } from 'react'; export const GitHubSettings = () => { useLayoutEffect(() => { ${stateAccess}.githubMounts++; }, []); return createElement('div', { 'data-github-handoff': true }); };`],
   ['@/lib/posthog-config', 'export const posthogConfig = { token: "" };'],
-  ['@/lib/auth-client', `export const authClient = { $store: { atoms: { session: { subscribe: listener => ${stateAccess}.subscribe(listener) } } } }; export const cloudAuthClient = authClient;`],
-  ['@/lib/swr/persistent-cache', `export const clearPersistentReadCaches = async () => { ${stateAccess}.cacheClears++; };`],
+  ['@/lib/auth-client', `export const authClient = { $store: { atoms: { session: { subscribe: listener => ${stateAccess}.subscribe(listener) } } } }; export const cloudAuthClient = authClient; export const endSession = async () => ({ error: null });`],
+  ['@/lib/swr/persistent-cache', `export const clearPersistentReadCaches = async () => { ${stateAccess}.cacheClears++; }; export class PersistentReadCache extends Map {} export const readCacheShareNamespace = () => null;`],
 ])
 const application = needsOfficialUi ? null : await applicationPlugin('web', { overlay: officialUi })
 const compiled = needsOfficialUi ? null : await build({

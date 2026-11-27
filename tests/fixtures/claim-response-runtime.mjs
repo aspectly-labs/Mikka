@@ -8,7 +8,8 @@ import { PgDialect, QueryBuilder } from 'drizzle-orm/pg-core'
 // This existing loader captures response scheduling below; no live delivery is claimed.
 const gatewayEnvironment = { MIKKA_EDITION: 'community', BETTER_AUTH_URL: 'http://127.0.0.1:3000',
   BETTER_AUTH_SECRET: 'synthetic-claim-commit-fixture', DEVICE_GATEWAY_URL: undefined,
-  DEVICE_GATEWAY_PUSH_SECRET: undefined, VERCEL: undefined }
+  DEVICE_GATEWAY_PUSH_SECRET: undefined, VERCEL: undefined,
+  MIKKA_LITELLM_URL: 'https://litellm.fixture.invalid', MIKKA_LITELLM_MASTER_KEY: 'synthetic-claim-only' }
 const previousGatewayEnvironment = Object.fromEntries(Object.keys(gatewayEnvironment).map(key => [key, process.env[key]]))
 for (const [key, value] of Object.entries(gatewayEnvironment)) {
   if (value === undefined) delete process.env[key]; else process.env[key] = value
@@ -19,7 +20,7 @@ after(() => {
   }
 })
 
-const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_organization_workspaces\".\"organizationId\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\" = $1 and \"mikka_workspace_members\".\"status\" = $2 and \"mikka_workspaces\".\"id\" = $3 and (\"mikka_workspaces\".\"kind\" = $4 or (\"mikka_workspaces\".\"kind\" = $5 and \"mikka_workspaces\".\"userId\" = $6))) order by \"mikka_workspaces\".\"createdAt\" asc"
+const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\" as \"mfa\", \"mikka_organization_workspaces\".\"organizationId\" as \"org\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\"=$1 and \"mikka_workspace_members\".\"status\"='active' and \"mikka_workspaces\".\"id\"=$2 and (\"mikka_workspaces\".\"kind\"='team' or (\"mikka_workspaces\".\"kind\"='personal' and \"mikka_workspaces\".\"userId\"=\"mikka_workspace_members\".\"userId\"))) order by \"mikka_workspaces\".\"createdAt\" asc"
 function expandMembershipAliases(sql) {
   for (const [table, name] of [['mikka_workspaces', 'w'], ['mikka_workspace_members', 'm'], ['mikka_organization_workspaces', 'o']]) {
     sql = sql.replaceAll('"' + table + '" "' + name + '"', '"' + table + '"')
@@ -32,14 +33,14 @@ function workspaceQuery(columns) {
   let table, condition, organizationJoin = false, statement = new QueryBuilder().select(columns)
   const organizations = () => {
     const p = globalThis.claimResponseProbe
-    assert.equal(table, 'mikka_organization_workspaces')
+    assert.equal(table, 'mikka_workspaces')
     assert.deepEqual(condition.params, [p.workspace.id])
-    assert.ok(condition.sql === '"mikka_organization_workspaces"."workspaceId" = $1'
-      || condition.sql === '"mikka_organization_workspaces"."workspaceId" in ($1)')
-    if (columns !== undefined) assert.deepEqual(Object.keys(columns), ['organizationId'])
+    assert.ok(condition.sql === '"mikka_workspaces"."id" = $1'
+      || condition.sql === '"mikka_workspaces"."id" in ($1)')
+    assert.deepEqual(Object.keys(columns), condition.sql.includes(' in ') ? ['workspaceId', 'organizationId', 'factorAt'] : ['organizationId', 'factorAt'])
     // This claim-composition fixture has no Organization-link row. The real
     // Enterprise gate consumes that exact projection; unknown queries fail.
-    return []
+    return [{ workspaceId: p.workspace.id, organizationId: null, factorAt: null }]
   }
   const query = {
     from(value) { table = value[Object.getOwnPropertySymbols(value).find(s => s.description === 'drizzle:Name')]; statement = statement.from(value); return query },
@@ -51,10 +52,13 @@ function workspaceQuery(columns) {
         assert.equal(value[Object.getOwnPropertySymbols(value).find(s => s.description === 'drizzle:Name')], 'mikka_organization_workspaces')
         assert.equal(join.sql, '"mikka_organization_workspaces"."workspaceId" = "mikka_workspace_members"."workspaceId"')
         assert.deepEqual(Object.keys(columns), ['id', 'organizationId'])
+      } else if (!columns.kind) {
+        assert.equal(table, 'mikka_workspaces')
+        assert.equal(join.sql, '"mikka_organization_workspaces"."workspaceId" = "mikka_workspaces"."id"')
       } else {
         // The unlocked membership path is checked as a complete real query
         // at orderBy, including its original base tables and all predicates.
-        assert.deepEqual(Object.keys(columns), ['id', 'kind', 'organizationId'])
+        assert.deepEqual(Object.keys(columns), ['id', 'kind', 'factorAt', 'organizationId'])
       }
       statement = statement.leftJoin(value, predicate)
       organizationJoin = true
@@ -83,10 +87,10 @@ function workspaceQuery(columns) {
     async orderBy(order) {
       const p = globalThis.claimResponseProbe
       assert.equal(organizationJoin, true)
-      assert.deepEqual(Object.keys(columns), ['id', 'kind', 'organizationId'])
+      assert.deepEqual(Object.keys(columns), ['id', 'kind', 'factorAt', 'organizationId'])
       const compiled = statement.orderBy(order).toSQL()
       assert.equal(expandMembershipAliases(compiled.sql), expectedMembershipSql)
-      assert.deepEqual(compiled.params, [p.run.userId, 'active', p.workspace.id, 'team', 'personal', p.run.userId])
+      assert.deepEqual(compiled.params, [p.run.userId, p.workspace.id])
       return p.memberAllowed && p.workspaceMemberAllowed ? [{ ...p.workspace, organizationId: null }] : []
     },
   }
@@ -115,7 +119,7 @@ export async function withRunProjectExecution(input,frozen,operation){
   const p=globalThis.claimResponseProbe, lease=p.projectAdmission
   assert.ok(lease,'project admission must be explicitly configured')
   assert.equal(lease.calls.length,0,'one resource admission per claim')
-  assert.deepEqual(input,{userId:p.run.userId,workspaceId:p.run.workspaceId,issueId:p.run.issueId,
+  assert.deepEqual(input,{userId:p.run.userId,botId:p.run.botId,workspaceId:p.run.workspaceId,issueId:p.run.issueId,
     repositoryKey:p.repo.remoteUrl?p.repo.repoPath:null,baseBranch:p.run.baseBranch,
     runtime:p.device.kind==='cloud'?'cloud':'local',harness:p.run.agentDefinition?.harness??p.agent.harness})
   assert.deepEqual(frozen,p.run.agentDefinition?.projectExecution,'validate the stored execution snapshot')
@@ -272,7 +276,7 @@ const sources = new Map([
   ['/lib/run-publications.ts', 'export async function prepareRunPublication(){const p=globalThis.claimResponseProbe;p.preparation.push("publication");return structuredClone(p.publication)};export async function persistRunCompletion(_owner,_run,completion){const p=globalThis.claimResponseProbe;if(completion.stopReason==="error"&&completion.report.summary==="The task is no longer available to this thread."){p.preparation.push("issue-unavailable");return}if(!p.run.retryOf||completion.stopReason!=="blocked")throw new Error("unexpected publication failure");p.preparation.push("blocked-recovery");p.run.status="stopped";p.run.stopReason="blocked"}'],
   ['/lib/issue-team-access.ts', 'export async function issueTeamAccess(){return {allowed:globalThis.claimResponseProbe.memberAllowed}}'],
   ['/lib/issue-access.ts', 'export async function issueForUser(){const p=globalThis.claimResponseProbe;if(p.issueAccessError)throw p.issueAccessError;return p.memberAllowed&&!p.issue?.content?.attrs?.mikka?.deletedAt?p.issue:null}'],
-  ['/lib/mcp/worker.ts', 'export async function issueRunToken(){const p=globalThis.claimResponseProbe;p.preparation.push("token");await p.beforeToken?.();if(p.tokenError)throw Object.assign(new Error("synthetic token refusal"),{name:"FixtureRunTokenRefusal"});return {token:"synthetic-only"}}'],
+  ['/lib/mcp/worker.ts', 'export async function issueRunToken(){const p=globalThis.claimResponseProbe;p.preparation.push("token");await p.beforeToken?.();if(p.tokenError)throw Object.assign(new Error("synthetic token refusal"),{name:"FixtureRunTokenRefusal"});return {token:"synthetic-only"}};export async function revokeRunTokens(runId){(globalThis.claimResponseProbe.revokedTokens??=[]).push(runId)}'],
   // These claims have no frozen mailbox grant. Validate that fact through the
   // real capability contract instead of accidentally failing its module load.
   ['/lib/personal-mailbox-runtime.ts', `import assert from 'node:assert/strict'
@@ -284,10 +288,36 @@ const sources = new Map([
       assert.equal(personalWorkerMailboxScopeMatches(p.run.agentDefinition?.harness??p.agent.harness,p.run.agentDefinition,{botId:p.run.botId??null,workspaceId:p.run.workspaceId}),false)
       p.mailboxLookups.push([owner,runId]);return []
     }`],
+  ['/lib/cloud-computer/e2b-task-workspace-archive.ts', 'export function portableTaskArchiveEnabled(){return Boolean(globalThis.claimResponseProbe.portableMachine)}'],
   ['/lib/computer/claim.ts', `
+    import assert from 'node:assert/strict'
+    // The same lease-scoped requeue as lib/computer/claim.ts: only this claim's still-preparing lease.
+    export const CLAIM_REQUEUE_LIMIT=3
+    export async function requeueLocalClaim(_pool,claim){
+      const p=globalThis.claimResponseProbe
+      if(claim.runId!==p.run.id||claim.userId!==p.run.userId||p.run.status!=='preparing'||p.run.stopRequestedAt||p.run.leaseExpiresAt?.toISOString()!==claim.leaseExpiresAt)return 'unavailable'
+      if((p.run.claimRequeues??0)>=CLAIM_REQUEUE_LIMIT)return 'limit'
+      if(p.skillReceiptRecorded)return 'receipted'
+      Object.assign(p.run,{status:'queued',startedAt:null,leaseExpiresAt:null,deviceTokenId:null,claimRequeues:(p.run.claimRequeues??0)+1});(p.requeued??=[]).push(claim);return 'requeued'
+    }
     function claimTransaction(){
       const p=globalThis.claimResponseProbe
       return {query(sql,args){
+        if(sql==='SELECT id FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE'){
+          assert.deepEqual(args,[p.run.id,p.run.userId]);if(p.portableMachine)p.portableOperations.push('lock-run')
+          return Promise.resolve({rows:[{id:p.run.id}],rowCount:1})
+        }
+        if(sql.startsWith("SELECT lifecycle->'portableWorkspaceRestore' AS receipt")){
+          assert.match(sql,/FROM thread_machines/);assert.match(sql,/FOR UPDATE$/)
+          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId]);if(p.portableMachine)p.portableOperations.push('lock-machine')
+          return Promise.resolve(p.portableMachine ? {rows:[p.portableMachine],rowCount:1} : {rows:[],rowCount:0})
+        }
+        if(sql.startsWith('UPDATE thread_machines SET lifecycle=')){
+          assert.deepEqual(args,[p.run.id,p.device.id,p.run.userId,p.run.workspaceId])
+          const writing = p.portableMachine && p.portableMachine.snapshotId !== 'cloudflare-task-v1'
+          if(writing)p.portableOperations.push('writer-ready')
+          return Promise.resolve({rows:[],rowCount:writing ? 1 : 0})
+        }
         if(!sql.startsWith('UPDATE agent_runs SET "deviceTokenId"=$2')||args[0]!==p.run.id||args[1]!=="synthetic-device-token"||args[2]!=="member")throw new Error("unexpected SQL in claim fixture")
         p.run.deviceTokenId=args[1]
         p.run.machineAuthority=args[3]
@@ -329,7 +359,7 @@ const sources = new Map([
   ['/lib/run-chain.ts', 'export async function readRunChain(){const p=globalThis.claimResponseProbe;return p.runChain??null}'],
   ['/lib/secrets/runtime.ts', secretSource],
   ['/lib/run-completion-effects.ts', 'export async function afterRunEnded(ownerId,runId){const p=globalThis.claimResponseProbe;(p.endedRuns??=[]).push({ownerId,runId})}'],
-  // The assignment hands the claim a fresh authority object; the fence must receive that exact object.
+  // The assignment hands the claim its authority; the tests check the fence gets the same authority by value.
   ['/lib/plugins/runtime.ts', 'export const personalPlugins = { async nativeMcpAssignment(_userId,authority) { const p = globalThis.claimResponseProbe; if (p.mcpAssignmentError) throw p.mcpAssignmentError; p.mcpAssigned = {...authority}; return {authority:p.mcpAssigned,servers:p.nativeMcpServers} } };'],
   ['/lib/plugins/workspace-mcp.ts', `import { PluginError } from ${JSON.stringify(new URL('../../lib/plugins/contracts.ts', import.meta.url).href)};
     function check(stage) { const p = globalThis.claimResponseProbe; p.mcpChecks.push(stage); const error = p.mcpErrors[stage].shift(); if (error) throw error; if (p.mcpRevoked) throw new PluginError('mcpUnavailable',403) }
@@ -361,11 +391,19 @@ const sources = new Map([
     export async function cloudGitHubCredential(owner,remoteKey){const p=scope(owner);assert.equal(remoteKey,p.repo.repoPath);p.cloudGitHubCredentials.push([owner,remoteKey]);return null}
   `],
   ['/lib/github/user-access.ts', 'export async function githubTokenForUser(owner){const p=globalThis.claimResponseProbe;p.credentialOwners.push(owner);await p.beforeCredential?.();if(p.credentialFailure)throw p.credentialFailure;return {token:"fixture-claim-github-token",githubAccountId:"123",expiresAt:new Date("2030-01-01T00:00:00.000Z")}}'],
+  ['/lib/model-gateway/token.ts', `import assert from 'node:assert/strict'
+    export async function mintGatewayToken(_query,grant,options){
+      const p=globalThis.claimResponseProbe
+      assert.equal(grant.source.kind,'subscription')
+      assert.equal(options?.subscriptionLeaseExpiresAt, p.run.leaseExpiresAt.toISOString())
+      p.subscriptionGatewayGrants.push(structuredClone(grant))
+      return {token:'mkg_'+'a'.repeat(43),expiresAt:new Date('2030-01-01T00:00:00.000Z')}
+    }`],
   ['/lib/subscription-runtime.ts', `import assert from 'node:assert/strict'
     export function subscriptionRuntime(...args){
       const p=globalThis.claimResponseProbe
       assert.equal(p.projectAdmission.active,true)
-      if(args.length)assert.deepEqual(args,[true,false,{exportAccessLease:true}])
+      if(args.length)assert.deepEqual(args,[true])
       return {
         repository:{async nativeBinding(owner,agent,harness){
           assert.deepEqual([owner,agent,harness],[p.run.userId,p.agent.id,p.agent.harness])
@@ -374,14 +412,16 @@ const sources = new Map([
           p.localBindingLookups.push([owner,agent,harness]);return null
         }},
         async nativeRun(owner,device,run){
-          assert.ok(p.nativeLease,'native custody must be explicitly configured')
+          assert.ok(p.nativeContext || p.cloud?.subscription,'native custody must be explicitly configured')
           assert.deepEqual([owner,device,run],[p.run.userId,p.device.id,p.run.id])
           ;(p.nativeRunCalls??=[]).push([owner,device,run]);return {ownerId:owner,runId:run}
         },
-        async nativeLease(use,signal,includeCatalogue){
-          assert.ok(p.nativeLease);assert.deepEqual(use,{ownerId:p.run.userId,runId:p.run.id})
-          assert.equal(signal.aborted,false);assert.equal(typeof includeCatalogue,'boolean')
-          ;(p.nativeLeaseCalls??=[]).push(use);p.nativeLeaseCapabilities.push(includeCatalogue);return p.nativeLease
+        async nativeContext(use,signal){
+          assert.deepEqual(use,{ownerId:p.run.userId,runId:p.run.id})
+          assert.equal(signal.aborted,false)
+          p.nativeContextCalls.push(use)
+          return p.nativeContext ?? { route:p.cloud.subscription.route, modelId:p.cloud.subscription.modelId, revision:1,
+            accountId:'fixture-account', expiresAt:'2030-01-01T00:00:00.000Z' }
         }
       }
     }`],

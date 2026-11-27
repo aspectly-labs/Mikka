@@ -20,6 +20,7 @@ type Row = {
   id: string; issueId: string | null; identifier: string | null; title: string | null; asked: string
   taskTitle: string | null; agentName: string; pinned: boolean; at: string; state: DirectoryState
   botId: string | null; status: string | null; harness: string | null; position: number; unread: boolean
+  folder?: string | null; tags?: string[] | null
 }
 
 // Both readers resolve exactly one authorized conversation per root. A pin or
@@ -29,7 +30,9 @@ const facts = dialect.sqlToQuery(sql`SELECT (${runAwaitingApproval}) AS approval
 const unread = dialect.sqlToQuery(threadUnread)
 const attribution = dialect.sqlToQuery(sql`SELECT ${runBotId} AS id`)
 
-function conversationQuery() {
+/** `groups`: the thread directory also lists the group chats the person is a member of (owner 2026-11-25: group chats
+ * are threads with more members, resolved-pages.md); the Bot sidebar and the organization reads keep named chats only. */
+function conversationQuery(groups = false) {
   const owner = '$' + (facts.params.length + 1), workspace = '$' + (facts.params.length + 2)
   const depth = '$' + (facts.params.length + 3)
   const scope = `r."userId"=${owner} AND r."workspaceId"=${workspace}`
@@ -49,7 +52,7 @@ function conversationQuery() {
       root."issueId",root.kind AS "runKind",i."issuedIdentifier" AS identifier,i.title AS "taskTitle",i.status,agent_runs.status AS "runStatus",
       agent_runs."deviceId" AS "currentDeviceId", root."threadReplacedBy" IS NOT NULL AS replaced,
       root."conversationPinnedAt" IS NOT NULL AS pinned,root."conversationArchivedAt" AS manual,
-      root."conversationRestoredAt" AS restored,latest.touched,root.source,
+      root."conversationRestoredAt" AS restored,latest.touched,root.source,root.folder,root.tags,
       CASE WHEN root."promptTaskStart">=0 AND root."promptTaskLength" BETWEEN 0 AND length(root.prompt)-root."promptTaskStart"::bigint
         THEN left(substr(root.prompt,root."promptTaskStart"+1,root."promptTaskLength"),400) ELSE '' END AS asked,
       bot.id AS "botId", settings.days,settings."keepPins",
@@ -100,7 +103,7 @@ function conversationQuery() {
         WHERE unread."conversationId"=c.id AND unread.position>coalesce(receipt."lastReadPosition",0)
           AND NOT (unread."authorType"='user' AND unread."authorId"=${owner}))) AS unread,c.id,c.title,NULL::text AS "agentName",NULL::text AS harness,
       NULL::uuid AS "issueId",NULL::text AS identifier,NULL::text AS "taskTitle",NULL::text AS status,
-      NULL::text AS "runStatus",(c."conversationPinnedAt" IS NOT NULL) AS pinned,activity.touched,NULL::text AS source, c.title AS asked,
+      NULL::text AS "runStatus",(c."conversationPinnedAt" IS NOT NULL) AS pinned,activity.touched,NULL::text AS source,NULL::text AS folder,NULL::jsonb AS tags,c.title AS asked,
       CASE WHEN turn.status IN ('running','queued') THEN 'working' WHEN turn.status='failed' THEN 'failed' ELSE 'idle' END AS state,
       to_char(activity.touched AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,
       (c."conversationArchivedAt" IS NOT NULL OR ((c."conversationPinnedAt" IS NULL OR NOT settings."keepPins") AND settings.days>0
@@ -114,7 +117,8 @@ function conversationQuery() {
     LEFT JOIN LATERAL (SELECT m."createdAt" FROM conversation_messages m WHERE m."conversationId"=c.id ORDER BY position DESC LIMIT 1) last ON true
     LEFT JOIN LATERAL (SELECT gt.status FROM group_turns gt WHERE gt."conversationId"=c.id ORDER BY gt."createdAt" DESC,gt."messageId" DESC LIMIT 1) turn ON true
     CROSS JOIN LATERAL (SELECT greatest(c."createdAt",last."createdAt") AS touched) activity
-    WHERE c."workspaceId"=${workspace} AND c."createdBy"=${owner} AND c."creationPurpose"='conversation' AND c.kind='group'
+    WHERE c."workspaceId"=${workspace} AND c.kind='group'
+      AND (${groups ? `c."creationPurpose"='group' OR ` : ''}(c."creationPurpose"='conversation' AND c."createdBy"=${owner}))
   )`
 }
 
@@ -159,6 +163,7 @@ export async function effectiveConversationArchive(database: RunChainQueryable, 
 
 function item(row: Row, linkedTasks?: DirectoryTaskLink[]) {
   const first = linkedTasks?.[0]
+  const tags = Array.isArray(row.tags) ? row.tags.filter((t): t is string => typeof t === 'string' && t.length > 0) : []
   return {
     ...(linkedTasks?.length ? { linkedTasks } : {}),
     pulls: row.pulls.flatMap((raw): DirectoryPull[] => {
@@ -171,6 +176,8 @@ function item(row: Row, linkedTasks?: DirectoryTaskLink[]) {
       title: row.title, name: threadName(row.asked, ''), issue: { title: row.taskTitle || row.agentName },
     }),
     state: row.state, unread: row.unread, at: row.at, pinned: row.pinned,
+    ...(row.folder ? { folder: row.folder } : {}),
+    ...(tags.length ? { tags } : {}),
   }
 }
 
@@ -187,10 +194,10 @@ async function directoryPage(database: RunChainQueryable, userId: string, worksp
   if (input.projectId && !scope?.projectIssueIds) throw new Error('conversationDirectoryProjectUnresolved')
   const param = (i: number) => '$' + (facts.params.length + i)
   const [archived,bot,search,state,id,pinned,at,pullState,kind,project,since,automation] = Array.from({length:12}, (_,i) => param(4+i))
-  const statement = conversationQuery() + `, candidates AS (
-    SELECT kind,pulls,unread,id,title,"agentName",harness,"issueId",identifier,"taskTitle",status,pinned,touched,asked,state,at,archived,"botId" FROM visible
+  const statement = conversationQuery(true) + `, candidates AS (
+    SELECT kind,pulls,unread,id,title,"agentName",harness,"issueId",identifier,"taskTitle",status,pinned,touched,folder,tags,asked,state,at,archived,"botId" FROM visible
     UNION ALL
-    SELECT n.kind,n.pulls,n.unread,n.id,n.title,n."agentName",n.harness,n."issueId",n.identifier,n."taskTitle",n.status,n.pinned,n.touched,n.asked,n.state,n.at,n.archived,${bot}::uuid FROM named_chats n
+    SELECT n.kind,n.pulls,n.unread,n.id,n.title,n."agentName",n.harness,n."issueId",n.identifier,n."taskTitle",n.status,n.pinned,n.touched,n.folder,n.tags,n.asked,n.state,n.at,n.archived,${bot}::uuid FROM named_chats n
       WHERE ${bot}::uuid IS NULL OR EXISTS (SELECT 1 FROM conversation_members cm JOIN bots b ON b.id=${bot} AND b."ownerId"=${param(1)} AND b."workspaceId"=${param(2)}
         WHERE cm."conversationId"=n.id AND cm."memberType"='bot' AND cm."memberId"=b.id::text AND cm."leftAt" IS NULL)
   ) SELECT * FROM candidates WHERE (${archived}::boolean IS NULL OR archived=${archived})
@@ -226,7 +233,7 @@ async function sidebarRows(database: RunChainQueryable, userId: string, workspac
         AND parent."runKind" IN ('implement','plan') AND NOT parent.archived AND parent.source IS DISTINCT FROM 'mcp'
     )` : ''
   const statement = conversationQuery() + `, bot_rows AS (
-    SELECT kind,pulls,unread,id,title,"agentName",harness,"issueId",identifier,"taskTitle",status,"runStatus",pinned,touched,source,asked,state,at,archived,"botId"
+    SELECT kind,pulls,unread,id,title,"agentName",harness,"issueId",identifier,"taskTitle",status,"runStatus",pinned,touched,source,folder,tags,asked,state,at,archived,"botId"
     FROM visible v ${parentFilter}
     UNION ALL
     SELECT n.*,b.id AS "botId" FROM named_chats n JOIN conversation_members cm ON cm."conversationId"=n.id AND cm."memberType"='bot' AND cm."leftAt" IS NULL

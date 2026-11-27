@@ -80,7 +80,24 @@ try {
       try {
         // The existing main executor keeps its concurrent-index validation.
         // Only the nine audited scope bodies defer COMMIT until its ledger insert.
-        await applyMigration(client, name, beforeCommit === null ? plan : { ...plan, sql: beforeCommit })
+        if (name === '20261125223723_environment_scope_and_task_environments.sql') {
+          // Workspace metadata and Project ACLs can live on different databases.
+          // Hold shared ACLs steady until the workspace migration commits.
+          const acl = await states.find(state => state.target === 'MIKKA_DATABASE_URL').pool.connect()
+          try {
+            await acl.query('BEGIN')
+            const shared = await acl.query(`SELECT id,"workspaceId" FROM resource_access_policies
+              WHERE kind='project' AND visibility='shared' AND "parentId" IS NULL FOR SHARE`)
+            await client.query('BEGIN')
+            await client.query("SELECT set_config('mikka.shared_project_backfill',$1,true)", [JSON.stringify(shared.rows)])
+            await applyMigration(client, name, plan)
+            await client.query('COMMIT')
+            await acl.query('COMMIT')
+          } catch (error) {
+            await Promise.allSettled([client.query('ROLLBACK'), acl.query('ROLLBACK')])
+            throw error
+          } finally { acl.release() }
+        } else await applyMigration(client, name, beforeCommit === null ? plan : { ...plan, sql: beforeCommit })
         if (beforeCommit !== null) await client.query('COMMIT')
         console.log(`migrate: applied ${name} to ${target}`)
       } catch (error) {

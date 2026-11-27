@@ -160,8 +160,9 @@ loopback `*_e2e` database) is described in
 Alex set the ownership rules on 2026-11-03
 ([`2026-11-03-2359`](design/decisions/2026-11-03-2359-issue-owner-merges-and-accepts-in-production.md)).
 The [SDLC delivery decision](design/decisions/2026-11-20-1640-sdlc-delivery.md)
-defines the default for new work. Already approved epic-specific batch rules,
-including #2891 and #2956, remain in force for those owners.
+defines the default for new work, and
+[no batch or integration PRs](design/decisions/2026-11-27-1930-no-batch-prs.md)
+withdraws every batch exception (Alex, 2026-11-27).
 They replace the coordinator-merges rule, the push-fixes-to-main rule and the
 old module owners (backend was Codex's).
 
@@ -184,15 +185,15 @@ old module owners (backend was Codex's).
    PR is mergeable, it merges, without waiting for or handing the PR to
    anyone. Merge an independently valid change as soon as its own proof and
    release window permit; the number of ready PRs is not a dependency.
-   Batch only changes that must land atomically, and state why each member
-   cannot safely ship alone. Merge those branches normally into the batch,
-   resolve conflicts once and verify the final batch head. Every merge uses
-   a normal merge commit: no squash, rebase, force push or direct main push.
+   **No batch or integration PRs.** Every PR targets `main`; never merge PRs
+   into another PR's branch or gather them on a session or epic branch.
+   Changes that depend on each other land in order, each green on `main` by
+   itself (expand–contract, a flag, or stacked PRs under rule 4). Every merge
+   uses a normal merge commit: no squash, rebase, force push or direct main push.
    A PR enters the merge queue only through its owner's explicit intent:
    turn on GitHub auto-merge to merge when green. While review findings are
    open, keep the PR a draft; nothing enqueues a Ready PR on its own.
-   Each issue retains its owner and acceptance criteria. Existing approved
-   epic batches keep their original rules. A UI change merges only after the owner has reviewed its
+   Each issue retains its owner and acceptance criteria. A UI change merges only after the owner has reviewed its
    screenshots and attached them to the PR.
    A change to auth, signup, privilege or credentials says so in the PR.
 4. **Stacked PRs** merge in order. After a base merges, retarget the next PR

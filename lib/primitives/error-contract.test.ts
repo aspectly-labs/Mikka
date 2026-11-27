@@ -566,7 +566,7 @@ test('signup, sign-in, auth-recovery, lib/abuse/signup.ts, and lib/auth-email.ts
   const dummyContext: AuthMailContext = {
     secret: 'synthetic-test-secret',
     internalAdapter: {
-      reserveVerificationValue: async () => true,
+      createVerificationValue: async () => ({}), reserveVerificationValue: async () => true,
       consumeVerificationValue: async () => null,
       findVerificationValue: async () => null,
       findUserById: async () => null,

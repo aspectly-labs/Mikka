@@ -8,14 +8,18 @@
 import { z } from 'zod'
 import { withBasePath } from '@/lib/base-path'
 import {
+  E2B_MACHINE_SIZES,
   MACHINE_SIZES,
+  selectableE2BMachineSizeOptions,
   selectableMachineSizeOptions,
+  type E2BMachineSize,
   type MachineSize,
 } from '@/lib/cloud-computer/machine-pricing'
 import { POINTS_PER_USD, POINTS_PURCHASE_AMOUNTS } from './hosted-usage'
 
 const MICRO_USD_PER_POINT = 1_000_000 / POINTS_PER_USD
 const MACHINE_SIZE_IDS = Object.keys(MACHINE_SIZES) as [MachineSize, ...MachineSize[]]
+const E2B_MACHINE_SIZE_IDS = E2B_MACHINE_SIZES as [E2BMachineSize, ...E2BMachineSize[]]
 const isoDatetimeSchema = z.iso.datetime({ offset: true })
 
 export const billingPlanCatalogEntrySchema = z.object({
@@ -57,6 +61,19 @@ export const machineSkuCatalogEntrySchema = z.object({
 
 export type MachineSkuCatalogEntry = z.infer<typeof machineSkuCatalogEntrySchema>
 
+export const e2bMachineSkuCatalogEntrySchema = z.object({
+  id: z.enum(E2B_MACHINE_SIZE_IDS),
+  vcpu: z.number().positive(),
+  memoryGib: z.number().positive(),
+  hourlyRateCents: z.number().int().nonnegative(),
+  hourlyUsd: z.number().nonnegative(),
+  perSecondMicroUsd: z.number().nonnegative(),
+  isDefault: z.boolean(),
+  provider: z.literal('e2b'),
+}).strict()
+
+export type E2BMachineSkuCatalogEntry = z.infer<typeof e2bMachineSkuCatalogEntrySchema>
+
 export const billingActiveOfferSchema = z.object({
   id: z.string().trim().min(1).max(120),
   kind: z.enum(['intro_period', 'discount', 'trial']),
@@ -77,6 +94,7 @@ export const billingCatalogViewSchema = z.object({
   plans: z.array(billingPlanCatalogEntrySchema),
   creditConversion: creditConversionSchema,
   machineSkus: z.array(machineSkuCatalogEntrySchema),
+  e2bMachineSkus: z.array(e2bMachineSkuCatalogEntrySchema).optional(),
   activeOffer: billingActiveOfferSchema.nullable(),
   fetchedAt: isoDatetimeSchema,
 }).strict()
@@ -102,6 +120,20 @@ export function deriveMachineSkuCatalog(): MachineSkuCatalogEntry[] {
     hourlyUsd: option.hourlyUsd,
     isDefault: option.isDefault,
     provider: 'cloudflare' as const,
+  }))
+}
+
+/** Derives E2B sandbox SKUs and per-awake-second pricing from the canonical table. */
+export function deriveE2BMachineSkuCatalog(): E2BMachineSkuCatalogEntry[] {
+  return selectableE2BMachineSizeOptions().map(option => ({
+    id: option.id,
+    vcpu: option.vcpu,
+    memoryGib: option.ramGib,
+    hourlyRateCents: option.hourlyRateCents,
+    hourlyUsd: option.hourlyUsd,
+    perSecondMicroUsd: option.perSecondMicroUsd,
+    isDefault: option.isDefault,
+    provider: 'e2b' as const,
   }))
 }
 

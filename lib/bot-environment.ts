@@ -19,15 +19,16 @@ const keysOf = (value: unknown) => Array.isArray(value) ? value.filter((key): ke
 /** The repositories of a live Environment in this workspace, or null when it is missing or archived. */
 export async function environmentRepositories(workspaceId: string, environmentId: string): Promise<string[] | null> {
   const { rows: [row] } = await workspaceDb.execute<{ repositoryKeys: unknown }>(sql`select configuration->'repositoryKeys' as "repositoryKeys"
-    from workspace_environments where id=${environmentId} and "workspaceId"=${workspaceId} and "archivedAt" is null`)
+    from workspace_environments where id=${environmentId} and "workspaceId"=${workspaceId} and "archivedAt" is null and scope='workspace'`)
   if (!row) return null
   return keysOf(row.repositoryKeys)
 }
 
-/** The workspace's live Environments, oldest first: the first is the workspace default (scripts/bot-environment-backfill.mjs). */
+/** The workspace's live shared Environments, oldest first: the first is the workspace default (scripts/bot-environment-backfill.mjs).
+ * A Bot works for the whole workspace, so a personal 「仅我」 environment is never one of its options. */
 export async function botEnvironmentOptions(workspaceId: string): Promise<BotEnvironmentOption[]> {
   const { rows } = await workspaceDb.execute<{ id: string; name: string; repositoryKeys: unknown }>(sql`select id,name,configuration->'repositoryKeys' as "repositoryKeys"
-    from workspace_environments where "workspaceId"=${workspaceId} and "archivedAt" is null order by "createdAt",id`)
+    from workspace_environments where "workspaceId"=${workspaceId} and "archivedAt" is null and scope='workspace' order by "createdAt",id`)
   return rows.map(row => ({ id: row.id, name: row.name, repositoryKeys: keysOf(row.repositoryKeys) }))
 }
 
@@ -61,13 +62,13 @@ export async function botRepository(bot: BotEnvironmentRef): Promise<string | nu
 }
 
 /**
- * A writer's check: the Environment is a live one of this workspace and the
- * person binding it may use it, through the same workspace access every
+ * A writer's check: the Environment is a live shared one of this workspace and
+ * the person binding it may use it, through the same workspace access every
  * Environment read takes (lib/project-resources/store.ts readableEnvironment).
  */
 export async function assertBotEnvironment(actorId: string, workspaceId: string, environmentId: string): Promise<void> {
   const { readableEnvironment } = await import('@/lib/project-resources/store')
-  const readable = await readableEnvironment(actorId, workspaceId, environmentId).catch((error: unknown) => {
+  const readable = await readableEnvironment(actorId, workspaceId, environmentId, { shared: true }).catch((error: unknown) => {
     if (error instanceof ActionFailureError && error.code === 'workspaceAccessDenied') return false
     throw error
   })

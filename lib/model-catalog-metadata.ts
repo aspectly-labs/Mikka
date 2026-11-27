@@ -98,3 +98,36 @@ export const LEGACY_DECISION_MODEL = 'openai/gpt-6-luna-decisions' as const
 
 /** Historical snapshot identifier retained for already-issued write-planning runs; new calls use `mikka-planning`. */
 export const LEGACY_WRITE_PLANNING_SNAPSHOT = 'openai/gpt-6-luna' as const
+
+/**
+ * Models supporting `reasoning.mode: "pro"` on Mikka Credits and OpenAI BYOK keys
+ * (never on subscription seats). Keys match `modelKeyOf` (`vendor/bare`).
+ */
+export const CATALOG_PRO_MODELS: ReadonlySet<string> = new Set([
+  'openai/gpt-6.2-astra', 'openai/gpt-6-astra', 'openai/gpt-6.2-sol', 'openai/gpt-6.1-sol', 'openai/gpt-6-sol',
+  'openai/gpt-6-luna', 'openai/gpt-6.1-terra', 'openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna',
+])
+
+const PROVIDER_LABS: Readonly<Record<string, string>> = Object.freeze({
+  claude: 'anthropic',
+  anthropic: 'anthropic',
+  codex: 'openai',
+  openai: 'openai',
+})
+
+/** Canonical vendor/lab name for a known subscription or API-key provider identifier. */
+export function catalogProviderLab(provider: string): string | undefined {
+  return Object.hasOwn(PROVIDER_LABS, provider) ? PROVIDER_LABS[provider] : undefined
+}
+
+/** Native CLI harness family for a known subscription or API-key provider identifier. */
+export function catalogProviderHarness(provider?: string): OrderHarness | undefined {
+  if (provider === 'codex' || provider === 'openai') return 'codex'
+  if (provider === 'claude' || provider === 'anthropic') return 'claude_code'
+  return undefined
+}
+
+/** Whether a BYOK provider supports OpenAI-native Responses modes (Pro / Daybreak). */
+export function providerSupportsOpenAIModes(provider: string): boolean {
+  return provider === 'openai'
+}

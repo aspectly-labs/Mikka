@@ -16,12 +16,16 @@ export function effortProviderOptions(effort: ModelRoutingEffort): NonNullable<C
 
 /**
  * The Bot's chat model with its saved reasoning effort (bot_model_choices.effort)
- * on every call. A model whose catalogue does not list that effort, or no
- * effort, gets the model unchanged: the provider's default, never a refusal.
+ * on every call. The effort was checked against the provider's own catalogue when
+ * the turn froze its model (lib/bot-model-selection.ts, lib/model-capabilities.ts).
+ * A model Mikka's built-in list knows is checked again here; one it does not know
+ * keeps the frozen effort. No effort gets the model unchanged: the provider's default.
  */
 export function withModelEffort(model: Model, effort: ModelRoutingEffort | null | undefined): Model {
   const id = model.modelId.split('/').pop() ?? model.modelId
-  if (!effort || !supportedModelEfforts(id, familyOf(id)).includes(effort)) return model
+  if (!effort) return model
+  const builtin = supportedModelEfforts(id, familyOf(id))
+  if (builtin.length && !builtin.includes(effort)) return model
   const extra = effortProviderOptions(effort)
   const merge = (options: CallOptions): CallOptions => {
     const providerOptions = { ...options.providerOptions }

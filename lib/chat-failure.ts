@@ -1,3 +1,4 @@
+import { modelRouteRejection, type ModelRouteRejection } from './model-route-rejection'
 import { hostedRefusal } from '@/lib/billing/hosted-usage'
 import { subscriptionRefusal, type SubscriptionRefusalNotice } from '@/lib/subscription-refusal'
 import { chatBalanceRefusal } from '@/lib/chat-balance'
@@ -28,7 +29,7 @@ export type ChatFailure = (
   | { kind: 'failed'; reason?: 'balance' | 'tools' | 'modelRequired'; cloudCode?: CloudErrorCode }
   // The stored code(s) as recorded, for 详情 only (decision 2026-11-05-0330): the
   // line's own code, then the turn failure behind a wake code. Never the words.
-) & { raw?: string; failureDetails?: RunFailure }
+) & Partial<ModelRouteRejection> & { raw?: string; failureDetails?: RunFailure }
 
 export function chatFailure(chat: { working: boolean; error: string | null; cause?: string | null; failureDetails?: unknown; items?: readonly { from: string; pending?: true; native?:true }[] }): ChatFailure | null {
   const details = chat.working || !chat.error ? null : readRunFailure(chat.failureDetails)
@@ -43,7 +44,14 @@ export function chatFailure(chat: { working: boolean; error: string | null; caus
     const code = text ? REFERENCED_CODE.test(text) ? text : CODE.exec(text)?.[1] : undefined
     return code ? [code] : text && unknown ? [text] : []
   }))]
-  return lines.length ? { ...failure, raw: lines.join('\n') } : failure
+  const refusal = failure.kind === 'subscription' ? failure.notice : null
+  const code = lines[0]?.split(' · ref ')[0]
+  const reason = code === 'account_unavailable (account_paused)' ? 'paused'
+    : refusal === 'reconnect' || code === 'account_unavailable (connection_not_connected)' ? 'expired'
+    : code === 'apiKeyInvalid' || details?.category === 'api_key' && details.recovery === 'configure_api_key' ? 'keyRefused'
+    : refusal === 'quotaUsed' || details?.category === 'quota' || failure.kind === 'failed' && failure.reason === 'balance' ? 'quota'
+    : refusal === 'modelRequired' || failure.kind === 'failed' && failure.reason === 'modelRequired' ? 'missing' : null
+  return { ...failure, ...(reason ? modelRouteRejection(reason) : {}), ...(lines.length ? { raw: lines.join('\n') } : {}) }
 }
 
 // The code alone, or ending a wrapped message (`Error: …`, `Step "…" failed after 3 retries: …`).

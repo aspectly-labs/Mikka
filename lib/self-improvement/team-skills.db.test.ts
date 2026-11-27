@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { Pool } from 'pg'
 import { skillMarkdown, SKILL_ARTIFACT_HEADER, TEAM_SKILL_HEADER } from '@mikka/protocol/skill'
 import { dbUrl, seedBot, seedIssue, seedUser, seedWorkspace } from '../../tests/support/workspace-admin-db'
@@ -46,6 +47,54 @@ test('team single-MD review, tenant-bound assignment and withdrawal use the exis
   })
   const queued=await run()
   let receiptId=''
+  await t.test('workspace publishing can require review or close new submissions and approvals', async () => {
+    const { writeSettings } = await import('../settings/store')
+    const set = (value: string) => writeSettings(scope, 'workspace', { values: { skillPublishingPolicy: value } })
+    await set('review')
+    const pending = await store.register(memberScope, upload)
+    assert.equal(pending.status, 'pending')
+    await assert.rejects(store.review(memberScope, pending.artifact, 'approve'), { code: 'notFound' })
+    await set('off')
+    await assert.rejects(store.register(scope, upload), { code: 'runUnavailable' })
+    await assert.rejects(store.review(scope, { versionId: pending.artifact.versionId, sha256: pending.artifact.sha256 }, 'approve'), { code: 'runUnavailable' })
+  })
+
+  await t.test('approval waits for membership before locking the publishing policy', async () => {
+    const { writeSettings } = await import('../settings/store')
+    await writeSettings(scope, 'workspace', { values: { skillPublishingPolicy: 'review' } })
+    const { artifact: pending } = await store.register(memberScope, upload)
+    const writer = await pool.connect()
+    let approval: Promise<void> | undefined
+    try {
+      await writer.query('BEGIN')
+      const { rows: [{ pid }] } = await writer.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+      await writer.query('SELECT 1 FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2 FOR UPDATE', [scope.workspaceId, scope.userId])
+      approval = assert.rejects(store.review(scope, { versionId: pending.versionId, sha256: pending.sha256 }, 'approve'), { code: 'runUnavailable' })
+      void approval.catch(() => undefined)
+      const deadline = Date.now() + 3000
+      let approvalWaiting = false
+      do {
+        const { rows: [state] } = await pool.query<{ waiting: boolean }>(`SELECT EXISTS (
+          SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid))
+        ) AS waiting`, [pid])
+        approvalWaiting = state.waiting
+        if (!approvalWaiting) await delay(20)
+      } while (!approvalWaiting && Date.now() < deadline)
+      assert.ok(approvalWaiting)
+      const { rows: [lock] } = await writer.query<{ acquired: boolean }>('SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS acquired', ['skill-publishing:' + scope.workspaceId])
+      assert.ok(lock.acquired, 'the settings writer can take its publishing lock while approval waits for membership')
+      await writer.query(`UPDATE workspace_setting_values SET "textValue"='off' WHERE "workspaceId"=$1 AND key='skillPublishingPolicy'`, [scope.workspaceId])
+      await writer.query('COMMIT')
+      await approval
+    } finally {
+      await writer.query('ROLLBACK')
+      writer.release()
+      await approval?.catch(() => undefined)
+    }
+    assert.equal((await store.read(scope, pending.versionId, true)).status, 'pending')
+  })
+
+  await (await import('../settings/store')).writeSettings(scope, 'workspace', { values: { skillPublishingPolicy: null } })
   await t.test('a different team member gets the approved exact artifact through existing selection/claim',async()=>{
     await assignments.selectTeam(member,first.id,artifact.versionId)
     await assignments.selectTeam(member,queued.id,artifact.versionId)

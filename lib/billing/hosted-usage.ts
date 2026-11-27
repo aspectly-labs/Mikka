@@ -50,6 +50,7 @@ export interface CreditTransaction {
   stripeFeeCents: number | null
   status: 'succeeded'
   receiptUrl: string | null
+  expiresAt?: string | null
 }
 
 export interface CreditBillingView {

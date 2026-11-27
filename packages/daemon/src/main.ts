@@ -53,6 +53,7 @@ import { MockAdapter } from "./adapters/mock"
 import type { AgentAdapter } from "./adapters/types"
 import { publishRun, snapshotTree } from "./agents/publish"
 import { agentPublishedReceipt, githubReceiptEnvironment } from './agents/github-runtime'
+import { checkoutEnvironmentRepositories } from './environment-repositories'
 import { prepareLocalGitHub } from './agents/local-github'
 import { runPaths } from "./agents/run-context"
 import { CAPTURES_DIR, CaptureUploader } from "./captures"
@@ -378,7 +379,8 @@ export class Daemon {
       this.options.retainResources,
       runId => this.journal.get(runId)?.assignment.traceContext,
     )
-    this.worktrees = new WorktreeManager(this.options.taskRegistered ? '/workspace/worktrees' : paths.worktrees, this.options.retainResources)
+    this.worktrees = new WorktreeManager(this.options.taskRegistered ? '/workspace/worktrees' : paths.worktrees,
+      this.options.retainResources, Boolean(this.options.taskRegistered || this.options.e2bContainerRuntime))
     this.repositories = new RepositoryCache(this.options.taskRegistered ? '/workspace/repos' : paths.repos, undefined, this.options.retainResources)
     // Hosted subscriptions start their CLIs through the hosted runner.
     this.sandbox = this.options.hostedSubscriptions ? null : await this.createAgentSandbox()
@@ -516,6 +518,7 @@ export class Daemon {
         : this.realAdapters()),
     ]))
     this.supervisor = new RunSupervisor({
+      runActivityChanged: active => this.rpc?.publishRunActivity(active),
       acquireWorkspaceControl: this.options.e2bContainerRuntime || this.options.taskRegistered
         ? (assignment, signal, onLost) => acquireCloudWorkspaceControl({ runId: assignment.runId, deviceId: assignment.deviceId, signal, onLost })
         : undefined,
@@ -571,6 +574,12 @@ export class Daemon {
             return result
           }
         : undefined,
+      prepareEnvironmentRepositories: (assignment, root, signal) => checkoutEnvironmentRepositories(root,
+        assignment.projectEnvironment!.startupRepositories!, async key => {
+          const link = this.options.link
+          if (!this.device.deviceId || !link.githubLease) throw new Error('Environment repository authorization unavailable')
+          return (await link.githubLease(this.device.deviceId, assignment.runId, signal, key)).token
+        }, signal),
       repository: assignment => this.repository(assignment),
       prepareRepository: (assignment, signal, githubEnvironment, policyReady, onRepositoryTiming) => prepareRunRepository(this.repositories,
         runPaths(this.paths.adapterState, assignment.runId).privateDir, assignment, signal, githubEnvironment, policyReady, this.options.collectCliTiming, onRepositoryTiming),
@@ -641,6 +650,7 @@ export class Daemon {
         pid: process.pid,
       }),
       handlers: this.handlers(),
+      isRunActive: () => this.supervisor.activeRunIds().length > 0,
       log: this.log,
     })
     await this.rpc.listen()
@@ -1204,9 +1214,34 @@ export class Daemon {
         }
         continue
       }
+      if (command.kind === "compact") {
+        if (this.stopping.has(command.runId) || this.unacked.has(command.messageId)) continue
+        try {
+          await this.supervisor.compact(command.runId, command.instructions)
+          this.unacked.add(command.messageId)
+          acted = true
+          this.log.info(
+            { run_id: command.runId, message_id: command.messageId },
+            "compact handed to the agent"
+          )
+        } catch (error) {
+          if (!(error instanceof RunNotFoundError))
+            this.log.warn(
+              { run_id: command.runId, err: error },
+              "could not compact the agent session"
+            )
+        }
+        continue
+      }
       if (this.unacked.has(command.messageId)) continue
       try {
-        await this.supervisor.send(command.runId, command.text)
+        const sendOptions = command.clientComposed || command.slashCommand
+          ? {
+              ...(command.clientComposed ? { clientComposed: true as const } : {}),
+              ...(command.slashCommand ? { slashCommand: command.slashCommand } : {}),
+            }
+          : undefined
+        await this.supervisor.send(command.runId, command.text, sendOptions)
         this.unacked.add(command.messageId)
         acted = true
         this.log.info(
@@ -1234,10 +1269,10 @@ export class Daemon {
     return info.harness === 'claude_code' || info.harness === 'codex' ? true : undefined
   }
 
-  /** A subscription run here takes a per-run access lease (subscription-local-runner.ts). */
+  /** A subscription run here uses the run-bound model gateway (subscription-local-runner.ts). */
   private localSubscriptionCapable(info: HarnessInfo) {
     return (info.harness === "claude_code" || info.harness === "codex") && info.installed &&
-      this.supportsToolApproval(info) === true && Boolean(this.options.link.nativeLease)
+      this.supportsToolApproval(info) === true && Boolean(this.options.link.nativeContext)
   }
 
   /** Advertise only a checked local runner, replacing any old readiness or failure. */
@@ -1431,16 +1466,14 @@ export class Daemon {
   }
 
   /**
-   * Subscription runs on this device: the server hands each run its
-   * short-lived access token, never the refresh grant (subscription-local-runner.ts).
+   * Subscription runs on this device receive the run-scoped Mikka model
+   * gateway credential (subscription-local-runner.ts).
    */
   private localSubscriptions() {
-    const link = this.options.link
     const options = this.adapterOptions()
-    if (!options || !link.nativeLease) return undefined
+    if (!options) return undefined
     return createLocalSubscriptionRunner({
       stateDir: this.paths.adapterState,
-      link: { nativeLease: link.nativeLease.bind(link) },
       claude: options.claude,
       codex: options.codex,
     })

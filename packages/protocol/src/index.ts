@@ -26,3 +26,4 @@ export * from "./computer"
 export * from "./subscription"
 
 export * from "./repository"
+export * from "./slash-commands"

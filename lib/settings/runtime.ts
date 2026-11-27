@@ -54,3 +54,9 @@ export async function readRuntimeSetting<K extends SettingKey>(database: Query, 
   const value = (scope: SettingScope) => unpack(rows.find(row => row.scope === scope) as Row | undefined)
   return resolveSettingValue(key, value('personal'), value('workspace')) as ResolvedSetting<SettingValueFor<K>>
 }
+
+/** Held through commit, including when the workspace still uses its default. */
+export async function lockSkillPublishingPolicy(database: Query, context: { userId: string; workspaceId: string }) {
+  await database.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1, 0))', ['skill-publishing:' + context.workspaceId])
+  return readRuntimeSetting(database, 'skillPublishingPolicy', context)
+}

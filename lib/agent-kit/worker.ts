@@ -26,7 +26,10 @@ export interface WorkerModelDispatch {
   /** The reasoning effort the request asked for (an automation's), host-checked against the model. */
   effort?: import('../model-routing').ModelRoutingEffort
   /** The serving speed tier (fast / ultrafast), server-verified against real model capabilities before dispatch. */
+  pro?: true
   serviceTier?: import('../model-routing').ModelSpeedMode
+  /** Server-verified Daybreak program (`access_programs.cyber`) frozen on this exact route (#3315). */
+  cyberAccessProgram?: import('../model-capabilities').CyberAccessProgram
 }
 
 /**
@@ -38,7 +41,9 @@ export function workerModelDispatchFromTarget(
   target: {
     entry: OrderEntry
     effort?: import('../model-routing').ModelRoutingEffort
+    pro?: true
     serviceTier?: import('../model-routing').ModelSpeedMode
+    cyberAccessProgram?: import('../model-capabilities').CyberAccessProgram
   },
   options: {
     mode: WorkerModelDispatch['mode']
@@ -48,14 +53,15 @@ export function workerModelDispatchFromTarget(
   },
 ): WorkerModelDispatch {
   // Explicit profile effort wins over workspace defaultEffort (claim reads modelDispatch.effort ?? agentProfile.effort).
-  const effort = options.profileEffort ? undefined : target.effort
+  const effort = target.pro || options.profileEffort ? undefined : target.effort
   return {
     mode: options.mode,
     ...(options.location ? { location: options.location } : {}),
     entry: target.entry,
     ...(options.followed ? { followed: options.followed } : {}),
     ...(effort ? { effort } : {}),
-    ...(target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+    ...(target.pro ? { pro: true } : target.serviceTier ? { serviceTier: target.serviceTier } : {}),
+    ...(target.cyberAccessProgram ? { cyberAccessProgram: target.cyberAccessProgram } : {}),
   }
 }
 
@@ -69,8 +75,13 @@ export interface WorkerDefinitionSnapshot {
   executionIdentity?: ExecutionIdentity
   /** An explicitly sponsored coding task. Old and ordinary cloud runs keep the owner's E2B account. */
   taskMachine?: import('../cloud-computer/sponsored-task').SponsoredTaskPlacement
+  taskCompute?: import('../cloud-computer/machine-pricing').MachineSku & { requireVerifiedHardware?: true }
   /** Project/Repository/Environment configuration frozen at admission; never backfilled on old runs. */
   projectExecution?: ProjectExecutionSnapshot
+  /** Optional control directive for a continuation run's followUp (compact, allowed slash command, or literal client_composed, #3333). */
+  followUpControl?: import('@mikka/protocol/device').RunAssignment['followUpControl']
+  /** Optional preferred cloud machine size chosen for this thread's next run via /machine (#3333). */
+  preferredMachineSize?: import('../cloud-computer/machine-pricing').MachineSize
   /** Copied only from the host's authorized parent execution; legacy workers gain nothing. */
   customMcp?: McpAuthority
   schemaVersion: 1
@@ -177,6 +188,8 @@ function apiKeyModelDispatch(dispatch: WorkerModelDispatch | undefined, key: { k
   const frozen = structuredClone(dispatch)
   const entry = frozen.entry
   if (entry && (entry.source.kind !== 'api_key' || entry.source.keyId !== key.keyId || entry.model !== key.model)) {
+    delete frozen.pro
+    delete frozen.cyberAccessProgram
     frozen.entry = { ...entry, id: `api_key:${entry.harness}:${key.model}:${key.keyId}`, model: key.model, source: { kind: 'api_key', keyId: key.keyId } }
     if (frozen.routing && frozen.routing.model !== key.model) {
       const { effort, ...previous } = frozen.routing

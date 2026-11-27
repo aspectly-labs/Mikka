@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
-import { bindFixtureWorkspaceDatabase, createFixtureWorkspaceTables } from '../../tests/helpers/workspace-database'
+import { bindFixtureAppDatabase, bindFixtureWorkspaceDatabase, createFixtureWorkspaceTables } from '../../tests/helpers/workspace-database'
 import { seedFixtureWorkspace } from '../../tests/helpers/task-workspace'
+import { builtinGateway } from '../builtin-gateway/runtime'
 import { ComputerStore } from './store'
 import { createComputerHandler } from './handler'
 import { bindComputerRun } from './run-binding'
@@ -23,12 +24,21 @@ import type * as provider from './e2b-provider'
 const databaseURL = process.env.COMPUTER_TEST_DATABASE_URL ?? process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1' && !databaseURL) throw new Error('Computer database test URL required')
 test('real PostgreSQL: allocation, owner boundary, control generations and recovery', { skip: !databaseURL }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(async () => {
+    const gateway = builtinGateway()
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+    await gateway?.stop()
+  })
   const schema = `computer_${randomUUID().replaceAll('-', '')}`
   assert.ok(['127.0.0.1', 'localhost'].includes(new URL(databaseURL!).hostname))
   const admin = new Pool({ connectionString: databaseURL })
   await admin.query(`CREATE SCHEMA ${schema}`)
   const pool = new Pool({ connectionString: databaseURL, options: `-c search_path=${schema}` })
   const closeWorkspace = await bindFixtureWorkspaceDatabase(pool)
+  const closeApp = await bindFixtureAppDatabase(pool)
   let created = 0, failSync = false, failStart = false, epoch = 0, computerAllowed = true
   const syncedLeases: { sandboxId: string; computerAllowed?: boolean; display: number }[] = []
   const runtime = {
@@ -47,6 +57,7 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     const migration = await readFile(new URL('../../drizzle/20261027164501_cloud_computers.sql', import.meta.url), 'utf8')
     await pool.query(migration); await pool.query(migration)
     await pool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS "archivedAt" timestamptz')
+    await pool.query('ALTER TABLE bots ADD COLUMN IF NOT EXISTS "environmentId" uuid')
     await createFixtureWorkspaceTables(pool)
     // Replace the helper's empty non-Org link shape with the full production
     // Org schema before any tenant is seeded; keep its real FK/check constraints.
@@ -60,6 +71,7 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
       CREATE TABLE workspace_project_tasks ("issueId" uuid PRIMARY KEY,"projectId" uuid NOT NULL,"workspaceId" uuid NOT NULL,
         FOREIGN KEY ("projectId","workspaceId") REFERENCES workspace_projects(id,"workspaceId"));`)
     await pool.query(await readFile(new URL('../../drizzle/20261111030004_project_resources.sql', import.meta.url), 'utf8'))
+    await pool.query(await readFile(new URL('../../drizzle/20261125223723_environment_scope_and_task_environments.sql', import.meta.url), 'utf8'))
     const queueTask = async () => {
       const id = randomUUID()
       await pool.query(`INSERT INTO issues (id,"userId","workspaceId","ownershipState") VALUES ($1,$2,$3,'bound')`, [id, actor.userId, actor.workspaceId])
@@ -102,6 +114,8 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
       const sql=await readFile(new URL('../../drizzle/'+name,import.meta.url),'utf8')
       await pool.query(sql);await pool.query(sql)
     }
+    // A key is a person's or a workspace's (the schema part of 20261127173719_model_api_keys_personal_or_workspace).
+    await pool.query('ALTER TABLE model_api_keys ALTER COLUMN "ownerId" DROP NOT NULL, ADD COLUMN IF NOT EXISTS "workspaceId" uuid, ADD COLUMN IF NOT EXISTS "addedBy" text')
     await pool.query(`CREATE TABLE user_preferences ("userId" text, "archiveIdleAfterDays" integer);
       CREATE TABLE thread_title_settings ("userId" text, "workspaceId" uuid, instructions text, triggers text);
       CREATE TABLE artifacts (id uuid PRIMARY KEY, "userId" text, "workspaceId" uuid, "runId" uuid, "issueId" uuid);
@@ -564,6 +578,6 @@ test('real PostgreSQL: allocation, owner boundary, control generations and recov
     await store.setPolicy(actor.workspaceId, 'allow')
   } finally {
     console.log(`Retained computer test schema: ${schema}`)
-    await closeWorkspace(); await pool.end(); await admin.end()
+    await closeWorkspace(); await closeApp(); await pool.end(); await admin.end()
   }
 })

@@ -4,7 +4,9 @@ import { ActionFailureError } from '@/lib/action-error'
 import { SubscriptionRefusal } from '@mikka/protocol/subscription'
 import { pool } from '@/lib/db'
 import { ExecutionSettings } from '@/lib/execution-settings'
-import { botModelMenu, botModelScope, chooseBotModel, refreshBotModelMenu } from '@/lib/bot-model-menu'
+import { botModelMenu, botModelScope, chooseBotModel, refreshBotModelMenu, setChatModelSettings, setPreferredRoute } from '@/lib/bot-model-menu'
+import { chatModelOptionsSchema } from '@/lib/model-picker-options'
+import { ModelRouteUnavailable } from '@/lib/model-route-rejection'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { openChatBotId } from '@/lib/coordinator/coordinator-bot'
 import { defineRoute } from '@/lib/primitives/define-route'
@@ -16,12 +18,16 @@ const botParam = z.uuid().nullable()
 const choice = z.strictObject({ bot: botParam, id: z.string().min(1).max(300) })
 const temporaryChoice = z.strictObject({ bot: z.uuid(), id: z.uuid(), mode: z.literal('temporary-if-absent') })
 const restoreChoice = z.strictObject({ bot: z.uuid(), mode: z.literal('restore-implicit'), bindingId: z.uuid(), revision: z.string().regex(/^[0-9]{1,10}$/) })
-const putChoice = z.union([choice, temporaryChoice, restoreChoice])
+const optionsChoice = z.strictObject({ bot: botParam, options: chatModelOptionsSchema })
+const routeChoice = z.strictObject({ bot: botParam, modelKey: z.string().min(1).max(512), optionId: choice.shape.id })
+const putChoice = z.union([choice, temporaryChoice, restoreChoice, optionsChoice, routeChoice])
 
 function failed(error: unknown) {
   if (error instanceof ActionFailureError && (error.code === 'botNotFound' || error.code === 'workspaceAccessDenied')) return json({ error: 'botNotFound' }, 404)
   // A binding held by another account answers the same as a missing one: the
   // response never discloses whether the id exists under someone else (#3057).
+  if (error instanceof ActionFailureError && error.code === 'validationGeneric') return json({ error: 'invalidModel' }, 400)
+  if (error instanceof ModelRouteUnavailable) return json({ error: 'modelUnavailable', health: error.health }, 409)
   if (error instanceof SubscriptionRefusal) return json({ error: 'modelUnavailable' }, 409)
   if (error instanceof ActionFailureError && error.code === 'executionModelUnknown') return json({ error: 'modelUnavailable' }, 409)
   throw error
@@ -51,9 +57,15 @@ async function handlePUT(request: Request, user: ApiSession['user']) {
   try {
     const botId = await openChatBotId(user, body.data.bot)
     const scope = await botModelScope(user.id, botId, user[tokenWorkspace])
+    const settings = new ExecutionSettings(pool)
+    if ('modelKey' in body.data) return json(await setPreferredRoute(pool, settings, scope, botId, body.data.modelKey, body.data.optionId))
+    if ('options' in body.data) {
+      const menu = await botModelMenu(pool, settings, scope, botId)
+      await setChatModelSettings(pool, scope, botId, body.data.options, menu.current.capabilities)
+      return json(await botModelMenu(pool, settings, scope, botId))
+    }
     if ('mode' in body.data) {
       if (!botId) return json({ error: 'invalidBot' }, 400)
-      const settings = new ExecutionSettings(pool)
       if (body.data.mode === 'restore-implicit') {
         const restored = await settings.restoreTemporaryBotModel(scope, botId, body.data)
         return restored ? json({ restored: true, preferenceState: 'absent' }) : json({ error: 'modelChanged' }, 409)
@@ -62,7 +74,7 @@ async function handlePUT(request: Request, user: ApiSession['user']) {
       if (!temporarySelection) return json({ error: 'modelChanged' }, 409)
       return json({ ...await botModelMenu(pool, settings, scope, botId), temporarySelection })
     }
-    return json(await chooseBotModel(pool, new ExecutionSettings(pool), scope, botId, body.data.id))
+    return json(await chooseBotModel(pool, settings, scope, botId, body.data.id))
   } catch (error) { return failed(error) }
 }
 

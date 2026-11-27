@@ -224,7 +224,7 @@ export const bots = pgTable('bots', {
   publicRole: text('publicRole').notNull().default(''),
   /** Private standing instructions for this Bot (≤2000 chars); never exposed to group participants or mixed with agents.instructions. */
   instructions: text('instructions').notNull().default(''),
-  /** A bloub colour id, see components/nav/bot-avatar.tsx. */
+  /** The bot's look (`look:c=…;h=…`, lib/bot-shapes.ts parseBotLook) or a legacy bloub colour id; `shape` is a bot-avatars body or an old bloub id (botShapeOf). */
   color: text('color').notNull().default('encre'),
   shape: text('shape').notNull().default('cercle'),
   /** Model family a new bot starts with ('mikka' | 'codex' | 'claude'); copied from workspace_settings. */
@@ -295,6 +295,11 @@ export const botModelChoices = pgTable('bot_model_choices', {
   creditsModel:text('creditsModel'),
   /** Reasoning effort for the chat model (lib/model-routing.ts); null is the model's default. */
   effort:text('effort').$type<import('@/lib/model-routing').ModelRoutingEffort>(),
+  /** Serving speed for the chat (`standard`, `fast`, `ultrafast`); null is the workspace's default. Used only when the model's provider advertises it. */
+  pro: boolean('pro').notNull().default(false),
+  /** OpenAI Trusted Access for Cyber (Daybreak) opt-in for the chat model; used only when the selected route grants Daybreak. */
+  daybreak: boolean('daybreak').notNull().default(false),
+  serviceTier:text('serviceTier').$type<import('@/lib/model-routing').ModelServiceTier>(),
 }, table=>[primaryKey({columns:[table.ownerId,table.workspaceId,table.botKey]})])
 
 export const agentSessions = pgTable('agent_sessions', {
@@ -573,6 +578,8 @@ export const agentRuns = pgTable('agent_runs', {
   leaseExpiresAt: timestamp('leaseExpiresAt', { withTimezone: true }),
   /** 1 for the first run; a retry after the device went offline counts up (lib/run-retry.ts). */
   attempt: integer('attempt').notNull().default(1),
+  /** Times a claim gave this run back to the queue because something it read changed before the claim response (lib/computer/claim.ts requeueLocalClaim). */
+  claimRequeues: integer('claimRequeues').notNull().default(0),
   /** The run this one retries, when its device went offline. */
   retryOf: uuid('retryOf').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
   /** The run of the same thread this one goes on from: a dispatch to a task whose thread had ended (lib/thread-dispatch.ts). */
@@ -595,6 +602,8 @@ export const agentRuns = pgTable('agent_runs', {
   sourceMessageId: uuid('sourceMessageId'),
   /** The thread's own labels, kept on the chain's root run (#2936). */
   tags: jsonb('tags').$type<string[] | null>(),
+  /** The thread's optional folder name, kept on the chain's root run (#3333). */
+  folder: text('folder'),
   /** Soft delete: hidden from every list for 30 days, restorable inside them (#2936). */
   deletedAt: timestamp('deletedAt', { withTimezone: true }), deletedBy: text('deletedBy'),
   /** Sub-agent card fields (F #2939): the child's display name, its mark and the parent's one-line brief. */
@@ -726,7 +735,7 @@ export const runTokens = pgTable('run_tokens', {
  * (lib/attention): the person has not seen it, and the Coordinator alone
  * decides whether to tell them.
  * `issue_assigned` wakes a Bot a task was assigned to, and `issue_activity` one
- * whose task got a comment or that was @-mentioned (Capy's issue_activity);
+ * whose task got a comment or that was @-mentioned (as Capy wakes a Captain on task activity);
  * the Bot decides whether to start work on it.
  */
 export const COORDINATOR_EVENT_KINDS = ['user_message', 'run_finished', 'issue_done', 'issue_status_changed', 'run_report', 'run_question', 'run_blocked', 'run_retried', 'action_decided', 'artifact_submitted', 'daily_briefing', 'matter_handoff', 'run_dispatch_failed', 'run_redispatched', 'run_credential_switched', 'run_quota_paused', 'issue_assigned', 'issue_activity'] as const
@@ -1597,6 +1606,9 @@ export const workspaceBilling = pgTable('workspace_billing', {
   autoRechargeConsentBy: text('autoRechargeConsentBy'),
   autoRechargeConsentAt: timestamp('autoRechargeConsentAt', { withTimezone: true }),
   autoRechargeRevision: integer('autoRechargeRevision').notNull().default(0),
+  overageEnabled: boolean('overageEnabled').notNull().default(false),
+  overageMonthlyCapPoints: integer('overageMonthlyCapPoints'),
+  overageRevision: integer('overageRevision').notNull().default(0),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -1614,7 +1626,7 @@ export const billingCheckoutRequests = pgTable('billing_checkout_requests', {
   closedAt: timestamp('closedAt', { withTimezone: true }),
 }, table => [uniqueIndex('billing_checkout_requests_active_idx').on(table.workspaceId).where(sql`${table.closedAt} IS NULL`)])
 
-/** Credit grants: 'plan' per paid invoice (replaces the previous period's), 'purchased' never expires. */
+/** Credit grants: 'plan' per paid invoice (resets monthly), 'purchased' top-ups expire 12 months after purchase (grandfathered NULL never expires). */
 export const workspaceCreditGrants = pgTable('workspace_credit_grants', {
   id: uuid('id').primaryKey(),
   workspaceId: uuid('workspaceId').notNull(),

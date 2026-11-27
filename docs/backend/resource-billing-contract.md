@@ -156,7 +156,7 @@ Workspace 视图保留该 Workspace 自己的历史余额与订阅。若 Organiz
 
 回滚保留所有新增列、outbox、授额和用量收据，不能删表、删列或反向移动余额。选择保留资源 ACL、个人付款隔离和 webhook 幂等修复的安全代码版本；若只回退界面，服务端付款和访问边界继续保留。回滚前按同一套数据库验收确认旧读取代码不会重新启用自动个人扣款或重扣已消费点数。回滚操作、目标 SHA、未送达 outbox 数量和重新投递结果写入对应 PR。
 
-产生退款补偿行后，回滚版本必须保留 `parentGrantId` 关联退款的余额计算、退款收件箱及 outbox 投递逻辑。直接部署早期只读取正数套餐授额的代码会恢复已退额度，不是允许的回滚路径。需要回退其他功能时，应先将这些财务兼容修复移植到目标版本，再运行部分退款、全额退款和乱序投递验收；不能声称任意历史 SHA 可安全回滚。
+产生退款补偿行后，回滚版本必须保留 `parentGrantId` 关联退款的余额计算、退款收件箱及 outbox 投递逻辑。直接部署早期只读取正数套餐授额的代码会恢复已退额度，不是允许的回滚路径。同样地，启用加购额度 12 个月到期（`expiresAt`）与 `hosted_usage."purchasedAllocations"` 扣减后，任何回滚目标都必须保留加购授额的 `expiresAt` 过滤与 `purchasedAllocations` / 退款欠款扣减逻辑，并在回滚清单中追加**已过期加购额度测试夹具**，防止过期加购额度被重新激活。需要回退其他功能时，应先将这些财务兼容修复移植到目标版本，再运行部分退款、全额退款、过期加购和乱序投递验收；不能声称任意历史 SHA 可安全回滚。
 
 ## 验证依据
 
@@ -175,3 +175,34 @@ Stripe 的 [订阅 webhook 文档](https://docs.stripe.com/billing/subscriptions
 Stripe 的 [Invoice Payment 对象](https://docs.stripe.com/api/invoice-payment/object) 和 [列表接口](https://docs.stripe.com/api/invoice-payment/list) 定义实际付款分配；[Managed Payments 文档](https://docs.stripe.com/payments/managed-payments) 列出当前不支持的集成，[配置文档](https://docs.stripe.com/payments/managed-payments/set-up) 定义 Checkout 的显式启用参数。这些是提供商能力边界；退款时保留已发生用量、追加补偿账目以及不在未知外部成本上扣点，是 Mikka 的财务归属要求。
 
 Stripe 的 [幂等请求](https://docs.stripe.com/api/idempotent_requests) 明确 API v1 幂等键可能在至少 24 小时后被清除；[Checkout 创建](https://docs.stripe.com/api/checkout/sessions/create)、[列表](https://docs.stripe.com/api/checkout/sessions/list)、[读取](https://docs.stripe.com/api/checkout/sessions/retrieve) 和 [订阅列表](https://docs.stripe.com/api/subscriptions/list) 是请求恢复使用的官方接口。本实现保留固定 Session 过期时间，不能因键被清除而重新创建同一历史付款请求。
+
+## 新定价模型合同（#3328 Part 1）
+
+在保留历史订阅、已结算收据和单库事务边界的前提下，新定价（`2026-11-26`）在 Hosted UI 读写合同与服务端账本中补充以下规则：
+
+1. **1.0× 套餐额度对等与团队按席位授额**：
+   - `resourcePrice()` 默认以 Stripe `unit_amount`（美分，100 额度 = $1）作为月度额度，`mikka_monthly_points` 可选；当 `metadata.mikka_pricing_model = 'at_cost_v1'` 时，强制校验 `monthlyPoints === unit_amount`。
+   - `metadata.mikka_seat_model` 支持 `per_workspace`（默认）与 `per_seat`。`per_seat` 方案在 Checkout 时按当前工作区活跃成员数（`>= 1`）设定 `quantity`，在 `subscription_create` 与 `subscription_cycle` 发放 `monthlyPoints × seats` 的当期套餐额度，并在 `subscription_update` 的已支付按比例增席账单按税前净实付金额（不含税）幂等追加当期共享额度（仅退费/减席的负净额账单不重复授额）。
+2. **加购额度 12 个月有效期与 FIFO 扣减**：
+   - 每次加购在入账时写入 `expiresAt = createdAt + 12 个月`（UTC 日历月，闰日按月底对齐），并在 `CreditTransaction.expiresAt` 返回给界面；退款补偿行继承原授额的 `expiresAt`。
+   - `HostedUsageStore` 通过 `hosted_usage."purchasedAllocations"` 按授额 `expiresAt ASC NULLS LAST, id` 先进先出扣减；过期授额不再计入可用余额，也不会抹除未过期的加购余额。
+3. **超额默认关闭与强制每月上限**：
+   - `workspace_billing` 新增 `overageEnabled`（默认 `false`）、`overageMonthlyCapPoints` 与 `overageRevision`，`BillingView.overage` 与 `WorkspaceBillingSettingsView.overage` 返回 `{ enabled, monthlyCapPoints, spentOveragePoints, remainingOveragePoints, revision }`。
+   - 仅当前账户 Owner 可通过 `POST /api/workspaces/:id/billing`（`action: 'overage'`）、`POST /api/organizations/:id/billing`、`PUT/PATCH /api/workspaces/:id/billing/settings`（`{ overage }`）、`saveOveragePolicy` Server Action 或 `billing.saveOveragePolicy` Desktop RPC 修改。开启超额必须提供正数 `monthlyCapPoints`，否则返回 `billingOverageCapRequired`（409）。
+   - 持有有效 `resource_v1` 付费套餐且当期套餐额度用尽时：超额关闭则拒绝溢出扣款（有加购余额返回 `usage_budget_exhausted`，无余额返回 `points_exhausted`）；超额开启则按当前 UTC 自然月已结算及在途超出消耗校验 `overageMonthlyCapPoints`。无有效套餐的纯充值工作区仍可自由消耗有效加购余额。
+4. **旧卡验证额度祖父迁移**：
+   - 迁移 `20261126233650_billing_new_pricing_credits.sql` 将既有 `hosted_allowances.remaining > 0` 幂等迁入永不过期的 `workspace_credit_grants`（`bucket = 'purchased'`、`reason = 'allowance_grandfather'`、`expiresAt = NULL`）并在同一条语句中从 `hosted_allowances.remaining` 减去恰好被转换的数额；已有祖父授予的工作区不再转换，因此重跑不会把迁移之后记入的额度（例如退款）清零。保证现有用户余额不缩水、不重复计算。祖父授予 `amountCents = 0` 且没有 Stripe 支付标识，不计入收入，也不会被退款流程（按 Stripe 发票/支付意图匹配）选中。
+
+## E2B 按活跃秒计量合同（#3328 Part 2）
+
+1. **按成本单价与目录曝光（无免费机器分钟）**：
+   - E2B 沙箱仅在唤醒活跃期间按秒计费：`vCPU × $0.000014/s + GiB × $0.0000045/s`（`small` `$0.1152/hr ≈ $0.12/hr`、`medium` `$0.2304/hr ≈ $0.23/hr`、`large` `$0.4608/hr ≈ $0.46/hr`、`ultra` `$0.9216/hr ≈ $0.92/hr`），暂停/休眠期间费用为 `$0`，无免费机器时长。
+   - `billingCatalogViewSchema` 与 `resolveBillingCatalog()` 通过 `deriveE2BMachineSkuCatalog()` 输出 `e2bMachineSkus`（含 `perSecondMicroUsd`、`hourlyRateCents`、`hourlyUsd`、`vcpu`、`memoryGib`），保持原有 Cloudflare `machineSkus` 兼容不变。
+2. **预付分片唤醒追踪与暂停/销毁退还**：
+   - 迁移 `20261127021336_e2b_awake_second_metering.sql` 在 `e2b_compute_leases` 新增 `activeChunkStartedAt`、`previousActiveChunkStartedAt` 与 `lastSettledChunkIndex`。
+   - 创建（`recordE2BComputeSandbox`）、续期/唤醒（`paidTimeout`）及未使用续期回滚（`refundUnusedRenewal`）同步维护当前活跃分片的起始时间戳。
+   - 当 E2B 沙箱暂停（`parkThreadMachine`、`thread-lifecycle` 观测到 `paused`、`retained-deliverable` 暂停）或销毁（`threadMachines` Stop/`end`、`killComputer`）时，幂等调用 `settleE2BAwakeInterval()` 按实际唤醒秒数精确结算未结清分片，并通过 `HostedUsageStore.adjustSettledMachineCost()` LIFO 回退未消耗秒数至工作区余额与月度超额上限，同时将 `paidUntil` 封顶至暂停时刻，确保后续唤醒重新申请分片而非继续占用未付费窗口。
+3. **Cloud E2B BYO Key 禁用与连接型订阅机器计费**：
+   - `byoE2BKeyEnabled()` 在 `MIKKA_EDITION = 'cloud'` 时始终返回 `false`，Cloud 版强制走平台按活跃秒计费（连接已有 Claude/Codex 订阅节省的是模型 API 费用，E2B 沙箱机时仍按 `credits` 扣费）。
+
+

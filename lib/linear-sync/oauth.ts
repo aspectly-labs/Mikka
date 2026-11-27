@@ -11,9 +11,22 @@ import { readEnv } from '@/lib/env/server'
 import { hashValue, seal, unseal } from './crypto'
 import { linearIdentity } from './client'
 import { oauthCredentials, postToken } from './tokens'
-export { linearAccessToken } from './tokens'
 export const LINEAR_OAUTH_STATE_COOKIE = 'linear-oauth-state'
 export const LINEAR_OAUTH_CALLBACK_PATH = withBasePath('/api/integrations/linear/callback')
+
+export function stateCookieOptions(maxAge: number) {
+  return { httpOnly: true, sameSite: 'lax' as const, secure: true, path: LINEAR_OAUTH_CALLBACK_PATH, maxAge }
+}
+
+export function linearOAuthConfigured() {
+  try {
+    oauthCredentials()
+    linearRedirectUrl()
+    return /^[a-f\d]{64}$/i.test(readEnv('LINEAR_TOKEN_ENCRYPTION_KEY') ?? '')
+  } catch {
+    return false
+  }
+}
 
 export function linearRedirectUrl() {
   const fallback = readEnv('VERCEL_ENV') === 'preview'
@@ -25,12 +38,6 @@ export function linearRedirectUrl() {
   if (url.protocol !== 'https:' && url.hostname !== LOCALHOST_HOSTNAME) throw new Error('Linear redirect URL must use HTTPS')
   return url.toString()
 }
-
-export function linearOAuthConfigured() {
-  if (!readEnv('LINEAR_CLIENT_ID') || !readEnv('LINEAR_CLIENT_SECRET') || !/^[a-f\d]{64}$/i.test(readEnv('LINEAR_TOKEN_ENCRYPTION_KEY') ?? '') || !readEnv('LINEAR_WEBHOOK_SECRET') || !readEnv('CRON_SECRET')) return false
-  try { linearRedirectUrl(); return true } catch { return false }
-}
-
 export async function createLinearAuthorizationUrl(userId: string) {
   const { clientId } = oauthCredentials()
   const redirectUri = linearRedirectUrl()
@@ -44,7 +51,7 @@ export async function createLinearAuthorizationUrl(userId: string) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: 'read,write,issues:create,comments:create',
+    scope: 'read',
     state,
     code_challenge: challenge,
     code_challenge_method: 'S256',

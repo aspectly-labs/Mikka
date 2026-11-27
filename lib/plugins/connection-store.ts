@@ -86,8 +86,9 @@ export class McpConnectionStore {
 
   /**
    * Turn one tool on or off, as Capy's per-tool switches do. Only the connection's owner may:
-   * a shared connection runs on the owner's credential, so no workspace member or admin can
-   * widen (or narrow) what it may do, and one switch applies to every run that uses it.
+   * it runs on the owner's credential and is never shared (decision 2026-11-27-1700), so no
+   * workspace member or admin can widen (or narrow) what it may do, and one switch applies to
+   * every run that uses it.
    * The connection itself does not change, so its revision stays and running tasks keep it:
    * every call re-reads the switch (`createPersonalMcpRuntime`), so a tool turned off is refused
    * from the next call and one turned on works from the next call. `expectedEnabled` is the
@@ -114,7 +115,8 @@ export class McpConnectionStore {
     const sharing = new WorkspaceMcpStore(this.personal.pool, this.personal.membership)
     await sharing.workspace(userId, input.workspaceId)
     const members = await this.members()
-    const { rows } = await members.query<{ id: string }>('SELECT id FROM workspace_environments WHERE "workspaceId"=$1 AND id=ANY($2::uuid[]) AND "archivedAt" IS NULL', [input.workspaceId, input.environmentIds])
+    const { rows } = await members.query<{ id: string }>(`SELECT id FROM workspace_environments WHERE "workspaceId"=$1 AND id=ANY($2::uuid[]) AND "archivedAt" IS NULL
+      AND (scope='workspace' OR "ownerId"=$3)`, [input.workspaceId, input.environmentIds, userId])
     if (rows.length !== input.environmentIds.length) throw new PluginError('environmentAccessDenied', 403)
     await this.write(userId, serverId, async client => {
       await sharing.workspace(userId, input.workspaceId)

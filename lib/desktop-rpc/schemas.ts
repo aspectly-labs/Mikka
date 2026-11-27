@@ -1,3 +1,5 @@
+import { snapshotInput } from '@/lib/project-resources/environment-snapshot-contract'
+import { candidatesSchema } from '@/lib/platform/desktop-notification-input'
 import { settingsPatchInput, settingsResetInput } from '@/lib/settings/registry'
 import { reviewRepositoryInput, reviewRepositoryKey } from '@/lib/code-review/settings-contract'
 import { artifactShareInput } from '@/lib/artifacts/share-input'
@@ -6,13 +8,14 @@ import { AVATAR_MAX_BYTES, isAvatarContentType } from '../account/avatar-file'
 import { deletePasskeyInputSchema, renamePasskeyInputSchema } from '@/lib/account/passkeys-contract'
 import { threadModelChoice } from '@/lib/thread-model-choice'
 import { archiveIdleDays, conversationTargetInput, directoryInput } from '@/lib/conversation-directory-input'
-import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, saveEnvironmentInstructionsInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
+import { projectPullAuthorInput, listProjectSetupVersionsInput, rollbackProjectSetupInput, saveEnvironmentInput, environmentShareInput, taskEnvironmentInput, taskEnvironmentsInput, saveEnvironmentInstructionsInput, listDependencyRepositoriesInput, replaceDependencyRepositoriesInput, projectDefaultEnvironmentInput, projectResourcesInput, workspaceRepositoryPolicyInput } from '@/lib/project-resources/contracts'
 import { createOnlyCommand, dispatchReceiptInput } from '@/lib/task-create-command'
 import { taskListPageInput } from '@/lib/task-list-page'
 import { taskPresentationsInput } from '@/lib/task-presentation-input'
 import { MAX_TURN_REFS } from '@/lib/turn-usage-limits'
 import { MAX_TURN_REF_LENGTH } from '@/lib/usage-turn-ref'
 import { z } from 'zod'
+import { structuredMentionsSchema } from '@mikka/protocol/slash-commands'
 import { threadHistoryInput, threadHistoryPosition } from '@/lib/thread-history'
 import { projectInput, projectPatch } from '@/lib/project-input'
 import { assigneeSchema, delegateSchema, blockFlagSchema, labelSchema, pullRequestSchema } from '@/lib/issue-metadata'
@@ -21,11 +24,13 @@ import { createIssueStateInput, deleteIssueStateInput, reorderIssueStatesInput, 
 import { taskDestinationSchema } from '@/lib/task-destination'
 import { BOT_DEFAULT_AGENTS, botRunsOnSchema } from '@/lib/bot-settings'
 import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS } from '@/lib/model-routing'
+import { chatModelOptionsSchema } from '@/lib/model-picker-options'
 import { API_KEY_PRESETS } from '@/lib/model-api-key-providers'
 import { gatewayFeaturesSchema } from '@/lib/model-gateway/features'
 import { setAppPolicyInput } from '@/lib/app-policy/apps'
 import { POINTS_PURCHASE_AMOUNTS } from '@/lib/billing/hosted-usage'
 import { autoRechargeInputSchema } from '@/lib/billing/auto-recharge-schema'
+import { overageInputSchema } from '@/lib/billing/overage-schema'
 import {
   deleteDeviceRepositoryInput,
   patchDeviceRepositoryInput,
@@ -39,6 +44,7 @@ import { DEVICE_DESCRIPTION_MAX, DEVICE_NAME_MAX } from '@/lib/device-name'
 import { savedViewScopes, saveViewInput } from '@/lib/saved-views'
 import { THREAD_COST_GROUPINGS } from '@/lib/thread-cost-grouping'
 import { updateWorkspaceInput } from '@/lib/workspace-admin/general-input'
+import { editTaskCommentInput, setTaskCommentReactionInput, taskCommentRefSchema } from '@/lib/task-comments/contract'
 
 const uuid = z.uuid()
 const id = z.string().min(1).max(200)
@@ -142,8 +148,14 @@ export const desktopActionSchemas = {
   'project-resources.rollbackProjectSetup': tuple(rollbackProjectSetupInput),
   'project-resources.listProjectResources': tuple(uuid, uuid.optional()),
   'environments.listEnvironments': z.union([none, tuple(uuid)]),
+  'environments.setTaskEnvironment': tuple(taskEnvironmentInput),
+  'environments.getSnapshot': tuple(snapshotInput),
+  'environments.buildSnapshot': tuple(snapshotInput),
+  'environments.listTaskEnvironments': tuple(taskEnvironmentsInput),
   'project-resources.setProjectDefaultEnvironment': tuple(projectDefaultEnvironmentInput),
   'project-resources.saveEnvironment': tuple(saveEnvironmentInput),
+  'project-resources.shareEnvironment': tuple(environmentShareInput),
+  'project-resources.unshareEnvironment': tuple(environmentShareInput),
   'project-resources.searchProjectPullAuthors': tuple(projectPullAuthorInput),
   'project-resources.listDependencyRepositories': tuple(listDependencyRepositoriesInput),
   'project-resources.replaceDependencyRepositories': tuple(replaceDependencyRepositoriesInput),
@@ -208,7 +220,7 @@ export const desktopActionSchemas = {
   'agents.getThreadGitTurnDiff': tuple(uuid.nullable(), uuid, object({ turnRunId: uuid.optional(), live: bool.optional(), cursor: text(256).optional(), limit: z.number().int().min(1).max(50).optional() })),
   'agents.getThreadTurnChanges': tuple(uuid.nullable(), uuid, uuid),
   'agents.getThreadInstructions': tuple(uuid.nullable(), uuid),
-  'agents.sendIssueThreadReply': tuple(object({ expectedOwnerId: text(256).optional(), expectedWorkspaceId: uuid.optional(), issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), requestId: uuid.optional(), retryOriginalSession: z.literal(true).optional(), questionWakeGeneration: uuid.optional(), modelChoice: threadModelChoice.optional(), delivery: z.enum(['queue','steer','interrupt']).optional(), references: z.array(object({ type: z.enum(['file','task','pr','thread','bot']), id: text(2048).min(1), offset: z.number().int().min(0).optional() })).max(20).optional() })),
+  'agents.sendIssueThreadReply': tuple(object({ expectedOwnerId: text(256).optional(), expectedWorkspaceId: uuid.optional(), issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), requestId: uuid.optional(), retryOriginalSession: z.literal(true).optional(), questionWakeGeneration: uuid.optional(), modelChoice: threadModelChoice.optional(), delivery: z.enum(['queue','steer','interrupt']).optional(), references: z.array(object({ type: z.enum(['file','task','pr','thread','bot']), id: text(2048).min(1), offset: z.number().int().min(0).optional() })).max(20).optional(), mentions: structuredMentionsSchema.optional(), sendAsText: bool.optional() })),
   'agents.createThreadReplyVersion': tuple(object({issueId:uuid.nullable(),runId:uuid,change:z.discriminatedUnion('operation',[
     object({operation:z.literal('edit'),anchorRunId:uuid,anchorKey:uuid,requestId:uuid,text:text(10_000).min(1)}),
     object({operation:z.literal('rerun'),anchorRunId:uuid,anchorKey:text(320).min(1),requestId:uuid})])})),
@@ -244,6 +256,7 @@ export const desktopActionSchemas = {
   'billing.startCardVerification': inWorkspace,
   'billing.getBillingSettings': inWorkspace,
   'billing.saveAutoRechargePolicy': tuple(autoRechargeInputSchema, workspace),
+  'billing.saveOveragePolicy': tuple(overageInputSchema, workspace),
   'devices.getPolicy': tuple(uuid, workspace),
   'devices.updatePolicy': tuple(uuid, updateDevicePolicyInput, workspace),
   'devices.listRepositories': oneId,
@@ -253,7 +266,7 @@ export const desktopActionSchemas = {
   'ops-metrics.getWorkspaceOpsMetrics': inWorkspace,
   'bots.listBots': none,
   'bots.pollBots': inWorkspace,
-  'bots.createBot': tuple(object({ name: text(200).trim().min(1), color: text(50).min(1), shape: text(50).min(1), model: text(1000).nullish(), repository: text(2048).nullish(), ...botSettingFields,
+  'bots.createBot': tuple(object({ name: text(200).trim().min(1), color: text(50).min(1).optional(), shape: text(50).min(1), model: text(1000).nullish(), repository: text(2048).nullish(), ...botSettingFields,
     visibility: z.enum(['shared', 'private']).optional(), subscribers: z.array(id).max(200).optional() }), workspace),
   'bots.updateBot': tuple(object({ botId: uuid, name: text(200).trim().min(1).optional(), color: text(50).min(1).optional(), shape: text(50).min(1).optional(), publicRole: text(2000).optional(), ...botSettingFields }), workspace),
   'bots.getBotSettings': tuple(uuid, workspace),
@@ -297,7 +310,7 @@ export const desktopActionSchemas = {
   'automations.cancelAutomationRun': tuple(object({ scheduleId: uuid, version: positive, runId: uuid }), workspace),
   'automations.runAutomationNow': tuple(object({ scheduleId: uuid, version: positive, requestId: uuid }), workspace),
   'bots.listBotsForWorkspace': oneId,
-  'collaboration.exchangeDocument': tuple(object({ id: uuid, vector: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), update: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), seed: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), known: version.optional() })),
+  'collaboration.exchangeDocument': tuple(object({ id: uuid, vector: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), update: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), seed: text(1_400_000).regex(/^[A-Za-z0-9+/]*={0,2}$/).optional(), known: version.optional(), inlineFiles: z.literal(1).optional() })),
   'collaboration.listMembers': oneId,
   'collaboration.inviteMember': tuple(uuid, z.email().max(254)),
   'collaboration.removeMember': tuple(uuid, id),
@@ -320,10 +333,15 @@ export const desktopActionSchemas = {
   'coordinator.coordinatorTurnVersions': tuple(bot),
   'coordinator.sendSuggestion': oneId,
   'coordinator.issueCreationAvailable': none,
-  'desktop-notifications.chooseDesktopNotifications': tuple(z.array(object({ id: text(300), issueId: text(100), kind: z.enum(['awaiting', 'failed', 'finished']) })).max(20)),
+  'coordinator.compactBotChat': tuple(bot.optional()),
+  'coordinator.clearBotChat': tuple(bot.optional()),
+  'coordinator.getBotCommands': tuple(bot.optional()),
+  'desktop-notifications.chooseDesktopNotifications': tuple(candidatesSchema),
   'execution-settings.getBotModelMenu': tuple(bot, workspace),
   'execution-settings.refreshBotModelMenuAction': tuple(bot),
   'execution-settings.chooseBotModel': tuple(bot, text(1000).min(1)),
+  'execution-settings.setPreferredModelRoute': tuple(bot, text(500).min(1), text(300).min(1)),
+  'execution-settings.setChatModelOptions': tuple(bot, chatModelOptionsSchema),
   'execution-settings.getUsageLimits': tuple(workspace),
   'issue-metadata.getIssuePropertyOptions': oneId,
   'issue-metadata.getNewTaskOptions': oneId,
@@ -337,6 +355,11 @@ export const desktopActionSchemas = {
   'issue-prefix.getIssuePrefixState': none,
   'issue-prefix.saveIssuePrefix': tuple(object({ prefix: text(20).min(1) })),
   'issue-states.getIssueStates': oneId,
+  // The actions parse each input again (lib/task-comments/contract.ts); the wire only bounds its shape.
+  'task-comments.getTaskCommentState': oneId,
+  'task-comments.editTaskComment': tuple(editTaskCommentInput),
+  'task-comments.deleteTaskComment': tuple(taskCommentRefSchema),
+  'task-comments.setTaskCommentReaction': tuple(setTaskCommentReactionInput),
   'task-list.countTaskListViews': oneId,
   'task-list.listUnreadTaskIds': oneId,
   'task-list.setTaskUnread': tuple(object({ id: uuid, unread: bool })),
@@ -367,7 +390,6 @@ export const desktopActionSchemas = {
   'issues.pollIssues': tuple(version.optional(), listPositions(100).optional()),
   'issues.syncIssueList': tuple(version.optional(), listPositions(100).optional()),
   'issues.countAssignedWorkspaceTasks': oneId,
-  'issues.countWorkspaceTaskViews': oneId,
   'issues.listWorkspaceIssues': oneId,
   'issues.listWorkspaceTaskPage': tuple(taskListPageInput),
   'issues.getIssue': oneId,
@@ -405,6 +427,7 @@ export const desktopActionSchemas = {
   'memory.undoRemoveFact': oneId,
   'model-api-keys.getApiKeys': inWorkspace,
   'model-api-keys.refetchApiKeyModels': tuple(uuid, workspace),
+  'model-api-keys.refreshApiKeyDaybreak': tuple(uuid, workspace),
   'model-api-keys.updateApiKeyAfterQuota': tuple(bool, workspace),
   'model-api-keys.createApiKey': tuple(apiKey, workspace, object({ share: bool.optional() }).optional()),
   'model-api-keys.updateApiKey': tuple(uuid, updateApiKeyInput, workspace),
@@ -455,7 +478,11 @@ export const desktopActionSchemas = {
   'task-runs.pollTaskRuns': none,
   'task-runs.pollThreads': tuple(version.optional(), listPositions(200).optional()),
   'task-runs.syncThreadList': tuple(version.optional(), listPositions(200).optional()),
-  'task-runs.findThreadReferences': z.union([tuple(uuid, text(120)), tuple(uuid, text(120), z.enum(['task', 'thread', 'pr', 'bot']))]),
+  'task-runs.findThreadReferences': z.union([
+    tuple(uuid, text(120)),
+    tuple(uuid, text(120), z.enum(['task', 'thread', 'pr', 'bot', 'device', 'subagent', 'plugin']).optional()),
+    tuple(uuid, text(120), z.enum(['task', 'thread', 'pr', 'bot', 'device', 'subagent', 'plugin']).optional(), uuid.optional()),
+  ]),
   'task-runs.listConversations': tuple(directoryInput),
   'list-views.listPullPins': oneId,
   'list-views.setPullPins': tuple(uuid, z.array(text(500)).min(1).max(100), bool),
@@ -468,7 +495,7 @@ export const desktopActionSchemas = {
   'task-runs.shareThread': oneId,
   'task-runs.revokeThreadShare': oneId,
   'task-runs.forkThread': z.union([oneId, tuple(uuid, z.enum(['full', 'summary']))]),
-  'task-runs.updateThread': tuple(uuid, object({ taskId: uuid.nullable().optional(), tags: z.array(text(60)).optional() })),
+  'task-runs.updateThread': tuple(uuid, object({ taskId: uuid.nullable().optional(), tags: z.array(text(60)).optional(), folder: text(60).nullable().optional() })),
   'task-runs.deleteThread': oneId,
   'task-runs.restoreThread': oneId,
   'task-runs.threadAutomation': tuple(uuid, z.record(z.string(), z.unknown())),
@@ -480,9 +507,13 @@ export const desktopActionSchemas = {
   'task-runs.setConversationOrganization': tuple(conversationTargetInput, object({ field: z.enum(['archived', 'pinned']), value: bool })),
   'task-runs.renameConversation': tuple(conversationTargetInput, text(400)),
   'task-runs.regenerateConversationTitle': tuple(conversationTargetInput),
+  'task-runs.deleteAllThreads': tuple(object({ workspaceId: uuid, confirm: z.literal(true) })),
   'task-runs.removeThread': tuple(uuid),
   'task-runs.undoRemoveThread': tuple(uuid),
   'task-runs.threadTags': z.union([tuple(uuid), tuple(uuid, z.array(text(64)).max(20))]),
+  'task-runs.threadFolder': z.union([tuple(uuid), tuple(uuid, text(64).nullable())]),
+  'task-runs.listThreadFolders': none,
+  'task-runs.listComposerSlackChannels': z.union([none, tuple(uuid.optional())]),
   'task-runs.threadAutomationSeed': tuple(uuid),
   'task-runs.forkThreadFrom': tuple(object({ runId: uuid, itemId: text(200).min(1).nullable().optional(), mode: z.enum(['full', 'summary']), text: text(4000), requestId: uuid })),
   'team-relations.getIssueTeam': oneId,
@@ -528,9 +559,12 @@ export const desktopActionSchemas = {
   'workspace-settings.takeOverArchivedBot': tuple(uuid, workspace),
   'workspace.createWorkspace': tuple(z.union([text(120).trim().min(1), object({ name: text(120).trim().min(1), slug })])),
   'agents.getReferencePreview': tuple(object({ issueId: uuid.nullable(), runId: uuid, references: z.array(object({ type: z.enum(['file','task','pr','thread','bot']), id: text(2048).min(1), offset: z.number().int().min(0).optional() })).max(20) })),
-  'agents.btwIssueThreadMessage': tuple(object({ issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1) })),
+  'agents.btwIssueThreadMessage': tuple(object({ issueId: uuid.nullable(), runId: uuid, text: text(10_000).min(1), fromMessageId: uuid.nullable().optional() })),
   'agents.getThreadContextStats': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
-  'agents.compactThread': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
+  'agents.compactThread': tuple(object({ issueId: uuid.nullable(), runId: uuid, instructions: text(4_000).optional() })),
+  'agents.getThreadCommands': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
+  'agents.getThreadMachineOptions': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
+  'agents.setThreadMachineSize': tuple(object({ issueId: uuid.nullable(), runId: uuid, machineSize: text(32).min(1) })),
   'agents.listThreadEnvVars': tuple(object({ issueId: uuid.nullable(), runId: uuid })),
   'agents.setThreadEnvVar': tuple(object({ issueId: uuid.nullable(), runId: uuid, name: text(256).min(1), value: text(8192).min(1) })),
   'agents.deleteThreadEnvVar': tuple(object({ issueId: uuid.nullable(), runId: uuid, name: text(256).min(1) })),

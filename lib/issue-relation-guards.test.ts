@@ -189,7 +189,6 @@ before(async () => {
     taskIdentifiers: async () => new Map(),
     syncWorkspaceTaskPrefix: async () => {},
   } })
-  mock.module(file('./linear-sync/dispatch.ts'), { namedExports: { dispatchLinearWork: () => {}, dispatchLinearIssueSync: () => {} } })
   mock.module(file('./live/lists.ts'), { namedExports: { issueListChanged: async () => {} } })
   mock.module(file('./live/issue-detail.ts'), { namedExports: { issueRelationsChanged: async () => {}, relationIds: () => [] } })
   ;({ updateIssueRelation } = await import('../app/actions/issue-operations'))

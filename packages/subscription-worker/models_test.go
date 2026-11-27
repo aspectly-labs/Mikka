@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,7 +22,7 @@ func TestModelsReadsOnlyBoundOwnerCatalogue(t *testing.T) {
 				if r.Method != "GET" || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 					t.Fatal("missing read authorization")
 				}
-				body := `{"models":[{"slug":"account-model","display_name":" Account model ","visibility":"list","secret":"must-not-leak","service_tiers":[{"id":"priority","description":"tier-private"}],"additional_speed_tiers":["fast"]},{"slug":"account-model","display_name":"Duplicate"},{"slug":"hidden-model","visibility":"hide"},{"slug":"bad id"},{"slug":"legacy-model","display_name":"Legacy model","additional_speed_tiers":["fast"]},{"slug":"no-priority","display_name":"","service_tiers":[]}]}`
+				body := `{"models":[{"slug":"account-model","display_name":" Account model ","visibility":"list","secret":"must-not-leak","service_tiers":[{"id":"priority","description":"tier-private"}],"additional_speed_tiers":["fast"],"available_access_programs":{"cyber":["standard","daybreak_blue"],"daybreak_availability":"available"}},{"slug":"account-model","display_name":"Duplicate"},{"slug":"hidden-model","visibility":"hide"},{"slug":"bad id"},{"slug":"legacy-model","display_name":"Legacy model","additional_speed_tiers":["fast"]},{"slug":"no-priority","display_name":"","service_tiers":[]}]}`
 				if provider == "claude" {
 					if r.URL.Host != "api.anthropic.com" || r.URL.Path != "/v1/models" || r.Header.Get("anthropic-beta") == "" {
 						t.Fatal("wrong Claude endpoint")
@@ -47,6 +48,9 @@ func TestModelsReadsOnlyBoundOwnerCatalogue(t *testing.T) {
 			if provider == "codex" {
 				if models[0].PrioritySupported == nil || !*models[0].PrioritySupported {
 					t.Fatal("advertised Codex priority was not projected")
+				}
+				if !reflect.DeepEqual(models[0].Daybreak, []string{"blue"}) || models[1].Daybreak != nil {
+					t.Fatalf("Daybreak tiers were not projected from the catalogue: %v %v", models[0].Daybreak, models[1].Daybreak)
 				}
 				if models[1].ID != "legacy-model" || models[1].PrioritySupported != nil {
 					t.Fatal("legacy speed tiers became proof of priority")

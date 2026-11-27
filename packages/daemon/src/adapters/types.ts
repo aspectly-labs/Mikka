@@ -166,7 +166,22 @@ export interface StartOptions extends SessionOptions {
     /** The run that last used the session (its run dir holds the harness home). */
     runId: string
     message: string
+    /** Optional control directive for `message` (compact, allowed slash command, or literal client_composed). */
+    followUpControl?: import("@mikka/protocol").RunAssignment["followUpControl"]
   }
+}
+
+export interface SendOptions {
+  mode?: "steer"
+  /** Deliver text literally with no slash-command dispatch (`client_composed: true`). */
+  clientComposed?: true
+  /** Execute an allowed harness slash command directly without JSON wrapper. */
+  slashCommand?: { name: string; args?: string }
+}
+
+export function normalizeSendOptions(modeOrOptions?: "steer" | SendOptions): SendOptions {
+  if (!modeOrOptions) return {}
+  return typeof modeOrOptions === "string" ? { mode: modeOrOptions } : modeOrOptions
 }
 
 export interface AgentSession {
@@ -178,7 +193,9 @@ export interface AgentSession {
   /** Single-consumer stream; ends after the `exit` event. */
   events(): AsyncIterable<AgentEvent>
   /** User message / interjection. */
-  send(text: string, mode?: "steer"): Promise<void>
+  send(text: string, modeOrOptions?: "steer" | SendOptions): Promise<void>
+  /** Trigger real harness context compaction when supported (#3333). */
+  compact?(instructions?: string): Promise<void>
   cancel(): Promise<void>
   /**
    * Optional: the daemon stops consuming this session without ending it

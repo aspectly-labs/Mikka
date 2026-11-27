@@ -18,7 +18,6 @@ const page = (id: string) => ({ object: 'page', id, url: `https://www.notion.so/
 
 let reconcile: typeof import('./reconcile')
 before(async () => {
-  mock.module('@/lib/linear-sync/flags', { namedExports: { linearSyncEnabled: async () => false } })
   mock.module('./github-redelivery', { namedExports: { redeliverFailedGitHubWebhooks: async () => null } })
   mock.module('./sources', { namedExports: { ensureComposioTriggers: async () => undefined, linearWebhookNotifications: async () => [] } })
   mock.module('./store', { namedExports: { ingestNotifications: async (notifications: unknown[]) => { ingested.push(notifications) } } })
