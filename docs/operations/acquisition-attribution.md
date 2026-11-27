@@ -10,10 +10,14 @@ First-touch acquisition is shared between `aspectlylabs.com` (mikka-web) and
    and bounded `utm_*` labels only. It also writes `mikka_first_touch_v1`
    (`Domain=aspectlylabs.com; SameSite=Lax; Max-Age=30d`) preserving the first
    external touch across internal navigation.
-2. **App pageview** — `instrumentation-client.ts` lets the SDK save referrer /
-   campaign params; `lib/analytics-policy.ts#source` keeps only bounded
-   `utm_*`, `$entry_*` session fields, `$referring_domain` and
-   `first_touch_*`. No query strings, fragments or raw URLs leave.
+2. **App pageview** — the SDK does not save referrer or campaign params
+   (`lib/analytics/posthog-init.ts`): with either on it keeps the first page's
+   raw URL and referrer and sends them, query and share token included, as
+   `$initial_*` person properties on every `/flags` request, which no hook
+   sanitizes. `lib/analytics-policy.ts#source` keeps only bounded
+   `$session_entry_*` UTM labels and referring domain, and `first_touch_*`.
+   No query strings, fragments or raw URLs leave
+   (`tests/posthog-flags-privacy.test.mjs` runs the real SDK).
 3. **Registration** — the Better Auth `user.create.after` hook captures
    `registration_completed` once per account (email and OAuth alike;
    sign-ins and failed attempts never reach it) with
