@@ -18,7 +18,7 @@ const database = process.env.E2E_DATABASE_URL
 if (database) assert.ok(isE2eTarget(database), E2E_DB_RULE)
 else if (process.env.REQUIRE_DB === '1') throw Error('Workspace MCP server tests require an isolated E2E_DATABASE_URL')
 
-// Capy's organization MCP servers (decision 2026-11-27-1700): real MCP SDK handshakes and
+// Capy's organization MCP servers (decision 2026-11-27-1705): real MCP SDK handshakes and
 // the SDK's own OAuth code flow against local fixtures; no third-party service or model I/O.
 test('workspace MCP servers: any member manages them, threads resolve by their starter, and accounts never cross members', { skip: !database, timeout: 180_000 }, async t => {
   const isolated = `workspace_servers_${randomUUID().replaceAll('-', '')}_e2e`

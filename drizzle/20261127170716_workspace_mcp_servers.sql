@@ -1,7 +1,7 @@
 -- target: MIKKA_DATABASE_URL
 
 -- Workspace (organization) MCP servers, as Capy's organization servers
--- (decision 2026-11-27-1700-workspace-mcp-servers-like-capy). Any active member
+-- (decision 2026-11-27-1705-workspace-mcp-servers-like-capy). Any active member
 -- adds, edits, connects or removes one. Additive and replayable: roll back
 -- application code and keep these tables; never discard saved credentials.
 -- Membership lives in the workspace database and is checked there on every use,

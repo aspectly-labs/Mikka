@@ -16,7 +16,7 @@ import { withPluginTransaction } from './transaction'
 
 /**
  * Workspace (organization) MCP servers, as Capy's organization servers
- * (docs/design/decisions/2026-11-27-1700-workspace-mcp-servers-like-capy.md):
+ * (docs/design/decisions/2026-11-27-1705-workspace-mcp-servers-like-capy.md):
  *
  * - Any active member of the workspace adds, edits, connects, switches tools on
  *   or removes one. There is no admin allow/deny policy.

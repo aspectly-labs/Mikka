@@ -87,7 +87,7 @@ const workspaceMcpBase = {
   url: webUrlSchema.refine(value => { const url = new URL(value); return !url.search && !url.hash }, 'Use the auth field for credentials'),
   transport: z.enum(['http', 'sse']),
 }
-/** Capy's CreateMcpServerRequest has no connection field: a new server is Shared. */
+/** As Capy, creating a server takes no connection mode: a new server is shared. */
 export const createWorkspaceMcpSchema = z.object({
   ...workspaceMcpBase, transport: workspaceMcpBase.transport.default('http'),
   serverKey: mcpServerKeySchema.optional(), environmentId: z.uuid().nullable().optional(),
