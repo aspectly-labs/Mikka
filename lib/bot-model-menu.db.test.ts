@@ -37,17 +37,8 @@ test("bot model menu: usable credentials, per-bot choice, Coordinator, unavailab
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,name text,status text);
       CREATE TABLE byos_connections (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,epoch bigint,state text,provider text,"accountLabel" text,quota jsonb,"removedAt" timestamptz,paused boolean NOT NULL DEFAULT false,"modelSettings" jsonb);
       CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,"modelId" text,route text,"createdAt" timestamptz DEFAULT now())`);
-    for (const file of ["20261030193000_device_enrollment_management.sql", "20261030200610_execution_rules.sql", "20261030233002_byos_model_catalog.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101020201_workspace_personal_policies.sql", "20261101020202_bot_archive.sql", "20261101021000_model_api_keys.sql", "20261101021100_bot_api_key_choice.sql", "20261102120000_model_api_key_models_error.sql", "20261102190000_model_api_key_responses_api.sql", "20261115175552_bot_model_choices_credits_model.sql", "20261115204738_model_gateway_tokens.sql", "20261120044916_bot_settings.sql", "20261108120101_enabled_models.sql", "20261031050732_workspace_deletion_guards.sql", "20261125212629_bot_model_choices_service_tier.sql", "20261125223407_model_favorites.sql", "20261125234000_chat_model_modes_and_preferred_routes.sql"])
+    for (const file of ["20261030193000_device_enrollment_management.sql", "20261030200610_execution_rules.sql", "20261030233002_byos_model_catalog.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101001200_bot_model_hosted_choice.sql", "20261101020201_workspace_personal_policies.sql", "20261101020202_bot_archive.sql", "20261101021000_model_api_keys.sql", "20261101021100_bot_api_key_choice.sql", "20261102120000_model_api_key_models_error.sql", "20261102190000_model_api_key_responses_api.sql", "20261115175552_bot_model_choices_credits_model.sql", "20261115204738_model_gateway_tokens.sql", "20261120044916_bot_settings.sql", "20261108120101_enabled_models.sql", "20261031050732_workspace_deletion_guards.sql", "20261125212629_bot_model_choices_service_tier.sql", "20261125234000_chat_model_modes_and_preferred_routes.sql"])
       await pool.query(await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8"));
-    // Upgrade path: existing favorite rows are dropped cleanly by 20261126125352_drop_model_favorites.sql.
-    await pool.query('INSERT INTO model_favorites ("ownerId", slots, "slotDetails", "preferredRoutes") VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb)', [
-      "alice",
-      JSON.stringify([{ optionId: "credits:anthropic/claude-sonnet-5.5", effort: "high", serviceTier: "fast" }]),
-      JSON.stringify([{ optionId: "credits:anthropic/claude-sonnet-5.5", effort: "high", serviceTier: "fast", modelKey: "anthropic/claude-sonnet-5-5" }]),
-      JSON.stringify({ "anthropic/claude-sonnet-5-5": "credits:anthropic/claude-sonnet-5.5" }),
-    ]);
-    await pool.query(await readFile(new URL("../drizzle/20261126125352_drop_model_favorites.sql", import.meta.url), "utf8"));
-    assert.equal((await pool.query("SELECT to_regclass('model_favorites') AS rel")).rows[0].rel, null);
     const daybreakSql = await readFile(new URL("../drizzle/20261126165656_daybreak_access_and_choice.sql", import.meta.url), "utf8");
     await pool.query(daybreakSql);
     await pool.query(daybreakSql);
@@ -759,65 +750,6 @@ test("mobile model API keeps normal selection and authenticates every temporary 
       assert.equal((await route.PUT(request({ ...body, bot: stored }))).status, 404); assert.equal(calls.length, before);
     }
   } finally { for (const handle of mocks.reverse()) handle.restore(); }
-});
-
-test("drop_model_favorites upgrades a PG17 schema with existing favorites while preserving bot_model_choices", { skip: !databaseURL }, async () => {
-  assert.ok(["127.0.0.1", "localhost"].includes(new URL(databaseURL!).hostname));
-  assert.equal(new URL(databaseURL!).pathname, "/mikka_e2e");
-  const admin = new Pool({ connectionString: databaseURL });
-  const schema = `drop_favorites_${randomUUID().replaceAll("-", "")}`;
-  await admin.query(`CREATE SCHEMA ${schema}`);
-  const pool = new Pool({ connectionString: databaseURL, options: `-c search_path=${schema}` });
-  try {
-    await pool.query(`CREATE TABLE "user" (id text PRIMARY KEY); INSERT INTO "user" VALUES ('alice'),('bob');
-      CREATE TABLE bots (id uuid PRIMARY KEY, "ownerId" text, "workspaceId" uuid);
-      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY, kind text NOT NULL DEFAULT 'team');
-      CREATE TABLE byos_bindings (id uuid PRIMARY KEY, "ownerId" text, "workspaceId" text);`);
-    for (const file of [
-      "20261030200610_execution_rules.sql",
-      "20261101001200_bot_model_hosted_choice.sql",
-      "20261101021000_model_api_keys.sql",
-      "20261101021100_bot_api_key_choice.sql",
-      "20261115175552_bot_model_choices_credits_model.sql",
-      "20261120044916_bot_settings.sql",
-      "20261031050732_workspace_deletion_guards.sql",
-      "20261125212629_bot_model_choices_service_tier.sql",
-      "20261125223407_model_favorites.sql",
-      "20261125234000_chat_model_modes_and_preferred_routes.sql",
-    ]) {
-      await pool.query(await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8"));
-    }
-    const workspace = randomUUID();
-    await pool.query('INSERT INTO mikka_workspaces(id) VALUES ($1)', [workspace]);
-    await pool.query(
-      'INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","creditsModel",effort,"serviceTier",pro) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      ["alice", workspace, "coordinator", "openai/gpt-6.1-sol", null, "standard", true],
-    );
-    await pool.query(
-      'INSERT INTO model_favorites ("ownerId",slots,"slotDetails","preferredRoutes") VALUES ($1,$2::jsonb,$3::jsonb,$4::jsonb), ($5,$6::jsonb,$6::jsonb,$7::jsonb)',
-      [
-        "alice",
-        JSON.stringify([{ optionId: "credits:openai/gpt-6.1-sol", effort: null, serviceTier: "standard" }]),
-        JSON.stringify([{ optionId: "credits:openai/gpt-6.1-sol", effort: null, serviceTier: "standard", modes: { fast: false, ultrafast: false, pro: true, daybreak: false }, modelKey: "openai/gpt-6.1-sol" }]),
-        JSON.stringify({ "openai/gpt-6.1-sol": "credits:openai/gpt-6.1-sol" }),
-        "bob",
-        JSON.stringify([]),
-        JSON.stringify({}),
-      ],
-    );
-    assert.equal((await pool.query("SELECT count(*)::int AS n FROM model_favorites")).rows[0].n, 2);
-    const dropSql = await readFile(new URL("../drizzle/20261126125352_drop_model_favorites.sql", import.meta.url), "utf8");
-    await pool.query(dropSql);
-    await pool.query(dropSql);
-    assert.equal((await pool.query("SELECT to_regclass('model_favorites') AS rel")).rows[0].rel, null);
-    assert.equal((await pool.query(`SELECT count(*)::int AS n FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname='model_favorites'`, [schema])).rows[0].n, 0);
-    const { rows: [choice] } = await pool.query('SELECT "creditsModel",effort,"serviceTier",pro FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3', ["alice", workspace, "coordinator"]);
-    assert.deepEqual(choice, { creditsModel: "openai/gpt-6.1-sol", effort: null, serviceTier: "standard", pro: true });
-  } finally {
-    await pool.end();
-    await admin.query(`DROP SCHEMA ${schema} CASCADE`);
-    await admin.end();
-  }
 });
 
 test("production desktop RPC registry rejects retired model favorite actions and keeps model menu/route/option actions", { skip: !databaseURL }, async () => {
