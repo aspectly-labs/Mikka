@@ -19,7 +19,7 @@
     ]
   },
   "asShipped": {
-    "$comment": "Paid blocks and components are used as shipped: only data and text change. Files under these paths skip style/semantic-colors and typography/preset-only; every other rule applies. See docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md. Empty: paid source is not allowed in this repository; the hosted list is in its AGENTS.md.",
+    "$comment": "From docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md, superseded by docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md (paid blocks are raw material edited to match the top-product reference). Files under these paths skip style/semantic-colors and typography/preset-only; every other rule applies. Empty: paid source is not allowed in this repository; the hosted paid-source list is in its AGENTS.md.",
     "public": []
   },
   "typography": {

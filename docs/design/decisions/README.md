@@ -21,15 +21,15 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `309` dated decision records carry verified `Status:` headers (`223` Accepted, `23` Superseded, `63` Superseded in part).
+All `315` dated decision records carry verified `Status:` headers (`222` Accepted, `26` Superseded, `67` Superseded in part).
 
 ### Key active architectural decisions
 
 | Area | Decision record | Status | Owning Tier 1 standard |
 | --- | --- | --- | --- |
-| **Local UI visual verification & browser-free hosted-UI CI** | [2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md](2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md) | Accepted | [`HANDBOOK.md`](../../engineering/HANDBOOK.md), `mikka-hosted-ui/AGENTS.md` |
+| **Hosted-UI CI: routed Electron e2e per PR, nightly full suite + DOM layout audit, no pixel comparison** | [2026-11-27-1100-electron-e2e-ci-no-pixel-diff.md](2026-11-27-1100-electron-e2e-ci-no-pixel-diff.md) (supersedes [2026-11-26-0645](2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md)) | Accepted | [`HANDBOOK.md`](../../engineering/HANDBOOK.md), `mikka-hosted-ui/AGENTS.md` |
 | **Brand mark & App Icon** | [2026-11-24-2235-new-mikka-ribbon-mark.md](2026-11-24-2235-new-mikka-ribbon-mark.md) | Accepted | [`docs/design/brand.md`](../brand.md) |
-| **Design System v2** | [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) | Accepted | [`docs/design/design-system.md`](../design-system.md) |
+| **Design System v2** | [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) | Accepted (paid-block clause superseded by 2026-11-27-1409) | [`docs/design/design-system.md`](../design-system.md) |
 | **All Web/Desktop UI in `mikka-hosted-ui`** | [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |
 | **Single flat right-column tabs (no Overview)** | [2026-11-23-2200-right-column-as-tembo.md](2026-11-23-2200-right-column-as-tembo.md) | Accepted | [`docs/design/design-system.md`](../design-system.md) |
 | **Node 24 CI toolchain** | [2026-11-22-1430-ci-node24-only.md](2026-11-22-1430-ci-node24-only.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
@@ -41,7 +41,8 @@ All `309` dated decision records carry verified `Status:` headers (`223` Accepte
 | **One state-mark registry** | [2026-11-19-1630-one-mark-registry.md](2026-11-19-1630-one-mark-registry.md) | Accepted | [`docs/design/components.md`](../components.md) |
 | **Automatic UTC migration IDs** | [2026-11-11-1151-automatic-migration-ids.md](2026-11-11-1151-automatic-migration-ids.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
 | **Native MCP configuration & credential delivery** | [2026-11-11-0534-eve-and-native-mcp.md](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
-| **Paid blocks as shipped (R-90)** | [2026-11-09-0050-paid-blocks-as-shipped.md](2026-11-09-0050-paid-blocks-as-shipped.md) | Accepted | [`docs/design/design-system.md`](../design-system.md) |
+| **No permission approvals: agents run with full access** | [2026-11-27-1615-no-permission-approvals.md](2026-11-27-1615-no-permission-approvals.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`docs/design/rules.md`](../rules.md) |
+| **Top products are the authority; paid blocks are raw material** | [2026-11-27-1409-top-products-over-paid-blocks.md](2026-11-27-1409-top-products-over-paid-blocks.md) | Accepted ("approval/permission cards" superseded by 2026-11-27-1615) | [`docs/design/design-system.md`](../design-system.md) |
 | **One UI across Cloud & self-hosted** | [2026-11-08-2133-one-ui.md](2026-11-08-2133-one-ui.md) | Accepted | [`docs/operations/build-source-of-truth.md`](../../operations/build-source-of-truth.md) |
 | **Execution boundary vs. task Secret exposure** | [2026-11-06-1800-machine-is-the-execution-boundary.md](2026-11-06-1800-machine-is-the-execution-boundary.md), [2026-11-08-0240-credential-exposure-boundary.md](2026-11-08-0240-credential-exposure-boundary.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
 | **No new polling & keep error causes** | [2026-11-05-0200-no-new-polling.md](2026-11-05-0200-no-new-polling.md), [2026-11-05-0330-error-causes.md](2026-11-05-0330-error-causes.md) | Accepted | [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |
@@ -50,6 +51,7 @@ All `309` dated decision records carry verified `Status:` headers (`223` Accepte
 
 | Retired direction | Superseded ADR(s) | Active successor |
 | --- | --- | --- |
+| **Paid blocks used as shipped (「原样使用，只换数据」), paid libraries keeping their own icons** | [2026-11-09-0050-paid-blocks-as-shipped.md](2026-11-09-0050-paid-blocks-as-shipped.md), [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) (in part), [2026-11-18-1900-icons-hugeicons.md](2026-11-18-1900-icons-hugeicons.md) (in part) | [2026-11-27-1409-top-products-over-paid-blocks.md](2026-11-27-1409-top-products-over-paid-blocks.md) |
 | **Comma typography/look & LobeHub action-bar overrides** | [2026-11-01-1204-type-follows-comma.md](2026-11-01-1204-type-follows-comma.md), [2026-11-22-2000-chat-look-as-lobehub.md](2026-11-22-2000-chat-look-as-lobehub.md) (in part) | [2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md](2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md) |
 | **5×5 dot-grid black icon artwork** | [2026-11-12-0449-browser-app-icon.md](2026-11-12-0449-browser-app-icon.md) (in part) | [2026-11-24-2235-new-mikka-ribbon-mark.md](2026-11-24-2235-new-mikka-ribbon-mark.md) |
 | **Public `@ui-slot/*` overlay & public UI pages** | [2026-11-06-2000-hosted-ui-overlay.md](2026-11-06-2000-hosted-ui-overlay.md), [2026-11-19-2120-slots-for-paid-surfaces.md](2026-11-19-2120-slots-for-paid-surfaces.md), [2026-11-22-2205-headless-public-engine-and-ui-decoupling.md](2026-11-22-2205-headless-public-engine-and-ui-decoupling.md) (in part) | [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) |

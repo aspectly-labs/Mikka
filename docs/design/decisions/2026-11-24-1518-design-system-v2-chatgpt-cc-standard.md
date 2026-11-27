@@ -1,7 +1,7 @@
 # Design System v2: ChatGPT / Codex + Claude Code + Capy as the single UI authority
 
 - **Date:** 2026-11-24 15:18 UTC
-- **Status:** Accepted (Alex, 2026-11-24)
+- **Status:** Superseded in part by [2026-11-27-1409-top-products-over-paid-blocks](2026-11-27-1409-top-products-over-paid-blocks.md) (its "Retains: Paid blocks as shipped" clause only) and [2026-11-27-1615-no-permission-approvals](2026-11-27-1615-no-permission-approvals.md) ("permission" and "write approval" in the bottom-slot priority only); Accepted, Alex, 2026-11-24
 - **Supersedes:**
   - Comma (`app.comma.surf`) as Mikka's look-and-feel authority (`docs/design/README.md` source table #6, `2026-11-01-1204-type-follows-comma.md`, `R-32`/`R-35` Comma look clauses).
   - Grok-style composer and the old `R-10` independent-review composer clause (`docs/design/rules.md` R-10).

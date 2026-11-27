@@ -1,7 +1,7 @@
 # Design rules
 
 These are decisions Alex has already made. Designs, specs and code follow
-them without asking again. Scope: these rules govern Mikka's own UI. Paid blocks and components (BoardUI Pro, affectUI, beUI Pro) in the hosted layer are used as shipped, and where a rule here would change one's look (icons, avatars, logos, layout, spacing, colours, type, borders, motion, subtitles), the block wins ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)). To change a rule, Alex decides, the change is
+them without asking again. Scope: these rules govern Mikka's UI. Top products are the authority: each surface matches the corresponding surface of ChatGPT / Codex and Claude / Claude Code (chat, composer, questions, status, errors; there are no permission cards — [2026-11-27-1615](decisions/2026-11-27-1615-no-permission-approvals.md)), Capy (right rail, tab bar, sidebar work tree, task detail) or Linear (issue/board semantics). Paid blocks and components (BoardUI Pro, affectUI, beUI Pro) in the hosted layer are raw material, edited in place to match the reference; their shipped look is never a reason to keep a difference ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). To change a rule, Alex decides, the change is
 recorded as a file in [`decisions/`](decisions/README.md), and this file is
 edited in the same PR. A new rule's id (`R-xx`) is assigned by the
 coordinator when the work is dispatched ([dev workflow](../dev-workflow.md)
@@ -61,7 +61,8 @@ source wins in a conflict is in [`README.md`](README.md).
   monitor — 独立审查/验证/观察) are strictly read-only for humans and never show
   a human composer or accept human messages (Alex, 2026-11-24; Agent↔Agent,
   Bot↔Subagent, Thread↔Subagent and Subagent↔Subagent messaging stay intact).
-  Blocking permissions, questions and logins take the single bottom slot
+  Blocking questions and logins take the single bottom slot (there are no
+  permission or write-approval cards: [2026-11-27-1615](decisions/2026-11-27-1615-no-permission-approvals.md))
   (`TakeoverCard`) with `Later` / `Esc` collapse (`design-system.md` §3.2);
   non-blocking quota, model and offline warnings sit above the intact composer
   as a 1-line `ChatStatusStrip`. Send follows the run's reply
@@ -536,8 +537,10 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
   A task's status icon is the one exception: `ISSUE_STATUSES` keeps its own glyphs, drawn in the status
   registry `lib/state-mark.ts` / `components/workspace/state-mark.tsx`
   ([2026-11-19-1630](decisions/2026-11-19-1630-one-mark-registry.md)), and no
-  other family stands in for a status. Paid blocks keep their own icons
-  ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+  other family stands in for a status. Hugeicons is the one set everywhere,
+  inside paid blocks too: a paid block edited to match a reference takes the
+  Hugeicons glyph closest to the reference's, at its rendered size and stroke
+  weight ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
   A new glyph is a line in that file, not a new package (ui-policy
   `icons/glyph-set`). Priority is the one mark Mikka draws itself: low, normal
   and high are three bars on one baseline, rising one step each, in the set's
@@ -553,14 +556,14 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
   default: a migration that turns a default on also rewrites rows that hold
   the old default. A feature stays off only for real per-use cost, an
   incident kill switch or a recorded Alex decision (`decisions.md`). Safety
-  and money defaults (approval requirements, auto-recharge) are not features;
+  and money defaults (auto-recharge) are not features;
   they change only with Alex's decision. Source: Alex, 2026-10-31.
 - **R-77** Enabled and authorized connections run their tools with the
   connected account's permissions. Mikka adds no per-call Decision API
   judgment and no Allow/Ask/Deny matrix for connected apps. Connection
   ownership, sharing, provider scopes and active run checks still apply.
-  Explicit approvals already created retain their exact account and action
-  binding. See [authorized MCP connections](decisions/2026-11-19-native-mcp-authorization.md).
+  There are no approvals and no remembered approvals
+  ([2026-11-27-1615](decisions/2026-11-27-1615-no-permission-approvals.md)). See [authorized MCP connections](decisions/2026-11-19-native-mcp-authorization.md).
 - **R-78** Threads and runs are executed by an Agent (Claude Code, Codex…)
   in an Agent 配置. Where an Agent stretch is drawn with a mark (the line where
   the Agent changes, a plan step, the execution identity), the main mark is
@@ -632,8 +635,8 @@ Figma: page `395:15023`, frames F1–F10 (listed in `decisions.md`).
 ## Look
 
 The Look rules (R-30 to R-39) and the avatar, icon and chip rules elsewhere
-are Mikka's look. They are never applied inside a paid block, which keeps the
-library's shipped look ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+are Mikka's look. Where a top product's surface differs, the reference wins,
+and a paid block is edited to match it ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 
 - **R-30** Greys are pure neutral: `rgba(0,0,0,a)` and `#737373 / #A3A3A3 /
   #171717` in light mode, the same idea in dark. Never slate, zinc or teal
@@ -782,8 +785,8 @@ library's shipped look ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-
 - **R-97** A list, table, panel, row, menu or popover never takes a radius
   above `12px`, and Mikka's own UI does not draw `rounded-3xl` (`24px`) on those
   surfaces. Approval and takeover cards take R-33's `8px` (`rounded-lg`), and a
-  paid dialog keeps the radius the shipped modal draws
-  ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+  paid dialog takes the radius its reference product draws
+  ([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 
 The measured baseline these come from, and the Capy values they were compared
 against, are in [2026-11-18-1400](decisions/2026-11-18-1400-pr-surface-and-craft-baseline.md).
