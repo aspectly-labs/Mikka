@@ -1673,7 +1673,7 @@
       "methods": [
         "PATCH"
       ],
-      "sourceHash": "58abe74d682dc229acd566f473ad2f01851ca88df003fca8da464824bdd60b3c"
+      "sourceHash": "ba122516c69d69b705951e231df866731d352394c3eaa1d0491309aa00def4f8"
     },
     {
       "path": "/mikka/api/integrations/mcp/[id]",

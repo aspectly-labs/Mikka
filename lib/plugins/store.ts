@@ -89,18 +89,18 @@ export class PersonalPluginStore {
   }
   /** Called immediately before remote discovery/call. Never returned by an API. */
   async mcpConnection(userId: string, id: string, revision?: number, authority?: McpAuthority) {
+    // Only the requester's own server: validation refuses any other owner (decision 2026-11-27-1700).
     const grant = authority ? (await new WorkspaceMcpStore(this.pool, this.membership).validate(userId, singleMcpAuthority(authority, id))).servers[0] : null
-    const ownerId = grant?.ownerId ?? userId
-    const row = (await this.pool.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true`, [id, ownerId])).rows[0]
+    const row = (await this.pool.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true`, [id, userId])).rows[0]
     if (!row || revision !== undefined && row.revision !== revision) throw new PluginError('mcpUnavailable', 404)
     if (grant && row.revision !== grant.revision) throw new PluginError('mcpUnavailable', 404)
-    const value = row.auth_header ? openSecret({ ciphertext: row.ciphertext!, iv: row.iv!, keyVersion: row.key_version! }, aad(ownerId,row.id,row.url,row.auth_header),this.env) : null
+    const value = row.auth_header ? openSecret({ ciphertext: row.ciphertext!, iv: row.iv!, keyVersion: row.key_version! }, aad(userId,row.id,row.url,row.auth_header),this.env) : null
     const native = row.transport === 'stdio' ? stdioConfiguration(row, value!) : undefined
     const headers: Record<string,string> = row.auth_header === '__headers__' ? JSON.parse(value!) : row.auth_header && row.transport !== 'stdio' ? { [row.auth_header]:value! } : {}
     if (row.oauth_enabled) {
       for (const name of Object.keys(headers)) if (name.toLowerCase() === 'authorization') delete headers[name]
       const oauth = this.oauth ?? new (await import('./mcp-oauth')).McpOAuthStore(this.pool, this.env)
-      headers.Authorization = `Bearer ${await oauth.accessToken(ownerId, id)}`
+      headers.Authorization = `Bearer ${await oauth.accessToken(userId, id)}`
     }
     const { rows: disabled } = await this.pool.query<{ name: string }>('SELECT tool_name AS name FROM mcp_server_tools WHERE server_id=$1 AND NOT enabled ORDER BY tool_name', [id])
     const disabledTools = disabled.map(tool => tool.name)
