@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BOOTSTRAP, BROWSER_SUITES, REQUIRED_SUITES, SELF_MANAGED, TEMPLATE_BOUND, checkSummary, cloneDatabaseName, createClones, concurrency, inventory, launch, runScript, scriptSteps, shardScripts, suiteEnv, main, parseSummary, readTree, validateTarget } from './run-db-tests.mjs'
+import { BOOTSTRAP, BROWSER_SUITES, REQUIRED_SUITES, SELF_MANAGED, TEMPLATE_BOUND, checkSummary, cloneDatabaseName, createClones, concurrency, inventory, launch, runScript, scriptSteps, shardScripts, suiteEnv, main, parseSummaries, parseSummary, readTree, testSteps, validateTarget } from './run-db-tests.mjs'
 import { isE2eTarget } from '../tests/helpers/e2e-target.mjs'
 
 const target = 'postgresql://e2e:local@127.0.0.1:5432/mikka_e2e'
@@ -476,20 +476,6 @@ test('runner rejects invalid shards before execution and preserves per-shard sum
   assert.ok(errors.some(error => /test:b-db: 1 skipped/.test(error)))
 })
 
-test('force-exit node tests run with blocking stdio so the TAP summary is flushed before exit', () => {
-  const plain = launch('test:plain', 'node --test tests/plain.db.test.mjs')
-  assert.deepEqual(plain, ['pnpm', ['-s', 'test:plain']])
-  const quoted = launch('test:quoted', 'node --test-force-exit "tests/odd name.db.test.mjs"')
-  assert.deepEqual(quoted, ['pnpm', ['-s', 'test:quoted']])
-  const chained = launch('test:chained', 'node --test-force-exit --test a.test.mjs && node --experimental-test-module-mocks --test b.test.mjs')
-  assert.deepEqual(chained, ['pnpm', ['-s', 'test:chained']])
-  const [bin, args] = launch('test:workspace-admin-db', 'node --test-force-exit --import tsx --test tests/one.db.test.mjs')
-  assert.equal(bin, process.execPath)
-  assert.equal(args[0], '--require')
-  assert.match(args[1], /blocking-stdio\.cjs$/)
-  assert.deepEqual(args.slice(2), ['--test-force-exit', '--import', 'tsx', '--test', 'tests/one.db.test.mjs'])
-})
-
 test('verbose force-exit test files keep their test counts and status with separate file-backed reporters', async t => {
   const root = mkdtempSync(join(tmpdir(), 'mikka-db-report-files-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
@@ -510,8 +496,10 @@ test('verbose force-exit test files keep their test counts and status with separ
     return runScript(bin, args, { cwd: root, env: childEnv, script: 'test:isolated-db' })
   }
   const complete = await execute(files)
-  const report = parseSummary(`${complete.stdout}\n${complete.stderr}`)
-  assert.equal(checkSummary('test:isolated-db', complete.status, report), null)
+  const completeOutput = `${complete.stdout}\n${complete.stderr}`
+  const report = parseSummary(completeOutput)
+  assert.equal(complete.steps, files.length)
+  assert.equal(checkSummary('test:isolated-db', complete.status, report, { steps: complete.steps, summaries: parseSummaries(completeOutput) }), null)
   assert.equal(report.tests, 24)
   for (let index = 0; index < files.length; index++) {
     assert.match(complete.stdout, new RegExp(`result-${index}-7`))
@@ -524,24 +512,128 @@ test('verbose force-exit test files keep their test counts and status with separ
   assert.equal(parseSummary(incomplete.stdout).tests, 8, 'the other file reported all of its results')
   assert.match(incomplete.stderr, /missing\.test\.mjs: no node:test summary found/)
 })
-
 // The runner reads the stdout of the `node --test` orchestrator, so the preload
 // must run there, not only in the per-file child processes. The orchestrator
 // skips `--import` modules (merge-queue failures "no node:test summary found",
-// 2026-11-26/27, test:pat-api-db and test:scope-detachment-db).
+// 2026-11-26/27, test:pat-api-db and test:scope-detachment-db), and chained
+// suites (test:desktop-auth, test:device-revocation-db, test:run-publication-db,
+// test:run-recovery-db) ran their force-exit steps through pnpm with no preload.
 // Without this file's own NODE_TEST_CONTEXT, so the spawned `node --test` runs its files.
 const orchestratorEnv = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== 'NODE_TEST_CONTEXT'))
-test('the blocking stdio preload runs in the node --test orchestrator process', t => {
-  const root = mkdtempSync(join(tmpdir(), 'mikka-db-runner-preload-'))
+// Each fixture file records whether its orchestrator (the parent process) holds
+// a blocking stdout. Linux exposes O_NONBLOCK in /proc/<pid>/fdinfo.
+const stdoutModeFixture = marks => `import { test } from 'node:test'
+import { appendFileSync, readFileSync } from 'node:fs'
+test('records the orchestrator stdout mode', () => {
+  const flags = Number.parseInt(/^flags:\\s*(\\d+)/m.exec(readFileSync('/proc/' + process.ppid + '/fdinfo/1', 'utf8'))[1], 8)
+  appendFileSync(${JSON.stringify(marks)}, process.env.STEP + ' ' + (flags & 0o4000 ? 'nonblocking' : 'blocking') + '\\n')
+})
+`
+test('force-exit orchestrators of single and chained suites hold a blocking stdout', { skip: process.platform !== 'linux' && 'reads /proc' }, t => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-db-runner-stdout-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  writeFileSync(join(root, 'one.test.mjs'), "import { test } from 'node:test'\ntest('one', () => {})\n")
   const marks = join(root, 'marks.txt')
-  writeFileSync(join(root, 'probe.cjs'), `require('node:fs').appendFileSync(${JSON.stringify(marks)}, (process.env.NODE_TEST_CONTEXT ?? 'orchestrator') + '\\n')\n`)
-  const [bin, args] = launch('test:one-db', 'node --test-force-exit --test one.test.mjs')
-  // Same flag as the preload, so a switch back to `--import` fails here.
-  const result = spawnSync(bin, [args[0], join(root, 'probe.cjs'), ...args], { cwd: root, encoding: 'utf8', env: orchestratorEnv() })
+  writeFileSync(join(root, 'mode.test.mjs'), stdoutModeFixture(marks))
+  const commands = {
+    'test:single-db': 'node --test-force-exit --test mode.test.mjs',
+    'test:chain-db': 'STEP=forced NODE_ENV=test node --test-force-exit --test mode.test.mjs && STEP=plain node --test mode.test.mjs && STEP=last node --test-force-exit --test-concurrency=1 --test mode.test.mjs',
+  }
+  // A package script too, so a launch that falls back to pnpm still runs it.
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: commands }))
+  const run = script => {
+    writeFileSync(marks, '')
+    const [bin, args] = launch(script, commands[script])
+    const result = spawnSync(bin, args, { cwd: root, encoding: 'utf8', env: orchestratorEnv() })
+    assert.equal(result.status, 0, result.stderr)
+    return readFileSync(marks, 'utf8').trim().split('\n')
+  }
+  assert.deepEqual(run('test:single-db').map(mark => mark.split(' ')[1]), ['blocking'])
+  // Every step runs, in order, with its own assignments; only force-exit steps
+  // get the preload, and a plain step does not inherit an earlier step's mode.
+  assert.deepEqual(run('test:chain-db'), ['forced blocking', 'plain nonblocking', 'last blocking'])
+})
+
+// launch() is the only place the preload is added, and it must not run what sh
+// would read differently from pnpm. Paths are injected so the quoting shows.
+test('launch keeps unsafe or non-node commands on pnpm and runs plain node chains through sh', () => {
+  const execPath = "/opt/node dir/it's/node", preload = '/repo dir/blocking-stdio.cjs'
+  const run = command => launch('test:x-db', command, { execPath, preload })
+  const forced = 'node --test-force-exit --test a.test.mjs'
+  const onPnpm = {
+    'double quotes': 'node --test-force-exit --test "odd name.test.mjs"',
+    'single quotes': "node --test-force-exit --test 'odd name.test.mjs'",
+    '||': `${forced} || node --test b.test.mjs`,
+    ';': `${forced}; node --test b.test.mjs`,
+    '|': `${forced} | tee out.txt`,
+    'single &': `${forced} & node --test b.test.mjs`,
+    '$': 'node --test-force-exit --test $FILES',
+    'pnpm step': `pnpm -s build && ${forced}`,
+    'tsx step': `tsx --test b.test.ts && ${forced}`,
+    'no force-exit': 'node --test a.test.mjs && node --test b.test.mjs',
+    'force-exit as a script argument': 'node script.mjs --test-force-exit --test a.test.mjs',
+    'empty step': `${forced} && && node --test b.test.mjs`,
+    'trailing &&': `${forced} &&`,
+    'leading &&': `&& ${forced}`,
+    'not a string': undefined,
+  }
+  for (const [name, command] of Object.entries(onPnpm)) assert.deepEqual(run(command), ['pnpm', ['-s', 'test:x-db']], name)
+
+  // One plain command runs directly, with nothing for a shell to read.
+  assert.deepEqual(run('node --test-force-exit --import tsx --test a.test.mjs'), [execPath, ['--require', preload, '--test-force-exit', '--import', 'tsx', '--test', 'a.test.mjs']])
+  assert.deepEqual(run('node --test-force-exit=true --test a.test.mjs'), [execPath, ['--require', preload, '--test-force-exit=true', '--test', 'a.test.mjs']])
+  // A chain, or a command with assignments, runs through sh: assignments kept,
+  // node shell-quoted, the preload only on force-exit steps.
+  const node = String.raw`'/opt/node dir/it'\''s/node'`, require = ` --require '/repo dir/blocking-stdio.cjs'`
+  assert.deepEqual(run('A=1 B=two node --test-force-exit --test a.test.mjs && node --test b.test.mjs && C=3 node --test-force-exit=true --test-concurrency=1 --test c.test.mjs'),
+    ['/bin/sh', ['-c', `A=1 B=two ${node}${require} --test-force-exit --test a.test.mjs && ${node} --test b.test.mjs && C=3 ${node}${require} --test-force-exit=true --test-concurrency=1 --test c.test.mjs`]])
+  assert.deepEqual(run('node --test b.test.mjs && node --test-force-exit --test a.test.mjs'), ['/bin/sh', ['-c', `${node} --test b.test.mjs && ${node}${require} --test-force-exit --test a.test.mjs`]])
+  assert.deepEqual(run('NODE_ENV=test node --test-force-exit --test a.test.mjs'), ['/bin/sh', ['-c', `NODE_ENV=test ${node}${require} --test-force-exit --test a.test.mjs`]])
+})
+
+test('a chain launched through sh runs when node and the preload sit under paths with spaces', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-db-runner-quoted-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const bin = join(root, "node bin's dir"), marks = join(root, 'marks.txt')
+  mkdirSync(bin)
+  symlinkSync(process.execPath, join(bin, 'node'))
+  const preload = join(root, 'pre load dir', 'probe.cjs')
+  mkdirSync(join(root, 'pre load dir'))
+  // Records the steps whose orchestrator loaded it.
+  writeFileSync(preload, `if (!process.env.NODE_TEST_CONTEXT) require('node:fs').appendFileSync(${JSON.stringify(marks)}, process.env.STEP + '\\n')\n`)
+  writeFileSync(marks, '')
+  writeFileSync(join(root, 'a.test.mjs'), "import { test } from 'node:test'\ntest('a', () => {})\n")
+  const command = 'STEP=forced node --test-force-exit --test a.test.mjs && STEP=plain node --test a.test.mjs && STEP=last node --test-force-exit --test a.test.mjs'
+  const [shell, args] = launch('test:quoted-db', command, { execPath: join(bin, 'node'), preload })
+  assert.equal(shell, '/bin/sh')
+  const result = spawnSync(shell, args, { cwd: root, encoding: 'utf8', env: orchestratorEnv() })
   assert.equal(result.status, 0, result.stderr)
-  assert.ok(readFileSync(marks, 'utf8').split('\n').includes('orchestrator'), 'preload flag is evaluated by the orchestrator')
+  assert.equal(parseSummaries(result.stdout).length, 3)
+  assert.deepEqual(readFileSync(marks, 'utf8').trim().split('\n'), ['forced', 'last'])
+})
+
+// A quote, `$` or other program added to a force-exit suite later would put it
+// back on pnpm without the preload, so the real inventory is checked here.
+test('every required DB suite with --test-force-exit gets the blocking stdio preload', () => {
+  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts
+  const preload = fileURLToPath(new URL('./ci/blocking-stdio.cjs', import.meta.url))
+  const routes = { direct: [], sh: [] }
+  for (const script of inventory(readTree(), scripts).scripts) {
+    const command = scripts[script]
+    if (!command.includes('--test-force-exit')) continue
+    const [bin, args] = launch(script, command)
+    if (bin === process.execPath) {
+      assert.deepEqual(args.slice(0, 2), ['--require', preload], script)
+      routes.direct.push(script)
+    } else if (bin === '/bin/sh') {
+      const steps = command.split('&&').filter(step => step.includes('--test-force-exit')).length
+      assert.equal(args[1].split(` --require '${preload.replaceAll("'", `'\\''`)}' `).length - 1, steps, `${script}: one preload per force-exit step`)
+      routes.sh.push(script)
+    } else {
+      assert.fail(`${script} runs --test-force-exit through ${bin} without the blocking stdio preload; keep it one node command or an && chain of node commands, with no quotes, $, pipes or other programs`)
+    }
+  }
+  assert.ok(routes.direct.length > 0, 'single-command suites run directly')
+  for (const script of ['test:desktop-auth', 'test:device-revocation-db', 'test:run-publication-db', 'test:run-recovery-db']) assert.ok(routes.sh.includes(script), `${script} runs through sh`)
 })
 
 test('force-exit keeps the summary when the last file reports a large burst into a slow reader', async t => {
@@ -562,6 +654,63 @@ test('force-exit keeps the summary when the last file reports a large burst into
     const [status] = await Promise.all([new Promise(resolve => suite.on('exit', resolve)), new Promise(resolve => reader.on('close', resolve))])
     assert.equal(checkSummary('test:burst-db', status, parseSummary(Buffer.concat(chunks).toString('utf8'))), null, `attempt ${attempt + 1}`)
   }
+})
+
+test('a force-exit chain keeps every step summary when its last step reports a burst into a slow reader', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-db-runner-chain-burst-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  writeFileSync(join(root, 'first.test.mjs'), "import { test } from 'node:test'\ntest('first', () => {})\n")
+  writeFileSync(join(root, 'a.test.mjs'), "import { test } from 'node:test'\ntest('slow', () => new Promise(resolve => setTimeout(resolve, 300)))\n")
+  writeFileSync(join(root, 'b.test.mjs'), "import { test } from 'node:test'\ntest('burst', () => { for (let i = 0; i < 1500; i++) console.log('x'.repeat(200)) })\n")
+  const throttle = "const fs=require('fs'),b=Buffer.alloc(1024),s=new Int32Array(new SharedArrayBuffer(4));for(;;){let n;try{n=fs.readSync(0,b)}catch(e){if(e.code==='EAGAIN'){Atomics.wait(s,0,0,1);continue}throw e}if(!n)break;fs.writeSync(1,b.subarray(0,n));Atomics.wait(s,0,0,1)}"
+  const command = 'node --test first.test.mjs && node --test-force-exit --test a.test.mjs b.test.mjs'
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: { 'test:chain-burst-db': command } }))
+  const [bin, args] = launch('test:chain-burst-db', command)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const suite = spawn(bin, args, { cwd: root, env: orchestratorEnv(), stdio: ['ignore', 'pipe', 'ignore'] })
+    const reader = spawn(process.execPath, ['-e', throttle], { stdio: [suite.stdout, 'pipe', 'ignore'] })
+    const chunks = []
+    reader.stdout.on('data', chunk => chunks.push(chunk))
+    const [status] = await Promise.all([new Promise(resolve => suite.on('exit', resolve)), new Promise(resolve => reader.on('close', resolve))])
+    const output = Buffer.concat(chunks).toString('utf8')
+    assert.equal(checkSummary('test:chain-burst-db', status, parseSummary(output), { steps: testSteps(command).length, summaries: parseSummaries(output) }), null, `attempt ${attempt + 1}`)
+  }
+})
+
+test('a chain step that loses its summary fails instead of dropping out of the totals', async t => {
+  const command = 'node --test a.test.mjs && NODE_ENV=test node --test-force-exit --test b.test.mjs c.test.mjs && node scripts/report.mjs'
+  assert.deepEqual(testSteps(command), ['node --test a.test.mjs', 'NODE_ENV=test node --test-force-exit --test b.test.mjs c.test.mjs'])
+  assert.deepEqual(testSteps('node --test-force-exit --test a.test.mjs'), ['node --test-force-exit --test a.test.mjs'])
+  assert.deepEqual(testSteps('pnpm -s test:x && tsx scripts/a.ts'), [])
+  // Only node's own --test counts: not a script argument, and a quoted option value stays one word.
+  assert.deepEqual(testSteps('node scripts/run.mjs --test && node --import tsx --test a.test.ts'), ['node --import tsx --test a.test.ts'])
+  assert.deepEqual(testSteps('X=1 node --test-reporter-destination="${DIR:?dir required}/out.xml" --import tsx --test a.test.ts').length, 1)
+  assert.deepEqual(testSteps('node --test-force-exit=true --test a.test.mjs'), ['node --test-force-exit=true --test a.test.mjs'])
+  assert.deepEqual(testSteps('node --experimental-test-isolation none --test a.test.mjs').length, 1, 'an option value is not the script')
+  const first = 'ℹ tests 3\nℹ pass 3\nℹ fail 0\n'
+  const truncated = `${first}▶ second step\n  ✔ one (1ms)\n`
+  // The totals alone still look like a passing suite.
+  assert.equal(checkSummary('test:chain-db', 0, parseSummary(truncated)), null)
+  assert.match(checkSummary('test:chain-db', 0, parseSummary(truncated), { steps: 2, summaries: parseSummaries(truncated) }), /1 node:test summaries for 2 node --test steps/)
+  assert.deepEqual(parseSummaries(`${first}ℹ tests 2\nℹ pass 2\n`), [{ tests: 3, pass: 3, fail: 0 }, { tests: 2, pass: 2 }])
+  assert.equal(checkSummary('test:chain-db', 0, parseSummary(`${first}ℹ tests 2\nℹ pass 2\n`), { steps: 2, summaries: parseSummaries(`${first}ℹ tests 2\nℹ pass 2\n`) }), null)
+  // A summary cut after its first line, and a step that ran nothing, fail per step.
+  const cut = 'ℹ tests 3\nℹ pass 3\nℹ tests 2\nℹ pass 1\nℹ tests 1\nℹ pass 2\n'
+  assert.match(checkSummary('s', 0, parseSummary(cut), { steps: 3, summaries: parseSummaries(cut) }), /step 2 passed count/)
+  const empty = 'ℹ tests 3\nℹ pass 3\nℹ tests 0\nℹ pass 0\n'
+  assert.match(checkSummary('s', 0, parseSummary(empty), { steps: 2, summaries: parseSummaries(empty) }), /step 2 ran no tests/)
+
+  // main() applies it to the package script's steps.
+  const fixture = runnerFixture(t, ['a'])
+  writeFileSync(join(fixture.root, 'package.json'), JSON.stringify({ scripts: { 'test:a-db': 'node --test tests/a.db.test.mjs && node --test-force-exit --test tests/a.db.test.mjs' } }))
+  const errors = []
+  t.mock.method(console, 'log', () => {})
+  t.mock.method(console, 'error', message => errors.push(message))
+  t.mock.method(process.stdout, 'write', () => true)
+  t.mock.method(process.stderr, 'write', () => true)
+  assert.equal(await main({ root: fixture.root, env, run: () => ({ status: 0, stdout: truncated, stderr: '' }), clone: cloneAll }), 1)
+  assert.ok(errors.some(error => /test:a-db: 1 node:test summaries for 2 node --test steps/.test(error)), errors.join('\n'))
+  assert.equal(await main({ root: fixture.root, env, run: () => ({ status: 0, stdout: `${first}ℹ tests 2\nℹ pass 2\n`, stderr: '' }), clone: cloneAll }), 0)
 })
 
 test('parses TAP/spec and rejects missing, zero, skipped, todo, cancelled or failed executions', () => {

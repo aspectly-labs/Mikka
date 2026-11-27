@@ -426,4 +426,4 @@ export interface MikkaBridge {
     html(html: string): Promise<string>
   }
 }
-export type { BundledBridge, BundledSession, BundledSignIn, BundledLiveEvent, BundledViewerInput, BundledViewerEvent, BundledViewerResult, BundledServer, BundledServerState, BundledServerProbe } from './bundled'
+export type { BundledBridge, BundledSession, BundledSignIn, BundledLiveEvent, BundledViewerInput, BundledViewerEvent, BundledViewerResult, BundledServer, BundledServerState, BundledServerProbe, BundledTelemetryState } from './bundled'

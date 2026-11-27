@@ -17,6 +17,12 @@ export const HOSTED_API_FLOOR = 0
 export const HOSTED_API_VERSION_HEADER = 'x-mikka-api-version'
 export const HOSTED_API_HEADERS = { [HOSTED_API_VERSION_HEADER]: String(HOSTED_API_VERSION) } as const
 
+/** Set only by the desktop's main process, on a 401 it hands back after the
+ * session endpoint confirmed the login still holds: the server refused that one
+ * operation and the session did not expire. Main strips it from every server
+ * response, so the renderer never sees one the server chose. */
+export const DESKTOP_SESSION_ACTIVE_HEADER = 'x-mikka-session-active'
+
 /**
  * Which version series the version above belongs to. The desktop (with the
  * daemon) and the phone release on their own schedules, so the server keeps a

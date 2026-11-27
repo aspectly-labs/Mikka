@@ -325,7 +325,7 @@ jobs:
             exit 1
           fi
       # Evidence for this exact public + hosted pairing, before any signing credential: the desktop
-      # route-allowlist guard (mandatory, never skipped) plus every Desktop check the policy lists.
+      # UI API route contract (mandatory, never skipped) plus every Desktop check the policy lists.
       - name: Run the required release checks for this exact public and hosted pairing
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -445,6 +445,21 @@ jobs:
           test -n "$xcode" || { echo "::error::No Xcode 26 on this runner; build/icon.icon needs actool 26+"; exit 1; }
           sudo xcode-select -s "$xcode"
           actool --version
+      # Desktop telemetry uses the web's PostHog project; its ingestion key is
+      # public (apps/desktop/src/main/telemetry.ts). A build without it sends nothing.
+      # No host is read: the project is in PostHog's US region, the build's
+      # default (https://us.i.posthog.com, as the web's DEFAULT_POSTHOG_API_HOST).
+      - name: Read the existing PostHog project ingestion key through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /vercel
+          secret-name: NEXT_PUBLIC_POSTHOG_KEY
+          include-imports: false
       - name: Stamp the release version
         working-directory: apps/desktop
         run: npm pkg set version="$RELEASE_VERSION"

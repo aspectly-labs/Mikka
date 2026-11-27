@@ -193,7 +193,7 @@ export const pollingAllowlist = {
     1,
   ),
   "scripts/release/cloudflare-promoted-web.mjs": retry(
-    "at most four reads of production's public version endpoint, with exponential backoff, only after it answered unavailable or without a build; a named build ends it at once",
+    "at most four requests to production's public version endpoint in total (no inner 503 retry), with exponential backoff, only after it answered unavailable or without a build; a named build ends it at once",
     1,
   ),
   "scripts/release/web-deploy.mjs": external(

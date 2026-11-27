@@ -46,6 +46,7 @@ import { guardAppAction, closeWindowTarget } from './window-actions'
 import { trayCopy, trayMenu } from './tray'
 import { TRAY_ICON_1X, TRAY_ICON_2X } from './tray-icon'
 import { markStartup } from '../startup'
+import { DesktopTelemetry } from './telemetry'
 
 const APP_URL = __MIKKA_APP_URL__
 const APP_VERSION = __MIKKA_APP_VERSION__
@@ -78,6 +79,7 @@ let retrying: NodeJS.Timeout | null = null
 let authServer: LoopbackAuthServer | null = null
 let authTimer: NodeJS.Timeout | null = null
 let bundledAuth: BundledAuth | null = null
+let telemetry: DesktopTelemetry | null = null
 let bundledLive: BundledLive | null = null
 let bundledViewer: BundledViewer | null = null
 /** The server the open page was loaded for; its preload reads `app.serverUrl` once. */
@@ -220,6 +222,9 @@ async function openNotificationSettings(): Promise<void> {
 }
 
 function registerSession(): void {
+  // The launch gate, update and offline windows use the default session and need no permission; deny by default.
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  session.defaultSession.setPermissionCheckHandler(() => false)
   const appSession = session.fromPartition(PARTITION)
   appSession.setPermissionRequestHandler((contents, permission, callback) => {
     callback(permission === 'clipboard-sanitized-write' && contents !== null && isTrustedFrame(contents.getURL(), PAGE_URL))
@@ -704,12 +709,31 @@ async function start(): Promise<void> {
       const contents = webContents.fromId(owner)
       if (contents && !contents.isDestroyed() && isTrustedFrame(contents.getURL(), PAGE_URL)) contents.send(BUNDLED_IPC.viewerEvent, event)
     })
+    const auth = bundledAuth
+    telemetry = new DesktopTelemetry({
+      key: typeof __MIKKA_POSTHOG_KEY__ === 'string' ? __MIKKA_POSTHOG_KEY__ : '',
+      host: typeof __MIKKA_POSTHOG_HOST__ === 'string' ? __MIKKA_POSTHOG_HOST__ : '',
+      version: APP_VERSION, flavor: FLAVOR,
+      publicSha: typeof __MIKKA_PUBLIC_SHA__ === 'string' ? __MIKKA_PUBLIC_SHA__ : '',
+      overlaySha: typeof __MIKKA_OVERLAY_SHA__ === 'string' ? __MIKKA_OVERLAY_SHA__ : '',
+    }, {
+      userId: () => auth.session()?.user.id ?? null,
+      cloud: () => directory.isCloud(auth.serverUrl()),
+    }, { file: join(app.getPath('userData'), 'telemetry.json'), send: (url, init) => net.fetch(url, init) })
+    const reporter = telemetry
+    process.on('uncaughtExceptionMonitor', error => reporter.mainError(error, 'uncaught_exception'))
+    process.on('unhandledRejection', reason => {
+      console.error('Unhandled rejection in main', reason instanceof Error ? reason.name : typeof reason)
+      reporter.mainError(reason, 'unhandled_rejection')
+    })
+    app.on('render-process-gone', (_event, _contents, details) => reporter.processGone('renderer', details.reason))
+    app.on('child-process-gone', (_event, details) => reporter.processGone(['GPU', 'Utility', 'Zygote', 'Sandbox helper', 'Pepper Plugin'].includes(details.type) ? details.type.toLowerCase().replace(' ', '-') : 'unknown', details.reason))
     registerBundledBridge(bundledAuth, bundledLive, bundledViewer, new BundledServers(bundledAuth, directory, {
       fetch: (url, init) => backend.fetch(url, init),
       appVersion: APP_VERSION,
       enforceMinimum: app.isPackaged && FLAVOR === 'prod',
-    }))
-    session.fromPartition(PARTITION).protocol.handle('mikka', bundledProtocol(join(__dirname, 'renderer'), bundledAuth))
+    }), telemetry)
+    session.fromPartition(PARTITION).protocol.handle('mikka', bundledProtocol(join(__dirname, 'renderer'), bundledAuth, failure => reporter.apiFailure(failure)))
   }
   appSettings = new AppSettings(join(app.getPath('userData'), 'app-settings.json'), {
     loginSupported: process.platform === 'darwin' || process.platform === 'win32',
@@ -800,7 +824,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => { tray?.destroy(); tray = null })
   app.on('before-quit', closeReturnListener)
   app.on('before-quit', () => runActivity?.close())
-  app.on('before-quit', () => { bundledAuth?.dispose(); bundledLive?.closeAll(); bundledViewer?.closeAll() })
+  app.on('before-quit', () => { bundledAuth?.dispose(); bundledLive?.closeAll(); bundledViewer?.closeAll(); void telemetry?.flush() })
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })

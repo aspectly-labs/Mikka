@@ -109,6 +109,24 @@ export const killSwitches = {
   computerTab: 'mikka-computer-tab-off',
 } as const
 
+/** The approval cache's hint to reread the server's personal-writes capability (use-approval-live); the server decides. */
+export const approvalWritesHint = 'mikka-personal-writes-off'
+
+/**
+ * Every flag a client reads to decide what the UI shows. The web asks PostHog
+ * for them in the browser; the desktop renderer, whose CSP has no PostHog
+ * origin, gets them in its bootstrap, evaluated on the server for the same
+ * person (lib/desktop-rpc/features.ts) and read through the same
+ * `postHogFlag` (lib/analytics/posthog.ts). A flag a client reads must be listed
+ * here; nothing else is sent. Security and billing decisions stay on the server.
+ */
+export const CLIENT_FLAG_KEYS: readonly string[] = [
+  ...Object.values(upcomingFeatures).map(feature => feature.key),
+  ...Object.values(gatedFeatures).map(feature => feature.key),
+  ...Object.values(killSwitches),
+  approvalWritesHint,
+]
+
 /** On only when PostHog says exactly true; unloaded, missing or multivariate values stay off. */
 export function gatedFeatureEnabled(remoteValue: boolean | string | undefined) {
   return remoteValue === true
