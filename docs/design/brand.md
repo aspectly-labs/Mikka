@@ -49,8 +49,9 @@ and home-screen assets from `public/`; the app shell declares them under
 ## Sizes
 
 Inside a paid block's logo slot (for example the hosted sign-in card) the
-block's own size and placement win
-([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+mark takes the size and placement of the reference product's sign-in, and the
+block is edited to match
+([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 
 | Placement | Size | Notes |
 | --- | --- | --- |

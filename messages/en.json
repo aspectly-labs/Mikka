@@ -1441,6 +1441,7 @@
       "hidden": "Hidden files",
       "diffViewHint": "How code changes show in a thread",
       "unavailable": "No API for this yet",
+      "saveFailed": "Could not save the setting.",
       "theme_softPurple": "Soft purple",
       "fill": "Background",
       "accent": "Accent",

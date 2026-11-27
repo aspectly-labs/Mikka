@@ -8,10 +8,11 @@ to code: a frame draws the existing component as its code renders it, never
 a look-alike (R-90). `pnpm lint:ui` blocks hand-built UI that a library
 component covers.
 
-Inside a paid block or component (BoardUI Pro, affectUI, beUI Pro, in the
-hosted layer) nothing here replaces its parts: it keeps its own icons,
-avatars, controls and look, and only data and text change
-([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+A paid block or component (BoardUI Pro, affectUI, beUI Pro, in the hosted
+layer) is raw material: its icons, avatars, controls and look are edited in
+its own source to match the reference product, and an element no top product
+has is removed unless Alex approves it by name
+([2026-11-27-1409](decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 
 ## Build selection
 
