@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 import { Pool } from 'pg'
+import { ENVIRONMENT_SCOPE_LIMITS, setLocalLimits } from '../scripts/migration-steps.mjs'
 import { dbUrl, seedUser, seedWorkspace } from './support/workspace-admin-db'
 
 const migration = () => readFile(new URL('../drizzle/20261125223723_environment_scope_and_task_environments.sql', import.meta.url), 'utf8')
@@ -14,6 +15,8 @@ test('the environment migration moves unambiguous Project data onto task 环境 
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    // The backfill runs under the same limits migrate.mjs sets on its workspace connection.
+    await setLocalLimits(client, ENVIRONMENT_SCOPE_LIMITS.migration)
     const db = client as unknown as Pool
     const owner = await seedUser(db, 'environment-migration')
     const workspace = await seedWorkspace(db, owner, [{ userId: owner, role: 'admin' }])
@@ -65,6 +68,8 @@ test('the environment migration moves unambiguous Project data onto task 环境 
     await client.query("SELECT set_config('mikka.shared_project_backfill',$1,true)",[JSON.stringify(sharedProjects)])
     const sql = await migration()
     await client.query(sql)
+    assert.deepEqual((await client.query("SELECT current_setting('lock_timeout') AS lock, current_setting('statement_timeout') AS statement")).rows[0],
+      { lock: '5s', statement: '1min' }, 'the migration ran with bounded lock waits and statements')
     const taskEnvironments = async () => Object.fromEntries((await client.query<{ issueId: string; environmentId: string; updatedBy: string | null }>(
       'SELECT "issueId","environmentId","updatedBy" FROM workspace_task_environments WHERE "workspaceId"=$1', [ws])).rows.map(row => [row.issueId, [row.environmentId, row.updatedBy]]))
     assert.deepEqual(await taskEnvironments(), {
@@ -103,5 +108,31 @@ test('the environment migration moves unambiguous Project data onto task 环境 
   } finally {
     await client.query('ROLLBACK')
     client.release()
+  }
+})
+
+// A long read of workspace_environments must not leave the migration waiting forever for
+// ACCESS EXCLUSIVE, nor a held ACL transaction stay open after the runner goes quiet.
+test('the environment migration gives up on a blocked lock and the ACL hold has an idle bound', { skip: !dbUrl }, async t => {
+  const pool = new Pool({ connectionString: dbUrl, max: 3 })
+  t.after(() => pool.end())
+  const [reader, migrator, acl] = [await pool.connect(), await pool.connect(), await pool.connect()]
+  try {
+    await reader.query('BEGIN')
+    await reader.query('SELECT 1 FROM workspace_environments LIMIT 1')
+    await migrator.query('BEGIN')
+    await setLocalLimits(migrator, ENVIRONMENT_SCOPE_LIMITS.migration)
+    const started = Date.now()
+    await assert.rejects(migrator.query(await migration()), { code: '55P03' }, 'lock_timeout ends the wait behind the reader')
+    assert.ok(Date.now() - started < 30_000)
+    await acl.query('BEGIN')
+    await setLocalLimits(acl, ENVIRONMENT_SCOPE_LIMITS.acl)
+    assert.deepEqual((await acl.query("SELECT current_setting('lock_timeout') AS lock, current_setting('idle_in_transaction_session_timeout') AS idle")).rows[0],
+      { lock: '5s', idle: '15min' })
+    await acl.query('ROLLBACK')
+    assert.equal((await acl.query("SELECT current_setting('idle_in_transaction_session_timeout') AS idle")).rows[0].idle, '0', 'SET LOCAL ends with the transaction')
+  } finally {
+    await Promise.allSettled([reader.query('ROLLBACK'), migrator.query('ROLLBACK')])
+    for (const client of [reader, migrator, acl]) client.release()
   }
 })

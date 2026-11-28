@@ -596,7 +596,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   // A computer grant is used at once: nobody is asked (ADR 2026-11-27-1720).
   // The device's own computer-use setting can still block it.
   const claimedComputer = computer?.permission ?? localComputer?.permission
-  const computerPermission = device.computerUseEnabled === false ? 'deny' as const : claimedComputer
+  // With no computer grant there is no computer to use: the workspace's Block
+  // setting is carried by the grant, so no grant is deny.
+  const computerPermission = device.computerUseEnabled === false ? 'deny' as const : claimedComputer ?? 'deny' as const
   // Computer authority comes from its persisted claim; retain every trusted
   // CLI restriction and its revision when attaching that independent grant.
   const policy = computerPermission
