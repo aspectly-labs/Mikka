@@ -102,7 +102,7 @@ This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.
   `utilities`: a class both apps generate (`hidden`, `md:grid`) keeps this
   app's order. A layer class that must win over one of this app's utilities
   is marked important (`bg-transparent!`). It holds BoardUI's theme tokens and fonts and an `@source` for
-  the layer's paid component files. Because `.hosted-ui` is gitignored, `apps/frontend/scripts/shared-styles.mjs` injects `@source` directives into the checkout's `core/app/globals.css` and `core/renderer/styles.css` for its `core/`, `web/`, `slots/` and `lib/` directories (skipping `.hosted-ui/components` so BoardUI CSS stays in `overlay.css`'s `components` layer). `overlay.css` does not import BoardUI's `globals.css`
+  the layer's paid component files. Because `.hosted-ui` is gitignored, `apps/frontend/scripts/shared-styles.mjs` injects `@source` directives into the checkout's `core/app/globals.css` and `core/renderer/styles.css` for its `core/`, `web/`, `slots/`, `lib/`, `ui/`, `shared/`, `features/` and `routes/` directories (skipping `.hosted-ui/components` so BoardUI CSS stays in `overlay.css`'s `components` layer). `overlay.css` does not import BoardUI's `globals.css`
   base reset or the shadcn block of its `globals.css` (whose tokens share this
   app's names). A few of BoardUI's theme variables share a name with this
   app's (`--font-sans`, `--color-blue-400`); this app's utilities inline their

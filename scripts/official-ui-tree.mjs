@@ -15,6 +15,7 @@ import { officialUiSkip } from './official-ui-requirement.mjs'
 export const repository = process.cwd()
 const configured = process.env.MIKKA_UI_OVERLAY_DIR?.trim()
 const checkout = configured ? resolve(repository, configured) : join(repository, '.hosted-ui')
+export const officialCheckout = existsSync(checkout) ? checkout : null
 export const officialCore = existsSync(join(checkout, 'core')) ? join(checkout, 'core') : null
 // MIKKA_REQUIRE_OFFICIAL_UI=1 applies to this repository only: a policy run in a fixture repository (cwd elsewhere)
 // is expected to have no checkout.
