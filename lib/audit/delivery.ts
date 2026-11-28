@@ -59,6 +59,9 @@ export async function deliverWorkspaceAudits(database: Targets = { main: pool, w
         const receipt = (await source.query<Receipt>(`SELECT id,"workspaceId",payload,"createdAt" FROM workspace_audit_outbox WHERE "deliveredAt" IS NULL
           ORDER BY COALESCE("lastAttemptAt",'epoch'::timestamptz),"createdAt",id LIMIT 1 FOR UPDATE SKIP LOCKED`)).rows[0]
         if (!receipt) { await source.query('COMMIT'); break }
+        // Retention uses the exclusive workspace-store lock. Keep its policy
+        // and the verified target row stable through the separate source ack.
+        await source.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [`mikka-audit-retention:${receipt.workspaceId}`])
         await source.query('UPDATE workspace_audit_outbox SET "lastAttemptAt"=now() WHERE id=$1', [receipt.id])
         try {
           const target = await database.main.connect()
