@@ -5,6 +5,12 @@ import { before, beforeEach, mock, test } from 'node:test'
 // provider token must not fail the run or stop the people after them.
 const NOTION_401 = '{"object":"error","status":401,"code":"unauthorized","message":"API token is invalid.","additional_data":{"reason":"token_invalid"}}'
 const people = ['person-revoked', 'person-ok']
+// A person whose connected-apps read never answers (a stalled provider call or database connection).
+const stalled = new Set<string>()
+const limits: unknown[] = []
+const peopleRows = () => Object.assign(Promise.resolve(people.map(userId => ({ userId }))), {
+  limit: async (count: number) => { limits.push(count); return people.map(userId => ({ userId })) },
+})
 let failure: (userId: string) => string | null = () => null
 const ingested: unknown[][] = []
 const marked: unknown[][] = []
@@ -27,14 +33,14 @@ before(async () => {
   } })
   // Two selects: the people to backfill, then (per person with pages) the suggestions already on file.
   mock.module('@/lib/db', { namedExports: { db: { select: () => ({ from: () => ({
-    orderBy: async () => people.map(userId => ({ userId })),
+    orderBy: peopleRows,
     // where() must stay awaitable rows for the already-on-file read while still chaining orderBy for the people query.
-    where: () => Object.assign(Promise.resolve([]), { orderBy: async () => people.map(userId => ({ userId })) }),
+    where: () => Object.assign(Promise.resolve([]), { orderBy: peopleRows }),
   }) }),
     update: () => ({ set: (value: unknown) => { stamps.push(value as { reconciledAt: unknown }); return { where: async () => [] } } }),
   }, pool: null } })
   mock.module('@/lib/composio', { namedExports: {
-    getComposio: () => ({ connectedAccounts: { list: async ({ userIds }: { userIds: string[] }) => ({ items: [{ id: `acct-${userIds[0]}`, status: 'ACTIVE', isDisabled: false, toolkit: { slug: 'notion' } }], nextCursor: null }) } }),
+    getComposio: () => ({ connectedAccounts: { list: async ({ userIds }: { userIds: string[] }) => stalled.has(userIds[0]) ? new Promise(() => {}) : ({ items: [{ id: `acct-${userIds[0]}`, status: 'ACTIVE', isDisabled: false, toolkit: { slug: 'notion' } }], nextCursor: null }) } }),
     runComposioAction: async (userId: string, action?: string, input?: { page_size?: number; start_cursor?: string }) => {
       const error = failure(userId)
       if (action === 'list_recent_notion_pages') {
@@ -53,7 +59,8 @@ before(async () => {
   reconcile = await import('./reconcile')
 })
 beforeEach(() => {
-  ingested.length = 0; marked.length = 0; cleared.length = 0; notionCalls.length = 0; stamps.length = 0
+  ingested.length = 0; marked.length = 0; cleared.length = 0; notionCalls.length = 0; stamps.length = 0; limits.length = 0
+  stalled.clear()
   for (const key of Object.keys(notionPages)) delete notionPages[key]
   for (const key of Object.keys(failAfter)) delete failAfter[key]
   failure = () => null
@@ -113,6 +120,28 @@ test('the Notion read follows the cursor its first answer gave', async () => {
   const okCalls = notionCalls.filter(call => call.userId === 'person-ok')
   assert.equal(okCalls.length, 2, 'has_more keeps the read going')
   assert.equal(okCalls[1].input.start_cursor, 'cursor-2')
+})
+
+test('one run reads a bounded number of people, least recently checked first', async () => {
+  const result = await reconcile.reconcileSuggestions()
+  assert.deepEqual(limits, [reconcile.PEOPLE_PER_RUN], 'the people read carries a LIMIT')
+  assert.ok(reconcile.PEOPLE_PER_RUN > 0 && reconcile.PEOPLE_PER_RUN <= 200)
+  assert.equal(result.overran, undefined)
+})
+
+test('a pass that never answers does not hold the run past its deadline', async () => {
+  stalled.add('person-revoked')
+  const warnings = mock.method(console, 'warn', () => {})
+  try {
+    const started = Date.now()
+    const result = await reconcile.reconcileSuggestions({ deadline: started + 200 })
+    assert.ok(Date.now() - started < 2_000, 'the run answers at its deadline')
+    assert.equal(result.overran, 1, 'the stalled pass is reported')
+    assert.equal(result.deferred, 1, 'and left for the next run')
+    assert.equal(result.people, 1, 'the other person in the batch still finished')
+    assert.equal(stamps.length, 1, 'only the finished pass was stamped')
+    assert.deepEqual(result.failed, {}, 'stopping at the deadline is not a failed read')
+  } finally { warnings.mock.restore() }
 })
 
 test('needsReconnect recognises refused authorization only', () => {
