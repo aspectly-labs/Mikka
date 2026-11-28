@@ -11,7 +11,7 @@ mock.module('@vercel/oidc', { namedExports: { getVercelOidcToken: async () => {
   return 'test-vercel-oidc-token'
 } } })
 mock.module('@/lib/api-auth', { namedExports: { auth: { api: { getSession: async () => ({ user: { id: 'fixture-user' } }) } } } })
-mock.module('@/lib/request-log', { namedExports: { noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler } })
+mock.module('@/lib/request-log', { namedExports: { noteLogUser: () => {}, noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler } })
 const { GET } = await import('./route')
 
 test('skills catalog requires deployment OIDC and preserves authenticated access', async t => {

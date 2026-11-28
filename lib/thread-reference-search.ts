@@ -44,21 +44,72 @@ async function tasksByCode(reader: IssueReader, workspaceId: string, query: stri
   return rows.rows.map(row => ({ kind: 'task' as const, id: row.id, title: [row.code, row.title].filter(Boolean).join(' ') }))
 }
 
-export async function searchThreadReferences(reader: IssueReader, workspaceId: string, query: string, kind?: ThreadReference['kind']) {
+async function searchDevices(userId: string, needle: string): Promise<ThreadReference[]> {
+  const { rows } = await pool.query<{ id: string; name: string; kind: string }>(
+    `SELECT id, name, kind FROM devices WHERE "ownerId"=$1 AND "removedAt" IS NULL ORDER BY "createdAt" DESC LIMIT 50`,
+    [userId],
+  )
+  return rows
+    .filter(d => !needle || d.name.toLowerCase().replace(/ς/g, 'σ').includes(needle))
+    .slice(0, 8)
+    .map(d => ({ kind: 'device' as const, id: d.id, title: d.name, detail: d.kind }))
+}
+
+async function searchSubagents(userId: string, workspaceId: string, needle: string, runId?: string): Promise<ThreadReference[]> {
+  const { rows } = runId
+    ? await pool.query<{ id: string; name: string | null; title: string | null; status: string }>(
+        `SELECT id, name, title, status FROM agent_runs
+         WHERE "userId"=$1 AND "workspaceId"=$2 AND "parentRunId"=$3 AND "threadRelation"='subagent' AND "deletedAt" IS NULL
+         ORDER BY "createdAt" DESC LIMIT 50`,
+        [userId, workspaceId, runId],
+      )
+    : await pool.query<{ id: string; name: string | null; title: string | null; status: string }>(
+        `SELECT id, name, title, status FROM agent_runs
+         WHERE "userId"=$1 AND "workspaceId"=$2 AND "threadRelation"='subagent' AND "deletedAt" IS NULL
+         ORDER BY "createdAt" DESC LIMIT 50`,
+        [userId, workspaceId],
+      )
+  return rows
+    .map(r => ({ kind: 'subagent' as const, id: r.id, title: r.name || r.title || `Subagent ${r.id.slice(0, 8)}`, detail: r.status }))
+    .filter(r => !needle || r.title.toLowerCase().replace(/ς/g, 'σ').includes(needle))
+    .slice(0, 8)
+}
+
+async function searchPlugins(userId: string, needle: string): Promise<ThreadReference[]> {
+  const { rows } = await pool.query<{ id: string; name: string; slug: string; source: string }>(
+    `SELECT id, name, slug, source FROM personal_skills WHERE user_id=$1 AND enabled=true ORDER BY created_at DESC LIMIT 100`,
+    [userId],
+  ).catch(() => ({ rows: [] as { id: string; name: string; slug: string; source: string }[] }))
+  return rows
+    .filter(p => !needle || p.name.toLowerCase().replace(/ς/g, 'σ').includes(needle) || p.slug.toLowerCase().includes(needle))
+    .slice(0, 8)
+    .map(p => ({ kind: 'plugin' as const, id: p.id, title: p.name, detail: p.slug }))
+}
+
+export async function searchThreadReferences(
+  reader: IssueReader,
+  workspaceId: string,
+  query: string,
+  kind?: ThreadReference['kind'],
+  options?: { runId?: string },
+) {
   const userId = typeof reader === 'string' ? reader : reader.id
+  const needle = query.toLowerCase().replace(/ς/g, 'σ')
   return withTaskWorkspace(reader, workspaceId, async () => {
     // Match names in JS like the other kinds: PostgreSQL's lower() folds final ς differently and would drop hits.
     const botsQuery = db.select({ id: bots.id, name: bots.name }).from(bots)
       .where(and(eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt))).orderBy(asc(bots.createdAt)).$dynamic()
-    const [tasks, coded, threads, prs, botRows] = await Promise.all([
+    const [tasks, coded, threads, prs, botRows, deviceRows, subagentRows, pluginRows] = await Promise.all([
       kind && kind !== 'task' ? null : searchIssues(db, { userId, workspaceId, params: parseSearchParams(new URLSearchParams({ q: query, limit: '8', workspaceId })) }),
       kind && kind !== 'task' ? [] : tasksByCode(reader, workspaceId, query),
       kind && kind !== 'thread' ? null : conversationDirectory(pool, reader, workspaceId, { search: query }),
       kind && kind !== 'pr' ? [] : pullRequests(reader, workspaceId, query),
       // No query needs only the picker's eight; a real query stays uncapped so the filter always precedes any cap.
       kind && kind !== 'bot' ? null : query.trim() ? botsQuery : botsQuery.limit(8),
+      kind && kind !== 'device' ? [] : searchDevices(userId, needle),
+      kind && kind !== 'subagent' ? [] : searchSubagents(userId, workspaceId, needle, options?.runId),
+      kind && kind !== 'plugin' ? [] : searchPlugins(userId, needle),
     ])
-    const needle = query.toLowerCase().replace(/ς/g, 'σ')
     return [
       // A code's matches first, then the title search's; each task once, eight at most.
       ...[...coded, ...tasks?.items.map(item => ({ kind: 'task' as const, id: item.id, title: [item.identifier, item.title].filter(Boolean).join(' ') })) ?? []]
@@ -68,6 +119,9 @@ export async function searchThreadReferences(reader: IssueReader, workspaceId: s
       ...prs,
       ...botRows?.filter(bot => !needle || bot.name.toLowerCase().replace(/ς/g, 'σ').includes(needle)).slice(0, 8)
         .map(bot => ({ kind: 'bot' as const, id: bot.id, title: bot.name })) ?? [],
+      ...deviceRows,
+      ...subagentRows,
+      ...pluginRows,
     ]
   })
 }

@@ -1,6 +1,7 @@
 import 'server-only'
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { pool } from '@/lib/db'
+import { connectForCommitEffects } from '@/lib/db/commit-effects'
 import { readRunChain } from '@/lib/run-chain'
 import { runOutsideToken } from '@/lib/tokens/scope'
 import { runListChanged } from '@/lib/live/lists'
@@ -11,6 +12,10 @@ import { ensureDeviceRepository } from '@/lib/device-repositories'
 import { rebindExecutionDevice, ExecutionIdentityError } from '@/lib/execution-identity'
 import { schedules } from '@/lib/schedules/runtime'
 import type { RequestWorkspaceUser } from '@/lib/request-workspace'
+import type { Pool, PoolClient } from 'pg'
+import { ComputerError, TaskWorkspaceArchiveUnavailable } from './computer/store'
+import { taskProviderUnavailableMessage } from './cloud-computer/task-provider-admission'
+import { workerDefinitionDigest } from './agent-kit/worker-digest'
 
 // #2936 thread lifecycle. A "thread" is its run chain rooted at the root run:
 // every relation column (`parentRunId`, `threadRelation`) anchors to that root so
@@ -60,9 +65,66 @@ const CHAIN_SQL = `WITH RECURSIVE chain AS (SELECT id FROM agent_runs WHERE id=$
 
 async function transcriptExcerpt(sourceRootId: string, limit = 20, cutoff?: string | null): Promise<string> {
   const { rows } = await pool.query(
-    `${CHAIN_SQL} SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3) ORDER BY "createdAt" DESC LIMIT $2`,
+    `${CHAIN_SQL} SELECT text FROM run_messages WHERE "runId" IN (SELECT id FROM chain) AND length(trim(text)) > 0 AND ($3::timestamptz IS NULL OR "createdAt" <= $3) ORDER BY "createdAt" DESC LIMIT $2`,
     [sourceRootId, limit, cutoff ?? null])
   return rows.reverse().map(row => String(row.text)).join('\n')
+}
+
+function isMovedE2BThread(run: Run) {
+  const definition = run.agentDefinition
+  if (definition?.taskCompute?.provider !== 'e2b' || definition.taskMachine) return false
+  const runtime = run.agentDefinition?.executionIdentity?.billingAccount?.runtime
+  return runtime?.kind === 'local_device' && runtime.resourceId === run.deviceId && runtime.ownerId === run.userId
+}
+
+async function cloudThreadBinding(database: Pick<Pool | PoolClient, 'query'>, ownerId: string, source: Run, lock = false) {
+  if (!source.workspaceId || !source.issueId || !source.deviceId || source.agentDefinition?.executor === 'eve_factory') return null
+  const { rows: [binding] } = await database.query<{ botId: string; remoteUrl: string }>(`SELECT b."botId", repo."remoteUrl"
+    FROM computer_run_bindings b JOIN agent_runs r ON r.id=b."runId" AND r."userId"=b."ownerId" AND r."workspaceId"=b."workspaceId"
+    JOIN device_repos repo ON repo.id=r."deviceRepoId" AND repo."userId"=r."userId" AND repo."deviceId"=r."deviceId"
+    JOIN devices d ON d.id=r."deviceId" AND d."ownerId"=r."userId" AND d.kind='cloud'
+    WHERE b."runId"=$1 AND b."ownerId"=$2 AND b."workspaceId"=$3 AND r."issueId"=$4
+      AND r."deletedAt" IS NULL AND repo."remoteUrl" IS NOT NULL${lock ? ' FOR SHARE OF b,r,repo,d' : ''}`, [source.id, ownerId, source.workspaceId, source.issueId])
+  return binding ?? null
+}
+
+async function queueCloudThreadChild(client: PoolClient, ownerId: string, source: Run, input: {
+  root: string; prompt: string; relation: Exclude<ThreadRelation, 'subagent'>; fromMessageId?: string | null
+  dispatchKey: string | null; dispatchFingerprint: string | null
+}): Promise<{ run: Run; replayed: boolean }> {
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`computer-policy:${source.workspaceId}`])
+  const binding = await cloudThreadBinding(client, ownerId, source, true)
+  if (!binding) throw new ComputerError(409, 'Cloud thread authority unavailable')
+  if (input.dispatchKey) {
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`cloud-thread-child:${ownerId}:${input.dispatchKey}`])
+    const { rows: [existing] } = await client.query('SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2',
+      [ownerId, input.dispatchKey])
+    if (existing) {
+      if (existing.dispatchFingerprint !== input.dispatchFingerprint) throw new ThreadSpawnConflictError()
+      return { run: existing, replayed: true }
+    }
+  }
+  const [{ ensureRecordedBotHarnessRuntime }, { threadRunModel }, { queueCloudRun }] = await Promise.all([
+    import('./computer/bot-runtime-records'), import('./computer/run-model'), import('./computer/queue-run'),
+  ])
+  const actor = { userId: ownerId, workspaceId: String(source.workspaceId) }
+  const model = threadRunModel(source.agentDefinition)
+  const harness = source.agentDefinition?.harness
+  if (!model || (harness !== 'codex' && harness !== 'claude_code')) throw new ComputerError(409, 'Cloud thread model unavailable')
+  const runtime = await ensureRecordedBotHarnessRuntime(client, actor, binding.botId, harness, { freshTask: true })
+  if (!runtime) throw new ComputerError(409, 'Cloud thread runtime unavailable')
+  const repo = await ensureDeviceRepository(ownerId, runtime.deviceId, binding.remoteUrl, client)
+  const { runId } = await queueCloudRun(pool, actor, {
+    ...model,
+    botId: binding.botId, issueId: source.issueId, agentId: runtime.agentId, deviceRepoId: repo.id,
+    title: '', body: '', forkPrompt: input.prompt, readOnly: source.agentDefinition?.readOnly,
+    withoutBot: source.botId === null, threadRunId: source.id, origin: 'web',
+  }, client)
+  const { rows: [run] } = await client.query(`UPDATE agent_runs SET kind=$2,"parentRunId"=$3,"threadRelation"=$4,"sourceMessageId"=$5,
+    "dispatchKey"=$6,"dispatchFingerprint"=$7 WHERE id=$1 RETURNING *`,
+  [runId, source.kind, input.root, input.relation, input.fromMessageId ?? null, input.dispatchKey, input.dispatchFingerprint])
+  if (!run) throw new ComputerError(409, 'Cloud thread admission unavailable')
+  return { run, replayed: false }
 }
 
 /** Spawn a child thread off a run. `fork` seeds the prompt with the transcript
@@ -70,7 +132,7 @@ async function transcriptExcerpt(sourceRootId: string, limit = 20, cutoff?: stri
  * keeps the excerpt small. The run insert and bounded history copy commit in
  * one transaction so workers never claim a half-copied thread. */
 export async function spawnThread(user: ApiUser, runId: string, input: {
-  relation: Exclude<ThreadRelation, 'subagent'>, mode?: 'full' | 'summary', fromMessageId?: string | null, idempotencyKey?: string | null,
+  relation: Exclude<ThreadRelation, 'subagent'>, mode?: 'full' | 'summary', fromMessageId?: string | null, idempotencyKey?: string | null, question?: string | null,
 }): Promise<Run | null> {
   const source = await ownedRun(user, runId)
   if (!source) return null
@@ -79,8 +141,9 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   const relation = input.relation
   const normalizedKey = input.idempotencyKey?.trim() || null
   const dispatchKey = normalizedKey ? `thread_spawn:${relation}:${normalizedKey}` : null
+  const trimmedQuestion = input.question?.trim() || null
   const dispatchFingerprint = dispatchKey
-    ? createHash('sha256').update(JSON.stringify({ root, sourceRunId: source.id, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null })).digest('hex')
+    ? createHash('sha256').update(JSON.stringify({ root, sourceRunId: source.id, relation, mode: relation === 'fork' ? (input.mode ?? 'full') : null, fromMessageId: input.fromMessageId ?? null, ...(trimmedQuestion ? { question: trimmedQuestion } : {}) })).digest('hex')
     : null
   // `fromMessageId` is the branch point: nothing after it joins the copy or the prompt.
   let cutoff: string | null = null
@@ -91,96 +154,137 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
   }
   // A full replay also carries the person's follow-up inputs, not just the first prompt.
   const replay = relation === 'fork' && input.mode !== 'summary' ? (await transcriptExcerpt(root, 50, cutoff)).slice(0, 8000) : ''
+  const sideQuestion = relation === 'side' ? input.question?.trim() : ''
   const prompt = relation === 'fork' && input.mode !== 'summary'
     ? `${source.prompt}${replay ? `\n\n${replay}` : ''}`
-    : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20, cutoff)).slice(0, 6000)}`
-  const id = randomUUID()
-  let run: Run | undefined
-  let replayed = false
-  let inTx = false
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    inTx = true
-    if (dispatchKey) {
-      const { rows: [inserted] } = await client.query(
-        `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin,"dispatchKey","dispatchFingerprint")
-         SELECT $1,${RUN_COPY_COLUMNS},'queued',$3,$4,$5,$6,now(),now()+interval '60 seconds','web',$7,$8 FROM agent_runs WHERE id=$2
-         ON CONFLICT ("userId", "dispatchKey") WHERE "dispatchKey" IS NOT NULL DO NOTHING
-         RETURNING *`,
-        [id, root, prompt, root, relation, input.fromMessageId ?? null, dispatchKey, dispatchFingerprint])
-      if (inserted) {
-        run = inserted
-      } else {
-        const { rows: [existing] } = await client.query(
-          `SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2 LIMIT 1`,
-          [user.id, dispatchKey])
-        if (existing) {
-          if (existing.dispatchFingerprint !== dispatchFingerprint) {
-            throw new ThreadSpawnConflictError()
+    : sideQuestion
+      ? `Side question on "${source.title ?? 'untitled thread'}" (do not alter the main thread's task state; answer concisely):\n\nQuestion: ${sideQuestion}\n\nRecent context:\n${(await transcriptExcerpt(root, 8, cutoff)).slice(0, 6000)}`
+      : `Thread forked from "${source.title ?? 'untitled thread'}"${relation === 'side' && input.fromMessageId ? ' at a message' : ''}:\n\n${(await transcriptExcerpt(root, relation === 'side' ? 5 : 20, cutoff)).slice(0, 6000)}`
+  const cloudChild = Boolean(await cloudThreadBinding(pool, user.id, source))
+  if (!cloudChild && (source.agentDefinition?.taskCompute || source.agentDefinition?.taskMachine) &&
+      source.agentDefinition?.executor !== 'eve_factory' && !isMovedE2BThread(source))
+    throw new ComputerError(409, 'Cloud thread authority unavailable')
+
+  const writeChild = async (): Promise<{ run: Run; replayed: boolean } | null> => {
+    const id = randomUUID()
+    let run: Run | undefined
+    let replayed = false
+    let inTx = false
+    const client = await connectForCommitEffects(pool)
+    try {
+      await client.query('BEGIN')
+      inTx = true
+      if (cloudChild) {
+        ({ run, replayed } = await queueCloudThreadChild(client, user.id, source, { root, prompt, relation, fromMessageId: input.fromMessageId, dispatchKey, dispatchFingerprint }))
+      } else if (dispatchKey) {
+        const { rows: [inserted] } = await client.query(
+          `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin,"dispatchKey","dispatchFingerprint")
+           SELECT $1,${RUN_COPY_COLUMNS},'queued',$3,$4,$5,$6,now(),now()+interval '60 seconds','web',$7,$8 FROM agent_runs WHERE id=$2
+           ON CONFLICT ("userId", "dispatchKey") WHERE "dispatchKey" IS NOT NULL DO NOTHING
+           RETURNING *`,
+          [id, root, prompt, root, relation, input.fromMessageId ?? null, dispatchKey, dispatchFingerprint])
+        if (inserted) {
+          run = inserted
+        } else {
+          const { rows: [existing] } = await client.query(
+            `SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2 LIMIT 1`,
+            [user.id, dispatchKey])
+          if (existing) {
+            if (existing.dispatchFingerprint !== dispatchFingerprint) {
+              throw new ThreadSpawnConflictError()
+            }
+            run = existing
+            replayed = true
           }
-          run = existing
-          replayed = true
         }
+      } else {
+        const { rows: [inserted] } = await client.query(
+          `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin)
+           SELECT $1,${RUN_COPY_COLUMNS},'queued',$3,$4,$5,$6,now(),now()+interval '60 seconds','web' FROM agent_runs WHERE id=$2 RETURNING *`,
+          [id, root, prompt, root, relation, input.fromMessageId ?? null])
+        run = inserted
       }
-    } else {
-      const { rows: [inserted] } = await client.query(
-        `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin)
-         SELECT $1,${RUN_COPY_COLUMNS},'queued',$3,$4,$5,$6,now(),now()+interval '60 seconds','web' FROM agent_runs WHERE id=$2 RETURNING *`,
-        [id, root, prompt, root, relation, input.fromMessageId ?? null])
-      run = inserted
-    }
-    if (!run) {
-      await client.query('ROLLBACK')
+      if (!run) {
+        await client.query('ROLLBACK')
+        inTx = false
+        return null
+      }
+      // A terminal cloud thread can be explicitly moved to a local device.
+      // Its old provider remains historical evidence. The new local child has no cloud SKU.
+      if (!replayed && !cloudChild && isMovedE2BThread(run)) {
+        const definition = { ...run.agentDefinition }
+        delete definition.taskCompute
+        definition.definitionDigest = workerDefinitionDigest(definition)
+        await client.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [run.id, JSON.stringify(definition)])
+        run.agentDefinition = definition
+      }
+      // A full fork replays the bounded newest transcript up to `fromMessageId`
+      // (or all of it) inside the same transaction so workers never claim a
+      // half-copied run.
+      if (!replayed && relation === 'fork' && input.mode !== 'summary') {
+        await client.query(
+          `${CHAIN_SQL}, picked AS (
+             SELECT "userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt" FROM run_messages
+             WHERE "runId" IN (SELECT id FROM chain)
+               AND length(trim(text)) > 0
+               AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
+             ORDER BY "createdAt" DESC LIMIT $4
+           )
+           INSERT INTO run_messages(id,"runId","userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt")
+           SELECT gen_random_uuid(),$2,"userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt"
+           FROM picked ORDER BY "createdAt"`,
+          [root, run.id, cutoff, SPAWN_MESSAGE_COPY_LIMIT])
+        // The agent's own answers and tool calls live in the chunk stream; copy it
+        // too. Negative seqs keep history ordered without colliding with the
+        // sequence numbers the child's own writer assigns (onConflictDoNothing
+        // would silently drop new replies at copied seqs). `cutoff` bounds history
+        // at the selected message.
+        await client.query(
+          `${CHAIN_SQL}, picked AS (
+             SELECT seq,chunk,"createdAt" FROM run_chunks
+             WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
+             ORDER BY "createdAt" DESC,seq DESC LIMIT $4
+           )
+           INSERT INTO run_chunks(id,"runId",seq,chunk,"createdAt")
+           SELECT gen_random_uuid(),$2,-ROW_NUMBER() OVER (ORDER BY "createdAt" DESC,seq DESC),chunk,"createdAt"
+           FROM picked ORDER BY "createdAt",seq`,
+          [root, run.id, cutoff, SPAWN_CHUNK_COPY_LIMIT])
+      }
+      await client.query('COMMIT')
       inTx = false
-      return null
+      return { run, replayed }
+    } catch (error) {
+      if (inTx) await client.query('ROLLBACK').catch(() => {})
+      throw error
+    } finally {
+      client.release()
     }
-    // A full fork replays the bounded newest transcript up to `fromMessageId`
-    // (or all of it) inside the same transaction so workers never claim a
-    // half-copied run.
-    if (!replayed && relation === 'fork' && input.mode !== 'summary') {
-      await client.query(
-        `${CHAIN_SQL}, picked AS (
-           SELECT "userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt" FROM run_messages
-           WHERE "runId" IN (SELECT id FROM chain)
-             AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
-           ORDER BY "createdAt" DESC LIMIT $4
-         )
-         INSERT INTO run_messages(id,"runId","userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt")
-         SELECT gen_random_uuid(),$2,"userId",text,origin,"mailboxWakeDepth","deliveredAt","createdAt"
-         FROM picked ORDER BY "createdAt"`,
-        [root, id, cutoff, SPAWN_MESSAGE_COPY_LIMIT])
-      // The agent's own answers and tool calls live in the chunk stream; copy it
-      // too. Negative seqs keep history ordered without colliding with the
-      // sequence numbers the child's own writer assigns (onConflictDoNothing
-      // would silently drop new replies at copied seqs). `cutoff` bounds history
-      // at the selected message.
-      await client.query(
-        `${CHAIN_SQL}, picked AS (
-           SELECT seq,chunk,"createdAt" FROM run_chunks
-           WHERE "runId" IN (SELECT id FROM chain) AND ($3::timestamptz IS NULL OR "createdAt" <= $3)
-           ORDER BY "createdAt" DESC,seq DESC LIMIT $4
-         )
-         INSERT INTO run_chunks(id,"runId",seq,chunk,"createdAt")
-         SELECT gen_random_uuid(),$2,-ROW_NUMBER() OVER (ORDER BY "createdAt" DESC,seq DESC),chunk,"createdAt"
-         FROM picked ORDER BY "createdAt",seq`,
-        [root, id, cutoff, SPAWN_CHUNK_COPY_LIMIT])
-    }
-    await client.query('COMMIT')
-    inTx = false
-  } catch (error) {
-    if (inTx) await client.query('ROLLBACK').catch(() => {})
-    throw error
-  } finally {
-    client.release()
   }
-  if (replayed) return run
+  // Project resources must stay admitted through the child and transcript commit.
+  const result = cloudChild
+    ? await (await import('./project-resources/store')).withProjectResourceLease(user.id, String(source.workspaceId), writeChild)
+    : await writeChild()
+  if (!result) return null
+  const { run, replayed } = result
+  if (replayed) {
+    const provider = run.agentDefinition?.taskCompute?.provider
+    if (provider && run.status === 'failed' && run.error === taskProviderUnavailableMessage(provider))
+      throw new ComputerError(503, run.error)
+    if (run.status === 'failed' && run.error === TaskWorkspaceArchiveUnavailable.code) throw new TaskWorkspaceArchiveUnavailable()
+    return run
+  }
   // Wake the child's execution: a device run pings its device; a cloud run gets a machine claim.
-  if (run.deviceId) notifyDeviceWork(String(run.deviceId))
-  else if (run.workspaceId) {
+  if (run.workspaceId && (cloudChild || !run.deviceId)) {
     const { startThreadMachine } = await import('@/lib/run-leases')
-    await startThreadMachine({ userId: user.id, workspaceId: String(run.workspaceId) }, String(run.id)).catch(() => undefined)
-  }
+    const started = await startThreadMachine({ userId: user.id, workspaceId: String(run.workspaceId) }, String(run.id))
+    if (started?.state === 'unavailable' && started.reason === 'provider_unavailable') {
+      throw new ComputerError(503, taskProviderUnavailableMessage(started.provider))
+    }
+    if (started?.state === 'unavailable' && started.reason === 'archive_unavailable') throw new TaskWorkspaceArchiveUnavailable()
+    if (started?.state === 'unavailable' && started.reason === 'startup_failed') throw new ComputerError(503, 'Cloud computer task unavailable')
+    if (started?.state === 'unavailable' && started.reason === 'billing_refused')
+      throw new ComputerError(started.code === 'points_exhausted' ? 402 : 409, started.code)
+  } else if (run.deviceId) notifyDeviceWork(String(run.deviceId))
   await runListChanged(pool, String(run.id)); await runChanged(pool, String(run.id))
   return run
 }
@@ -225,15 +329,15 @@ export async function sharedThread(token: string): Promise<Run | null> {
      JOIN agent_runs r ON r.id=s."runId" WHERE s."tokenHash"=$1 AND s."revokedAt" IS NULL AND r."deletedAt" IS NULL`, [hashToken(token)])
   if (!run) return null
   const { rows: messages } = await pool.query(
-    `${CHAIN_SQL} SELECT id,text,origin,"createdAt" FROM run_messages WHERE "runId" IN (SELECT id FROM chain) ORDER BY "createdAt" LIMIT 200`, [run.id])
+    `${CHAIN_SQL} SELECT id,text,origin,"createdAt" FROM run_messages WHERE "runId" IN (SELECT id FROM chain) AND length(trim(text)) > 0 ORDER BY "createdAt" LIMIT 200`, [run.id])
   return { ...run, messages }
 }
 
 const QUESTION_ORIGIN_SQL = `(CASE WHEN r."questionContinuation"->>'originRunId' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN (r."questionContinuation"->>'originRunId')::uuid END)`
 const LOCKED_FACTORY_PREDICATE = `(a.stage IN ('review','verify','monitor') OR (t."attemptId"=a.id AND (a.status IN ('pending','running','waiting') OR t.status IN ('pending','running','waiting'))))`
 
-/** PATCH: retarget the thread's task and/or its tags (on the root the lists read). */
-export async function patchThread(user: ApiUser, runId: string, input: { taskId?: string | null, tags?: string[] }): Promise<Run | null | 'forbidden'> {
+/** PATCH: retarget the thread's task, tags, and/or folder (on the root the lists read). */
+export async function patchThread(user: ApiUser, runId: string, input: { taskId?: string | null, tags?: string[], folder?: string | null }): Promise<Run | null | 'forbidden'> {
   const source = await ownedRun(user, runId)
   if (!source) return null
   const chain = await readRunChain(pool, user.id, runId)
@@ -275,7 +379,16 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
     }
   }
   if (input.tags !== undefined && (!Array.isArray(input.tags) || input.tags.length > 20 || input.tags.some(tag => typeof tag !== 'string' || tag.length > 60))) return null
-  if (input.taskId === undefined && input.tags === undefined) return source
+  let normalizedFolder: string | null | undefined
+  if (input.folder !== undefined) {
+    if (input.folder === null) normalizedFolder = null
+    else if (typeof input.folder === 'string') {
+      const cleaned = input.folder.normalize('NFC').replace(/\s+/g, ' ').trim()
+      if ([...cleaned].length > 60) return null
+      normalizedFolder = cleaned || null
+    } else return null
+  }
+  if (input.taskId === undefined && input.tags === undefined && input.folder === undefined) return source
   // Task retarget discovers the scoped chain inside the mutation statement so
   // concurrent retries/continuations/question-resumes move with the root
   // instead of splitting. Re-check Factory lock atomically and keep the root
@@ -314,6 +427,8 @@ export async function patchThread(user: ApiUser, runId: string, input: { taskId?
   }
   if (input.tags !== undefined)
     await pool.query(`UPDATE agent_runs SET tags=$2::jsonb WHERE id=$1 AND "userId"=$3`, [root, JSON.stringify(input.tags), user.id])
+  if (input.folder !== undefined)
+    await pool.query(`UPDATE agent_runs SET folder=$2 WHERE id=$1 AND "userId"=$3`, [root, normalizedFolder ?? null, user.id])
   await runListChanged(pool, root); await runChanged(pool, root)
   if (input.taskId !== undefined && previousIssueId && previousIssueId !== input.taskId)
     await issueThreadsChanged(pool, previousIssueId)

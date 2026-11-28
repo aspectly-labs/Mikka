@@ -1,8 +1,9 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { readEnv } from '../env/server'
 
 type Coordinates = { installationId: string; linkId: string; teamId: string; slackUserId: string }
 /** A product-tool JWT alone cannot request the native Slack transport's credential. */
-export function slackGrantProof(auth: string, grant: Coordinates, secret = process.env.BETTER_AUTH_SECRET) {
+export function slackGrantProof(auth: string, grant: Coordinates, secret = readEnv('BETTER_AUTH_SECRET')) {
   if (!secret || secret.length < 32) throw new Error('slackUnavailable')
   return createHmac('sha256', secret)
     .update(

@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterCommit, hasCommitEffect } from '../db/commit-effects'
 import { liveGatewayConfig, type LiveScope } from './scope'
 import type { LiveInvalidation } from './events'
@@ -47,7 +48,7 @@ async function sender(database: Database, target: Target) {
 }
 
 async function changed(tx: PoolClient, database: Database, target: Target, key: string) {
-  if (!liveGatewayConfig(process.env) || hasCommitEffect(tx, key)) return
+  if (!liveGatewayConfig(runtimeEnv()) || hasCommitEffect(tx, key)) return
   afterCommit(tx, key, await sender(database, target))
 }
 
@@ -62,6 +63,6 @@ export const computerWorkspaceChanged = (tx: PoolClient, database: Database, wor
 
 /** Only for a provider reconciliation whose guarded UPDATE already committed. */
 export async function machineCommitted(database: Database, ownerId: string, workspaceId: string) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   ;(await sender(database, { ownerId, workspaceId }))()
 }

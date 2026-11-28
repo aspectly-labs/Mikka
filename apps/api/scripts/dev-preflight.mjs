@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import pg from 'pg'
+import { runtimeEnv } from '../../../lib/env/runtime.mjs'
 
 /**
  * `pnpm dev` is the one command a developer should need. Two things used to be
@@ -69,7 +70,7 @@ function migrated(databaseUrl) {
 function migrate(root, databaseUrl) {
   execFileSync(process.execPath, ['scripts/migrate.mjs'], {
     cwd: root, stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: databaseUrl, MIKKA_DATABASE_URL: databaseUrl, MIGRATE: '1' },
+    env: { ...runtimeEnv(), DATABASE_URL: databaseUrl, MIKKA_DATABASE_URL: databaseUrl, MIGRATE: '1' },
   })
 }
 
@@ -78,7 +79,7 @@ function migrate(root, databaseUrl) {
  * process gets. Throws a readable error instead of letting the first request
  * fail: an unreachable local PostgreSQL, or a database URL that is not loopback.
  */
-export async function prepareDevelopment({ root, env = process.env, log = () => {} } = {}) {
+export async function prepareDevelopment({ root, env = runtimeEnv(), log = () => {} } = {}) {
   const configured = configuredDatabase(env)
   const databaseUrl = configured?.url ?? DEFAULT_DEVELOPMENT_DATABASE
   // A URL the developer named is theirs: migrate it, but say out loud that it is

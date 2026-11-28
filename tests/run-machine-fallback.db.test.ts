@@ -19,6 +19,12 @@ import { threadPromptView } from '../lib/thread-prompt'
 const mac = [{ harness: 'codex', installed: true, subscriptionBroker: true, modelSlots: [{ slot: 'gpt-5', model: 'gpt-5', name: 'gpt-5' }] }]
 
 test('run machine fallback: 本地 a computer that takes part, 云端 own E2B, else an actionable error', { skip: !dbUrl }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+  })
   process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1'
   process.env.MIKKA_BYOS_ENABLED = '1'
   const restoreModels = templateModelsFixture()

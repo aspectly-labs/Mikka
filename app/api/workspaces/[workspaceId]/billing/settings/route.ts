@@ -1,31 +1,47 @@
-import { freshSessionRoute } from '@/lib/fresh-session'
-import { withRequestLog } from '@/lib/request-log'
 import { apiWorkspaceAllowed } from '@/lib/api-auth'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { WorkspaceError } from '@/lib/workspace-access'
-import { readWorkspaceBillingSettings, writeWorkspaceAutoRecharge } from '@/lib/billing/settings'
+import { readWorkspaceBillingSettings, writeWorkspaceAutoRecharge, writeWorkspaceOveragePolicy } from '@/lib/billing/settings'
 import { readRequiredJsonBody, requireDeviceApiSession, wsGJsonResponse } from '@/lib/settings/device-policy-http'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-type RouteContext = { params: Promise<{ workspaceId: string }> }
+export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/billing/settings',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId: ({ params }) => params.workspaceId,
+    freshSession: true,
+  },
+  ({ request, params, session }) =>
+    wsGJsonResponse(async () => {
+      const verified = await requireDeviceApiSession(request, false, session)
+      if (!apiWorkspaceAllowed(verified, params.workspaceId)) throw new WorkspaceError('workspaceAccessDenied')
+      return readWorkspaceBillingSettings(verified.user.id, params.workspaceId, verified.user[enterprisePrincipal])
+    }),
+)
 
-export const GET = freshSessionRoute(withRequestLog('/api/workspaces/[workspaceId]/billing/settings', async (request: Request, context: RouteContext) =>
+const mutateSpec = {
+  route: '/api/workspaces/[workspaceId]/billing/settings',
+  auth: 'session',
+  origin: 'same-origin-or-desktop',
+  workspace: 'pat-scoped',
+  workspaceId: ({ params }: { params: { workspaceId: string } }) => params.workspaceId,
+  freshSession: true,
+} as const
+
+const mutateHandler = ({ request, params, session }: { request: Request; params: { workspaceId: string }; session: Parameters<typeof apiWorkspaceAllowed>[0] }) =>
   wsGJsonResponse(async () => {
-    const session = await requireDeviceApiSession(request, false)
-    const { workspaceId } = await context.params
-    if (!apiWorkspaceAllowed(session, workspaceId)) throw new WorkspaceError('workspaceAccessDenied')
-    return readWorkspaceBillingSettings(session.user.id, workspaceId, session.user[enterprisePrincipal])
-  }),
-))
-
-const mutate = freshSessionRoute(withRequestLog('/api/workspaces/[workspaceId]/billing/settings', async (request: Request, context: RouteContext) =>
-  wsGJsonResponse(async () => {
-    const session = await requireDeviceApiSession(request, true)
-    const { workspaceId } = await context.params
-    if (!apiWorkspaceAllowed(session, workspaceId)) throw new WorkspaceError('workspaceAccessDenied')
+    const verified = await requireDeviceApiSession(request, true, session)
+    if (!apiWorkspaceAllowed(verified, params.workspaceId)) throw new WorkspaceError('workspaceAccessDenied')
     const body = await readRequiredJsonBody(request)
-    return writeWorkspaceAutoRecharge(session.user.id, workspaceId, body, session.user[enterprisePrincipal])
-  }),
-))
+    if (body && typeof body === 'object' && !Array.isArray(body) && 'overage' in body && Object.keys(body).length === 1) {
+      return writeWorkspaceOveragePolicy(verified.user.id, params.workspaceId, (body as { overage: unknown }).overage, verified.user[enterprisePrincipal])
+    }
+    return writeWorkspaceAutoRecharge(verified.user.id, params.workspaceId, body, verified.user[enterprisePrincipal])
+  })
 
-export const PUT = mutate
-export const PATCH = mutate
+export const PUT = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(mutateSpec, mutateHandler)
+
+export const PATCH = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(mutateSpec, mutateHandler)

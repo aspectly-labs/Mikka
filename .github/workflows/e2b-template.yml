@@ -21,6 +21,7 @@ on:
 permissions:
   contents: read
 env:
+  MIKKA_E2B_CONFIRMED_MEMORY_GIB: ${{ vars.MIKKA_E2B_CONFIRMED_MEMORY_GIB }}
   MIKKA_RUNTIME_SOURCE: ${{ inputs.source_sha }}
 jobs:
   build:
@@ -67,6 +68,7 @@ jobs:
           name="mikka-${MIKKA_RUNTIME_SOURCE::12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           "$RUNNER_TEMP/e2b/bin/python" scripts/e2b/build-template.py --name "$name" --source-ref "$MIKKA_RUNTIME_SOURCE" --json > "$RUNNER_TEMP/candidates.json"
           node --input-type=module - "$RUNNER_TEMP/candidates.json" <<'JS'
+          import { releaseTemplateRows } from './scripts/e2b/machine-variants.mjs'
           import { readFileSync, appendFileSync } from 'node:fs'
           import { assertReportIdentity, cleanupIdentity, reportDigest, reportStep, templateModelsDigest } from './scripts/e2b/runtime-report.mjs'
           reportStep(() => {
@@ -74,11 +76,11 @@ jobs:
             const expected = { sourceCommit: process.env.MIKKA_RUNTIME_SOURCE, workerSha: report.workerSha,
               runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT }
             assertReportIdentity(report, expected)
-            for (const kind of ['desktop', 'claude', 'codex']) {
-              const row = report.templates[kind], proof = row.conservation
+            for (const { kind, suffix, row } of releaseTemplateRows(report)) {
+              const proof = row.conservation
               if (row.baseTemplate !== kind || row.preinstalled !== true || !row.buildId || !Array.isArray(row.models)
                 || !proof?.before?.entries || JSON.stringify(proof.before) !== JSON.stringify(proof.after)) throw Error('runtime_report_preservation_invalid')
-              console.log(`${kind}: ${proof.before.entries} preserved entries, manifest ${proof.before.sha256}`)
+              console.log(`${suffix}: ${proof.before.entries} preserved entries, manifest ${proof.before.sha256}`)
             }
             appendFileSync(process.env.GITHUB_OUTPUT, `source-sha=${report.workerSha}\ntemplate-models-sha256=${templateModelsDigest(report)}\ncandidate-sha256=${reportDigest(bytes)}\ncandidate-identities=${cleanupIdentity(report, expected)}\n`)
           })

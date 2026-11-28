@@ -106,7 +106,7 @@ test('Mikka 默认 out of points and no model for threads: says so with the card
   await passAll('points', async () => trial('在 alexj11324/Mikka 修复登录页的类型错误', await facts({ order: { location: 'local', entries: [], credentials: [] }, hosted: 'points_exhausted' })), ({ reply }) => {
     if (!reply.trim()) return 'silent'
     if (/已(经)?(派|开始|在跑)|is running|started/.test(reply)) return 'claimed it runs'
-    if (!/BeQuestions|模型与订阅|订阅|Key/.test(reply)) return 'no way on (card, subscription or key)'
+    if (!/模型与订阅|订阅|Key|云端|电脑/.test(reply)) return 'no way on (subscription, key or computer)'
     return null
   })
 })
@@ -132,7 +132,7 @@ test('watching a front-end test uses the Bot computer; a code fix goes to an Age
 
 test('a repository that does not exist: asking is right (negative case)', { skip }, async () => {
   results = { getIssue: { id: ISSUE, title: '加 README' }, findRepository: { match: 'none', card: notFoundCard }, dispatchRun: { error: 'repositoryNotFound', card: notFoundCard } }
-  await passAll('not found', async () => trial('在 Mikka_tset 里加一个 README', await facts()), ({ reply }) => /BeQuestions/.test(reply) ? null : 'did not draw the card')
+  await passAll('not found', async () => trial('在 Mikka_tset 里加一个 README', await facts()), ({ reply }) => /找不到|未找到|没有找到|授权|not found|GitHub/i.test(reply) ? null : 'did not report missing repository')
 })
 
 test('more work on a task stays in its thread; a new one only when the person asks', { skip }, async () => {
@@ -209,7 +209,7 @@ for (const item of siteCases) {
       const dispatched = calls.filter(call => call.step === 'dispatchRun' && repoOf(call))
       if (dispatched.some(call => named(repoOf(call), item.family.app))) return `dispatched to the app repository ${item.family.app}`
       if (dispatched.some(call => named(repoOf(call), item.family.site))) return null
-      return /BeQuestions/.test(reply) ? null : 'neither the site repository nor a question'
+      return /[？?]/.test(reply) ? null : 'neither the site repository nor a question'
     })
   })
 }
@@ -278,6 +278,6 @@ test('「Octo 官网的导航栏在手机上错位了」 with the authorized lis
     const dispatched = calls.filter(call => call.step === 'dispatchRun' && repoOf(call))
     if (dispatched.some(call => named(repoOf(call), 'octo/octo'))) return 'dispatched to the app repository'
     if (dispatched.some(call => named(repoOf(call), 'octo/octo-web'))) return null
-    return /BeQuestions/.test(reply) ? null : 'neither octo-web nor a question'
+    return /[？?]/.test(reply) ? null : 'neither octo-web nor a question'
   })
 })

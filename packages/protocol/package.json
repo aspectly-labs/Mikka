@@ -69,6 +69,7 @@
     "./collab": "./src/collab.ts",
     "./artifact-frame": "./src/artifact-frame.ts",
     "./artifact-share": "./src/artifact-share.ts",
+    "./open-artifact": "./src/open-artifact.ts",
     "./coordinator": "./src/coordinator.ts",
     "./computer": "./src/computer.ts",
     "./subscription": "./src/subscription.ts",
@@ -76,7 +77,8 @@
     "./subagent": "./src/subagent.ts",
     "./trace-context": "./src/trace-context.ts",
     "./tracing": "./src/tracing.ts",
-    "./codex-startup": "./src/codex-startup.ts"
+    "./codex-startup": "./src/codex-startup.ts",
+    "./slash-commands": "./src/slash-commands.ts"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.json",

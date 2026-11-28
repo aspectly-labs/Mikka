@@ -11,17 +11,23 @@ import { profileSkillRunReportSchema } from "./skill"
 import { providerFailureSchema } from "./provider-failure"
 import { runFailureSchema } from "./run-failure"
 
+/** What an agent's question is about. There is no `permission` kind: agents
+ * never ask a human for permission (ADR 2026-11-27-1615). */
 export const RUN_QUESTION_KINDS = [
   "context",
   "decision",
-  "permission",
   "external",
 ] as const
+/** A question stored before ADR 2026-11-27-1615 may carry kind `permission`;
+ * it reads back as an ordinary `decision`. Nothing writes it any more. */
+const runQuestionKind = z
+  .enum([...RUN_QUESTION_KINDS, "permission"])
+  .transform((kind): (typeof RUN_QUESTION_KINDS)[number] => kind === "permission" ? "decision" : kind)
 export const runQuestion = z
   .object({
     questionId: z.uuid(),
     purpose: z.literal("verification_command").optional(),
-    kind: z.enum(RUN_QUESTION_KINDS).default("decision"),
+    kind: runQuestionKind.default("decision"),
     question: z.string().trim().min(1).max(4000),
     context: z.string().trim().max(4000).optional(),
     options: z.array(z.string().trim().min(1).max(4000)).max(20).default([]),

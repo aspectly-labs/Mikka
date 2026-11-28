@@ -25,7 +25,7 @@ async function moduleFrom({ entry, source, plugins = [], defines = {} }) {
 async function browser(callback) {
   const window = new Window({ url: 'mikka://app/mikka/en' })
   const saved = new Map()
-  for (const key of ['window', 'document', 'Event', 'MessageEvent', 'CloseEvent']) {
+  for (const key of ['window', 'document', 'Element', 'HTMLElement', 'Node', 'Event', 'MessageEvent', 'CloseEvent']) {
     saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key))
     Object.defineProperty(globalThis, key, { value: key === 'window' ? window : key === 'document' ? window.document : window[key], configurable: true, writable: true })
   }
@@ -121,6 +121,25 @@ test('RPC sends only the versioned local envelope and preserves shared cache acc
   globalThis.fetch = async () => Response.json({ version: 1, ok: false, error: { code: 'not_found' } }, { status: 404 })
   await assert.rejects(api.callAction('module.action', []), error => error.status === 404 && api.readAccessFailure(error) === 'resource')
   globalThis.fetch = async () => new Response('', { status: 401 })
+  await assert.rejects(api.callAction('module.action', []), error => error.code === 'desktop_session_expired' && error.status === 401 && api.readAccessFailure(error) === 'session')
+  assert.equal(api.getTransportState(), 'unauthenticated')
+}))
+
+test('a 401 main re-checked against a live session is a refused operation, not an expiry', () => browser(async () => {
+  const api = await moduleFrom({ source: `export { callAction } from ${JSON.stringify(join(renderer, 'rpc.ts'))}; export { getTransportState } from ${JSON.stringify(join(renderer, 'transport-state.ts'))}; export { readAccessFailure } from '@/lib/swr/persistent-cache';` })
+  let writes = 0
+  globalThis.fetch = async () => Response.json({ version: 1, ok: true, result: null })
+  await api.callAction('module.action', [])
+  assert.equal(api.getTransportState(), 'ready')
+  // Main confirmed the session (apps/desktop/src/main/bundled-auth.ts): the
+  // write is refused with its own status and code, sent once, and nothing signs out.
+  globalThis.fetch = async () => { writes++; return Response.json({ version: 1, ok: false, error: { code: 'desktop_session_expired' } }, { status: 401, headers: { 'x-mikka-session-active': '1' } }) }
+  await assert.rejects(api.callAction('module.action', []), error => error.code === 'desktop_rpc_request_rejected' && error.status === 401
+    && error.cause?.code === 'desktop_session_expired' && api.readAccessFailure(error) === null)
+  assert.equal(writes, 1)
+  assert.equal(api.getTransportState(), 'ready')
+  // Without main's mark the same 401 is the session's verdict.
+  globalThis.fetch = async () => Response.json({ version: 1, ok: false, error: { code: 'desktop_session_expired' } }, { status: 401 })
   await assert.rejects(api.callAction('module.action', []), error => error.code === 'desktop_session_expired' && error.status === 401 && api.readAccessFailure(error) === 'session')
   assert.equal(api.getTransportState(), 'unauthenticated')
 }))

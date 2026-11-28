@@ -135,3 +135,18 @@ export async function applyMigration(client, name, plan, log = console.error) {
   if (plan.concurrentIndex) await assertIndexValid(query, plan.concurrentIndex, name)
   await client.query('insert into schema_migrations (name) values ($1)', [name])
 }
+
+// The environment-scope migration runs on two connections (migrate.mjs). The workspace
+// transaction takes ACCESS EXCLUSIVE on workspace_environments; the ACL transaction holds
+// FOR SHARE on shared Project ACL rows until the workspace one commits. Both use the budget the
+// SQL files use: a lock wait gives up after 5s and a statement after 60s. The ACL connection is
+// idle for the whole workspace migration (13 statements), so its idle bound covers 13 x 60s.
+export const ENVIRONMENT_SCOPE_LIMITS = Object.freeze({
+  migration: Object.freeze({ lock_timeout: '5s', statement_timeout: '60s' }),
+  acl: Object.freeze({ lock_timeout: '5s', idle_in_transaction_session_timeout: '15min' }),
+})
+
+/** SET LOCAL each limit inside `client`'s open transaction; COMMIT or ROLLBACK ends them. */
+export async function setLocalLimits(client, limits) {
+  await client.query(Object.entries(limits).map(([name, value]) => `SET LOCAL ${name} = '${value}'`).join('; '))
+}

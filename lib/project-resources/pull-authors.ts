@@ -9,7 +9,9 @@ import type { projectPullAuthorInput } from './contracts'
 import { resourceLock } from './store'
 
 /** Both the selected trigger repository and the selected Project are explicit.
- * Check local admission again after the upstream read without holding a DB
+ * The workspace repository policy admits the repository (the retired Project
+ * repository bindings no longer do; decision 2026-11-26-0110 rule 3). Check
+ * local admission again after the upstream read without holding a DB
  * transaction open during the network request. */
 export async function projectPullAuthors(reader: { id: string }, input: z.infer<typeof projectPullAuthorInput>) {
   if (input.readerId !== reader.id) throw new ActionFailureError('workspaceAccessDenied')
@@ -17,11 +19,9 @@ export async function projectPullAuthors(reader: { id: string }, input: z.infer<
   const admitted = () => withTaskWorkspace(reader, workspaceId, async (_workspace, tx) => {
     await resourceLock(tx, workspaceId, false)
     return withReadableProject(reader, workspaceId, projectId, async () => {
-      const result = await tx.execute(sql`SELECT 1 FROM workspace_project_repositories r
-        LEFT JOIN workspace_repository_policies p ON p."workspaceId"=r."workspaceId"
-        WHERE r."workspaceId"=${workspaceId} AND r."projectId"=${projectId} AND r."repositoryKey"=${repository}
-          AND (p.mode IS DISTINCT FROM 'restricted' OR p."repositoryKeys" ? ${repository})`)
-      return !!result.rowCount
+      const result = await tx.execute(sql`SELECT 1 FROM workspace_repository_policies p
+        WHERE p."workspaceId"=${workspaceId} AND p.mode='restricted' AND NOT (p."repositoryKeys" ? ${repository})`)
+      return !result.rowCount
     })
   })
   if (!(await admitted())) return []

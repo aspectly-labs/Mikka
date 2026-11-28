@@ -30,3 +30,27 @@ export function pullRequestDiffText(files: readonly PullFileEntry[]): string {
   }
   return out.length ? `${out.join("\n")}\n` : "";
 }
+
+/**
+ * Standard unified diff patch (`git diff` format with `---` and `+++` file headers
+ * before each hunk set) for external diff renderers such as Mobile 2.0's native diff view.
+ */
+export function pullRequestUnifiedPatch(files: readonly PullFileEntry[]): string {
+  const out: string[] = [];
+  for (const file of files) {
+    const from = file.previousPath ?? file.path;
+    out.push(`diff --git a/${from} b/${file.path}`);
+    if (file.status === "added") out.push("new file mode 100644");
+    else if (file.status === "deleted") out.push("deleted file mode 100644");
+    else if (file.status === "renamed" && file.previousPath)
+      out.push(`rename from ${file.previousPath}`, `rename to ${file.path}`);
+    if (file.patch !== null) {
+      out.push(file.status === "added" ? "--- /dev/null" : `--- a/${from}`);
+      out.push(file.status === "deleted" ? "+++ /dev/null" : `+++ b/${file.path}`);
+      out.push(file.patch);
+    } else {
+      out.push(`Binary files a/${from} and b/${file.path} differ`);
+    }
+  }
+  return out.length ? `${out.join("\n")}\n` : "";
+}

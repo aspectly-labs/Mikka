@@ -46,9 +46,17 @@ export async function GET() {
 }
 `
 
-test('the current repository satisfies the ratcheted route-guard baseline and includes flagship migrated routes', () => {
+test('the current repository is permanently locked at 0 unguarded routes and includes flagship migrated routes', () => {
   const result = runRouteGuardPolicy()
   assert.deepEqual(result.problems, [])
+  assert.deepEqual(result.baseline, {
+    version: 1,
+    maxUnguardedRoutes: 0,
+    legacyRoutes: [],
+  })
+  assert.equal(result.scan.unguarded.length, 0)
+  assert.equal(result.scan.invalid.length, 0)
+  assert.equal(result.scan.guarded.length, result.scan.total)
   const guardedFiles = result.scan.guarded.map(entry => entry.file)
   for (const flagship of [
     'app/api/health/route.ts',
@@ -58,7 +66,6 @@ test('the current repository satisfies the ratcheted route-guard baseline and in
   ]) {
     assert.ok(guardedFiles.includes(flagship), `expected ${flagship} to be guarded`)
   }
-  assert.equal(result.scan.unguarded.length, result.baseline.maxUnguardedRoutes)
 })
 
 test('inspectApiRouteSource accepts direct, aliased, relative, wrapped, and multi-method defineRoute handlers', () => {
@@ -423,6 +430,23 @@ test('shallow synthetic PR merge checkouts still enforce the ratchet against pul
   })
   assert.equal(failClosed.status, 1)
   assert.match(failClosed.stderr, /cannot resolve trusted base commit for pull_request event/)
+})
+
+test('the route-guard policy resolves relative re-exports from guarded routes and blocks unguarded re-export targets', t => {
+  const f = fixture(t)
+  f.write('app/api/target/route.ts', GUARDED_SAMPLE)
+  f.write('app/api/alias/route.ts', "export { GET } from '../target/route'\n")
+  f.write(BASELINE_PATH, JSON.stringify({ version: 1, maxUnguardedRoutes: 0, legacyRoutes: [] }, null, 2) + '\n')
+  f.commit('base')
+  execFileSync('git', ['branch', '-M', 'main'], { cwd: f.root })
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'main'], { cwd: f.root })
+  assert.equal(f.run().status, 0)
+
+  // Re-exporting from an unguarded target still fails.
+  f.write('app/api/target/route.ts', UNGUARDED_SAMPLE)
+  const failed = f.run()
+  assert.equal(failed.status, 1)
+  assert.match(failed.stderr, /app\/api\/alias\/route\.ts: unguarded API route/)
 })
 
 test('the route-guard policy is wired into package.json and the required source-checks CI job', () => {

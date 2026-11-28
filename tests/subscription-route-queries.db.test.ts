@@ -9,7 +9,8 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mock, test } from 'node:test'
 import pg from 'pg'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
-import { REPO_ORIGIN_HEADER } from '@mikka/protocol/device'
+import { REPO_ORIGIN_HEADER, RUN_CREDENTIALS_HEADER } from '@mikka/protocol/device'
+import { SUBSCRIPTION_GATEWAY_HEADER } from '@mikka/protocol/subscription'
 import { normalizeRepository } from '@mikka/protocol/repository'
 import { dbUrl, seedBot, seedIssue, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { fakeThreadMachines } from './support/thread-machine-fake'
@@ -22,9 +23,10 @@ test('a cloud run\'s subscription context read stays within its statement budget
   const saved = Object.fromEntries(['WORKSPACE_SECRETS_KEY', 'MIKKA_BYOS_ENABLED', 'MIKKA_BYOS_VALIDATED_MODEL_ROUTES', 'MIKKA_BYOS_VALIDATED_NATIVE_ROUTES',
     'MIKKA_BYOS_INFISICAL_ORIGIN', 'MIKKA_BYOS_INFISICAL_PROJECT', 'MIKKA_BYOS_INFISICAL_ENVIRONMENT', 'MIKKA_BYOS_INFISICAL_PATH',
     'MIKKA_BYOS_ACCESS_INFISICAL_PATH', 'MIKKA_BYOS_INFISICAL_TOKEN', 'MIKKA_BYOS_ACCESS_INFISICAL_TOKEN', 'MIKKA_BYOS_SHARED_CUSTODY_IDENTITY',
-    'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED'].map(key => [key, process.env[key]]))
+    'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'MIKKA_LITELLM_URL', 'MIKKA_LITELLM_MASTER_KEY', 'E2B_API_KEY'].map(key => [key, process.env[key]]))
   Object.assign(process.env, {
-    WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), MIKKA_BYOS_ENABLED: '1',
+    MIKKA_LITELLM_URL: 'http://127.0.0.1:1', MIKKA_LITELLM_MASTER_KEY: 'fixture-gateway-key',
+    WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), MIKKA_BYOS_ENABLED: '1', E2B_API_KEY: 'synthetic-subscription-query-e2b-key',
     MIKKA_BYOS_VALIDATED_MODEL_ROUTES: 'claude_cpa', MIKKA_BYOS_VALIDATED_NATIVE_ROUTES: 'claude_code_cli',
     // Synthetic custody configuration; the worker client is mocked below and never starts.
     MIKKA_BYOS_INFISICAL_ORIGIN: 'http://127.0.0.1:1', MIKKA_BYOS_INFISICAL_PROJECT: 'synthetic-route-queries',
@@ -59,9 +61,11 @@ test('a cloud run\'s subscription context read stays within its statement budget
   const threadMachines = await fakeThreadMachines(pool, harnesses)
   const userId = await seedUser(pool, 'route-queries')
   const organizationId = randomUUID(), providerId = `route-budget-${randomUUID()}`, directoryConnectionId = randomUUID(), directoryUserId = randomUUID()
+  let workspaceId: string | undefined
   t.after(async () => {
     for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value
     threadMachines.restore()
+    if (workspaceId) await pool.query('DELETE FROM mikka_workspace_entitlements WHERE "workspaceId"=$1', [workspaceId])
     await pool.query('DELETE FROM enterprise_scim_user WHERE id=$1', [directoryUserId])
     await pool.query('DELETE FROM enterprise_scim_connection WHERE id=$1', [directoryConnectionId])
     await pool.query('DELETE FROM enterprise_sso_provider WHERE "providerId"=$1', [providerId])
@@ -78,7 +82,8 @@ test('a cloud run\'s subscription context read stays within its statement budget
   })
 
   // The person's own subscription, a workspace Bot and its task: the shape of the traced runs.
-  const workspaceId = (await seedWorkspace(pool, userId, [{ userId, role: 'admin' }])).id
+  workspaceId = (await seedWorkspace(pool, userId, [{ userId, role: 'admin' }])).id
+  await pool.query('INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,\'pro\',\'cloud\')', [workspaceId])
   const botId = await seedBot(pool, workspaceId, userId), issueId = await seedIssue(pool, userId, workspaceId)
   const connectionId = randomUUID(), model = 'fixture-opus'
   const quota = { vendor: 'claude_code', source: 'official', status: 'ok', plan: null, observedAt: new Date().toISOString(), windows: [{ kind: 'five_hour', used: .2, resetsAt: new Date(Date.now() + 3_600_000).toISOString() }] }
@@ -99,8 +104,6 @@ test('a cloud run\'s subscription context read stays within its statement budget
   const worker = await threadMachines.start({ userId, workspaceId }, queued.runId)
   const headers = { 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.456', authorization: `Bearer ${worker.token}` }
   const params = { params: Promise.resolve({ deviceId: worker.deviceId, runId: queued.runId }) }
-  const claim = await claimRoute.POST(new Request(`http://127.0.0.1/v1/devices/${worker.deviceId}/runs/${queued.runId}/claim`, { method: 'POST', headers: { ...headers, [REPO_ORIGIN_HEADER]: '1' } }), params)
-  assert.equal(claim.status, 200, JSON.stringify(await claim.clone().json()))
 
   // The private provider worker: the account and token expiry a real one reports.
   const expiresAt = new Date(Date.now() + 3_600_000).toISOString()
@@ -111,6 +114,9 @@ test('a cloud run\'s subscription context read stays within its statement budget
     if (method === 'nativeContext') return { accountId: 'fixture-account', expiresAt }
     throw new Error(`unexpected worker operation: ${method}`)
   })
+  const claim = await claimRoute.POST(new Request(`https://mikka.test/v1/devices/${worker.deviceId}/runs/${queued.runId}/claim`, { method: 'POST', headers: { ...headers, [REPO_ORIGIN_HEADER]: '1', [RUN_CREDENTIALS_HEADER]: '1', [SUBSCRIPTION_GATEWAY_HEADER]: '1' } }), params)
+  assert.equal(claim.status, 200, JSON.stringify(await claim.clone().json()))
+
   const context = () => subscriptionRoute.POST(new Request(`http://127.0.0.1/v1/devices/${worker.deviceId}/runs/${queued.runId}/subscription`,
     { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'context' }) }), params)
 

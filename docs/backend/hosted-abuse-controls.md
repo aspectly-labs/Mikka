@@ -231,6 +231,15 @@ unchanged.
 
 ## Verification
 
+Public Web Search/Fetch admission keeps its separate per-user sliding minute
+in the existing `rateLimit` table. The per-user transaction lock stays in its
+own statement so a waiting worker reads the preceding worker's committed slot.
+One subsequent statement deletes only that user's expired rows, counts active
+rows and conditionally inserts one slot. An admission takes four database
+round trips including `BEGIN` and `COMMIT`; refusal also takes four. A failure
+still prevents the provider call. This does not change Better Auth's independent
+request limiter, signup/mail counters, quotas, or provider billing.
+
 `test:abuse` covers the policy, metered provider boundary and Stripe fixtures.
 `test:abuse-db` uses an isolated local PostgreSQL schema, actual migrations,
 concurrent card/admission/settlement calls, rolling-window behavior and signup

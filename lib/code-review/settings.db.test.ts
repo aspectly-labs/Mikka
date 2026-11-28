@@ -41,6 +41,12 @@ before(async () => {
   mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({ get: () => undefined }) } })
   mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en', getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
   mock.module('@/lib/session', { namedExports: { getSession: async () => currentUser ? { user: currentUser, session: { id: 'code-review-test-session' } } : null } })
+  mock.module('@/lib/api-auth', { namedExports: {
+    auth: { api: { getSession: async () => currentUser ? { user: currentUser, session: { id: 'code-review-test-session' } } : null } },
+    getApiSession: async () => currentUser ? { user: currentUser, session: { id: 'code-review-test-session' } } : null,
+    apiWorkspaceAllowed: (session: { tokenWorkspaceId?: string }, workspaceId: string) =>
+      !session.tokenWorkspaceId || session.tokenWorkspaceId === workspaceId,
+  } })
   mock.module('@/lib/suggestions/sources', { namedExports: { connectedComposioApps: async () => [] } })
   ;({ pool } = await import('@/lib/db'))
   ;({ workspacePool } = await import('@/lib/workspace-db'))

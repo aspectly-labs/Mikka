@@ -5,7 +5,8 @@ import { auth } from '@/lib/api-auth';
 import { factoryLifecycleEnabled } from '@/lib/factory/runtime';
 import { factoryDispatchRecovery } from '@/lib/factory/dispatch-recovery-server';
 import { handleFactoryDispatchRecovery } from '@/lib/factory/dispatch-recovery-http';
-export async function GET(request: Request,{params}:{params:Promise<{taskId:string}>}) {
+import { defineRoute } from '@/lib/primitives/define-route'
+async function unguardedGET(request: Request,{params}:{params:Promise<{taskId:string}>}) {
   if (!factoryLifecycleEnabled()) return RouteResponse.json({error:'factoryLifecycleUnavailable'},{status:404});
   const sessionHeaders=request.headers.has('authorization')?humanSessionHeaders(request):request.headers;
   if (!sessionHeaders) return RouteResponse.json({error:'authRequired'},{status:401});
@@ -16,3 +17,12 @@ export async function GET(request: Request,{params}:{params:Promise<{taskId:stri
   });
 
 }
+export const GET = defineRoute<'public','none',{ taskId: string }>(
+  {
+    route: '/api/factory/tasks/[taskId]/dispatch',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
+)

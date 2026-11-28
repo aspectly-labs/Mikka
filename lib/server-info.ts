@@ -6,6 +6,7 @@ import { isLoopbackHost } from './loopback'
 import { mailConfigured } from './mail-delivery'
 import { webConnectionEnabled, webConnectionURL } from './web-connection/policy'
 import { DESKTOP_RELEASES_URL } from './platform/desktop-releases'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Environment = Record<string, string | undefined>
 type Query = (sql: string) => Promise<{ rows: Array<{ hasUsers?: unknown }> }>
@@ -35,7 +36,7 @@ function configuredOrigin(env: Environment): string | null {
 /** One bounded public-state query. It returns no account identity or count and
  * grants no installation-wide authority to the first person who signs up. */
 export async function readServerInfo(options: { env?: Environment; query?: Query; signIn?: () => Promise<SignIn> } = {}): Promise<ServerInfo | null> {
-  const env = options.env ?? process.env
+  const env = options.env ?? runtimeEnv()
   if (getEdition(env) !== 'community') return null
   const origin = configuredOrigin(env), basePath = BASE_PATH || '/mikka'
   const address = origin ? `${origin}${basePath}` : null

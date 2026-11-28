@@ -4,12 +4,13 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Sandbox } from 'e2b'
 import { CodedError, type CodedErrorOptions } from '@mikka/protocol/coded-error'
-import { connectComputer, computerGone, computerState } from '@/lib/computer/e2b-provider'
+import { connectRunningComputer, computerGone, computerState, PolicySandboxUnavailable } from '@/lib/computer/e2b-provider'
 import { isPreviewPort } from './port'
 import { authTrustedOrigins } from '@/lib/auth-config'
 import { cloudflareReview, reviewReply, type CloudflareReview } from '../cloudflare-review'
 import type { ReviewSessionLease } from '../review-sessions'
 import type { TaskReviewAuthority } from '../review-authority'
+import { runtimeEnv } from '@/lib/env/server'
 
 const ROOT = '/run/mikka-preview'
 const SCRIPT = '/opt/mikka/preview/preview-gateway.py'
@@ -34,11 +35,11 @@ export type PreparedPreview = {
 } & ({sandbox:Sandbox;gatewayPort:number;cloudflare?:undefined} | {cloudflare:CloudflareReview;origin:string})
 export type PreviewRevokeTarget = { runId: string; ownerId: string; workspaceId: string; sandboxId: string }
 type Json = Record<string, unknown>
-type Connector = typeof connectComputer
+type Connector = (workspaceId: string, sandboxId: string, signal?: AbortSignal) => Promise<Sandbox>
 type StateReader = typeof computerState
 
 export function previewParentOrigin(request: Request): string {
-  const allowed = authTrustedOrigins(process.env).filter(origin => /^https?:\/\//.test(origin))
+  const allowed = authTrustedOrigins(runtimeEnv()).filter(origin => /^https?:\/\//.test(origin))
   const application = new URL(request.url).origin
   const parent = request.headers.get('origin') ?? application
   if (!allowed.includes(application) || !allowed.includes(parent)) throw new PreviewRuntimeError('configuration', 403)
@@ -109,7 +110,7 @@ async function control(sandbox: Sandbox, message: Json): Promise<Json> {
   }
 }
 
-export async function prepareRunPreview(authority: TaskReviewAuthority, options: { expiresAt?: string; port?: number; lease?: ReviewSessionLease } = {}, connect: Connector = connectComputer, state: StateReader = computerState): Promise<PreparedPreview | PreviewUnavailable> {
+export async function prepareRunPreview(authority: TaskReviewAuthority, options: { expiresAt?: string; port?: number; lease?: ReviewSessionLease } = {}, connect?: Connector, state: StateReader = computerState): Promise<PreparedPreview | PreviewUnavailable> {
   if (authority.machineKind !== 'cloud' || !authority.sandboxId || authority.machineEpoch === null)
     throw new PreviewRuntimeError('configuration', 404)
   if (options.port !== undefined && !isPreviewPort(options.port))
@@ -139,7 +140,9 @@ export async function prepareRunPreview(authority: TaskReviewAuthority, options:
     // E2B connect() can resume a VM. Only the explicit authorized resume path
     // may do that; discovery never wakes a parked machine as a side effect.
     if (await state(authority.workspaceId, authority.sandboxId) !== 'running') throw new PreviewRuntimeError('scope_changed', 409)
-    const sandbox = await connect(authority.workspaceId, authority.sandboxId, AbortSignal.timeout(45_000))
+    const signal = AbortSignal.timeout(45_000)
+    const sandbox = connect ? await connect(authority.workspaceId, authority.sandboxId, signal)
+      : await connectRunningComputer(authority.ownerId, authority.sandboxId, undefined, signal)
     if (sandbox.sandboxId !== authority.sandboxId) throw new PreviewRuntimeError('scope_changed', 409)
     await verifyIngress(sandbox)
     await install(sandbox)
@@ -154,7 +157,8 @@ export async function prepareRunPreview(authority: TaskReviewAuthority, options:
     return { running: true, sandbox, binding, gatewayPort: reply.gatewayPort, port: reply.port, expiresAt: new Date(reply.expiresAt * 1000).toISOString() }
   } catch (cause) {
     if (cause instanceof PreviewRuntimeError) throw cause
-    throw new PreviewRuntimeError(computerGone(cause) ? 'scope_changed' : 'runtime', computerGone(cause) ? 409 : 503, { cause })
+    const unavailable = computerGone(cause) || cause instanceof PolicySandboxUnavailable
+    throw new PreviewRuntimeError(unavailable ? 'scope_changed' : 'runtime', unavailable ? 409 : 503, { cause })
   }
 }
 
@@ -167,7 +171,7 @@ export async function issueRunPreview(prepared: PreparedPreview, parentOrigin: s
   const origin = new URL(`https://${host}`)
   const parent = new URL(parentOrigin)
   if (origin.host !== host || origin.username || origin.password || origin.pathname !== '/' || parent.origin === origin.origin
-    || !authTrustedOrigins(process.env).includes(parentOrigin) || parent.origin !== parentOrigin)
+    || !authTrustedOrigins(runtimeEnv()).includes(parentOrigin) || parent.origin !== parentOrigin)
     throw new PreviewRuntimeError('configuration')
   if (prepared.cloudflare && prepared.cloudflare.scope.leaseId !== lease.id) throw new PreviewRuntimeError('scope_changed',403)
   const reply = prepared.cloudflare ? await reviewReply(prepared.cloudflare,'preview-issue',{parentOrigin,expiresAt:expires})
@@ -184,7 +188,7 @@ export async function issueRunPreview(prepared: PreparedPreview, parentOrigin: s
 
 /** Failures propagate to the durable review lease's retry/stop path. Never
  * report a revocation ack while an active gateway could still serve traffic. */
-export async function revokeRunPreview(target: PreviewRevokeTarget, options: { leaseIds?: string[]; expiresAt?: string } = {}, connect: Connector = connectComputer, state: StateReader = computerState): Promise<void> {
+export async function revokeRunPreview(target: PreviewRevokeTarget, options: { leaseIds?: string[]; expiresAt?: string } = {}, connect?: Connector, state: StateReader = computerState): Promise<void> {
   try {
     // Frozen gateways cannot serve traffic, but an ACK would lose the pending
     // nonce revocation before a normal resume. Keep the durable lease pending.
@@ -192,7 +196,9 @@ export async function revokeRunPreview(target: PreviewRevokeTarget, options: { l
       if (options.leaseIds?.length && options.expiresAt && Number.isFinite(Date.parse(options.expiresAt)) && Date.parse(options.expiresAt) <= Date.now()) return
       throw new PreviewRuntimeError('scope_changed', 409)
     }
-    const sandbox = await connect(target.workspaceId, target.sandboxId, AbortSignal.timeout(15_000))
+    const signal = AbortSignal.timeout(15_000)
+    const sandbox = connect ? await connect(target.workspaceId, target.sandboxId, signal)
+      : await connectRunningComputer(target.ownerId, target.sandboxId, undefined, signal)
     if (sandbox.sandboxId !== target.sandboxId) throw new PreviewRuntimeError('scope_changed', 409)
     const present = await sandbox.commands.run(`if test -S ${ROOT}/control.sock; then printf present; else printf absent; fi`, { user: 'root', timeoutMs: 5_000 })
     if (present.stdout === 'absent') return
@@ -201,6 +207,7 @@ export async function revokeRunPreview(target: PreviewRevokeTarget, options: { l
     if (reply.revoked !== true) throw new PreviewRuntimeError('protocol')
   } catch (cause) {
     if (computerGone(cause)) return
+    if (cause instanceof PolicySandboxUnavailable) throw new PreviewRuntimeError('scope_changed', 409, { cause })
     if (cause instanceof PreviewRuntimeError) throw cause
     throw new PreviewRuntimeError('runtime', 503, { cause })
   }

@@ -4,7 +4,7 @@ import { afterJob } from '@/lib/background'
 import { db, pool } from '@/lib/db'
 import { briefings } from '@/lib/db/schema'
 import type { mobileUser } from '@/lib/mobile-api'
-import { listPendingActions } from '@/lib/pending-action-store'
+import type { PendingActionView } from '@/lib/pending-action-view'
 import { effectiveRequestWorkspace } from '@/lib/request-workspace'
 import { ACTION_LOCALES, type ActionLocale } from '@/lib/suggestions/action-title'
 import { rememberLocale } from '@/lib/suggestions/action-title-server'
@@ -13,11 +13,12 @@ import { ensureComposioTriggers } from '@/lib/suggestions/sources'
 import { listSuggestions, recordTimeZone, todaysBriefing } from '@/lib/suggestions/store'
 import { manualTimeZone } from '@/lib/suggestions/time-zone'
 import { tokenWorkspace } from '@/lib/tokens/principal'
-import { isPersonalWorkspace, pendingActionsOutsideToken, suggestionsOutsideToken } from '@/lib/tokens/scope'
+import { isPersonalWorkspace, suggestionsOutsideToken } from '@/lib/tokens/scope'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { WorkspaceError } from '@/lib/workspace-error'
 
-export type MobilePendingAction = Awaited<ReturnType<typeof listPendingActions>>[number]
+/** Always empty: nothing waits for approval (ADR 2026-11-27-1615). The field stays one release for existing clients. */
+export type MobilePendingAction = PendingActionView
 export type MobileProactiveUser = NonNullable<Awaited<ReturnType<typeof mobileUser>>>
 
 export interface MobileProactiveBriefing {
@@ -89,7 +90,7 @@ async function latestBriefingReadOnly(userId: string) {
 
 /**
  * Unified authorized read of Coordinator proactive cards for mobile:
- * - active pending actions (approve/decline via `POST /api/mobile/pending-actions/:id`)
+ * - `pendingActions`: always empty (no approvals, ADR 2026-11-27-1615); kept one release for existing clients
  * - active suggestions & in-progress suggestion runs (act via `POST|DELETE /api/mobile/suggestions/:id`)
  * - today's daily briefing summary (omitted for team-scoped tokens)
  *
@@ -156,21 +157,16 @@ export async function readMobileProactiveCards(
       ? null
       : (await manualTimeZone(user.id)) ?? options.timeZone ?? options.ipTimeZone ?? null
 
-  const [briefingRow, rawPending, rawSuggestions] = await Promise.all([
+  const [briefingRow, rawSuggestions] = await Promise.all([
     !allowPersonalBriefing
       ? Promise.resolve(null)
       : options.readonly
         ? latestBriefingReadOnly(user.id)
         : todaysBriefing(user.id, timeZone),
-    listPendingActions(user.id),
     listSuggestions(user.id),
   ])
 
-  const [outsidePending, outsideSuggestions, executions] = await Promise.all([
-    pendingActionsOutsideToken(
-      user,
-      rawPending.map(item => item.id),
-    ),
+  const [outsideSuggestions, executions] = await Promise.all([
     suggestionsOutsideToken(
       user,
       rawSuggestions.map(item => item.id),
@@ -181,7 +177,7 @@ export async function readMobileProactiveCards(
     ),
   ])
 
-  const pendingActions = rawPending.filter(item => !outsidePending.has(item.id))
+  const pendingActions: MobilePendingAction[] = []
   const visibleSuggestions = rawSuggestions.filter(item => !outsideSuggestions.has(item.id))
 
   const view = (item: (typeof visibleSuggestions)[number]): MobileSuggestionCard => ({

@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import type { LiveInvalidation } from './events'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -47,7 +48,7 @@ async function messageGroups(database: Database, messageIds: readonly string[]) 
  * refuses only this request (the app keeps its minute fallback for it).
  */
 async function changed(executor: object, key: string, resolve: (database: Database, workspaceDatabase: Database) => Promise<Target[]>) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive } = await import('./notify')
   afterDatabaseCommit(executor, `group-chat:${key}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

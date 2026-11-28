@@ -1,3 +1,4 @@
+import { lockSkillPublishingPolicy } from '@/lib/settings/runtime'
 import { runChanged } from '../live/panels'
 import 'server-only'
 import { runListChanged } from '../live/lists'
@@ -33,14 +34,16 @@ function guard(scope: TeamSkillScope, admin = false) {
   return async (_tx: PoolClient, signal: AbortSignal) => {
     const lease = await realCliMembershipGuard(scope.workspaceId, scope.userId, signal)
     try {
-      if (admin) {
-        const role = await lease.workspaceClient!.query(`SELECT role FROM mikka_workspace_members
-          WHERE "workspaceId"=$1 AND "userId"=$2 AND status='active' FOR SHARE`, [scope.workspaceId, scope.userId])
-        if (role.rows[0]?.role !== 'admin') throw new ImprovementError('notFound')
-      }
+      if (admin) await requireLeasedAdmin(lease.workspaceClient, scope)
       return lease
     } catch (error) { await lease.close(); throw error }
   }
+}
+async function requireLeasedAdmin(client: Pick<PoolClient, 'query'> | undefined, scope: TeamSkillScope) {
+  if (!client) throw new ImprovementError('notFound')
+  const role = await client.query(`SELECT role FROM mikka_workspace_members
+    WHERE "workspaceId"=$1 AND "userId"=$2 AND status='active' FOR SHARE`, [scope.workspaceId, scope.userId])
+  if (role.rows[0]?.role !== 'admin') throw new ImprovementError('notFound')
 }
 export function teamSkillMembershipGuard(userId: string, versionId: string) {
   return async (tx: PoolClient, signal: AbortSignal) => {
@@ -118,9 +121,10 @@ export class TeamSkillStore {
     },{guard:guard(scope,inspect)})
   }
   async register(scope: TeamSkillScope, input: unknown) {
-    await teamRole(scope, true)
+    await teamRole(scope)
     const parsed = teamSkillUploadSchema.safeParse(input)
     if (!parsed.success) throw new ImprovementError('invalid')
+    let adminRequired = false
     return writeTransaction(this.pool, async tx => {
       const value = parsed.data
       let catalogOwnerId = scope.userId
@@ -128,6 +132,7 @@ export class TeamSkillStore {
         const { rows: [catalog] } = await tx.query<TeamSkillMetadata>(`SELECT * FROM improvement_team_skill_metadata
           WHERE "workspaceId"=$1 AND "skillId"=$2 ORDER BY "createdAt" LIMIT 1`, [scope.workspaceId, value.skillId])
         if (!catalog) throw new ImprovementError('notFound')
+        if (scope.userId !== catalog.catalogOwnerId) adminRequired = true
         catalogOwnerId = catalog.catalogOwnerId
       }
       const skillId = value.skillId ?? randomUUID(), versionId = randomUUID()
@@ -140,7 +145,17 @@ export class TeamSkillStore {
         actor: { type: 'user', id: scope.userId, name: scope.userId }, action: 'skill.registered',
         target: { type: 'skill', id: skillId, label: value.name }, metadata: { versionId, sha256: artifact.sha256, format: artifact.format } }))
       return { artifact, status: 'pending' as const }
-    }, { guard: guard(scope, true) })
+    }, {
+      guard: (tx, signal) => guard(scope, adminRequired)(tx, signal),
+      // Settings saves lock membership before the publishing policy. Match that
+      // order and keep both locks through the commit of the new skill version.
+      guardedWork: async (tx, result, lease) => {
+        const policy = await lockSkillPublishingPolicy(tx, scope)
+        if (policy.value === 'off') throw new ImprovementError('runUnavailable')
+        if (policy.value === 'open' && !adminRequired) await requireLeasedAdmin(lease?.workspaceClient, scope)
+        return result
+      },
+    })
   }
   async read(scope: TeamSkillScope, versionId: string, inspect = false) {
     await teamRole(scope, inspect)
@@ -202,7 +217,12 @@ export class TeamSkillStore {
         target: { type: 'skill', id: version.artifact.skillId, label: version.skill.name },
         metadata: { versionId, sha256, format: version.artifact.format } }))
       return { artifact: version.artifact, status: operation === 'withdraw' ? 'withdrawn' as const : 'approved' as const }
-    }, { guard: guard(scope, true) })
+    }, {
+      guard: guard(scope, true),
+      authorizeCommit: async tx => {
+        if (operation === 'approve' && (await lockSkillPublishingPolicy(tx, scope)).value === 'off') throw new ImprovementError('runUnavailable')
+      },
+    })
     for(const run of ended)await afterRunEnded(run.userId,run.id)
     return result
   }

@@ -30,7 +30,7 @@ test('real PostgreSQL serializes seats across acceptance and restoration', { ski
   const quotaPool = new Pool({ connectionString: target.toString(), max: 5 })
   const db = drizzle(pool, { schema: workspaceSchema })
   try {
-    await pool.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL,name varchar(120) NOT NULL,slug varchar(64) UNIQUE,"taskPrefix" varchar(4),icon text,kind text NOT NULL DEFAULT 'team',"createdAt" timestamptz NOT NULL DEFAULT now());
+    await pool.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL,name varchar(120) NOT NULL,slug varchar(64) UNIQUE,"taskPrefix" varchar(4),icon text,kind text NOT NULL DEFAULT 'team',"createdAt" timestamptz NOT NULL DEFAULT now(), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid NOT NULL,"userId" text NOT NULL,name text NOT NULL,email text NOT NULL,role text NOT NULL,status text NOT NULL DEFAULT 'active',"createdAt" timestamptz NOT NULL DEFAULT now(),PRIMARY KEY("workspaceId","userId"));
       CREATE TABLE mikka_workspace_invitations (id uuid PRIMARY KEY,"workspaceId" uuid NOT NULL,"userId" text NOT NULL,email text NOT NULL,role text NOT NULL,"tokenHash" text NOT NULL UNIQUE,status text NOT NULL DEFAULT 'pending',"expiresAt" timestamptz NOT NULL,"createdAt" timestamptz NOT NULL DEFAULT now(),UNIQUE("workspaceId",email));
       CREATE TABLE workspace_projects (id uuid PRIMARY KEY,"userId" text NOT NULL,"workspaceId" uuid,"leadUserId" text,"archivedAt" timestamptz);`)
@@ -75,6 +75,15 @@ test('real PostgreSQL serializes seats across acceptance and restoration', { ski
       const id = await workspace(2)
       await pool.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=\'human-1\'', [id])
       assert.deepEqual(await db.transaction(tx => planWorkspaces(tx, 'human-0')), { soleAdminOf: ['Seat fixture'] })
+    })
+
+    await t.test('acceptance by the wrong signed-in account never reveals the recipient', async () => {
+      const workspaceId = await workspace(1), tokenHash = randomUUID()
+      await db.insert(workspaceSchema.workspaceInvitations).values({ id: randomUUID(), workspaceId, userId: 'human-0',
+        email: 'recipient@example.invalid', role: 'member', tokenHash, expiresAt: new Date(Date.now() + 60_000) })
+      await assert.rejects(db.transaction(tx => acceptHumanInvitation(tx, { id: 'other', name: 'Other', email: 'other@example.invalid' }, tokenHash)),
+        { code: 'inviteInvalid' })
+      assert.equal((await pool.query('SELECT status FROM mikka_workspace_invitations WHERE "tokenHash"=$1', [tokenHash])).rows[0].status, 'pending')
     })
 
     await t.test('concurrent invitations are not refused over shared member count', async () => {
@@ -185,6 +194,8 @@ test('real PostgreSQL serializes seats across acceptance and restoration', { ski
       await pool.query(await readFile(new URL('../drizzle/20261121043334_add_hosted_usage_message_attribution.sql', import.meta.url), 'utf8'))
       await pool.query(await readFile(new URL('../drizzle/20261122084255_hosted_usage_turn_ref.sql', import.meta.url), 'utf8'))
       await pool.query(await readFile(new URL('../drizzle/20261123210000_hosted_usage_platform_funded.sql', import.meta.url), 'utf8'))
+      await pool.query(await readFile(new URL('../drizzle/20261126035203_cloudflare_compute_measurements.sql', import.meta.url), 'utf8'))
+      await pool.query(`ALTER TABLE hosted_usage ADD COLUMN IF NOT EXISTS "purchasedAllocations" jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof("purchasedAllocations") = 'object')`)
       const id = await workspace(1)
       await db.insert(workspaceEntitlements).values({ workspaceId: id, plan: 'pro', source: 'cloud', seatLimit: 20 })
       await pool.query('insert into hosted_verifications values($1)', [id])

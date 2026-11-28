@@ -1,7 +1,7 @@
 # Bundle the desktop UI locally
 
 - Date: 2026-11-05
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-27-1200-desktop-renderer-credential-parity](2026-11-27-1200-desktop-renderer-credential-parity.md) (credentials the server mints for the renderer: web parity; main still never hands over the session credential it holds)
 - Source: Alex, [#1415](https://github.com/alexj11324/Mikka/issues/1415), and the implementation request: complete the acceptance checklist without intermediate confirmation; prefer the agent's existing VM before Docker Agentic Platform.
 - Rules: R-23, R-35, R-90 (unchanged shared UI and native capabilities).
 - Replaces: the hosted-renderer part of the 2026-10-29 desktop decision and the window-owned web session in `../platforms.md`.

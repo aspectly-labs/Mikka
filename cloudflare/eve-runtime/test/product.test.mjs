@@ -41,14 +41,27 @@ test('workerd forwards the scoped body to its binding and rejects redirects', as
   const directory = await mkdtemp(join(tmpdir(), 'eve-product-binding-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
   const source = await readFile(new URL('../runtime/product.mjs', import.meta.url), 'utf8')
+  const hostsConstantsSource = await readFile(new URL('../../../lib/env/hosts-constants.mjs', import.meta.url), 'utf8')
   const options = { modules: true, compatibilityDate: '2026-10-22', compatibilityFlags: ['nodejs_compat'] }
   const runtime = new Miniflare(convertV4MiniflareOptions({
     cf: false, host: '127.0.0.1', port: 0, resourcePersistencePath: directory,
     workers: [
-      { ...options, name: 'eve', script: source + `
+      {
+        ...options,
+        name: 'eve',
+        modules: [
+          {
+            type: 'ESModule',
+            path: 'index.mjs',
+            contents: source.replace('../../../lib/env/hosts-constants.mjs', './hosts-constants.mjs') + `
 export default { fetch(request, env) {
           return productRequest(request, env.API, 'https://app.example.test', 'private-local')
-        } }`, serviceBindings: { API: 'product' } },
+        } }`,
+          },
+          { type: 'ESModule', path: 'hosts-constants.mjs', contents: hostsConstantsSource },
+        ],
+        serviceBindings: { API: 'product' },
+      },
       { ...options, name: 'product', script: `import {WorkerEntrypoint} from 'cloudflare:workers'; export default class extends WorkerEntrypoint { async eveProduct(request, scope) {
           if (new URL(request.url).hostname !== 'app.example.test') throw Error('unexpected redirect')
           const operation = await request.json()

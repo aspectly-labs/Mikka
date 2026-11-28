@@ -1,7 +1,7 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { auth } from '@/lib/api-auth'
+import { auth, type ApiSession } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
 import { writeAllowed } from '@/lib/mobile-api'
 import { ActionFailureError } from '@/lib/action-error'
@@ -52,8 +52,8 @@ function fileLinkPage(search: URLSearchParams) {
 }
 
 /** First HTTP surface over the existing volume, CAS and object-store implementation. */
-export async function driveResponse(request: Request, operation: Operation, params: Params = {}): Promise<Response> {
-  const session = params.organizationId ? await organizationSession(request, params.organizationId) : await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
+export async function driveResponse(request: Request, operation: Operation, params: Params = {}, authenticatedSession?: ApiSession): Promise<Response> {
+  const session = authenticatedSession ?? (params.organizationId ? await organizationSession(request, params.organizationId) : await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } }))
   if (!session?.user) return json({ error: 'authRequired' }, 401)
   if (request.method !== 'GET' && !writeAllowed(request)) return json({ error: 'originNotAllowed' }, 403)
   try {

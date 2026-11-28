@@ -2,11 +2,13 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { pool } from '@/lib/db'
 import { withBasePath } from '@/lib/base-path'
+import { LOCALHOST_HOSTNAME, LOOPBACK_IPV4 } from '@/lib/env/hosts'
+import { runtimeEnv } from '@/lib/env/server'
 import { deliverMail, mailConfigured, type MailMessage } from '@/lib/mail-delivery'
 import type { OrganizationInvitationOutcome } from './organization-invitations'
 
 /** Existing auth mail credentials alone must not opt a deployment into invitation mail costs. */
-export function organizationInvitationMailEnabled(env: Record<string, string | undefined> = process.env): boolean {
+export function organizationInvitationMailEnabled(env: Readonly<Record<string, string | undefined>> = runtimeEnv()): boolean {
   return env.MIKKA_ORG_INVITE_EMAIL_ENABLED === 'true' && mailConfigured(env)
 }
 
@@ -18,7 +20,7 @@ export function organizationInvitationMail(
   const base = new URL(origin)
   if (base.origin !== origin || base.username || base.password
     || (base.protocol !== 'https:' && !(base.protocol === 'http:'
-      && (base.hostname === 'localhost' || base.hostname === '127.0.0.1')))) {
+      && (base.hostname === LOCALHOST_HOSTNAME || base.hostname === LOOPBACK_IPV4)))) {
     throw new Error('invalid_organization_invitation_origin')
   }
   if (!/^\/organization-invite\/[a-f0-9]{64}$/.test(invite.path)) {

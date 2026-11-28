@@ -94,3 +94,103 @@ test('the serving API keeps BYOK working while the shared converter is upgraded'
   assert.equal(response.status, 200)
   assert.match(await response.text(), /message_delta/)
 })
+
+function setLiteLLMEnvironment(t: import('node:test').TestContext) {
+  const previousUrl = process.env.MIKKA_LITELLM_URL, previousKey = process.env.MIKKA_LITELLM_MASTER_KEY
+  process.env.MIKKA_LITELLM_URL = url
+  process.env.MIKKA_LITELLM_MASTER_KEY = masterKey
+  t.after(() => {
+    if (previousUrl === undefined) delete process.env.MIKKA_LITELLM_URL
+    else process.env.MIKKA_LITELLM_URL = previousUrl
+    if (previousKey === undefined) delete process.env.MIKKA_LITELLM_MASTER_KEY
+    else process.env.MIKKA_LITELLM_MASTER_KEY = previousKey
+  })
+}
+
+for (const byok of [true, false]) test(`LiteLLM keeps ${byok ? 'BYOK' : 'Managed'} Responses search, citations and usage intact`, { skip }, async t => {
+  setLiteLLMEnvironment(t)
+  const { createLiteLLMModel, liteLLMCost, liteLLMGenerationId } = await import('../lib/model-gateway/litellm-client')
+  const modelId = byok ? 'gpt-5.5' : 'openai/gpt-6-luna'
+  const model = createLiteLLMModel(modelId, byok ? {
+    credential: { modelId, provider: 'openai', apiKey: 'sk-person-search-fixture', baseUrl: provider!, nativeResponses: true },
+  } : {})
+  const result = await model.doStream({
+    prompt: [{ role: 'user', content: [{ type: 'text', text: 'fixture' }] }],
+    tools: [
+      { type: 'provider', id: 'openai.web_search', name: 'web_search', args: {} },
+      { type: 'function', name: 'lookup', inputSchema: { type: 'object', properties: {} } },
+    ],
+  })
+  const parts = await Array.fromAsync(result.stream)
+  assert.ok(!parts.some(part => part.type === 'error'))
+  assert.ok(parts.some(part => part.type === 'tool-result' && part.toolName === 'web_search'))
+  assert.ok(parts.some(part => part.type === 'source' && part.sourceType === 'url' && part.url === 'https://example.com/source'))
+  const finish = parts.find(part => part.type === 'finish')
+  assert.equal(finish?.usage.inputTokens.total, 5)
+  assert.equal(finish?.usage.outputTokens.total, 2)
+  if (!byok) {
+    assert.equal(liteLLMCost(finish?.providerMetadata), 37981)
+    assert.ok(liteLLMGenerationId(finish?.providerMetadata))
+  }
+})
+
+const managedHaiku = 'anthropic/claude-haiku-5.5'
+const haikuSearch = {
+  prompt: [{ role: 'user' as const, content: [
+    { type: 'text' as const, text: 'fixture' },
+    { type: 'file' as const, mediaType: 'image/png', data: { type: 'url' as const, url: new URL('https://example.com/fixture.png') } },
+  ] }],
+  tools: [
+    { type: 'provider' as const, id: 'anthropic.web_search_20250305' as const, name: 'web_search', args: {} },
+    { type: 'function' as const, name: 'lookup', inputSchema: { type: 'object' as const, properties: {} } },
+  ],
+}
+
+for (const byok of [true, false]) test(`LiteLLM preserves ${byok ? 'BYOK Messages' : 'Managed Haiku TypeSafe'} search, citations and images`, { skip }, async t => {
+  setLiteLLMEnvironment(t)
+  const { createLiteLLMModel, liteLLMCost, liteLLMGenerationId } = await import('../lib/model-gateway/litellm-client')
+  const modelId = byok ? 'claude-haiku-5-5' : managedHaiku
+  const model = createLiteLLMModel(modelId, byok ? {
+    credential: { modelId, provider: 'anthropic', apiKey: 'sk-person-messages-fixture', baseUrl: provider!, nativeMessages: true },
+  } : {})
+  const result = await model.doStream(haikuSearch)
+  const parts = await Array.fromAsync(result.stream)
+  assert.ok(!parts.some(part => part.type === 'error'))
+  assert.ok(parts.some(part => part.type === 'tool-result' && part.toolName === 'web_search'))
+  assert.ok(parts.some(part => part.type === 'source' && part.sourceType === 'url' && part.url === 'https://example.com/source'))
+  const finish = parts.find(part => part.type === 'finish')
+  assert.equal(finish?.usage.inputTokens.total, 5)
+  assert.equal(finish?.usage.outputTokens.total, 2)
+  if (!byok) {
+    assert.equal(liteLLMCost(finish?.providerMetadata), 37981)
+    assert.equal(liteLLMGenerationId(finish?.providerMetadata), 'gen_01ARZ3NDEKTSV4RRFFQ69G5FAV')
+    const early = parts.find(part => part.type !== 'finish' && 'providerMetadata' in part && liteLLMGenerationId(part.providerMetadata))
+    assert.ok(early, 'the provider generation ID is available before finish')
+    assert.equal(new Headers(result.response?.headers).has('x-litellm-call-id'), false)
+  }
+})
+
+test('LiteLLM routes nonstreaming Managed Haiku search to its actual generation receipt', { skip }, async t => {
+  setLiteLLMEnvironment(t)
+  const { createLiteLLMModel, liteLLMCost, liteLLMGenerationId } = await import('../lib/model-gateway/litellm-client')
+  const result = await createLiteLLMModel(managedHaiku).doGenerate(haikuSearch)
+  assert.ok(result.content.some(part => part.type === 'tool-result' && part.toolName === 'web_search'))
+  assert.ok(result.content.some(part => part.type === 'source' && part.sourceType === 'url' && part.url === 'https://example.com/source'))
+  assert.equal(liteLLMCost(result.providerMetadata), 37981)
+  assert.equal(liteLLMGenerationId(result.providerMetadata), 'gen_01ARZ3NDEKTSV4RRFFQ69G5FAW')
+})
+
+test('LiteLLM keeps standalone managed search and its actual cost on one response', { skip }, async t => {
+  setLiteLLMEnvironment(t)
+  const { createLiteLLMModel, liteLLMCost, liteLLMGenerationId } = await import('../lib/model-gateway/litellm-client')
+  const { MANAGED_WEB_SEARCH_MODEL } = await import('../lib/model-gateway/provider-config')
+  const result = await createLiteLLMModel(MANAGED_WEB_SEARCH_MODEL).doGenerate({
+    prompt: [{ role: 'user', content: [{ type: 'text', text: 'fixture' }] }],
+    toolChoice: { type: 'required' },
+    tools: [{ type: 'provider', id: 'openai.web_search', name: 'web_search', args: { searchContextSize: 'low' } }],
+  })
+  assert.ok(result.content.some(part => part.type === 'tool-result' && part.toolName === 'web_search'))
+  assert.ok(result.content.some(part => part.type === 'source' && part.sourceType === 'url' && part.url === 'https://example.com/source'))
+  assert.equal(liteLLMCost(result.providerMetadata), 37981)
+  assert.ok(liteLLMGenerationId(result.providerMetadata))
+})

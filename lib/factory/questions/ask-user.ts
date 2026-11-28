@@ -6,7 +6,7 @@ import { PENDING_QUESTION_STATUSES } from "./schema";
 export { PENDING_QUESTION_STATUSES };
 
 /** Claude Code AskUserQuestion `header` is a short chip label (max 12 chars). */
-const HEADERS: Record<string, string> = { context: "Context", decision: "Decision", permission: "Permission", external: "External" };
+const HEADERS: Record<string, string> = { context: "Context", decision: "Decision", external: "External" };
 
 type QuestionView = {
   id: string; kind: string; question: string; context?: string | null; options: string[] | null;

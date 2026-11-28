@@ -1,5 +1,18 @@
 # Personal approved-write endpoint
 
+> **Since [ADR 2026-11-27-1615](../design/decisions/2026-11-27-1615-no-permission-approvals.md)
+> nothing waits for approval.** A run's write goes straight through
+> `writeFromRun` (receipt inserted `running`, then the ledger's single
+> invocation). The browser endpoint only reads receipts (`list`, `view`);
+> `propose` is gone and `decide` is answered `409 pendingActionUnavailable`
+> for one release while the official UI still sends it. A receipt still
+> `running` after its run ended is read back by the reconcile sweep
+> (`lib/operations/write-receipt-sweep.ts`, read/reconcile phases only, never a
+> resend); one whose invoke gate never committed is closed `failed`
+> (`writeRunEnded`). The sweep also closes any late `pending` row as
+> `declined` / `approvalRetired`. The text below is the
+> original contract, kept for its ledger, binding and recovery rules.
+
 Depends on the transaction foundation in PR373. The endpoint POST `/api/approved-writes` (normal app base path applies), Coordinator tool registry and owner/session approval services share one operation ledger. The feature does not replace existing email/calendar-create/update handlers. Availability defaults on in every deployment scope. The PostHog flag `mikka-personal-writes-off` is the incident kill switch (`lib/deployment-switches.ts`); the old `MIKKA_PERSONAL_WRITES_ENABLED` variable is no longer read. Request input cannot override it. Disabled calls return 503/approvedWritesDisabled before auth, application Pool or provider runtime loads. Availability grants no provider permission and does not expand existing frozen tool snapshots.
 
 ## Existing-schema compatibility

@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { TASK_INLINE_FILE_PENDING_HOURS, TASK_INLINE_FILE_RETAIN_DAYS } from './task-attachments/contract'
 
 // A frozen account's original deletion job owns these keys and their grant deadlines.
 export function chatStorageCleanupOwner(table: 'chat_attachments' | 'chat_attachment_retirements') {
@@ -6,6 +7,8 @@ export function chatStorageCleanupOwner(table: 'chat_attachments' | 'chat_attach
     JOIN account_deletion_jobs j ON j.id=g."jobId" AND j."subjectUserId"=g."subjectId"
     WHERE g."subjectId"=${table}."userId" AND j.stage NOT IN ('completed','cancelled'))`
 }
+/** When an unreferenced inline task file expires: a day after an upload nothing named, 30 days after its last reference went. */
+export const TASK_INLINE_FILE_EXPIRY_SQL = `"unreferencedAt" + CASE WHEN "referencedAt" IS NULL THEN interval '${TASK_INLINE_FILE_PENDING_HOURS} hours' ELSE interval '${TASK_INLINE_FILE_RETAIN_DAYS} days' END`
 const availableDraft = chatStorageCleanupOwner('chat_attachments')
 const availableRetirement = chatStorageCleanupOwner('chat_attachment_retirements')
 
@@ -16,8 +19,9 @@ const availableRetirement = chatStorageCleanupOwner('chat_attachment_retirements
  *   are still valid; an hour after its last try when a step failed or the person is a
  *   workspace's sole admin (the hourly recheck the cron had);
  * - an unused chat file: a day after upload, or once removed, after its upload grant expires;
- * - an upload grant still held: at its expiry; a retired object: at its notBefore.
- * Every term reads a partial index (account_deletion_pending_idx, chat_attachments_drafts_idx,
+ * - an upload grant still held: at its expiry; a retired object: at its notBefore;
+ * - an unreferenced inline task file: a day after upload, or 30 days after its last reference went.
+ * Every term reads a partial index (account_deletion_pending_idx, chat_attachments_drafts_idx, task_attachments_inline_unreferenced_idx,
  * chat_attachments_upload_expiry_idx) or the small retirement queue.
  */
 export const ACCOUNT_DELETIONS_DUE_SQL = `SELECT min(CASE WHEN "blockedReasons" @> '["upload_grants_not_expired"]' THEN "storageNotBefore"
@@ -26,7 +30,8 @@ export const ACCOUNT_DELETIONS_DUE_SQL = `SELECT min(CASE WHEN "blockedReasons" 
   UNION ALL SELECT min(greatest(coalesce("removedAt", "createdAt" + interval '1 day' + interval '1 millisecond'),
       coalesce("uploadExpiresAt" + interval '1 millisecond', '-infinity'))) FROM chat_attachments WHERE "usedAt" IS NULL AND ${availableDraft}
   UNION ALL SELECT min("uploadExpiresAt") + interval '1 millisecond' FROM chat_attachments WHERE "uploadKey" IS NOT NULL AND ${availableDraft}
-  UNION ALL SELECT min("notBefore") FROM chat_attachment_retirements WHERE ${availableRetirement}`
+  UNION ALL SELECT min("notBefore") FROM chat_attachment_retirements WHERE ${availableRetirement}
+  UNION ALL SELECT min(${TASK_INLINE_FILE_EXPIRY_SQL}) FROM task_attachments WHERE placement='inline' AND "unreferencedAt" IS NOT NULL`
 
 /** The earliest account-deletion work due (epoch ms, rounded up from PostgreSQL microseconds), or null. */
 export async function nextAccountDeletionsDue(pool: Pick<Pool, 'query'>): Promise<number | null> {

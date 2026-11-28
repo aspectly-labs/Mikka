@@ -1,6 +1,7 @@
 import { afterDatabaseCommit } from './db/commit-effects'
 import { configuredDeploymentId, releaseBuiltAfter } from './deployment-id.mjs'
 import { wakeTokens, wakeTransport, workflowWakesEnabled } from './workflow-wake'
+import { readEnv } from '@/lib/env/server'
 
 /**
  * Jobs whose work carries a persisted due time (#1212 D). Instead of a minute
@@ -68,7 +69,7 @@ export const dueTimerTransport: {
 } = {}
 
 const ENDED = new Set(['completed', 'failed', 'cancelled'])
-const productionDeployment = () => process.env.MIKKA_DEPLOYMENT_STAGE === 'production' || process.env.MIKKA_DEPLOYMENT_ENVIRONMENT === 'production'
+const productionDeployment = () => readEnv('MIKKA_DEPLOYMENT_STAGE') === 'production' || readEnv('MIKKA_DEPLOYMENT_ENVIRONMENT') === 'production'
 
 async function timerHolder(token: string): Promise<DueTimerHolder | null> {
   if (dueTimerTransport.holder) return dueTimerTransport.holder(token)

@@ -76,6 +76,12 @@ before(async () => {
   mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({ get: () => undefined }) } })
   mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en', getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
   mock.module('@/lib/session', { namedExports: { getSession: async () => currentUser ? { user: currentUser, session: { id: sessionId } } : null } })
+  mock.module('@/lib/api-auth', { namedExports: {
+    auth: { api: { getSession: async () => currentUser ? { user: currentUser, session: { id: sessionId } } : null } },
+    getApiSession: async () => currentUser ? { user: currentUser, session: { id: sessionId } } : null,
+    apiWorkspaceAllowed: (session: { tokenWorkspaceId?: string }, workspaceId: string) =>
+      !session.tokenWorkspaceId || session.tokenWorkspaceId === workspaceId,
+  } })
   mock.module('@/lib/auth', { namedExports: {
     authBaseURL: 'http://127.0.0.1',
     googleEnabled: false,

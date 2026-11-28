@@ -37,6 +37,12 @@ before(async () => {
     authBaseURL: 'https://memory-rpc.example.invalid', googleEnabled: false, githubSignInEnabled: async () => false,
   } })
   mock.module('@/lib/session', { namedExports: { getSession: async () => sessionUser ? { user: sessionUser, session: { id: 'preferences-fixture-session' } } : null } })
+  mock.module('@/lib/api-auth', { namedExports: {
+    auth: { api: { getSession: async () => sessionUser ? { user: sessionUser, session: { id: 'preferences-fixture-session' } } : null } },
+    getApiSession: async () => sessionUser ? { user: sessionUser, session: { id: 'preferences-fixture-session' } } : null,
+    apiWorkspaceAllowed: (session: { tokenWorkspaceId?: string }, workspaceId: string) =>
+      !session.tokenWorkspaceId || session.tokenWorkspaceId === workspaceId,
+  } })
   mock.module('@/lib/suggestions/sources', { namedExports: { connectedComposioApps: async () => connected } })
   m = await load()
   const { db, drizzle: { sql } } = m

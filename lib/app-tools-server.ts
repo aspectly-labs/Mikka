@@ -7,7 +7,6 @@ import { getComposio } from '@/lib/composio'
 import { db, pool } from '@/lib/db'
 import { activeExecutionIdentity } from '@/lib/execution-identity'
 import { pendingActions } from '@/lib/db/schema'
-import { proposeAppToolCall } from '@/lib/pending-action-store'
 import { isToolkitSlug, OWN_INTEGRATIONS } from '@/lib/composio-accounts'
 import { composioToolkitLister, isNoAuthToolkit } from '@/lib/plugins/catalog'
 import { MAX_RUN_APP_TOOLS, runAppCall, runAppTool, type RunAppScope } from '@/lib/run-app-mcp'
@@ -39,7 +38,6 @@ export function appToolDeps(userId: string, botId: string | null, client: Client
     recordEnd: async (id, outcome) => {
       await db.update(pendingActions).set({ status: outcome.status, error: outcome.error ?? null, result: outcome.result ?? null }).where(eq(pendingActions.id, id))
     },
-    propose: (call, accountId) => proposeAppToolCall(userId, call, accountId, botId),
   }
 }
 

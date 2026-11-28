@@ -1,3 +1,5 @@
+import { analyticsPath } from './analytics-path.ts'
+
 /** Non-identifying first-touch attribution shared by marketing and App subdomains.
  * Cookie values are untrusted analytics hints, never authorization inputs.
  * Keep this contract identical in both repositories (mirrors
@@ -18,8 +20,11 @@ export function safeLanding(pathname: unknown) {
   if (typeof pathname !== 'string' || pathname === '/') return '/'
   const segments = pathname.split('/').filter(Boolean)
   if (segments.length > 4 || segments.some(part => !/^[a-z][a-z0-9-]{0,32}$/i.test(part))) return '/'
-  if (segments.some(part => ['invite', 'token', 'oauth', 'callback', 'reset-password', 'settings', 'w', 'a'].includes(part.toLowerCase()))) return '/'
-  return '/' + segments.join('/')
+  if (segments.some(part => ['invite', 'organization-invite', 'share', 'shared', 'token', 'oauth', 'callback', 'reset-password', 'device', 'settings', 'w', 'a'].includes(part.toLowerCase()))) return '/'
+  const landing = '/' + segments.join('/')
+  // Stricter than the marketing site's copy, never looser: a path analytics would
+  // rewrite (an id, a token, a page that carries one) is not a landing page.
+  return analyticsPath(landing) === landing ? landing : '/'
 }
 
 export interface FirstTouch {

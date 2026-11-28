@@ -4,6 +4,13 @@ import { resolveFrozenHostedModel, selectionScope, type HostedModelSelection } f
 import { authorizeSubscriptionWorkspace, subscriptionRuntime } from './subscription-runtime'
 export function resolveSubscriptionWorkflowModel(selection: HostedModelSelection, signal?: AbortSignal, modelRequestPolicy?: SubscriptionModelRequestPolicy) {
   return resolveFrozenHostedModel(selectionScope(selection),
-    { harness: 'ai_sdk', model: selection.modelId, modelSelection: selection, ...(modelRequestPolicy?.apiKeyServiceTier ? { serviceTier: modelRequestPolicy.apiKeyServiceTier } : {}) },
+    {
+      harness: 'ai_sdk',
+      model: selection.modelId,
+      modelSelection: selection,
+      ...(modelRequestPolicy?.apiKeyPro ? { pro: true as const } : {}),
+      ...(modelRequestPolicy?.apiKeyServiceTier ? { serviceTier: modelRequestPolicy.apiKeyServiceTier } : {}),
+      ...(modelRequestPolicy?.apiKeyCyberAccessProgram ? { cyberAccessProgram: modelRequestPolicy.apiKeyCyberAccessProgram } : {}),
+    },
     { service: () => subscriptionRuntime(false, false, { modelRequestPolicy }), workspace: authorizeSubscriptionWorkspace }, signal)
 }

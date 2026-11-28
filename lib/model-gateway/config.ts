@@ -1,17 +1,18 @@
+import { runtimeEnv } from '@/lib/env/server'
 import { COORDINATOR_MODEL } from '../coordinator/model'
 
 /*
  * Configuration of the sole model egress, LiteLLM. Pure:
  * reads only the environment passed in.
  */
-type Env = Record<string, string | undefined>
+type Env = Readonly<Record<string, string | undefined>>
 
 /**
  * The internal model service used by every application model request.
  * Provider keys stay behind this server boundary; the task receives only a
  * run-scoped Mikka gateway token. Missing configuration fails closed.
  */
-export function gatewayLiteLlm(env: Env = process.env): { url: string; masterKey: string } | null {
+export function gatewayLiteLlm(env: Env = runtimeEnv()): { url: string; masterKey: string } | null {
   const raw = env.MIKKA_LITELLM_URL?.trim(), masterKey = env.MIKKA_LITELLM_MASTER_KEY?.trim()
   if (!raw || !masterKey) return null
   try {

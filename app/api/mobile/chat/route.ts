@@ -8,10 +8,12 @@ import { reactionsFor } from '@/lib/reactions'
 import { chatFailure } from '@/lib/chat-failure'
 import { coordinatorEnabled } from '@/lib/coordinator/wake'
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
 import { coordinatorHistory, pollCoordinatorChat } from '@/app/actions/coordinator'
 import { ActionFailureError } from '@/lib/action-error'
-import { json, mobileUser, unauthorized } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
+import { enrichMobileChatItems } from '@/lib/coordinator/mobile-tool-projection'
 
 
 const botParam = z.uuid().nullable()
@@ -50,10 +52,7 @@ function readKind(params: URLSearchParams) {
  * - `&after=&cursor=&prefix=` (the last read's `continuation`): what is new since it, with `after`; the app keeps the
  *   messages it has up to `after`. If the chat changed before that point, the latest page as a full read.
  */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const params = new URL(request.url).searchParams
   const bot = botParam.safeParse(params.get('bot'))
   if (!bot.success) return json({ error: 'invalidBot' }, 400)
@@ -67,7 +66,7 @@ async function handleGET(request: Request) {
       const enabled = await coordinatorEnabled(user.id, botId)
       const view = await chatUpdate(user.id, botId, read.kind === 'update' ? read.continuation : undefined)
       // The app shows a failed welcome through `failure`; the empty Bot item is no message (nor unread, nor reactable).
-      const chat = { ...view, items: view.items.filter(item => !item.welcome) }
+      const chat = { ...view, items: enrichMobileChatItems(view.items.filter(item => !item.welcome)) }
       const working = enabled && chat.working
       return json({ ...chat, submissionIds: true, enabled, working, failure: enabled ? chatFailure({ working, error: chat.error, cause: chat.cause, failureDetails: chat.failureDetails, items: chat.items }) : null, reactions: await reactionsOf(user.id, chat.items) })
     }
@@ -75,7 +74,7 @@ async function handleGET(request: Request) {
     const polled = await pollCoordinatorChat(bot.data, undefined, read.kind === 'update' ? read.continuation : undefined)
     // Without a known version the poll always returns the chat itself.
     if ('unchanged' in polled) throw new Error('chatUnchangedWithoutVersion')
-    const chat = { ...polled, items: polled.items.filter(item => !item.welcome) }
+    const chat = { ...polled, items: enrichMobileChatItems(polled.items.filter(item => !item.welcome)) }
     return json({ ...chat, submissionIds: true, failure: chat.enabled ? chatFailure(chat) : null, reactions: await reactionsOf(user.id, chat.items) })
   } catch (error) {
     if (error instanceof ActionFailureError) return json({ error: error.code }, 404)
@@ -85,10 +84,26 @@ async function handleGET(request: Request) {
 
 /** An older page: its messages and what they cite, and whether there are older ones still. */
 async function history(userId: string, page: Awaited<ReturnType<typeof chatView>>) {
-  const items = page.items.filter(item => !item.welcome)
+  const items = enrichMobileChatItems(page.items.filter(item => !item.welcome))
   return json({ items, sources: page.sources, artifacts: page.artifacts, historyBefore: page.historyBefore ?? null, reactions: await reactionsOf(userId, items) })
 }
 
-export const GET = withRequestLog('/api/mobile/chat', handleGET)
-export const POST = withRequestLog('/api/mobile/chat', () =>
-  Response.json({ error: 'coordinatorSendRetired' }, { status: 410, headers: { 'Cache-Control': 'no-store' } }))
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/mobile/chat',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  () => Response.json({ error: 'coordinatorSendRetired' }, { status: 410, headers: { 'Cache-Control': 'no-store' } }),
+)
+
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/chat',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)

@@ -1,14 +1,6 @@
-import {RouteResponse} from '@/lib/server-runtime/server'
-import {auth} from '@/lib/api-auth'
-
-/** The old wire label is retained for installed clients; Eve owns execution. */
-export async function GET(request:Request) {
-  const session=await auth.api.getSession({headers:request.headers})
-  if(!session?.user)return RouteResponse.json({error:'authRequired'},{status:401})
-  return RouteResponse.json({available:false,runtime:{harness:'ai_sdk'}},{headers:{'Cache-Control':'private, no-store'}})
-}
-export async function PUT(request:Request) {
-  const session=await auth.api.getSession({headers:request.headers})
-  if(!session?.user)return RouteResponse.json({error:'authRequired'},{status:401})
-  return RouteResponse.json({error:'notEnabled'},{status:404})
-}
+import { RouteResponse } from '@/lib/server-runtime/server'
+import { defineRoute } from '@/lib/primitives/define-route'
+const respond = (body: unknown, status: number) => RouteResponse.json(body, { status, headers: { 'cache-control': 'private, no-store' } })
+const spec = { auth: 'session', origin: 'any', workspace: 'pat-scoped' } as const
+export const GET = defineRoute<'session', 'pat-scoped'>(spec, () => respond({ available: false, runtime: { harness: 'ai_sdk' } }, 200))
+export const PUT = defineRoute<'session', 'pat-scoped'>(spec, () => respond({ error: 'notEnabled' }, 404))

@@ -1,3 +1,6 @@
+export const WEB_USER_LIMIT_PER_MINUTE = 10
+export const BYOK_WEB_SEARCH_USAGE_LABEL = 'Web Search'
+
 export type SearchResult = { title: string; url: string; snippet: string }
 
 export type SearchOutcome = 'ok' | 'rate_limited' | 'upstream_error' | 'timeout' | 'error'

@@ -496,7 +496,10 @@ test('empty, ambiguous, timed-out or incomplete reconciliation never invokes POS
   })
   await t.test('timeout', async t => {
     const f = fixture(t)
-    f.state.onFetch = url => { if (url.pathname.endsWith('/reviews')) throw new DOMException('Fixture read timeout', 'TimeoutError') }
+    f.state.onFetch = url => {
+      if (url.pathname.endsWith('/reviews')) throw new DOMException('Fixture read timeout', 'TimeoutError')
+      return undefined
+    }
     await assert.rejects(f.reconcile(), code('workspace_review_github_unavailable'))
     assert.equal(f.posts().length, 0)
   })

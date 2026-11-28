@@ -2,9 +2,10 @@ import 'server-only'
 import { Client } from 'eve/client'
 import { internalEveHeaders } from './auth'
 import { assertEveScope, type EveScope } from './scope'
+import { resolveEveServerEndpoint } from '../env/hosts'
 
 export function eveInternalOrigin() {
-  return process.env.MIKKA_EVE_ORIGIN ?? new URL('/mikka/api/agents', process.env.BETTER_AUTH_URL ?? 'http://127.0.0.1:3000').toString()
+  return resolveEveServerEndpoint()
 }
 /** One authenticated upstream protocol for web, native clients and host events. */
 export function eveClient(scope: EveScope) {

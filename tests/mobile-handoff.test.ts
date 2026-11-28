@@ -118,6 +118,18 @@ test('desktop bearer opens the intended account and integration page only after 
   assert.equal((await open(token, bob.cookie)).headers.getSetCookie().length, 0, 'one-use token cannot replay the account handoff')
 })
 
+test('confirmed desktop Linear consent starts on a fresh document with the issuing account', async () => {
+  const alice = await signUp('linear-owner')
+  const target = `/api/integrations/linear/connect?account=${alice.id}`
+  const confirmed = await confirm(await open(await issue(alice.cookie), undefined, target))
+  assert.equal(confirmed.status, 200)
+  assert.equal(confirmed.headers.has('location'), false)
+  assert.match(confirmed.headers.get('content-security-policy')!, /form-action 'self'/)
+  assert.equal((await session(cookieHeader(confirmed.headers)))?.user.id, alice.id)
+  const html = await confirmed.text()
+  assert.ok(html.includes(`http-equiv="refresh" content="0; url=https://handoff.test${target}"`))
+})
+
 test('confirmation rejects expired, tampered state and a revoked underlying session', async () => {
   const alice = await signUp('alice3')
   const response = await open(await issue(alice.cookie))

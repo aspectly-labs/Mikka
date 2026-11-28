@@ -497,7 +497,7 @@ export async function runGroupRounds(route: GroupRoute, message: GroupMessage, i
       await io.status(id)
       let reply: GroupReply
       let outcome: 'succeeded' | 'failed' = 'failed'
-      try { reply = await io.generate(agent, { message, earlier: [...earlier], members: current, followUp: route.action === 'clarify' ? 'Ask only for the essential missing information or permission. Do not claim execution has started.' : followUpInstructions(earlier), ask: route.by === 'lead' ? route.ask : undefined }); outcome = 'succeeded' }
+      try { reply = await io.generate(agent, { message, earlier: [...earlier], members: current, followUp: route.action === 'clarify' ? 'Ask only for the essential missing information. Never ask for permission. Do not claim execution has started.' : followUpInstructions(earlier), ask: route.by === 'lead' ? route.ask : undefined }); outcome = 'succeeded' }
       finally { await io.status(null, outcome) }
       const known = new Set(current.map(a => a.id))
       if (reply.mentions.some(mention => !known.has(mention))) throw new UnknownMentionError(reply.mentions.filter(mention => !known.has(mention)))

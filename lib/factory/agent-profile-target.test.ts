@@ -38,20 +38,21 @@ const { assertFrozenModelTarget, assertProfileTarget, assertProfileSelection } =
 const { resolveModelDispatch } = await import('../model-dispatch')
 
 type Connection = { id: string; ownerId: string; provider: 'claude' | 'codex'; models: string[]; state: string; paused: boolean; removed: boolean; epoch: string; bindingEpoch: string; quota: unknown }
-type Key = { id: string; ownerId: string; provider: 'custom' | 'deepseek'; name: null; baseUrl: string; protocol: 'openai' | 'anthropic'; last4: string; models: string[]; modelsError: string | null; responsesApi: boolean }
+type Key = { id: string; ownerId: string | null; workspaceId: string | null; provider: 'custom' | 'deepseek'; name: null; baseUrl: string; protocol: 'openai' | 'anthropic'; last4: string; models: string[]; modelsError: string | null; responsesApi: boolean }
 type Call = { kind: string; params: unknown[]; rows: number }
 const quota = (used = .1, age = 0) => ({ vendor: 'codex', source: 'official', status: 'ok', plan: null, observedAt: new Date(Date.now() - age).toISOString(), windows: [{ kind: 'five_hour', used, resetsAt: new Date(Date.now() + 3_600_000).toISOString() }] })
 function fixture() {
   const connection = (ownerId: string): Connection => ({ id: randomUUID(), ownerId, provider: 'codex', models: ['fixed-model', 'other-model'], state: 'connected', paused: false, removed: false, epoch: '1', bindingEpoch: '1', quota: quota() })
-  const key = (ownerId: string): Key => ({ id: randomUUID(), ownerId, provider: 'deepseek', name: null, baseUrl: 'https://example.invalid', protocol: 'openai', last4: 'fake', models: ['fixed-model', 'other-model'], modelsError: null, responsesApi: true })
+  // A key is a person's or a workspace's, never shared (decision 2026-11-27-1740).
+  const key = (ownerId: string | null, workspaceId: string | null = null): Key => ({ id: randomUUID(), ownerId, workspaceId, provider: 'deepseek', name: null, baseUrl: 'https://example.invalid', protocol: 'openai', last4: 'fake', models: ['fixed-model', 'other-model'], modelsError: null, responsesApi: true })
   const connections = [connection(scope.ownerId), connection(scope.ownerId), connection('payor'), connection('unrelated-payor')]
-  const keys = [key(scope.ownerId), key(scope.ownerId), key('payor'), key('unrelated-payor')]
-  const shares = new Set(['payor', 'unrelated-payor']), keyShares = new Set(keys.filter(row => row.ownerId !== scope.ownerId).map(row => row.id))
+  const keys = [key(scope.ownerId), key(scope.ownerId), key(null, scope.workspaceId), key('unrelated-payor')]
+  const shares = new Set(['payor', 'unrelated-payor'])
   const calls: Call[] = []
   let allowed = true, health: unknown[] = [], afterLock: (() => void) | undefined, profile: AgentProfileSelection | undefined
   let profileState: { archivedAt?: Date; enabled?: boolean; version?: number; ownerId?: string; workspaceId?: string } = {}
   const mayUse = (owner: string) => owner === scope.ownerId || (allowed && shares.has(owner))
-  const mayUseKey = (row: Key) => row.ownerId === scope.ownerId || (allowed && keyShares.has(row.id))
+  const mayUseKey = (row: Key) => row.ownerId === scope.ownerId || row.workspaceId === scope.workspaceId
   const query = async (sql: string, params: unknown[] = []) => {
     let kind: string, rows: unknown[]
     if (sql.includes('FROM model_order_settings')) {
@@ -82,11 +83,11 @@ function fixture() {
     } else if (sql.includes('WITH requested AS')) {
       kind = 'provider_health'; rows = health
     } else if (sql.includes('FROM model_api_keys k') && sql.includes('JOIN unnest')) {
-      kind = 'key_state'; rows = keys.filter(row => (params[0] as string[]).includes(row.id) && (params[1] as string[]).includes(row.ownerId) && mayUseKey(row))
-    } else if (sql.includes('FROM model_api_key_shares s JOIN model_api_keys k')) {
-      kind = 'shared_keys'; rows = keys.filter(row => row.ownerId !== scope.ownerId && keyShares.has(row.id) && (params.length === 2 || row.id === params[2]))
-    } else if (sql.includes('FROM model_api_keys WHERE "ownerId"=$1')) {
-      kind = 'own_keys'; rows = keys.filter(row => row.ownerId === params[0] && (params.length === 1 || row.id === params[1]))
+      kind = 'key_state'; rows = keys.filter(row => (params[0] as string[]).includes(row.id) && (params[1] as string[]).includes(row.ownerId ?? row.workspaceId!) && mayUseKey(row))
+    } else if (sql.includes('WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid)')) {
+      kind = 'usable_keys'; rows = keys.filter(row => (row.ownerId === params[0] || row.workspaceId === params[1]) && (params.length === 2 || row.id === params[2]))
+    } else if (sql.includes('FROM bot_model_choices c')) {
+      kind = 'daybreak_choice'; rows = []
     } else assert.fail(`Unrecognized query: ${sql}`)
     calls.push({ kind, params: structuredClone(params), rows: rows.length })
     return { rows, rowCount: rows.length }
@@ -97,7 +98,7 @@ function fixture() {
     profile = { profileId: randomUUID(), version: 1, digest: agentProfileDigest(definition, []), name: definition.name, source: 'explicit', reason: 'explicit', scope, definition, skills: [], instructions: agentProfileInstructions(definition, []), targetEntry: entry }
     return profile
   }
-  return { query: { query } as unknown as Pick<Pool, 'query'>, calls, connections, keys, shares, keyShares, source, selection,
+  return { query: { query } as unknown as Pick<Pool, 'query'>, calls, connections, keys, shares, source, selection,
     policy(value: boolean) { allowed = value }, health(value: unknown[]) { health = value }, afterLock(value: () => void) { afterLock = value }, profileState(value: typeof profileState) { profileState = value } }
 }
 const result = async (fn: () => Promise<void>) => {
@@ -119,7 +120,7 @@ for (const shared of [false]) test(`fixed ${shared ? 'shared' : 'own'} dispatch 
   const selected = await resolve()
   assert.equal(selected.kind, 'cloud')
   assert.deepEqual(selected.entry, entry)
-  assert.equal(f.calls.some(call => ['pooled_owners', 'catalogue_rank', 'own_keys', 'shared_keys'].includes(call.kind)), false)
+  assert.equal(f.calls.some(call => ['pooled_owners', 'catalogue_rank', 'usable_keys'].includes(call.kind)), false)
   assert.equal(f.calls.filter(call => call.kind === 'catalogue').length, 1)
   assert.ok(f.calls.filter(call => call.kind === 'catalogue').every(call => call.params[6] === connectionId && call.params[7] === entry.model))
   f.connections[shared ? 2 : 0].paused = true
@@ -138,7 +139,7 @@ test('a harness-only dispatch keeps its preference model even with a conflicting
   assert.equal(providerCalls, 0)
 })
 
-for (const [shared, kind] of [[false, 'subscription'], [false, 'api_key'], [true, 'api_key']] as const) test(`fixed ${shared ? 'shared' : 'own'} ${kind} reads only its selected source, with the original final fences`, async t => {
+for (const [shared, kind] of [[false, 'subscription'], [false, 'api_key'], [true, 'api_key']] as const) test(`fixed ${shared ? 'workspace' : 'own'} ${kind} reads only its selected source, with the original final fences`, async t => {
   reset()
   const f = fixture(), entry = f.source(kind, shared), selected = f.selection(entry)
   const baseline = await result(() => assertFrozenModelTarget(f.query, scope, entry))
@@ -181,11 +182,10 @@ for (const scenario of ['paused', 'removed', 'reconnect', 'epoch_changed', 'mode
   assert.equal(providerCalls, 0)
 })
 
-for (const scenario of ['unshared', 'team_denied', 'models_error', 'model_gone', 'protocol', 'responses', 'health'] as const) test(`fixed API key keeps the full implementation refusal: ${scenario}`, async () => {
+for (const scenario of ['workspace_removed', 'models_error', 'model_gone', 'protocol', 'responses', 'health'] as const) test(`fixed API key keeps the full implementation refusal: ${scenario}`, async () => {
   reset()
-  const f = fixture(), shared = ['unshared', 'team_denied'].includes(scenario), entry = f.source('api_key', shared), selected = f.selection(entry), key = f.keys[shared ? 2 : 0]
-  if (scenario === 'unshared') f.keyShares.delete(key.id)
-  if (scenario === 'team_denied') f.policy(false)
+  const f = fixture(), shared = scenario === 'workspace_removed', entry = f.source('api_key', shared), selected = f.selection(entry), key = f.keys[shared ? 2 : 0]
+  if (scenario === 'workspace_removed') key.workspaceId = randomUUID()
   if (scenario === 'models_error') key.modelsError = 'invalid'
   if (scenario === 'model_gone') key.models = ['other-model']
   if (scenario === 'protocol') { key.provider = 'custom'; key.protocol = 'anthropic' }
@@ -197,11 +197,11 @@ for (const scenario of ['unshared', 'team_denied', 'models_error', 'model_gone',
   assert.equal(providerCalls, 0)
 })
 
-for (const change of ['pause', 'key_share'] as const) test(`the original post-lock fresh read still sees ${change}`, async () => {
+for (const change of ['pause', 'workspace_key'] as const) test(`the original post-lock fresh read still sees ${change}`, async () => {
   reset()
   const run = async (full: boolean) => {
-    const f = fixture(), entry = f.source(change === 'key_share' ? 'api_key' : 'subscription', change !== 'pause'), selected = f.selection(entry)
-    f.afterLock(() => { if (change === 'pause') f.connections[0].paused = true; else f.keyShares.clear() })
+    const f = fixture(), entry = f.source(change === 'workspace_key' ? 'api_key' : 'subscription', change !== 'pause'), selected = f.selection(entry)
+    f.afterLock(() => { if (change === 'pause') f.connections[0].paused = true; else f.keys[2].workspaceId = randomUUID() })
     return result(() => full ? assertFrozenModelTarget(f.query, scope, entry) : assertProfileTarget(f.query, scope, selected))
   }
   const baseline = await run(true)

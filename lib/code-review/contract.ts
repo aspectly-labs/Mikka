@@ -1,4 +1,4 @@
-import type { TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
+import type { TaskReviewPullRef, TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
 
 // The code review contract (#1722 backend, #1732 UI; decision 2026-11-08 「审阅」).
 // One set of types for the web, the hosted layer and iOS: every field ties to an
@@ -40,11 +40,15 @@ export type ReviewSummary = {
   /** The task (issue) id. */
   taskId: string
   /** Null before a PR exists (R6). */
-  pr: { number: number; state: ReviewPullRequestState; url: string; observedAt?: string } | null
+  pr: { number: number; state: ReviewPullRequestState; url: string; observedAt?: string;
+    headSha?: string; mergeable?: boolean | null; draft?: boolean } | null
   reviewRef?: TaskReviewRef | null
   countsKnown?: boolean
   reclaimed?: boolean
   mergeTarget?: { reviewRef: TaskReviewRef; binding: { taskId: string; issueId: string; attemptId: string; candidateId: string; revision: number }; expectedHeadSha: string } | null
+  /** Additive native writer capability; legacy mergeTarget/permissions remain
+   * snapshot-bound until their consumers migrate. Null means no native intent. */
+  nativeMergeTarget?: { pullRef: TaskReviewPullRef; binding: { taskId: string; issueId: string; attemptId: string; candidateId: string; revision: number }; expectedHeadSha: string } | null
   files: number | null
   additions: number | null
   deletions: number | null

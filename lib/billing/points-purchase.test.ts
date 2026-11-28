@@ -66,6 +66,7 @@ test('each fixed USD amount creates a payment session with server-owned pricing 
     assert.equal(body.get('line_items[0][price_data][currency]'), 'usd')
     assert.equal(body.get('line_items[0][price_data][unit_amount]'), String(amount * 100))
     assert.equal(body.get('line_items[0][quantity]'), '1')
+    assert.equal(body.get('line_items[0][price_data][product_data][name]'), 'Mikka credits')
     // Managed Payments (on by default for the account) refuses a product without an eligible tax code.
     assert.equal(body.get('line_items[0][price_data][product_data][tax_code]'), 'txcd_10105002')
     for (const prefix of ['metadata', 'payment_intent_data[metadata]']) {

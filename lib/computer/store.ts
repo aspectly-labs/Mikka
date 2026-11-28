@@ -19,6 +19,10 @@ import { initializeWorkVisibility } from '@/lib/settings/work-creation'
 export class ComputerError extends Error {
   constructor(public status: number, message: string) { super(message) }
 }
+export class TaskWorkspaceArchiveUnavailable extends ComputerError {
+  static readonly code = 'task_workspace_archive_unavailable'
+  constructor() { super(503, 'Task workspace archive unavailable. Retry the run.') }
+}
 type Actor = { userId: string; workspaceId: string }
 type Bot = { id: string; name: string; ownerId: string; workspaceId: string }
 type Machine = { workspaceId: string; ownerId: string; sandboxId: string | null; operationId: string; state: string; errorCode: string | null; runtimeReady: boolean }
@@ -73,15 +77,14 @@ export class ComputerStore {
           version=CASE WHEN workspace_computer_policies.permission=$2 THEN workspace_computer_policies.version ELSE workspace_computer_policies.version+1 END
         RETURNING version`, [workspaceId, permission])).rows[0]
       if (previous !== permission) {
-        await client.query('UPDATE computer_run_bindings SET "approvedForRun"=false WHERE "workspaceId"=$1', [workspaceId])
         // Local and cloud direct runners use the authority admitted at claim.
         // Revoke that generation through a durable stop, never a per-call read.
         await stopRunsForPolicyChange(client, { kind: 'workspace', workspaceId })
       }
       if (permission === 'deny') {
-        // Previously delivered approvals cannot be rebound to a later policy
-        // generation. Stop these threads so they cannot appear to resume with
-        // stale authority after an administrator re-enables computer use.
+        // Computer authority admitted under an earlier policy generation
+        // cannot carry over. Stop these threads so they cannot appear to resume
+        // with stale authority after an administrator re-enables computer use.
         const stopped = await client.query<{ id: string }>(`UPDATE agent_runs r SET "stopRequestedAt"=coalesce(r."stopRequestedAt",now()),"updatedAt"=now(),
           "finishedAt"=CASE WHEN r.status='queued' THEN now() ELSE r."finishedAt" END,
           status=CASE WHEN r.status='queued' THEN 'stopped' ELSE r.status END
@@ -89,10 +92,22 @@ export class ComputerStore {
             AND r.status=ANY($2::text[]) RETURNING r.id`, [workspaceId, ['queued', 'preparing', 'running', 'paused', 'waiting_input', 'finishing']])
         for (const { id } of stopped.rows) { await runListChanged(client, id); await runChanged(client, id) }
       }
+      const connectForPolicy = async (ownerId: string, sandboxId: string) => {
+        try {
+          return this.runtime.connectComputerForPolicy
+            ? await this.runtime.connectComputerForPolicy(ownerId, sandboxId, client)
+            : await this.runtime.connectComputer(workspaceId, sandboxId, undefined, undefined, true)
+        }
+        catch (error) {
+          if (error instanceof provider.PolicySandboxUnavailable || provider.computerGone(error)) return null
+          throw error
+        }
+      }
       const sync = async () => {
         for (const machine of machines) {
           if (!machine.sandboxId || !machine.runtimeReady) continue
-          const sandbox = await this.runtime.connectComputer(workspaceId, machine.sandboxId)
+          const sandbox = await connectForPolicy(machine.ownerId, machine.sandboxId)
+          if (!sandbox) continue
           for (const desktop of desktops.filter(d => d.ownerId === machine.ownerId)) await this.runtime.syncDesktopLease(sandbox, this.lease(desktop, permission !== 'deny', Number(policy?.version ?? 0)))
         }
         // Dedicated threads have their own driver lease. Updating only the
@@ -101,12 +116,13 @@ export class ComputerStore {
           JOIN bots b ON b.id=t."botId" AND b."workspaceId"=t."workspaceId" AND b."ownerId"=t."ownerId"
           WHERE t."workspaceId"=$1 AND t."sandboxId" IS NOT NULL AND t.state IN ('starting','running') ORDER BY t."runId"`, [workspaceId])).rows
         for (const thread of threads) {
-          const sandbox = await this.runtime.connectComputer(workspaceId, thread.sandboxId)
+          const sandbox = await connectForPolicy(thread.ownerId, thread.sandboxId)
+          if (!sandbox) continue
           await this.runtime.syncDesktopLease(sandbox, { botId: thread.botId, ownerId: thread.ownerId, display: 1, epoch: thread.epoch, controlledBy: null, controlUntil: 0, computerAllowed: permission !== 'deny', policyVersion: Number(policy?.version ?? 0) })
         }
       }
       // Every transition increments the policy version. The display lock
-      // fences old approvals even if the subsequent database commit fails.
+      // fences older driver leases even if the subsequent database commit fails.
       await sync()
       if (previous !== permission) await computerWorkspaceChanged(client, this.pool, workspaceId)
       await client.query('COMMIT')

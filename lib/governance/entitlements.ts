@@ -4,6 +4,7 @@ import { organizations, organizationEntitlements, organizationMembers, organizat
 import { workspaceEntitlements } from '@/lib/db/team-entitlements-schema'
 import { workspaceMembers, workspaces } from '@/lib/db/workspace-schema'
 import type { WorkspaceTransaction } from '@/lib/workspace-access'
+import { getRuntimeConfig } from '@/lib/runtime-config'
 import { deploymentMode } from './edition'
 import { GovernanceError } from './errors'
 import { resolveEntitlements, seatAdmissionAllowed, type DeploymentMode, type GovernanceFeature } from './policy'
@@ -22,7 +23,12 @@ export async function lockWorkspaceEntitlements(tx: WorkspaceTransaction, worksp
     .leftJoin(workspaceEntitlements, eq(workspaceEntitlements.workspaceId, workspaces.id))
     .leftJoin(organizationEntitlements, organizationId ? eq(organizationEntitlements.organizationId, organizationId) : sql`false`)
     .where(eq(workspaces.id, workspaceId)).limit(1)
-  const entitlements = resolveEntitlements({ mode, kind: workspace.kind, grants: [grants?.local, grants?.organization] })
+  const entitlements = resolveEntitlements({
+    mode,
+    kind: workspace.kind,
+    grants: [grants?.local, grants?.organization],
+    capabilityOverrides: getRuntimeConfig('planEntitlementOverrides'),
+  })
   return { workspace, organizationId, entitlements }
 }
 
@@ -61,6 +67,6 @@ export async function workspaceGovernanceSummary(tx: WorkspaceTransaction, works
   const activeHumans = (await activeHumanSeats(tx, workspaceId, scope.organizationId)).length
   const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(workspaceMembers)
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.status, 'active')))
-  return { organizationId: scope.organizationId, ...scope.entitlements, activeHumans, workspaceActiveHumans: count,
+  return { organizationId: scope.organizationId, ...scope.entitlements, capabilities: scope.entitlements.capabilities, activeHumans, workspaceActiveHumans: count,
     overLimit: scope.entitlements.activeHumanLimit !== null && activeHumans > scope.entitlements.activeHumanLimit }
 }

@@ -1,9 +1,10 @@
 import { isCloudEdition } from '@/lib/edition'
+import { runtimeEnv } from '@/lib/env/server'
 import { CloudServiceError } from '@/lib/cloud-services/errors'
 
 /** Operator-owned runtime configuration, shared with the platform rewrite.
  * A request can never choose the receiving host, path, or credentials. */
-export function officialGitHubRelayEndpoint(env: Readonly<Record<string, string | undefined>> = process.env): string | null {
+export function officialGitHubRelayEndpoint(env: Readonly<Record<string, string | undefined>> = runtimeEnv()): string | null {
   if (!isCloudEdition(env) || !env.MIKKA_CLOUD_BACKEND_URL) return null
   let target: URL
   try { target = new URL(env.MIKKA_CLOUD_BACKEND_URL) }

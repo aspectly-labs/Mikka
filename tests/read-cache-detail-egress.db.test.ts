@@ -206,9 +206,9 @@ test('detail and activity revalidate current access while returning only changed
     assert.ok(shared.issue)
     await t.test('an explicit read-only grant invalidates an editable cursor and supplies the persisted discussion without seeding the document', async () => {
       assert.equal(shared.issue?.canSteer, true)
-      const { loadIssueDocument, upsertLinearComment, encodedIssueDocument } = await import('../lib/linear-sync/document')
+      const { loadIssueDocument, upsertThreadMessage, encodedIssueDocument } = await import('../lib/task-comments/issue-document')
       const doc = loadIssueDocument(null, createdShared.issue!.content)
-      upsertLinearComment(doc, { threadId: 'discussion-existing', messageId: 'first', author: 'Owner', authorUserId: owner, body: 'Existing discussion', at: new Date().toISOString() })
+      upsertThreadMessage(doc, { threadId: 'discussion-existing', messageId: 'first', author: 'Owner', authorUserId: owner, body: 'Existing discussion', at: new Date().toISOString() })
       const state = encodedIssueDocument(doc)
       doc.destroy()
       await pool.query('insert into issue_documents("issueId","userId",state) values ($1,$2,$3)', [sharedId, owner, state])
@@ -413,14 +413,10 @@ test('detail and activity revalidate current access while returning only changed
       })
       await t.test('an authorized Linear import verifies its target until the link is removed', async () => {
         const { linearTeamSyncs } = await import('../lib/db/schema')
-        const { createAppIssueFromLinear } = await import('../lib/linear-sync/issue-sync')
         const [sync] = await db.insert(linearTeamSyncs).values({ id: randomUUID(), ownerId: owner,
           workspaceId, linearTeamId: randomUUID(), linearTeamKey: 'ALIS', linearTeamName: 'Verified read fixture', active: true }).returning()
-        const imported = await createAppIssueFromLinear(sync, { id: randomUUID(), identifier: 'ALIS-1',
-          title: 'Verified read fixture', description: '', dueDate: null, priority: 0, url: 'https://example.invalid/fixture',
-          updatedAt: new Date().toISOString(), state: null, team: { id: sync.linearTeamId, key: sync.linearTeamKey, name: sync.linearTeamName },
-          assignee: null, labels: [] })
-        assert.ok(imported)
+        const { historicalLinearTask } = await import('./helpers/historical-linear-task')
+        const imported = await historicalLinearTask(pool, owner, workspaceId, sync.id, randomUUID(), 'ALIS-1', 'Verified read fixture')
         const verified = successful(await readWorkspace(() => pollIssue(imported.id)))
         assert.equal(verified.issue?.linearTargetVerified, true)
         assert.equal(verified.issue?.scope, 'workspace')

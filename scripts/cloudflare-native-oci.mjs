@@ -79,7 +79,6 @@ export function command(bin, args, options = {}) {
 export function buildProduct(work, env) {
   const commands = [
     ['SUBSCRIPTION_WORKER', 'node', ['scripts/build-subscription-worker.mjs']],
-    ['AGENT_UI', 'corepack', ['pnpm', 'generate:agent-ui']],
     ['FRONTEND', 'node', ['apps/frontend/scripts/build.mjs', 'web']],
     ['API', 'node', ['apps/api/scripts/build.mjs']],
   ]

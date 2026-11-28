@@ -1,9 +1,11 @@
 import { withDeviceRoute } from '@/lib/device-route'
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { daemonTestMode, normalizeRepository } from '@mikka/protocol/repository'
+import { runnableSetup } from '@mikka/protocol/device'
 import { readUnderDeviceAuthority } from '@/lib/db'
 import { readRepositoryDaemonSettings } from '@/lib/device-repositories'
 import { authenticateDevice } from '@/lib/device-link'
+import { runtimeEnv } from '@/lib/env/server'
 
 
 /** Repository records and owner-scoped settings, never a local path allow-list. */
@@ -24,7 +26,7 @@ async function handleGET(request: Request, { params }: { params: Promise<{ devic
     if (directory.kind === 'cloud' || repo.repoPath.startsWith('v2/')) return [repo]
     if (!repo.remoteUrl) return []
     try {
-      const repository = normalizeRepository(repo.remoteUrl, { allowFile: daemonTestMode(process.env) })
+      const repository = normalizeRepository(repo.remoteUrl, { allowFile: daemonTestMode(runtimeEnv()) })
       return [{ ...repo, repoPath: repository.key }]
     } catch { return [] }
   })
@@ -35,7 +37,7 @@ async function handleGET(request: Request, { params }: { params: Promise<{ devic
       name: repo.repoPath.split('/').filter(Boolean).pop() ?? repo.repoPath,
       path: repo.repoPath,
       remoteUrl: repo.remoteUrl,
-      ...(settings?.setup ? { setup: settings.setup } : {}),
+      ...(settings?.setup ? { setup: runnableSetup(settings.setup) } : {}),
       ...(settings?.networkAllow ? { networkAllow: settings.networkAllow } : {}),
       // Push approval is pinned in claim.policy, not cached between runs.
     }

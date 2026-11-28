@@ -38,7 +38,6 @@ import { createUnstartedTask } from '@/lib/task-create-only'
 import { readTaskDispatchReceipt } from '@/lib/task-dispatch-receipt'
 import type { CreateOnlyCommand, DispatchReceiptInput } from '@/lib/task-create-command'
 import { promoteExistingIssueForUser } from '@/lib/team-issue-promotion'
-import { scheduleIssueEffect } from '@/lib/issue-effects'
 import { recordCoordinatorEvent } from '@/lib/coordinator-event-store'
 import { coordinatorBot } from '@/lib/coordinator/coordinator-bot'
 import { issueStatusEvent } from '@/lib/coordinator-events'
@@ -58,6 +57,8 @@ import { ownerListRead } from '@/lib/live/list-read-server'
 import { beginOwnerListRead } from '@/lib/live/revision-read'
 import { changedListIds, listPositionKey, readListPositions, unchangedList, type ListPosition } from '@/lib/list-poll'
 import { cacheReadAction } from '@/lib/cache-read-action'
+import { referencedTaskFileIds } from '@/lib/task-comments/document'
+import { syncTaskInlineFileReferences } from '@/lib/task-comments/save-effects'
 import { requireTaskWorkspace, taskReaderScope, withTaskWorkspace } from '@/lib/task-workspace'
 
 type IssueRow = typeof issues.$inferSelect
@@ -123,25 +124,6 @@ export async function countAssignedWorkspaceTasks(workspaceId: string) {
       sql`${assignee}->>'kind' = 'member' and ${assignee}->>'id' = ${user.id}`,
     ))
     return { count: row.count }
-  })
-}
-
-/** Views belongs to the selected workspace. Its totals span the same visible
- * Tasks as the paginated list, including those the client has not loaded. */
-export async function countWorkspaceTaskViews(workspaceId: string) {
-  z.uuid().parse(workspaceId)
-  const user = await requireUser()
-  if (await effectiveRequestWorkspace(user) !== workspaceId) throw new ActionFailureError('workspaceAccessDenied')
-  return withTaskWorkspace(user, workspaceId, async () => {
-    const metadata = sql`coalesce(${issues.content}->'attrs'->'mikka', ${issues.content}->'attrs'->'orvilo')`
-    const statusCount = (status: IssueStatus) => sql<number>`count(*) filter (where ${issues.status} = ${status})::int`
-    const statuses = Object.fromEntries(ISSUE_STATUS_CODES.map(status => [status, statusCount(status)])) as Record<IssueStatus, ReturnType<typeof statusCount>>
-    const [counts] = await db.select({
-      ...statuses,
-      favorites: sql<number>`count(*) filter (where ${metadata}->'favoriteUserIds' @> jsonb_build_array(${user.id}::text))::int`,
-      following: sql<number>`count(*) filter (where ${metadata}->'subscriberUserIds' @> jsonb_build_array(${user.id}::text))::int`,
-    }).from(issues).where(issueVisibilityPredicate(user.id, { allowedIds: [], workspaceIds: [workspaceId] }))
-    return counts
   })
 }
 
@@ -319,6 +301,8 @@ async function readIssueSnapshot(workspaceId?: string, known?: string, previous?
     return { version, live, positions, ...(previous ? { delta: true as const } : {}), items: liveRows.map(({ content, checklistTotal, checklistChecked, ...issue }) => ({
       ...issue, issuedIdentifier: identifiers.get(issue.id) ?? null, identifier: identifiers.get(issue.id) ?? null,
       projectId: taskProjects.get(issue.id)?.projectId ?? null, teamId: links.find(link => link.issueId === issue.id)?.teamId ?? null,
+      // The task's 「环境」; absent when it has none. Setting it is a task revision, so the row signature covers it.
+      ...(taskProjects.get(issue.id)?.environmentId ? { environmentId: taskProjects.get(issue.id)!.environmentId! } : {}),
       // Keep the legacy DTO union during the client rollout. taskAssignees
       // above is the runtime authority and emits only active members or null.
       metadata: { ...readIssueMetadata(content), assignee: assignees.get(issue.id) ?? null, project: taskProjects.get(issue.id)?.project ?? null } as ReturnType<typeof readIssueMetadata>,
@@ -356,7 +340,7 @@ export async function pollIssue(id: string, known?: string): Promise<ActionResul
         // A reader may view discussions without sending the editor's initial Yjs seed or an update.
         const [document] = await tx.select({ state: issueDocuments.state }).from(issueDocuments)
           .where(and(eq(issueDocuments.issueId, id), eq(issueDocuments.userId, issue.userId)))
-        const { loadIssueDocument, readIssueThreads } = await import('@/lib/linear-sync/document')
+        const { loadIssueDocument, readIssueThreads } = await import('@/lib/task-comments/issue-document')
         const doc = document ? loadIssueDocument(document.state, body.content) : null
         try { return { viewerId: user.id, version, issue: { ...view, content: body.content, readOnlyDiscussions: doc ? readIssueThreads(doc) : [] } } }
         finally { doc?.destroy() }
@@ -443,13 +427,14 @@ async function persistIssue(input: SaveIssueInput, block?: BlockFlag, state?: Ch
           if (!source) throw new ActionFailureError('workspaceAccessDenied')
         }
         await tx.insert(issueVersions).values({ id: crypto.randomUUID(), issueId: id, userId: ownerId, revision: issue.revision, title: issue.title, content: issue.content, status: issue.status, priority: issue.priority, ...actor })
+        // A saved (or restored) description keeps the inline files it names; comments' files are the document's to track.
+        await syncTaskInlineFileReferences(tx, id, referencedTaskFileIds(issue.content as JSONContent, []), { onlyAdd: true })
         await issueListChanged(tx, id, latest.title !== issue.title)
         // Title, status and priority show in every connected task's relations panel.
         await issueRelationsChanged(tx, [id])
         return { issue: await issueView(issue, tx) }
       })
       const result = existing ? await withIssueWorkspace(user, context.workspace.id, { issueId: existing.id, action: 'canSteer' }, save) : await withTaskWorkspace(user, context.workspace.id, save)
-      if ('issue' in result && result.issue?.linearSyncPolicy === 'explicit' && !result.issue.linearSyncBlocked && result.issue.linearTargetVerified) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
       return result
     } catch (error) {
       if (error instanceof ActionFailureError) throw error
@@ -526,7 +511,7 @@ export async function previewIssuePersonalScope(id: string) {
   })
 }
 
-/** The owner's confirmation retires the active link and queues its archive. */
+/** The owner's confirmation retires the local link. */
 export async function confirmIssuePersonalScope(input: { id: string; revision: number; confirmation: string }) {
   return runAction(async () => {
     const userId = await getUserId()
@@ -534,7 +519,6 @@ export async function confirmIssuePersonalScope(input: { id: string; revision: n
     if (!parsed.success) return { error: 'issueScopeInvalid' as const }
     await requireIssueAccess(parsed.data.id)
     const result = await changeIssueScopeLocally(userId, { id: parsed.data.id, revision: parsed.data.revision, scope: 'personal' }, { allowLinkedPersonal: true, confirmation: parsed.data.confirmation })
-    if ('issue' in result && result.issue) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
     return result
   })
 }
@@ -640,7 +624,7 @@ export async function loadEarlierIssueActivity(id: string, beforeRevision: numbe
 /**
  * The one-click scope change (MIK-47). The person's choice wins over the
  * agent's and becomes an example for its next judgment. Linked transitions
- * retain the team's history through the existing archive outbox.
+ * retain historical provider associations through local detachment records.
  */
 export async function setIssueScope(input: { id: string; revision: number; scope: string }): Promise<ActionResult<{ issue: IssueView }>> {
   return runAction(async () => {
@@ -653,7 +637,6 @@ export async function setIssueScope(input: { id: string; revision: number; scope
     // not infer the owner's active Linear team or publish an unassigned task.
     if (parsed.data.scope === 'workspace') return { error: 'issueScopeTeamRequired' }
     const result = await changeIssueScopeLocally(userId, parsed.data, { allowLinkedPersonal: true })
-    if ('issue' in result && result.issue) scheduleIssueEffect({ kind: 'sync', issueId: result.issue.id })
     return result
 
   })

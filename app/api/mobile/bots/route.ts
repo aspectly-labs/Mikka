@@ -21,7 +21,7 @@ export const POST = defineRoute(
       return json(
         await createOwnedBot(
           { ownerId: user.id, workspaceId: workspace.id },
-          { name: String(body?.name ?? ''), color: String(body?.color ?? ''), shape: String(body?.shape ?? ''), visibility: visibility.data },
+          { name: String(body?.name ?? ''), color: body?.color == null ? undefined : String(body.color), shape: String(body?.shape ?? ''), visibility: visibility.data },
         ),
         201,
       )

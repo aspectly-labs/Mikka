@@ -1,7 +1,27 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PaidResourceError } from '@/lib/abuse/policy'
-import { DEFAULT_MACHINE_SIZE, MACHINE_CHUNK_MS, machineChunkMicroUsd, machineHourlyUsd } from './machine-pricing'
+import {
+  DEFAULT_E2B_MACHINE_SIZE,
+  DEFAULT_MACHINE_SIZE,
+  E2B_MICRO_USD_PER_GIB_SECOND,
+  E2B_MICRO_USD_PER_VCPU_SECOND,
+  MACHINE_CHUNK_MS,
+  MACHINE_LIST_PRICE_START,
+  e2bAwakeSecondsMicroUsd,
+  e2bHourlyMicroUsd,
+  e2bHourlyRateCents,
+  e2bPerSecondMicroUsd,
+  machineChunkMicroUsd,
+  machineHourlyUsd,
+  machineLedgerLabel,
+  machineListUsageMicroUsd,
+  machinePriceIsEffective,
+  machineSkuGeometry,
+  machineSkuListPrice,
+  prepaidMachineMicroUsd,
+  selectableE2BMachineSizeOptions,
+} from './machine-pricing'
 import { fundMachineChunk, machineChunkId, type MachineBillingDependencies, type MachineChunk } from './machine-billing'
 
 test('machines are priced by memory at USD 0.025 per GiB-hour; standard-3 is the default', () => {
@@ -12,7 +32,7 @@ test('machines are priced by memory at USD 0.025 per GiB-hour; standard-3 is the
   assert.equal(machineChunkMicroUsd('standard-3'), 16_667)
 })
 
-const chunk: MachineChunk = { ownerId: 'owner', workspaceId: 'workspace', runId: 'run', operationId: 'op', index: 2, size: 'standard-3' }
+const chunk: MachineChunk = { provider: 'cloudflare', ownerId: 'owner', workspaceId: 'workspace', runId: 'run', operationId: 'op', index: 2, size: 'standard-3' }
 
 function fake(states: Map<string, string>, charge: MachineBillingDependencies['charge']): MachineBillingDependencies & { charged: number[] } {
   const charged: number[] = []
@@ -26,6 +46,11 @@ test('a chunk is charged once at its prepaid price; a retried renewal never char
   assert.equal(await fundMachineChunk(chunk, deps), true)
   assert.deepEqual(deps.charged, [16_667])
   assert.equal(machineChunkId(chunk), 'machine:run:op:2')
+})
+
+test('a Cloudflare receipt for another size cannot admit this allocation', async () => {
+  const deps = fake(new Map([[machineChunkId(chunk), 'different_sku']]), async () => assert.fail('another size already owns the receipt'))
+  assert.equal(await fundMachineChunk(chunk, deps), false)
 })
 
 test('nothing to pay with: unfunded, not an error', async () => {
@@ -43,4 +68,62 @@ test('a concurrent charge of the same chunk counts only once it settled; other f
   assert.equal(await fundMachineChunk(chunk, busy), true)
   const broken = fake(new Map(), async () => { throw new TypeError('database down') })
   await assert.rejects(fundMachineChunk(chunk, broken), (error: Error) => error.message === 'machine_chunk_charge_failed' && error.cause instanceof TypeError)
+})
+
+test('provider quotes use effective dates, exact resource prices and five-minute fixed-point rounding', () => {
+  const start = Date.parse(MACHINE_LIST_PRICE_START)
+  assert.equal(machineSkuListPrice({ provider: 'e2b', size: 'medium' }, start - 1), null)
+  const e2b = machineSkuListPrice({ provider: 'e2b', size: 'medium' }, start)
+  assert.deepEqual(e2b, { version: '2026-11-26', effectiveFrom: MACHINE_LIST_PRICE_START, effectiveUntil: null,
+    minimumPrepaidSeconds: 300, basis: 'provisioned_hour', hourlyMicroUsd: 230_400 })
+  const bounded = { effectiveFrom: MACHINE_LIST_PRICE_START, effectiveUntil: '2026-12-01T00:00:00.000Z' }
+  assert.equal(machinePriceIsEffective(bounded, Date.parse(bounded.effectiveUntil) - 1), true)
+  assert.equal(machinePriceIsEffective(bounded, Date.parse(bounded.effectiveUntil)), false)
+  assert.equal(machinePriceIsEffective(bounded, Number.NaN), false)
+  const cloudflare = { provider: 'cloudflare', size: 'standard-3' } as const
+  assert.deepEqual(machineSkuGeometry(cloudflare), { vcpu: 2, ramGib: 8 })
+  assert.deepEqual(machineSkuGeometry({ provider: 'e2b', size: 'medium' }), { vcpu: 2, ramGib: 8 })
+  assert.deepEqual(machineSkuListPrice(cloudflare, start), { version: '2026-11-26', effectiveFrom: MACHINE_LIST_PRICE_START,
+    effectiveUntil: null, minimumPrepaidSeconds: 300, basis: 'active_cpu', fixedHourlyMicroUsd: 76_032,
+    activeVcpuHourlyMicroUsd: 72_000 })
+  const cfRate = machineSkuListPrice(cloudflare, start)!
+  assert.equal(machineListUsageMicroUsd(cfRate, 3_600_000), null, 'provisioned vCPU is not evidence of active CPU')
+  assert.equal(machineListUsageMicroUsd(cfRate, 3_600_000, 0), 76_032)
+  assert.equal(machineListUsageMicroUsd(cfRate, 3_600_000, 1_800_000), 112_032)
+  assert.equal(machineListUsageMicroUsd(e2b!, 1_000), 64)
+  assert.equal(machineListUsageMicroUsd(e2b!, 1_001), 65)
+  assert.equal(machineSkuListPrice({ provider: 'cloudflare', size: 'standard-4-16' }, start), null)
+  assert.equal(prepaidMachineMicroUsd(230_400), 19_200)
+  assert.equal(prepaidMachineMicroUsd(230_401), 19_201)
+  assert.equal(machineLedgerLabel(cloudflare), 'machine/cloudflare-standard-3')
+  assert.equal(machineLedgerLabel({ provider: 'e2b', size: 'medium' }), 'machine/e2b-medium')
+  assert.equal(machineChunkId({ provider: 'e2b', runId: 'run', operationId: 'op', index: 2 }), 'machine:e2b:op:2')
+})
+
+test('E2B tiers price at-cost per awake second with zero cost when paused', () => {
+  assert.equal(E2B_MICRO_USD_PER_VCPU_SECOND, 14)
+  assert.equal(E2B_MICRO_USD_PER_GIB_SECOND, 4.5)
+  assert.equal(DEFAULT_E2B_MACHINE_SIZE, 'medium')
+  const options = selectableE2BMachineSizeOptions()
+  assert.deepEqual(
+    options.map(option => ({
+      id: option.id,
+      vcpu: option.vcpu,
+      ramGib: option.ramGib,
+      hourlyRateCents: option.hourlyRateCents,
+      perSecondMicroUsd: option.perSecondMicroUsd,
+      isDefault: option.isDefault,
+    })),
+    [
+      { id: 'small', vcpu: 1, ramGib: 4, hourlyRateCents: 12, perSecondMicroUsd: 32, isDefault: false },
+      { id: 'medium', vcpu: 2, ramGib: 8, hourlyRateCents: 23, perSecondMicroUsd: 64, isDefault: true },
+      { id: 'large', vcpu: 4, ramGib: 16, hourlyRateCents: 46, perSecondMicroUsd: 128, isDefault: false },
+      { id: 'ultra', vcpu: 8, ramGib: 32, hourlyRateCents: 92, perSecondMicroUsd: 256, isDefault: false },
+    ],
+  )
+  assert.equal(e2bHourlyRateCents('small'), 12)
+  assert.equal(e2bPerSecondMicroUsd('ultra'), 256)
+  assert.equal(e2bAwakeSecondsMicroUsd(e2bHourlyMicroUsd('small'), 0), 0)
+  assert.equal(e2bAwakeSecondsMicroUsd(e2bHourlyMicroUsd('small'), 60), 1_920)
+  assert.equal(e2bAwakeSecondsMicroUsd(e2bHourlyMicroUsd('medium'), 300), 19_200)
 })

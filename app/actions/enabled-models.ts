@@ -10,7 +10,8 @@ import { changeEnabledModels, readEnabledModels, type ModelSettingsChange } from
 async function scope(workspaceId: string) {
   const user = await requireUser()
   const context = await loadWorkspaceContext(workspaceId, user)
-  return { ownerId: user.id, workspaceId: context.workspace.id }
+  // A team workspace's admin also manages the workspace's own API keys (decision 2026-11-27-1740).
+  return { ownerId: user.id, workspaceId: context.workspace.id, manageWorkspaceKeys: context.workspace.kind === 'team' && context.role === 'admin' }
 }
 export async function getEnabledModels(workspaceId: string) {
   return settingsWorkspaceAction(async () => readEnabledModels(pool, await scope(workspaceId)))

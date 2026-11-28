@@ -777,7 +777,16 @@ test('dispatch_task automations run as their creator through the existing create
     await assert.rejects(page(member, memberChat, { action: 'create', requestId: randomUUID(), definition: { ...existing, task: { ...existing.task, botId: null } as Definition['task'] } }), /scheduleThreadUnavailable/)
     const { schedule } = await create(existing)
     const { occurrence: started } = await runNow(schedule)
-    await tick()
+    await fixture.query('UPDATE "user" SET "twoFactorEnabled"=true WHERE id=$1', [owner])
+    await fixture.query(`INSERT INTO "twoFactor"(id,"userId",secret,"backupCodes") VALUES ($1,$2,'fixture','[]')`, [randomUUID(), owner])
+    await fixture.query(`UPDATE mikka_workspaces SET "requireTwoFactor"=true,"twoFactorRequiredAt"=now() WHERE id=$1`, [workspace.id])
+    try {
+      await tick()
+    } finally {
+      await fixture.query(`UPDATE mikka_workspaces SET "requireTwoFactor"=NULL,"twoFactorRequiredAt"=NULL WHERE id=$1`, [workspace.id])
+      await fixture.query('DELETE FROM "twoFactor" WHERE "userId"=$1', [owner])
+      await fixture.query('UPDATE "user" SET "twoFactorEnabled"=false WHERE id=$1', [owner])
+    }
     const run = await occurrence(started.id)
     assert.equal(run.status, 'succeeded')
     assert.deepEqual([run.result!.id, (run.result as { continued?: boolean }).continued], [taskId, true])

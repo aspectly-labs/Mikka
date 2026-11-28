@@ -19,6 +19,7 @@ Paid component source (BoardUI Pro, affectUI, beUI Pro) lives only in `mikka-hos
 | `mikka:platform` | not available | `core/renderer/platform.tsx` (desktop), `core/renderer/web/platform.tsx` (web) |
 | stylesheet | none | `core/app/globals.css` and `core/renderer/styles.css` |
 | `@hosted/*` | does not resolve | the checkout's own files |
+| Vite plugin from the checkout | none | `scripts/track-owner/vite-plugin.mjs` (`data-track-owner`), loaded and run when present |
 
 `lib/ui-overlay.mjs` decides this once (`OVERLAY_APPLICATION` lists the files an official checkout must carry) and
 `apps/frontend/scripts/application-plugin.mjs` applies it to both Web and Desktop. `apps/frontend/src/index.ts`
@@ -30,6 +31,15 @@ The checkout's `core/` holds the interface that used to live here at the same re
 `core/hooks/`, `core/app/globals.css` and `core/app/fonts/`, the React pieces of the client runtime under
 `core/lib/`, and the client application under `core/renderer/`. It imports this repository's runtime, API clients
 and contracts through `@/`; nothing here imports it, except the build glue and its tests.
+
+Only with an explicit `MIKKA_TRACK_OWNER=1` does the build **run** a file from the checkout:
+`apps/frontend/vite.config.mjs` then loads `scripts/track-owner/vite-plugin.mjs` as a Vite plugin
+(`trackOwnerPlugins`), which adds a `data-track-owner` attribute to the checkout's interactive JSX while Vite
+transforms it in memory and writes nothing back. Without that switch (unset, `0` or anything else), no checkout code
+is imported or run in the build process, for a production build and the dev server alike. A build that holds signing
+or release credentials never sets it: the desktop release builds its renderer in a step before any credential is
+exported (`scripts/ci/desktop-release-overlay-guard.test.mjs`). The owners are read only by the owner-click analytics
+allowlist (`lib/track-owner-rule.ts`, `lib/analytics-policy.ts`).
 
 A build without the checkout only has to compile. Its server answers a browser with the headless page; the official
 clients connect to it. A dev-flavour desktop build without the checkout shows the same page so the native shell can
@@ -74,35 +84,9 @@ then the public one.
 
 ## iOS app
 
-Both App Store profiles select the private mobile checkout, including the default `production` profile used by the EAS CLI. The official release workflow also checks the contents of the source archive before invoking EAS. To recover a completed build, provide its EAS build ID and main source commit. The workflow finds the original native run and checks its protected archive, private revision and runtime fingerprint against the EAS build before submitting. A failed TestFlight submission remains recoverable while the original artifact is available.
+The iOS app (`mobile-next/apps/mobile`) lives exclusively in the private `mikka-hosted-ui` repository ([decision 2026-11-25-0915](design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)); the legacy 1.x `apps/mobile` client, `@ui-slot/*` mobile overlay mechanism, and `mobile-update.yml` / `mobile-native.yml` / `mobile-screenshots.yml` workflows have been removed from this public repository.
 
-The iOS app (`apps/mobile`) has its own slots, filled from the layer's
-`mobile/` folder. They are React Native components, so they share nothing with
-the web slots but the idea.
-
-| | Build without `mikka-hosted-ui` | Official OTA |
-| --- | --- | --- |
-| `MIKKA_MOBILE_OVERLAY_DIR` | unset | `.hosted-ui/mobile`, relative to the repository root and inside it |
-| `@ui-slot/<name>` | `apps/mobile/slots/<name>.tsx` | `$MIKKA_MOBILE_OVERLAY_DIR/slots/<name>.tsx` (required in a configured layer) |
-| `@hosted/*` | does not resolve | `$MIKKA_MOBILE_OVERLAY_DIR/*` |
-
-`apps/mobile/ui-overlay.js` decides this and `apps/mobile/metro.config.js`
-applies it as Metro's `resolveRequest`. Every other import in a layer file
-resolves as if from `apps/mobile`, so the layer uses the app's `react`,
-`react-native`, `react-native-svg` and `react-native-reanimated` and installs
-no packages of its own. `@/` in the layer is `apps/mobile` (for example
-`@/lib/bot-look`, `@/slots/bot-avatar-contract`). `apps/mobile/tsconfig.json`
-maps `@ui-slot/*` to the defaults, so typecheck always sees the open-source
-build. A set but missing directory fails the bundle.
-
-| Slot | Surface | Props | Callers import |
-| --- | --- | --- | --- |
-| `bot-avatar` | the still blob with one eye | `BotAvatarProps` in `apps/mobile/slots/bot-avatar-contract.ts` (`color`, `shape`, `size`; `id` and `coordinator` when the caller has them, as on the web); colours and shapes in `apps/mobile/lib/bot-look.ts` | `BotAvatar` from `@/components/icons` |
-
-Required exports are `MOBILE_SLOT_EXPORTS` in `apps/mobile/ui-overlay.js`;
-the same rule as the web applies (merge the layer's export first).
-
-`mobile-update.yml` obtains the production Expo and UI-checkout credentials through the trusted main workflow. A production OTA requires the private mobile folder and its native slots. The native TestFlight workflow selects a reviewed overlay revision for its hosted production build. The public native source and contract tests can run without private credentials.
+This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.ts`, `tests/mobile-*.test.ts`) and the trusted release entry workflows (`.github/workflows/mobile-next-ios.yml` for TestFlight native builds and `.github/workflows/mobile-next-update.yml` for EAS OTA updates). Both release workflows check out `mikka-hosted-ui` via OIDC (`HOSTED_UI_READ_KEY`) and build or publish from `mobile-next/apps/mobile`.
 
 ## Rules for the layer
 
@@ -123,10 +107,10 @@ the same rule as the web applies (merge the layer's export first).
   app's names). A few of BoardUI's theme variables share a name with this
   app's (`--font-sans`, `--color-blue-400`); this app's utilities inline their
   own values, so pages outside the slots look the same in both builds.
-  Paid blocks in the layer keep their shipped look and only data and text
-  change ([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)). Because the
+  Paid blocks in the layer are raw material, edited in place to match the
+  reference product ([2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). Because the
   shadcn token block is left out, affectUI blocks currently resolve shadcn
-  token names to this app's values; that is recorded drift, not a rule to
+  token names to this app's values; that is a fact of the build, not a rule to
   follow.
 - **Dependencies.** Packages BoardUI needs that this repository lacks are
   installed in the layer. `react` and `react-dom` come from this repository
@@ -136,7 +120,7 @@ the same rule as the web applies (merge the layer's export first).
 
 ### Shared chat screen (#2913)
 
-Every chat entrance calls `ThreadScreen`. The `host` identifies its containing surface without selecting a new style. Every chat, a group included, is the one official thread presentation: a group's members and Bots are entries with their own `author` (decision 2026-11-22-1510-group-chat-as-bot-chat). The readers still own history, delivery, unread state and callbacks; keyed rows, the scroll container and composer placement belong to the screen. Optional message nodes carry existing event/card contents, not another list.
+Every chat entrance calls `ThreadScreen`. The `host` identifies its containing surface without selecting a new style. Every chat, a group included, is the one official thread presentation: a group's members and Bots are entries with their own `author` ([decision 2026-11-22-1510](design/decisions/2026-11-22-1510-group-chat-as-bot-chat.md)). The readers still own history, delivery, unread state and callbacks; keyed rows, the scroll container and composer placement belong to the screen. Optional message nodes carry existing event/card contents, not another list.
 
 The optional `transcriptLabel` names the existing native transcript viewport as a region. Coordinator readers supply their existing conversation translation, as they do for embedded transcripts. While the first read is pending, `loadingLabel` gives the existing empty transcript column its waiting status and busy state. A resolved or failed read removes that state; any existing message keeps the column's original log role, conversation name and streaming busy state. Providers add no wrapper or visible content for these labels.
 

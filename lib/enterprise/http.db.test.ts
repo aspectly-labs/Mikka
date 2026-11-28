@@ -219,7 +219,8 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
         if (governance[2]) response = await (await import('../../app/api/workspaces/[workspaceId]/governance/usage/route')).GET(request, context)
         else {
           const route = await import('../../app/api/workspaces/[workspaceId]/governance/route')
-          response = request.method === 'GET' ? await route.GET(request, context) : await route.POST(request, context)
+          // Approval templates are gone (ADR 2026-11-27-1615): the route only reads.
+          response = request.method === 'GET' ? await route.GET(request, context) : new Response(null, { status: 405 })
         }
       } else if (organizationIdentity && ['GET', 'POST'].includes(request.method)) {
         response = await withMobileRequest(request, async () => {
@@ -1218,7 +1219,7 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     assert.equal(patch.status, 200); assert.equal((await patch.json()).members.length, 0)
     assert.equal((await requestScim(`Groups/${group.id}`, 'DELETE')).status, 204)
   })
-  await t.test('real governance HTTP usage, CSV and templates require the admitted SSO principal and current Workspace membership', async () => {
+  await t.test('real governance HTTP usage, CSV and summary require the admitted SSO principal and current Workspace membership', async () => {
     const previousEdition = process.env.MIKKA_EDITION
     process.env.MIKKA_EDITION = 'cloud'
     const workspaceId = randomUUID(), templateId = randomUUID(), plainSessionId = randomUUID(), plainToken = randomBytes(32).toString('hex')
@@ -1241,15 +1242,12 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     const detailCall = (token: string, issueId: string, extraHeaders: Record<string, string> = {}) => fetch(`${appOrigin}/api/mobile/tasks/${issueId}`, {
       headers: { authorization: `Bearer ${token}`, 'x-mikka-locale': 'en', ...extraHeaders }, signal: AbortSignal.timeout(10_000),
     })
-    const call = (token: string, apply = false, csv = false) => fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance${apply ? '' : `/usage${csv ? '?format=csv' : ''}`}`, {
-      method: apply ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      ...(apply ? { body: JSON.stringify({ action: 'apply', templateId }) } : {}), signal: AbortSignal.timeout(10_000),
+    const call = (token: string, csv = false) => fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance/usage${csv ? '?format=csv' : ''}`, {
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
-    const templateCall = (token: string, input?: unknown) => fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance`, {
-      method: input === undefined ? 'GET' : 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      ...(input === undefined ? {} : { body: JSON.stringify(input) }), signal: AbortSignal.timeout(10_000),
+    const summaryCall = (token: string) => fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance`, {
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
-    const templateInput = { action: 'save', template: { name: 'SSO template', rules: { approvalMode: 'read_only' } } }
     try {
       const artifactToken = `mks_${randomBytes(24).toString('base64url')}`
       const html = '<main>Restricted native artifact</main>'
@@ -1271,11 +1269,8 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
         if (suffix) assert.ok((await admitted.text()).includes(html))
       }
       assert.equal((await call(plainToken)).status, 403, 'ordinary authenticated session cannot read enforced-SSO usage')
-      assert.equal((await call(plainToken, false, true)).status, 403)
-      assert.equal((await call(plainToken, true)).status, 403, 'Workspace admin alone cannot apply an enforced-SSO template')
-      assert.equal((await templateCall(plainToken)).status, 403)
-      assert.equal((await templateCall(plainToken, templateInput)).status, 403)
-      assert.equal((await templateCall(plainToken, { action: 'delete', templateId })).status, 403)
+      assert.equal((await call(plainToken, true)).status, 403)
+      assert.equal((await summaryCall(plainToken)).status, 403)
       assert.equal((await pool.query('select count(*) from workspace_computer_policies where "workspaceId"=$1', [workspaceId])).rows[0].count, '0')
       const personal = await detailCall(plainToken, personalTaskId)
       assert.equal(personal.status, 200, 'the registered mobile detail route reads this plain session Personal task without a selection cookie')
@@ -1306,19 +1301,15 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
       assert.equal(explicitlyPersonal.status, 200)
       assert.deepEqual(await explicitlyPersonal.json(), personalBody)
       assert.equal((await call(assuredToken)).status, 200, 'native bearer retains the real OIDC assurance through the governance lease')
-      assert.equal((await call(assuredToken, false, true)).status, 200)
-      const summary = await templateCall(assuredToken); assert.equal(summary.status, 200)
-      assert.ok((await summary.json()).templates.some((row: { id: string }) => row.id === templateId))
-      const saved = await templateCall(assuredToken, templateInput); assert.equal(saved.status, 200)
-      const savedId = (await saved.json()).id as string; assert.ok(savedId)
-      assert.equal((await templateCall(assuredToken, { action: 'delete', templateId: savedId })).status, 200)
       assert.equal((await call(assuredToken, true)).status, 200)
-      assert.deepEqual((await pool.query('select cli_run_policy from workspace_computer_policies where "workspaceId"=$1', [workspaceId])).rows[0].cli_run_policy, { approvalMode: 'read_only' })
+      const summary = await summaryCall(assuredToken); assert.equal(summary.status, 200)
+      // A stored template configures nothing any more (ADR 2026-11-27-1615).
+      assert.deepEqual((await summary.json()).templates, [])
+      assert.equal((await fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance`, { method: 'POST', headers: { authorization: `Bearer ${assuredToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'apply', templateId }), signal: AbortSignal.timeout(10_000) })).status, 405)
       await pool.query('update mikka_workspace_members set status=\'suspended\' where "workspaceId"=$1 and "userId"=$2', [workspaceId, userId])
       assert.equal((await call(assuredToken)).status, 403, 'SSO assurance and Enterprise plan cannot restore Workspace membership')
       assert.equal((await call(assuredToken, true)).status, 403)
-      assert.equal((await templateCall(assuredToken)).status, 403)
-      assert.equal((await templateCall(assuredToken, templateInput)).status, 403)
+      assert.equal((await summaryCall(assuredToken)).status, 403)
     } finally {
       await pool.query('delete from artifacts where id=$1', [artifactId])
       await pool.query('delete from issues where id=any($1::uuid[])', [[personalTaskId, organizationTaskId]])

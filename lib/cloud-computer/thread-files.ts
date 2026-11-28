@@ -1,4 +1,5 @@
 import 'server-only'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { z } from 'zod'
 import type { Pool } from 'pg'
 import { getApiSession, apiWorkspaceAllowed } from '@/lib/api-auth'
@@ -7,7 +8,7 @@ import { ComputerError } from '@/lib/computer/store'
 import { hostedSnapshot } from './sponsored-task'
 import { Sandbox } from 'e2b'
 import { connectComputer, computerGone } from '@/lib/computer/e2b-provider'
-import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { withE2BErrors } from '@/lib/secrets/e2b-runtime'
 
 export type ThreadFileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed'
 
@@ -63,7 +64,7 @@ export async function readThreadTouchedFiles(pool: Pool, actor: { userId: string
       // paused the VM; `Sandbox.connect` would billably resume it. getInfo is
       // a pure read, so only a sandbox the provider itself reports running is
       // worth connecting to.
-      const apiKey = await e2bApiKey(actor.userId, 'Cloud computer is not configured')
+      const apiKey = (await e2bResourceAccount(actor.userId, 'sandbox', machine.sandboxId)).apiKey
       const info = await withE2BErrors(actor.userId, false, () => Sandbox.getInfo(machine.sandboxId!, { apiKey, requestTimeoutMs: 10_000, signal }))
       if (info.state === 'running') {
         const sandbox = await connectComputer(actor.workspaceId, machine.sandboxId, signal)

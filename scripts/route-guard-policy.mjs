@@ -217,6 +217,8 @@ export function inspectApiRouteSource(file, source) {
     }
   }
 
+  const reexportedMethods = new Map()
+
   for (const statement of tree.statements) {
     if (!ts.isExportDeclaration(statement) || statement.isTypeOnly) continue
     if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
@@ -226,6 +228,14 @@ export function inspectApiRouteSource(file, source) {
         if (!HTTP_METHODS.has(exportedName)) continue
         if (statement.moduleSpecifier) {
           exportedMethods.set(exportedName, null)
+          if (ts.isStringLiteral(statement.moduleSpecifier)) {
+            const importedName = element.propertyName?.text ?? exportedName
+            const normalized = normalizeModuleTarget(file, statement.moduleSpecifier.text)
+            const targetFile = `${normalized}.ts`
+            if (/^app\/api\/(?:.+\/)?route\.ts$/.test(targetFile)) {
+              reexportedMethods.set(exportedName, { targetFile, importedName })
+            }
+          }
         } else {
           const localName = element.propertyName?.text ?? exportedName
           exportedMethods.set(exportedName, declarations.get(localName) ?? null)
@@ -262,7 +272,7 @@ export function inspectApiRouteSource(file, source) {
       ? 'guarded'
       : 'unguarded'
 
-  return { file, status, methods, guardedMethods, unguardedMethods, specErrors }
+  return { file, status, methods, guardedMethods, unguardedMethods, specErrors, reexportedMethods }
 }
 
 /** Lists all `app/api/.../route.ts` files (tracked and untracked, excluding gitignored paths). */
@@ -279,7 +289,51 @@ export function apiRouteFiles(root = process.cwd()) {
 
 export function scanApiRoutes(root = process.cwd()) {
   const files = apiRouteFiles(root)
-  const results = files.map(file => inspectApiRouteSource(file, readFileSync(resolve(root, file), 'utf8')))
+  const rawResults = files.map(file => inspectApiRouteSource(file, readFileSync(resolve(root, file), 'utf8')))
+  const byFile = new Map(rawResults.map(entry => [entry.file, entry]))
+
+  const isMethodGuarded = (file, method, seen = new Set()) => {
+    const key = `${file}#${method}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    const entry = byFile.get(file)
+    if (!entry) return false
+    if (entry.guardedMethods.includes(method)) return true
+    const reexport = entry.reexportedMethods?.get(method)
+    if (!reexport) return false
+    return isMethodGuarded(reexport.targetFile, reexport.importedName, seen)
+  }
+
+  const results = rawResults.map(entry => {
+    if (!entry.reexportedMethods?.size || entry.unguardedMethods.length === 0) {
+      const { reexportedMethods: _ignored, ...clean } = entry
+      return clean
+    }
+    const guardedMethods = [...entry.guardedMethods]
+    const unguardedMethods = []
+    for (const method of entry.unguardedMethods) {
+      if (isMethodGuarded(entry.file, method)) {
+        guardedMethods.push(method)
+      } else {
+        unguardedMethods.push(method)
+      }
+    }
+    guardedMethods.sort()
+    const status = entry.specErrors.length > 0
+      ? 'invalid'
+      : entry.methods.length > 0 && unguardedMethods.length === 0
+        ? 'guarded'
+        : 'unguarded'
+    return {
+      file: entry.file,
+      status,
+      methods: entry.methods,
+      guardedMethods,
+      unguardedMethods,
+      specErrors: entry.specErrors,
+    }
+  })
+
   return {
     total: results.length,
     guarded: results.filter(entry => entry.status === 'guarded'),

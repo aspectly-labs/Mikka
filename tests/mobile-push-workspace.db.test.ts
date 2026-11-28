@@ -254,9 +254,9 @@ test('phone delivery rechecks native sessions and the persisted Workspace with b
       // pg accepts a query config object as well as SQL text.
       const query: unknown = call.arguments[0]
       const sql = typeof query === 'object' && query !== null && 'text' in query ? query.text : query
-      return typeof sql === 'string' && sql.startsWith('select "organizationId" from "mikka_organization_workspaces" ')
+      return typeof sql === 'string' && sql.startsWith('select "mikka_organization_workspaces"."organizationId", "mikka_workspaces"."twoFactorRequiredAt" from "mikka_workspaces" left join "mikka_organization_workspaces" ')
     })
-    assert.equal(linkReads.length, 3, 'each admitted phone reads its locked organization link once')
+    assert.equal(linkReads.length, 3, 'each admitted phone reads its locked organization link and Workspace factor requirement once')
     assert.equal(sent.length, 3)
     assert.ok(sent.every(row => row.userId === owner && row.message.to.length === 1 && row.message.to[0] === token))
     assert.deepEqual(sent.map(row => row.message.data.botId), [personalBot, alphaBot, betaBot])

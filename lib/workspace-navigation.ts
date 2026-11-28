@@ -1,7 +1,7 @@
 /**
  * Pure workspace URL builders, location parsers, and history-mark helpers
  * shared across server links, notifications, mobile targets, and web navigation
- * (rules.md R-82, decisions/2026-11-01-1320-navigation-model.md).
+ * (mikka-hosted-ui docs/design/rules.md R-82, decisions/2026-11-01-1320-navigation-model.md).
  */
 export type WorkspaceSection = 'pulls' | 'conversations' | 'inbox' | 'my-issues' | 'agent' | 'coordinator' | 'group' | 'projects' | 'views' | 'team-home' | 'team-issues' | 'team-projects' | 'all-issues' | 'plugins' | 'suggestions' | 'artifacts' | 'memory' | 'automations'
 

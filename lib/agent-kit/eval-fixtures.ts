@@ -17,10 +17,12 @@ export function evaluationObservation(name:string,input:unknown,testCase:EvalCas
         const valid = input !== null && typeof input === 'object' && 'runId' in input && 'text' in input && input.runId === COLLABORATION_RUN_ID && input.text === COLLABORATION_MESSAGE
         return observed(valid ? 'ok' : 'error', valid, valid ? { status:'queued',delivered:false,read:false,acknowledged:false,executed:false } : { error:'fixtureMessageTargetMismatch' })
       }
-      const pending = ['send_email','create_calendar_event','update_calendar_event'].includes(name)
-      const failed = testCase.id === 'search-failure' || (!pending && name !== 'web_search')
-      const result = pending ? { status:'pending_approval',actionId:'eval-action',executed:false } : failed ? { error:'searchUnavailable',verified:false } : { results:[{ title:'Acme Example 1.0 release',url:'https://example.com/release',snippet:'Acme Example 1.0 was released on 2026-01-15.' }],source:'synthetic evaluation fixture' }
-      return observed(pending ? 'approval_pending' : failed ? 'error' : 'ok', false, result)
+      // Account writes act at once, as connected apps do (ADR 2026-11-27-1615);
+      // the fixture records the call and performs nothing.
+      const write = ['send_email','create_calendar_event','update_calendar_event'].includes(name)
+      const failed = testCase.id === 'search-failure' || (!write && name !== 'web_search')
+      const result = write ? { status:'done',actionId:'eval-action',source:'synthetic evaluation fixture' } : failed ? { error:'searchUnavailable',verified:false } : { results:[{ title:'Acme Example 1.0 release',url:'https://example.com/release',snippet:'Acme Example 1.0 was released on 2026-01-15.' }],source:'synthetic evaluation fixture' }
+      return observed(failed ? 'error' : 'ok', false, result)
 }
 
 /** Replace every executor before inference; no real account or device is contacted. */

@@ -10,7 +10,6 @@ import { createInterface } from 'node:readline'
 import { setTimeout as delay } from 'node:timers/promises'
 import { streamText, stepCountIs, tool } from 'ai'
 import { z } from 'zod'
-import { nativeLeaseSchema } from '@mikka/protocol/subscription'
 import { SubscriptionService } from '../../lib/subscription-service'
 import type { SubscriptionRepository } from '../../lib/subscription-repository'
 import { SubscriptionWorkerClient } from '../../packages/daemon/src/subscription-worker-client'
@@ -22,7 +21,7 @@ import { preflightLocalSubscription } from '../../packages/daemon/src/subscripti
 import { HARNESS_PINS } from '../../packages/daemon/src/harness-install'
 import { answerModel, tracePublicationReady } from './model.mjs'
 
-test('trace subscription fixture supports the current catalogue and native lease ABI, scoped to a run', async () => {
+test('trace subscription fixture supports the catalogue and native metadata ABI, scoped to a run', async () => {
   const config = { scope: { ownerId: 'mvp-owner', workspaceId: randomUUID(), connectionId: randomUUID(), provider: 'codex' as const },
     databaseUrl: 'postgresql://ci:fixture@127.0.0.1:5432/mikka_e2e', infisicalOrigin: MVP_SERVICES,
     project: 'mvp-synthetic', environment: 'test', path: '/custody', workloadToken: 'mvp-synthetic-custody', accessPath: '/access', accessToken: 'mvp-synthetic-access' }
@@ -37,18 +36,6 @@ test('trace subscription fixture supports the current catalogue and native lease
   assert.equal(context.accountId, MVP_NATIVE_ACCOUNT)
   assert.ok(Date.parse(context.expiresAt) > Date.now())
   await assert.rejects(scoped.call('nativeAuth', { revision: 1 }), { code: 'subscription_fixture_refused' })
-  const exportable = new SubscriptionWorkerClient(launch, { ...config, exportAccessLease: true })
-  await assert.rejects(exportable.call('nativeAuth', { revision: 1 }), { code: 'subscription_fixture_refused' })
-  const auth = await exportable.forUse(use)
-    .call<{ accessToken: string; expiresAt: string; chatgptAccountId: string; chatgptPlanType?: string }>('nativeAuth', { revision: 1 })
-  // The claim's nativeLease now obtains identity and access in one nativeAuth call.
-  const lease = nativeLeaseSchema.parse({ route: 'codex_cli', modelId: MVP_SUBSCRIPTION_MODEL, revision: 1,
-    accountId: auth.chatgptAccountId, ...(typeof auth.chatgptPlanType === 'string' ? { plan: auth.chatgptPlanType } : {}),
-    accessToken: auth.accessToken, expiresAt: auth.expiresAt })
-  assert.equal(lease.accountId, MVP_NATIVE_ACCOUNT)
-  assert.equal(lease.plan, 'plus')
-  assert.equal(lease.accessToken, MVP_NATIVE_TOKEN)
-  assert.ok(Date.parse(lease.expiresAt) > Date.now())
   await assert.rejects(scoped.call('models', { revision: 2 }), { code: 'subscription_fixture_refused' })
 })
 
@@ -232,7 +219,19 @@ test('MVP subscription boundary retains real service authorization, private work
  const worker=new SubscriptionWorkerClient({binary:fileURLToPath(new URL('./subscription-worker.mjs',import.meta.url))},config)
  const repository={binding:async(user:string,id:string)=>{assert.equal(user,owner);assert.equal(id,bindingId);return binding},connection:async(user:string,id:string)=>{assert.equal(user,owner);assert.equal(id,connectionId);return row},scope:()=>config.scope,saveQuota:async()=>undefined} as unknown as SubscriptionRepository
  let scopeChecks=0
- const service=new SubscriptionService(repository,()=>worker,{ready:()=>true,nativeIsolation:'none'},undefined,async(user,id)=>{assert.equal(user,owner);assert.equal(id,workspaceId);scopeChecks++},async(scope,model,route)=>{assert.deepEqual(scope,{ownerId:owner,workspaceId});assert.equal(model,binding.modelId);assert.equal(route,binding.route)})
+ const service: SubscriptionService = new SubscriptionService(
+  repository, () => worker, { ready: () => true, nativeIsolation: 'none' }, undefined,
+  async (user, id) => { assert.equal(user, owner); assert.equal(id, workspaceId); scopeChecks++ },
+  async (scope, model, route) => {
+   assert.deepEqual(scope, { ownerId: owner, workspaceId, runId: undefined })
+   assert.equal(model, binding.modelId)
+   assert.equal(route, binding.route)
+  },
+  undefined, undefined, async (use, model, payload, signal) => {
+   const admitted = await service.openLiteLLMChat(use, model, JSON.parse(payload), signal)
+   return new Response(admitted.start(), { headers: { 'content-type': 'text/event-stream' } })
+  },
+ )
  try {
   const marker=`mvp-${randomUUID()}`,deviceId=randomUUID(),issueId=randomUUID(),agentId=randomUUID(),runId=randomUUID()
   await fetch(`${services.origin}/scenario`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({marker,title:'Subscription MVP'})})

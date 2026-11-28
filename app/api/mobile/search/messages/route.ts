@@ -1,19 +1,17 @@
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
 import { SearchInputError } from '@/lib/issue-search'
-import { json, mobileUser, unauthorized } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
 import { loadWorkspaceContext, WorkspaceError } from '@/lib/workspace-access'
 import { parseMessageSearchInput } from '@/lib/mobile-message-search-contract'
 import { MobileMessageSearchAccessError, searchMobileMessages } from '@/lib/mobile-message-search'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 /**
  * `GET /api/mobile/search/messages?q=&workspaceId=&scope=all|bot|group|thread&botId=&conversationId=&limit=&cursor=`:
  * authorized full-text message search across Bot chats, group conversations,
  * and task/agent threads in one workspace.
  */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   try {
     const params = new URL(request.url).searchParams
     const explicitWorkspace = params.get('workspaceId')
@@ -29,4 +27,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/mobile/search/messages', handleGET)
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/search/messages',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)

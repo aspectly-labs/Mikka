@@ -1,17 +1,18 @@
 # Mobile app
 
-- **Redesign:** Alex dropped the push drawer and accepted the tab-bar design after Comma on 2026-11-06 ([decision](decisions/2026-11-06-1300-ios-comma-tabs-accepted.md)); the frames are in [`mobile-comma-redesign.md`](mobile-comma-redesign.md). Later task navigation, title, icon and spacing decisions supersede the
+- **Redesign:** Alex dropped the push drawer and accepted the tab-bar design after Comma on 2026-11-06 ([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-06-1300-ios-comma-tabs-accepted.md)); the frames are in [`mobile-comma-redesign.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/mobile-comma-redesign.md). Later task navigation, title, icon and spacing decisions supersede the
   corresponding original frames, as described here.
 - **Status:** implemented baseline; UI/UX acceptance tracked in [#1296](https://github.com/alexj11324/Mikka/issues/1296) (2026-11-05)
 - **GitHub:** #1296
 - **Figma:** `zPe5LKycb2XuT1ivCLRw07`; page `268:4750` is archived per #1296 and is not a design authority. Page `358:9186` is a reference to verify. Current main and accepted decisions govern; do not redesign from archived or unaccepted frames.
 - **Owner thread:** `claude/mikka-mobile-tech-choice-jrtbd3`
-- **Code:** `apps/mobile` (Expo SDK 58) on the server's `app/api/mobile/*`
-  routes. Earlier Expo Web acceptance belongs to its recorded revision;
-  native behavior requires its own compatible build and device evidence.
+- **Code:** `mikka-hosted-ui/mobile-next/apps/mobile` on the server's `app/api/mobile/*`
+  routes. The legacy 1.x `apps/mobile` workspace in this public repository was
+  deleted on 2026-11-25 ([decision](decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)).
+  Native behavior requires its own compatible build and device evidence.
 
 Decisions behind this spec are the 2026-10-27 rows in `decisions.md` and
-R-20 / R-21 in `rules.md`.
+R-20 / R-21 in `mikka-hosted-ui/docs/design/rules.md`.
 
 ## What the user does
 
@@ -22,8 +23,8 @@ briefing in the morning and see what is waiting on me.
 
 ## Platform and stack
 
-- Expo (React Native) with Expo Router, in the main repository at
-  `apps/mobile`, using `@mikka/protocol` from the pnpm workspace.
+- Expo (React Native) in private `mikka-hosted-ui/mobile-next/apps/mobile`,
+  connecting to this public repository's `app/api/mobile/*` backend routes.
 - iOS ships first. Android builds from the same code later; Android pushes in
   mainland China need a vendor push service (FCM is not available there).
 - Builds run on EAS, not on the developer's Mac (`AGENTS.md`).
@@ -43,7 +44,7 @@ Every tab root has one centred native title, with actions grouped on the
 right and an empty left side. The transparent header has no material slab
 or hairline; content fades under the soft top edge on iOS 26, with a short
 page-colour fade on earlier versions
-([header decision](decisions/2026-11-08-0120-ios-header-like-comma.md)).
+([header decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0120-ios-header-like-comma.md)).
 
 ### Bot and workspaces
 
@@ -82,8 +83,8 @@ The hand belongs only to a task needing a reply, confirmation or review.
 受阻 uses an octagon, 失败 a triangle, 运行中 a ring and 排队中 a clock.
 An attempt waiting for the person uses pause, and never the hand. Each glyph
 has its semantic system colour, with no status dot or badge
-([icons](decisions/2026-11-07-2230-one-icon-per-task-state.md),
-[colours](decisions/2026-11-08-0130-task-state-icon-colours.md)).
+([icons](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-2230-one-icon-per-task-state.md),
+[colours](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0130-task-state-icon-colours.md)).
 `features/tasks/components/task-icons.tsx` and `model/task-groups.ts` own
 that native presentation. The API can retain older group fields; source
 fallbacks do not establish that every legacy server meets the accepted state
@@ -102,14 +103,14 @@ the selection as a quote without sending. Reactions, 回复, 复制 and
 选择文本 live in ⋯ under Bot replies and other members' group messages.
 The person's own messages have no ⋯. The latest finished Bot reply also
 shows a separate copy action
-([chat decision](decisions/2026-11-08-1430-ios-chat-gestures-and-header.md)).
+([chat decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-1430-ios-chat-gestures-and-header.md)).
 Reactions remain one per person and message, and a second tap removes one's own.
 
 The Bot's replies use grey bubbles, and the person's use blue. In groups,
 Bot messages also show their own name and avatar. @name selects who answers;
 otherwise routing chooses. Dispatch cards identify tasks and open task detail.
 The native composer and chat controls reuse the components catalogued in
-[components.md](components.md).
+[components.md](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md).
 
 A centred time separates message groups after a gap of at least 15 minutes
 or a new day. Messages have no individual timestamps. `lib/chat-time.ts`
@@ -144,7 +145,7 @@ matching evidence before claiming the entire flow works.
 20 pt, list rows have 15 pt vertical padding, blocks are 20 pt apart, and
 sections 30 pt apart. Task group headers are plain secondary text on the
 page. Properties sit as chips without a box
-([spacing decision](decisions/2026-11-08-0200-mobile-spacing.md)).
+([spacing decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0200-mobile-spacing.md)).
 
 System navigation, menus, switches, search and sheets use native controls.
 Shared product content follows `apps/mobile/DESIGN.md`; Liquid Glass is for
@@ -208,7 +209,7 @@ Administration (members, teams, devices) stays on the web.
 ## Native first
 
 Wherever iOS has a native control or behavior, the app uses it; we build our own only where nothing native exists
-([2026-11-05-1230](decisions/2026-11-05-1230-ios-native-first.md)). Native today: the transparent stack header and its system
+([2026-11-05-1230](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-05-1230-ios-native-first.md)). Native today: the transparent stack header and its system
 back swipe, the header's 更多 (`Stack.Toolbar.Menu`), in-place text selection
 and the reply's ⋯ menu, the header search field (`Stack.SearchBar`), the model picker and 「+」 (SwiftUI
 `Menu`), segmented controls (SwiftUI `Picker`), switches (`UISwitch`), the activity indicator, sheets (`formSheet` with
@@ -287,9 +288,9 @@ linked in Where it lives. An accepted frame alone is not runtime evidence.
   「在网页上打开」, which opens the same chat on the web signed in
   (`app/api/mobile/open`, a one-minute single-use token). The browser first
   shows the target account and requires a same-origin, browser-bound confirmation;
-  following the link alone never changes its signed-in account. Proposals from
-  `/api/pending-actions` sit at the end of every chat with 不要 and
-  发送/保存到日历 (`POST /api/mobile/pending-actions/:id`).
+  following the link alone never changes its signed-in account. There are no
+  approval cards: connected-account writes run directly
+  ([ADR 2026-11-27-1615](decisions/2026-11-27-1615-no-permission-approvals.md)).
 - **Navigation:** tab roots are under `app/(tabs)`, with task detail at
   `/task/:id` and its conversation at `/task/:id/conversation`. An `attempt`
   parameter selects that section. Bot chats use `/bots/:id`, groups
@@ -329,16 +330,9 @@ linked in Where it lives. An accepted frame alone is not runtime evidence.
   [chat-attachments.md](chat-attachments.md). Native camera/library photos
   still use `pickImages` resizing before becoming scoped files. The legacy
   unscoped transport retains its two-image/text-file path in source.
-- **现状（非决定）:** thread filters 待审阅 and 已归档, and dictation remain outside the implemented first-version flow. Pins are implemented. Appearance follows the system ([decision](decisions/2026-11-02-1410-mobile-follows-system-appearance.md)); changing the native appearance configuration requires a compatible EAS build.
-- **App icon:** the Mikka mark, the same file as the desktop app's
-  (`apps/mobile/assets/icon.icon`, Icon Composer; `icon.png` is the opaque
-  1024 fallback). Two layers on the dark fill: the lit dots (Liquid Glass,
-  specular) and the unlit dots (white at 14%), so iOS 26 draws the default,
-  dark, tinted and clear looks itself; actool also writes flat icons for
-  earlier iOS. `.github/workflows/app-icon.yml` compiles it for iOS and macOS
-  and renders each look on a pull request. A new icon needs a new build,
-  dispatched by hand (`mobile-native.yml` does not watch `assets/`).
-- **Updates:** `.github/workflows/mobile-update.yml` publishes JavaScript to the production OTA channel on main. Native configuration changes use `.github/workflows/mobile-native.yml`: exact-commit main CI, a completed EAS iOS build, then submission of that exact build id to App Store Connect/TestFlight. The workflow's automatic path filters cover `app.json`, `app.config.ts` and `eas.json`; native dependency or asset changes outside those filters need manual dispatch on main. A different runtime needs a compatible binary. TestFlight processing, installation and device acceptance remain separate from publication; see `apps/mobile/README.md`.
+- **现状（非决定）:** thread filters 待审阅 and 已归档, and dictation remain outside the implemented first-version flow. Pins are implemented. Appearance follows the system ([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-02-1410-mobile-follows-system-appearance.md)); changing the native appearance configuration requires a compatible EAS build.
+- **App icon:** the Mikka mark (`apps/desktop/build/icon.icon` in this repo and `mobile-next/apps/mobile/assets/mikka/icon.icon` in `mikka-hosted-ui`, Icon Composer; `icon.png` is the opaque 1024 fallback). `.github/workflows/app-icon.yml` compiles `apps/desktop/build/icon.icon` for iOS and macOS and renders each look on a pull request.
+- **Updates:** `.github/workflows/mobile-next-update.yml` publishes JavaScript OTA updates for `mikka-hosted-ui/mobile-next/apps/mobile` via EAS Update, and `.github/workflows/mobile-next-ios.yml` builds and submits native iOS TestFlight releases from a reviewed `mikka-hosted-ui` commit. Legacy 1.x `mobile-update.yml`, `mobile-native.yml`, and `mobile-screenshots.yml` are retired ([decision](decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)). TestFlight processing, installation and device acceptance remain separate from publication.
 
 ## Out of scope (first version)
 
@@ -347,8 +341,7 @@ linked in Where it lives. An accepted frame alone is not runtime evidence.
   editing.
 - A bot's computer screen.
 - Device and daemon management; most of Settings stays on the web.
-- Watches on sources without webhooks (polling), pending Alex's decision on
-  watches.
+- Watches on sources without webhooks (polling); the product decision is registered in `docs/decisions/pending.yaml` as `mobile-webhook-polling-decision`.
 
 ## Done when
 

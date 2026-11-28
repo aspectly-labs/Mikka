@@ -5,6 +5,7 @@ import { routing } from '@/i18n/routing'
 import { auth } from '@/lib/auth'
 import { withBasePath } from '@/lib/base-path'
 import { completeGoogleLink } from '@/lib/google-link'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 async function handleGET(request: RouteRequest) {
   const requestedLocale = request.routeUrl.searchParams.get('locale')
@@ -34,4 +35,12 @@ async function handleGET(request: RouteRequest) {
   }
 }
 
-export const GET = withRequestLog('/api/integrations/google/callback', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/google/callback', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request as RouteRequest),
+)

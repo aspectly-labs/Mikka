@@ -1,23 +1,25 @@
-import { ActionFailureError } from '@/lib/action-error'
 import { freshSessionRoute } from '@/lib/fresh-session'
-import { GovernanceError } from '@/lib/governance/errors'
-import { governanceJson, governanceMutationSession, governanceResponse } from '@/lib/governance/http'
-import { addProjectRepositoriesBody } from '@/lib/project-resources/contracts'
-import { saveProjectResources } from '@/lib/project-resources/store'
+import { governanceMutationSession, governanceResponse } from '@/lib/governance/http'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 type Context = { params: Promise<{ workspaceId: string; projectId: string }> }
 
-export const POST = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+// Retired with the Project -> repository -> environment bindings (decision 2026-11-26-0110 rule 5): repositories
+// belong to an environment, and a repository outside it is admitted by the workspace repository policy. The
+// route answers 410 for one release so an older caller gets a coded refusal, then it is removed.
+const POSTBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const params = await context.params
-  const session = await governanceMutationSession(request, params.workspaceId)
-  const body = addProjectRepositoriesBody.parse(await governanceJson(request))
-  try {
-    return await saveProjectResources(session.user, { ...params, ...body })
-  } catch (error) {
-    if (error instanceof ActionFailureError && error.code === 'projectNotFound') throw new GovernanceError('not_found', error)
-    if (error instanceof ActionFailureError && (error.code === 'projectArchived' || error.code === 'projectResourceConflict')) {
-      return Response.json({ error: { code: error.code } }, { status: 409, headers: { 'cache-control': 'private, no-store' } })
-    }
-    throw error
-  }
+  await governanceMutationSession(request, params.workspaceId)
+  return Response.json({ error: { code: 'projectBindingsRetired' } }, { status: 410, headers: { 'cache-control': 'private, no-store' } })
 }))
+
+export const POST = defineRoute<'public', 'none', { workspaceId: string; projectId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/projects/[projectId]/repos',
+    auth: 'public',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
+)

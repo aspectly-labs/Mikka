@@ -28,14 +28,20 @@ test('real API dispatch serves the generated route inventory over HTTP without l
   assert.ok(address && typeof address !== 'string')
   const baseUrl = `http://127.0.0.1:${address.port}`
   try {
-    const positive = await runRouteProbe({ baseUrl, manifest })
+    // This is the API dispatcher with no public edge in front: internal-only routes must be registered too.
+    const positive = await runRouteProbe({ baseUrl, manifest, publicEdge: false })
     assert.equal(positive.total, routes.length)
     assert.deepEqual(positive.results.filter((result: { ok: boolean }) => !result.ok), [])
     assert.equal(positive.status, 'pass')
+    // Probed as the public edge, the bare dispatcher exposes them, which the probe reports as reachable.
+    const exposed = await runRouteProbe({ baseUrl, manifest })
+    assert.deepEqual(exposed.results.filter((result: { ok: boolean }) => !result.ok), [
+      { route: '/mikka/api/internal/subscription/chat', method: 'OPTIONS', status: 204, ok: false, error: 'route_probe_internal_reachable' },
+    ])
     const removed = '/mikka/api/version'
     assert.ok(routes.some(route => route.path === removed))
     app = createApiHandler(routes.filter(route => route.path !== removed))
-    const negative = await runRouteProbe({ baseUrl, manifest })
+    const negative = await runRouteProbe({ baseUrl, manifest, publicEdge: false })
     assert.equal(negative.status, 'fail')
     assert.equal(negative.failed, 1)
     assert.deepEqual(negative.results.filter((result: { ok: boolean }) => !result.ok), [

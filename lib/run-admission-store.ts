@@ -1,6 +1,7 @@
 import { workerDefinitionDigest } from './agent-kit/worker-digest'
 import { scheduleThreadTitle } from '@/lib/thread-title-schedule'
 import 'server-only'
+import { runtimeEnv } from '@/lib/env/server'
 import { admitProfileSelection } from './factory/profile-admission'
 import { runListChanged } from './live/lists'
 import { requestedRunSettings } from './task-run-settings'
@@ -44,25 +45,26 @@ export async function acceptLocalRun(input: {
   /** A live parent's own worker delegation (#3089): the task's only live run must be this exact parent. */
   delegation?: { parentRunId: string }
   /** A host-authorized device recovery retains config without the same-Agent replay exception. */
+  refreshTaskEnvironment?: true
   frozenSourceRunId?: string
   factoryContext?: { sourceEventId: string; attemptId: string }
 }, existing?: PoolClient, projectExecution?: ProjectExecutionSnapshot): Promise<{ runId: string; status?: typeof agentRuns.$inferSelect.status; replayed?: boolean }> {
   if (!projectExecution) {
     const sourceId = input.frozenSourceRunId ?? input.sourceRunId ?? input.profileSourceRunId
     const { rows: [target] } = await (existing ?? pool).query(`SELECT i."workspaceId",repo."repoPath",
-        CASE WHEN source.id IS NULL THEN repo."baseBranch"
+        CASE WHEN source.id IS NULL OR ($5::boolean AND source."agentDefinition"#>>'{projectExecution,environment,chosen}' IS DISTINCT FROM 'true') THEN repo."baseBranch"
           WHEN source."agentDefinition"->'projectExecution' IS NOT NULL THEN source."agentDefinition"->'projectExecution'->>'baseBranch'
           ELSE source."baseBranch" END AS "baseBranch",
         CASE WHEN source."agentDefinition"#>>'{projectExecution,environment,chosen}'='true' THEN source."agentDefinition"#>>'{projectExecution,environment,id}' END AS "chosenEnvironmentId"
       FROM issues i JOIN device_repos repo ON repo.id=$2 AND repo."userId"=$3
       LEFT JOIN agent_runs source ON source.id=$4 AND source."userId"=$3 AND source."issueId"=i.id AND source."workspaceId"=i."workspaceId"
-      WHERE i.id=$1 AND i."ownershipState"='bound' AND i."workspaceId" IS NOT NULL`, [input.issueId, input.deviceRepoId, input.userId, sourceId ?? null])
+      WHERE i.id=$1 AND i."ownershipState"='bound' AND i."workspaceId" IS NOT NULL`, [input.issueId, input.deviceRepoId, input.userId, sourceId ?? null, input.refreshTaskEnvironment === true])
     if (!target) throw new ActionFailureError('runInvalid', { reason: 'issueUnavailable' })
     const { withProjectExecution } = await import('./project-resources/store')
     // An Environment the request chose for a new thread; a continuation keeps the one its thread was admitted with.
     const environmentId = sourceId ? target.chosenEnvironmentId ?? undefined
       : input.continuation ? undefined : (await requestedRunSettings(existing ?? pool, input.userId, input.requestEventId)).environmentId
-    return withProjectExecution({ userId: input.userId, workspaceId: target.workspaceId, issueId: input.issueId, repositoryKey: target.repoPath, baseBranch: target.baseBranch, runtime: 'local', harness: input.definition.harness, ...(environmentId ? { environmentId } : {}) },
+    return withProjectExecution({ userId: input.userId, botId: input.botId, workspaceId: target.workspaceId, issueId: input.issueId, repositoryKey: target.repoPath, baseBranch: target.baseBranch, runtime: 'local', harness: input.definition.harness, ...(environmentId ? { environmentId } : {}) },
       snapshot => acceptLocalRun(input, existing, snapshot), Boolean(existing))
   }
   requireProjectResourceLease(input.userId, projectExecution.workspaceId)
@@ -103,7 +105,7 @@ export async function acceptLocalRun(input: {
     const [device] = await tx.select().from(devices).where(and(eq(devices.id, input.deviceId), eq(devices.ownerId, input.userId), eq(devices.kind, 'local'))).for('share')
     if (!agent || agent.deviceId !== input.deviceId || agent.harness !== input.definition.harness || !device?.enabled || !localExecutionHarnesses(device.harnesses).includes(agent.harness)) throw invalid('deviceUnavailable')
     const [repo] = await tx.select().from(deviceRepos).where(and(eq(deviceRepos.id, input.deviceRepoId), eq(deviceRepos.userId, input.userId), eq(deviceRepos.deviceId, input.deviceId))).for('share')
-    if (!repo?.remoteUrl || !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(process.env) })) throw invalid('repositoryMismatch')
+    if (!repo?.remoteUrl || !repositoryBindingMatches(repo.repoPath, repo.remoteUrl, { allowFile: daemonTestMode(runtimeEnv()) })) throw invalid('repositoryMismatch')
     assertProjectExecutionTarget(projectExecution, { userId: input.userId, workspaceId: task.workspaceId!, repositoryKey: repo.repoPath, runtime: 'local', harness: agent.harness })
     const [bot] = input.botId ? await tx.select().from(bots).where(and(eq(bots.id, input.botId), eq(bots.ownerId, input.userId))).for('share') : []
     if (input.botId && (!bot || bot.workspaceId !== task.workspaceId)) throw invalid('botUnavailable')
@@ -124,13 +126,14 @@ export async function acceptLocalRun(input: {
     const [source] = sourceId ? await tx.select({ definition: agentRuns.agentDefinition, baseBranch: agentRuns.baseBranch }).from(agentRuns)
       .where(and(eq(agentRuns.id, sourceId), eq(agentRuns.userId, input.userId), eq(agentRuns.issueId, task.id), eq(agentRuns.workspaceId, task.workspaceId!))).for('share') : []
     if (sourceId && !source) throw invalid('sourceRunMismatch')
-    if (source) {
+    const retainSource = source && (!input.refreshTaskEnvironment || source.definition?.projectExecution?.environment?.chosen)
+    if (retainSource) {
       const { assertRunProjectExecution } = await import('./project-resources/run-lease')
       assertRunProjectExecution(source, source.definition?.projectExecution, projectExecution)
     }
-    const effectiveExecution = input.definition.projectExecution ?? (source ? source.definition?.projectExecution : projectExecution)
+    const effectiveExecution = input.definition.projectExecution ?? (retainSource ? source.definition?.projectExecution : projectExecution)
     if (effectiveExecution) assertFrozenProjectExecution(effectiveExecution, projectExecution)
-    const effectiveBaseBranch = effectiveExecution ? effectiveExecution.baseBranch : source ? source.baseBranch : projectExecution.baseBranch
+    const effectiveBaseBranch = effectiveExecution ? effectiveExecution.baseBranch : retainSource ? source.baseBranch : projectExecution.baseBranch
     const definition = { ...input.definition, ...(effectiveExecution ? { projectExecution: structuredClone(effectiveExecution) } : {}), ...(traceContext ? { traceContext } : {}), executionIdentity, ...(profileOriginRunId && !questionSource ? { profileOriginRunId } : {}) }
     if (!questionSource) definition.definitionDigest = workerDefinitionDigest(definition)
     const context = { workspaceId: task.workspaceId!, ...(input.requestEventId ? { requestEventId: input.requestEventId } : {}) }
