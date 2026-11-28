@@ -12,7 +12,8 @@ export type TaskSummaryChecks = Awaited<ReturnType<typeof latestTaskReviewChecks
 /** Metadata projection shared by detail and bulk reads. Importing it must not
  * initialize authentication, provider clients, or the request handlers. */
 export function projectTaskReviewSummary(actor: Pick<ReviewActor, 'userId' | 'workspaceId' | 'credential'>, scope: ReviewScope,
-  snapshot: DiffSnapshot | null, facts: TaskSummaryFacts | undefined, checks: TaskSummaryChecks, currentPull?: GitHubPullSummary) {
+  snapshot: DiffSnapshot | null, facts: TaskSummaryFacts | undefined, checks: TaskSummaryChecks, currentPull?: GitHubPullSummary,
+  currentFactory?: DiffSnapshot['factory']) {
   const own = actor.userId === scope.identity.ownerId && actor.credential.kind === 'session'
   const currentSource = !currentPull || snapshot?.pullRequest?.number === currentPull.number
     && snapshot.sourceAccess?.repositoryId === currentPull.repositoryId && snapshot.revision.headSha === currentPull.headSha
@@ -24,6 +25,13 @@ export function projectTaskReviewSummary(actor: Pick<ReviewActor, 'userId' | 'wo
   const canSend = Boolean(own && available && !facts?.merging), canMerge = Boolean(own && available && liveMergeable
     && state && !['closed', 'merged'].includes(state) && facts?.canMerge)
   const countsKnown = Boolean(currentPull || available && snapshot.counts.complete)
+  const nativeMergeTarget = own && currentPull && currentFactory && facts?.canMerge && !facts.merging
+    && currentPull.mergeable === true && !currentPull.draft && !['closed', 'merged'].includes(currentPull.state)
+    && currentFactory.sha === currentPull.headSha ? {
+      pullRef: { runId: scope.identity.runId, repoId: scope.identity.repoId, repositoryId: currentPull.repositoryId,
+        number: currentPull.number, baseSha: currentPull.baseSha, producerRunId: currentFactory.producerRunId },
+      binding: facts.mergeBinding, expectedHeadSha: currentPull.headSha,
+    } : null
   return { taskId: scope.taskId!, reviewRef: available ? reviewReference(snapshot) : null, pr: currentPull ? {
     number: currentPull.number, url: currentPull.url, state: currentPull.state, observedAt: currentPull.observedAt,
     headSha: currentPull.headSha, mergeable: currentPull.mergeable, draft: currentPull.draft,
@@ -33,6 +41,7 @@ export function projectTaskReviewSummary(actor: Pick<ReviewActor, 'userId' | 'wo
   additions: currentPull?.additions ?? (countsKnown ? snapshot!.counts.additions : null),
   deletions: currentPull?.deletions ?? (countsKnown ? snapshot!.counts.deletions : null), countsKnown, checks: currentPull ? currentPull.checks : checks,
   mergeTarget: canMerge ? { reviewRef: reviewReference(snapshot!), binding: facts!.mergeBinding, expectedHeadSha: snapshot!.revision.headSha } : null,
+  nativeMergeTarget,
   running: !scope.stopped && UNFINISHED_RUN_STATUSES.some(status => status === scope.status), ...(facts?.branch ? { branch: facts.branch } : {}),
   permissions: { canMerge, canSend, canTerminal: own, reasons: {
     ...(!canMerge ? { merge: own ? 'review_unavailable' : 'not_owner_merge' } : {}),
