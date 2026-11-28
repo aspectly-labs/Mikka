@@ -166,6 +166,37 @@ test('a rerun that fails before its writer cannot hide an earlier partial deploy
   }
 })
 
+test('a re-run that erased an earlier attempt\'s deployment receipt fails closed and names the recovery', async () => {
+  const original = { ...run(), path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_run',
+    conclusion: 'failure', run_attempt: 1 }
+  const latest = { ...original, run_attempt: 2 }
+  const expected = { '101': /pipeline_rerun_after_deploy_refused/, '200': /pipeline_rerun_erased_receipt_requires_recovery/ }
+  for (const currentRun of ['200', '101']) {
+    const api = async path => {
+      if (path.includes('actions/workflows/')) return { total_count: 1,
+        workflow_runs: [{ ...latest, ...(currentRun === '101' ? { status: 'in_progress', conclusion: null } : {}) }] }
+      if (path.endsWith('/attempts/1')) return original
+      if (path.includes('/attempts/2/jobs?')) return { total_count: 1, jobs: [{ id: 402, name: 'pipeline',
+        status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'skipped' }] }] }
+      if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 401, name: 'pipeline',
+        status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
+      // GitHub deletes the re-run job's earlier artifacts; the run lists none.
+      if (path.includes('/runs/101/artifacts?')) return { total_count: 0, artifacts: [] }
+      assert.fail('Unexpected metadata request: ' + path)
+    }
+    await assert.rejects(priorDeployment(api, currentRun), expected[currentRun])
+  }
+  // A single-attempt run whose receipt is missing keeps the original error.
+  const single = async path => {
+    if (path.includes('actions/workflows/')) return { total_count: 1, workflow_runs: [original] }
+    if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 401, name: 'pipeline',
+      status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
+    if (path.includes('/runs/101/artifacts?')) return { total_count: 0, artifacts: [] }
+    assert.fail('Unexpected metadata request: ' + path)
+  }
+  await assert.rejects(priorDeployment(single, '200'), /pipeline_original_artifact_required/)
+})
+
 test('a Deploy step that failed before its first receipt is skipped, but a printed summary still blocks', async () => {
   const zip = members => execFileSync('python3', ['-c',
     'import io,sys,json,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z:\n  for k,v in json.loads(sys.argv[1]).items(): z.writestr(k,v)\nsys.stdout.buffer.write(b.getvalue())',
