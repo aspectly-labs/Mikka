@@ -239,6 +239,29 @@ test('delegated scheduled work keeps its original read-only occurrence without r
   })
 })
 
+test('delegated turns use native search only within their public web grant and interactive scope', async () => {
+  runtime = { harness: 'ai_sdk', model: 'fixture-model', modelSelection: {
+    type: 'api_key', ownerId: scope.ownerId, workspaceId: scope.workspaceId, keyId: serverId, modelId: 'fixture-model',
+  } }
+  searchBackend = 'openai'
+  try {
+    await contextStorage.run(new ContextContainer(), async () => {
+      const child = context({ parent: true })
+      await started({ data: { turnId: 'turn_1' } }, child)
+      assert.equal(turnModel.get()?.nativeWebSearchBackend, 'openai')
+
+      scheduled = true
+      await started({ data: { turnId: 'turn_2' } }, context({ parent: true, turnId: 'turn_2' }))
+      assert.equal(turnModel.get()?.nativeWebSearchBackend, undefined)
+
+      scheduled = false
+      definition = { ...definition, tools: ['list_issues'] }
+      await started({ data: { turnId: 'turn_3' } }, context({ parent: true, turnId: 'turn_3' }))
+      assert.equal(turnModel.get()?.nativeWebSearchBackend, undefined)
+    })
+  } finally { searchBackend = undefined }
+})
+
 test('Slack instructions skip private web memory, profile and Factory composition', async () => {
   await contextStorage.run(new ContextContainer(), async () => {
     const instructions = await instructionsForSession(context({ surface: 'slack' }))

@@ -17,6 +17,7 @@ import { workspaceMemberCredentialsAllowed } from '@/lib/personal-policy'
 import { stopRunsUsingApiKeys } from '@/lib/model-api-key-runs'
 import { openSecret, sealSecret, SecretsKeyMissingError } from '@/lib/secrets/crypto'
 import { WorkspaceError } from '@/lib/workspace-error'
+import { jsonbFlagIsTrueSql } from '@/lib/primitives/jsonb-predicates'
 import {
   API_KEY_PRESET_ENDPOINTS, API_KEY_PRESETS, apiKeyChatBaseUrl, apiKeyProtocols, customModelsUrl, gatewayKeyHarnesses,
   type ApiKeyHarness, type ApiKeyProtocol, type ApiKeyProvider, type ApiKeyView,
@@ -576,7 +577,7 @@ export async function apiKeyOwnerOf(query: Query, id: string): Promise<{ ownerId
 /** 订阅额度用完后，自动改用 API Key. On unless the person turned it off. */
 export async function apiKeyPreferences(query: Query, ownerId: string) {
   const { rows: [row] } = await query.query<{ apiKeyAfterQuota: boolean; apiKeyWebSearch?: boolean }>(
-    `SELECT "apiKeyAfterQuota", (to_jsonb("user")->>'apiKeyWebSearch')::boolean AS "apiKeyWebSearch" FROM "user" WHERE id=$1`, [ownerId],
+    `SELECT "apiKeyAfterQuota", ${jsonbFlagIsTrueSql('to_jsonb("user")', 'apiKeyWebSearch')} AS "apiKeyWebSearch" FROM "user" WHERE id=$1`, [ownerId],
   )
   return { apiKeyAfterQuota: row?.apiKeyAfterQuota ?? true, apiKeyWebSearch: row?.apiKeyWebSearch === true }
 }

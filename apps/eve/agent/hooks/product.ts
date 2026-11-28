@@ -44,7 +44,7 @@ export default defineHook({events:{
         })() : null,
       ])
       const selected = runtime.modelSelection
-      const canSearch = !scheduled && !ctx.session.parent && policy?.effectiveTools.includes('web_search') !== false
+      const canSearch = !scheduled && policy?.effectiveTools.includes('web_search') !== false
       let nativeSearch: typeof runtime.nativeWebSearchBackend
       if (canSearch && selected?.type === 'api_key') {
         nativeSearch = await (await import('../../../../lib/model-api-key-chat')).apiKeyNativeSearchBackend(selected)
