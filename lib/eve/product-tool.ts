@@ -3,6 +3,7 @@ import type { ApprovalConfiguration } from 'eve/tools/approval'
 import { isEveApprovalResponder } from './approval-principal'
 import { productRpc, type ProductCatalogueEntry } from './product-rpc'
 import type { EveScope } from './scope'
+import type { HostedRuntimeSnapshot } from '../hosted-model-selection'
 
 type Binding = {sessionId:string;turnId:string;executionId?:string}
 type ApprovalReview = {status:'not-applicable'|'denied'}
@@ -11,12 +12,15 @@ type ApprovalReview = {status:'not-applicable'|'denied'}
  * the owner's own session and turn and records the exact business write plan.
  * It never pauses for a person (ADR 2026-11-27-1615); the gateway rechecks
  * policy before provider dispatch and replays the recorded plan at most once. */
-export function createProductTool(scope:EveScope,binding:Binding,definition:ProductCatalogueEntry,rpc:typeof productRpc=productRpc) {
+export function createProductTool(scope:EveScope,{ runtime, ...binding }:Binding & { runtime?: HostedRuntimeSnapshot },definition:ProductCatalogueEntry,rpc:typeof productRpc=productRpc) {
+  const selection = runtime?.modelSelection
+  const webSearchModel = runtime?.harness === 'ai_sdk' && selection?.type === 'api_key' && selection.modelId === runtime.model && !runtime.nativeWebSearchBackend
+    ? selection : undefined
   async function actionBinding(signal?: AbortSignal): Promise<Binding> {
     signal?.throwIfAborted()
     if (binding.executionId) return binding
     const { beginProductAction } = await import('./product-definitions')
-    const executionId = await beginProductAction(scope, binding)
+    const executionId = await beginProductAction(scope, binding, runtime)
     signal?.throwIfAborted()
     return { ...binding, ...(executionId ? { executionId } : {}) }
   }
@@ -37,7 +41,9 @@ export function createProductTool(scope:EveScope,binding:Binding,definition:Prod
     inputSchema:definition.inputSchema as never,
     approval,
     async execute(input:unknown,ctx) {
-      return (await rpc<{output:unknown}>(scope,{...await actionBinding(ctx.abortSignal),operation:'execute',name:definition.name,input,callId:ctx.callId},ctx.abortSignal)).output
+      return (await rpc<{output:unknown}>(scope,{...await actionBinding(ctx.abortSignal),operation:'execute',name:definition.name,input,callId:ctx.callId,
+        ...(definition.name === 'web_search' && webSearchModel && { webSearchModel }),
+      },ctx.abortSignal)).output
     },
   })
 }

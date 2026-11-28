@@ -36,6 +36,6 @@ export default defineDynamic(async ctx => {
   return Object.fromEntries(catalogue.map(definition => [definition.name,
     definition.name === 'web_search' && runtime.nativeWebSearchBackend
       ? webSearch({ provider: 'native' })
-      : createProductTool(scope, binding, definition),
+      : createProductTool(scope, { ...binding, runtime }, definition),
   ]))
 })

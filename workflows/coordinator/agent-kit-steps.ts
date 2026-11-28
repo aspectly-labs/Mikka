@@ -4,6 +4,7 @@ import { freezeBotModel } from '@/lib/bot-model-selection'
 import { SubscriptionRefusal } from '@mikka/protocol/subscription'
 import { authorizeSubscriptionWorkspace, subscriptionRuntime } from '@/lib/subscription-runtime'
 import type { CoordinatorRuntime } from '@mikka/protocol/coordinator'
+import type { HostedRuntimeSnapshot } from '@/lib/hosted-model-selection'
 import { agentKitEnabled, agentKitStore, agentScope, agentScopeWithBotMetadata, agentKitDefaults } from '@/lib/agent-kit/service'
 import { AgentKitError, type AgentExecution, type AgentScope } from '@/lib/agent-kit/store'
 import type { ToolOutcome } from '@/lib/agent-kit/instrument'
@@ -23,10 +24,10 @@ async function refusalIsFinal<T>(work: Promise<T>): Promise<T> {
   }
 }
 
-export async function beginAgentExecution(userId: string, botId: string, holder: string, round: number, runtime: CoordinatorRuntime): Promise<AgentExecution | null> {
+export async function beginAgentExecution(userId: string, botId: string, holder: string, round: number, runtime: CoordinatorRuntime, frozenRuntime?: HostedRuntimeSnapshot): Promise<AgentExecution | null> {
   'use step'
   if (!agentKitEnabled()) return null
-  return reserveAgentExecution(userId,botId,holder,round,runtime)
+  return reserveAgentExecution(userId,botId,holder,round,runtime,frozenRuntime)
 }
 /** The hosted composite reuses its run's durable setting on every preparation attempt. */
 export async function beginPreparedAgentExecution(userId: string, botId: string, holder: string, round: number, runtime: Extract<CoordinatorRuntime, { harness: 'ai_sdk' }>, enabled: boolean): Promise<AgentExecution | null> {
@@ -34,7 +35,7 @@ export async function beginPreparedAgentExecution(userId: string, botId: string,
   if (!enabled) return null
   return reserveAgentExecution(userId,botId,holder,round,runtime)
 }
-async function reserveAgentExecution(userId: string, botId: string, holder: string, round: number, runtime: CoordinatorRuntime): Promise<AgentExecution> {
+async function reserveAgentExecution(userId: string, botId: string, holder: string, round: number, runtime: CoordinatorRuntime, frozenRuntime?: HostedRuntimeSnapshot): Promise<AgentExecution> {
   let scope: AgentScope, instructions: string
   if (runtime.harness === 'ai_sdk') {
     const current = await agentScopeWithBotMetadata(userId,botId)
@@ -45,7 +46,11 @@ async function reserveAgentExecution(userId: string, botId: string, holder: stri
     instructions = await botInstructions(userId,botId,personalCoordinatorInstructions())
   }
   const { personalPlugins } = await import('@/lib/plugins/runtime')
-  return refusalIsFinal(agentKitStore.beginExecution(scope,`${holder}:${round}`,instructions,() => runtime.harness === 'ai_sdk' ? freezeBotModel(scope,{service:()=>subscriptionRuntime(),workspace:authorizeSubscriptionWorkspace}) : Promise.resolve({harness:runtime.harness,model:'model' in runtime ? runtime.model ?? null : null}),agentKitDefaults(), client => personalPlugins.snapshotForBot(userId,scope.botId,scope.workspaceId,client)))
+  const selectModel = () => runtime.harness === 'ai_sdk'
+    ? freezeBotModel(scope,{service:()=>subscriptionRuntime(),workspace:authorizeSubscriptionWorkspace})
+    : Promise.resolve({harness:runtime.harness,model:'model' in runtime ? runtime.model ?? null : null})
+  return refusalIsFinal(agentKitStore.beginExecution(scope,`${holder}:${round}`,instructions,frozenRuntime ?? selectModel,
+    agentKitDefaults(), client => personalPlugins.snapshotForBot(userId,scope.botId,scope.workspaceId,client)))
 }
 /** Durable model selection also applies when versioned definitions are disabled. */
 export async function botRuntime(userId:string,botId:string|null) {
