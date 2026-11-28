@@ -61,6 +61,8 @@ deleteWorkspace(id: string, confirmName: string): Promise<ActionResult<{
 
 已提交到 `workspace_audit_outbox` 的审计不会随工作区删除而丢失。账号和工作区的现有删除 guard 不变。保留任务持有原有独占锁；投递持共享锁到源回执确认。源工作区仍存在或有 pending receipt 时，不移除该工作区的保留策略和删除记录；确认源删除并投递完成后继续执行原90天、较长期限及法律保留规则。迁移顺序和并发边界见[删除保护下的持久审计投递](../design/audit-delivery-deletion.md)。
 
+`workspace_deletion_jobs` 的扩展 schema 保存独立工作区删除的授权范围、提交阶段和有期限的结果回执，并由通用清理器明确保留。入口和恢复执行器在 #3439 后续行为 PR 接入；这份扩展不从历史删除记录生成任务。字段、阶段和发布顺序见[工作区删除的持久记录](../design/workspace-deletion-journal.md)。
+
 ## 成员
 
 ### `removeWorkspaceMember(memberId, options?)` — `app/actions/workspace-settings.ts`
