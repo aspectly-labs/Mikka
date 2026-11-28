@@ -75,8 +75,9 @@ test('workspace MCP servers: any member manages them, threads resolve by their s
   try {
     const directory = new URL('../../drizzle/', import.meta.url)
     for (const migration of orderMigrations((await readdir(directory)).filter(name => name.endsWith('.sql')))) await pool.query(await readFile(new URL(migration, directory), 'utf8'))
-    // Replayable: the migration applies twice without change.
-    await pool.query(await readFile(new URL('20261127170716_workspace_mcp_servers.sql', directory), 'utf8'))
+    // migrate.mjs records it and runs it once. A second run stops at the plain
+    // CREATE TABLE, before its unique indexes could land on existing rows.
+    await assert.rejects(pool.query(await readFile(new URL('20261127170716_workspace_mcp_servers.sql', directory), 'utf8')), { code: '42P07' })
     assert.match((await pool.query('SHOW server_version')).rows[0].server_version, /^17\./)
     for (const user of [alice, bob, carol, mallory]) await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())', [user, `${user}@example.invalid`])
     for (const [id, kind, users] of [[workspace, 'team', [alice, bob, carol]], [foreign, 'team', [mallory]], [solo, 'personal', [alice]]] as const) {
