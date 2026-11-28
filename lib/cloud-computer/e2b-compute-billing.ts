@@ -235,13 +235,14 @@ export async function recordE2BComputeSandbox(ownerId: string, operationId: stri
 export type E2BAwakeSettleFence = {
   runId?: string
   expectedEpoch?: number
+  expectedStates?: readonly ('paused' | 'error')[]
   botWorkspaceId?: string
 }
 
 /**
- * Settles E2B machine billing per actual awake second when a sandbox pauses or
- * is killed, refunding unused seconds of open chunks back to the workspace's
- * credit balance and capping `paidUntil` so resumed runs fund a fresh chunk.
+ * Settles E2B machine billing per actual awake second when a sandbox pauses,
+ * disappears, or is killed, refunding unused seconds of open chunks back to the
+ * workspace's credit balance and capping `paidUntil` so resumed runs fund a fresh chunk.
  */
 export async function settleE2BAwakeInterval(
   ownerId: string,
@@ -258,11 +259,12 @@ export async function settleE2BAwakeInterval(
     if (!meta?.available) return { settled: false, refundedMicroUsd: 0 }
 
     if (fence?.runId && fence.expectedEpoch !== undefined) {
+      const allowedStates = fence.expectedStates?.length ? [...fence.expectedStates] : ['paused']
       const fenced = await tx.query(
         `SELECT 1 FROM thread_machines
-         WHERE "runId"=$1 AND "ownerId"=$2 AND "sandboxId"=$3 AND epoch=$4 AND state='paused'
+         WHERE "runId"=$1 AND "ownerId"=$2 AND "sandboxId"=$3 AND epoch=$4 AND state=ANY($5::text[])
          FOR SHARE`,
-        [fence.runId, ownerId, sandboxId, fence.expectedEpoch],
+        [fence.runId, ownerId, sandboxId, fence.expectedEpoch, allowedStates],
       )
       if (!fenced.rowCount) return { settled: false, refundedMicroUsd: 0 }
     }
@@ -309,12 +311,12 @@ export async function settleE2BAwakeInterval(
       const chunkStart = start ?? new Date(endLimit.getTime() - MACHINE_CHUNK_MS)
       const effectiveStopMs = Math.min(effectiveEnd.getTime(), endLimit.getTime())
       const maxWindowSeconds = Math.min(
-        Math.round(MACHINE_CHUNK_MS / 1_000),
-        Math.max(0, Math.round((endLimit.getTime() - chunkStart.getTime()) / 1_000)),
+        Math.ceil(MACHINE_CHUNK_MS / 1_000),
+        Math.max(0, Math.ceil((endLimit.getTime() - chunkStart.getTime()) / 1_000)),
       )
       const awakeSeconds = effectiveStopMs <= chunkStart.getTime()
         ? 0
-        : Math.min(maxWindowSeconds, Math.max(0, Math.round((effectiveStopMs - chunkStart.getTime()) / 1_000)))
+        : Math.min(maxWindowSeconds, Math.max(0, Math.ceil((effectiveStopMs - chunkStart.getTime()) / 1_000)))
       const targetCost = e2bAwakeSecondsMicroUsd(lease.hourlyMicroUsd, awakeSeconds)
       const res = await hostedUsage.adjustSettledMachineCost(
         `machine:e2b:${lease.operationId}:${chunkIndex}`,

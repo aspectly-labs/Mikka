@@ -63,6 +63,7 @@ type Dependencies = {
   acknowledgeStop: (pool: Pool, actor: Actor, runId: string) => Promise<boolean>
   stop: (pool: Pool, actor: Actor, row: ThreadLifecycleRow, cause: StopCause, claimId: string, now: number) => Promise<boolean>
   recover: (pool: Pool, actor: Actor, row: ThreadLifecycleRow, now: number) => Promise<void>
+  settleAwake?: typeof settleE2BAwakeInterval
   now: () => number
 }
 
@@ -196,6 +197,7 @@ const runtime: Dependencies = {
   acknowledgeStop: async (pool, actor, runId) => (await import('./thread-machines')).acknowledgeQueuedThreadStop(pool, actor, runId),
   stop: requestLifecycleStop,
   recover: async (_pool, actor, _row, now) => (await import('@/lib/run-leases')).reclaimLostRuns(actor.userId, new Date(now)),
+  settleAwake: settleE2BAwakeInterval,
 }
 
 /** Shared by the per-run Workflow and the existing deployment-owned recovery
@@ -427,7 +429,7 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         await deps.park(pool, actor, runId, fenceOf(row))
     }
     if (provider?.state === 'paused' && !live(row.workerLeaseUntil, now) && row.state !== 'ended' && row.sandboxId) {
-      await settleE2BAwakeInterval(actor.userId, row.sandboxId, new Date(now), undefined, {
+      await (deps.settleAwake ?? settleE2BAwakeInterval)(actor.userId, row.sandboxId, new Date(now), undefined, {
         runId: row.runId,
         expectedEpoch: row.epoch,
       })
@@ -472,6 +474,16 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         WHERE "runId"=$1 AND epoch=$2 AND "sandboxId"=$3 AND lifecycle->>'reconcileId'=$4 AND state<>'ended'
           AND "ownerId"=$5 AND "workspaceId"=$6`, [runId, row.epoch, row.sandboxId, token, actor.userId, actor.workspaceId])
       if (missing.rowCount) {
+        if (!live(row.workerLeaseUntil, now) && row.sandboxId) {
+          const missingObservedAt = typeof row.lifecycle.providerMissingAt === 'number' && Number.isFinite(row.lifecycle.providerMissingAt)
+            ? row.lifecycle.providerMissingAt
+            : now
+          await (deps.settleAwake ?? settleE2BAwakeInterval)(actor.userId, row.sandboxId, new Date(missingObservedAt), undefined, {
+            runId: row.runId,
+            expectedEpoch: row.epoch,
+            expectedStates: ['error'],
+          })
+        }
         taskActivityChanged(pool, runId)
         await (await import('@/lib/live/panels')).runChanged(pool, runId)
       }

@@ -768,6 +768,43 @@ test('hosted E2B prepays each verified five-minute interval once', { skip: !dbUr
       runId: awakeRunId, expectedEpoch: 2,
     })
     assert.deepEqual(capSettle, { settled: true, refundedMicroUsd: 7 * 64 })
+
+    // Sub-second awake window (400ms) rounds UP to 1 whole second (matching E2B billing),
+    // and an unexpected missing sandbox fenced on state='error' settles and refunds unused seconds
+    // while rejecting default paused-only fences and stale epochs.
+    const errOp = randomUUID()
+    const errSb = `sb-${randomUUID()}`
+    const errStart = new Date(Date.now() - 20_000)
+    await fixture.query(`INSERT INTO e2b_resource_accounts (kind,id,"ownerId",scope) VALUES ('operation',$1,$2,'team:fixture'),('sandbox',$3,$2,'team:fixture')`,
+      [errOp, awakeOwnerId, errSb])
+    await e2bCreationTimeout(awakeOwnerId, 'team:fixture', errOp, templates.codex.templateId, { workspaceId: awakeWorkspaceId, runId: awakeRunId }, 900_000,
+      { provider: 'e2b', size: 'medium', hourlyMicroUsd: 230_400, pricingVersion: '2026-11-26', cpuCount: 2, memoryMB: 8192 })
+    await recordE2BComputeSandbox(awakeOwnerId, errOp, errSb, errStart, new Date(errStart.getTime() + 300_000))
+    await fixture.query(`INSERT INTO thread_machines ("runId","ownerId","workspaceId","sandboxId","operationId","snapshotId",state,epoch)
+      VALUES ($1,$2,$3,$4,$5,'verified-codex','error',4)
+      ON CONFLICT ("runId") DO UPDATE SET "sandboxId"=$4,"operationId"=$5,state='error',epoch=4`, [awakeRunId, awakeOwnerId, awakeWorkspaceId, errSb, errOp])
+    // Default fence (paused only) must NOT settle an error-state machine.
+    assert.deepEqual(
+      await settleE2BAwakeInterval(awakeOwnerId, errSb, new Date(errStart.getTime() + 400), undefined, {
+        runId: awakeRunId, expectedEpoch: 4,
+      }),
+      { settled: false, refundedMicroUsd: 0 },
+    )
+    // Stale epoch on error-state fence must NOT settle.
+    assert.deepEqual(
+      await settleE2BAwakeInterval(awakeOwnerId, errSb, new Date(errStart.getTime() + 400), undefined, {
+        runId: awakeRunId, expectedEpoch: 3, expectedStates: ['error'],
+      }),
+      { settled: false, refundedMicroUsd: 0 },
+    )
+    // Matching error-state fence settles 400ms as 1 whole second (64 micro-USD), refunding 299s (19,136 micro-USD).
+    assert.deepEqual(
+      await settleE2BAwakeInterval(awakeOwnerId, errSb, new Date(errStart.getTime() + 400), undefined, {
+        runId: awakeRunId, expectedEpoch: 4, expectedStates: ['error'],
+      }),
+      { settled: true, refundedMicroUsd: 299 * 64 },
+    )
+    assert.deepEqual(await usage(errOp, 0), { state: 'settled', cost: '64' })
   })
 
   const afterMismatch = await receipts()
