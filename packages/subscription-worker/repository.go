@@ -29,6 +29,16 @@ type Record struct {
 type Operation struct{ Record }
 type Repository struct{ DB *sql.DB }
 
+// Keep the driver cause in-process while preserving the existing refusal.
+// Only metadataDiagnosticFor may project its bounded fields across IPC.
+type metadataFailure struct {
+	phase string
+	cause error
+}
+
+func (e *metadataFailure) Error() string   { return ErrDatabase.Error() }
+func (e *metadataFailure) Unwrap() []error { return []error{ErrDatabase, e.cause} }
+
 var uuidPattern = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 var scopePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
@@ -55,7 +65,7 @@ func scanRecord(row interface{ Scan(...any) error }) (Record, error) {
 		return r, ErrUnavailable
 	}
 	if err != nil {
-		return r, ErrDatabase
+		return r, &metadataFailure{phase: "record_scan", cause: err}
 	}
 	return r, nil
 }
@@ -147,6 +157,7 @@ func (r *Repository) Publish(ctx context.Context, o Operation, name, digest, acc
 	}
 	return nil
 }
+
 // codedText stores the code (detail) serialization CodedError writes on the Node side.
 func codedText(code, detail string) string {
 	if detail == "" {
@@ -182,7 +193,7 @@ func (r *Repository) Disconnect(ctx context.Context, s Scope, epoch int64) error
 	var n int
 	err := r.DB.QueryRowContext(ctx, `with disconnected as (update byos_connections set state='disconnected',epoch=epoch+1,quota=null,"secretName"=null,"secretDigest"=null,"accessSecretName"=null,"accessDigest"=null,"providerSubject"=null,"operationId"=null,"operationKind"=null,"operationDeadline"=null,"stagedSecretName"=null,"stagedDigest"=null,"stagedAccessName"=null,"stagedAccessDigest"=null,"lastErrorCode"=null,"updatedAt"=now() where id=$1 and "ownerId"=$2 and "workspaceId"=$3 and provider=$4 and epoch=$5 returning id), invalidated as (update byos_oauth_attempts set "consumedAt"=coalesce("consumedAt",now()) where "connectionId" in (select id from disconnected) and "ownerId"=$2 and "workspaceId"=$3) select count(*) from disconnected`, s.ConnectionID, s.OwnerID, s.WorkspaceID, s.Provider, epoch).Scan(&n)
 	if err != nil {
-		return ErrDatabase
+		return &metadataFailure{phase: "disconnect", cause: err}
 	}
 	if n != 1 {
 		return ErrStale
