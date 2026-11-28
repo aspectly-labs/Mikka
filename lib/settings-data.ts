@@ -1,4 +1,5 @@
 import { settingsKeys } from '@/lib/swr/keys'
+import { keyedFetcher, urlFetcher, type KeyedFetcher } from '@/lib/swr/fetcher'
 import type { listTeamMembers, loadTeamDirectory } from '@/app/actions/teams'
 import { withBasePath } from '@/lib/base-path'
 
@@ -6,10 +7,17 @@ export const settingsReadOptions = { revalidateIfStale: false, shouldRetryOnErro
 export const memberSettingsKey = settingsKeys.memberSettings
 export const teamDirectoryKey = settingsKeys.teamDirectory
 export const teamMembersKey = settingsKeys.teamMembers
-export const fetchTeamMembers = ([, teamId]: ReturnType<typeof teamMembersKey>) => fetchSettingsData<Awaited<ReturnType<typeof listTeamMembers>>>(`/api/teams/${encodeURIComponent(teamId)}/members`)
+export const fetchTeamMembers = keyedFetcher(([, teamId]: ReturnType<typeof teamMembersKey>) => fetchSettingsData<Awaited<ReturnType<typeof listTeamMembers>>>(`/api/teams/${encodeURIComponent(teamId)}/members`))
 export const teamHomeKey = (userId: string, teamId: string) => ['team-home', userId, teamId] as const
-export const fetchTeamHome = ([, , teamId]: ReturnType<typeof teamHomeKey>) => fetchSettingsData<Awaited<ReturnType<typeof listTeamMembers>>>(`/api/teams/${encodeURIComponent(teamId)}/members?include=task-count`)
-export const fetchTeamDirectory = ([, workspaceId]: ReturnType<typeof teamDirectoryKey>) => fetchSettingsData<Awaited<ReturnType<typeof loadTeamDirectory>>>(`/api/teams/directory${workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : ''}`)
+export const fetchTeamHome = keyedFetcher(([, , teamId]: ReturnType<typeof teamHomeKey>) => fetchSettingsData<Awaited<ReturnType<typeof listTeamMembers>>>(`/api/teams/${encodeURIComponent(teamId)}/members?include=task-count`))
+export const fetchTeamDirectory = keyedFetcher(([, workspaceId]: ReturnType<typeof teamDirectoryKey>) => fetchSettingsData<Awaited<ReturnType<typeof loadTeamDirectory>>>(`/api/teams/directory${workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : ''}`))
+
+const sharedSettingsDataFetcher = urlFetcher<unknown>(url => fetchSettingsData<unknown>(url))
+
+/** Typed URL SWR fetcher backed by `fetchSettingsData<T>`. */
+export function settingsDataFetcher<T>(): KeyedFetcher<string, T> {
+  return sharedSettingsDataFetcher as KeyedFetcher<string, T>
+}
 
 export class SettingsReadError extends Error {
   constructor(message: string, public status: number) { super(message); this.name = 'SettingsReadError' }
