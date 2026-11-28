@@ -59,17 +59,22 @@ async function handleGET(request: Request, user: ApiSession['user']) {
       if (page && !page.success) return json({ error: 'validationGeneric' }, 400)
       const nextPage = page?.success ? await listWorkspaceTaskPage(page.data) : null
       if (nextPage?.reset) return json({ error: 'issueStale' }, 409)
-      const { issues, workspaceId } = nextPage
+      const { issues: candidates, workspaceId } = nextPage
         ? { issues: nextPage.items, workspaceId: nextPage.workspaceId }
         : tokenWorkspaceId ? { issues: await listWorkspaceIssues(tokenWorkspaceId), workspaceId: tokenWorkspaceId }
           : await pollIssues().then(snapshot => ({ issues: snapshot.items!, workspaceId: snapshot.live.selectedWorkspaceId }))
+      // GitHub may be slow. Do not keep membership locks while it answers,
+      // and never return the list that preceded that external request.
+      const reviews = await taskReviewSummaries(user, candidates.map(issue => issue.id), workspaceId)
       // Recheck and hold the exact tenant before decorating or returning the
       // authorized list. A revocation that wins admission cannot return it.
       span?.setAttribute('mikka.task_refresh.server_stage', 'workspace')
       return withTaskWorkspace(user, workspaceId, async () => {
+        const currentPage = page?.success ? await listWorkspaceTaskPage(page.data) : null
+        if (currentPage?.reset) return json({ error: 'issueStale' }, 409)
+        const issues = currentPage?.items ?? await listWorkspaceIssues(workspaceId)
         span?.setAttribute('mikka.task_refresh.server_stage', 'decoration')
         const snapshots = await newestTaskRuns(user.id, issues.map(issue => issue.id), workspaceId, await taskScheduleLabels())
-        const reviews = await taskReviewSummaries(user, snapshots.filter(row => row.codingReview).map(row => row.issueId), workspaceId)
         const runs = snapshots.flatMap(row => row.runId && row.status ? [{ ...row, runId: row.runId, status: row.status }] : [])
         const byIssue = new Map(snapshots.map(row => [row.issueId, row]))
         const runByIssue = new Map(runs.map(row => [row.issueId, row]))

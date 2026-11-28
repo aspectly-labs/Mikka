@@ -39,15 +39,16 @@ const document = `query WorkspaceReviewState($owner:String!,$name:String!,$numbe
     number headRefOid baseRefOid state reviewDecision repository { fullDatabaseId nameWithOwner }
   } }
 }`
-const summaryDocument = `query WorkspaceReviewSummary($owner:String!,$name:String!,$number:Int!) {
-  repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+const summaryFields = `
     number headRefOid baseRefOid state reviewDecision repository { fullDatabaseId nameWithOwner }
     changedFiles additions deletions isDraft mergeable
     commits(last:1) { nodes { commit { oid statusCheckRollup { contexts(first:1) {
       totalCount checkRunCount statusContextCount
       checkRunCountsByState { count state } statusContextCountsByState { count state }
     } } } } }
-  } }
+`
+const summaryDocument = `query WorkspaceReviewSummary($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner,name:$name) { pullRequest(number:$number) { ${summaryFields} } }
 }`
 
 /** A display-only observation of the current PR. It does not capture a diff,
@@ -57,7 +58,38 @@ export async function readGitHubPullSummary(grant: GitHubPullGrant, number: numb
   const [owner, name] = grant.fullName.split('/')
   const parsed = summaryResponse.safeParse(await grant.client.graphql(summaryDocument, { owner, name, number }))
   if (!parsed.success) throw new WorkspaceReviewError('workspace_review_github_unavailable')
-  const value = parsed.data.repository.pullRequest, observedAt = new Date().toISOString()
+  return projectPullSummary(grant, number, parsed.data.repository.pullRequest)
+}
+
+export const GITHUB_SUMMARY_BATCH_SIZE = 20
+
+/** Exact requested PRs, not a repository's latest page. Keep the same grant,
+ * client byte/request limits and complete aggregate checks as a detail read.
+ * Any GraphQL error still rejects the entire document in GitHubDiffClient. */
+export async function readGitHubPullSummaries(grant: GitHubPullGrant, numbers: readonly number[]): Promise<Map<number, GitHubPullSummary>> {
+  const selected = [...new Set(numbers)]
+  if (selected.length > GITHUB_SUMMARY_BATCH_SIZE || selected.some(number => !Number.isSafeInteger(number) || number <= 0))
+    throw new WorkspaceReviewError('workspace_review_github_unavailable')
+  const result = new Map<number, GitHubPullSummary>()
+  if (!selected.length) return result
+  const [owner, name] = grant.fullName.split('/')
+  const query = `query WorkspaceReviewSummaries($owner:String!,$name:String!${selected.map((_, index) => `,$number${index}:Int!`).join('')}) {
+    repository(owner:$owner,name:$name) { ${selected.map((_, index) => `pull${index}:pullRequest(number:$number${index}) { ${summaryFields} }`).join('\n')} }
+  }`
+  const raw = z.object({ repository: z.record(z.string(), z.unknown()) }).safeParse(await grant.client.graphql(query,
+    { owner, name, ...Object.fromEntries(selected.map((number, index) => ['number' + index, number])) }))
+  if (!raw.success) throw new WorkspaceReviewError('workspace_review_github_unavailable')
+  const observedAt = new Date().toISOString()
+  for (const [index, number] of selected.entries()) {
+    const parsed = summaryResponse.shape.repository.shape.pullRequest.safeParse(raw.data.repository['pull' + index])
+    if (!parsed.success) throw new WorkspaceReviewError('workspace_review_github_unavailable')
+    result.set(number, projectPullSummary(grant, number, parsed.data, observedAt))
+  }
+  return result
+}
+
+function projectPullSummary(grant: GitHubPullGrant, number: number,
+  value: z.infer<typeof summaryResponse>['repository']['pullRequest'], observedAt = new Date().toISOString()): GitHubPullSummary {
   if (value.number !== number || value.repository.fullDatabaseId !== grant.repositoryId
     || value.repository.nameWithOwner.toLowerCase() !== grant.fullName.toLowerCase())
     throw new WorkspaceReviewError('workspace_review_github_forbidden')

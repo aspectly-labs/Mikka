@@ -86,7 +86,7 @@ async function runRows(userId: string, filter: SQL | undefined, limit: number) {
     .leftJoin(conversationReads, joinThreadRead(userId))
     .where(and(eq(agentRuns.userId, userId), isNull(agentRuns.deletedAt), filter))
     .orderBy(desc(agentRuns.createdAt)).limit(limit)
-  const sources = rows.length ? await citationSources(userId, [], rows.map(row => row.id)) : {}
+  const sources = rows.length ? await citationSources(userId, [], rows.map(row => row.id), { includeReview: false }) : {}
   // The tasks' state and PRs, for the group; only tasks the person can see (citationSources checked them).
   const issueIds = [...new Set(Object.values(sources).flatMap(source => source?.kind === 'run' && source.issue ? [source.issue.id] : []))]
   const tasks = new Map<string, GroupIssue>((issueIds.length ? await db.select({ id: issues.id, status: issues.status, content: issueAttrsContent }).from(issues).where(inArray(issues.id, issueIds)) : [])

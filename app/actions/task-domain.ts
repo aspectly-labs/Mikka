@@ -11,12 +11,15 @@ export async function getTaskPresentations(input: TaskPresentationsInput) {
   const parsed = taskPresentationsInput.parse(input)
   const user = await requireUser()
   if (await effectiveRequestWorkspace(user) !== parsed.workspaceId) throw new ActionFailureError('workspaceAccessDenied')
+  // External metadata must finish before the canonical payload takes its
+  // tenant lease and read-only snapshot. A missing review is not a task ACL.
+  const reviews = parsed.includeReview && parsed.issueIds.length
+    ? await (await import('@/lib/coding-workspace/task-review/summaries')).taskReviewSummaries(user, parsed.issueIds, parsed.workspaceId)
+    : null
   const batch = await readTaskPresentations(user, parsed)
-  if (parsed.includeReview && Object.keys(batch.items).length) {
-    const { taskReviewSummaries } = await import('@/lib/coding-workspace/task-review/summaries')
-    const reviews = await taskReviewSummaries(user, Object.keys(batch.items), parsed.workspaceId)
+  if (reviews) {
     for (const [id, summary] of reviews) {
-      if (!summary.pr && !summary.files) continue
+      if (!batch.items[id] || !summary.pr && !summary.files) continue
       batch.items[id]!.review = {
         pr: summary.pr && { number: summary.pr.number, state: summary.pr.state },
         files: summary.files, additions: summary.additions, deletions: summary.deletions,

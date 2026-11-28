@@ -18,6 +18,7 @@ import type { JournalEntry } from '../../../packages/daemon/src/runs/journal'
 import { orderMigrations } from '../../../scripts/migration-order.mjs'
 import { disposableDatabase, E2E_DB_RULE } from '../../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../../tests/support/drop-test-database'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import type { ReviewActor } from '../diff/authority'
 
 const url = process.env.E2E_DATABASE_URL
@@ -25,7 +26,8 @@ if (url) assert.ok(disposableDatabase(process.env, url), E2E_DB_RULE)
 else if (process.env.REQUIRE_DB === '1') assert.fail('REQUIRE_DB=1 needs an isolated E2E_DATABASE_URL')
 const execute = promisify(execFile)
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
-const remote = 'https://github.com/mikka-fixtures/task-review-summaries.git'
+const fullName = 'mikka-fixtures/task-review-summaries'
+const remote = `https://github.com/${fullName}.git`
 const reference = (snapshot: DiffSnapshot) => ({ snapshotId: snapshot.id, sourceVersion: snapshot.revision.version })
 
 /** The bulk reader, both databases, Git evidence and masking are real. Only
@@ -42,17 +44,60 @@ test('Task review summaries preserve current source and tenant boundaries on Pos
   const directory = await mkdtemp(join(tmpdir(), 'mikka-task-summary-db-'))
   const environment = { MIKKA_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), ORVILO_DATABASE_URL: target.toString(),
     E2E_DATABASE_URL: target.toString(), BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
-    BETTER_AUTH_URL: 'http://127.0.0.1:3199', WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') }
+    BETTER_AUTH_URL: 'http://127.0.0.1:3199', WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'),
+    GITHUB_CLIENT_ID: 'fixture-client', GITHUB_CLIENT_SECRET: 'fixture-client-secret', GITHUB_APP_ID: '4840908' }
   const previous = Object.fromEntries(Object.keys(environment).map(name => [name, process.env[name]]))
   Object.assign(process.env, environment)
   let appPool: Pool | undefined, workspacePool: Pool | undefined
+  const tokens = new Map<string, { token: string; githubAccountId: string }>()
+  const repositories = new Map<string, { id: string; full_name: string; private: boolean }>()
+  const pulls = new Map<string, Record<string, unknown>>()
+  const deniedUsers = new Set<string>(), failedRepositories = new Set<string>(), partialRepositories = new Set<string>()
+  const providerErrors: unknown[] = []
+  const summaryCalls: { repository: string; numbers: number[]; userId: string }[] = []
+  let beforeSummary: ((call: typeof summaryCalls[number]) => Promise<void>) | undefined
+  let activeSummaries = 0, maximumSummaries = 0
+  const githubHttp = await startGitHubAccessHttp({
+    getUser: request => {
+      const entry = [...tokens.entries()].find(([, value]) => `Bearer ${value.token}` === request.headers.authorization)
+      return entry && !deniedUsers.has(entry[0]) ? { id: entry[1].githubAccountId, login: 'summary-fixture' } : null
+    },
+    getRepositories: request => [...tokens.values()].some(value => `Bearer ${value.token}` === request.headers.authorization)
+      ? [...repositories.values()] : [],
+    onRequest: async (url, request, body) => {
+      if (url.pathname !== '/graphql') return
+      try {
+        assert.equal(request.method, 'POST')
+        const { query, variables } = JSON.parse(body) as { query: string; variables: Record<string, unknown> }
+        assert.match(query, /^query\b/); assert.doesNotMatch(query, /\bmutation\b/)
+        const entry = [...tokens.entries()].find(([, value]) => `Bearer ${value.token}` === request.headers.authorization)
+        assert.ok(entry)
+        const name = `${variables.owner}/${variables.name}`
+        const aliases = [...query.matchAll(/([A-Za-z_][\w]*):\s*pullRequest\(number:\$([A-Za-z_][\w]*)\)/g)]
+          .map(match => ({ name: match[1]!, number: Number(variables[match[2]!]) }))
+        if (!aliases.length && Number.isInteger(variables.number)) aliases.push({ name: 'pullRequest', number: Number(variables.number) })
+        assert.ok(aliases.length > 0 && aliases.length <= 20)
+        const call = { repository: name, numbers: aliases.map(value => value.number), userId: entry[0] }
+        summaryCalls.push(call)
+        activeSummaries++; maximumSummaries = Math.max(maximumSummaries, activeSummaries)
+        try {
+          await beforeSummary?.(call)
+          if (failedRepositories.has(name)) return Response.json({ message: 'synthetic unavailable' }, { status: 503 })
+          return Response.json({ data: { repository: Object.fromEntries(aliases.map(value => [value.name, pulls.get(name + '#' + value.number) ?? null])) },
+            ...(partialRepositories.has(name) ? { errors: [{ type: 'FORBIDDEN', message: 'synthetic partial data' }] } : {}) })
+        } finally { activeSummaries-- }
+      } catch (error) { providerErrors.push(error); return Response.json({ message: 'synthetic fixture failure' }, { status: 500 }) }
+    },
+  })
+  mock.method(globalThis, 'fetch', githubHttp.routeFetch(globalThis.fetch))
   try {
     const migrations = new URL('../../../drizzle/', import.meta.url)
     for (const name of orderMigrations((await readdir(migrations)).filter(name => name.endsWith('.sql'))))
       await pool.query(await readFile(new URL(name, migrations), 'utf8'))
     const next = await import('@/lib/server-runtime/server')
     mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after() {} } })
-    mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({
+    const apiContext = await import('../../../apps/api/src/context')
+    mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => apiContext.currentRequestScope()?.headers ?? new Headers(), cookies: async () => ({
       get: () => undefined, getAll: () => [], has: () => false, set() {}, delete() {},
     }) } })
     mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en',
@@ -64,7 +109,7 @@ test('Task review summaries preserve current source and tenant boundaries on Pos
     const { resolveRunWorktree } = await import('../identity')
     const { resolveReviewScope, withReviewTransaction } = await import('../diff/authority')
     const { prepareCheckpointReview, retainCheckpointReview } = await import('../diff/checkpoint')
-    const { latestDiffSnapshot, readDiffSnapshot, retainDiffSnapshot } = await import('../diff/store')
+    const { latestDiffSnapshot, readDiffSnapshot, retainDiffSnapshot, manifestRevision } = await import('../diff/store')
     const { validateDiffReceipt } = await import('../diff/receipt')
     const { secretMaskerFor } = await import('../../secrets/runtime')
     const { tokenWorkspace } = await import('../../tokens/principal')
@@ -84,6 +129,13 @@ test('Task review summaries preserve current source and tenant boundaries on Pos
     }
     type User = Awaited<ReturnType<typeof user>>
     const owner = await user(), member = await user(), outsider = await user()
+    const { saveGitHubConnection } = await import('../../github/connection')
+    for (const person of [owner, member]) {
+      const credential = { token: 'fixture-summary-' + randomUUID(), githubAccountId: String(4_000_000 + tokens.size) }
+      tokens.set(person.id, credential)
+      await saveGitHubConnection(person.id, { githubAccountId: credential.githubAccountId, githubLogin: 'summary-fixture' },
+        { access_token: credential.token, expires_in: 3600 })
+    }
     async function workspace() {
       const id = randomUUID(), teamId = randomUUID()
       await pool.query('INSERT INTO mikka_workspaces(id,"userId",name) VALUES($1,$2,\'Task summary fixture\')', [id, owner.id])
@@ -106,7 +158,7 @@ test('Task review summaries preserve current source and tenant boundaries on Pos
         [id, where.teamId, where.id, owner.id])
       return id
     }
-    async function fixture(where?: Workspace) {
+    async function fixture(where?: Workspace, fixtureRemote = remote) {
       where ??= await workspace()
       const runId = randomUUID(), repoId = randomUUID(), taskId = await task(where),
         deviceId = randomUUID(), tokenId = randomUUID(), agentId = randomUUID()
@@ -114,7 +166,7 @@ test('Task review summaries preserve current source and tenant boundaries on Pos
       await mkdir(repository, { recursive: true })
       await git(repository, 'init', '--initial-branch=main')
       await git(repository, 'config', 'core.autocrlf', 'false')
-      await git(repository, 'remote', 'add', 'origin', remote)
+      await git(repository, 'remote', 'add', 'origin', fixtureRemote)
       for (const path of ['alpha.txt', 'beta.txt']) await writeFile(join(repository, path), 'before ' + path + '\nstable\n')
       await git(repository, 'add', '--all'); await git(repository, 'commit', '-qm', 'summary base')
       await git(repository, 'worktree', 'add', '-q', '--detach', worktree, 'HEAD')
@@ -123,17 +175,17 @@ test('Task review summaries preserve current source and tenant boundaries on Pos
       await pool.query('INSERT INTO agents(id,"userId",name,harness,"deviceId") VALUES($1,$2,$3,\'codex\',$4)',
         [agentId, owner.id, 'Task summary ' + runId, deviceId])
       await pool.query('INSERT INTO device_repos(id,"userId","deviceId","repoPath","remoteUrl") VALUES($1,$2,$3,$4,$5)',
-        [repoId, owner.id, deviceId, remoteKey(remote), remote])
+        [repoId, owner.id, deviceId, remoteKey(fixtureRemote), fixtureRemote])
       await pool.query('INSERT INTO device_tokens(id,"userId","tokenHash","expiresAt") VALUES($1,$2,$3,now()+interval \'1 hour\')',
         [tokenId, owner.id, hash(randomUUID())])
       await pool.query('INSERT INTO agent_runs(id,"userId","issueId","agentId","deviceId","deviceRepoId","deviceTokenId",status,"worktreePath","leaseExpiresAt","agentDefinition") ' +
         'VALUES($1,$2,$3,$4,$5,$6,$7,\'running\',$8,now()+interval \'10 minutes\',$9)',
       [runId, owner.id, taskId, agentId, deviceId, repoId, tokenId, worktree,
-        { executionIdentity: { workspaceId: where.id }, repositoryAdmission: { workspaceId: where.id, remoteKey: remoteKey(remote) } }])
+        { executionIdentity: { workspaceId: where.id }, repositoryAdmission: { workspaceId: where.id, remoteKey: remoteKey(fixtureRemote) } }])
       const who = actor(owner, where.id)
       const identity = (await resolveRunWorktree(pool, pool, who, runId, repoId)).identity
       const entry: JournalEntry = { assignment: runAssignmentSchema.parse({ runId, issueId: taskId, repoId, deviceId,
-        remoteUrl: remote, baseBranch: 'main', harness: 'codex', prompt: 'Read this task.', kind: 'implement' }),
+        remoteUrl: fixtureRemote, baseBranch: 'main', harness: 'codex', prompt: 'Read this task.', kind: 'implement' }),
       state: 'running', sessionId: null, worktree, baseCommit: baseSha, lastSeq: 0, error: null, updatedAt: new Date().toISOString() }
       for (const path of ['alpha.txt', 'beta.txt']) await writeFile(join(worktree, path), 'after ' + path + '\nstable\n')
       return { where, taskId, runId, repoId, deviceId, tokenId, agentId, repository, worktree, baseSha, who, identity, entry }
@@ -192,12 +244,404 @@ test('Task review summaries preserve current source and tenant boundaries on Pos
       return runId
     }
     const read = (f: Fixture, userId = owner.id, workspaceId = f.where.id) => taskReviewSummaries(userId, [f.taskId], workspaceId)
+    async function publish(f: Pick<Fixture, 'identity' | 'runId' | 'taskId'>, number: number) {
+      const name = f.identity.repositoryKey.slice('v2/github.com/'.length)
+      if (!repositories.has(name)) repositories.set(name, { id: String(8_000_000 + repositories.size), full_name: name, private: true })
+      pulls.set(name + '#' + number, { number, headRefOid: 'b'.repeat(40), baseRefOid: 'a'.repeat(40), state: 'OPEN', reviewDecision: null,
+        repository: { fullDatabaseId: repositories.get(name)!.id, nameWithOwner: name },
+        changedFiles: 9, additions: 42, deletions: 7, isDraft: false, mergeable: 'MERGEABLE',
+        commits: { nodes: [{ commit: { oid: 'b'.repeat(40), statusCheckRollup: null } }] } })
+      await pool.query(`INSERT INTO run_publications("runId","userId","issueId","remoteUrl","remoteKey",branch,status,"pullRequest")
+        VALUES($1,$2,$3,$4,$5,'mikka/summary-fixture','published',$6)`,
+      [f.runId, owner.id, f.taskId, `https://github.com/${name}.git`, f.identity.repositoryKey, { url: `https://github.com/${name}/pull/${number}` }])
+    }
+    async function copyPublication(f: Fixture, number: number) {
+      const taskId = await task(f.where), runId = randomUUID()
+      await pool.query(`INSERT INTO agent_runs(id,"userId","issueId","agentId","deviceId","deviceRepoId","deviceTokenId",status,"worktreePath","leaseExpiresAt","agentDefinition")
+        SELECT $2,"userId",$3,"agentId","deviceId","deviceRepoId","deviceTokenId",status,"worktreePath","leaseExpiresAt","agentDefinition"
+        FROM agent_runs WHERE id=$1`, [f.runId, runId, taskId])
+      const copy = { taskId, runId, identity: { ...f.identity, runId } }
+      await publish(copy, number)
+      return copy
+    }
+    async function archive(f: Fixture, number: number) {
+      const name = f.identity.repositoryKey.slice('v2/github.com/'.length), repositoryId = repositories.get(name)!.id
+      const sourceAccess = { kind: 'github' as const, repositoryId, pullRequestNumber: number, pullRequestBaseSha: 'a'.repeat(40), manifestComplete: true as const }
+      const mask = await secretMaskerFor({ workspaceId: f.where.id, ownerId: owner.id })
+      return withReviewTransaction(pool, pool, f.who, f.runId, f.repoId, (tx, scope) => retainDiffSnapshot(tx, scope, {
+        revision: manifestRevision('pull_request', 'a'.repeat(40), 'b'.repeat(40), null, [], sourceAccess), files: [], sourceAccess,
+        pullRequest: { number, url: `https://github.com/${name}/pull/${number}`, baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), state: 'open' },
+      }, mask), { live: f.identity })
+    }
     async function sourceHints(ids: string[], userId = owner.id) {
       const visibility = await issueVisibility(userId, false, undefined, db, { onlyIssueIds: ids, withIdentifierTeams: true })
       const rows = await db.select({ id: issues.id, codingReview: taskReviewSourceHint }).from(issues)
         .where(and(inArray(issues.id, ids), visibility.predicate))
       return new Map(rows.map(row => [row.id, row.codingReview]))
     }
+
+    await t.test('published PR metadata is live for the current viewer without creating an archive', async () => {
+      const f = await fixture()
+      await publish(f, 7)
+      const value = (await read(f, member.id)).get(f.taskId)
+      assert.equal(value?.pr?.number, 7)
+      assert.equal(value?.pr?.state, 'open')
+      assert.equal(value?.files, 9); assert.equal(value?.additions, 42); assert.equal(value?.deletions, 7)
+      assert.equal(value?.reviewRef, null); assert.equal(value?.nativeMergeTarget, null)
+      assert.equal(value?.checks?.total, 0)
+      assert.equal(summaryCalls.at(-1)?.userId, member.id, 'read authority belongs to the viewer, not the Run owner')
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM coding_workspace_snapshots WHERE "runId"=$1', [f.runId])).rows[0].n, 0)
+    })
+
+    await t.test('changed HEAD, base, lifecycle and checks never borrow retained PR metadata or grant a native merge', async () => {
+      const f = await fixture()
+      await publish(f, 8)
+      const stored = await archive(f, 8)
+      const value = pulls.get(fullName + '#8')!
+      value.headRefOid = 'c'.repeat(40); value.baseRefOid = 'd'.repeat(40); value.state = 'MERGED'; value.changedFiles = 17
+      value.commits = { nodes: [{ commit: { oid: 'c'.repeat(40), statusCheckRollup: { contexts: {
+        totalCount: 124, checkRunCount: 124, statusContextCount: 0,
+        checkRunCountsByState: [{ count: 122, state: 'SUCCESS' }, { count: 2, state: 'FAILURE' }], statusContextCountsByState: [],
+      } } } }] }
+      const summary = (await read(f)).get(f.taskId)
+      assert.equal(summary?.pr?.state, 'merged'); assert.equal(summary?.pr?.headSha, 'c'.repeat(40))
+      assert.equal(summary?.files, 17); assert.equal(summary?.checks?.total, 124); assert.equal(summary?.checks?.failed, 2)
+      assert.equal(summary?.reviewRef, null); assert.equal(summary?.mergeTarget, null); assert.equal(summary?.nativeMergeTarget, null)
+      const retained = await readDiffSnapshot(pool, await resolveReviewScope(pool, pool, f.who, f.runId, f.repoId), stored.id)
+      assert.equal(retained.revision.headSha, 'b'.repeat(40)); assert.equal(retained.pullRequest?.state, 'open')
+    })
+
+    await t.test('45 task cards deduplicate 22 exact PRs into two documents and constant SQL work', async t => {
+      const f = await fixture(), ids = [f.taskId]
+      await publish(f, 1000)
+      for (let index = 1; index < 45; index++) ids.push((await copyPublication(f, 1000 + index % 22)).taskId)
+      const query = t.mock.method(appPool!, 'query')
+      const oneStart = query.mock.callCount()
+      assert.equal((await read(f, member.id)).size, 1)
+      const sqlOne = query.mock.callCount() - oneStart
+      const start = summaryCalls.length, httpStart = githubHttp.requests.length, manyStart = query.mock.callCount()
+      const summaries = await taskReviewSummaries(member.id, [...ids, ids[0]!, ids[1]!], f.where.id)
+      const sqlMany = query.mock.callCount() - manyStart
+      assert.equal(summaries.size, 45)
+      assert.equal(sqlMany, sqlOne, 'source, masks, visibility and association use bounded bulk SQL, never per-card reads')
+      const calls = summaryCalls.slice(start)
+      assert.equal(calls.length, 2); assert.deepEqual(calls.map(call => call.numbers.length), [20, 2])
+      assert.equal(new Set(calls.flatMap(call => call.numbers)).size, 22)
+      assert.ok(calls.every(call => call.userId === member.id))
+      const requests = githubHttp.requests.slice(httpStart)
+      assert.equal(requests.filter(request => request.pathname === '/user').length, 1)
+      assert.equal(requests.filter(request => request.pathname === '/repos/' + fullName).length, 1)
+      console.log('bulk_summary_bounds=' + JSON.stringify({ tasks: summaries.size, sqlOne, sqlMany, graphql: calls.length, uniquePulls: 22 }))
+    })
+
+    await t.test('repository reads have at most four concurrent documents and independent complete results', async () => {
+      const where = await workspace(), ids: string[] = []
+      for (let index = 0; index < 6; index++) {
+        const f = await fixture(where, `https://github.com/mikka-fixtures/bulk-concurrency-${index}.git`)
+        await publish(f, 1); ids.push(f.taskId)
+      }
+      maximumSummaries = 0
+      beforeSummary = async () => { await new Promise(resolve => setTimeout(resolve, 40)) }
+      try { assert.equal((await taskReviewSummaries(member.id, ids, where.id)).size, 6) }
+      finally { beforeSummary = undefined }
+      assert.ok(maximumSummaries > 1 && maximumSummaries <= 4)
+    })
+
+    await t.test('unavailable and partial GraphQL batches stay unknown while another repo and working source survive', async () => {
+      const where = await workspace(), bad = await fixture(where), good = await fixture(where, 'https://github.com/mikka-fixtures/bulk-healthy.git'),
+        workingTask = await fixture(where)
+      await publish(bad, 9); await archive(bad, 9); await publish(good, 1); await working(workingTask)
+      for (const denied of [failedRepositories, partialRepositories]) {
+        denied.add(fullName)
+        try {
+          const result = await taskReviewSummaries(member.id, [bad.taskId, good.taskId, workingTask.taskId], where.id)
+          assert.equal(result.has(bad.taskId), false, 'an archive cannot turn an incomplete or failed response into live status')
+          assert.equal(result.get(good.taskId)?.pr?.number, 1)
+          assert.equal(result.get(workingTask.taskId)?.files, 2)
+          assert.equal(result.get(workingTask.taskId)?.additions, null)
+        } finally { denied.delete(fullName) }
+      }
+    })
+
+    await t.test('in-flight member revocation and publication changes suppress only invalidated sources', async () => {
+      const where = await workspace(), first = await fixture(where), second = await fixture(where)
+      await publish(first, 10); await publish(second, 11)
+      const ids = [first.taskId, second.taskId]
+      beforeSummary = async () => { await pool.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [where.id, member.id]) }
+      try { assert.equal((await taskReviewSummaries(member.id, ids, where.id)).size, 0) }
+      finally {
+        beforeSummary = undefined
+        await pool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [where.id, member.id])
+      }
+      beforeSummary = async () => { await pool.query('UPDATE run_publications SET "pullRequest"=$2 WHERE "runId"=$1',
+        [first.runId, { url: `https://github.com/${fullName}/pull/12` }]) }
+      try {
+        const result = await taskReviewSummaries(member.id, ids, where.id)
+        assert.equal(result.has(first.taskId), false); assert.equal(result.get(second.taskId)?.pr?.number, 11)
+      } finally { beforeSummary = undefined }
+      deniedUsers.add(member.id)
+      const start = summaryCalls.length
+      try { assert.equal((await read(second, member.id)).size, 0) } finally { deniedUsers.delete(member.id) }
+      assert.equal(summaryCalls.length, start, 'a revoked viewer never borrows the owner credential')
+      assert.equal((await read(second, owner.id)).get(second.taskId)?.pr?.number, 11)
+    })
+
+    await t.test('one shared deadline prevents a second batch after the first response exhausts the budget', async t => {
+      const f = await fixture(), ids = [f.taskId]
+      await publish(f, 2000)
+      for (let index = 1; index < 22; index++) ids.push((await copyPublication(f, 2000 + index)).taskId)
+      const start = summaryCalls.length, realNow = Date.now.bind(Date)
+      let elapsed = 0
+      t.mock.method(Date, 'now', () => realNow() + elapsed)
+      beforeSummary = async () => { elapsed = 31_000 }
+      try { assert.equal((await taskReviewSummaries(member.id, ids, f.where.id)).size, 0) }
+      finally { beforeSummary = undefined }
+      assert.equal(summaryCalls.length - start, 1)
+    })
+
+    await t.test('changed Task links or a replacement Run during GitHub I/O cannot borrow the previous source', async () => {
+      const where = await workspace(), elsewhere = await workspace()
+      const moved = await fixture(where), replaced = await fixture(where), unchanged = await fixture(where)
+      await publish(moved, 31); await publish(replaced, 32); await publish(unchanged, 33)
+      beforeSummary = async () => {
+        const tx = await pool.connect()
+        try {
+          await tx.query('BEGIN')
+          await tx.query('UPDATE mikka_team_issues SET "teamId"=$2,"workspaceId"=$3 WHERE "issueId"=$1',
+            [moved.taskId, elsewhere.teamId, elsewhere.id])
+          // The Task's database-enforced workspace stays immutable. Recheck
+          // the separate Team association after the external response too.
+          await tx.query('COMMIT')
+        } catch (error) { await tx.query('ROLLBACK'); throw error } finally { tx.release() }
+        await extraRun(replaced, owner, 10)
+      }
+      try {
+        const result = await taskReviewSummaries(member.id, [moved.taskId, replaced.taskId, unchanged.taskId], where.id)
+        assert.deepEqual([...result.keys()], [unchanged.taskId])
+        assert.equal(result.get(unchanged.taskId)?.pr?.number, 33)
+      } finally { beforeSummary = undefined }
+      assert.equal((await read(moved, member.id, elsewhere.id)).size, 0, 'the old Run remains bound to its original workspace')
+      assert.equal((await read(replaced, member.id)).size, 0, 'the newest noncoding Run cannot use its predecessor PR')
+    })
+
+    await t.test('mobile and citation callers expose current PR metadata without an archived diff', async () => {
+      const f = await fixture()
+      await publish(f, 34)
+      const { mobileTask } = await import('../../mobile-tasks')
+      const { citationSources } = await import('../../coordinator/store')
+      const mobile = await mobileTask({ id: member.id }, f.taskId, f.where.id)
+      assert.equal(mobile?.task.review?.pr?.number, 34)
+      assert.equal(mobile?.task.review?.reviewRef, null)
+      const current = pulls.get(fullName + '#34')!
+      current.state = 'CLOSED'
+      const citations = await citationSources(member.id, [`[[issue:${f.taskId}]]`])
+      const source = citations[f.taskId]
+      assert.ok(source?.kind === 'issue')
+      assert.equal(source.review?.pr?.state, 'closed')
+      assert.equal(source.review?.nativeMergeTarget, null)
+      assert.doesNotMatch(JSON.stringify([mobile, citations]), /"repositoryKey"|"worktreePath"|"sourceAccess"/)
+    })
+
+    await t.test('caller payloads recheck authority after GitHub without holding workspace locks', async t => {
+      const { actAs } = await import('../../acting-user')
+      const { enterprisePrincipal } = await import('../../enterprise/principal')
+      const { auth } = await import('../../auth')
+      const { GET: detail } = await import('../../../app/api/mobile/tasks/[id]/route')
+      const { GET: list } = await import('../../../app/api/mobile/tasks/route')
+      const { TASK_PRESENTATION_PARAM, TASK_PRESENTATION_VERSION } = await import('../../mobile-task-refresh')
+      const { getTaskPresentations } = await import('../../../app/actions/task-domain')
+      const { citationSources } = await import('../../coordinator/store')
+      const { ActionFailureError } = await import('../../action-error')
+      const authContext = await auth.$context
+      const session = await authContext.internalAdapter.createSession(member.id)
+      assert.ok(session)
+      for (const name of ['detail', 'work detail', 'list', 'projected list', 'presentations', 'citations'] as const) {
+        for (const providerFails of [false, true]) await t.test(name + (providerFails ? ' with unavailable GitHub' : ''), async () => {
+          const f = await fixture(), title = 'Private caller payload ' + randomUUID()
+          await pool.query('UPDATE issues SET title=$2 WHERE id=$1', [f.taskId, title])
+          await publish(f, 3000 + summaryCalls.length)
+          const reader = { id: member.id, [tokenWorkspace]: f.where.id,
+            [enterprisePrincipal]: { kind: 'session' as const, sessionId: session.id } }
+          const api = async (path: string, handler: (request: Request) => Promise<Response>) => {
+            const request = new Request('http://127.0.0.1:3199/mikka' + path, { headers: {
+              authorization: 'Bearer ' + session.token, 'x-mikka-workspace-id': f.where.id, 'x-mikka-locale': 'en',
+            } })
+            const scope = apiContext.createRequestScope(request)
+            try {
+              const response = await apiContext.runRequestScope(scope, () => handler(request))
+              return { status: response.status, body: await response.json() }
+            } finally { await scope.after.finish() }
+          }
+          const invoke = async () => {
+            if (name === 'detail' || name === 'work detail') return api('/api/mobile/tasks/' + f.taskId + (name === 'work detail' ? '?work=1' : ''),
+              request => detail(request, { params: Promise.resolve({ id: f.taskId }) }))
+            if (name === 'list' || name === 'projected list') return api('/api/mobile/tasks' + (name === 'projected list'
+              ? `?${TASK_PRESENTATION_PARAM}=${TASK_PRESENTATION_VERSION}` : ''), request => list(request))
+            if (name === 'presentations') return actAs(reader, () => getTaskPresentations({ workspaceId: f.where.id, issueIds: [f.taskId], includeReview: true }))
+            return citationSources(reader, [`[[issue:${f.taskId}]] [[run:${f.runId}]]`])
+          }
+          const control = await invoke()
+          assert.ok(JSON.stringify(control).includes(f.taskId), 'the original caller returns the authorized task')
+          let writes = 0, lockFailure: unknown
+          beforeSummary = async () => {
+            const tx = await pool.connect()
+            try {
+              await tx.query('BEGIN')
+              await tx.query("SET LOCAL lock_timeout='500ms'")
+              await tx.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [f.where.id, member.id])
+              await tx.query('COMMIT'); writes++
+            } catch (error) { await tx.query('ROLLBACK'); lockFailure = error }
+            finally { tx.release() }
+          }
+          if (providerFails) failedRepositories.add(fullName)
+          let value: unknown
+          try {
+            try { value = await invoke() }
+            catch (error) {
+              if (!(error instanceof ActionFailureError) || !['workspaceAccessDenied', 'issueNotFound'].includes(error.code)) throw error
+              value = { error: error.code }
+            }
+          } finally {
+            beforeSummary = undefined; failedRepositories.delete(fullName)
+            await pool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [f.where.id, member.id])
+          }
+          assert.equal(lockFailure, undefined, 'membership revocation must commit while the real GitHub HTTP request is pending')
+          assert.equal(writes, 1)
+          assert.ok(!JSON.stringify(value).includes(f.taskId), 'the entire revoked task is absent, not only its review')
+          assert.ok(!JSON.stringify(value).includes(title), 'no old title survives the final authorization read')
+        })
+      }
+    })
+
+    await t.test('chat payloads recheck their own Bot workspace after citation provider I/O', async t => {
+      const { auth } = await import('../../auth')
+      const { actAs } = await import('../../acting-user')
+      const { enterprisePrincipal } = await import('../../enterprise/principal')
+      const { chatViewState } = await import('../../coordinator/store')
+      const { pollCoordinatorChat } = await import('../../../app/actions/coordinator')
+      const { ActionFailureError } = await import('../../action-error')
+      const { WorkspaceError } = await import('../../workspace-error')
+      const session = await (await auth.$context).internalAdapter.createSession(member.id)
+      assert.ok(session)
+      for (const name of ['chat view', 'full poll', 'unchanged poll'] as const) {
+        for (const providerFails of [false, true]) await t.test(name + (providerFails ? ' with unavailable GitHub' : ''), async () => {
+          const f = await fixture(), botId = randomUUID(), privateText = 'Private chat payload ' + randomUUID()
+          await publish(f, 5000 + summaryCalls.length)
+          await pool.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,\'Citation fixture\')',
+            [botId, member.id, f.where.id])
+          await pool.query('INSERT INTO coordinator_messages(id,"userId","botId",position,message) VALUES($1,$2,$3,1,$4)',
+            [randomUUID(), member.id, botId, { role: 'assistant', content: [{ type: 'text', text: `${privateText} [[issue:${f.taskId}]] [[run:${f.runId}]]` }] }])
+          const reader = { id: member.id, [tokenWorkspace]: f.where.id,
+            [enterprisePrincipal]: { kind: 'session' as const, sessionId: session.id } }
+          const request = async <T,>(work: () => Promise<T>): Promise<T> => {
+            const scope = apiContext.createRequestScope(new Request('http://127.0.0.1:3199/mikka', { headers: {
+              authorization: 'Bearer ' + session.token, 'x-mikka-workspace-id': f.where.id, 'x-mikka-locale': 'en',
+            } }))
+            try { return await apiContext.runRequestScope(scope, () => actAs(reader, work)) }
+            finally { await scope.after.finish() }
+          }
+          const initial = await request(() => pollCoordinatorChat(botId))
+          assert.ok(!('unchanged' in initial) && initial.version && initial.continuation)
+          assert.ok(JSON.stringify(initial).includes(privateText))
+          const known = initial.version
+          const held = { ...initial.continuation, sourceIds: Object.keys(initial.sources), artifactIds: [] }
+          const invoke = () => request(async () => name === 'chat view'
+            ? await chatViewState(member.id, 200, botId)
+            : name === 'full poll' ? await pollCoordinatorChat(botId) : await pollCoordinatorChat(botId, known, held))
+          const control = await invoke()
+          if (name === 'unchanged poll') assert.ok('unchanged' in control && control.unchanged)
+          else assert.ok(JSON.stringify(control).includes(privateText))
+          const start = summaryCalls.length, revokeOn = name === 'full poll' ? 2 : 1
+          let writes = 0, lockFailure: unknown
+          beforeSummary = async () => {
+            if (summaryCalls.length - start !== revokeOn) return
+            const tx = await pool.connect()
+            try {
+              await tx.query('BEGIN')
+              await tx.query("SET LOCAL lock_timeout='500ms'")
+              await tx.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [f.where.id, member.id])
+              await tx.query('COMMIT'); writes++
+            } catch (error) { await tx.query('ROLLBACK'); lockFailure = error }
+            finally { tx.release() }
+          }
+          if (providerFails) failedRepositories.add(fullName)
+          let value: unknown, denied = false
+          try {
+            try { value = await invoke() }
+            catch (error) {
+              if (!(error instanceof ActionFailureError || error instanceof WorkspaceError)
+                || !['workspaceAccessDenied', 'botNotFound'].includes(error.code)) throw error
+              denied = true
+            }
+          } finally {
+            beforeSummary = undefined; failedRepositories.delete(fullName)
+            await pool.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [f.where.id, member.id])
+          }
+          assert.equal(lockFailure, undefined, 'the chat reader never holds a membership lease across GitHub')
+          assert.equal(writes, 1, 'the intended provider read reached the revocation barrier')
+          assert.equal(denied, true, 'revoked Bot workspace authority refuses the whole response, including an unchanged poll')
+          assert.equal(value, undefined, 'no previously read transcript or Bot metadata survives revocation')
+        })
+      }
+    })
+
+    await t.test('title and delivery callers keep their existing projection without fetching GitHub review metadata', async () => {
+      const f = await fixture(); await publish(f, 4000)
+      const { citationSources } = await import('../../coordinator/store')
+      const { resolveMessageReferencesBatch } = await import('../../message-references')
+      const { getThreadName } = await import('../../../app/actions/agents')
+      const { mobileThreads } = await import('../../mobile-threads')
+      const { actAs } = await import('../../acting-user')
+      const { enterprisePrincipal } = await import('../../enterprise/principal')
+      const { auth } = await import('../../auth')
+      const session = await (await auth.$context).internalAdapter.createSession(owner.id)
+      assert.ok(session)
+      const reader = { id: owner.id, [tokenWorkspace]: f.where.id,
+        [enterprisePrincipal]: { kind: 'session' as const, sessionId: session.id } }
+      const text = `[[issue:${f.taskId}]] [[run:${f.runId}]]`
+      const complete = await citationSources(reader, [text])
+      for (const source of Object.values(complete)) {
+        if (source.kind === 'issue') delete source.review
+        else if (source.issue) delete source.issue.review
+      }
+      const start = summaryCalls.length
+      assert.deepEqual(await citationSources(reader, [text], [], { includeReview: false }), complete)
+      const references = await resolveMessageReferencesBatch({ userId: owner.id, workspaceId: f.where.id }, [text])
+      assert.equal(references[0]?.length, 2); assert.ok(references[0]?.every(reference => !reference.unavailable))
+      const scope = apiContext.createRequestScope(new Request('http://127.0.0.1:3199/mikka', { headers: {
+        authorization: 'Bearer ' + session.token, 'x-mikka-workspace-id': f.where.id, 'x-mikka-locale': 'en',
+      } }))
+      try {
+        await apiContext.runRequestScope(scope, async () => {
+          const name = await getThreadName(f.runId)
+          assert.ok(name?.includes('Task summary fixture'))
+          const threads = await actAs(reader, () => mobileThreads(owner.id, 60, undefined, f.where.id))
+          assert.ok(threads.threads.some(thread => thread.id === f.runId))
+        })
+      } finally { await scope.after.finish() }
+      assert.equal(summaryCalls.length, start, 'these existing caller contracts never expose or fetch review metadata')
+    })
+
+    for (const unavailable of [false, true]) await t.test(`mixed local summaries revalidate Run changes after ${unavailable ? 'failed' : 'successful'} GitHub I/O`, async () => {
+      const where = await workspace(), pull = await fixture(where), local = await fixture(where),
+        stopped = await fixture(where), unchanged = await fixture(where)
+      await publish(pull, unavailable ? 36 : 35)
+      await working(local); await checkpoint(stopped); await stop(stopped)
+      const kept = await working(unchanged)
+      beforeSummary = async () => {
+        await extraRun(local, owner, 10)
+        await extraRun(stopped, owner, 10)
+      }
+      if (unavailable) failedRepositories.add(fullName)
+      try {
+        const result = await taskReviewSummaries(member.id,
+          [pull.taskId, local.taskId, stopped.taskId, unchanged.taskId], where.id)
+        assert.equal(result.has(local.taskId), false, 'a replaced working Run cannot return its old review reference')
+        assert.equal(result.has(stopped.taskId), false, 'a replaced checkpoint Run cannot return its old review reference')
+        assert.equal(result.has(pull.taskId), !unavailable)
+        assert.deepEqual(result.get(unchanged.taskId)?.reviewRef, reference(kept))
+      } finally { beforeSummary = undefined; failedRepositories.delete(fullName) }
+    })
 
     await t.test('one bulk read returns each same-owner Task with its own immutable reference and shared viewer permissions', async () => {
       const where = await workspace(), fixtures: Fixture[] = [], snapshots: DiffSnapshot[] = []
@@ -389,9 +833,11 @@ test('Task review summaries preserve current source and tenant boundaries on Pos
     })
   } finally {
     mock.restoreAll()
+    await githubHttp.close()
     for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value }
     await dropTestDatabase(admin, database, pool, appPool, workspacePool)
     await admin.end()
     await rm(directory, { recursive: true, force: true })
+    assert.deepEqual(providerErrors, [])
   }
 })

@@ -144,7 +144,9 @@ async function readCoordinatorChat(botId: string | null, known?: string, continu
   })
   // This stays outside the flight, after awaiting it: cited task and artifact
   // access may have changed while another request was reading the transcript.
-  return refreshChatMetadata(shared, previous, async ({ sourceIds, artifactIds }) => {
+  let readSources = false
+  const refreshed = await refreshChatMetadata(shared, previous, async ({ sourceIds, artifactIds }) => {
+    readSources = sourceIds.length > 0
     const { artifactSummaries } = await import('@/lib/artifacts/store')
     const [sources, artifacts] = await Promise.all([
       citationSources({ ...user, [tokenWorkspace]: bot.workspaceId }, sourceIds.map(id => `[[issue:${id}]] [[run:${id}]]`)),
@@ -152,6 +154,13 @@ async function readCoordinatorChat(botId: string | null, known?: string, continu
     ])
     return { sources, artifacts }
   })
+  // A source refresh also runs for unchanged polls. Reauthorize this exact
+  // Bot after the provider wait before returning any retained chat payload.
+  if (readSources) {
+    const current = await ownBot(user, bot.id)
+    if (current.workspaceId !== bot.workspaceId) throw new ActionFailureError('botNotFound')
+  }
+  return refreshed
 }
 
 /** A bounded older page overlaps the first rendered item, preserving multi-step reply grouping. The app's pages are

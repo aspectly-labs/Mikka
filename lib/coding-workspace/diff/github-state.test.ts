@@ -6,7 +6,7 @@ import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { diffSnapshot, WorkspaceReviewError, type DiffSnapshot } from '@mikka/protocol/coding-workspace-review'
 import type { RequestBudget } from '../../request-budget'
 import { GitHubDiffClient, GitHubWriteRejection } from './github-api'
-import { readGitHubPullState, readGitHubPullSummary } from './github-state'
+import { readGitHubPullState, readGitHubPullSummary, readGitHubPullSummaries } from './github-state'
 import { manifestRevision } from './store'
 
 // Native schema, including nullable reviewDecision and string-encoded BigInt:
@@ -276,4 +276,39 @@ test('incomplete native check aggregates and another repository never become a s
     const f = fixture(t, () => Response.json(envelope(liveNative(changes))))
     await assert.rejects(readGitHubPullSummary(f.grant, number), failure(expected))
   })
+})
+
+test('a summary batch reads exact distinct PR numbers and shares the full single-reader projection', async t => {
+  const f = fixture(t, () => Response.json({ data: { repository: {
+    pull0: liveNative({ number: 900, state: 'MERGED' }), pull1: liveNative({ number: 3, reviewDecision: 'CHANGES_REQUESTED' }),
+  } } }))
+  const result = await readGitHubPullSummaries(f.grant, [900, 3, 900])
+  assert.deepEqual([...result.keys()], [900, 3])
+  assert.equal(result.get(900)?.state, 'merged'); assert.equal(result.get(3)?.state, 'changes_requested')
+  assert.equal(result.get(900)?.checks?.total, 124); assert.equal(result.get(3)?.checks?.failed, 3)
+  assert.equal(f.calls.length, 1)
+  assert.deepEqual(f.calls[0]!.variables, { owner: 'fixture', name: 'review', number0: 900, number1: 3 })
+  assert.doesNotMatch(f.calls[0]!.query, /\b(?:pullRequests|body|bodyText|bodyHTML|url|files|tree|patch)\b/)
+})
+
+test('a batch cannot publish partial data, a misbound alias or a foreign repository', async t => {
+  for (const [name, second, errors, expected] of [
+    ['missing row', undefined, undefined, 'workspace_review_github_unavailable'],
+    ['null row', null, undefined, 'workspace_review_github_unavailable'],
+    ['different PR', liveNative({ number: 4 }), undefined, 'workspace_review_github_forbidden'],
+    ['different repository', liveNative({ number: 3, repository: { fullDatabaseId: '98765', nameWithOwner: fullName } }), undefined, 'workspace_review_github_forbidden'],
+    ['partial forbidden', liveNative({ number: 3 }), [{ type: 'FORBIDDEN', message: privateBody }], 'workspace_review_github_forbidden'],
+  ] as const) await t.test(name, async t => {
+    const f = fixture(t, () => Response.json({ data: { repository: { pull0: liveNative({ number: 900 }), pull1: second } }, ...(errors ? { errors } : {}) }))
+    await assert.rejects(readGitHubPullSummaries(f.grant, [900, 3]), failure(expected))
+    assert.equal(f.calls.length, 1)
+  })
+})
+
+test('empty or oversized batches cannot create an unbounded GraphQL document', async t => {
+  const f = fixture(t)
+  assert.equal((await readGitHubPullSummaries(f.grant, [])).size, 0)
+  for (const numbers of [Array.from({ length: 21 }, (_, index) => index + 1), [0], [1.5], [Number.MAX_SAFE_INTEGER + 1]])
+    await assert.rejects(readGitHubPullSummaries(f.grant, numbers), failure('workspace_review_github_unavailable'))
+  assert.equal(f.calls.length, 0)
 })
