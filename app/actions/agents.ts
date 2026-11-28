@@ -1250,7 +1250,7 @@ export async function getThreadName(runId: string): Promise<string | null> {
   const reader = await getWorkspaceReader()
   const parsed = z.uuid().safeParse(runId)
   if (!parsed.success) return null
-  const source = (await citationSources(reader, [`[[run:${parsed.data}]]`]))[parsed.data]
+  const source = (await citationSources(reader, [`[[run:${parsed.data}]]`], [], { includeReview: false }))[parsed.data]
   if (source?.kind !== 'run' || !source.issue) return null
   const key = source.issue.identifier ?? (source.issue.number === null ? null : `#${source.issue.number}`)
   return key ? `${key} ${source.issue.title}` : source.issue.title

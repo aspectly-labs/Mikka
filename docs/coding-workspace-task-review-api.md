@@ -73,10 +73,34 @@ API at `/api/runs/:runId/workspace/diff/:snapshotId/{review,github-review}` with
 the explicit `repoId` and Workspace context.
 
 Task list/detail reads embed `task.review`; citations embed issue `review` or
-`source.issue.review`. This is a bulk local metadata projection. It neither
-contacts every machine/GitHub repository nor creates a source snapshot on a
-list read. A first coding Run can therefore have an entry with unknown counts.
-No source body or check log is included in these cards.
+`source.issue.review`. Working and checkpoint metadata use retained local
+evidence. Published PR metadata uses the current viewer's GitHub connection,
+with deduplicated, exact PR numbers in documents of at most 20 and at most
+four concurrent repository reads. One request shares the provider's deadline
+and repository credential cache. A failed or partial provider document leaves
+its PR summaries absent; archived PR state is never a fallback. Complete
+results from other repositories and local working/checkpoint rows remain
+available. No list read contacts a machine, fetches a diff or check log, or
+creates a source snapshot. A first coding Run without a published PR can
+therefore have an entry with unknown counts.
+
+After provider I/O, bulk reads recheck every returned row's exact owner Run,
+publication and candidate in one database query, including local rows in mixed
+lists and requests where all provider batches failed. They then recheck Task visibility and membership
+across the existing database boundaries. Moving a Task, replacing its source
+Run or revoking membership suppresses the affected summary. The bulk adapter
+does not grant the archive-independent `nativeMergeTarget`; that intent still
+comes from the authoritative `GET /summary` read.
+The mobile list and detail readers finish provider I/O before acquiring their
+Workspace/Task read leases, then read the final payload under fresh authority.
+Task presentations and citation sources likewise read their canonical local
+payload after the provider answers; a missing summary alone does not prove
+that a Task remains visible. This also applies when GitHub fails. Name-only
+thread reads and message-reference delivery explicitly omit review enrichment,
+so their existing database-only projections do not gain provider requests.
+Bot chat reads and metadata refreshes recheck the same Bot's ownership and
+Workspace after citation enrichment, including unchanged responses and failed
+provider reads. Dropping a cited Task does not authorize the retained chat.
 Mobile task list/detail reads use `review: null` when no summary exists.
 Citations keep their existing shape by omitting `review` in that case; readers
 should treat an absent property and null as no summary. The source-selection
@@ -112,7 +136,9 @@ text. Excerpts are masked before truncation and include `logTruncated`.
 PR state uses GitHub's current `reviewDecision` alongside open/closed/merged,
 so an old accepted request-changes batch does not masquerade as current state
 after dismissal. The immutable diff is never rewritten to store that state.
-Cards use the viewer's last observed metadata and expose its time.
+Cards with a published PR read current metadata as that viewer and expose its
+observation time. A retained PR snapshot cannot supply state or check counts
+when that live read fails.
 
 ## Send one review
 

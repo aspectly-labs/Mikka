@@ -59,7 +59,7 @@ const sessionOf = (userId: string, botId: string) => and(eq(coordinatorSessions.
 const messagesOf = (userId: string, botId: string) => and(eq(coordinatorMessages.userId, userId), eq(coordinatorMessages.botId, botId))
 const eventsOf = (userId: string, botId: string) => and(eq(coordinatorEvents.userId, userId), eq(coordinatorEvents.botId, botId))
 
-async function chatReader(userId: string, botId: string): Promise<IssueReader> {
+async function chatReader(userId: string, botId: string): Promise<Exclude<IssueReader, string>> {
   const [bot] = await db.select({ workspaceId: bots.workspaceId }).from(bots).where(and(eq(bots.id, botId), eq(bots.ownerId, userId))).limit(1)
   if (!bot) throw new ActionFailureError('botNotFound')
   await requireTaskWorkspace(userId, bot.workspaceId)
@@ -263,34 +263,43 @@ export async function storedReasoning(userId: string, botId: string, positions: 
 }
 
 /** Looks up the issues and runs cited in `texts`, and the `threads` dispatched, keeping only what `userId` may see. */
-export async function citationSources(reader: IssueReader, texts: readonly string[], threads: readonly string[] = []): Promise<Record<string, CitationSource>> {
+export async function citationSources(reader: IssueReader, texts: readonly string[], threads: readonly string[] = [],
+  options: { includeReview?: false } = {}): Promise<Record<string, CitationSource>> {
   const userId = typeof reader === 'string' ? reader : reader.id
   const cited = citedIds(texts)
   const issueIds = cited.issueIds
   const runIds = [...new Set([...cited.runIds, ...threads])]
   const sources: Record<string, CitationSource> = {}
   if (!issueIds.length && !runIds.length) return sources
-  // Authorization reads keep the complete principal and fresh workspace gate.
-  // Numbering is a separate bounded read after the visible tasks are known.
-  const visibility = issueIds.length
-    ? await issueVisibility(reader, false, undefined, db, { onlyIssueIds: issueIds, withTeamLinks: false }) : null
-  const issueRows = issueIds.length ? await db.select({ id: issues.id, ownerId: issues.userId, scope: issues.scope, title: issues.title, status: issues.status, priority: issues.priority, content: issueAttrsContent, run: issueLatestRun, codingReview: taskReviewSourceHint, issuedIdentifier: issues.issuedIdentifier })
-    .from(issues)
-    .where(and(inArray(issues.id, issueIds), visibility!.predicate)) : []
-  // Only what a citation shows: the report's summary, the prompt's opening (its name) and each task without its body.
-  const runs = runIds.length ? await visibleRuns(reader, { runIds, limit: runIds.length, brief: true }) : []
+  // These bounded, database-only reads preserve the complete principal. If a
+  // review needs external I/O, run them again before projecting any payload.
+  const readRows = async () => {
+    const visibility = issueIds.length
+      ? await issueVisibility(reader, false, undefined, db, { onlyIssueIds: issueIds, withTeamLinks: false }) : null
+    const issueRows = issueIds.length ? await db.select({ id: issues.id, ownerId: issues.userId, scope: issues.scope, title: issues.title, status: issues.status, priority: issues.priority, content: issueAttrsContent, run: issueLatestRun, codingReview: taskReviewSourceHint, issuedIdentifier: issues.issuedIdentifier })
+      .from(issues)
+      .where(and(inArray(issues.id, issueIds), visibility!.predicate)) : []
+    const runs = runIds.length ? await visibleRuns(reader, { runIds, limit: runIds.length, brief: true }) : []
+    const runIssueIds = [...new Set(runs.flatMap(row => row.issueId ? [row.issueId] : []))]
+    const tasks = await issuesForUser(reader, runIssueIds, false, db, { projection: 'citation', withTeamLinks: false })
+    return { issueRows, runs, tasks }
+  }
+  let current = await readRows()
+  const reviewIds = options.includeReview === false ? [] : [...new Set([
+    ...current.issueRows.filter(row => row.codingReview).map(row => row.id),
+    ...[...current.tasks.values()].filter(task => task.codingReview).map(task => task.id),
+  ])]
+  const reviews = reviewIds.length ? await taskReviewSummaries(reader, reviewIds) : new Map<string, TaskReviewSummary>()
+  if (reviewIds.length) current = await readRows()
+  const { issueRows, runs, tasks } = current
   // A teammate's run arrives as the bare projection (no agent id): its prompt, report and steps stay with its owner.
   const ownIds = runs.filter(row => row.agentId).map(row => row.id)
-  const runIssueIds = [...new Set(runs.flatMap(row => row.issueId ? [row.issueId] : []))]
   // The prompt and tool count belong to the same authorized owner runs. One
   // bounded projection avoids opening a third APP connection beside tasks.
-  const [ownedRuns, tasks] = await Promise.all([
-    ownIds.length ? db.select({ id: agentRuns.id, prompt: threadNamePrompt, title: agentRuns.title, facts: sql<unknown>`${sql.raw(SUBAGENT_FACTS_SQL('agent_runs'))}`,
+  const ownedRuns = ownIds.length ? await db.select({ id: agentRuns.id, prompt: threadNamePrompt, title: agentRuns.title, facts: sql<unknown>`${sql.raw(SUBAGENT_FACTS_SQL('agent_runs'))}`,
       steps: sql<number>`(select count(*) from ${runChunks} c where c."runId" = agent_runs.id
         and c.chunk->>'type' = 'tool-input-available')`.mapWith(Number),
-    }).from(agentRuns).where(and(inArray(agentRuns.id, ownIds), eq(agentRuns.userId, userId))) : [],
-    issuesForUser(reader, runIssueIds, false, db, { projection: 'citation', withTeamLinks: false }),
-  ])
+    }).from(agentRuns).where(and(inArray(agentRuns.id, ownIds), eq(agentRuns.userId, userId))) : []
   const prompts = new Map(ownedRuns.map(row => [row.id, row.prompt]))
   const titles = new Map(ownedRuns.map(row => [row.id, row.title]))
   const steps = new Map(ownedRuns.map(row => [row.id, row.steps]))
@@ -300,14 +309,6 @@ export async function citationSources(reader: IssueReader, texts: readonly strin
     ...issueRows.map(row => ({ id: row.id, ownerId: row.ownerId, scope: row.scope, number: readIssueMetadata(row.content).number, issuedIdentifier: row.issuedIdentifier })),
     ...[...tasks.values()].map(task => ({ id: task.id, ownerId: task.userId, scope: task.scope, number: readIssueMetadata(task.content).number, issuedIdentifier: task.issuedIdentifier })),
   ])
-  // The hint avoids Review database reads for tasks with no source.
-  const reviewIds = [...new Set([
-    ...issueRows.filter(row => row.codingReview).map(row => row.id),
-    ...[...tasks.values()].filter(task => task.codingReview).map(task => task.id),
-  ])]
-  const reviews = reviewIds.length
-    ? await taskReviewSummaries(reader, reviewIds)
-    : new Map<string, TaskReviewSummary>()
   for (const { content, ownerId: _owner, scope: _scope, issuedIdentifier: _issued, codingReview: _codingReview, ...row } of issueRows) {
     const metadata = readIssueMetadata(content)
     const review = reviews.get(row.id)
@@ -415,6 +416,12 @@ export async function chatViewState(userId: string, limit = 200, botId: string, 
   const read = chatItems([...rows.reverse().map(row => ({ ...row, message: row.message as unknown as ModelMessage })), ...pending])
   // An older page (history): a welcome failure there was answered by what came after it, so it is not shown.
   const items = window.through !== undefined ? read.filter(item => !item.welcome) : read
+  const sourceTexts = [...items.filter(item => item.from === 'coordinator').map(item => item.text),
+    // An event line names its thread or task as a chip; its stored text is the model's, never shown.
+    ...items.flatMap(item => item.line ? [item.line.runId && `[[run:${item.line.runId}]]`, item.line.issueId && `[[issue:${item.line.issueId}]]`].filter((text): text is string => !!text) : []),
+    ...items.flatMap(item => item.activity?.tools.flatMap(toolCitations) ?? [])]
+  const sourceThreads = items.flatMap(item => item.threads)
+  const sourceIds = citedIds(sourceTexts)
   const after = Math.max(0, (items.findLast(item => !item.pending)?.position ?? 1) - 1)
   const now = new Date()
   const chat: ChatView = {
@@ -423,11 +430,7 @@ export async function chatViewState(userId: string, limit = 200, botId: string, 
     persistedStreamIds: [...new Set(rows.flatMap(({message}) => message.role === 'assistant' && typeof message.mikkaStreamId === 'string' ? [message.mikkaStreamId] : []))],
     ...(coordinatorLeaseActive(session) && session?.leaseHolder?.startsWith('wrun_') ? { streamRunId: session.leaseHolder } : {}),
     ...coordinatorChatState(session, waiting, now, lastMessage),
-    // An event line names its thread or task as a chip (C1); its stored text is the model's, never shown.
-    sources: await citationSources(reader, [...items.filter(item => item.from === 'coordinator').map(item => item.text),
-      ...items.flatMap(item => item.line ? [item.line.runId && `[[run:${item.line.runId}]]`, item.line.issueId && `[[issue:${item.line.issueId}]]`].filter((text): text is string => !!text) : []),
-      // A tool row that read or changed a task or thread opens to its chip (Alex, 2026-11-22).
-      ...items.flatMap(item => item.activity?.tools.flatMap(toolCitations) ?? [])], items.flatMap(item => item.threads)),
+    sources: await citationSources(reader, sourceTexts, sourceThreads),
     artifacts: await artifactSummaries(reader, items.flatMap(item => [...item.artifacts, ...(item.quote ? [item.quote.artifactId] : [])])),
     continuation: { after, prefix: await chatPrefix(userId, botId, after), cursor: last },
     ...(hasMore && rows[0] ? { historyBefore: rows[0].position } : {}),
@@ -437,6 +440,12 @@ export async function chatViewState(userId: string, limit = 200, botId: string, 
       typeof snapshot.summary === 'string' ? snapshot.summary : null,
       rows.filter(row => row.position > (snapshot.summaryThrough ?? 0)).map(row => ({ position: row.position, message: row.message as unknown as ModelMessage })),
     ),
+  }
+  // Citation metadata can wait on GitHub. Its Task checks do not authorize
+  // the already-read transcript, even if every provider result was absent.
+  if (sourceIds.issueIds.length || sourceIds.runIds.length || sourceThreads.length) {
+    const current = await chatReader(userId, botId)
+    if (current[tokenWorkspace] !== reader[tokenWorkspace]) throw new ActionFailureError('botNotFound')
   }
   return { chat, ...chatReadObservation(session, waiting, now) }
 }

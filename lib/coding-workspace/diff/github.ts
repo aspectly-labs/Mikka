@@ -17,7 +17,7 @@ import { buildDiffFilePatch, diffDigest, gitBlobHash } from './patch'
 import { buildGitHubFilePatch } from './github-patch'
 import { buildGitHubManifest, parseGitHubTree, type GitHubNativeFile } from './github-manifest'
 import { GitHubDiffClient } from './github-api'
-import { readGitHubPullState, readGitHubPullSummary } from './github-state'
+import { readGitHubPullState, readGitHubPullSummary, readGitHubPullSummaries, type GitHubPullSummary } from './github-state'
 
 const sha = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/)
 const id = z.union([z.number().int().positive().max(Number.MAX_SAFE_INTEGER).transform(String), z.string().regex(/^[1-9]\d{0,39}$/)])
@@ -103,7 +103,9 @@ export async function associatedGitHubPull(database: Pick<Pool, 'query'>, scope:
 
 /** Each HTTP request creates its own provider bound to the actual viewer.
  * The Run owner is used only for immutable publication lookup, never tokens. */
-export function githubDiffProvider(database: Pool, userId: string, signal?: AbortSignal): ExternalDiffProvider {
+export function githubDiffProvider(database: Pool, userId: string, signal?: AbortSignal): ExternalDiffProvider & {
+  pullSummaries(scope: ReviewScope, numbers: readonly number[]): Promise<Map<number, GitHubPullSummary>>
+} {
   const budget: RequestBudget = { deadline: Date.now() + 30_000, signal }
   const checkBudget = () => {
     try { remainingRequestBudget(budget) } catch (cause) { throw new WorkspaceReviewError('workspace_review_github_unavailable', { cause }) }
@@ -177,6 +179,7 @@ export function githubDiffProvider(database: Pool, userId: string, signal?: Abor
     verify,
     async pullState(scope, snapshot) { return readGitHubPullState(await access(scope), snapshot) },
     async pullSummary(scope, number) { return readGitHubPullSummary(await access(scope), number) },
+    async pullSummaries(scope, numbers) { return readGitHubPullSummaries(await access(scope), numbers) },
     async capture(scope, selection) {
       const grant = await access(scope)
       let baseSha: string, headSha: string, sourceAccess: DiffSourceAccess, associated: Association | undefined, current: Pull | undefined

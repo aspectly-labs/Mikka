@@ -16,6 +16,8 @@ import { secretMaskerFor } from '../../secrets/runtime'
 import { maskDeep, type Masker } from '../../secrets/mask'
 import type { ReviewActor, ReviewScope } from '../diff/authority'
 import { reviewBoardId } from '../diff/board-id'
+import { githubDiffProvider } from '../diff/github'
+import { GITHUB_SUMMARY_BATCH_SIZE, type GitHubPullSummary } from '../diff/github-state'
 import { observedReviewChecks } from './github-checks'
 import { projectTaskReviewSummary, type TaskReviewSummary, type TaskSummaryChecks, type TaskSummaryFacts } from './projection'
 
@@ -29,8 +31,8 @@ type Source = { scope: ReviewScope; row: SourceRow; active: boolean; number: num
 type SnapshotRow = TaskSummaryFacts & { taskId: string; snapshot: unknown | null; files: number; additions: number; deletions: number;
   complete: boolean; observation: unknown | null; maskPolicy: string | null; viewerMaskPolicy: string | null }
 
-/** Task cards read retained public metadata in bulk. They never fetch a
- * daemon, GitHub source or logs, or choose a viewer's/another Bot's thread.
+/** Task cards read live PR metadata in bounded batches, while working and
+ * checkpoint evidence stays local. No diff, daemon or logs are fetched.
  * Full review reads and every action still obtain their own current lease. */
 export async function taskReviewSummaries(reader: IssueReader, taskIds: readonly string[], workspaceId?: string): Promise<Map<string, TaskReviewSummary>> {
   const result = new Map<string, TaskReviewSummary>()
@@ -42,7 +44,7 @@ export async function taskReviewSummaries(reader: IssueReader, taskIds: readonly
   const scopedReader: IssueReader = selectedWorkspace ? { id: userId, [tokenWorkspace]: selectedWorkspace, [enterprisePrincipal]: typeof reader === 'string' ? undefined : reader[enterprisePrincipal] } : reader
   const tasks = await issuesForUser(scopedReader, wanted, false, undefined, { withoutBody: true })
   if (!tasks.size) return result
-  const { rows } = await pool.query<SourceRow>(`SELECT i.id AS "taskId",i."userId" AS "ownerId",r.id AS "runId",r.status,
+  const sourceQuery = `SELECT i.id AS "taskId",i."userId" AS "ownerId",r.id AS "runId",r.status,
     r."stopRequestedAt" IS NOT NULL AS stopped,r."deviceRepoId",coalesce(b."repoId",p.id) AS "repoId",
     coalesce(b."repositoryKey",p."repoPath") AS "repositoryKey",p."remoteUrl",coalesce(b.count,0)::int AS bindings,
     coalesce(b."workspaceId"::text,r."agentDefinition"#>>'{executionIdentity,workspaceId}',
@@ -66,7 +68,8 @@ export async function taskReviewSummaries(reader: IssueReader, taskIds: readonly
     LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('taskId',c."taskId",'candidateId',c.id,'producerRunId',c."runId",
       'sha',c.sha,'kind',c.kind,'repository',c.repository,'skill',EXISTS(SELECT 1 FROM improvement_skill_candidates sc WHERE sc."candidateId"=c.id))) AS candidates
       FROM factory_candidates c JOIN factory_tasks t ON t.id=c."taskId" AND t."issueId"=i.id AND t."userId"=i."userId" WHERE c."runId"=r.id
-    ) c ON true WHERE i.id=ANY($1::uuid[])`, [[...tasks.keys()]])
+    ) c ON true WHERE i.id=ANY($1::uuid[])`
+  const { rows } = await pool.query<SourceRow>(sourceQuery, [[...tasks.keys()]])
   const sources = new Map<string, Source>()
   for (const row of rows) {
     if (tasks.get(row.taskId)?.userId !== row.ownerId || !row.repoId || !row.repositoryKey || !z.uuid().safeParse(row.workspaceId).success
@@ -92,6 +95,7 @@ export async function taskReviewSummaries(reader: IssueReader, taskIds: readonly
     sources.set(row.taskId, { scope, row, number, factory, active: !row.stopped && UNFINISHED_RUN_STATUSES.some(status => status === row.status) })
   }
   if (!sources.size) return result
+  const pulls = await currentPullSummaries(userId, sources)
   const selections = [...sources.values()].map(({ scope, number, factory, active }) => ({ ...scope.identity, taskId: scope.taskId, boardId: scope.boardId, number, factory, active }))
   const { rows: snapshots } = await pool.query<SnapshotRow>(`WITH wanted AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
     "taskId" uuid,"runId" uuid,"repoId" uuid,"ownerId" text,"workspaceId" uuid,"boardId" text,number int,factory jsonb,active boolean))
@@ -125,11 +129,16 @@ export async function taskReviewSummaries(reader: IssueReader, taskIds: readonly
   }
   for (const row of snapshots) {
     const source = sources.get(row.taskId)!, { scope } = source
+    const currentPull = pulls.get(row.taskId)
+    // A failed live read must not turn retained PR evidence back into status.
+    // Other repositories and non-PR working/checkpoint rows remain usable.
+    if (source.number !== null && !currentPull) continue
     const pair = await Promise.all([maskFor(scope.identity.workspaceId, scope.identity.ownerId), maskFor(scope.identity.workspaceId, userId)])
     const parsed = row.snapshot ? diffSnapshot.safeParse(row.snapshot) : null
     if (parsed && (!parsed.success || !isDeepStrictEqual(parsed.data.identity, scope.identity) || parsed.data.taskId !== scope.taskId)) continue
     const snapshot = parsed?.success ? { ...parsed.data, counts: { files: row.files, additions: row.additions,
       deletions: row.deletions, complete: row.complete && parsed.data.availability !== 'unavailable' } } : null
+    if (snapshot?.pullRequest && (!currentPull || snapshot.sourceAccess?.repositoryId !== currentPull.repositoryId)) continue
     let checks: TaskSummaryChecks = null
     if (snapshot && row.observation && row.maskPolicy === pair[0]!.sourcePolicy && row.viewerMaskPolicy === pair[1]!.sourcePolicy) {
       const observed = observedReviewChecks.safeParse(row.observation)
@@ -137,9 +146,16 @@ export async function taskReviewSummaries(reader: IssueReader, taskIds: readonly
         checks = { ...observed.data.counts, sha: observed.data.headSha, observedAt: observed.data.observedAt, fingerprint: observed.data.fingerprint }
     }
     const actor: ReviewActor = { userId, workspaceId: scope.identity.workspaceId, credential: { kind: token ? 'pat' : 'session', id: 'summary' } }
-    const summary = projectTaskReviewSummary(actor, scope, snapshot, { ...row, branch: source.row.branch, reclaimed: source.row.reclaimed }, checks)
+    const summary = projectTaskReviewSummary(actor, scope, snapshot, { ...row, branch: source.row.branch, reclaimed: source.row.reclaimed }, checks, currentPull)
     if (pair.some(mask => !isDeepStrictEqual(maskDeep(summary, mask), summary))) continue
     result.set(row.taskId, summary)
+  }
+  if (result.size && [...sources.values()].some(source => source.number !== null)) {
+    // Revalidate every returned source after GitHub I/O, including local rows
+    // in a mixed list and requests where all live PR batches failed.
+    const fresh = await pool.query<SourceRow>(sourceQuery, [[...result.keys()]])
+    const byTask = new Map(fresh.rows.map(row => [row.taskId, row]))
+    for (const id of result.keys()) if (!isDeepStrictEqual(sources.get(id)?.row, byTask.get(id))) result.delete(id)
   }
   // The two databases remain separate. Recheck membership and Task visibility
   // after awaiting masking; frozen Run tenancy cannot follow a moved Task.
@@ -159,5 +175,35 @@ export async function taskReviewSummaries(reader: IssueReader, taskIds: readonly
     if (!task || task.userId !== source.row.ownerId || !access
       || (access.kind === 'personal' ? task.userId !== userId || task.scope === 'workspace' && access.elsewhere : !access.linked)) result.delete(id)
   }
+  return result
+}
+
+/** One provider owns this viewer's request-wide deadline and credential map.
+ * Four repository workers reuse its clients across exact, deduplicated batches. */
+async function currentPullSummaries(userId: string, sources: Map<string, Source>): Promise<Map<string, GitHubPullSummary>> {
+  const groups = new Map<string, { scope: ReviewScope; pulls: Map<number, string[]> }>()
+  for (const [taskId, source] of sources) {
+    if (source.number === null) continue
+    const key = source.scope.identity.repositoryKey
+    if (!groups.has(key)) groups.set(key, { scope: source.scope, pulls: new Map() })
+    const group = groups.get(key)!
+    group.pulls.set(source.number, [...group.pulls.get(source.number) ?? [], taskId])
+  }
+  const result = new Map<string, GitHubPullSummary>()
+  const pending = [...groups.values()], provider = githubDiffProvider(pool, userId)
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
+    while (next < pending.length) {
+      const group = pending[next++]!, numbers = [...group.pulls.keys()]
+      for (let offset = 0; offset < numbers.length; offset += GITHUB_SUMMARY_BATCH_SIZE) {
+        try {
+          const values = await provider.pullSummaries(group.scope, numbers.slice(offset, offset + GITHUB_SUMMARY_BATCH_SIZE))
+          for (const [number, value] of values) for (const taskId of group.pulls.get(number)!) result.set(taskId, value)
+        // error-cause: GitHub failures can contain credentials or private response bodies.
+        // This optional display batch stays unknown; never fall back to archive metadata.
+        } catch { /* Other complete batches may still succeed within the shared deadline. */ }
+      }
+    }
+  }))
   return result
 }

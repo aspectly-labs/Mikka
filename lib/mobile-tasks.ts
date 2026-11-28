@@ -28,7 +28,7 @@ import { mobileTaskActivity } from '@/lib/mobile-task-view'
 import { issueVisibility, type IssueReader } from '@/lib/issue-visibility'
 import { taskBlock } from '@/lib/task-blocked'
 import { taskReviewSummaries } from '@/lib/coding-workspace/task-review/summaries'
-import { taskReviewSourceHint } from '@/lib/coding-workspace/task-review/summary-selection'
+import type { TaskReviewSummary } from '@/lib/coding-workspace/task-review/projection'
 
 /** Locate the persisted tenant through the full reader, then hold fresh
  * membership and re-read every projection. Cookie/default choices are not pins. */
@@ -36,7 +36,11 @@ export async function mobileTask(user: Exclude<IssueReader, string>, id: string,
   const located = await mobileTaskReader(user, id, explicitWorkspaceId)
   if (!located) return null
   const { workspaceId, reader } = located
-  const read = () => withIssueWorkspace(reader, workspaceId, { issueId: id, action: 'canReadContent' }, () => readMobileTask(reader, workspaceId, id))
+  // No GitHub request holds the workspace or task lease. Every field below,
+  // including the optional work payload, is read under fresh authority after it.
+  const reviews = await taskReviewSummaries(reader, [id], workspaceId)
+  const read = () => withIssueWorkspace(reader, workspaceId, { issueId: id, action: 'canReadContent' },
+    () => readMobileTask(reader, workspaceId, id, reviews.get(id) ?? null))
   if (!includeWork) return read()
   const { withTaskWorkspace } = await import('./task-workspace')
   const { readTaskWork } = await import('./task-work-read')
@@ -90,7 +94,7 @@ export async function mobileTaskReader(user: Exclude<IssueReader, string>, id: s
 const memberView = (member: { id: string; name: string; image: string | null } | null | undefined) =>
   member ? { id: member.id, name: member.name, image: member.image } : null
 
-async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: string, id: string) {
+async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: string, id: string, review: TaskReviewSummary | null) {
   const issue = await issueForUser(user, id)
   if (!issue || issue.ownershipState !== 'bound' || issue.workspaceId !== workspaceId) return null
   const metadata = readIssueMetadata(issue.content)
@@ -112,7 +116,7 @@ async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: s
       .leftJoin(devices, and(eq(devices.id, agentRuns.deviceId), eq(devices.ownerId, user.id)))
       .where(and(eq(agentRuns.issueId, id), eq(agentRuns.userId, user.id), eq(agentRuns.workspaceId, workspaceId)))
       .orderBy(desc(agentRuns.createdAt), desc(agentRuns.id)),
-    db.select({ schedule: taskSchedule(issues.id, user.id, workspaceId), owner: users.name, codingReview: taskReviewSourceHint }).from(issues)
+    db.select({ schedule: taskSchedule(issues.id, user.id, workspaceId), owner: users.name }).from(issues)
       .leftJoin(users, eq(users.id, issues.userId))
       .where(and(eq(issues.id, id), eq(issues.workspaceId, workspaceId), eq(issues.ownershipState, 'bound'))),
     db.select().from(taskActivityVersions(db, id, issue.userId)),
@@ -124,7 +128,6 @@ async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: s
     // The web's runtime authority: only an active workspace member reads as the assignee.
     taskAssignees([{ id, workspaceId, assignee: metadata.assignee }]),
   ])
-  const reviews = await taskReviewSummaries(user, decoration?.codingReview ? [id] : [], workspaceId)
   const history = deriveIssueActivity(await enrichActivityActors(versions, issue.userId), [], Infinity)
   const creation = history.find(event => event.kind === 'created')
   const { loadIssueDocument, readIssueThreads } = await import('./task-comments/issue-document')
@@ -159,7 +162,7 @@ async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: s
       ...taskStateOf(task, newest, { block, schedule }), bot: newest?.bot ?? null,
       replyRunId: latestConversationRun(runs),
       agent: newest ? { harness: newest.harness, model: newest.model } : null, place, schedule,
-      review: reviews.get(id) ?? null,
+      review,
     },
     timeline,
     activity: mobileTaskActivity(task, attempts, { by: creation?.actor ? creation.actor.name : decoration?.owner ?? null, createdAt: issue.createdAt }),

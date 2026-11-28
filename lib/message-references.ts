@@ -50,7 +50,7 @@ export async function resolveMessageReferencesBatch(
       chunks.push(citationTokens.slice(i, i + CITATION_BATCH_CHUNK))
     }
     const resolvedChunks = await Promise.all(
-      chunks.map(chunk => citationSources({ id: reader.userId, [tokenWorkspace]: reader.workspaceId }, chunk)),
+      chunks.map(chunk => citationSources({ id: reader.userId, [tokenWorkspace]: reader.workspaceId }, chunk, [], { includeReview: false })),
     )
     for (const chunk of resolvedChunks) Object.assign(sources, chunk)
   }
