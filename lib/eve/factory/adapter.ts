@@ -11,6 +11,7 @@ import { freezeWorkerDefinition, type WorkerDefinitionSnapshot } from '../../age
 import { workerDefinitionDigest } from '../../agent-kit/worker-digest'
 import { freezeExecutionIdentity } from '../../execution-identity'
 import { hostedSnapshot } from '../../cloud-computer/sponsored-task'
+import { DEFAULT_MACHINE_SIZE } from '../../cloud-computer/machine-pricing'
 import { internalEveHeaders } from '../auth'
 import { eveInternalOrigin } from '../server-client'
 import {
@@ -199,9 +200,11 @@ export const eveFactoryFreeze: FactoryDispatchAdapters['freeze'] = async (tx, ta
   if (!row || !plan || !isEveFactoryDefinition(row.agentDefinition)) throw new FactoryError('eveFactoryRouteMismatch')
   const { descriptor } = admitEveFactoryProvider({ provider: plan.provider, ...(plan.model ? { model: plan.model } : {}) })
   assertEveFactoryRoleCapability(descriptor, plan.role as EveFactoryDispatchRole)
+  const taskCompute = { provider: 'cloudflare' as const, size: DEFAULT_MACHINE_SIZE }
   const taskMachine = {
     provider: 'cloudflare' as const, payer: 'mikka' as const, ownerId: task.userId, workspaceId: row.workspaceId,
     taskId: task.issueId, botId: task.botId!, repositoryKey: row.repoPath!, requestEventId: task.sourceEventId,
+    size: taskCompute.size,
   }
   const frozen = freezeWorkerDefinition({
     harness: 'claude_code', // replaced below; 'eve_factory' is outside the Harness union by design.
@@ -219,12 +222,13 @@ export const eveFactoryFreeze: FactoryDispatchAdapters['freeze'] = async (tx, ta
     role: plan.role,
     eveFactoryVersion: EVE_FACTORY_CONTRACT_VERSION,
     taskMachine,
+    taskCompute,
     ...(row.agentDefinition?.projectExecution ? { projectExecution: row.agentDefinition.projectExecution as WorkerDefinitionSnapshot['projectExecution'] } : {}),
     ...(row.agentDefinition?.repositoryAdmission ? { repositoryAdmission: row.agentDefinition.repositoryAdmission as WorkerDefinitionSnapshot['repositoryAdmission'] } : {}),
   }
   definition.definitionDigest = workerDefinitionDigest({
     harness: EVE_FACTORY_EXECUTOR, instructions: frozen.instructions, model: plan.model,
-    readOnly: plan.role !== 'implementer', taskMachine,
+    readOnly: plan.role !== 'implementer', taskMachine, taskCompute,
     ...(row.agentDefinition?.projectExecution ? { projectExecution: row.agentDefinition.projectExecution } : {}),
   })
   definition.executionIdentity = await freezeExecutionIdentity(tx, {

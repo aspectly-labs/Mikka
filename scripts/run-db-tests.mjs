@@ -80,6 +80,7 @@ export const REQUIRED_SUITES = [
   { marker: 'lib/eve/settlement.ts', file: 'lib/eve/settlement.db.test.ts', script: 'test:eve-db' },
   { marker: 'lib/eve/outcome-delivery.ts', file: 'lib/eve/outcome-delivery.db.test.ts', script: 'test:eve-db' },
   { marker: 'lib/eve/approval-store.ts', file: 'lib/eve/approval-bridge.db.test.ts', script: 'test:eve-db' },
+  { marker: 'lib/eve/factory/machine.ts', file: 'lib/eve/factory/machine.db.test.ts', script: 'test:eve-db' },
   { marker: 'lib/schedules/store.ts', file: 'lib/schedules/store.db.test.ts', script: 'test:schedules-db' },
   { marker: 'lib/run-leases.ts', file: 'tests/run-recovery.db.test.ts', script: 'test:run-recovery-db' },
   { marker: 'app/v1/runs/[runId]/checkpoint/route.ts', file: 'tests/checkpoint-recovery.db.test.ts', script: 'test:run-recovery-db' },
