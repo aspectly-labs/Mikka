@@ -47,6 +47,7 @@ const ALLOWED = new Set([
   'posthogDistinctId', 'sessionId',
   'mikka.catalogue.cache', 'mikka.catalogue.refresh_candidates', 'mikka.catalogue.deferred', 'mikka.catalogue.provider', 'mikka.catalogue.refresh_count',
   'mikka.eve.route', 'mikka.http.response_kind', 'mikka.http.response_headers_ms', 'mikka.http.ttfb_ms', 'mikka.http.outcome',
+  'mikka.http.peer', 'mikka.http.transport',
 ])
 const STATEMENT_KEYS = new Set(['db.query.text', 'db.statement'])
 /** `next.*` keys that carry no request data worth the risk. */

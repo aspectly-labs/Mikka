@@ -123,3 +123,22 @@ export function resolveEveServerEndpoint(env: EnvMap = runtimeEnv()): string {
 export function syntheticLocalRequest(path = '/'): Request {
   return new Request(new URL(path, DEFAULT_LOCAL_SYNTHETIC_ORIGIN))
 }
+
+export type HttpTracePeer = 'github' | 'composio' | 'eve' | 'cloud' | 'litellm' | 'other'
+
+/** Closed telemetry labels only; operator/private hosts never leave this boundary. */
+export function httpTracePeer(rawOrigin: string | URL, env: EnvMap = runtimeEnv()): HttpTracePeer {
+  try {
+    const origin = new URL(rawOrigin).origin
+    if (origin === 'https://api.github.com') return 'github'
+    if (origin === 'https://backend.composio.dev') return 'composio'
+    const configured: readonly [HttpTracePeer, string | undefined][] = [
+      ['eve', resolveEveProxyOrigin(env)], ['cloud', env.MIKKA_CLOUD_URL], ['litellm', env.MIKKA_LITELLM_URL],
+    ]
+    for (const [peer, value] of configured) {
+      if (!value) continue
+      try { if (new URL(value).origin === origin) return peer } catch { /* invalid configuration is not a telemetry label */ }
+    }
+  } catch { /* an unfamiliar transport origin remains private */ }
+  return 'other'
+}
