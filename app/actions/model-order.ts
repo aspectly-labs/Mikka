@@ -27,8 +27,8 @@ export async function getModelOrder(workspaceId?: string): Promise<SettingsActio
 async function readModelOrder(workspaceId?: string): Promise<SettingsActionResult<OrderView>> {
   return settingsWorkspaceAction(async () => {
     const target = await scope(workspaceId)
-    // A subscription never asked for its models (or a Codex catalogue lacking priority/ultrafast metadata) asks its account once per revision.
-    await new ExecutionSettings(pool).ensureCatalogues(target, undefined, undefined, { codexPriority: true })
+    // Missing models are discovered once per revision; optional metadata never blocks a valid catalogue.
+    await new ExecutionSettings(pool).ensureCatalogues(target, undefined, undefined, { codexPriority: true, deferOptional: true })
     // After that write: the view's repeated key, policy and device reads run once.
     const view=await orderView(readOnce(pool),target)
     const {hostedTaskEnabled}=await import('@/lib/cloud-computer/sponsored-task')

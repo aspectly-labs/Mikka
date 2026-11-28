@@ -19,7 +19,7 @@ import { disposableDatabase, E2E_DB_RULE } from '../../../tests/helpers/e2e-targ
 import { createTestDatabase, dropTestDatabase } from '../../../tests/support/drop-test-database'
 import type { ReviewActor } from '../diff/authority'
 import type { ExternalDiffProvider } from '../diff/service'
-import type { ObservedPullState } from '../diff/github-state'
+import type { GitHubPullSummary, ObservedPullState } from '../diff/github-state'
 import type { ReviewMutationReceipt } from '../diff/review'
 import type { TaskReviewHttpInput, TaskReviewHttpResult } from './http'
 import type { ReviewResources } from '../../code-review/contract'
@@ -722,6 +722,35 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
       for (const who of [f.who, f.viewer]) await assert.rejects(() => readTaskReviewResources({ ...input(f, {}, who),
         deps: { ...deps, external: denied } }), code('workspace_review_github_forbidden'))
       assert.equal(verifies, 4)
+    })
+
+    await t.test('the summary displays live PR metadata after a push and before any PR snapshot capture', async () => {
+      const f = await fixture(), native = await commitSnapshot(f)
+      await associatePull(f, 106)
+      const snapshot = await retainPull(f, native, 106)
+      const live: GitHubPullSummary = { repositoryId: snapshot.sourceAccess!.repositoryId, number: 106, url: snapshot.pullRequest!.url,
+        headSha: hash('a new GitHub push').slice(0, 40), baseSha: f.baseSha, state: 'changes_requested',
+        observedAt: '2026-11-28T09:00:00.000Z', files: 9, additions: 42, deletions: 7, draft: false, mergeable: true,
+        checks: { total: 4, passed: 2, failed: 1, pending: 1, neutral: 0, sha: hash('a new GitHub push').slice(0, 40),
+          observedAt: '2026-11-28T09:00:00.000Z', fingerprint: hash('current native checks') } }
+      const provider: ExternalDiffProvider = { ...external(async () => ({ isStale: true })),
+        pullSummary: async () => live }
+      const request = () => ({ ...input(f, {}), deps: { ...deps, external: provider } })
+      const before = await pool.query('SELECT snapshot FROM coding_workspace_snapshots WHERE id=$1', [snapshot.id])
+      const current = await render<Summary>(await readTaskReviewSummary(request()), f.who)
+      assert.deepEqual({ files: current.files, additions: current.additions, deletions: current.deletions }, { files: 9, additions: 42, deletions: 7 })
+      assert.equal(current.pr?.state, 'changes_requested'); assert.equal(current.countsKnown, true); assert.deepEqual(current.checks, live.checks)
+      assert.equal(current.reviewRef, null); assert.equal(current.mergeTarget, null); assert.equal(current.permissions.canMerge, false)
+      assert.deepEqual((await pool.query('SELECT snapshot FROM coding_workspace_snapshots WHERE id=$1', [snapshot.id])).rows, before.rows,
+        'a metadata read must not recapture or rewrite immutable review evidence')
+      await associatePull(f, 107)
+      const next = { ...provider, pullSummary: async () => ({ ...live, number: 107, url: 'https://github.com/mikka-fixtures/task-review/pull/107' }) }
+      const fresh = await render<Summary>(await readTaskReviewSummary({ ...input(f, {}), deps: { ...deps, external: next } }), f.who)
+      assert.equal(fresh.pr?.number, 107); assert.equal(fresh.files, 9); assert.equal(fresh.reviewRef, null)
+      const pending = await readTaskReviewSummary({ ...input(f, {}), deps: { ...deps, external: next } })
+      await associatePull(f, 108)
+      await assert.rejects(() => render<Summary>(pending, f.who), code('workspace_snapshot_outdated'),
+        'the publication may not move to a different PR while GitHub is being read')
     })
 
     await t.test('summary rendering rejects a different working source selected after the initial read', async () => {

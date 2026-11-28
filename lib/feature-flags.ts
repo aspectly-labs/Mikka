@@ -31,6 +31,8 @@ export interface GatedFeatureDefinition {
 export const gatedFeatures = {
   /** The bots' cloud computer UI (#174); the E2B backend (#172) is live. */
   cloudComputer: { key: 'mikka-cloud-computer' },
+  /** Environment builds consume the owner's E2B quota; opt in per user. */
+  environmentSnapshots: { key: 'mikka-environment-snapshots' },
   /** Points that bill cloud computer time (计费 › 点数). Hidden while E2B runs on the workspace's own API key (Alex, 2026-10-30). */
   computerBilling: { key: 'mikka-computer-billing' },
   /** 记忆 (sidebar entry, its page and its settings section). Hidden: it does not work yet (Alex, 2026-11-20). */
@@ -39,25 +41,35 @@ export const gatedFeatures = {
 
 export type GatedFeature = keyof typeof gatedFeatures
 
+export const taskProviderFlag = 'mikka-task-provider'
+export type TaskProviderFlagVariant = 'cloudflare' | 'e2b'
+export const isTaskProviderFlagVariant = (value: unknown): value is TaskProviderFlagVariant =>
+  value === 'cloudflare' || value === 'e2b'
+
 /** Production capabilities when an installation has no PostHog project.
  * Billing and unshipped experiments remain off. See docs/self-hosting-byok.md. */
-export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean>> = {
+export const PRODUCTION_FLAG_DEFAULTS: Readonly<Record<string, boolean | TaskProviderFlagVariant>> = {
+  [taskProviderFlag]: 'e2b',
   'mikka-cloud-computer': true,
   'mikka-computer-billing': false,
   'mikka-memory': false,
+  'mikka-environment-snapshots': false,
   'mikka-byos-subscription-chat': true,
   'mikka-byos-subscription-native': true,
   'mikka-email-sign-in-off': false,
   'mikka-computer-tab-off': false,
   'mikka-proactive-profile': false,
   'mikka-proactive-research': false,
+  // Owner-click analytics (the UI checkout's components/mikka/observability/track-owner-clicks.ts); needs a build
+  // made with MIKKA_TRACK_OWNER=1 as well.
+  'mikka-track-owner-clicks': false,
   ...Object.fromEntries(Object.values(upcomingFeatures).map(feature => [feature.key, false])),
 }
 export const productionFlagDefault = (key: string) => PRODUCTION_FLAG_DEFAULTS[key] ?? false
 
 /** Local server acceptance can exercise both flag states without a PostHog key.
  * Production ignores this setting before reading or parsing it. */
-export function localFlagOverride(key: string): boolean | undefined {
+export function localFlagOverride(key: string): boolean | TaskProviderFlagVariant | undefined {
   const nodeEnv = getNodeEnv()
   if (nodeEnv !== 'development' && nodeEnv !== 'test') return undefined
   const configured = envValue('MIKKA_FLAG_OVERRIDES')
@@ -69,10 +81,11 @@ export function localFlagOverride(key: string): boolean | undefined {
     throw new Error('MIKKA_FLAG_OVERRIDES_INVALID_JSON', { cause: error })
   }
   if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)
-    || Object.values(overrides).some(value => typeof value !== 'boolean')) {
+    || Object.entries(overrides).some(([name, value]) => name === taskProviderFlag
+      ? !isTaskProviderFlagVariant(value) : typeof value !== 'boolean')) {
     throw new Error('MIKKA_FLAG_OVERRIDES_REQUIRE_BOOLEANS')
   }
-  return Object.hasOwn(overrides, key) ? (overrides as Record<string, boolean>)[key] : undefined
+  return Object.hasOwn(overrides, key) ? (overrides as Record<string, boolean | TaskProviderFlagVariant>)[key] : undefined
 }
 
 /**
@@ -95,6 +108,20 @@ export const killSwitches = {
   /** A bot's 电脑 tab in the right panel; shown for every bot unless this is on (Alex, 2026-10-31). */
   computerTab: 'mikka-computer-tab-off',
 } as const
+
+/**
+ * Every flag a client reads to decide what the UI shows. The web asks PostHog
+ * for them in the browser; the desktop renderer, whose CSP has no PostHog
+ * origin, gets them in its bootstrap, evaluated on the server for the same
+ * person (lib/desktop-rpc/features.ts) and read through the same
+ * `postHogFlag` (lib/analytics/posthog.ts). A flag a client reads must be listed
+ * here; nothing else is sent. Security and billing decisions stay on the server.
+ */
+export const CLIENT_FLAG_KEYS: readonly string[] = [
+  ...Object.values(upcomingFeatures).map(feature => feature.key),
+  ...Object.values(gatedFeatures).map(feature => feature.key),
+  ...Object.values(killSwitches),
+]
 
 /** On only when PostHog says exactly true; unloaded, missing or multivariate values stay off. */
 export function gatedFeatureEnabled(remoteValue: boolean | string | undefined) {

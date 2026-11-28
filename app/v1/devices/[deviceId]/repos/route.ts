@@ -1,6 +1,7 @@
 import { withDeviceRoute } from '@/lib/device-route'
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { daemonTestMode, normalizeRepository } from '@mikka/protocol/repository'
+import { runnableSetup } from '@mikka/protocol/device'
 import { readUnderDeviceAuthority } from '@/lib/db'
 import { readRepositoryDaemonSettings } from '@/lib/device-repositories'
 import { authenticateDevice } from '@/lib/device-link'
@@ -36,7 +37,7 @@ async function handleGET(request: Request, { params }: { params: Promise<{ devic
       name: repo.repoPath.split('/').filter(Boolean).pop() ?? repo.repoPath,
       path: repo.repoPath,
       remoteUrl: repo.remoteUrl,
-      ...(settings?.setup ? { setup: settings.setup } : {}),
+      ...(settings?.setup ? { setup: runnableSetup(settings.setup) } : {}),
       ...(settings?.networkAllow ? { networkAllow: settings.networkAllow } : {}),
       // Push approval is pinned in claim.policy, not cached between runs.
     }

@@ -128,6 +128,9 @@ test('settings device and contribution HTTP reads preserve owner, tenant and rol
       { day: '2026-11-19', memberId: owner, completedTasks: 0, mergedPullRequests: 0, threads: 1 },
       { day: '2026-11-19', memberId: member, completedTasks: 1, mergedPullRequests: 1, threads: 0 },
     ].sort((a, b) => a.memberId.localeCompare(b.memberId)))
+    assert.equal(value.mergedPullRequests, 0, 'a manually linked PR does not count as Mikka-published')
+    assert.equal(value.mergedPullRequestsAll, 0)
+    assert.deepEqual(value.previous, { mergedPullRequests: 0, mergedPullRequestsAll: 0 })
     assert.deepEqual(value.threadCosts, { available: false, reason: 'thread_cost_ledger_pending', items: null })
     assert.equal(value.dateSource, 'recorded_events')
     assert.ok(!JSON.stringify(value).includes('https://github.com'))

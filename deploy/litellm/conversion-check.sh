@@ -4,7 +4,8 @@
 # provider) on a private Docker network and run the public gateway test
 # tests/model-gateway-litellm.test.ts against it. Claude Code's Anthropic
 # messages (with a tool call) and Codex's Responses must both complete and
-# settle from the usage LiteLLM converted. Used by
+# settle from the usage LiteLLM converted. The provider also simulates native
+# search APIs and the receipt for a Managed Haiku TypeSafe generation. Used by
 # .github/workflows/cloudflare-litellm-image.yml before publication.
 set -euo pipefail
 image="$1"
@@ -18,6 +19,7 @@ docker network create "$network" > /dev/null
 docker run -d --name litellm-proof-provider --network "$network" --cap-drop ALL --security-opt=no-new-privileges \
   -v "$(cd "$(dirname "$0")" && pwd)/mock-provider.py:/mock-provider.py:ro" --entrypoint python "$image" /mock-provider.py 9911 > /dev/null
 docker run -d --name litellm-proof --network "$network" --cap-drop ALL --security-opt=no-new-privileges -p 127.0.0.1:4012:4000 \
+  -e NO_PROXY=litellm-proof-provider,localhost,127.0.0.1 -e no_proxy=litellm-proof-provider,localhost,127.0.0.1 \
   -e LITELLM_LOCAL_MODEL_COST_MAP=True -e LITELLM_MASTER_KEY="$key" \
   -e AI_GATEWAY_API_KEY=sk-vercel-fixture -e VERCEL_AI_GATEWAY_API_BASE=http://litellm-proof-provider:9911/v1 \
   -e NEON_AI_GATEWAY_BASE_URL=http://litellm-proof-provider:9911 -e NEON_AI_GATEWAY_TOKEN=sk-neon-fixture "$image" > /dev/null
@@ -36,6 +38,7 @@ output=$(NODE_OPTIONS=--test-reporter=tap MIKKA_LITELLM_TEST_URL=http://127.0.0.
   exit 1
 }
 printf '%s\n' "$output" | grep -E '^ok |^# (pass|fail|skipped)'
-# Require all protocol and upstream cases; a skipped test is not a proof.
-printf '%s\n' "$output" | grep -qx '# pass 7' && printf '%s\n' "$output" | grep -qx '# skipped 0'
+# Require both conversion and provider-native cases to run.
+printf '%s\n' "$output" | grep -qx '# pass 13'
+printf '%s\n' "$output" | grep -qx '# skipped 0'
 echo "LiteLLM conversion proof passed"

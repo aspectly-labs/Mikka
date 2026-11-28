@@ -14,7 +14,7 @@ on:
         description: Reviewed deployment phase; never compiles product source
         type: choice
         required: true
-        options: [stage-all, stage-verify, stage-worlds, stage-task, stage-eve, stage-litellm, stage-api, stage-web, stage-sessions, production-reserve, production-litellm, production-eve, production-eve-maintenance, production-eve-postgres, production-worlds-prepare, production-api, production-worlds-register, production-web, production-verify, production-migrate-database, production-task, gateway-prepare, gateway-observe, eve-retire, service-stage, service-production, pipeline-stage, pipeline-rollback, pipeline-promote, cloud-services-stage, cloud-services-production]
+        options: [stage-all, stage-verify, stage-worlds, stage-task, stage-eve, stage-litellm, stage-api, stage-web, stage-sessions, production-reserve, production-litellm, production-eve, production-eve-maintenance, production-eve-postgres, production-worlds-prepare, production-api, production-worlds-register, production-web, production-verify, production-migrate-database, production-task, gateway-prepare, gateway-observe, eve-retire, service-stage, service-production, pipeline-stage, pipeline-rollback, pipeline-promote, cloud-services-stage, cloud-services-promote, cloud-services-production]
       database_window:
         description: Existing reviewed database migration window; used only by production-migrate-database
         type: string
@@ -37,8 +37,13 @@ on:
         type: string
         required: false
       pipeline_run:
-        description: Deployment pipeline run whose staging result to roll back (pipeline-rollback) or promote to production (pipeline-promote)
+        description: Staging run to roll back or promote, including cloud-services-promote
         type: string
+        required: false
+      cloud_stage_attempt:
+        description: cloud-services-promote only, the successful staging run attempt
+        type: string
+        default: '1'
         required: false
       promote_source:
         description: pipeline-promote only, the exact public main commit that pipeline_run staged and that production should serve
@@ -62,7 +67,7 @@ env:
 jobs:
   # Manual phases need a promoter (config/release-promoters.json). Owner-only: the break-glass phases that
   # write production without pipeline-promote evidence (production-*, service-production,
-  # cloud-services-production), eve-retire and gateway-observe; agents promote through pipeline-promote.
+  # cloud-services-production), eve-retire and gateway-observe; agents promote through evidence-gated phases.
   deploy-application:
     if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !startsWith(inputs.phase, 'pipeline-') && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor)) && (!(startsWith(inputs.phase, 'production-') || inputs.phase == 'service-production' || inputs.phase == 'cloud-services-production' || inputs.phase == 'eve-retire' || inputs.phase == 'gateway-observe') || (github.actor_id == '183887963' && github.actor == 'alexj11324' && github.triggering_actor == 'alexj11324'))
     outputs:
@@ -83,6 +88,8 @@ jobs:
       MIKKA_OPERATIONS_CI_RUN_ATTEMPT: ${{ inputs.qualification_attempt }}
       MIKKA_OPERATIONS_CI_ARTIFACT_ID: ${{ inputs.qualification_artifact }}
       MIKKA_DEPLOYMENT_PHASE: ${{ inputs.phase }}
+      MIKKA_CLOUD_STAGE_RUN: ${{ inputs.pipeline_run }}
+      MIKKA_CLOUD_STAGE_ATTEMPT: ${{ inputs.cloud_stage_attempt }}
       DATABASE_WINDOW: ${{ inputs.database_window }}
       CLOUDFLARE_ACCOUNT_ID: d8f6630c7869111a5139bc5ed4d24ace
     steps:
@@ -619,6 +626,8 @@ jobs:
         run: |
           echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
           echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+      # status=not-ready (automatic only: a required check or the daemon floor is not met yet) skips every
+      # step below without failing the run, so the staging run stays promotable by a pipeline-promote dispatch.
       - name: Select the verified staging result and production baseline
         id: select
         env:

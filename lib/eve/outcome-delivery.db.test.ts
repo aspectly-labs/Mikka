@@ -30,7 +30,7 @@ test('committed native outcomes deliver Telegram and existing phone Decisions on
   await admin.query(`CREATE SCHEMA ${schema}`)
   await app.query(`CREATE TABLE "user"(id text PRIMARY KEY);
    CREATE TABLE bots(id uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid);
-   CREATE TABLE mikka_workspaces(id uuid PRIMARY KEY,kind text,"userId" text);
+   CREATE TABLE mikka_workspaces(id uuid PRIMARY KEY,kind text,"userId" text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
    CREATE TABLE mikka_workspace_members("workspaceId" uuid,"userId" text,status text);
    CREATE TABLE coordinator_bots("ownerId" text,"workspaceId" uuid,"botId" uuid);
    CREATE TABLE eve_sessions(session_id text PRIMARY KEY,owner_id text,bot_id uuid,workspace_id uuid,surface text);
@@ -119,6 +119,41 @@ test('committed native outcomes deliver Telegram and existing phone Decisions on
    const deliver=createEveOutcomeDelivery(app,app,{safe:async()=>{},telegram:async()=>{sends++;throw Error('synthetic provider response lost')}})
    await deliver(f.scope,f.input);await deliver(f.scope,f.input);assert.equal(sends,1);assert.equal(decisions,1)
    assert.deepEqual((await app.query("SELECT chunk_index,status FROM eve_outcome_deliveries WHERE session_id=$1 AND kind='telegram'",[f.session])).rows,[{chunk_index:0,status:'unknown'}])
+  })
+  await t.test('a failed receipt acknowledgement keeps an uncertain dispatch across a fresh delivery instance',async()=>{
+   const {context,propagation,trace}=await import('@opentelemetry/api')
+   const {AlwaysOnSampler,InMemorySpanExporter,SimpleSpanProcessor}=await import('@opentelemetry/sdk-trace-base')
+   const {NodeTracerProvider}=await import('@opentelemetry/sdk-trace-node')
+   const {sanitizeSpan}=await import('../tracing/sanitize')
+   const {withRunSpan}=await import('../tracing/context')
+   const f=await fixture({telegram:false}),canary='private_receipt_status',memory=new InMemorySpanExporter()
+   const provider=new NodeTracerProvider({sampler:new AlwaysOnSampler(),spanProcessors:[new SimpleSpanProcessor(memory)]})
+   provider.register()
+   let sends=0
+   const services={safe:async()=>{},push:async()=>{sends++}}
+   await app.query(`CREATE FUNCTION receipt_ack_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN IF NEW.session_id='${f.session}' AND NEW.status='completed' THEN NEW.status='${canary}'; END IF; RETURN NEW; END $$;
+    CREATE TRIGGER receipt_ack_failure BEFORE UPDATE ON eve_outcome_deliveries FOR EACH ROW EXECUTE FUNCTION receipt_ack_failure()`)
+   try {
+    const deliver=createEveOutcomeDelivery(app,app,services)
+    await assert.rejects(withRunSpan('eve.receipt.fixture',{},()=>deliver(f.scope,f.input)),{code:'23514',constraint:'eve_outcome_deliveries_status_check'})
+    assert.equal(sends,1)
+    assert.deepEqual((await app.query('SELECT status FROM eve_outcome_deliveries WHERE session_id=$1',[f.session])).rows,[{status:'dispatching'}])
+    await app.query('DROP TRIGGER receipt_ack_failure ON eve_outcome_deliveries')
+    await createEveOutcomeDelivery(app,app,services)(f.scope,f.input)
+    assert.equal(sends,1,'a lost acknowledgement must not cause another irreversible delivery')
+    await provider.forceFlush()
+    const span=memory.getFinishedSpans().map(sanitizeSpan).find(row=>row.name==='eve.receipt.fixture')
+    assert.ok(span)
+    assert.equal(span.attributes['mikka.error.code'],'23514')
+    assert.equal(span.attributes['mikka.error.detail'],'eve_outcome_deliveries_status_check')
+    assert.equal(span.attributes['mikka.eve.receipt_phase'],'finish')
+    const exported=JSON.stringify({attributes:span.attributes,events:span.events,status:span.status})
+    for(const value of [canary,f.owner,f.session,f.workspace,f.source])assert.ok(!exported.includes(value))
+   }finally{
+    await app.query('DROP TRIGGER IF EXISTS receipt_ack_failure ON eve_outcome_deliveries; DROP FUNCTION receipt_ack_failure()')
+    await provider.shutdown();trace.disable();context.disable();propagation.disable()
+   }
   })
   await t.test('current link and conversation ownership are checked before every chunk',async()=>{
    const f=await fixture({text:'x'.repeat(9000)})

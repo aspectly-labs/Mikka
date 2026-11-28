@@ -14,9 +14,15 @@ export const ROUTE_GUARD_SCRIPT = 'test:desktop-release-guard'
 const GITHUB_ACTIONS_APP_ID = 15368
 const PUBLIC_REPOSITORY_ID = 1427517699
 
-function fail(code) {
-  throw new Error('releaseChecks:' + code)
+function fail(code, check) {
+  const error = new Error('releaseChecks:' + code)
+  // The policy's own check name (validated as [a-z0-9-]), so a caller can say which check to wait for.
+  if (check) error.check = check
+  throw error
 }
+
+// A check run that finished without succeeding: a likely real failure, unlike one still queued or running.
+const FINISHED_UNSUCCESSFUL = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale'])
 
 /** Node's TAP summary. A skipped route-guard test is exactly the silent hole we are closing. */
 export function routeGuardSummary(tap) {
@@ -31,7 +37,7 @@ export function routeGuardSummary(tap) {
   return summary
 }
 
-/** The bundled-routes allowlist guard for this exact public + hosted pairing, with the official UI required. */
+/** The UI API route contract (`scripts/ui-api-routes.test.mjs`) for this exact public + hosted pairing, with the official UI required. */
 export function desktopRouteGuard({ root = process.cwd(), env = process.env, run = execFileSync } = {}) {
   const git = (directory, args, code) => {
     try { return run('git', ['-C', directory, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() }
@@ -77,7 +83,11 @@ export async function publicCheckRun(check, sourceCommit, read) {
       && job.status === 'completed' && job.conclusion === 'success')
       return { name: check.name, checkRun: check.checkRun, workflow: check.workflow, sourceCommit }
   }
-  fail('checkRunMissing')
+  // Nothing counts. Say whether GitHub Actions already finished this check unsuccessfully on the commit
+  // (checkRunFailed), or it is still queued, running or absent (checkRunMissing). Either refuses.
+  const finished = runs.some(item => item?.name === check.checkRun && item.head_sha === sourceCommit && item.app?.id === GITHUB_ACTIONS_APP_ID
+    && item.status === 'completed' && FINISHED_UNSUCCESSFUL.has(item.conclusion))
+  fail(finished ? 'checkRunFailed' : 'checkRunMissing', check.name)
 }
 
 const builtins = { 'desktop-route-guard': desktopRouteGuard }

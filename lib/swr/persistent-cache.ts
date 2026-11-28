@@ -16,6 +16,9 @@ export function readAccessFailure(error: unknown): 'session' | 'workspace' | 're
   if (!error || typeof error !== 'object') return null
   const value = error as { status?: unknown; statusCode?: unknown; code?: unknown; kind?: unknown; name?: unknown }
   const status = value.status ?? value.statusCode
+  // The desktop's refused operation keeps its 401 but is not the session's
+  // verdict (apps/desktop/src/renderer/rpc.ts): main confirmed the login holds.
+  if (value.code === 'desktop_rpc_request_rejected' && status === 401) return null
   if (status === 401 || value.code === 'authRequired' || value.kind === 'owner') return 'session'
   if (status === 403 || value.code === 'workspaceAccessDenied' || value.kind === 'workspace') return 'workspace'
   if (status === 404 || value.code === 'issueNotFound' || value.code === 'botNotFound') return 'resource'

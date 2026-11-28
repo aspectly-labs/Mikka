@@ -1,9 +1,9 @@
 import { bigint, index, integer, jsonb, pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core'
 import { workspaces } from './workspace-schema'
-import type { ApprovalMode, StoredPermissions } from '@mikka/protocol/agent-policy'
+import type { LegacyApprovalMode, StoredPermissions } from '@mikka/protocol/agent-policy'
 
 export type GovernancePlan = 'free' | 'pro' | 'enterprise'
-export type ApprovalTemplateRules = { permissions?: Omit<StoredPermissions, 'computer_use'>; networkAllow?: string[]; approvalMode?: ApprovalMode }
+export type ApprovalTemplateRules = { permissions?: Omit<StoredPermissions, 'computer_use'>; networkAllow?: string[]; approvalMode?: LegacyApprovalMode }
 
 /** Provisioned by an operator; workspace APIs cannot grant their own plan. */
 export const workspaceEntitlements = pgTable('mikka_workspace_entitlements', {

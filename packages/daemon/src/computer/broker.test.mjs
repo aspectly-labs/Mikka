@@ -52,7 +52,7 @@ test("suspending revokes grants and in-flight work without closing resources", a
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   const b = await fixture(t, { execute: async () => { await gate; } });
-  const grant = b.spec("run", "ask");
+  const grant = b.spec("run", "allow");
   const pending = assert.rejects(b.request(grant.token, { name: "get_desktop_state" }));
   b.suspend();
   release();
@@ -72,11 +72,11 @@ test("listen rejects a pre-existing path without deleting or replacing it", asyn
   assert.equal(await readFile(socketPath, "utf8"), "retained evidence");
   t.after(() => rm(dir, { recursive: true, force: true }));
 });
-for (const permission of ["allow", "ask"]) test(`suspension during ${permission} asynchronous admission blocks the later action`, async (t) => {
+test("suspension during asynchronous admission blocks the later action", async (t) => {
   let release, called = 0;
   const waiting = new Promise(resolve => { release = resolve; });
   const b = await fixture(t, { execute: async (_driver, _call, _display, _runId, context) => { await waiting; context.assertLive(); called++; } });
-  const grant = b.spec("run", permission);
+  const grant = b.spec("run", "allow");
   const result = b.request(grant.token, { name: "get_desktop_state" });
   await Promise.resolve();
   b.suspend();
@@ -92,8 +92,8 @@ test("each broker action has its own trusted id", async (t) => {
   await b.request(allow.token, call);
   await b.request(allow.token, call);
   assert.notEqual(ids[0], ids[1]);
-  const ask = b.spec('reviewed', 'ask');
-  await b.request(ask.token, call);
+  const other = b.spec('other', 'allow');
+  await b.request(other.token, call);
   assert.equal(new Set(ids).size, 3);
 });
 test("only pinned driver detected; missing/unexpected version absent", async (t) => {
@@ -109,9 +109,10 @@ test("only pinned driver detected; missing/unexpected version absent", async (t)
 });
 test("missing/deny/unknown permissions do not produce an MCP grant", async (t) => {
   const b = await fixture(t);
-  for (const p of [undefined, "deny", "garbage"])
+  // `ask` is not a tier any more (ADR 2026-11-27-1720): callers resolve a
+  // stored ask to allow before they get here, so the broker only knows allow.
+  for (const p of [undefined, "deny", "ask", "garbage"])
     assert.equal(b.spec("r", p), undefined);
-  assert.ok(b.spec("r", "ask"));
   assert.ok(b.spec("r", "allow"));
   const absent = await fixture(t, { driver: null });
   assert.equal(absent.spec("r", "allow"), undefined);
@@ -135,7 +136,7 @@ test("strict allowlist rejects arbitrary tools, output paths and argument smuggl
 });
 test("keys and scrolling use the selected desktop", async (t) => {
   const b = await fixture(t);
-  const grant = b.spec("r", "ask", { display: ":1" });
+  const grant = b.spec("r", "allow", { display: ":1" });
   for (const call of [
     { name: "press_key", arguments: { key: "tab", modifiers: ["shift"] } },
     { name: "scroll", arguments: { direction: "down", amount: 2, x: 10, y: 20 } },
@@ -145,7 +146,7 @@ test("keys and scrolling use the selected desktop", async (t) => {
   assert.deepEqual(driverArguments({ name: "press_key", arguments: { key: "tab" } }, "linux"), { key: "tab", scope: "desktop", delivery_mode: "foreground" });
   assert.deepEqual(driverArguments({ name: "scroll", arguments: { direction: "down", amount: 2, x: 10, y: 20 } }, "linux"), { direction: "down", amount: 2, x: 10, y: 20, scope: "desktop", coordinate_frame: "desktop", delivery_mode: "foreground" });
 });
-test("ask executes directly; no approval is waited on", async (t) => {
+test("an allowed action executes at once; nobody is asked and nothing waits", async (t) => {
   let calls = 0;
   const b = await fixture(t, {
     execute: async () => {
@@ -153,7 +154,7 @@ test("ask executes directly; no approval is waited on", async (t) => {
       return { ok: true };
     },
   });
-  const grant = b.spec("r", "ask");
+  const grant = b.spec("r", "allow");
   assert.deepEqual(await b.request(grant.token, {
     name: "click",
     arguments: { y: 2, x: 1 },
@@ -212,7 +213,7 @@ test("newly forbidden requests never execute", async (t) => {
       calls++;
     },
   });
-  const grant = b.spec("r", "ask");
+  const grant = b.spec("r", "allow");
   allowed = false;
   await assert.rejects(b.request(grant.token, { name: "get_desktop_state" }), /Not permitted/);
   assert.equal(calls, 0);
@@ -223,7 +224,7 @@ test("failed/uncertain driver execution propagates without replay", async (t) =>
       throw new Error("outcome uncertain");
     },
   });
-  const grant = b.spec("r", "ask");
+  const grant = b.spec("r", "allow");
   await assert.rejects(
     b.request(grant.token, { name: "get_desktop_state" }),
     /outcome uncertain/,
@@ -233,12 +234,12 @@ test("closing the broker revokes in-flight work and old session grants", async (
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   const b = await fixture(t, { execute: async () => { await gate; } });
-  const old = b.spec("r", "ask");
-  b.spec("r", "ask");
+  const old = b.spec("r", "allow");
+  b.spec("r", "allow");
   await assert.rejects(() =>
     b.request(old.token, { name: "get_desktop_state" }),
   );
-  const grant = b.spec("r", "ask");
+  const grant = b.spec("r", "allow");
   const rejected = assert.rejects(
     b.request(grant.token, { name: "get_desktop_state" }),
   );
@@ -250,7 +251,7 @@ test("closing the broker revokes in-flight work and old session grants", async (
 test("real stdio MCP proxy executes the call through the broker", async (t) => {
   const b = await fixture(t);
   await b.listen();
-  const grant = b.spec("r", "ask");
+  const grant = b.spec("r", "allow");
   const child = spawn(process.execPath, [
     new URL("./proxy.mjs", import.meta.url).pathname,
     grant.socketPath,
@@ -298,12 +299,12 @@ test("replaced run session and disconnected model discard in-flight execution", 
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   const b = await fixture(t, { execute: async () => { await gate; return "done"; } });
-  let grant = b.spec("r", "ask");
+  let grant = b.spec("r", "allow");
   const refused = assert.rejects(b.request(grant.token, { name: "get_desktop_state" }));
-  b.spec("r", "ask");
+  b.spec("r", "allow");
   release();
   await refused;
-  grant = b.spec("r", "ask");
+  grant = b.spec("r", "allow");
   const abort = new AbortController();
   const cancelled = assert.rejects(b.request(grant.token, { name: "get_desktop_state" }, abort.signal));
   abort.abort();
@@ -325,9 +326,9 @@ test("concurrent runs execute on their own trusted display", async (t) => {
     executions.push({ call, display, runId });
     return { ok: true };
   } });
-  assert.throws(() => b.spec("bad", "ask", { display: ":0;touch /tmp/owned" }));
-  const first = b.spec("run-a", "ask", { display: ":1" });
-  const second = b.spec("run-b", "ask", { display: ":2" });
+  assert.throws(() => b.spec("bad", "allow", { display: ":0;touch /tmp/owned" }));
+  const first = b.spec("run-a", "allow", { display: ":1" });
+  const second = b.spec("run-b", "allow", { display: ":2" });
   const a = b.request(first.token, { name: "click", arguments: { x: 10, y: 20 } });
   const c = b.request(second.token, { name: "click", arguments: { x: 30, y: 40 } });
   await Promise.all([a, c]);
@@ -342,7 +343,7 @@ test("capture calls skip review but still need the run's grant", async (t) => {
     permitted: () => allowed,
     capture: async (runId, call) => { calls.push({ runId, call }); return { action: call.action, capture: { id: "c1" } }; },
   });
-  const { token } = b.spec("run-1", "ask", { display: ":2" });
+  const { token } = b.spec("run-1", "allow", { display: ":2" });
   assert.deepEqual(await b.captureRequest(token, { name: "capture_screenshot", arguments: { title: "  Login   page " } }), { result: { action: "screenshot", capture: { id: "c1" } } });
   assert.deepEqual(calls, [{ runId: "run-1", call: { action: "screenshot", title: "Login page" } }]);
   assert.deepEqual(await b.captureRequest("forged", { name: "capture_screenshot", arguments: { title: "x" } }), { error: "Not permitted" });
@@ -365,21 +366,21 @@ test("capture calls cannot choose the desktop, a path or a longer recording", as
   ]) assert.throws(() => normalizeCaptureCall(value));
   assert.deepEqual(normalizeCaptureCall({ name: "start_screen_recording", arguments: { title: "Flow", maxSeconds: 60 } }), { action: "start_recording", title: "Flow", maxSeconds: 60 });
   const b = await fixture(t);
-  const { token } = b.spec("run-1", "ask");
+  const { token } = b.spec("run-1", "allow");
   assert.deepEqual(await b.captureRequest(token, { name: "capture_screenshot", arguments: { title: "x" } }), { error: "Not permitted" }, "no capture relay, no capture");
 });
 test("a refused capture tells the model only the server's own reason", async (t) => {
   const b = await fixture(t, { capture: async () => { throw Object.assign(new Error("https://e2b.internal/secret?key=1"), { safeMessage: "A recording is already going; stop it first." }); } });
-  const { token } = b.spec("run-1", "ask");
+  const { token } = b.spec("run-1", "allow");
   assert.deepEqual(await b.captureRequest(token, { name: "start_screen_recording", arguments: { title: "x" } }), { error: "Capture failed", detail: "A recording is already going; stop it first." });
   const quiet = await fixture(t, { capture: async () => { throw new Error("https://e2b.internal/secret?key=1"); } });
-  const grant = quiet.spec("run-1", "ask");
+  const grant = quiet.spec("run-1", "allow");
   assert.deepEqual(await quiet.captureRequest(grant.token, { name: "capture_screenshot", arguments: { title: "x" } }), { error: "Capture failed" });
 });
 test("the proxy lists capture tools only with --captures and relays them over the socket", async (t) => {
   const b = await fixture(t, { capture: async (_runId, call) => ({ action: call.action, capture: { id: "c1", title: call.title } }) });
   await b.listen();
-  const { token, socketPath } = b.spec("run-1", "ask");
+  const { token, socketPath } = b.spec("run-1", "allow");
   const ask = async (flags, messages) => {
     const child = spawn(process.execPath, [new URL("./proxy.mjs", import.meta.url).pathname, socketPath, token, ...flags]);
     const lines = createInterface({ input: child.stdout });
@@ -450,7 +451,7 @@ test('recording timings exclude human approval wait and finish before stop', asy
       return {};
     },
   });
-  const { token } = b.spec('run', 'ask');
+  const { token } = b.spec('run', 'allow');
   await b.captureRequest(token, { name: 'start_screen_recording', arguments: { title: 'Flow' } });
   const action = b.request(token, { name: 'click', arguments: { x: 1, y: 2, step: 'Submit form' } });
   await action;
@@ -461,13 +462,13 @@ test('recording timings exclude human approval wait and finish before stop', asy
   releaseStep(); await stop;
   assert.equal(stopped, true);
 });
-test("under ask actions execute directly without the Decisions API", async (t) => {
+test("actions execute directly without the Decisions API", async (t) => {
   let asked = 0, calls = 0;
   const b = await fixture(t, {
     execute: async () => { calls++; return "ok"; },
     needsPerson: async () => { asked++; return true; },
   });
-  const { token } = b.spec("run", "ask");
+  const { token } = b.spec("run", "allow");
   assert.equal(await b.request(token, { name: "click", arguments: { x: 1, y: 2 } }), "ok");
   assert.equal(await b.request(token, { name: "type_text", arguments: { text: "hello" } }), "ok");
   assert.equal(asked, 0);
@@ -479,10 +480,10 @@ test("deny grants nothing", async (t) => {
   assert.equal(await b.request(token, { name: "get_desktop_state" }), "ok");
   assert.equal(b.spec("run", "deny"), undefined);
 });
-test("ask requests execute immediately with no pending queue", async (t) => {
+test("requests execute immediately with no pending queue", async (t) => {
   let calls = 0;
   const b = await fixture(t, { execute: async () => { calls++; } });
-  const { token } = b.spec("run", "ask");
+  const { token } = b.spec("run", "allow");
   await Promise.all(Array.from({ length: 21 }, () => b.request(token, { name: "get_desktop_state" })));
   assert.equal(calls, 21);
 });

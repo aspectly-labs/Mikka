@@ -1,6 +1,6 @@
 import { withDeviceRoute } from '@/lib/device-route'
 import { RouteResponse } from '@/lib/server-runtime/server'
-import { COMMANDS_DAEMON_LATEST_PARAM, COMMANDS_MAX_SKIP, COMMANDS_MAX_SKIP_DEVICE_COMMANDS, COMMANDS_SKIP_DEVICE_COMMANDS_PARAM, COMMANDS_SKIP_PARAM, ACTIVE_TURN_STEER_HEADER, MAILBOX_NOTICE_HEADER } from '@mikka/protocol/device'
+import { COMMANDS_DAEMON_LATEST_PARAM, COMMANDS_MAX_SKIP, COMMANDS_MAX_SKIP_DEVICE_COMMANDS, COMMANDS_SKIP_DEVICE_COMMANDS_PARAM, COMMANDS_SKIP_PARAM, ACTIVE_TURN_STEER_HEADER, MAILBOX_NOTICE_HEADER, RUN_CONTROL_COMMANDS_HEADER } from '@mikka/protocol/device'
 import { daemonVersions } from '@/lib/daemon-release'
 import { authenticateDevice, deviceMayHaveWork, deviceWork, ownsDevice, tokenActsAsDevice } from '@/lib/device-link'
 import { noteLogOutcome, withRequestLog } from '@/lib/request-log'
@@ -33,7 +33,12 @@ async function handleGET(request: Request, { params }: { params: Promise<{ devic
   const skip = list(COMMANDS_SKIP_PARAM, COMMANDS_MAX_SKIP)
   const knownRelease = search.get(COMMANDS_DAEMON_LATEST_PARAM)
   // A device with scheduling off gets no work (as GET .../runs).
-  const options = { ...(request.headers.get(ACTIVE_TURN_STEER_HEADER) === '1' ? { activeTurnSteer: true } : {}), mailboxNotices: request.headers.get(MAILBOX_NOTICE_HEADER) === '1', queued: device.enabled }
+  const options = {
+    ...(request.headers.get(ACTIVE_TURN_STEER_HEADER) === '1' ? { activeTurnSteer: true } : {}),
+    ...(request.headers.get(RUN_CONTROL_COMMANDS_HEADER) === '1' ? { runControlCommands: true } : {}),
+    mailboxNotices: request.headers.get(MAILBOX_NOTICE_HEADER) === '1',
+    queued: device.enabled,
+  }
   // The cheap check also refuses a revoked credential; the full read hands over work.
   const check = await deviceMayHaveWork(deviceId, skip, knownRelease ? { ...options, skipDeviceCommands: list(COMMANDS_SKIP_DEVICE_COMMANDS_PARAM, COMMANDS_MAX_SKIP_DEVICE_COMMANDS) } : options)
   const { commands, queuedRuns: queued } = check.work ? await deviceWork(deviceId, skip, options) : { commands: [], queuedRuns: [] }

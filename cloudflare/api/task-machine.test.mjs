@@ -38,3 +38,38 @@ test('a valid open passes the grant to the machine and returns its receipt', asy
   assert.deepEqual(seen, [grant])
   assert.equal((await response.json()).state, 'running')
 })
+
+test('portable archive bytes stream only through an authenticated task bridge', async () => {
+  const payload = Uint8Array.from([0, 1, 255])
+  const receipt = { size: payload.length, sha256: 'b'.repeat(64), headSha: 'c'.repeat(40) }
+  const identity = { ...grant, portableWorkspace: receipt }
+  const id = randomUUID()
+  const machine = {
+    async stagePortableArchive(received, body) {
+      assert.deepEqual(received, identity)
+      assert.deepEqual(new Uint8Array(await new Response(body).arrayBuffer()), payload)
+      return receipt
+    },
+    async portableArchive(received, operation, archiveId) {
+      assert.deepEqual(received, grant)
+      assert.equal(operation, 'read')
+      assert.equal(archiveId, id)
+      return new Response(payload)
+    },
+  }
+  const stage = (authorization, encodedGrant = Buffer.from(JSON.stringify(identity)).toString('base64')) =>
+    taskMachine(new Request('http://task-machine.internal/v1/stage-portable-archive', {
+      method: 'POST', headers: { authorization, 'content-type': 'application/octet-stream', 'x-mikka-task-grant': encodedGrant },
+      body: payload,
+    }), { TASK_MACHINE: machine }, { params: { token: 'fixture-token' } })
+  assert.equal((await stage('Bearer wrong')).status, 403)
+  assert.equal((await stage('Bearer fixture-token', 'invalid')).status, 400)
+  assert.deepEqual(await (await stage('Bearer fixture-token')).json(), receipt)
+  const request = new Request('http://task-machine.internal/v1/portable-archive', {
+    method: 'POST',
+    headers: { authorization: 'Bearer fixture-token', 'content-type': 'application/json' },
+    body: JSON.stringify({ grant, operation: 'read', id }),
+  })
+  const read = await taskMachine(request, { TASK_MACHINE: machine }, { params: { token: 'fixture-token' } })
+  assert.deepEqual(new Uint8Array(await read.arrayBuffer()), payload)
+})

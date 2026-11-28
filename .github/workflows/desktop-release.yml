@@ -313,11 +313,17 @@ jobs:
       # The installed renderer uses the shared Vite and application dependency
       # graph, including apps/frontend and root UI/CSS build dependencies.
       - run: pnpm install --frozen-lockfile
-      - name: Check that the private UI records every restyle of a paid block
-        # 「原样使用，只换数据」: the overlay's own guard (scripts/paid-overrides.mjs) runs before it is built in; an
-        # overlay revision older than the guard has nothing to run.
+      - name: Check the private UI's paid-source list and patch ledger
+        # The overlay's own check runs before it is built in: scripts/paid-sources.mjs, or on a pinned overlay older than
+        # that, its predecessor scripts/paid-overrides.mjs. An overlay with neither has nothing to run (as before).
+        # Paid blocks themselves are edited to match the top-product reference
+        # (mikka-hosted-ui/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md).
         run: |
-          if [ -f .hosted-ui/scripts/paid-overrides.mjs ]; then node .hosted-ui/scripts/paid-overrides.mjs; fi
+          if [ -f .hosted-ui/scripts/paid-sources.mjs ]; then
+            node .hosted-ui/scripts/paid-sources.mjs
+          elif [ -f .hosted-ui/scripts/paid-overrides.mjs ]; then
+            node .hosted-ui/scripts/paid-overrides.mjs
+          fi
       - name: Install private UI runtime dependencies without license scripts
         run: |
           if ! pnpm --dir .hosted-ui install --ignore-workspace --prod --ignore-scripts --frozen-lockfile > "$RUNNER_TEMP/private-ui-install.log" 2>&1; then
@@ -325,7 +331,7 @@ jobs:
             exit 1
           fi
       # Evidence for this exact public + hosted pairing, before any signing credential: the desktop
-      # route-allowlist guard (mandatory, never skipped) plus every Desktop check the policy lists.
+      # UI API route contract (mandatory, never skipped) plus every Desktop check the policy lists.
       - name: Run the required release checks for this exact public and hosted pairing
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -344,6 +350,34 @@ jobs:
         run: node apps/desktop/scripts/install-electron.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+      # Desktop telemetry uses the web's PostHog project; its ingestion key is
+      # public (apps/desktop/src/main/telemetry.ts). A build without it sends nothing.
+      # No host is read: the project is in PostHog's US region, the build's
+      # default (https://us.i.posthog.com, as the web's DEFAULT_POSTHOG_API_HOST).
+      - name: Read the existing PostHog project ingestion key through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /vercel
+          secret-name: NEXT_PUBLIC_POSTHOG_KEY
+          include-imports: false
+      - name: Stamp the release version
+        working-directory: apps/desktop
+        run: npm pkg set version="$RELEASE_VERSION"
+      # The renderer compiles the private UI checkout; build it here, before any signing or notarization
+      # credential is in the job's environment, so no code from the checkout can run beside them. Packaging
+      # below uses this output (package:mac:prebuilt) and never rebuilds. The track-owner switch stays unset, so the
+      # checkout's Vite plugin is not even imported (scripts/ci/desktop-release-overlay-guard.test.mjs).
+      - name: Build the desktop app and renderer before any signing credential
+        run: |
+          if ! pnpm --filter @mikka/desktop build > "$RUNNER_TEMP/official-desktop-build.log" 2>&1; then
+            echo "::error::Official desktop build failed; private compiler diagnostics withheld."
+            exit 1
+          fi
       - name: Read existing APPLE_DEVELOPER_ID_P12_BASE64 through OIDC
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
         with:
@@ -445,13 +479,10 @@ jobs:
           test -n "$xcode" || { echo "::error::No Xcode 26 on this runner; build/icon.icon needs actool 26+"; exit 1; }
           sudo xcode-select -s "$xcode"
           actool --version
-      - name: Stamp the release version
-        working-directory: apps/desktop
-        run: npm pkg set version="$RELEASE_VERSION"
       - name: Package signed macOS app
         run: |
-          if ! pnpm --filter @mikka/desktop package:mac > "$RUNNER_TEMP/official-desktop-build.log" 2>&1; then
-            echo "::error::Official desktop build failed; private compiler diagnostics withheld."
+          if ! pnpm --filter @mikka/desktop package:mac:prebuilt > "$RUNNER_TEMP/official-desktop-package.log" 2>&1; then
+            echo "::error::Official desktop packaging failed; private diagnostics withheld."
             exit 1
           fi
       - name: Audit the packaged app-owned files

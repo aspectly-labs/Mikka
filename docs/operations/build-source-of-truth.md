@@ -341,17 +341,54 @@ production serves (no downgrade); and every `requiredChecks.production` entry
 passes. The private publisher re-checks the promoters, the staging evidence
 (`stagingEvidence`) and the downgrade rule before any write.
 
+Production (automatic, `workflow_run`): the public selector re-reads and
+validates the policy at the operations commit it deploys, requires
+`autoProduction: true` there, and applies the same daemon floor and
+`requiredChecks.production` gates to the candidate's `sourceCommit` before any
+deployment input is exported or credential read. Two manual gates are not run:
+the current-staging-baseline check and the downgrade comparison. Both hold by
+construction, because the workflow-level `cloudflare-application-deployment`
+concurrency group runs this run's staging and production jobs with no other
+deployment in between (so its own staging result is the current baseline), and
+the candidate was `main` when staging selected it inside that group, and `main`
+(protected, never rewritten) contains every commit production can already
+serve.
+
+The automatic selector holds production back (`status=not-ready`) instead of
+failing the run when the evidence could still arrive for the same commit:
+
+- a listed check-run has no successful run on the commit: still queued or
+  running, not started, or finished as failure, cancelled or timed out. A
+  check-run entry whose `checkRun` name or `workflow` path matches nothing is
+  held back the same way, forever, not failed;
+- npm `latest` is below the candidate's `MIN_DAEMON_VERSION`, or the npm registry
+  did not answer (`npmLatestDaemon` returns undefined), which is held back the
+  same way, not failed.
+
+Production is then skipped, the run still succeeds and no failure issue is
+filed. The select step writes a step summary with the reason, the cause code
+and the recovery: dispatch `pipeline-promote` with that `pipeline_run` and
+`promote_source` once the check passes or npm `latest` meets the floor. A check
+that finished unsuccessfully is headed as a likely real failure and annotated
+as an error; a pending or never-started one as a wait. Only these fail the
+run: a `builtin` check the selector does not implement, a policy that fails its
+schema or cannot be read (including a malformed `requiredChecks` entry),
+`autoProduction` not `true` at the pinned operations commit, and every
+integrity refusal (manifest, artifact, run or actor).
+
 Desktop (a `desktop-release.yml` dispatch): the dispatcher and re-run actor are
 promoters; the receipt is verified as before (a manual `pipeline:` receipt must
 come from a promoter's `pipeline-promote`); then, after the hosted checkout and
 before any Apple credential, `release-checks.mjs run desktop` runs the Desktop
-route-allowlist guard (`desktop-route-guard`): `pnpm run
+UI API route contract (`desktop-route-guard`): `pnpm run
 test:desktop-release-guard` from the product checkout being packaged, after
-checking the exact public commit and hosted SHA. It fails unless the TAP summary
-shows at least three tests, all passed, none skipped, todo or cancelled; that
-summary rule is what stops a missing hosted checkout today. It also passes
-`MIKKA_REQUIRE_OFFICIAL_UI=1`, which nothing reads yet; the Desktop lane's
-redefinition of the script is meant to fail on it instead of skipping. Then
+checking the exact public commit and hosted SHA. The script runs
+`scripts/ui-api-routes.test.mjs` (every API route the official UI requests
+exists on the server with its method) and the renderer request scanner's own
+tests; the Desktop app keeps no client-side route list. It fails unless the TAP
+summary shows at least three tests, all passed, none skipped, todo or
+cancelled, and it passes `MIKKA_REQUIRE_OFFICIAL_UI=1`, which makes the
+contract fail instead of skip without the hosted checkout. Then
 every listed Desktop check runs. A product commit without that package script
 cannot be released. Desktop never starts by itself from a deployment dispatch
 (`gateway-observe`, `pipeline-promote`).
@@ -372,6 +409,16 @@ it (`pipeline_daemon_latest_behind`); promote the daemon to `latest` first. This
 or manual (the selector reads the declaration at the start of a line in the
 candidate commit and ignores comments).
 
+### Cloud Services staging and promotion
+
+Dispatch `cloud-services-stage` with the reviewed `cloud_source_sha` and the
+original qualification run, attempt, and artifact. Once staging passes, any
+listed promoter can dispatch `cloud-services-promote` with the same inputs,
+the successful stage's run ID in `pipeline_run`, and its attempt in
+`cloud_stage_attempt`. Promotion checks the staging receipt against the active
+staging deployment and requires the candidate to contain the production
+baseline. Use `cloud-services-production` only during a production incident.
+
 ### Break-glass phases that bypass the staging evidence
 
 These `cloudflare-app-deploy.yml` `deploy-application` phases still write
@@ -383,8 +430,7 @@ so they stay **owner-only** (Alex, 2026-11-27), and so do `eve-retire` (stops
 production Eve hosts) and `gateway-observe` (runs funded model acceptance and
 chains the E2B runtime release): the job `if` and the private operator require
 `alexj11324` as both actor and re-run actor (`BREAK_GLASS_PHASES` in
-`scripts/release/release-policy.mjs`). Agents promote only through
-`pipeline-promote`. The remaining manual phases (`stage-*`, `gateway-prepare`,
+`scripts/release/release-policy.mjs`). Agents promote through `pipeline-promote` or `cloud-services-promote`. The remaining manual phases (`stage-*`, `gateway-prepare`,
 `service-stage`, `cloud-services-stage`, `pipeline-stage`, `pipeline-rollback`)
 need any promoter, on a reviewed operations commit.
 `gateway-observe` and `service-production` still chain the E2B runtime release
@@ -426,8 +472,9 @@ The Desktop and runtime verifiers read `https://app.aspectlylabs.com/mikka/api/v
 It is a known flake: on 2026-11-27 it briefly answered
 `{"error":"deploymentVersionUnavailable"}` (HTTP 200) before answering build
 `01a4a7dcd076`, overlay `24d3aa2a` again. `readProductionVersion` retries only
-that unavailability or a non-200, four reads with 2, 4 and 8 second backoff,
-then fails closed; an answer that names a build is final.
+that unavailability or a non-200, four requests in total with 2, 4 and 8 second
+backoff (it skips the shared reader's immediate 503 retries), then fails closed;
+an answer that names a build is final.
 
 Production at the pause is deployment run 45913824441 (`main` `0e259f65f`,
 services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back.
@@ -437,7 +484,7 @@ services built at `01a4a7dcd076`, UI overlay `24d3aa2a`). It was not rolled back
 Each must exist and pass, listed in `requiredChecks` where it is a check, with
 evidence linked in the `mikka-cloud` PR that flips the flag:
 
-- the Desktop route-allowlist guard in release CI with the hosted checkout (now
+- the Desktop UI API route contract in release CI with the hosted checkout (now
   mandatory in `desktop-release.yml`);
 - browser end-to-end tests on hosted UI pull requests;
 - a smoke test of the signed Desktop build before publication;
@@ -449,6 +496,9 @@ evidence linked in the `mikka-cloud` PR that flips the flag:
 - the Infisical OIDC identity bound to `refs/heads/main` claims (owner action, above);
 - the daemon floor check (`MIN_DAEMON_VERSION` against npm `latest`) in the private
   publisher too, not only in the public selector.
+- a held-back automatic promotion (`not-ready`) opens, or updates, one
+  "production held back" issue naming the run, the check and the recovery
+  dispatch, so it is not visible only in a green run's step summary.
 
 ### Mobile OTA while paused
 

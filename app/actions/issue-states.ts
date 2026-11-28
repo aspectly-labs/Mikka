@@ -51,7 +51,7 @@ export async function setDefaultWorkspaceIssueState(input: SetDefaultIssueStateI
   })
 }
 
-/** Capy's MoveAndDelete: the state's tasks move to `moveTo` first. */
+/** Deleting a state moves its tasks to `moveTo` first, as Capy does. */
 export async function deleteWorkspaceIssueState(input: DeleteIssueStateInput): Promise<ActionResult<{ moved: number }>> {
   return workspaceAction(async () => {
     const { userId, input: parsed } = await asAdmin(deleteIssueStateInput.parse(input))

@@ -7,6 +7,7 @@ import { artifactFor, readArtifactMembers } from './pipeline-inputs.mjs'
 import { isPromoter } from './release-policy.mjs'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { containsDesktopSource, githubRead, PRODUCTION_VERSION_URL } from './web-deploy.mjs'
+import { isPipelineProductionPromoted } from './production-promotion.mjs'
 
 const ownerId = 183887963
 const mergeQueueId = 118344674
@@ -61,15 +62,13 @@ export function parsePromotionRecord(raw) {
   return record
 }
 
-async function publicRead(url, accept, fetchImpl) {
+// A live read rides out up to two immediate 503s; a caller with its own backoff loop passes 0 so
+// its attempt count is the total number of requests.
+async function publicRead(url, accept, fetchImpl, retries = fetchImpl === fetch ? 2 : 0) {
   const init = () => ({ redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(15000),
     headers: { accept, 'cache-control': 'no-cache' } })
   let response = await fetchImpl(url, init())
-  if (response.status === 503 && fetchImpl === fetch) {
-    await response.body?.cancel()
-    response = await fetchImpl(url, init())
-  }
-  if (response.status === 503 && fetchImpl === fetch) {
+  for (let retry = 0; retry < retries && response.status === 503; retry++) {
     await response.body?.cancel()
     response = await fetchImpl(url, init())
   }
@@ -199,7 +198,8 @@ export async function readProductionVersion(fetchImpl = fetch, { wait = sleep, a
   for (let attempt = 1; ; attempt++) {
     let failure
     try {
-      const response = await publicRead(PRODUCTION_VERSION_URL, 'application/json', fetchImpl)
+      // No inner 503 retry: this loop alone bounds the reads at `attempts` requests.
+      const response = await publicRead(PRODUCTION_VERSION_URL, 'application/json', fetchImpl, 0)
       let body
       try { body = await response.json() } catch { body = null }
       if (present(body?.build, sha)) return { headers: response.headers, body }
@@ -262,13 +262,6 @@ async function servingObservation(ref, api) {
 // dispatch, used while automatic promotion is paused, is accepted only by a Desktop release the
 // owner dispatches by hand with that receipt (`manual`).
 const pipelineRef = /^pipeline:([1-9][0-9]{0,15}):([1-9][0-9]{0,15})$/
-const isPipelineProductionPromoted = job => job.name === 'pipeline-production'
-  && job.status === 'completed' && job.conclusion === 'success'
-  && Array.isArray(job.steps)
-  && job.steps.some(step => step.name === 'Promote and verify the staged service manifest'
-    && step.status === 'completed' && step.conclusion === 'success')
-  && job.steps.some(step => step.name === 'Upload production receipts'
-    && step.status === 'completed' && step.conclusion === 'success')
 
 /** The release policy projection the workflow read from private main (release-policy.mjs read desktop). */
 function releasePromoters(env) {

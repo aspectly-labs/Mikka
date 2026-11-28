@@ -154,6 +154,18 @@ test('interop reads, sends and Drive follow the ACL of the caller\'s own Workspa
     assert.deepEqual(await runInteropTool(asOutsiderBot, 'drive_read', { scope: 'bot', scopeId: teammateBot, path: 'notes.md' }), notFound)
   })
 
+  await t.test('an environment Drive follows sharing and personal ownership', async () => {
+    const { saveEnvironment, setEnvironmentScope } = await import('../project-resources/store')
+    const env = await saveEnvironment(teammate, { workspaceId: team.id, scope: 'personal', name: 'Personal Drive', configuration: {} })
+    const input = { scope: 'environment', scopeId: env.id }
+    const asAdmin = { kind: 'account' as const, userId: owner, workspaceId: team.id }
+    assert.equal((await runInteropTool(asTeammate, 'drive_list', input) as { scopeId: string }).scopeId, env.id)
+    assert.deepEqual(await runInteropTool(asAdmin, 'drive_list', input), notFound)
+    assert.deepEqual(await runInteropTool(asTeammateBot, 'drive_list', input), notFound)
+    await setEnvironmentScope(teammate, { workspaceId: team.id, environmentId: env.id }, 'workspace')
+    assert.equal((await runInteropTool(asTeammateBot, 'drive_list', input) as { scopeId: string }).scopeId, env.id)
+  })
+
   await t.test('Drive: the thread folder follows the thread ACL and the workspace folder is team-only', async () => {
     // The Bot holds canReadContent on the thread from the first subtest: it can list, not write.
     const listed = await runInteropTool(asTeammateBot, 'drive_list', { scope: 'thread', scopeId: thread }) as { scopeId: string }

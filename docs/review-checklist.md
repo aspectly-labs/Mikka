@@ -4,23 +4,25 @@ Run this before you show any UI to Alex, in Figma or in code, and before you
 approve someone else's UI PR. Each item names the rule it checks. If an item
 fails, fix it first; do not show work with known failures.
 
-A paid block or component (BoardUI Pro, affectUI, beUI Pro) is checked against
-the library's demo instead: attach a side-by-side and list every visual
-difference beyond data and text. The Reuse, Look and Figma items below never
-ask to restyle one ([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+Every changed surface, paid blocks and components (BoardUI Pro, affectUI,
+beUI Pro) included, is checked against its top-product reference (ChatGPT /
+Codex, Claude / Claude Code, Capy or Linear): cite it per surface (a Mobbin
+link or the unpacked app or source path) and list every remaining difference
+with its reason. A paid block's library demo is not a reference
+([2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 
 ## Before showing UI
 
 ### Reuse (R-90) & Design System v2
 
 - [ ] Every part of the screen names the existing component it uses
-      (`docs/design/components.md`, `docs/design/design-system.md` §2, the live
+      (`mikka-hosted-ui/docs/design/components.md`, `mikka-hosted-ui/docs/design/design-system.md` §2, the live
       screen for the same job, or a library in `components/reui/`,
       `components/ui/`, `components/motion/`, the OpenUI catalog), drawn or
       coded as that component renders it.
 - [ ] Any new component says why none of those fit and is added to
-      `components.md` in the same PR.
-- [ ] **Viewport budget (`design-system.md` §3):** scrollable chat keeps
+      `mikka-hosted-ui/docs/design/components.md` in the same PR.
+- [ ] **Viewport budget (`mikka-hosted-ui/docs/design/design-system.md` §3):** scrollable chat keeps
       `>= 55%` on desktop (`1280×760`) and `>= 50%` on compact (`960×720`);
       at most one bottom `TakeoverCard` (`<= min(42dvh, 320px)`, mobile
       `min(40dvh, 260px)`) with `Later` / `Esc` collapse; `TodoList` defaults
@@ -28,7 +30,7 @@ ask to restyle one ([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-bloc
       duplication; zero unbounded approval cards outside `ThreadScreen`;
       non-blocking quota/model/offline warnings use 1-line single-CTA
       `ChatStatusStrip` without hijacking the composer.
-- [ ] **Mandatory 7-state contract (`design-system.md` §4):** Loading
+- [ ] **Mandatory 7-state contract (`mikka-hosted-ui/docs/design/design-system.md` §4):** Loading
       (shape-matched skeleton), Empty (first-use vs 0-match with Clear), Error
       (inline Retry preserving drafts, never behind open modals), Pending
       (synchronous double-submit lock + targeted button spinner + dismiss guard),
@@ -75,7 +77,7 @@ what they came for. A reviewer who did not build the screen runs this.
 - [ ] For changed business capabilities, the authoritative `command × permission × business transition × promised UI entry` is traced **both ways**; each authorized user job has a discoverable path and every visible action reaches a real command and durable result. Use [mikka-action-coverage](../.claude/skills/mikka-action-coverage/SKILL.md).
 - [ ] Do not confuse derived Task run/Factory states such as `running` with writable Task business status; a compact/read-only view may link to the canonical editor instead of duplicating every action.
 - [ ] A real action has immediate pending/error feedback, an ACK or explicit error, persisted readback/retry and appropriate permission denial. A Toast or callable handler alone is not acceptance.
-- [ ] Every audit labels source-only, runtime-verified, not-tested and intentionally-unavailable states and attaches the exact public/hosted source pair. Follow [UX audit baseline](design/ux-quality-audit.md) and [mikka-ux-quality-audit](../.claude/skills/mikka-ux-quality-audit/SKILL.md); do not revive retired browser E2E CI.
+- [ ] Every audit labels source-only, runtime-verified, not-tested and intentionally-unavailable states and attaches the exact public/hosted source pair. Follow [UX audit baseline](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/ux-quality-audit.md) and [mikka-ux-quality-audit](../.claude/skills/mikka-ux-quality-audit/SKILL.md); do not revive retired browser E2E CI.
 
 ### Model
 
@@ -92,8 +94,8 @@ what they came for. A reviewer who did not build the screen runs this.
 - [ ] Each task row shows its own state's icon. The hand means a task needs
       the person, the octagon means blocked, and the triangle means failed.
       State glyphs use the accepted semantic colours, with no dots or badges
-      ([state icons](design/decisions/2026-11-07-2230-one-icon-per-task-state.md),
-      [colours](design/decisions/2026-11-08-0130-task-state-icon-colours.md)).
+      ([state icons](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-2230-one-icon-per-task-state.md),
+      [colours](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0130-task-state-icon-colours.md)).
 - [ ] A task opens its one conversation through task detail. Attempts and
       活动 run oldest first. Selecting an attempt scrolls to its section, the
       composer addresses the newest attempt, and attempts never show a hand
@@ -112,17 +114,17 @@ more than once.
 - [ ] The only model picker is a bot composer's `BotModelPicker` chip (R-11).
 - [ ] No starter or suggestion cards in a chat (R-12).
 - [ ] No avatar or name on messages in a one-to-one chat (R-13).
-- [ ] Nothing from the "Do not use" table in `docs/design/components.md` is
+- [ ] Nothing from the "Do not use" table in `mikka-hosted-ui/docs/design/components.md` is
       imported by the diff.
 
 ### Look
 
 - [ ] No white hairlines in dark mode (R-31); card/notice rules use translucent
-      `--rule` and `8px`/`12px` radii (`design-system.md` §1, T2). Check inputs,
+      `--rule` and `8px`/`12px` radii (`mikka-hosted-ui/docs/design/design-system.md` §1, T2). Check inputs,
       dialogs, popovers, notice strips and column edges.
 - [ ] Greys are pure neutral; no slate, zinc or teal tint (R-30, R-38); primary
-      and secondary text clear WCAG AA `>= 4.5:1` in Light and Dark (`design-system.md` §1.1, T1).
-- [ ] Only the allowed text styles, radii and quiet status washes (`design-system.md` §1.2–§1.3, R-32, R-33); zero card-in-card error nesting (R-39).
+      and secondary text clear WCAG AA `>= 4.5:1` in Light and Dark (`mikka-hosted-ui/docs/design/design-system.md` §1.1, T1).
+- [ ] Only the allowed text styles, radii and quiet status washes (`mikka-hosted-ui/docs/design/design-system.md` §1.2–§1.3, R-32, R-33); zero card-in-card error nesting (R-39).
 - [ ] Status colours from the StatusBadge / `state-mark.ts` set (R-34, R-52).
 - [ ] Every device, agent, model, app and account name has its icon in
       front of it; brand marks are bare colored logos, not in a white
@@ -178,7 +180,7 @@ more than once.
    the screens).
 4. CI is green as the final gate (`CONTRIBUTING.md` § How changes are
    tested); do not run builds on the Mac.
-5. Docs updated in the same PR: `rules.md`, `components.md`, a new file in
+5. Docs updated in the same PR: `mikka-hosted-ui/docs/design/rules.md`, `mikka-hosted-ui/docs/design/components.md`, a new file in
    `decisions/`, `glossary.md` or the feature spec, whichever the change
    touches.
 6. The owning agent merges it once CI is green on the latest head and

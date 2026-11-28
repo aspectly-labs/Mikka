@@ -10,6 +10,8 @@ import {
   runReport,
   runExecution,
   runBenchmarkContext,
+  runQuestion,
+  RUN_QUESTION_KINDS,
 } from "./run"
 
 const report = {
@@ -164,5 +166,21 @@ describe("Factory validation results", () => {
     expect(runReport.parse(value)).toEqual(value)
     for (const reviewVerdict of ["passed", "changes_requested", "needs_judgment"]) expect(runReport.parse({ ...value, reviewVerdict })).toEqual({ ...value, reviewVerdict })
     expect(runReport.safeParse({ ...value, reviewVerdict: "maybe" }).success).toBe(false)
+  })
+})
+
+describe("run questions (ADR 2026-11-27-1615)", () => {
+  const question = { questionId: "6f0c1c55-2d2c-4b7e-9d64-6f1d4cdb3f11", question: "Which release?" }
+  it("has no permission kind", () => {
+    expect(RUN_QUESTION_KINDS).toEqual(["context", "decision", "external"])
+  })
+  it("reads a stored permission question as a decision", () => {
+    expect(runQuestion.parse({ ...question, kind: "permission" }).kind).toBe("decision")
+    expect(runReport.shape.question.parse({ ...question, kind: "permission" })?.kind).toBe("decision")
+  })
+  it("keeps the other kinds and still rejects unknown ones", () => {
+    for (const kind of RUN_QUESTION_KINDS) expect(runQuestion.parse({ ...question, kind }).kind).toBe(kind)
+    expect(runQuestion.parse(question).kind).toBe("decision")
+    expect(runQuestion.safeParse({ ...question, kind: "approval" }).success).toBe(false)
   })
 })

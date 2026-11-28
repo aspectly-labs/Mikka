@@ -1,20 +1,18 @@
 'use server'
 
-import { z } from 'zod'
 import { ActionFailureError, runAction } from '@/lib/action-error'
 import type { ActionResult } from '@/lib/action-result'
 import { requireUser } from '@/lib/acting-user'
-import { decidePendingAction as decideForUser } from '@/lib/pending-actions'
 
-const getUserId = async () => (await requireUser()).id
-
-/** Approves (runs) or declines one proposal. */
-export async function decidePendingAction(id: string, approve: boolean): Promise<ActionResult<{ status: 'done' | 'failed' | 'declined' | 'running'; reason: string | null }>> {
+/**
+ * Retired: nothing waits for a person's approval (ADR 2026-11-27-1615), so
+ * there is nothing to approve or decline. Kept for one release only because the
+ * official UI still imports it; it decides nothing and always answers
+ * `pendingActionUnavailable`. Remove with the hosted follow-up.
+ */
+export async function decidePendingAction(_id: string, _approve: boolean): Promise<ActionResult<{ status: 'done' | 'failed' | 'declined' | 'running'; reason: string | null }>> {
   return runAction(async () => {
-    const userId = await getUserId()
-    const parsed = z.uuid().safeParse(id)
-    if (!parsed.success) throw new ActionFailureError('pendingActionUnavailable')
-    const { status, error } = await decideForUser(userId, parsed.data, approve === true)
-    return { status, reason: error }
+    await requireUser()
+    throw new ActionFailureError('pendingActionUnavailable')
   })
 }

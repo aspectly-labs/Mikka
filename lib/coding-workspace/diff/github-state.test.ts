@@ -6,7 +6,7 @@ import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { diffSnapshot, WorkspaceReviewError, type DiffSnapshot } from '@mikka/protocol/coding-workspace-review'
 import type { RequestBudget } from '../../request-budget'
 import { GitHubDiffClient, GitHubWriteRejection } from './github-api'
-import { readGitHubPullState } from './github-state'
+import { readGitHubPullState, readGitHubPullSummary } from './github-state'
 import { manifestRevision } from './store'
 
 // Native schema, including nullable reviewDecision and string-encoded BigInt:
@@ -229,4 +229,51 @@ test('expired or aborted budgets do not send a GraphQL observation request', asy
       const f = fixture(t, undefined, budget)
       await assert.rejects(f.read(), failure('workspace_review_github_unavailable')); assert.equal(f.calls.length, 0)
     })
+})
+
+const liveNative = (changes: Partial<NativePull> = {}) => native({ changedFiles: 9, additions: 42, deletions: 7,
+  isDraft: false, mergeable: 'MERGEABLE', commits: { nodes: [{ commit: { oid: headSha, statusCheckRollup: { contexts: {
+    totalCount: 124, checkRunCount: 121, statusContextCount: 3,
+    checkRunCountsByState: [{ count: 116, state: 'SUCCESS' }, { count: 2, state: 'FAILURE' }, { count: 2, state: 'IN_PROGRESS' }, { count: 1, state: 'SKIPPED' }],
+    statusContextCountsByState: [{ count: 1, state: 'SUCCESS' }, { count: 1, state: 'ERROR' }, { count: 1, state: 'EXPECTED' }],
+  } } } }] }, ...changes })
+
+test('live PR summary reads current GitHub metadata and complete check counts beyond one page without a snapshot', async t => {
+  const f = fixture(t, () => Response.json(envelope(liveNative({ reviewDecision: 'CHANGES_REQUESTED' }))))
+  const value = await readGitHubPullSummary(f.grant, number)
+  assert.equal(value.state, 'changes_requested'); assert.equal(value.files, 9); assert.equal(value.additions, 42); assert.equal(value.deletions, 7)
+  assert.equal(value.headSha, headSha); assert.equal(value.baseSha, baseSha); assert.equal(value.mergeable, true); assert.equal(value.draft, false)
+  assert.equal(value.url, `https://github.com/${fullName}/pull/${number}`)
+  assert.deepEqual(value.checks && { total: value.checks.total, passed: value.checks.passed, failed: value.checks.failed,
+    pending: value.checks.pending, neutral: value.checks.neutral }, { total: 124, passed: 117, failed: 3, pending: 3, neutral: 1 })
+  assert.equal(value.checks?.sha, headSha); assert.equal(value.checks?.observedAt, value.observedAt)
+  assert.equal(f.calls.length, 1)
+  assert.doesNotMatch(f.calls[0]!.query, /\b(?:body|bodyText|bodyHTML|url|files|tree|patch)\b/)
+})
+
+test('live summaries distinguish unknown checks and mergeability from zero checks and do not borrow another commit', async t => {
+  for (const [name, commits, expected] of [
+    ['head with no checks', { nodes: [{ commit: { oid: headSha, statusCheckRollup: null } }] }, 0],
+    ['empty nullable state groups', { nodes: [{ commit: { oid: headSha, statusCheckRollup: { contexts: { totalCount: 0,
+      checkRunCount: 0, statusContextCount: 0, checkRunCountsByState: null, statusContextCountsByState: null } } } }] }, 0],
+    ['empty PR commit connection', { nodes: [] }, null],
+    ['different returned commit', { nodes: [{ commit: { oid: object('another commit'), statusCheckRollup: null } }] }, null],
+  ] as const) await t.test(name, async t => {
+    const f = fixture(t, () => Response.json(envelope(liveNative({ commits, mergeable: 'UNKNOWN' }))))
+    const value = await readGitHubPullSummary(f.grant, number)
+    assert.equal(value.mergeable, null); assert.equal(value.checks?.total ?? null, expected)
+  })
+})
+
+test('incomplete native check aggregates and another repository never become a successful PR summary', async t => {
+  for (const [name, changes, expected] of [
+    ['incomplete counts', { commits: { nodes: [{ commit: { oid: headSha, statusCheckRollup: { contexts: {
+      totalCount: 2, checkRunCount: 2, statusContextCount: 0, checkRunCountsByState: [{ count: 1, state: 'SUCCESS' }], statusContextCountsByState: [],
+    } } } }] } }, 'workspace_review_github_unavailable'],
+    ['unknown native state', { mergeable: 'MAYBE' }, 'workspace_review_github_unavailable'],
+    ['another repository id', { repository: { fullDatabaseId: '98765', nameWithOwner: fullName } }, 'workspace_review_github_forbidden'],
+  ] as const) await t.test(name, async t => {
+    const f = fixture(t, () => Response.json(envelope(liveNative(changes))))
+    await assert.rejects(readGitHubPullSummary(f.grant, number), failure(expected))
+  })
 })

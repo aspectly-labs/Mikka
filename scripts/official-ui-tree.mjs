@@ -3,9 +3,12 @@
 // holds the base components, styles, fonts and client application at the paths they had here (decision 2026-11-22-2205).
 // This view lets a policy keep its own paths: `components/ui/badge.tsx` reads `<checkout>/core/components/ui/badge.tsx`,
 // and the checkout's `@hosted/core/` imports read as the `@/` imports the rules name. Without a checkout the policies
-// that need the interface skip; mikka-hosted-ui's CI runs them with its checkout mounted.
+// that need the interface skip; mikka-hosted-ui's CI runs them with its checkout mounted and MIKKA_REQUIRE_OFFICIAL_UI=1,
+// which turns a missing checkout into an error (official-ui-requirement.mjs).
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { officialUiSkip } from './official-ui-requirement.mjs'
 
 // The policies run from the repository root and read its files by relative path; a test that runs a policy in a
 // fixture repository gets that fixture's checkout, or none.
@@ -13,7 +16,10 @@ export const repository = process.cwd()
 const configured = process.env.MIKKA_UI_OVERLAY_DIR?.trim()
 const checkout = configured ? resolve(repository, configured) : join(repository, '.hosted-ui')
 export const officialCore = existsSync(join(checkout, 'core')) ? join(checkout, 'core') : null
-export const needsOfficialUi = !officialCore && 'needs the official UI checkout (MIKKA_UI_OVERLAY_DIR or .hosted-ui); mikka-hosted-ui CI runs it'
+// MIKKA_REQUIRE_OFFICIAL_UI=1 applies to this repository only: a policy run in a fixture repository (cwd elsewhere)
+// is expected to have no checkout.
+const own = resolve(fileURLToPath(new URL('..', import.meta.url))) === resolve(repository)
+export const needsOfficialUi = officialUiSkip(officialCore, 'MIKKA_UI_OVERLAY_DIR or .hosted-ui', own ? process.env : {})
 
 const slash = value => value.split(sep).join('/')
 /** Where a policy's repository path is: this repository's own file, else the checkout's core/ file. */

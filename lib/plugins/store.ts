@@ -9,6 +9,8 @@ import { taskMcpServerSchema, type TaskMcpServer } from '../../packages/protocol
 import type { McpAuthority } from './contracts'
 import type { McpOAuthStore } from './mcp-oauth'
 import { scopedMcpAuthority, singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
+import { nativeMcpName } from './native-mcp'
+import type { WorkspaceMcpServers } from './workspace-servers'
 
 type McpRow = Omit<McpServerView, 'authKind' | 'createdAt'> & {
   auth_header: string | null; ciphertext: string | null; iv: string | null; key_version: number | null; created_at: Date; oauth_enabled: boolean;
@@ -20,11 +22,14 @@ const mcpAuthKind = (row: Pick<McpRow, 'transport' | 'auth_header' | 'oauth_enab
   row.oauth_enabled ? 'oauth' : row.transport === 'stdio' ? (row.auth_header === '__stdio_noenv__' ? 'none' : 'env') : row.auth_header ? 'header' : 'none'
 const mcpView = (row: McpRow): McpServerView => ({ id: row.id, name: row.name, url: row.url, transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: mcpAuthKind(row), createdAt: row.created_at.toISOString() })
 const aad = (userId: string, id: string, url: string, header: string) => JSON.stringify(['personal-mcp', userId, id, url, header.toLowerCase()])
-const stdioConfiguration = (row: McpRow, value: string) => taskMcpServerSchema.options[1].parse({ name: `mcp_${row.id.replaceAll('-', '')}`, transport: 'stdio', ...JSON.parse(value) })
+const stdioConfiguration = (row: McpRow, value: string) => taskMcpServerSchema.options[1].parse({ name: nativeMcpName(row.id), transport: 'stdio', ...JSON.parse(value) })
 
 export class PersonalPluginStore {
   constructor(readonly pool: Pool, readonly env: Readonly<Record<string, string | undefined>> = runtimeEnv(), readonly membership?: Pick<Pool | PoolClient, 'query'>,
-    private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>) {}
+    private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>, private readonly workspaceServers?: Pick<WorkspaceMcpServers, 'connection'>) {}
+  private async workspaceConnections() {
+    return this.workspaceServers ?? new (await import('./workspace-servers')).WorkspaceMcpServers(this.pool, this.env, this.membership)
+  }
   private async write<T>(userId: string, work: (client: PoolClient) => Promise<T>) {
     const client = await this.pool.connect()
     try {
@@ -89,18 +94,24 @@ export class PersonalPluginStore {
   }
   /** Called immediately before remote discovery/call. Never returned by an API. */
   async mcpConnection(userId: string, id: string, revision?: number, authority?: McpAuthority) {
+    // The requester's own server, or the workspace's: validation refuses any other person's (decision 2026-11-27-1700).
     const grant = authority ? (await new WorkspaceMcpStore(this.pool, this.membership).validate(userId, singleMcpAuthority(authority, id))).servers[0] : null
-    const ownerId = grant?.ownerId ?? userId
-    const row = (await this.pool.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true`, [id, ownerId])).rows[0]
+    if (grant?.source === 'workspace') {
+      // Validation fixed requester === userId: a "member" server uses this person's account only.
+      const connection = await (await this.workspaceConnections()).connection(userId, authority!.workspaceId!, grant)
+      if (revision !== undefined && connection.revision !== revision) throw new PluginError('mcpUnavailable', 404)
+      return { ...connection, native: undefined }
+    }
+    const row = (await this.pool.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true`, [id, userId])).rows[0]
     if (!row || revision !== undefined && row.revision !== revision) throw new PluginError('mcpUnavailable', 404)
     if (grant && row.revision !== grant.revision) throw new PluginError('mcpUnavailable', 404)
-    const value = row.auth_header ? openSecret({ ciphertext: row.ciphertext!, iv: row.iv!, keyVersion: row.key_version! }, aad(ownerId,row.id,row.url,row.auth_header),this.env) : null
+    const value = row.auth_header ? openSecret({ ciphertext: row.ciphertext!, iv: row.iv!, keyVersion: row.key_version! }, aad(userId,row.id,row.url,row.auth_header),this.env) : null
     const native = row.transport === 'stdio' ? stdioConfiguration(row, value!) : undefined
     const headers: Record<string,string> = row.auth_header === '__headers__' ? JSON.parse(value!) : row.auth_header && row.transport !== 'stdio' ? { [row.auth_header]:value! } : {}
     if (row.oauth_enabled) {
       for (const name of Object.keys(headers)) if (name.toLowerCase() === 'authorization') delete headers[name]
       const oauth = this.oauth ?? new (await import('./mcp-oauth')).McpOAuthStore(this.pool, this.env)
-      headers.Authorization = `Bearer ${await oauth.accessToken(ownerId, id)}`
+      headers.Authorization = `Bearer ${await oauth.accessToken(userId, id)}`
     }
     const { rows: disabled } = await this.pool.query<{ name: string }>('SELECT tool_name AS name FROM mcp_server_tools WHERE server_id=$1 AND NOT enabled ORDER BY tool_name', [id])
     const disabledTools = disabled.map(tool => tool.name)
@@ -111,13 +122,15 @@ export class PersonalPluginStore {
     return (await this.nativeMcpAssignment(userId, authority, environmentId)).servers
   }
 
-  async nativeMcpAssignment(userId: string, authority: McpAuthority, environmentId?: string | null) {
+  /** The tool switches exported here are read before the claim locks them: the claim response
+   * takes them again from `lockNativeMcpAuthority` (`withLockedToolSwitches`). */
+  async nativeMcpAssignment(userId: string, authority: McpAuthority, environmentId?: string | null): Promise<{ authority: McpAuthority; servers: TaskMcpServer[] }> {
     const store = new WorkspaceMcpStore(this.pool,this.membership)
     const requested = environmentId === undefined ? authority : { ...authority, environmentId }
     const authorized = await store.validate(userId,await scopedMcpAuthority(this.pool,requested))
     const servers = await Promise.all(authorized.servers.map(async grant => {
       const connection = await this.mcpConnection(userId,grant.id,grant.revision,authorized)
-      return connection.native ?? taskMcpServerSchema.parse({ name:`mcp_${grant.id.replaceAll('-','')}`, transport:connection.transport,url:connection.url,headers:connection.headers,...(connection.disabledTools.length ? { disabledTools:connection.disabledTools } : {}) })
+      return connection.native ?? taskMcpServerSchema.parse({ name:nativeMcpName(grant.id), transport:connection.transport,url:connection.url,headers:connection.headers,...(connection.disabledTools.length ? { disabledTools:connection.disabledTools } : {}) })
     }))
     return { authority: authorized, servers }
   }
@@ -187,7 +200,14 @@ export class PersonalPluginStore {
   /** Resolve the bot's existing runtime environment before freezing connection scope. */
   async snapshotForBot(userId: string, botId: string | null, workspaceId: string | null, client: Pick<PoolClient, 'query'> = this.pool) {
     const { rows: [bot] } = botId ? await client.query<{ environmentId: string | null }>('SELECT "environmentId" FROM bots WHERE id=$1 AND "ownerId"=$2 AND "workspaceId"=$3', [botId, userId, workspaceId]) : { rows: [] }
-    return this.snapshot(userId, client, workspaceId, bot?.environmentId)
+    let environmentId = bot?.environmentId ?? null
+    if (environmentId) {
+      const membership = this.membership ?? (await import('@/lib/workspace-db')).workspacePool
+      const { rowCount } = await membership.query(`SELECT 1 FROM workspace_environments WHERE id=$1 AND "workspaceId"=$2
+        AND "archivedAt" IS NULL AND scope='workspace'`, [environmentId, workspaceId])
+      if (!rowCount) environmentId = null
+    }
+    return this.snapshot(userId, client, workspaceId, environmentId)
   }
   /**
    * One enabled skill's body, for `read_personal_skill` (ALE-75).

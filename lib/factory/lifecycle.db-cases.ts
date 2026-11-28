@@ -94,11 +94,12 @@ export async function lifecycleCases(t:TestContext,pool:Pool,authorize:FactoryAu
     await questions.settle('owner',result.continuationRunId);
     assert.equal((await store.read('owner',state.task.id)).task.status,'blocked');
   });
-  await t.test('permission question cannot be answered by model; cancel blocks human replay and claim',async()=>{
+  await t.test('a stored legacy permission question reads as a decision the model cannot answer; cancel blocks human replay and claim',async()=>{
     const r=await store.route('owner',await fixture());
     const d=await dispatch('owner',{binding:factoryBinding(r.task),agentId,deviceRepoId:repoId});
-    await pool.query(`UPDATE agent_runs SET status='stopped',"stopReason"='asked_human',"sessionId"='permission-session',report=$2 WHERE id=$1`,[d.runId,JSON.stringify({question:{questionId:randomUUID(),kind:'permission',question:'May I publish?',options:[]}})]);
+    await pool.query(`UPDATE agent_runs SET status='stopped',"stopReason"='asked_human',"sessionId"='legacy-question-session',report=$2 WHERE id=$1`,[d.runId,JSON.stringify({question:{questionId:randomUUID(),kind:'permission',question:'Which release should this go into?',options:[]}})]);
     const q=await questions.record('owner',d.runId);
+    assert.equal(q.kind,'decision');
     await denies(()=>questions.answer({source:'orchestrator',userId:'owner'},{reference:questionReference(q),answerId:randomUUID(),facts:[{kind:'issue',quote:'Fixture'}]}),'factoryQuestionHumanRequired');
     const current=await store.read('owner',r.task.id);
     await store.apply('owner',factoryBinding(current.task),randomUUID(),{action:'cancel',reason:'Cancelled'});
@@ -108,7 +109,7 @@ export async function lifecycleCases(t:TestContext,pool:Pool,authorize:FactoryAu
   await t.test('real loopback HTTP: authenticated human only, origin, strict body, duplicate and cancelled answer fences',async()=>{
     const r=await store.route('owner',await fixture());
     const d=await dispatch('owner',{binding:factoryBinding(r.task),agentId,deviceRepoId:repoId});
-    await pool.query(`UPDATE agent_runs SET status='stopped',"stopReason"='asked_human',"sessionId"='human-session',report=$2 WHERE id=$1`,[d.runId,JSON.stringify({question:{questionId:randomUUID(),kind:'permission',question:'Confirm requested scope?',options:[]}})]);
+    await pool.query(`UPDATE agent_runs SET status='stopped',"stopReason"='asked_human',"sessionId"='human-session',report=$2 WHERE id=$1`,[d.runId,JSON.stringify({question:{questionId:randomUUID(),kind:'decision',question:'Which scope should this change cover?',options:[]}})]);
     const q=await questions.record('owner',d.runId), sessionId=randomUUID();
     await pool.query(`INSERT INTO "session"(id,"userId",token,"expiresAt","createdAt","updatedAt") VALUES ($1,'owner',$2,now()+interval '1 hour',now(),now())`,[sessionId,randomUUID()]);
     let origin='';

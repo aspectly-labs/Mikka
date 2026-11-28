@@ -164,10 +164,14 @@ async function continuationDefinition(run: Run, prompt: string, key: RunApiKey |
     if (queued) {
       delete definition.repositoryAdmission
       if (queued.agentDefinition?.repositoryAdmission) definition.repositoryAdmission = structuredClone(queued.agentDefinition.repositoryAdmission)
+      delete definition.taskCompute
+      delete definition.taskMachine
+      if (queued.agentDefinition?.taskCompute) definition.taskCompute = structuredClone(queued.agentDefinition.taskCompute)
+      if (queued.agentDefinition?.taskMachine) definition.taskMachine = structuredClone(queued.agentDefinition.taskMachine)
       if (definition.allowLocalRecovery && !queued.agentDefinition?.allowLocalRecovery) {
         delete definition.allowLocalRecovery
-        definition.definitionDigest = workerDefinitionDigest(definition)
       }
+      definition.definitionDigest = workerDefinitionDigest(definition)
     }
     definition.executionIdentity = await freezeExecutionIdentity(pool, { ...(queued ?? run), agentDefinition: definition }, undefined, run.workspaceId)
     const current = definition.executionIdentity

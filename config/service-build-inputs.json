@@ -124,6 +124,8 @@
         "scripts/build-cloudflare-world.mjs",
         "packages/eve-cloudflare-world/**",
         "cloudflare/litellm/request.mjs",
+        "cloudflare/litellm/subscription-chat.mjs",
+        "cloudflare/web/route-path.mjs",
         "cloudflare/bounded-json.mjs",
         "cloudflare/task-sandbox/process-socket.mjs",
         "cloudflare/credential-identity/transport.mjs",
@@ -171,6 +173,7 @@
         "scripts/build-cloudflare-eve-image.sh",
         "cloudflare/api/ingress/services.mjs",
         "cloudflare/litellm/request.mjs",
+        "cloudflare/litellm/subscription-chat.mjs",
         "cloudflare/api/ingress/request.mjs"
       ],
       "entrypoints": [
@@ -245,6 +248,7 @@
       "paths": [
         "deploy/litellm/**",
         "cloudflare/litellm/**",
+        "lib/model-gateway/gateway-generation-id.mjs",
         "lib/model-gateway/protocol-fields.mjs"
       ],
       "entrypoints": [

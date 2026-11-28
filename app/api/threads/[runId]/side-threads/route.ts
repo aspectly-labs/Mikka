@@ -1,6 +1,7 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { defineRoute } from '@/lib/primitives/define-route'
+import { ComputerError } from '@/lib/computer/store'
 import { spawnThread, ThreadSpawnConflictError } from '@/lib/thread-lifecycle'
 
 export const maxDuration = 60
@@ -38,6 +39,7 @@ export const POST = defineRoute<'session', 'pat-scoped', { runId: string }>(
       return respond({ run }, 201)
     } catch (error) {
       if (error instanceof ThreadSpawnConflictError) return respond({ error: error.code }, 409)
+      if (error instanceof ComputerError) return respond({ error: error.message }, error.status)
       if (error instanceof z.ZodError) return respond({ error: 'Invalid request' }, 400)
       return respond({ error: 'Side thread unavailable' }, 503)
     }

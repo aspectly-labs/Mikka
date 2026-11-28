@@ -15,6 +15,8 @@ export const hostedBillingScope = new AsyncLocalStorage<{
   /** The conversation turn the call serves (lib/usage-turn-ref.ts); stored as hosted_usage."usageTurnRef". */
   turnRef?: string | null
   billingSource?: 'credits'
+  /** Stable receipt ID for one host-authorized BYOK web search tool call. */
+  byokWebSearchId?: string
   /** True only after server authorization established each resource binding. */
   attributionComplete?: boolean
 }>()

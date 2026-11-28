@@ -13,7 +13,7 @@ description: >-
 Use this skill before finalizing any UI redesign, PR review, or before-and-after report across Mikka Web, Desktop, or `mobile-next` iOS.
 
 ## Gate 1 — Authoritative & Competitor Baseline
-1. Read applicable `docs/design/decisions/` and `docs/design/glossary.md` first (e.g., `2026-11-09-0050` paid blocks as shipped, `2026-11-18-1200` Capy sidebar rows, Bot-managed threads, zero `对话`/`会话`/`Issue` in Chinese UI).
+1. Read applicable `docs/design/decisions/` and `docs/design/glossary.md` first (e.g., `2026-11-27-1409` top products over paid blocks, `2026-11-18-1200` Capy sidebar rows, Bot-managed threads, zero `对话`/`会话`/`Issue` in Chinese UI).
 2. Inspect real competitor benchmarks before writing UI code:
    - Query **Mobbin MCP** (`best-practices` → `search` → `search_screens`) for the exact platform (`ios` or `web`) and screen type (ChatGPT, Claude, Cursor, Linear, GitHub, v0).
    - For Agent workflows (tool calls, sidebar/captains/crew, PRs, threads, secrets), inspect the reference Electron **frontend + backend** protocol rather than mimicking surface visuals alone.
@@ -30,7 +30,7 @@ Audit **both** `features/mikka/*` **and** inherited `features/threads/*`, `featu
 - **Built-in Native Reuse**: Wire existing Mikka backend endpoints (`/api/mobile/model`, PR/diff APIs) into built-in native T3 screens (`MikkaModelPickerSheet`, `PullRequestRouteScreen`) instead of hardcoded stubs or Safari escapes.
 
 ## Gate 3 — Web & Cross-Client Hard-0 Checklist
-- **No paid-block bypass**: Never replace shipped `affectUI` / `BoardUI Pro` / `beUI Pro` screens with custom stubs (`DRIFT_CEILING = 0`).
+- **Edit, don't stub**: Edit `affectUI` / `BoardUI Pro` / `beUI Pro` source in place to match the top-product reference; never replace one with a custom stub that drops working controls.
 - **50+ item stress check**: Every repo, secret, model, timezone, member, bot, label, or file picker must support search/filtering and bounded scroll height; use structured KV/chip editors instead of raw newline/`KEY=VALUE` textareas.
 - **Zero DB jargon & honest state**: Strip raw `versionId`, `sha256`, `revision`, `approved`, raw UUIDs, lowercase DB enums, fake disabled switches, and `· 待接入` badges. `进行中` / `Active` filters must exclude `failed`, `stopped`, `done`, and `canceled`.
 - **Verbatim tool calls (Codex standard)**: Align tool-call schema and fold/expand UX with Codex (`read|search|listFiles|exec|edit|mcp|web|agent`, streaming inline, exploration coalescing, auto-fold after answer unless failed or manually expanded); do not add speculative regex output masking or UUID scrubbing beyond environment/secret boundaries.

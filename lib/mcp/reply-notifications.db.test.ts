@@ -78,7 +78,7 @@ const tables = `
   CREATE TABLE coordinator_sessions("userId" text, "botId" uuid, "leaseHolder" text, "leaseUntil" timestamptz,
     "lastError" text, "lastErrorAt" timestamptz, summary text);
   CREATE TABLE mikka_workspace_members("workspaceId" uuid, "userId" text, status text);
-  CREATE TABLE mikka_workspaces(id uuid PRIMARY KEY, "userId" text, kind text);
+  CREATE TABLE mikka_workspaces(id uuid PRIMARY KEY, "userId" text, kind text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
 `;
 
 test(

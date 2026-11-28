@@ -646,6 +646,7 @@ test("run completion enters review without the Coordinator; replays do not advan
       let unavailable = true;
       const human = createFactoryHumanStore(pool, () => store, async () => {
         if (unavailable) throw new Error('Fixture admission unavailable');
+        return undefined;
       });
       await assert.rejects(handleFactory(human, f.request), /Fixture admission unavailable/);
       assert.deepEqual(await history(f.task.id, f.runId, f.task.attemptId), before);
@@ -692,6 +693,7 @@ test("run completion enters review without the Coordinator; replays do not advan
       }, defaultFactoryDispatchAdapters);
       const human = createFactoryHumanStore(pool, () => checkedStore, async (tx, _store, current) => {
         await checkDispatch('owner', { binding: factoryBinding(current), agentId, deviceRepoId: deliverableRepo }, tx);
+        return undefined;
       });
       assert.equal((await handleFactory(human, f.request)).status, 200);
       const candidate = (await checkedStore.read('owner', f.task.id)).candidates[0];

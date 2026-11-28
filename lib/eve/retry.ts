@@ -37,7 +37,7 @@ export function eveRetrySubmission(sessionId:string,turnId:string,source:EveRetr
   const text=typeof source.payload.text==='string'?source.payload.text:''
   const files=Array.isArray(source.payload.images)?source.payload.images.flatMap(value=>value&&typeof value==='object'&&'dataUrl' in value&&typeof value.dataUrl==='string'&&'mediaType' in value&&typeof value.mediaType==='string'?[{type:'file' as const,data:value.dataUrl,mediaType:value.mediaType}]:[]):[]
   const message:MessageContent=files.length?[...(text?[{type:'text' as const,text}]:[]),...files]:text
-  const clientContext=eveProductContext.parse({retryOf:source.position,...(source.payload.taskCommand ? {taskCommand:source.payload.taskCommand} : {}),taskDestination:source.payload.taskDestination,profileId:source.payload.profileId,taskTitle:source.payload.taskTitle})
+  const clientContext=eveProductContext.parse({retryOf:source.position,...(source.payload.taskCommand ? {taskCommand:source.payload.taskCommand} : {}),taskDestination:source.payload.taskDestination,profileId:source.payload.profileId,taskTitle:source.payload.taskTitle,...(Array.isArray(source.payload.mentions) && source.payload.mentions.length ? {mentions:source.payload.mentions} : {})})
   return {message,options:{clientContext,headers:{'x-mikka-submission-id':submissionId}}}
 }
 

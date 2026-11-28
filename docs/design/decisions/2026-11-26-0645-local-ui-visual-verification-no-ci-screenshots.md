@@ -1,7 +1,7 @@
 # Local UI visual verification and browser-free hosted-UI CI
 
 - Date: 2026-11-26
-- **Status:** Accepted
+- **Status:** Superseded by [2026-11-27-1100-electron-e2e-ci-no-pixel-diff](2026-11-27-1100-electron-e2e-ci-no-pixel-diff.md)
 - Source: Alex, 2026-11-26: 「你的意思是，我们现在截图走的是 CI 吗？我突然发现这个问题，这好像是错误的做法吧。我一直的要求是在本机真实去跑呀，怎么能够用 CI 去截图呢？这很浪费啊。」「选择方案A，立刻另开PR把这套机制改掉」
 - Rule: —
 - Aligns with: [2026-11-01-1520-no-browser-tests-in-ci.md](2026-11-01-1520-no-browser-tests-in-ci.md), [2026-11-01-1440-dev-workflow-local-first.md](2026-11-01-1440-dev-workflow-local-first.md)

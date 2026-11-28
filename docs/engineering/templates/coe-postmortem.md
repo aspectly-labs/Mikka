@@ -73,5 +73,5 @@ List short-term fixes (hotfix PR, data reconciliation, documentation/ADR status 
 ## 8. Closure verification
 
 - [ ] Every permanent mechanical guard in §6 is merged to `main` and verified failing on the pre-fix reproduction and passing on the fix.
-- [ ] Tier 1 Living Standards (`docs/engineering/HANDBOOK.md`, `docs/design/design-system.md`, `docs/architecture/primitives.md`) and any superseded Tier 2 ADR `Status:` headers are updated.
+- [ ] Tier 1 Living Standards (`docs/engineering/HANDBOOK.md`, `mikka-hosted-ui/docs/design/design-system.md`, `docs/architecture/primitives.md`) and any superseded Tier 2 ADR `Status:` headers are updated.
 - [ ] Zero secrets, credentials, or user PII appear anywhere in this document.

@@ -194,3 +194,14 @@ test('gitAuthorName and gitAuthorEmail inherit across personal, workspace and de
   assert.equal(nameEntry.label['zh-CN'], '提交作者')
   assert.equal(emailEntry.label['zh-CN'], '提交邮箱')
 })
+
+test('workspace security and publishing policies require administrator scope and Git switches inherit', () => {
+  for (const values of [{ requireTwoFactor: true }, { skillPublishingPolicy: 'review' }]) {
+    assert.deepEqual(parseSettingsPatch('workspace', { values }), values)
+    assert.throws(() => parseSettingsPatch('personal', { values }))
+  }
+  assert.throws(() => parseSettingsPatch('workspace', { values: { skillPublishingPolicy: 'invalid' } }))
+  for (const key of ['prAutoOpen', 'prWakeOnReview', 'prWakeOnCiFailure', 'prWakeOnConflict']) {
+    assert.deepEqual(resolveSettingValue(key, false, true), { value: false, source: 'personal' })
+  }
+})

@@ -10,6 +10,11 @@ export type PersonalSecurityState = {
   twoFactorEnabled: boolean
   sessionVerified: boolean
   passkeyCount: number
+  workspaces: Array<{
+    workspaceId: string
+    name: string
+    status: 'enrollment_required' | 'verification_required' | 'verified'
+  }>
   organizations: Array<{
     organizationId: string
     name: string

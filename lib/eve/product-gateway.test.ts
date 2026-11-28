@@ -50,14 +50,38 @@ test('tool arguments and cancellation signal reach the authorized product servic
   assert.equal(response.headers.get('cache-control'), 'private, no-store')
 })
 
-test('approval review and native resumption use separate strict host operations', async () => {
+test('a Web Search model snapshot is bound to the internal Eve Bot and requested operation', async () => {
+  const snapshot = { type: 'api_key', keyId: 'a902d597-81d1-40c2-9dee-bad80365874b', ownerId: scope.ownerId, consumerId: scope.botId,
+    workspaceId: scope.workspaceId, modelId: 'fixture/original-model' }
+  const search = { ...body, name: 'web_search', input: { query: 'fixture' }, webSearchModel: snapshot }
+  const calls: unknown[] = []
+  const services: EveProductGatewayServices = { authorize: async () => scope, assertSession: async () => {}, run: async (_scope, input) => {
+    calls.push(input)
+    return { output: {} }
+  } }
+  assert.equal((await handleEveProductRequest(request(search), services)).status, 200)
+  assert.deepEqual(calls, [search])
+  assert.equal((await handleEveProductRequest(request({ ...search, webSearchModel: null }), services)).status, 200)
+  assert.deepEqual(calls, [search, { ...search, webSearchModel: null }])
+  for (const denied of [
+    { ...search, webSearchModel: { ...snapshot, workspaceId: snapshot.keyId } },
+    { ...search, webSearchModel: { ...snapshot, coordinator: true } },
+    { ...search, name: 'read_issue' },
+  ]) assert.equal((await handleEveProductRequest(request(denied), services)).status, 404)
+  assert.equal((await handleEveProductRequest(request(search), { ...services,
+    authorize: async () => ({ ...scope, surface: 'factory' }),
+  })).status, 404)
+  assert.equal(calls.length, 2)
+})
+
+test('review and execution use separate strict host operations; an older responder field is accepted and ignored', async () => {
   const responder = { authenticator: 'mikka', principalType: 'user', principalId: scope.ownerId,
     attributes: { botId: scope.botId, workspaceId: scope.workspaceId, surface: scope.surface } }
   const seen: unknown[] = []
   const services: EveProductGatewayServices = { authorize: async () => scope, assertSession: async () => {}, run: async (_scope, input, _signal, request) => {
     assert.equal(request.headers.get('authorization'), 'Bearer trusted-service-fixture')
     seen.push(input)
-    return input.operation === 'approval' ? { status: 'user-approval' } : { output: 'sent' }
+    return input.operation === 'approval' ? { status: 'not-applicable' } : { output: 'sent' }
   } }
   for (const value of [{ ...body, operation: 'approval' }, { ...body, approvalResponder: responder }]) {
     const req = request(value)

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  activeHref, activateTab, addTab, closeTab, createSavedTabs, moveHistory, nextTabIndex, readSavedTabs,
+  activeHref, activateTab, addTab, closeOtherTabs, closeTab, closeTabsToLeft, closeTabsToRight, createSavedTabs, cycleTabIndex, duplicateTab,
+  moveHistory, nextTabIndex, readSavedTabs, tabForNumber,
   persistableHref, recordHistoryLocation, recordNavigation, SAVED_TABS_KEY, tabLabel, writeSavedTabs,
 } from './saved-tabs.ts'
 
@@ -145,4 +146,42 @@ test('tabLabel derives contextual workspace, task, thread, and settings labels w
   assert.equal(tabLabel('/mikka/settings/members'), 'Members')
   assert.equal(tabLabel('/mikka/settings/teams'), 'Teams')
   assert.equal(tabLabel('/mikka/devices'), 'Devices')
+})
+
+test('the tab menu closes other tabs, tabs to the right, and duplicates a tab with its history', () => {
+  const tabs = { items: [
+    { entries: ['/mikka'], index: 0 },
+    { entries: ['/mikka/?section=pulls', '/mikka/?section=tasks'], index: 0 },
+    { entries: ['/mikka/settings'], index: 0 },
+    { entries: ['/mikka/?section=inbox'], index: 0 },
+  ], active: 3 }
+  assert.deepEqual(closeOtherTabs(tabs, 1), { items: [tabs.items[1]], active: 0 })
+  assert.equal(closeOtherTabs({ items: [tabs.items[0]], active: 0 }, 0).items.length, 1)
+  const right = closeTabsToRight(tabs, 1)
+  assert.equal(right.items.length, 2)
+  assert.equal(right.active, 1, 'the active tab was closed, so the clicked tab takes over')
+  assert.equal(closeTabsToRight({ ...tabs, active: 0 }, 1).active, 0)
+  assert.equal(closeTabsToRight(tabs, 3), tabs, 'nothing to the right of the last tab')
+  const left = closeTabsToLeft(tabs, 2)
+  assert.deepEqual(left.items, tabs.items.slice(2))
+  assert.equal(left.active, 1, 'the active tab keeps its place among the remaining tabs')
+  assert.equal(closeTabsToLeft({ ...tabs, active: 0 }, 2).active, 0)
+  assert.equal(closeTabsToLeft(tabs, 0), tabs, 'nothing to the left of the first tab')
+  const duplicated = duplicateTab(tabs, 1)
+  assert.equal(duplicated.items.length, 5)
+  assert.equal(duplicated.active, 2)
+  assert.deepEqual(duplicated.items[2], tabs.items[1])
+  assert.notEqual(duplicated.items[2], tabs.items[1], 'the copy owns its own history')
+})
+
+test('⌘1–⌘8 pick a tab, ⌘9 the last one, and ⌃Tab cycles', () => {
+  assert.equal(tabForNumber(4, 1), 0)
+  assert.equal(tabForNumber(4, 4), 3)
+  assert.equal(tabForNumber(4, 5), null)
+  assert.equal(tabForNumber(4, 9), 3)
+  assert.equal(tabForNumber(12, 9), 11)
+  assert.equal(tabForNumber(0, 1), null)
+  assert.equal(cycleTabIndex(3, 2, 'next'), 0)
+  assert.equal(cycleTabIndex(3, 0, 'previous'), 2)
+  assert.equal(cycleTabIndex(1, 0, 'next'), null)
 })
