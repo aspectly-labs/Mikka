@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { Window } from 'happy-dom'
-import { needsOfficialUi, officialRenderer, officialUiResolution } from './official-ui.mjs'
+import { needsOfficialUi, officialRenderer, officialUi, officialUiResolution } from './official-ui.mjs'
 
 // Use the actual production scheduler: act()/fake clocks would flush away the
 // lazy-first-read fallback that this startup regression needs to exercise.
@@ -23,6 +23,10 @@ const { createRoot } = await import('react-dom/client')
 const require = createRequire(import.meta.url)
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
 const renderer = officialRenderer
+const workspaceLoaders = new Set([
+  resolve(renderer, 'workspace-loader.ts'),
+  ...(officialUi.dir ? [resolve(officialUi.dir, 'routes/workspace-loader.ts')] : []),
+])
 const directory = await mkdtemp(join(tmpdir(), 'mikka-installed-workspace-'))
 const key = Symbol.for('mikka.test.installed-workspace')
 const compiled = needsOfficialUi ? null : await build({
@@ -41,7 +45,7 @@ const compiled = needsOfficialUi ? null : await build({
       builder.onResolve({ filter: /^@\/lib\/base-path$/ }, () => ({ path: resolve(repository, 'lib/base-path.ts') }))
       builder.onResolve({ filter: /^@hosted\/core\/components\/workspace\/workspace-loading$/ }, () => ({ path: 'loading', namespace: 'fixture' }))
       builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args => {
-        assert.equal(args.importer, resolve(renderer, 'workspace-loader.ts'))
+        assert.ok(workspaceLoaders.has(args.importer), `expected workspace-loader importer, got ${args.importer}`)
         return { path: 'workspace', namespace: 'fixture' }
       })
       builder.onLoad({ filter: /.*/, namespace: 'fixture' }, args => ({
