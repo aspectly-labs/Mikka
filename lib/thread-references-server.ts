@@ -1,6 +1,7 @@
 import 'server-only'
 import type { Pool } from 'pg'
 import { z } from 'zod'
+import { readEnv } from '@/lib/env/server'
 
 /** #2941 item 2: a typed reference the composer attaches to a message. `id` is
  * the type's natural key — task: issue uuid, pr: the pull url, thread: run
@@ -101,7 +102,7 @@ export async function resolveStructuredMentions(
     if (options && 'slackChannels' in options) return Promise.resolve(options.slackChannels ?? null)
     if (!slackChannelsPromise) {
       slackChannelsPromise = (async () => {
-        const app = process.env.SLACK_APP_ID?.trim()
+        const app = readEnv('SLACK_APP_ID')?.trim()
         if (!app || !workspaceId) return null
         const { slackInstallationChannels } = await import('@/lib/slack/automation-channels')
         return await slackInstallationChannels(app, ownerId, workspaceId)
