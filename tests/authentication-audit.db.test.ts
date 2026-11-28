@@ -197,6 +197,7 @@ test('authentication writes tenant-bound durable intent and withholds every new 
     } finally { await database.query(`ALTER TABLE workspace_audit_outbox DROP CONSTRAINT ${name}`) }
   })
   await t.test('final workspace deletion waits for in-flight login audit and prevents new tenant intent afterward', async () => {
+    assert.equal((await deliverOwn()).failed, 0)
     const [{ deleteWorkspaceData }, { workspaceDb }] = await Promise.all([import('../lib/account/delete'), import('../lib/workspace-db')])
     const guarded = workspaces.slice(0, 2), name = `auth_audit_gate_${randomUUID().replaceAll('-', '')}`
     const holder = await database.connect(), holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0].pid
