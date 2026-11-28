@@ -147,6 +147,13 @@ Self-hosted deployments configure their own `GITHUB_APP_ID` and `GITHUB_APP_PRIV
 Official Cloud keeps the managed App's signing key in the private broker and uses the API ingress's
 `GITHUB_REDELIVERY` binding. Its publisher verifies the deployed private Worker/container capability
 before adding that binding; source builds and configuration text alone do not establish readiness.
+The fixed maintenance POST accepts a completed zero-byte HTTP stream, including
+chunked requests; a non-null stream or Content-Length alone cannot determine
+whether it is empty. Body validation and forwarding share a forty-second signal.
+Non-empty, failed, unfinished, canceled or excessive empty-chunk streams cannot
+dispatch maintenance. The Worker forwards a fresh request without caller headers
+or body and rejects redirects explicitly because workerd does not support
+`redirect: 'error'`.
 Deploy the qualified private capability before the API consumer through the existing private release
 runbook. The receiving `/mikka/api/webhooks/github` route still requires `GITHUB_WEBHOOK_SECRET` to
 match its GitHub App. The cron Worker continues to hold only its original scheduled-call credentials.
