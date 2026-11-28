@@ -3,6 +3,7 @@ import test from 'node:test'
 import type { DiffFileMetadata, DiffFilePatch, DiffSnapshot } from '@mikka/protocol/coding-workspace-review'
 import { getReviewSummary, getReviewDiff, getReviewFile } from '../../code-review/client'
 import { projectTaskReviewSummary, reviewReference, taskReviewDiff, taskReviewFile } from './projection'
+import type { GitHubPullSummary } from '../diff/github-state'
 
 const snapshotId = '20000000-0000-4000-8000-000000000001'
 const sourceVersion = 'a'.repeat(64)
@@ -35,6 +36,29 @@ const snapshot = (source: DiffSnapshot['revision']['source'] = 'working', change
   ...changes,
 })
 const idle = { running: false, reclaimed: false, nextCursor: null }
+
+test('a live PR summary exposes a merge target only for the approved native head with current source evidence', async t => {
+  const source = snapshot('pull_request', { sourceAccess: { kind: 'github', repositoryId: '42', manifestComplete: true },
+    factory: { taskId: '20000000-0000-4000-8000-000000000006', candidateId: '20000000-0000-4000-8000-000000000007',
+      producerRunId: '20000000-0000-4000-8000-000000000002', sha: headSha } })
+  const actor = { userId: source.identity.ownerId, workspaceId: source.identity.workspaceId, credential: { kind: 'session' as const, id: 'session' } }
+  const scope = { identity: source.identity, taskId: source.taskId, status: 'completed', stopped: true, boardId: 'board' }
+  const facts = { branch: null, reclaimed: true, canMerge: true, merging: false, mergeBinding: { candidateId: source.factory!.candidateId } }
+  const live: GitHubPullSummary = { repositoryId: '42', number: 7, url: source.pullRequest!.url, headSha,
+    baseSha: source.pullRequest!.baseSha!, state: 'open', observedAt, files: 9, additions: 42, deletions: 7, draft: false, mergeable: true, checks: null }
+  for (const [name, change, own, allowed] of [
+    ['approved head', {}, true, true], ['moved head', { headSha: '9'.repeat(40) }, true, false],
+    ['moved base', { baseSha: '8'.repeat(40) }, true, false], ['unknown mergeability', { mergeable: null }, true, false],
+    ['conflict', { mergeable: false }, true, false], ['draft', { draft: true }, true, false],
+    ['closed', { state: 'closed' }, true, false], ['already merged', { state: 'merged' }, true, false],
+    ['other viewer', {}, false, false],
+  ] as const) await t.test(name, () => {
+    const result = projectTaskReviewSummary(own ? actor : { ...actor, userId: 'other-viewer' }, scope, source, facts, null, { ...live, ...change })
+    assert.equal(result.permissions.canMerge, allowed)
+    assert.equal(Boolean(result.mergeTarget), allowed)
+    if (allowed) assert.equal(result.mergeTarget?.expectedHeadSha, headSha)
+  })
+})
 
 test('unloaded metadata counts remain unknown, including manifest placeholder zeroes', () => {
   for (const [additions, deletions] of [[0, 0], [17, 9]]) {

@@ -11,12 +11,13 @@ import { resolveRunWorktree } from '../identity'
 import { requestWorkspaceRead, workspaceResultMaskPolicy } from '../requests'
 import { resolveReviewScope, withReviewTransaction, type ReviewActor, type ReviewScope } from './authority'
 import { latestDiffSnapshot, manifestRevision, readDiffSnapshot, readDiffFilePage, readStoredDiffFile, retainDiffFilePatch, retainDiffSnapshot } from './store'
-import type { ObservedPullState } from './github-state'
+import type { GitHubPullSummary, ObservedPullState } from './github-state'
 
 export interface ExternalDiffProvider {
   capture(scope: ReviewScope, selection: Extract<DiffSelection, { source: 'commit' | 'pull_request' }>, mask: Masker): Promise<Parameters<typeof retainDiffSnapshot>[2]>
   verify(scope: ReviewScope, snapshot: DiffSnapshot): Promise<void | { isStale: boolean }>
   pullState?(scope: ReviewScope, snapshot: DiffSnapshot): Promise<ObservedPullState>
+  pullSummary?(scope: ReviewScope, number: number): Promise<GitHubPullSummary>
   file(scope: ReviewScope, snapshot: DiffSnapshot, file: DiffFileMetadata, mask: Masker): Promise<DiffFilePatch>
 }
 

@@ -1,7 +1,7 @@
 import type { DiffFileMetadata, DiffFilePatch, DiffSnapshot, TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
 import { UNFINISHED_RUN_STATUSES } from '../../agent-run-statuses'
 import type { ReviewActor, ReviewScope } from '../diff/authority'
-import { matchingPullState } from '../diff/github-state'
+import { matchingPullState, type GitHubPullSummary } from '../diff/github-state'
 import type { latestTaskReviewChecks } from './checks'
 
 export const reviewReference = (snapshot: DiffSnapshot): TaskReviewRef => ({ snapshotId: snapshot.id, sourceVersion: snapshot.revision.version })
@@ -12,17 +12,26 @@ export type TaskSummaryChecks = Awaited<ReturnType<typeof latestTaskReviewChecks
 /** Metadata projection shared by detail and bulk reads. Importing it must not
  * initialize authentication, provider clients, or the request handlers. */
 export function projectTaskReviewSummary(actor: Pick<ReviewActor, 'userId' | 'workspaceId' | 'credential'>, scope: ReviewScope,
-  snapshot: DiffSnapshot | null, facts: TaskSummaryFacts | undefined, checks: TaskSummaryChecks) {
+  snapshot: DiffSnapshot | null, facts: TaskSummaryFacts | undefined, checks: TaskSummaryChecks, currentPull?: GitHubPullSummary) {
   const own = actor.userId === scope.identity.ownerId && actor.credential.kind === 'session'
-  const available = snapshot && snapshot.availability !== 'unavailable'
+  const currentSource = !currentPull || snapshot?.pullRequest?.number === currentPull.number
+    && snapshot.sourceAccess?.repositoryId === currentPull.repositoryId && snapshot.revision.headSha === currentPull.headSha
+    && snapshot.pullRequest.baseSha === currentPull.baseSha
+  const available = snapshot && snapshot.availability !== 'unavailable' && currentSource
   const pull = snapshot ? matchingPullState(facts?.pullObservation, snapshot) : null
-  const state = pull?.state ?? snapshot?.pullRequest?.state
-  const canSend = Boolean(own && available && !facts?.merging), canMerge = Boolean(own && state && !['closed', 'merged'].includes(state) && facts?.canMerge)
-  const countsKnown = Boolean(available && snapshot.counts.complete)
-  return { taskId: scope.taskId!, reviewRef: available ? reviewReference(snapshot) : null, pr: snapshot?.pullRequest ? {
+  const state = currentPull?.state ?? pull?.state ?? snapshot?.pullRequest?.state
+  const liveMergeable = !currentPull || currentPull.mergeable === true && !currentPull.draft && snapshot?.factory?.sha === currentPull.headSha
+  const canSend = Boolean(own && available && !facts?.merging), canMerge = Boolean(own && available && liveMergeable
+    && state && !['closed', 'merged'].includes(state) && facts?.canMerge)
+  const countsKnown = Boolean(currentPull || available && snapshot.counts.complete)
+  return { taskId: scope.taskId!, reviewRef: available ? reviewReference(snapshot) : null, pr: currentPull ? {
+    number: currentPull.number, url: currentPull.url, state: currentPull.state, observedAt: currentPull.observedAt,
+    headSha: currentPull.headSha, mergeable: currentPull.mergeable, draft: currentPull.draft,
+  } : snapshot?.pullRequest ? {
     number: snapshot.pullRequest.number, url: snapshot.pullRequest.url, state: state!, observedAt: pull?.observedAt ?? snapshot.observedAt,
-  } : null, files: available ? snapshot.counts.files : null, additions: countsKnown ? snapshot!.counts.additions : null,
-  deletions: countsKnown ? snapshot!.counts.deletions : null, countsKnown, checks,
+  } : null, files: currentPull?.files ?? (available ? snapshot.counts.files : null),
+  additions: currentPull?.additions ?? (countsKnown ? snapshot!.counts.additions : null),
+  deletions: currentPull?.deletions ?? (countsKnown ? snapshot!.counts.deletions : null), countsKnown, checks: currentPull ? currentPull.checks : checks,
   mergeTarget: canMerge ? { reviewRef: reviewReference(snapshot!), binding: facts!.mergeBinding, expectedHeadSha: snapshot!.revision.headSha } : null,
   running: !scope.stopped && UNFINISHED_RUN_STATUSES.some(status => status === scope.status), ...(facts?.branch ? { branch: facts.branch } : {}),
   permissions: { canMerge, canSend, canTerminal: own, reasons: {

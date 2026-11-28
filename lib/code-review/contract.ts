@@ -40,7 +40,8 @@ export type ReviewSummary = {
   /** The task (issue) id. */
   taskId: string
   /** Null before a PR exists (R6). */
-  pr: { number: number; state: ReviewPullRequestState; url: string; observedAt?: string } | null
+  pr: { number: number; state: ReviewPullRequestState; url: string; observedAt?: string;
+    headSha?: string; mergeable?: boolean | null; draft?: boolean } | null
   reviewRef?: TaskReviewRef | null
   countsKnown?: boolean
   reclaimed?: boolean
