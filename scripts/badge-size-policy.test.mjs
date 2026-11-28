@@ -1,16 +1,26 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { needsOfficialUi, readUi, uiExists } from './official-ui-tree.mjs'
+import { needsOfficialUi, officialCheckout, readUi, uiExists } from './official-ui-tree.mjs'
 
-// Every badge in the app is drawn on one ladder (`components/ui/badge-size.ts`).
+// Every badge in the app is drawn on one ladder (`ui/badge-size.ts` or legacy `components/ui/badge-size.ts`).
 // Two modules with their own heights and type sizes is what put a row of chips
 // on two baselines (2026-11-19): `components/ui/badge` drew 20px at 12px type
 // while `components/reui/badge` drew 16/18/20/22/24px at 9.6/11/12/12/13px.
 // This holds the ladder in one place and refuses a second one.
-// The ladder and both badges live in the official UI checkout (core/ and web/); without it these tests skip.
+// The ladder and both badges live in the official UI checkout (ui/, core/, and web/); without it these tests skip.
 const read = file => needsOfficialUi ? '' : readUi(file)
-const ladder = read('components/ui/badge-size.ts')
-const uiBadge = read('components/ui/badge.tsx')
+const readLayeredOrCore = (layered, legacy) => {
+  if (needsOfficialUi) return ''
+  if (officialCheckout) {
+    const layeredPath = join(officialCheckout, layered)
+    if (existsSync(layeredPath)) return readFileSync(layeredPath, 'utf8')
+  }
+  return readUi(legacy)
+}
+const ladder = readLayeredOrCore('ui/badge-size.ts', 'components/ui/badge-size.ts')
+const uiBadge = readLayeredOrCore('ui/badge.tsx', 'components/ui/badge.tsx')
 const reuiBadgePath = uiExists('components/reui/badge.tsx')
   ? 'components/reui/badge.tsx'
   : uiExists('.hosted-ui/web/components/reui/badge.tsx')

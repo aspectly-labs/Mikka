@@ -7,7 +7,7 @@ import { sharedCssTargets } from './css-targets.mjs'
 
 const slash = value => value.split(sep).join('/')
 // Tailwind skips git-ignored paths, so the official UI checkout's sources are named explicitly.
-const OVERLAY_CSS_DIRECTORIES = ['core', 'web', 'slots', 'lib']
+const OVERLAY_CSS_DIRECTORIES = ['core', 'web', 'slots', 'lib', 'ui', 'shared', 'features', 'routes']
 
 /** Use the same Tailwind and build-only Lightning CSS pass the application
  * shipped with. Vite must not perform a second, different color conversion.
