@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { committedPromoters, isBreakGlassPhase, promoterGateExpression } from './release-policy.mjs'
 import test from 'node:test'
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
@@ -36,8 +40,8 @@ test('only actual successful same-repository main pushes or explicit recovery ac
   assert.doesNotMatch(source, /GITHUB_EVENT_NAME:\s|GITHUB_REF:\s|GITHUB_ACTOR_ID:\s/)
 })
 
-test('automatic staging accepts the merge queue pair but manual recovery remains owner-only', () => {
-  const allowed = new Function('github', 'inputs', `return ${workflow.jobs.pipeline.if}`)
+test('automatic staging accepts the merge queue pair but manual recovery is promoter-only', () => {
+  const allowed = (github, inputs) => evaluate(workflow.jobs.pipeline.if, { github, inputs })
   const github = { repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main',
     actor_id: '118344674', actor: 'github-merge-queue[bot]', triggering_actor: 'github-merge-queue[bot]', event_name: 'workflow_run', event: {
       repository: { id: 1427517699 }, workflow_run: { event: 'push', head_branch: 'main', conclusion: 'success', head_repository: { id: 1427517699 } } } }
@@ -50,9 +54,12 @@ test('automatic staging accepts the merge queue pair but manual recovery remains
   for (const patch of [{ event: 'workflow_dispatch' }, { head_branch: 'feature' }, { conclusion: 'failure' }, { head_repository: { id: 7 } }])
     assert.equal(allowed({ ...github, event: { ...github.event, workflow_run: { ...github.event.workflow_run, ...patch } } }, {}), false)
   for (const phase of ['pipeline-stage', 'pipeline-rollback']) {
-    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase }), true)
-    assert.equal(allowed({ ...github, actor_id: '158243242', actor: 'devin-ai-integration[bot]', event_name: 'workflow_dispatch' }, { phase }), true)
-    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase: 'stage-all' }), false)
+    // Manual recovery is promoter-only: the merge queue cannot dispatch it, the owner and Devin can.
+    assert.equal(allowed({ ...github, event_name: 'workflow_dispatch' }, { phase }), false)
+    const owner = { actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }
+    assert.equal(allowed({ ...github, ...owner, event_name: 'workflow_dispatch' }, { phase }), true)
+    assert.equal(allowed({ ...github, actor_id: '158243242', actor: 'devin-ai-integration[bot]', triggering_actor: 'devin-ai-integration[bot]', event_name: 'workflow_dispatch' }, { phase }), true)
+    assert.equal(allowed({ ...github, ...owner, event_name: 'workflow_dispatch' }, { phase: 'stage-all' }), false)
   }
 })
 
@@ -121,6 +128,7 @@ test('read-only migration admission precedes candidate preparation and deploymen
     assert.equal(overlayMint.with.repositories, 'mikka-hosted-ui')
     assert.equal(overlayMint.with['permission-contents'], 'read')
     assert.equal(overlayMint.with['permission-actions'], 'read')
+    assert.equal(overlayMint.with['permission-checks'], 'read')
     const clearStep = job.steps.findIndex(step => step.name === 'Remove App credentials before loading private operations code')
     assert.ok(clearStep > job.steps.indexOf(overlayMint), name + ' must clear App credentials after minting overlay token')
     const admissions = job.steps.filter(step => step.run === command)
@@ -158,4 +166,117 @@ test('read-only migration admission precedes candidate preparation and deploymen
     assert.equal(upload.if, "always() && steps.select.outputs.status == 'selected'", 'a rejection must retain safe evidence')
   }
   assert.equal(workflow.jobs['deploy-application'].steps.some(step => step.run === command), false)
+})
+
+// GitHub expression subset used by these job conditions, evaluated with JavaScript semantics.
+function condition(expression) {
+  const body = expression.replace(/\.([A-Za-z_][A-Za-z0-9_]*-[A-Za-z0-9_-]+)/g, '["$1"]')
+  return new Function('github', 'inputs', 'needs', 'cancelled', 'always', 'startsWith', 'contains', 'fromJSON', `return ${body}`)
+}
+function evaluate(expression, { github, inputs = {}, needs = {} }) {
+  return condition(expression)(github, inputs, needs, () => false, () => true,
+    (value, prefix) => String(value ?? '').startsWith(prefix), (list, item) => list.includes(item), JSON.parse)
+}
+
+// Runs the workflow's own inline policy reader against a fixture operations checkout.
+async function policyDecision(policy) {
+  const directory = await mkdtemp(join(tmpdir(), 'mikka-production-policy-'))
+  try {
+    if (policy !== undefined) {
+      await mkdir(join(directory, 'docs/operations/releases'), { recursive: true })
+      await writeFile(join(directory, 'docs/operations/releases/deploy-pipeline.json'), typeof policy === 'string' ? policy : JSON.stringify(policy))
+    }
+    const step = workflow.jobs.pipeline.steps.find(item => item.id === 'policy')
+    const script = /<<'JS'\n([\s\S]*)\nJS\s*$/.exec(step.run)[1]
+    const output = join(directory, 'output')
+    await writeFile(output, '')
+    execFileSync(process.execPath, ['--input-type=module'], { cwd: directory, input: script,
+      env: { PATH: process.env.PATH, GITHUB_OUTPUT: output }, stdio: ['pipe', 'pipe', 'pipe'] })
+    return /^enabled=(true|false)$/m.exec(await readFile(output, 'utf8'))[1]
+  } finally { await rm(directory, { recursive: true, force: true }) }
+}
+
+test('the private autoProduction switch in manual mode leaves production to an owner dispatch only', async () => {
+  // The policy reader fails closed without failing staging: only an exact true enables automatic promotion.
+  assert.equal(await policyDecision({ version: 1, autoProduction: true, mobileProduction: true }), 'true')
+  for (const policy of [{ version: 1, autoProduction: false, mobileProduction: true }, { version: 1 }, { version: 2, autoProduction: true },
+    { version: 1, autoProduction: 'true' }, '{not json', undefined]) assert.equal(await policyDecision(policy), 'false', JSON.stringify(policy))
+
+  const production = workflow.jobs['pipeline-production'].if
+  const bot = { actor_id: '118344674', actor: 'github-merge-queue[bot]', triggering_actor: 'github-merge-queue[bot]' }
+  const github = { repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main', ...bot,
+    event_name: 'workflow_run', event: { repository: { id: 1427517699 },
+      workflow_run: { event: 'push', head_branch: 'main', conclusion: 'success', head_repository: { id: 1427517699 } } } }
+  const staged = enabled => ({ pipeline: { result: 'success', outputs: { selected: 'selected', 'production-enabled': enabled } },
+    'pipeline-record': { result: 'success' } })
+  // Automatic promotion after a merge happens only while the switch reads true.
+  assert.equal(evaluate(production, { github, needs: staged('true') }), true)
+  assert.equal(evaluate(production, { github, needs: staged('false') }), false)
+  assert.equal(evaluate(production, { github, needs: staged('') }), false)
+  assert.equal(evaluate(production, { github, needs: { ...staged('true'), pipeline: { result: 'failure', outputs: { 'production-enabled': 'true' } } } }), false)
+  assert.equal(evaluate(production, { github, needs: { ...staged('true'), 'pipeline-record': { result: 'failure' } } }), false)
+  // Staging still runs on every merge regardless of the switch.
+  assert.equal(evaluate(workflow.jobs.pipeline.if, { github }), true)
+  // A held-back automatic promotion (selector status not-ready, job successful) skips every writer step
+  // and the production record job, which files failure issues; a real failure is still recorded.
+  const productionRecord = workflow.jobs['pipeline-production-record'].if
+  const outcome = (selected, result) => ({ 'pipeline-production': { result, outputs: { selected } } })
+  assert.equal(evaluate(productionRecord, { github, needs: outcome('not-ready', 'success') }), false)
+  assert.equal(evaluate(productionRecord, { github, needs: outcome('', 'failure') }), true)
+  assert.equal(evaluate(productionRecord, { github, needs: outcome('selected', 'success') }), true)
+  const afterSelect = workflow.jobs['pipeline-production'].steps.slice(workflow.jobs['pipeline-production'].steps.findIndex(step => step.id === 'select') + 1)
+  for (const step of afterSelect) assert.match(step.if ?? '', /steps\.select\.outputs\.status == 'selected'/, step.name ?? step.uses)
+
+  // The manual path: a dispatch of pipeline-promote on main reaches the selector, which admits only
+  // listed promoters on evidence (scripts/release/pipeline-inputs.test.mjs) before any deploy credential.
+  const skipped = { pipeline: { result: 'skipped', outputs: {} }, 'pipeline-record': { result: 'skipped' } }
+  const owner = { ...github, event_name: 'workflow_dispatch', actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }
+  assert.equal(evaluate(production, { github: owner, inputs: { phase: 'pipeline-promote' }, needs: skipped }), true)
+  assert.equal(evaluate(production, { github: { ...owner, actor_id: '158243242', actor: 'devin-ai-integration[bot]' }, inputs: { phase: 'pipeline-promote' }, needs: skipped }), true)
+  const steps = workflow.jobs['pipeline-production'].steps
+  assert.ok(steps.findIndex(step => step.id === 'select') < steps.findIndex(step => step.name === 'Read the existing Cloudflare deployment identity'),
+    'promoter and evidence gates run before the deployment credential')
+  assert.equal(evaluate(workflow.jobs.pipeline.if, { github: owner, inputs: { phase: 'pipeline-promote' } }), false)
+  assert.equal(evaluate(workflow.jobs['deploy-application'].if, { github: owner, inputs: { phase: 'pipeline-promote' } }), false)
+  for (const phase of ['pipeline-stage', 'pipeline-rollback', 'service-production', 'gateway-observe', undefined])
+    assert.equal(evaluate(production, { github: owner, inputs: { phase }, needs: skipped }), false, String(phase))
+  for (const patch of [{ ref: 'refs/heads/feature' }, { repository_id: '7' }, { repository_owner_id: '7' }])
+    assert.equal(evaluate(production, { github: { ...owner, ...patch }, inputs: { phase: 'pipeline-promote' }, needs: skipped }), false, JSON.stringify(patch))
+  // The dispatch carries the staging run and the exact commit to promote into the selector.
+  assert.ok(workflow.on.workflow_dispatch.inputs.phase.options.includes('pipeline-promote'))
+  assert.equal(workflow.on.workflow_dispatch.inputs.promote_source.type, 'string')
+  const select = workflow.jobs['pipeline-production'].steps.find(step => step.id === 'select')
+  assert.equal(select.env.INPUT_PIPELINE_RUN, '${{ inputs.pipeline_run }}')
+  assert.equal(select.env.INPUT_PROMOTE_SOURCE, '${{ inputs.promote_source }}')
+  assert.equal(select.env.INPUT_CLOUD_SOURCE, '${{ inputs.cloud_source_sha }}')
+})
+
+test('every manual deployment job is gated on the committed promoters list before any secret is read', () => {
+  const gate = promoterGateExpression()
+  assert.deepEqual(committedPromoters().map(entry => entry.login), ['alexj11324', 'devin-ai-integration[bot]'])
+  for (const name of ['deploy-application', 'pipeline', 'pipeline-production'])
+    assert.equal(workflow.jobs[name].if.split(gate).length - 1, 1, name + ' must carry the promoter gate exactly once')
+  const promoter = { repository_id: '1427517699', repository_owner_id: '359279274', ref: 'refs/heads/main', event_name: 'workflow_dispatch' }
+  const skipped = { pipeline: { result: 'skipped', outputs: {} }, 'pipeline-record': { result: 'skipped' } }
+  const breakGlass = ['service-production', 'production-web', 'production-api', 'production-migrate-database', 'cloud-services-production',
+    'eve-retire', 'gateway-observe']
+  assert.ok(breakGlass.every(isBreakGlassPhase) && !['stage-all', 'gateway-prepare', 'service-stage', 'pipeline-promote', 'cloud-services-promote'].some(isBreakGlassPhase))
+  const cases = [...breakGlass.map(phase => ['deploy-application', phase]), ['deploy-application', 'stage-all'], ['deploy-application', 'gateway-prepare'],
+    ['deploy-application', 'service-stage'], ['deploy-application', 'cloud-services-stage'], ['deploy-application', 'cloud-services-promote'],
+    ['pipeline', 'pipeline-stage'], ['pipeline', 'pipeline-rollback'], ['pipeline-production', 'pipeline-promote']]
+  for (const [name, phase] of cases) {
+    const run = github => evaluate(workflow.jobs[name].if, { github: { ...promoter, ...github }, inputs: { phase }, needs: skipped })
+    assert.equal(run({ actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }), true, name + phase)
+    // Break-glass phases carry no pipeline-promote evidence: owner only. Everything else: any promoter.
+    assert.equal(run({ actor_id: '158243242', actor: 'devin-ai-integration[bot]', triggering_actor: 'devin-ai-integration[bot]' }),
+      !breakGlass.includes(phase), name + phase)
+    if (breakGlass.includes(phase)) assert.equal(run({ actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'devin-ai-integration[bot]' }), false, 're-run ' + phase)
+    // A non-listed writer, a re-run of a listed dispatch by someone else, a renamed account and merge automation never start the job.
+    for (const github of [{ actor_id: '7', actor: 'outsider', triggering_actor: 'outsider' },
+      { actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'outsider' },
+      { actor_id: '183887963', actor: 'renamed', triggering_actor: 'renamed' },
+      { actor_id: '118344674', actor: 'github-merge-queue[bot]', triggering_actor: 'github-merge-queue[bot]' },
+      { actor_id: '41898282', actor: 'github-actions[bot]', triggering_actor: 'github-actions[bot]' }])
+      assert.equal(run(github), false, name + phase + JSON.stringify(github))
+  }
 })

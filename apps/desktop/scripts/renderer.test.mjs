@@ -25,7 +25,7 @@ async function moduleFrom({ entry, source, plugins = [], defines = {} }) {
 async function browser(callback) {
   const window = new Window({ url: 'mikka://app/mikka/en' })
   const saved = new Map()
-  for (const key of ['window', 'document', 'Event', 'MessageEvent', 'CloseEvent']) {
+  for (const key of ['window', 'document', 'Element', 'HTMLElement', 'Node', 'Event', 'MessageEvent', 'CloseEvent']) {
     saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key))
     Object.defineProperty(globalThis, key, { value: key === 'window' ? window : key === 'document' ? window.document : window[key], configurable: true, writable: true })
   }
@@ -121,6 +121,25 @@ test('RPC sends only the versioned local envelope and preserves shared cache acc
   globalThis.fetch = async () => Response.json({ version: 1, ok: false, error: { code: 'not_found' } }, { status: 404 })
   await assert.rejects(api.callAction('module.action', []), error => error.status === 404 && api.readAccessFailure(error) === 'resource')
   globalThis.fetch = async () => new Response('', { status: 401 })
+  await assert.rejects(api.callAction('module.action', []), error => error.code === 'desktop_session_expired' && error.status === 401 && api.readAccessFailure(error) === 'session')
+  assert.equal(api.getTransportState(), 'unauthenticated')
+}))
+
+test('a 401 main re-checked against a live session is a refused operation, not an expiry', () => browser(async () => {
+  const api = await moduleFrom({ source: `export { callAction } from ${JSON.stringify(join(renderer, 'rpc.ts'))}; export { getTransportState } from ${JSON.stringify(join(renderer, 'transport-state.ts'))}; export { readAccessFailure } from '@/lib/swr/persistent-cache';` })
+  let writes = 0
+  globalThis.fetch = async () => Response.json({ version: 1, ok: true, result: null })
+  await api.callAction('module.action', [])
+  assert.equal(api.getTransportState(), 'ready')
+  // Main confirmed the session (apps/desktop/src/main/bundled-auth.ts): the
+  // write is refused with its own status and code, sent once, and nothing signs out.
+  globalThis.fetch = async () => { writes++; return Response.json({ version: 1, ok: false, error: { code: 'desktop_session_expired' } }, { status: 401, headers: { 'x-mikka-session-active': '1' } }) }
+  await assert.rejects(api.callAction('module.action', []), error => error.code === 'desktop_rpc_request_rejected' && error.status === 401
+    && error.cause?.code === 'desktop_session_expired' && api.readAccessFailure(error) === null)
+  assert.equal(writes, 1)
+  assert.equal(api.getTransportState(), 'ready')
+  // Without main's mark the same 401 is the session's verdict.
+  globalThis.fetch = async () => Response.json({ version: 1, ok: false, error: { code: 'desktop_session_expired' } }, { status: 401 })
   await assert.rejects(api.callAction('module.action', []), error => error.code === 'desktop_session_expired' && error.status === 401 && api.readAccessFailure(error) === 'session')
   assert.equal(api.getTransportState(), 'unauthenticated')
 }))
@@ -337,20 +356,70 @@ test('desktop tabs restore once at launch without overwriting later Settings nav
       import React from 'react'
       import { createRoot } from 'react-dom/client'
       import { DesktopTabs } from ${JSON.stringify(join(officialRenderer, 'desktop-tabs.tsx'))}
-      let testWindow
       export function setWindow(value) { globalThis.__mikkaDesktopTabsWindow = value }
+      function EffectBarrier({ token, onEffect, onUnmount }) {
+        React.useEffect(() => { onEffect(token) }, [token, onEffect])
+        React.useEffect(() => () => { onUnmount() }, [onUnmount])
+        return null
+      }
+      function waitWithTimeout(promise, label, timeoutMs = 5000) {
+        let timer
+        return Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(label)), timeoutMs)
+          }),
+        ]).finally(() => clearTimeout(timer))
+      }
       export async function mount(container) {
         const root = createRoot(container)
-        root.render(React.createElement(DesktopTabs))
-        await new Promise(resolve => setTimeout(resolve, 30))
-        return root
+        let token = 0
+        let effectResolve = null
+        let unmountResolve = null
+        const unmounted = new Promise(resolve => { unmountResolve = resolve })
+        const onEffect = seen => {
+          if (seen === token && effectResolve) {
+            const done = effectResolve
+            effectResolve = null
+            done()
+          }
+        }
+        const onUnmount = () => {
+          if (unmountResolve) {
+            const done = unmountResolve
+            unmountResolve = null
+            done()
+          }
+        }
+        const renderAndFlushEffects = async label => {
+          const nextToken = ++token
+          const flushed = new Promise(resolve => { effectResolve = resolve })
+          root.render(React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(DesktopTabs),
+            React.createElement(EffectBarrier, { token: nextToken, onEffect, onUnmount }),
+          ))
+          await waitWithTimeout(flushed, label)
+        }
+        try {
+          await renderAndFlushEffects('DESKTOP_TABS_MOUNT_EFFECT_TIMEOUT')
+          await renderAndFlushEffects('DESKTOP_TABS_RESTORE_EFFECT_TIMEOUT')
+        } catch (error) {
+          root.unmount()
+          throw error
+        }
+        return { root, renderAndFlushEffects, unmounted }
       }
-      export async function unmount(root) { root.unmount(); await new Promise(resolve => setTimeout(resolve, 0)) }
-      export async function navigateForTest(href) {
+      export async function unmount(handle) {
+        handle.root.unmount()
+        await waitWithTimeout(handle.unmounted, 'DESKTOP_TABS_UNMOUNT_TIMEOUT')
+      }
+      export async function navigateForTest(handle, href) {
         globalThis.__mikkaDesktopTabsWindow.history.pushState(globalThis.__mikkaDesktopTabsWindow.history.state, '', href)
         globalThis.__mikkaDesktopTabsWindow.dispatchEvent(new globalThis.__mikkaDesktopTabsWindow.CustomEvent('mikka:desktop-history', { detail: { method: 'pushState', href } }))
         globalThis.__mikkaDesktopTabsWindow.dispatchEvent(new globalThis.__mikkaDesktopTabsWindow.Event('mikka:test-location'))
-        await new Promise(resolve => setTimeout(resolve, 30))
+        await handle.renderAndFlushEffects('DESKTOP_TABS_NAVIGATE_EFFECT_TIMEOUT')
       }
     `,
     plugins: [{
@@ -375,15 +444,20 @@ test('desktop tabs restore once at launch without overwriting later Settings nav
       },
     }, officialUiResolution],
   })
+  let mounted = null
   try {
     fixture.setWindow(window)
     const container = window.document.createElement('div')
     window.document.body.append(container)
-    const root = await fixture.mount(container)
+    mounted = await fixture.mount(container)
     assert.equal(window.location.pathname, '/mikka/en/dashboard', 'startup restores the saved active route')
-    await fixture.navigateForTest('/mikka/en/settings')
+    await fixture.navigateForTest(mounted, '/mikka/en/settings')
     assert.equal(window.location.pathname, '/mikka/en/settings', 'later Settings navigation is not reset to the launch route')
-    await fixture.unmount(root)
   } finally {
+    try {
+      if (mounted) await fixture.unmount(mounted)
+    } finally {
+      delete globalThis.__mikkaDesktopTabsWindow
+    }
   }
 }))

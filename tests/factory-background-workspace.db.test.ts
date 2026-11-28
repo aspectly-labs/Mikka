@@ -399,7 +399,7 @@ test('background Factory transactions use persisted tenants before the APP pool 
     assert.deepEqual(await monitor.reconcile(retired), { observed: 0 })
     assert.deepEqual(await sweepFactoryWatchdog(pool, {
       runtime: botId => { runtimeReads++; return factoryRuntimeForBot(botId) },
-      dispatch: async () => { dispatches++ },
+      dispatch: async () => { dispatches++; return undefined },
       wake: async () => { watchdogWakes++ },
     }, new Date(), Date.now() + 5000, { userId: retired, runId: retained[1].runId }),
     { scanned: 0, recovered: 0, blocked: 0, deferred: 0, failed: 0 })

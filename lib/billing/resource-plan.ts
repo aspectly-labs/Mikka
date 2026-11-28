@@ -10,7 +10,9 @@ export const resourcePriceSchema = z.object({
   metadata: z.object({
     mikka_billing_model: z.literal(RESOURCE_BILLING_VERSION),
     mikka_plan: z.enum(['pro', 'enterprise']),
-    mikka_monthly_points: z.string().regex(/^\d+$/).transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0 && value <= 100_000_000),
+    mikka_monthly_points: z.string().regex(/^\d+$/).transform(Number).refine(value => Number.isSafeInteger(value) && value >= 0 && value <= 100_000_000).optional(),
+    mikka_seat_model: z.enum(['per_workspace', 'per_seat']).optional(),
+    mikka_pricing_model: z.enum(['at_cost_v1']).optional(),
   }).loose(),
 }).loose()
 
@@ -18,7 +20,12 @@ export const resourcePriceSchema = z.object({
 export function resourcePrice(raw: unknown, configuredId: string, options: { requireActive?: boolean } = {}) {
   const price = resourcePriceSchema.parse(raw)
   if (price.id !== configuredId || (options.requireActive !== false && !price.active)) throw new Error('billing_resource_price_invalid')
-  return { id: price.id, plan: price.metadata.mikka_plan, monthlyPoints: price.metadata.mikka_monthly_points,
+  const monthlyPoints = price.metadata.mikka_monthly_points ?? price.unit_amount
+  if (price.metadata.mikka_pricing_model === 'at_cost_v1' && monthlyPoints !== price.unit_amount) {
+    throw new Error('billing_resource_price_invalid')
+  }
+  const seatModel = price.metadata.mikka_seat_model ?? 'per_workspace'
+  return { id: price.id, plan: price.metadata.mikka_plan, monthlyPoints, seatModel,
     amountCents: price.unit_amount, currency: price.currency, version: RESOURCE_BILLING_VERSION }
 }
 

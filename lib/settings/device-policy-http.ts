@@ -10,8 +10,12 @@ import { isActionErrorCode } from '@/lib/workspace-admin/action'
 
 const NO_STORE_HEADERS = { 'cache-control': 'private, no-store' } as const
 
-export async function requireDeviceApiSession(request: Request, mutation = false): Promise<ApiSession> {
-  const session = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
+export async function requireDeviceApiSession(
+  request: Request,
+  mutation = false,
+  authenticatedSession?: ApiSession,
+): Promise<ApiSession> {
+  const session = authenticatedSession ?? await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
   if (!session) throw new ActionFailureError('authRequired')
   if (mutation) {
     if (!desktopSameOriginRequest(request)) throw new WorkspaceError('workspaceAccessDenied')

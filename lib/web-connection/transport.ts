@@ -15,7 +15,10 @@ const exposedHeaders = [
   WORKSPACE_SELECTION_HEADER,
 ]
 const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']
-const publicPaths = new Set(['/api/desktop/discovery', '/api/server', '/api/version', '/api/web/begin', '/api/web/exchange'])
+const publicPaths = new Set([
+  '/api/desktop/discovery', '/api/server', '/api/version', '/api/web/begin', '/api/web/exchange',
+  '/api/invitations/[token]', '/api/organization-invitations/[token]',
+])
 const blockedPaths = /^\/api\/(?:auth(?:\/|$)|rpc$|cron(?:\/|$)|webhooks(?:\/|$)|desktop\/(?:begin|return|exchange|finish)(?:\/|$)|web\/(?:return|complete)(?:\/|$))/
 const bearer = /^Bearer [A-Za-z0-9_.%~+/-]{32,512}$/
 

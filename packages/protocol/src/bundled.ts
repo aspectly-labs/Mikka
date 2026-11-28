@@ -49,6 +49,13 @@ export type BundledServerProbe =
   | { status: 'server_update_required'; version: string | null }
   | { status: 'app_update_required'; minimum: string | null }
 
+export interface BundledTelemetryState {
+  /** This build has a PostHog project and the current account is on the built-in server. */
+  available: boolean
+  /** The person's choice; on unless they turned it off. */
+  enabled: boolean
+}
+
 export interface BundledBridge {
   session(): Promise<BundledSession | null>
   signIn(input: BundledSignIn): Promise<void>
@@ -74,6 +81,18 @@ export interface BundledBridge {
     close(id: string): Promise<void>
     onEvent(listener: (event: BundledLiveEvent) => void): () => void
   }
+  /**
+   * Usage events and error reports (docs/self-hosting-byok.md). Absent on older
+   * desktops. Main sends them to the build's PostHog project through the web's
+   * allowlist (lib/analytics-policy.ts), only for an account on the built-in
+   * server, and only while the person leaves sharing on.
+   */
+  telemetry?: {
+    state(): Promise<BundledTelemetryState>
+    /** Settings › 电脑 › 隐私: persisted in main beside the session vault. */
+    setEnabled(enabled: boolean): Promise<BundledTelemetryState>
+    capture(event: string, properties: Record<string, unknown>): void
+  }
   viewer: {
     prepare(input: BundledViewerInput): Promise<BundledViewerResult>
     connect(id: string): Promise<void>
@@ -95,4 +114,7 @@ export const BUNDLED_IPC = {
   serverDisconnect: 'bundled:server-disconnect',
   /** Synchronous, once per page load: the preload's `app.serverUrl`. */
   serverUrl: 'bundled:server-url',
+  telemetryState: 'bundled:telemetry-state', telemetrySet: 'bundled:telemetry-set',
+  /** One-way: the renderer never waits on, or learns the outcome of, a send. */
+  telemetryCapture: 'bundled:telemetry-capture',
 } as const

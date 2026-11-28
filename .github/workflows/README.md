@@ -30,9 +30,19 @@ protected UI check.
   `Browser tests (before merge)` and passes at once; delete it once that name
   is removed from the required checks in the repository settings.
 - `GitGuardian Security Checks` is a separate external required check.
-- All four existing required names remain intact. Do not silently replace
-  them with a new aggregate check until the GitHub branch-protection settings
-  have been migrated and verified.
+- The protected `UI policy (strict)` source stage also runs the waiting-issue check, so `waiting-issues.yml` only reopens a waited issue on `issues: closed`.
+- **`CI OK`** (job `ci-ok` in `ui-policy.yml`) is the single aggregate, as in
+  Orca: it needs every CI job (except `nightly-journey` until its first green run), runs on pull requests, merge groups, main pushes
+  and the daily schedule, and fails if any needed job failed or was cancelled.
+  A skipped job passes only where its own `if:` (trusted selection and event)
+  left it out; each `CI_OK_EXPECT_*` is that `if:` (`scripts/ci/ci-ok.mjs`,
+  compared by `scripts/ci/ci-ok.test.mjs`). The job runs main's copy of the
+  script, as the selector runs main's bootstrap, so a pull request cannot edit
+  the script that judges it; the workflow, its `needs` and the expectations are
+  still the pull request's own, checked by `ci-ok.test.mjs`. Draft PRs fail it
+  until Ready.
+- All four existing required names remain intact until branch protection
+  requires `CI OK` instead ([GitHub branch protection](#github-branch-protection-separate-repository-setting)).
 
 `local-device-node22.yml` now runs an actual app/Eve build and startup smoke
 on Node 24, retaining the daemon and installer tests. The core,
@@ -41,10 +51,10 @@ Node 24 only ([2026-11-22-1430](../../docs/design/decisions/2026-11-22-1430-ci-n
 the original Node 24 protected-check names stay unchanged.
 
 ## Focused governance acceptance and superseded PR runs
-Merge queue autopilot checks the PR head after CI or Browser gate completes.
-It adds an eligible same-repository PR to the end of the queue once all required
-checks pass. Stacks and PRs included in an open batch follow their owner's merge
-flow. The GitHub App installation token lets queue candidates trigger CI.
+Nothing enqueues a PR on its own. A PR joins the merge queue only when its
+owner turns on GitHub auto-merge ("Merge when ready"); GitHub then queues it once
+the required checks pass. Turning auto-merge off or converting the PR to a draft
+keeps it out. The integration promotion workflow keeps its own gated enqueue path.
 
 A pull request that changes the interface must include a screenshot or
 recording in its description. `UI policy (strict)` requires it, and
@@ -82,10 +92,12 @@ App, Eve and local-device build and startup on Node 24.
 See [test ownership and CI cost](../../docs/ci/test-ownership.md) before
 adding or duplicating regression suites.
 
-Mark a same-repository mobile PR Ready or apply the `mobile-preview` label to
-publish a preview of the current PR to its `pr-<n>` EAS branch. Remove and reapply the
-label to publish a newer head. Production OTA still runs on its main push, after a successful automatic
-Cloudflare deployment (`workflow_run`), or by existing manual dispatch.
+The active iOS app lives in the private `mikka-hosted-ui` repository
+(`mobile-next/apps/mobile/`). Native iOS builds (`mobile-next-ios.yml`) and OTA
+updates (`mobile-next-update.yml`) are dispatched from `main` against a
+reviewed `mikka-hosted-ui` commit. Legacy 1.x `apps/mobile/**`,
+`mobile-update.yml`, `mobile-native.yml`, and `mobile-screenshots.yml` were
+deleted on 2026-11-25.
 
 ## Draft pull requests
 
@@ -154,14 +166,21 @@ product regression. Main pushes and merge groups continue normal full coverage.
 - The special suites (`analytics-ssr`, `cloud-computer`, `desktop`,
   `e2b-byos`, `site-search`, `ssh-device-backend`, `unattended-sandbox`) run on
   pull requests only, selected by trusted dependencies or their existing path filters; each can still be run
-  by hand (`workflow_dispatch`). Production Web is promoted through the
+  by hand (`workflow_dispatch`). CI calls `desktop.yml` on ready PRs, merge
+  groups and the daily full run when the selector reports `desktop` (routed on
+  PRs, broad on merge groups); a main
+  push relies on the merge-queue run of the same commit. Production Web is promoted through the
   Cloudflare deployment workflow; Vercel publication was removed on 2026-11-17.
-- `publish-daemon.yml` uses daemon/package-input path filters.
+- `publish-daemon.yml` uses daemon/package-input path filters. A push publishes to the npm `next` dist-tag only; `latest` moves only when a promoter dispatches it with a successful `staged_run` whose daemon inputs match main.
   `desktop-release.yml` also watches the shared frontend, UI and API inputs.
   On a push it builds nothing and leaves a note in the run summary. The
-  installer is built when the Cloudflare deployment workflow's serving-release
-  observation shows current main, or from a dispatch carrying
-  `cloudflare_receipt`. A Markdown file under a
+  installer is built by itself only after an automatic `pipeline-production`
+  promotion that serves current main, or from a dispatch carrying
+  `cloudflare_receipt` (an owner `gateway-observe` or `pipeline-promote`
+  dispatch never starts it). While production promotion
+  is paused (private `deploy-pipeline.json` `autoProduction: false`), a promoter
+  (`config/release-promoters.json`) promotes with a `pipeline-promote` dispatch and then dispatches Desktop by
+  hand ([promotion switch](../../docs/operations/build-source-of-truth.md#production-promotion-switch)). A Markdown file under a
   watched directory still matches those release filters. Read the exact
   workflow paths before predicting release work.
 - The run-dispatch and Controlled Skill improvement suites run in the CI
@@ -177,42 +196,13 @@ product regression. Main pushes and merge groups continue normal full coverage.
   their existing dispatch and authorization conditions. The unified
   protected Cloudflare publisher continues to own main image builds.
 
-## Production mobile OTA
+## Production mobile releases
 
-- `mobile-update.yml` keeps its mobile type check on main pushes. Production
-  OTA waits for the private deployment policy's explicit owner window, merged
-  compatibility change and authenticated automatic staging receipts. It reads
-  that policy at a fixed private main commit through the existing read-only
-  source App, then calls the same read-only eligibility gate before reading
-  Expo/UI credentials and again before publication. The official overlay comes
-  from the verified staging manifest. A completed automatic Cloudflare
-  deployment supplies the next opportunity; no polling or new release identity
-  is introduced. A declined gate explicitly records that no OTA was published.
-  Main events do not cancel an active OTA; PR preview cancellation stays local
-  to its PR ref. After the policy permits the candidate, production OTA compares
-  the actual Git trees of `apps/mobile`, `packages/protocol`, and the reviewed
-  private mobile layer with the most recent verified publication. A later
-  Web-only merge therefore preserves an earlier, unpublished mobile change;
-  unchanged mobile inputs do not read an Expo credential or publish an update.
-  The immutable `mobile-production-ota-source` artifact records only source and
-  tree identities and is uploaded before Expo access. It becomes publication
-  evidence only when the original run attempt's later `Publish to production`
-  step succeeded, with both policy and input checks intact. Overall workflow
-  success alone is insufficient. Only the latest trusted source artifact is
-  considered: failed/cancelled publication or expired evidence cannot borrow an
-  older baseline. With no verified baseline, automatic events explicitly decline;
-  an owner must use the existing manual dispatch with valid staging references
-  and the same policy/window checks for the first publication or recovery.
-  Receipts are retained for 90 days. Recovery uses a fresh manual run, because
-  reruns cannot overwrite an existing immutable source artifact. Malformed
-  provenance fails closed even on manual dispatch. Tests verify this contract;
-  they do not prove that an Expo production update or a device install occurred.
-- `mobile-next-ios.yml` (dispatch only, from main) builds the new iOS app from
+- `mobile-next-ios.yml` (dispatch only, from main) builds the active iOS app from
   `mikka-hosted-ui` `mobile-next` at an exact `overlay_sha` that is already on its `main`, on the `xcode-27` runner (iOS 27 SDK), signs it
   manually with one persistent Apple Distribution identity (`APPLE_IOS_DISTRIBUTION_P12_BASE64`, `APPLE_IOS_DISTRIBUTION_P12_PASSWORD` in Infisical `prod:/platform`) imported into a temporary runner keychain, reuses or creates only the matching App Store provisioning profile through the existing App Store Connect API key (never creating or revoking certificates), and uploads
   it to TestFlight. It keeps no build artifact (this repository is public) and uses no EAS build; its runtime version
-  (`mikka-next-*`) and update channel (`next`) keep it apart from today's app and
-  `mobile-update.yml`.
+  (`mikka-next-*`) and update channel (`next`) identify the active 2.0 release line.
 - `mobile-next-update.yml` (dispatch only, from main on `ubuntu-24.04`) publishes JS/asset EAS Updates
   from `mikka-hosted-ui` `mobile-next` at `hosted_ui_ref` (`main` or an exact 40-char commit SHA verified
   on `mikka-hosted-ui` `main`) to the isolated **`next`** channel (`runtimeVersion: mikka-next-1`,
@@ -223,6 +213,11 @@ product regression. Main pushes and merge groups continue normal full coverage.
   channel→branch mapping before publishing explicitly to that dedicated branch (never `production`), keeps
   private logs in `$RUNNER_TEMP`, and reports only public-safe update metadata (update group ID, runtime
   version, channel, branch, and resolved `mikka-hosted-ui` SHA).
+  It has three phases: `stage` (default) publishes only to the `next-staging` branch and uploads a stage
+  receipt; `publish` (a promoter) goes straight to `next` and needs private `mobileProduction: true`; `promote` lets a
+  promoter republish a promoter's successful stage run's update group to `next`. While mobile OTA is paused
+  (`mobileProduction: false`), only `stage` then a promoter's `promote` reach users
+  ([promotion switch](../../docs/operations/build-source-of-truth.md#mobile-ota-while-paused)).
 
 ## Cloud worker template release
 
@@ -295,8 +290,8 @@ retry only failed candidate/gate jobs: cleanup has removed their candidates.
 
 After the candidate and receipt checks pass, the workflow makes the candidates
 public and keeps the
-release report (all three IDs, their official base kinds, worker digest, source
-commit and original candidate evidence) as an immutable artifact for the private Cloudflare
+release report (all template IDs, their official base kinds, observed hardware,
+worker digest, source commit and original candidate evidence) as an immutable artifact for the private Cloudflare
 API deployment. Old template IDs and aliases are never updated or deleted. A
 failure before publication leaves the selected release unchanged. Publication
 verifies the candidate's source, run, attempt and report digests. The private
@@ -304,6 +299,15 @@ Cloudflare deployment selects the verified IDs under the #1954 release owner;
 publishing IDs alone does not change production selection. Rollback follows
 that owner's existing procedure and a normal rollback PR when code changes,
 preserving matched application/worker sources and the current admission gates.
+
+The builder creates independently sized Claude and Codex templates and compares
+the CPU and memory on a disposable E2B sandbox against each release tier.
+The default ceiling is 8 GiB. Set the repository variable
+`MIKKA_E2B_CONFIRMED_MEMORY_GIB` to `16` or `32` only after E2B confirms
+that quota for the release account. Both build and promotion enforce the
+ceiling. The Desktop template uses the medium tier. The release catalogue
+records only the successfully verified template IDs and their hardware.
+[E2B billing and limits](https://docs.e2b.dev/billing.md)
 
 PR runs use no release credentials. Main builds read the existing `E2B_API_KEY`
 from the existing Infisical `prod:/vercel` path. That retained secret location
@@ -372,7 +376,28 @@ retained as workflow artifacts; credentials and raw task logs are excluded.
 
 Keep the existing protection and required checks. Read the effective repository
 settings; workflow YAML and a permission-denied administration API cannot
-establish them. Do not change protection to shorten a validation cycle. Follow
+establish them.
+
+Moving to the single aggregate is one settings change on the `main` ruleset (or
+classic branch protection), made by Alex or a promoter after `CI OK` has passed
+on a Ready PR and a merge group:
+
+1. Add the required status check **`CI OK`** (source: GitHub Actions).
+2. Remove **`UI policy (strict)`**, **`Production build and browser
+   interactions`** and **`Browser tests (before merge)`**. Keep **`GitGuardian
+   Security Checks`** and **`PR acceptance`** where they are required.
+3. In a follow-up PR, delete `browser-gate.yml` and the two legacy aggregate
+   jobs (`ui-policy`, `browser-tests`) once no ruleset names them. Move the
+   rule-as-code, Engineering Handbook and timing-summary steps of `ui-policy`
+   into a job `ci-ok` needs, and drop the two jobs from `ci-ok`'s `needs` and
+   expectations in the same PR.
+
+`CI` does not run on `pull_request: edited`, so editing a PR description does
+not re-run it: `CI OK` (like `UI policy (strict)` today) keeps the result of
+the last push, including `Frontend screenshots`, which reads the description.
+After fixing a description, push a commit or re-run the failed jobs.
+
+Do not change protection to shorten a validation cycle. Follow
 the single [merge procedure](../../docs/dev-workflow.md#5-ownership-and-merging):
 normally integrate `main` when protection requires it, a conflict exists or a
 relevant landed change requires verification, then validate that candidate.
@@ -420,9 +445,7 @@ which captured that build's settings pages, was removed on 2026-11-08.)
 `cloudflare-api-image.yml`, `desktop-release.yml`, `mobile-next-ios.yml` and `mobile-next-update.yml` read the private UI, with the
 GitHub read-only deploy key `HOSTED_UI_READ_KEY` on `alexj11324/mikka-hosted-ui` only. They set
 `MIKKA_UI_OVERLAY_DIR` and record `MIKKA_UI_OVERLAY_SHA`; public and fork PRs still build with the
-default slots without either variable or any private secret. Today's phone app also reads it, with
-the same key and without recording an overlay: `mobile-native.yml`, `mobile-screenshots.yml` and
-`mobile-update.yml` take its `mobile/` slot. No other workflow reads the private UI.
+default slots without either variable or any private secret. No other workflow reads the private UI.
 
 Web verifies `/mikka/api/version`'s `build` and `overlaySha`. Desktop uses the
 existing matching-Web source gate and checks out **that Web overlay SHA**, then
@@ -449,12 +472,27 @@ unmapped/unsafe/global inputs expand coverage. Core/integration commands are
 scheduled by Nx; the existing strict database runner owns selected PG17 suites.
 When the immutable base predates the selector, full blocking coverage and
 shadow selection apply. A selector absent from that base cannot authorize a skip. Manual dispatch
-and Monday 03:23 UTC run complete CI. No Nx Cloud, remote test cache, browser E2E
+and the daily 03:23 UTC schedule run complete CI. No Nx Cloud, remote test cache, browser E2E
 or release credentials are added. See [policy and commands](../../docs/ci/incremental.md)
 and [measured results](../../docs/ci/1699-results.md).
 
 Selected reusable jobs consume CI's trusted decision without running another
-selector. The Analytics conclusion contributes to `UI policy (strict)`.
+selector, as Orca routes its checks by path. On a pull request the selector
+reports `desktop` only for a change that can reach the Desktop suite:
+`apps/desktop/**`, every workspace package `apps/desktop/package.json` links
+through `workspace:` (followed transitively, today `packages/config`,
+`packages/daemon` and `packages/protocol`), `desktop.yml`, `.npmrc`, a path
+`desktop.yml` runs directly (`test:platform`, its `node` scripts), even one the
+change deletes, any file in the Nx closure of `@mikka/desktop` and of those
+paths, `pnpm-workspace.yaml`/`nx.json`, and a
+`pnpm-lock.yaml` or root `package.json` change that alters Desktop's
+dependency closure or a root script it runs (`scripts/ci/desktop-inputs.mjs`).
+A global input alone (`scripts/`, other workflows, configs) does not select it.
+Merge groups and the daily run keep the broad rule, so a merge still runs
+Desktop for every global input. CI's `desktop-checks` job then calls
+`desktop.yml` with `selected: true` (`scripts/ci/select.test.mjs` dry-runs
+this route). The Analytics and Desktop
+conclusions contribute to `UI policy (strict)` and `CI OK`.
 The actual Analytics build, SSR checks and browser run own the `analytics-ssr`
 check name; no second runner summarizes that job. An absent or invalid trusted
 selection fails before setup, and the parent gate rejects selected runs that
@@ -472,8 +510,12 @@ inputs change on main; dispatch it to repopulate evicted or changed-image keys.
 
 ## Scheduled offline journeys and deployment route probes
 
-`nightly-journey.yml` runs `pnpm test:e2e:mvp --grep @journey` at 06:43 UTC
-and on manual dispatch, on `main` only. It uses a fresh local PostgreSQL 17
+`nightly-journey.yml` runs `pnpm test:e2e:mvp --grep @journey` in the daily
+full CI run (03:23 UTC, `ui-policy.yml` job `nightly-journey`) and on manual
+dispatch, on `main` of the canonical repository only. `CI OK` does not require
+it yet: the journeys have never passed, so it joins `ci-ok`'s `needs` after the
+first green scheduled run. Both guards use the repository id (`1427517699`), which survived the move
+from `alexj11324/Mikka`; the former name guard skipped every scheduled run. It uses a fresh local PostgreSQL 17
 `mikka_e2e` service and scripted LiteLLM, E2B, Slack and GitHub boundaries.
 It does not read model keys or create a preview database. The `@p0` tag
 identifies core journeys; it does not add browser execution to pull-request CI.
@@ -486,7 +528,10 @@ from the actual reused web source and private overlay SHA. Missing exact-source
 publication fails the job. The evidence audit must pass before reports upload.
 This proves the local scripted composition, not a live model or deployment.
 
-`production-smoke.yml` resolves the API's serving source through the anonymous
+`production-smoke.yml` runs daily at 14:17 UTC, on dispatch and after each
+`Cloudflare application deployment` run (`workflow_run`) whose
+`pipeline-production` job succeeded, that is, a run that promoted production;
+it no longer wakes for every `deployment_status` event. It resolves the API's serving source through the anonymous
 version endpoint and reads that immutable main commit's generated route list.
 Its route probe uses undeclared methods, checking dispatch status and `Allow`
 without credentials or business handlers; a missing route or 5xx fails before
@@ -496,3 +541,13 @@ rollout and flag deadlines follow the [production acceptance decision](../../doc
 ## Engineering sandbox
 
 `engineering-sandbox.yml` authenticates explicitly dispatched main jobs to the configured engineering Worker and runs the Factory handoff, startup-timing and isolated PostgreSQL 17 policy-migration suites there. External agents can dispatch a supported suite on a committed source SHA using the [engineering runner instructions](../../docs/operations/engineering-sandbox.md).
+
+## On-demand integration-to-main promotion & overlay probe
+
+`integration-to-main-promotion.yml` runs on manual `workflow_dispatch` on `main` (no background `schedule` cron), defaulting to read-only `dry_run=true` so operators and local agent automations can invoke the cross-repo compatibility probe without Actions noise or concurrent PR races, and opt into live sync/promotion with `-f dry_run=false`. It is split into four isolated jobs (`plan`, `auto-sync`, `verify-overlay-pairing`, and `promote`) coordinated by `scripts/ci/integration-promotion-probe.mjs`:
+
+1. **`plan` (read-only metadata)**: Resolves the exact integration branch tip (`vars.MIKKA_INTEGRATION_BRANCH`, default `claude/affectionate-einstein-s235cb`) via `branches/<ref>`, checks ahead/behind counts and Ready child PRs (verifying any open `chore/auto-sync-main-*` PR includes both current `main` and the current integration base tip), reads the current approved `overlaySource` pin from `mikka-cloud/main` (`docs/operations/releases/deploy-build-inputs.json`) via the existing read-only source App, and checks whether a coordinated Ready integration PR exists on `mikka-hosted-ui`.
+2. **`auto-sync` (conflict-free `main` back-merge)**: Whenever the integration branch has commits ahead of `main` (`ahead_by > 0`), is behind `main` (`behind_by > 0`), and has zero open Ready feature child PRs, opens or forward-merges a clean `chore/auto-sync-main-*` PR targeting the non-`main` integration branch (never force-pushing, `-c core.hooksPath=/dev/null --no-verify`, refreshing both `main` and the integration base if either advanced, replacing a stale sync PR cleanly if only the stale intermediate sync tree conflicts while the live tips merge cleanly, and aborting cleanly on genuine live-tip conflicts), records verified `CI` evidence once aggregator checks pass, re-verifies live base-tip identity immediately before writing, and merges via a normal merge commit (`--merge --delete-branch --match-head-commit`).
+3. **`verify-overlay-pairing` (network-isolated cross-repo compatibility probe)**: Stages `integration-promotion-probe.mjs` strictly from `main`, scrubs all App/OIDC credentials, pre-installs separate `integration/` and `main/` checkouts (`--frozen-lockfile --ignore-scripts`), stages each candidate overlay as an independent local Git checkout in `integration/.hosted-ui` installed with `--prod --ignore-scripts --frozen-lockfile` (matching `scripts/release/service-build-ci.mjs`), and executes the official Web build (`apps/frontend/scripts/build.mjs web`), UI action/read-cache contract, release audit (`scripts/release/hosted-ui.mjs audit`), and zero-regression `tsrs --noEmit --incremental false` delta against the separate read-only `main/` checkout inside a digest-pinned `node:24.22.1-trixie` container (`--network none --cap-drop ALL --security-opt no-new-privileges`, read-only `.git` mounts, allowlist-only environment with zero `GITHUB_*`, `ACTIONS_*`, or `RUNNER_*` access). Emits strictly public-safe booleans, counts, and TS error codes — zero private overlay paths or source lines — and deletes `.hosted-ui` and build output in `always()`.
+4. **`promote` (clean metadata-only merge-queue promotion)**: `integration-to-main-promotion.yml` is the only automated enqueue path. Only a compatible approved `pinned_overlay` (`deploy-build-inputs.json`) authorizes creating or enqueueing a `main` promotion PR by default (a passing `coordinated_ui_pr` is reported as readiness evidence only unless explicitly authorized via `vars.MIKKA_INTEGRATION_ALLOW_COORDINATED_UNPINNED_PROMOTE=true`; an explicit probe bypass requires `vars.MIKKA_INTEGRATION_SKIP_OVERLAY_PROBE=true`, never legacy `MIKKA_INTEGRATION_PROMOTE_TO_MAIN`; emergency pause uses `vars.MIKKA_INTEGRATION_PROMOTE_FREEZE=true`). Immediately before `create_pr` and `enqueue_pr`, `promote` re-verifies that live `main`, the integration branch tip, `behind_by == 0`, and open Ready child PR count did not drift during the overlay probe, then enqueues strictly via `enqueuePullRequest` (preserving full `merge_group` PostgreSQL coverage).
+

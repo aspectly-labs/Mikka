@@ -246,10 +246,15 @@ before(async () => {
   })
   mock.module('@/lib/tokens/scope', { namedExports: { artifactOutsideToken: async () => false } })
   mock.module('@/lib/artifacts/delete', { namedExports: { deleteOwnArtifact: async () => true } })
+  class ComputerError extends Error {
+    constructor(readonly status: number, message: string) { super(message) }
+  }
   mock.module('@/lib/computer/store', {
     namedExports: {
-      ComputerError: class ComputerError extends Error {
-        constructor(readonly status: number, message: string) { super(message) }
+      ComputerError,
+      TaskWorkspaceArchiveUnavailable: class TaskWorkspaceArchiveUnavailable extends ComputerError {
+        static readonly code = 'task_workspace_archive_unavailable'
+        constructor() { super(503, 'Task workspace archive unavailable. Retry the run.') }
       },
       ComputerStore: class ComputerStore {
         async getPolicy() { return { permission: 'allow' } }

@@ -5,8 +5,9 @@ import { verifyAppOidc } from '../../../lib/credentials/oidc'
 import { credentialBody, credentialFailure, privateHeaders } from '../../../lib/credentials/http'
 import { CredentialError } from '../../../lib/credentials/contracts'
 import { credentialRuntimeEnvironment } from '../../../lib/credentials/runtime-identity'
+import { readEnv } from '../../../lib/env/server'
 
-const pool = new Pool({ connectionString: process.env.MIKKA_DATABASE_URL, max: 3, connectionTimeoutMillis: 10_000 })
+const pool = new Pool({ connectionString: readEnv('MIKKA_DATABASE_URL'), max: 3, connectionTimeoutMillis: 10_000 })
 async function fill(request: IncomingMessage, response: ServerResponse, privateTransport: boolean) {
   let result: Response
   try {

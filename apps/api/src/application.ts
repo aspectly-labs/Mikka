@@ -9,7 +9,7 @@ import { createRequestScope, requireRequestScope, runRequestScope } from './cont
 import { trailingSlashRedirect } from '../runtime/http-policy.mjs'
 import type { PrepareWebTransport, WebTransport } from '../../../lib/web-connection/transport'
 
-type Trace = { run<T>(work: () => T): T; finish(status: number, error?: unknown): void }
+type Trace = { run<T>(work: () => T): T; response?(response: Response): Response; finish(status: number, error?: unknown): void }
 type TraceFactory = (request: Request, route: string) => Trace
 const noTrace: TraceFactory = () => ({ run: work => work(), finish() {} })
 const failure = (status: number) => Response.json({ error: status === 404 ? 'Not found' : 'Request failed' }, { status, headers: { 'cache-control': 'no-store' } })
@@ -65,7 +65,7 @@ export function createApiHandler(routes: ApiRoute[], beginTrace: TraceFactory = 
     onDispose(event, reason => {
       trace.finish(result?.status ?? 500, caught ?? reason)
     })
-    return trace.run(async () => {
+    const response = await trace.run(async () => {
       let prepared: WebTransport | Response | null | undefined
       const serviceBearer = /^Bearer\s+mksvc_/i.test(original.headers.get('authorization') ?? '')
       const serviceProjectRead = template === '/api/service-identity/projects'
@@ -113,6 +113,7 @@ export function createApiHandler(routes: ApiRoute[], beginTrace: TraceFactory = 
       })
       return transport ? transport.run(dispatch) : dispatch()
     })
+    return trace.response?.(response) ?? response
   })
   return app
 }

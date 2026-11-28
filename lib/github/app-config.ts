@@ -3,6 +3,7 @@ import { createPrivateKey } from 'node:crypto'
 import type { Pool } from 'pg'
 import { CodedError } from '@mikka/protocol/coded-error'
 import { isCloudEdition } from '@/lib/edition'
+import { runtimeEnv } from '@/lib/env/server'
 import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
 import { githubAppEnvironmentConfig, type GitHubAppConfig, type GitHubAppCredentials } from './app-env'
 export type { GitHubAppConfig, GitHubAppCredentials } from './app-env'
@@ -31,7 +32,7 @@ export function validateGitHubAppCredentials(value: unknown): GitHubAppCredentia
   return { id: row.id!, slug: row.slug!, pem: row.pem!, webhookSecret: row.webhookSecret!, clientId: row.clientId!, clientSecret: row.clientSecret! }
 }
 
-export function resolveGitHubAppConfig(stored: Sealed | null, env: Readonly<Record<string, string | undefined>> = process.env): GitHubAppConfig {
+export function resolveGitHubAppConfig(stored: Sealed | null, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): GitHubAppConfig {
   if (!stored) return githubAppEnvironmentConfig(env)
   let credentials: unknown
   try { credentials = JSON.parse(openSecret(stored, AAD, env)) }
@@ -39,13 +40,13 @@ export function resolveGitHubAppConfig(stored: Sealed | null, env: Readonly<Reco
   return { source: 'database', ...validateGitHubAppCredentials(credentials) }
 }
 
-export function sealGitHubAppConfig(credentials: GitHubAppCredentials, env: Readonly<Record<string, string | undefined>> = process.env): Sealed {
+export function sealGitHubAppConfig(credentials: GitHubAppCredentials, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Sealed {
   const validated = validateGitHubAppCredentials(credentials)
   try { return sealSecret(JSON.stringify(validated), AAD, env) }
   catch (error) { throw new GitHubAppSetupError('encryption', 503, error) }
 }
 
-export async function readGitHubAppConfig({ query, env = process.env }: Options = {}): Promise<GitHubAppConfig> {
+export async function readGitHubAppConfig({ query, env = runtimeEnv() }: Options = {}): Promise<GitHubAppConfig> {
   // The official App keeps its deployment-owned credentials and zero-read
   // webhook path. Community installations resolve their own stored App below.
   if (isCloudEdition(env)) return githubAppEnvironmentConfig(env)
@@ -60,7 +61,7 @@ export async function readGitHubAppConfig({ query, env = process.env }: Options 
 }
 
 /** Only the first successful registration wins. A second callback cannot replace server-wide authority. */
-export async function saveGitHubAppConfig(credentials: GitHubAppCredentials, userId: string, { query, env = process.env }: Options = {}): Promise<void> {
+export async function saveGitHubAppConfig(credentials: GitHubAppCredentials, userId: string, { query, env = runtimeEnv() }: Options = {}): Promise<void> {
   const sealed = sealGitHubAppConfig(credentials, env)
   const connection = query ?? (await import('@/lib/db')).pool
   let inserted: number | null
@@ -73,7 +74,7 @@ export async function saveGitHubAppConfig(credentials: GitHubAppCredentials, use
 }
 
 /** Explicit opt-in: Better Auth resolves provider options at startup; changing this choice requires a restart. */
-export async function githubSignInClient(env: Readonly<Record<string, string | undefined>> = process.env): Promise<{ clientId: string; clientSecret: string; enabled: boolean }> {
+export async function githubSignInClient(env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Promise<{ clientId: string; clientSecret: string; enabled: boolean }> {
   const config = env.GITHUB_SIGN_IN_USE_APP === 'true' ? await readGitHubAppConfig({ env }) : githubAppEnvironmentConfig(env)
   return { clientId: config.clientId ?? '', clientSecret: config.clientSecret ?? '', enabled: Boolean(config.clientId && config.clientSecret) }
 }

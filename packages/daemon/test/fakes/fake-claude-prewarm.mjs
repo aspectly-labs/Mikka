@@ -12,6 +12,7 @@ const flag = name => {
 }
 const sessionId = flag('--session-id')
 const mode = flag('--fixture-mode')
+const exerciseTools = args.includes('--fixture-mikka-tools')
 const initialization = { commands: [], agents: [], output_style: 'default', account: {
   apiProvider: mode === 'wrong_account' ? 'gateway' : 'firstParty', tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
 } }
@@ -22,10 +23,10 @@ const success = (frame, response) => send({ type: 'control_response', response: 
 const emit = event => process.send?.(event)
 const sdkReplies = new Map()
 let sdkId = 0, sdkServers = []
-const sdkCall = (method, params) => new Promise(resolve => {
+const sdkCall = (method, params, server = 'mikka_mailbox') => new Promise(resolve => {
   const request_id = `mailbox-${++sdkId}`
   sdkReplies.set(request_id, resolve)
-  send({ type: 'control_request', request_id, request: { subtype: 'mcp_message', server_name: 'mikka_mailbox',
+  send({ type: 'control_request', request_id, request: { subtype: 'mcp_message', server_name: server,
     message: { jsonrpc: '2.0', id: sdkId, method, params } } })
 })
 let releaseInitialize, releaseClaim
@@ -53,6 +54,11 @@ lines.on('line', async line => {
   if (frame.type === 'user') {
     emit({ event: 'user', uuid: frame.uuid, sessionId: frame.session_id, text: frame.message.content[0].text })
     send(frame)
+    if (exerciseTools && sdkServers.includes('mikka')) {
+      const result = await sdkCall('tools/call', { name: 'switch_repository',
+        arguments: { repository: 'example/fixture', reason: 'Exercise the bound checkout' } }, 'mikka')
+      emit({ event: 'mikka_tool', result })
+    }
     return
   }
   if (frame.type === 'control_response') {
@@ -68,6 +74,11 @@ lines.on('line', async line => {
     const reply = () => success(frame, initialization)
     if (mode === 'pause_initialize') releaseInitialize = reply
     else reply()
+    if (exerciseTools && sdkServers.includes('mikka')) {
+      await sdkCall('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'fixture', version: '1' } }, 'mikka')
+      const catalogue = await sdkCall('tools/list', {}, 'mikka')
+      emit({ event: 'mikka_catalogue', names: catalogue.result.tools.map(tool => tool.name) })
+    }
   } else if (type === 'claim_session') {
     const reply = async () => {
       if (mode === 'refuse_claim' || mode === 'project_settings') {

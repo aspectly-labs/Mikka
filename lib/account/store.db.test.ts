@@ -769,7 +769,7 @@ dbTest('account deletion preserves task run and Factory history through DELETE u
     let providerCalls = 0
     const unavailableProvider = async () => { providerCalls++; throw new Error('deleted account reached the provider') }
     const writes = createApprovedWrites(pool, { name: 'fixture', prepare: unavailableProvider, execute: unavailableProvider, lookup: unavailableProvider }, 'send_slack_message')
-    for (const id of operationIds) await assert.rejects(writes.decide(actor, id, true), /operationSessionUnavailable/)
+    for (const id of operationIds) await assert.rejects(writes.view(actor, id), /operationSessionUnavailable/)
     assert.equal(providerCalls, 0)
     assert.deepEqual(await rows('operation_ledger', 'operationId', operationIds), retainedOperations, 'failed claim and replay attempts leave every retained ledger row unchanged')
     assert.deepEqual((await pool.query('SELECT "botId","wakeLeaseUntil" FROM coordinator_events WHERE id=$1', [completedFactory.eventId])).rows, [{ botId: null, wakeLeaseUntil: null }])

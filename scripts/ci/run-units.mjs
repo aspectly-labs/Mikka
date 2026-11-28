@@ -3,11 +3,12 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import tasks from './tasks.json' with { type: 'json' }
 
-// Older trusted selectors (origin/main before Wave 2 UI pruning) still emit
-// these retired public Web UI suites, which now run inside mikka-hosted-ui.
+// Older trusted selectors (origin/main before Wave 2 UI pruning and OpenUI
+// removal) still emit these retired tasks.
 const RETIRED_UI_TASKS = new Map([
   ['ci-core-8', 'core'],
   ['ci-core-49', 'core'],
+  ['ci-core-52', 'core'],
   ['ci-core-57', 'core'],
   ['ci-core-view-state', 'core'],
 ])

@@ -497,7 +497,8 @@ test('real CI CLI binds artifact bytes then refuses changed source/attempt/publi
   mkdirSync(root); mkdirSync(temp)
   for (const file of ['scripts/acceptance/task-secrets-ci.mjs', 'scripts/acceptance/thread-lifecycle-ci.mjs',
     'scripts/release/web-deploy.mjs', 'scripts/ci-docs-only.mjs', 'scripts/cloudflare-source.mjs',
-    'scripts/e2b/runtime-report.mjs', 'scripts/e2b/build-template.py']) {
+    'scripts/e2b/runtime-report.mjs', 'scripts/e2b/build-template.py',
+    'scripts/e2b/machine-variants.mjs', 'scripts/e2b/machine-sizes.json']) {
     const target = join(root, file); mkdirSync(dirname(target), { recursive: true }); copyFileSync(new URL('../../' + file, import.meta.url), target)
   }
   const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()

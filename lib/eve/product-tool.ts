@@ -3,18 +3,25 @@ import type { ApprovalConfiguration } from 'eve/tools/approval'
 import { isEveApprovalResponder } from './approval-principal'
 import { productRpc, type ProductCatalogueEntry } from './product-rpc'
 import type { EveScope } from './scope'
+import type { HostedRuntimeSnapshot } from '../hosted-model-selection'
 
 type Binding = {sessionId:string;turnId:string;executionId?:string}
-type ApprovalReview = {status:'not-applicable'|'denied'|'user-approval'}
+type ApprovalReview = {status:'not-applicable'|'denied'}
 
-/** Eve owns the pause and approved resumption. The product gateway retains the
- * exact business write plan and rechecks policy before provider dispatch. */
-export function createProductTool(scope:EveScope,binding:Binding,definition:ProductCatalogueEntry,rpc:typeof productRpc=productRpc) {
+/** Eve's approval hook is only the pre-execution review: it binds the call to
+ * the owner's own session and turn and records the exact business write plan.
+ * It never pauses for a person (ADR 2026-11-27-1615); the gateway rechecks
+ * policy before provider dispatch and replays the recorded plan at most once. */
+export function createProductTool(scope:EveScope,{ runtime, ...binding }:Binding & { runtime?: HostedRuntimeSnapshot },definition:ProductCatalogueEntry,rpc:typeof productRpc=productRpc) {
+  const selection = runtime?.modelSelection
+  const webSearchModel = runtime?.harness === 'ai_sdk'
+    ? selection?.type !== 'api_key' ? null : selection.modelId === runtime.model ? selection : undefined
+    : undefined
   async function actionBinding(signal?: AbortSignal): Promise<Binding> {
     signal?.throwIfAborted()
     if (binding.executionId) return binding
     const { beginProductAction } = await import('./product-definitions')
-    const executionId = await beginProductAction(scope, binding)
+    const executionId = await beginProductAction(scope, binding, runtime)
     signal?.throwIfAborted()
     return { ...binding, ...(executionId ? { executionId } : {}) }
   }
@@ -27,12 +34,7 @@ export function createProductTool(scope:EveScope,binding:Binding,definition:Prod
         return 'not-applicable'
       }
       const review = await rpc<ApprovalReview>(scope,{...await actionBinding(ctx.abortSignal),operation:'approval',name:definition.name,input:ctx.toolInput,callId:ctx.callId},ctx.abortSignal)
-      return ['not-applicable','denied','user-approval'].includes(review.status) ? review.status : 'denied'
-    },
-    response(ctx) {
-      const allowed = ctx.session.id === binding.sessionId && ctx.session.turn.id === binding.turnId &&
-        isEveApprovalResponder(scope,ctx.request.principal) && isEveApprovalResponder(scope,ctx.response.principal)
-      return allowed ? {status:'allowed'} : {status:'rejected',reason:'workspaceAccessDenied'}
+      return review.status === 'not-applicable' ? 'not-applicable' : 'denied'
     },
   }
   return defineTool({
@@ -40,14 +42,9 @@ export function createProductTool(scope:EveScope,binding:Binding,definition:Prod
     inputSchema:definition.inputSchema as never,
     approval,
     async execute(input:unknown,ctx) {
-      const principal = ctx.approval?.responder
-      // Copy identity data only. A public Eve responder also has getToken(),
-      // which is a local capability and never part of the service request.
-      const approvalResponder = principal ? {
-        authenticator:principal.authenticator,principalType:principal.principalType,principalId:principal.principalId,
-        attributes:{botId:principal.attributes.botId,workspaceId:principal.attributes.workspaceId,surface:principal.attributes.surface},
-      } : undefined
-      return (await rpc<{output:unknown}>(scope,{...await actionBinding(ctx.abortSignal),operation:'execute',name:definition.name,input,callId:ctx.callId,...approvalResponder ? {approvalResponder} : {}},ctx.abortSignal)).output
+      return (await rpc<{output:unknown}>(scope,{...await actionBinding(ctx.abortSignal),operation:'execute',name:definition.name,input,callId:ctx.callId,
+        ...(definition.name === 'web_search' && webSearchModel !== undefined && { webSearchModel }),
+      },ctx.abortSignal)).output
     },
   })
 }

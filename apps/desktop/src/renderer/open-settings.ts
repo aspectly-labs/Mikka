@@ -1,11 +1,12 @@
 import { bridgeFromWindow, type MikkaWindow } from '@/lib/platform/detect'
 import { withBasePath } from '@/lib/base-path'
-import type { SettingsHandoff } from '@/lib/platform/open-settings'
+import type { BrowserSettingsSection, SettingsHandoff } from '@/lib/platform/open-settings'
 
-export type { SettingsHandoff }
+export type { BrowserSettingsSection, SettingsHandoff }
 
-export function openSettingsInBrowser(section: 'account' | 'integrations', target?: MikkaWindow | null) {
-  return openPathInBrowser(withBasePath(`/?settings=${section}`), target)
+export function openSettingsInBrowser(section: BrowserSettingsSection, target?: MikkaWindow | null) {
+  const canonical = section === 'integrations' ? 'connections' : section
+  return openPathInBrowser(withBasePath(`/settings?section=${canonical}`), target)
 }
 
 export function openCurrentPageInBrowser(target: MikkaWindow | null | undefined = window as MikkaWindow) {

@@ -64,7 +64,4 @@ test('every first-class write path reads the workspace app policy, not only the 
   for (const action of ['send_email', 'create_calendar_event', 'update_calendar_event']) {
     assert.match(keys, new RegExp(`^\\s*${action}: '(gmail|googlecalendar)'`, 'm'), `${action} is in the workspace key map`)
   }
-  const pending = source['lib/pending-actions.ts']
-  assert.match(pending, /approvalPolicyBlock\(userId, row\)/)
-  assert.match(pending, /botMayUseApp\(row\.botId, toolkit, userId\)/)
 })

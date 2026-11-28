@@ -7,6 +7,7 @@ import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { filterEnterpriseWorkspaceLinks } from '@/lib/enterprise/access'
 import { lockLiveRegistration } from '@/lib/enterprise/live-store'
+import { workspaces } from '@/lib/db/workspace-schema'
 import { organizationWorkspaces } from '@/lib/db/governance-schema'
 import { db, pool, withDatabaseClient } from '@/lib/db'
 import { agentRuns, bots } from '@/lib/db/schema'
@@ -16,7 +17,7 @@ import { pushAllowed } from '@/lib/push-allowed'
 import type { PushReason } from '@/lib/push-reasons'
 import { readNotificationRuntimeSettings } from '@/lib/settings/notification-preferences'
 import { chatMuted } from '@/lib/chat-preferences'
-import { openUIText, parseOpenUI } from '@/lib/openui-lang'
+import { extractLegacyOpenUIText } from '@/lib/legacy-chat-content'
 import type { ActionLocale } from '@/lib/suggestions/action-title'
 import { personLocale } from '@/lib/suggestions/action-title-server'
 import { appOrigin } from '@/lib/mcp/resource'
@@ -45,12 +46,12 @@ export { pushAllowed }
 
 /**
  * The push text: the reply's first lines, without citation tokens or Markdown
- * marks. A card (OpenUI) is read as its words: its text, question and options.
- * Pushes have no buttons (mobile.md).
+ * marks. Historical OpenUI replies are read as their words: text, question and
+ * options. Pushes have no buttons (mobile.md).
  */
 export function pushBody(text: string): string {
-  const card = parseOpenUI(text)
-  const plain = (card === null ? text : openUIText(card))
+  const legacy = extractLegacyOpenUIText(text)
+  const plain = (legacy === null ? text : legacy)
     .replace(/\[\[(?:issue|run|artifact):[0-9a-f-]{36}\]\]/gi, '')
     .replace(/\[([^\]\n]+)\]\((?:[^)\s]+)\)/g, '$1')
     .replace(/^\s*[-*]\s+/gm, '')
@@ -83,8 +84,8 @@ export async function pushReply(userId: string, botId: string, text: string | nu
       const reader = { id: userId, [enterprisePrincipal]: principal, [tokenWorkspace]: origin.workspaceId }
       try {
         await withTaskWorkspace(reader, origin.workspaceId, async (_workspace, workspaceTx) => {
-          const [link] = await workspaceTx.select({ organizationId: organizationWorkspaces.organizationId })
-            .from(organizationWorkspaces).where(eq(organizationWorkspaces.workspaceId, origin.workspaceId)).limit(1)
+          const [link] = await workspaceTx.select({ organizationId: organizationWorkspaces.organizationId, factorAt: workspaces.twoFactorRequiredAt })
+            .from(workspaces).leftJoin(organizationWorkspaces, eq(organizationWorkspaces.workspaceId, workspaces.id)).where(eq(workspaces.id, origin.workspaceId)).limit(1)
           const organizationId = link?.organizationId ?? null
           const client = await pool.connect()
           try {
@@ -100,7 +101,7 @@ export async function pushReply(userId: string, botId: string, text: string | nu
                   [sessionId, userId])
                 if (!session.rowCount) return
                 // The Workspace transaction still holds its attachment lock. Recheck the live policy under the APP barrier.
-                const allowed = await filterEnterpriseWorkspaceLinks(reader, [{ id: origin.workspaceId, organizationId }], client)
+                const allowed = await filterEnterpriseWorkspaceLinks(reader, [{ id: origin.workspaceId, organizationId, factorAt: link?.factorAt ?? null }], client)
                 if (!allowed.length) return
                 const preferences = await readPreferences(userId)
                 const runtime = await readNotificationRuntimeSettings(userId)

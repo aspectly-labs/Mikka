@@ -138,7 +138,7 @@ test('real PG: VM intervals follow confirmed lifecycle and stay inside the Facto
           await writer.query("SET statement_timeout='5s'")
           await first.query('BEGIN')
           await first.query('SELECT id FROM agent_runs WHERE id=$1 FOR UPDATE',[id])
-          const operation = kind==='create' ? recordThreadSandbox(writer,id,sandboxId,leaseId)
+          const operation = kind==='create' ? recordThreadSandbox(writer,id,sandboxId,leaseId,true)
             : kind==='cancelled' ? recordCancelledSandbox(writer,id,sandboxId,operationId)
             : recordThreadMaintenanceSession(writer,{runId:id,ownerId:owner,workspaceId:workspace,sandboxId,operationId},leaseId,'running')
           pending = operation.then(value=>({value}),error=>({error}))
@@ -159,6 +159,14 @@ test('real PG: VM intervals follow confirmed lifecycle and stay inside the Facto
           if (outcome.error) throw outcome.error
           assert.equal(outcome.value,true)
           assert.equal((await intervals(id)).length,1)
+          if (kind === 'create') {
+            const lifecycle = async () => (await pool.query('SELECT lifecycle FROM thread_machines WHERE "runId"=$1', [id])).rows[0].lifecycle
+            assert.equal((await lifecycle()).portableWorkspaceRestorePending, true)
+            assert.equal((await lifecycle()).portableWorkspaceRestore, undefined)
+            // A retry can reconnect to the same sandbox after an interrupted transfer.
+            assert.equal(await recordThreadSandbox(writer, id, sandboxId, leaseId), true)
+            assert.equal((await lifecycle()).portableWorkspaceRestorePending, true)
+          }
         } finally {
           await first.query('ROLLBACK')
           await pending

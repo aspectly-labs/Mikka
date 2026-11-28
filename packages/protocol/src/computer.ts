@@ -21,6 +21,9 @@ export const viewerRequestSchema = z.object({ mode: viewerModeSchema }).strict()
 export const viewerGrantSchema = z.object({ url: z.url({ protocol: /^wss$/ }), expiresAt: z.iso.datetime() })
 export const createBotSchema = z.object({ name: z.string().trim().min(1).max(120), visibility: workVisibilitySchema.optional() }).strict()
 export const botViewSchema = z.object({ id: z.uuid(), name: z.string().min(1).max(120) })
+/** A computer task never waits for a person's approval (ADR 2026-11-27-1720):
+ * nothing sets `approval` or `approvalId`. Both stay for one release, until the
+ * official UI's computer status stops naming them. */
 export const computerTaskStateSchema = z.enum(['working', 'approval', 'done', 'failed'])
 export const computerTaskSchema = z.object({ botId: z.string(), runId: z.string(), task: z.string(), state: computerTaskStateSchema, approvalId: z.string().optional() })
 export const computerEventSchema = z.discriminatedUnion('type', [

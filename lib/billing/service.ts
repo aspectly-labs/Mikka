@@ -20,9 +20,11 @@ import { drainBillingEntitlements } from './entitlement-outbox'
 import { organizationBillingAccounts, organizationMembers } from '@/lib/db/governance-schema'
 import { requireOrganizationAdmin } from '@/lib/governance/organizations'
 import { autoRechargePolicy } from './auto-recharge'
+import { overagePolicy, readMonthlyOverageMicroUsd } from './overage'
 import { authTrustedOrigins } from '@/lib/auth-config'
 import { resourcePlanCheckout } from './plan-checkout'
 import { withBillingAuthority } from './authority'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -50,13 +52,13 @@ async function activeMembers(workspaceId: string) {
 }
 
 /** Admins only. */
-export async function workspaceBillingView(actorId: string, workspaceId: string, env: Env = process.env): Promise<BillingView> {
+export async function workspaceBillingView(actorId: string, workspaceId: string, env: Env = runtimeEnv()): Promise<BillingView> {
   await requireAdmin(actorId, workspaceId)
   return readBillingAccount(workspaceId, env)
 }
 
 /** Organization admins receive billing metadata without acquiring private workspace content access. */
-export async function organizationBillingView(actorId: string, organizationId: string, env: Env = process.env) {
+export async function organizationBillingView(actorId: string, organizationId: string, env: Env = runtimeEnv()) {
   const account = await workspaceDb.transaction(async tx => {
     await requireOrganizationAdmin(tx, organizationId, actorId)
     const [row] = await tx.select().from(organizationBillingAccounts).where(eq(organizationBillingAccounts.organizationId, organizationId)).limit(1)
@@ -71,7 +73,10 @@ export async function organizationBillingView(actorId: string, organizationId: s
 /** Internal read after an enclosing Workspace/Organization authority check. */
 export async function readBillingAccount(workspaceId: string, env: Env, members?: number): Promise<BillingView> {
   const [billing] = await db.select().from(workspaceBilling).where(eq(workspaceBilling.workspaceId, workspaceId)).limit(1)
-  const balance = await new HostedUsageStore(pool).balance(workspaceId)
+  const [balance, spentOverageMicroUsd] = await Promise.all([
+    new HostedUsageStore(pool).balance(workspaceId),
+    readMonthlyOverageMicroUsd(workspaceId),
+  ])
   const status = billing?.status ?? null
   return {
     configured: Boolean(stripeConfig(env)),
@@ -88,6 +93,7 @@ export async function readBillingAccount(workspaceId: string, env: Env, members?
     planPointsLimit: (await planGrantLimit(workspaceId)) / MICRO_USD_PER_POINT || null,
     purchasedPoints: balance.purchased / MICRO_USD_PER_POINT,
     autoRecharge: autoRechargePolicy(billing),
+    overage: overagePolicy(billing, spentOverageMicroUsd),
     receiptsManagedBy: 'stripe_portal',
     receipts: { receiptsManagedBy: 'stripe_portal', source: 'provider' },
   }
@@ -116,7 +122,7 @@ function requireConfig(env: Env): StripeConfig {
 }
 
 /** 管理付款方式 / 更改方案 / 发票: a Customer Portal session URL. Admins only. */
-export async function billingPortalUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = process.env): Promise<{ url: string }> {
+export async function billingPortalUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = runtimeEnv()): Promise<{ url: string }> {
   const config = requireConfig(env)
   return withBillingAuthority(actorId, workspaceId, async () => {
     const [billing] = await db.select({ customer: workspaceBilling.stripeCustomerId }).from(workspaceBilling).where(eq(workspaceBilling.workspaceId, workspaceId)).limit(1)
@@ -129,7 +135,7 @@ export async function billingPortalUrl(actorId: string, workspaceId: string, bac
 }
 
 /** A capacity plan is one verified resource price, regardless of human membership. */
-export async function planCheckoutUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = process.env): Promise<{ url: string }> {
+export async function planCheckoutUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = runtimeEnv()): Promise<{ url: string }> {
   const config = requireConfig(env)
   return withBillingAuthority(actorId, workspaceId, async () => {
     if (!config.webhookSecret) throw new WorkspaceError('billingNotConfigured')
@@ -139,7 +145,49 @@ export async function planCheckoutUrl(actorId: string, workspaceId: string, back
     const configuredPrice = await provider(() => stripeGet<unknown>(config, `prices/${config.resourcePriceId}`, fetchImpl))
     try { price = resourcePrice(configuredPrice, config.resourcePriceId) }
     catch (error) { throw new WorkspaceError('billingResourcePlanUnavailable', { cause: error }) }
-    return provider(() => resourcePlanCheckout(actorId, workspaceId, back_, price, config, fetchImpl))
+    const { extractStripeProductId, prepareCheckoutOfferCandidate, resolveEligibleCheckoutOffer } = await import('./catalog')
+    const { pointsToCreditCents } = await import('./hosted-usage')
+    const planEntry = {
+      id: price.plan,
+      plan: price.plan,
+      name: price.plan,
+      stripePriceId: price.id,
+      amountCents: price.amountCents,
+      currency: price.currency,
+      interval: 'month' as const,
+      includedCreditCents: pointsToCreditCents(price.monthlyPoints),
+      includedPoints: price.monthlyPoints,
+      seatModel: price.seatModel,
+      active: true,
+    }
+    const quantity = price.seatModel === 'per_seat' ? Math.max(1, await activeMembers(workspaceId)) : 1
+    const verifiedOffer = await prepareCheckoutOfferCandidate({
+      plan: planEntry,
+      planProductId: extractStripeProductId(configuredPrice),
+      config,
+      env,
+      fetchImpl,
+      bypassCache: true,
+    })
+    return provider(() => resourcePlanCheckout(
+      actorId,
+      workspaceId,
+      back_,
+      price,
+      config,
+      fetchImpl,
+      verifiedOffer
+        ? tx => resolveEligibleCheckoutOffer({
+            workspaceId,
+            plan: planEntry,
+            env,
+            queryTx: tx,
+            skipOrgScopeCheck: true,
+            preverifiedOffer: verifiedOffer,
+          })
+        : undefined,
+      quantity,
+    ))
   }, { ownPlatformAccount: true })
 }
 

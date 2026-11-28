@@ -10,6 +10,7 @@ import { isActionErrorCode } from '@/lib/workspace-admin/action'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { definitionSchema, ScheduleError, scheduleListInput, webhookBatchListInput, webhookBatchInput, type Command, type Definition } from '@/lib/schedules/contract'
 import type { AutomationHistory, AutomationList, AutomationUsage, AutomationView, CancelledAutomationRun, WebhookBatchClosure, WebhookBatchPage } from '@/lib/schedules/automation-view'
+import { readEnv } from '@/lib/env/server'
 
 /**
  * 自动化: the page's commands. Every one goes through the schedules' one writer, `executeScheduleCommand`, as the
@@ -162,16 +163,22 @@ export async function automationWebhookKey(input: { scheduleId: string; version:
 }
 
 /** Linear triggers' teams: those of the person's own Linear connection; `connected: false` without one. */
-export async function automationLinearTeams(): Promise<ActionResult<{ connected: boolean; teams: { id: string; key: string; name: string }[] }>> {
+export async function automationLinearTeams(): Promise<ActionResult<{ connected: boolean; canConnect?: boolean; teams: { id: string; key: string; name: string }[] }>> {
   return runAction(async () => {
     if (actingContext.getStore()) throw new ActionFailureError('authRequired')
     const [{ requireUser }, { pool }] = await Promise.all([import('@/lib/issue-access'), import('@/lib/db')])
     const user = await requireUser()
-    if (!(await pool.query('SELECT 1 FROM linear_connections WHERE "userId"=$1 AND "revokedAt" IS NULL', [user.id])).rowCount) return { connected: false, teams: [] }
+    const { linearOAuthConfigured } = await import('@/lib/linear-sync/oauth')
+    const disconnected = () => ({ connected: false, teams: [], canConnect: linearOAuthConfigured() })
+    if (!(await pool.query('SELECT 1 FROM linear_connections WHERE "userId"=$1 AND "revokedAt" IS NULL', [user.id])).rowCount) return disconnected()
     const [{ linearAccessToken }, { linearTeams }] = await Promise.all([import('@/lib/linear-sync/tokens'), import('@/lib/linear-sync/client')])
     try {
       return { connected: true, teams: (await linearTeams(await linearAccessToken(user.id))).map(({ id, key, name }) => ({ id, key, name })) }
-    } catch (error) { throw new ActionFailureError('scheduleLinearUnreachable', undefined, undefined, { cause: error }) }
+    } catch (error) {
+      const { LinearApiError } = await import('@/lib/linear-sync/graphql')
+      if (error instanceof LinearApiError && error.credentialRejected) return disconnected()
+      throw new ActionFailureError('scheduleLinearUnreachable', undefined, undefined, { cause: error })
+    }
   })
 }
 
@@ -198,7 +205,7 @@ export async function automationLinearLabels(workspaceId: string): Promise<Actio
 export async function automationSlackChannels(workspaceId?: string): Promise<ActionResult<{ installed: boolean; channels: { id: string; name: string; private: boolean }[] }>> {
   return runAction(async () => {
     if (actingContext.getStore()) throw new ActionFailureError('authRequired')
-    const app = process.env.SLACK_APP_ID
+    const app = readEnv('SLACK_APP_ID')
     let actor
     try { actor = await currentWorkspaceActor(workspaceId) } catch (error) {
       if (error instanceof WorkspaceError) throw new ActionFailureError(isActionErrorCode(error.code) ? error.code : 'generic', undefined, undefined, { cause: error })
@@ -223,7 +230,7 @@ export async function automationSlackEmojis(workspaceId: string): Promise<Action
       if (error instanceof WorkspaceError) throw new ActionFailureError(isActionErrorCode(error.code) ? error.code : 'generic', undefined, undefined, { cause: error })
       throw error
     }
-    const app = process.env.SLACK_APP_ID
+    const app = readEnv('SLACK_APP_ID')
     if (!app) return { emojis: [] }
     const { slackInstallationEmojis } = await import('@/lib/slack/automation-channels')
     try { return { emojis: await slackInstallationEmojis(app, actor.userId, actor.workspaceId) } }
@@ -241,7 +248,7 @@ export async function automationSlackAuthors(workspaceId: string, cursor?: strin
       if (error instanceof WorkspaceError) throw new ActionFailureError(isActionErrorCode(error.code) ? error.code : 'generic', undefined, undefined, { cause: error })
       throw error
     }
-    const app = process.env.SLACK_APP_ID
+    const app = readEnv('SLACK_APP_ID')
     if (!app) return { users: [], nextCursor: null }
     const { slackInstallationAuthors } = await import('@/lib/slack/automation-channels')
     try { return await slackInstallationAuthors(app, actor.userId, actor.workspaceId, cursor) }

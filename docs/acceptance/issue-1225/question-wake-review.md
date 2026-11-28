@@ -41,7 +41,7 @@
 
 ## 组件复用（R-90）
 
-按 [components.md](../../design/components.md) 和当前 main 既有线程 UI 核对。没有新增、重画或删除组件，也没有改变布局 token。布局基准为 [main-is-the-design](../../design/decisions/2026-11-01-0015-main-is-the-design.md)；本次没有新增 Figma frame，不声称存在未取得的对应 accepted frame。
+按 [components.md](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md) 和当前 main 既有线程 UI 核对。没有新增、重画或删除组件，也没有改变布局 token。布局基准为 [main-is-the-design](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-0015-main-is-the-design.md)；本次没有新增 Figma frame，不声称存在未取得的对应 accepted frame。
 
 | 屏幕部分 | 复用的既有组件 | 变化 |
 | --- | --- | --- |

@@ -293,9 +293,7 @@ test('real Factory admission preserves host scope, policy and transaction owners
       { label: 'owner pinned A', destination: 'selected' as const },
       { label: 'the frozen model grant was revoked', revoke: true },
       { label: 'a legacy attempt has no epoch', legacyEpoch: true },
-      { label: 'the original run had a frozen action deny', policyCeiling: { permissions: { ...livePermissions, install_dependency: 'deny' }, networkAllow: liveNetwork } },
       { label: 'the original run was frozen read-only', policyCeiling: { permissions: livePermissions, networkAllow: liveNetwork, readOnly: true } },
-      { label: 'the original run had a frozen network ceiling', policyCeiling: { permissions: livePermissions, networkAllow: liveNetwork, networkCeiling: ['allowed.example.com'] } },
     ]) await t.test(`admitted recovery blocks without replaying offline A when ${options.label}`, async () => {
       const { f, admitted, now } = await lostAdmission(options)
       await reclaim(f.userId, now)
@@ -306,6 +304,19 @@ test('real Factory admission preserves host scope, policy and transaction owners
       const task = (await pool.query('SELECT status,"sourceEventId" FROM factory_tasks WHERE id=$1', [f.task.id])).rows[0]
       assert.deepEqual(task, { status: 'blocked', sourceEventId: f.eventId })
       assert.equal((await pool.query('SELECT payload FROM coordinator_events WHERE id=$1', [f.eventId])).rows[0].payload.taskDestination?.deviceId, options.destination ? f.deviceId : undefined)
+    })
+
+    // An older frozen ceiling's install/network denials and domain lists restrict nothing
+    // (ADR 2026-11-27-1615, lib/run-assignment-policy.ts): recovery transfers to B as an unrestricted run does.
+    for (const options of [
+      { label: 'a frozen action deny', policyCeiling: { permissions: { ...livePermissions, install_dependency: 'deny' }, networkAllow: liveNetwork } },
+      { label: 'a frozen network ceiling', policyCeiling: { permissions: livePermissions, networkAllow: liveNetwork, networkCeiling: ['allowed.example.com'] } },
+    ]) await t.test(`admitted recovery transfers to B although the original run had ${options.label}`, async () => {
+      const { f, admitted, deviceB, now } = await lostAdmission(options)
+      await reclaim(f.userId, now)
+      await reclaim(f.userId, now)
+      const { rows: children } = await pool.query('SELECT "deviceId" FROM agent_runs WHERE "retryOf"=$1', [admitted.runId])
+      assert.deepEqual(children, [{ deviceId: deviceB }], 'one B retry, as without the ceiling')
     })
 
     await t.test('no recorded GitHub App grant is needed to admit', async () => {

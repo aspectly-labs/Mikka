@@ -4,10 +4,11 @@ import { GitHubAccessError } from "@/lib/github/user-access";
 import { readPullDetail } from "@/lib/github/pull-detail";
 import { pullDetailQuery } from "@/lib/pull-directory";
 import { withRequestLog } from "@/lib/request-log";
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const headers = { "Cache-Control": "private, no-store" };
 /** One pull request's own page: summary, checks and reviews, for PRs with or without a linked task. */
-export const GET = withRequestLog(
+const unguardedGET = withRequestLog(
   "/api/integrations/github/repositories/pulls/detail",
   async (request: Request) => {
     const sessionHeaders = humanSessionHeaders(request);
@@ -56,3 +57,12 @@ export const GET = withRequestLog(
     }
   },
 );
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedGET(request),
+)

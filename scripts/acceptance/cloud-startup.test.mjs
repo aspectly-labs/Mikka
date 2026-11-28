@@ -1132,8 +1132,8 @@ test('lease audit uses ordinary cloud placement and waits for a terminal reply a
     assert.equal(dispatch.readOnly, false)
     assert.equal(rawCliShellAvailable({ ...defaultRunPolicy(), readOnly: dispatch.readOnly }), true,
       'the real CLI permission policy must permit the Python lease probe')
-    assert.equal(rawCliShellAvailable({ ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, install_dependency: 'deny' }, readOnly: dispatch.readOnly }), false,
-      'the audit must retain the workspace shell restriction')
+    assert.equal(rawCliShellAvailable({ ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, install_dependency: 'deny' }, readOnly: dispatch.readOnly }), true,
+      'an older install deny no longer withholds the shell (ADR 2026-11-27-1615)')
   }
   assert.equal(rawCliShellAvailable({ ...defaultRunPolicy(), readOnly: true }), false,
     'ordinary read-only checks retain their native-shell restriction')

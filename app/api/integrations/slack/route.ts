@@ -2,9 +2,8 @@ import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { RouteResponse } from '@/lib/server-runtime/server'
-import { auth } from '@/lib/api-auth'
+import { type ApiSession } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
-import { withRequestLog } from '@/lib/request-log'
 import { withTaskWorkspace } from '@/lib/task-workspace'
 import { secretsKey } from '@/lib/secrets/crypto'
 import { installPlatform, selectableSlackChannel, slackChannels, uninstallSlack } from '@/lib/slack/install-provider'
@@ -16,8 +15,9 @@ import {
   uninstallForWorkspace,
   updatePreferences,
 } from '@/lib/slack/installation-store'
+import { defineRoute } from '@/lib/primitives/define-route'
+import { runtimeEnv } from '@/lib/env/server'
 
-const route = '/api/integrations/slack'
 const reply = (value: unknown, status = 200) =>
   RouteResponse.json(value, { status, headers: { 'Cache-Control': 'private, no-store' } })
 const coordinates = { workspaceId: z.uuid(), viewerId: z.string().min(1).max(256) }
@@ -34,9 +34,7 @@ const body = z.discriminatedUnion('operation', [
     })
     .strict(),
 ])
-async function handle(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers })
-  if (!session?.user) return reply({ error: 'authRequired' }, 401)
+async function handle(request: Request, session: ApiSession) {
   const url = new URL(request.url),
     platform = installPlatform()
   const mutating = request.method === 'POST'
@@ -120,7 +118,7 @@ async function handle(request: Request) {
           owner,
           workspace,
           (token) => uninstallSlack(platform, token),
-          process.env,
+          runtimeEnv(),
           admin,
         )
         return ok ? reply({ ok: true }) : reply({ error: 'slackProviderUnavailable' }, 503)
@@ -146,5 +144,23 @@ async function handle(request: Request) {
     return reply({ error: 'slackUnavailable' }, 503)
   }
 }
-export const GET = withRequestLog(route, handle)
-export const POST = withRequestLog(route, handle)
+export const GET = defineRoute(
+  {
+    route: '/api/integrations/slack',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  ({ request, session }) => handle(request, session),
+)
+
+export const POST = defineRoute(
+  {
+    route: '/api/integrations/slack',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    onOriginFailure: () => reply({ error: 'originRejected' }, 403),
+  },
+  ({ request, session }) => handle(request, session),
+)

@@ -72,7 +72,7 @@ export const createIssueStateInput = z.strictObject({ workspaceId: z.uuid(), nam
 export const updateIssueStateInput = z.strictObject({ workspaceId: z.uuid(), id: z.uuid(), name: stateName.nullable().optional(), icon: looks.icon.optional(), color: looks.color.optional() })
 export const reorderIssueStatesInput = z.strictObject({ workspaceId: z.uuid(), ids: z.array(z.uuid()).min(1).max(200) })
 export const setDefaultIssueStateInput = z.strictObject({ workspaceId: z.uuid(), id: z.uuid() })
-/** Capy's MoveAndDelete: the state's tasks move to `moveTo`, then the state goes. */
+/** Deleting a state, as Capy does: its tasks move to `moveTo`, then the state goes. */
 export const deleteIssueStateInput = z.strictObject({ workspaceId: z.uuid(), id: z.uuid(), moveTo: z.uuid() })
 
 export type CreateIssueStateInput = z.infer<typeof createIssueStateInput>

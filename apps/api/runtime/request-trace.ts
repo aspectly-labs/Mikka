@@ -9,11 +9,13 @@ import { telemetryId } from '@mikka/protocol/trace-context'
 
 export type RequestTrace = {
   run<T>(callback: () => T): T
+  response(response: Response): Response
   finish(status: number, error?: unknown): void
 }
 
 /** route is the generated route template, never a concrete path or query. */
 export function beginRequestTrace(request: Request, route: string): RequestTrace {
+  const started = performance.now()
   // Accept only the standard trace carrier. Baggage and arbitrary incoming
   // headers must not become attributes or propagate into business work.
   const carrier: Record<string, string | undefined> = {
@@ -44,9 +46,55 @@ export function beginRequestTrace(request: Request, route: string): RequestTrace
     },
   }, parent)
   const active = trace.setSpan(parent, span)
-  let finished = false
+  let finished = false, streaming = false, bodyFailed = false, bodyError: unknown
+  // A server deadline or an upstream AbortError is not proof of user intent.
+  // Node's incoming request signal identifies a real client disconnect.
+  const requestCancelled = (error: unknown) => {
+    if (!request.signal.aborted) return false
+    const reason = safeErrorAttributes(request.signal.reason)
+    const clientAbort = reason['error.type'] === 'AbortError' || reason['mikka.error.code'] === 'ECONNRESET'
+      || reason['mikka.error.code'] === 'ERR_STREAM_PREMATURE_CLOSE'
+    return clientAbort && (error === undefined || error === request.signal.reason || (error instanceof Error && error.name === 'AbortError'))
+  }
   return {
     run: callback => context.with(active, () => withTraceMetadata(metadata, () => routeScope.run(route, callback))),
+    response(response) {
+      if (!span.isRecording()) return response
+      const contentType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase()
+      const kind = contentType === 'text/event-stream' ? 'event_stream' : contentType === 'application/x-ndjson' ? 'ndjson' : 'regular'
+      streaming = kind !== 'regular'
+      span.setAttributes({ 'mikka.http.response_kind': kind, 'mikka.http.response_headers_ms': performance.now() - started })
+      if (!streaming || !response.body) return response
+      const reader = response.body.getReader()
+      let firstByte = false, closed = false
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const chunk = await reader.read()
+            if (closed) return
+            if (chunk.done) { closed = true; controller.close(); reader.releaseLock(); return }
+            if (!firstByte && chunk.value.byteLength > 0) {
+              firstByte = true
+              span.setAttribute('mikka.http.ttfb_ms', performance.now() - started)
+            }
+            controller.enqueue(chunk.value)
+          } catch (error) {
+            if (closed) return
+            closed = true
+            // Capture upstream failure before socket disposal can also abort
+            // the incoming signal and otherwise disguise it as cancellation.
+            if (!requestCancelled(error)) { bodyFailed = true; bodyError = error }
+            controller.error(error)
+            reader.releaseLock()
+          }
+        },
+        async cancel(reason) {
+          closed = true
+          try { await reader.cancel(reason) } finally { reader.releaseLock() }
+        },
+      }, { highWaterMark: 0 })
+      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
+    },
     // H3's actual response-disposal boundary calls this before running after
     // jobs. Ending at handler return would truncate streaming requests; holding
     // the span through after jobs would misattribute their own detached spans.
@@ -54,8 +102,12 @@ export function beginRequestTrace(request: Request, route: string): RequestTrace
       if (finished) return
       finished = true
       span.setAttribute('http.response.status_code', status)
-      if (error !== undefined) span.setAttributes(safeErrorAttributes(error))
-      if (status >= 500 || error !== undefined) span.setStatus({ code: SpanStatusCode.ERROR })
+      const cancelled = streaming && status >= 200 && status < 300 && !bodyFailed && requestCancelled(error)
+      const failure = bodyFailed ? bodyError : error
+      const failed = status >= 500 || bodyFailed || (failure !== undefined && !cancelled)
+      span.setAttribute('mikka.http.outcome', failed ? 'error' : cancelled ? 'client_cancelled' : 'completed')
+      if (failed && failure !== undefined) span.setAttributes(safeErrorAttributes(failure))
+      if (failed) span.setStatus({ code: SpanStatusCode.ERROR })
       span.end()
     },
   }

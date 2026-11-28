@@ -77,6 +77,17 @@ export function normalizeThreadTags(value: unknown): string[] | null {
   return tags.length > THREAD_TAG_MAX ? null : tags
 }
 
+export const THREAD_FOLDER_LENGTH = 60
+
+/** Folder name as typed by the owner: trimmed, NFC-normalized, at most 60 chars; empty/null clears it; invalid returns undefined. */
+export function normalizeThreadFolder(value: unknown): string | null | undefined {
+  if (value === null) return null
+  if (typeof value !== 'string') return undefined
+  const folder = value.normalize('NFC').replace(/\s+/g, ' ').trim()
+  if (!folder) return null
+  return [...folder].length <= THREAD_FOLDER_LENGTH ? folder : undefined
+}
+
 /** The thread's tags; with `tags`, replaces them first. */
 export async function threadTags(q: RunChainQueryable, actor: Actor, tags?: string[]): Promise<{ threadId: string; tags: string[] } | null> {
   const chain = await ownedThreadChain(q, actor)
@@ -85,6 +96,27 @@ export async function threadTags(q: RunChainQueryable, actor: Actor, tags?: stri
     ? await q.query('UPDATE agent_runs SET tags=$4::jsonb,"updatedAt"=now() WHERE id=$1 AND "userId"=$2 AND "workspaceId"=$3 AND "deletedAt" IS NULL RETURNING tags', [chain.rootRunId, actor.ownerId, actor.workspaceId, JSON.stringify(tags)])
     : await q.query('SELECT tags FROM agent_runs WHERE id=$1 AND "userId"=$2 AND "workspaceId"=$3 AND "deletedAt" IS NULL', [chain.rootRunId, actor.ownerId, actor.workspaceId])
   return row ? { threadId: chain.rootRunId, tags: (row.tags as string[] | null) ?? [] } : null
+}
+
+/** The thread's folder (#3333); with `folder !== undefined`, replaces or clears it on the chain's root run. */
+export async function threadFolder(q: RunChainQueryable, actor: Actor, folder?: string | null): Promise<{ threadId: string; folder: string | null } | null> {
+  const chain = await ownedThreadChain(q, actor)
+  if (!chain) return null
+  const { rows: [row] } = folder !== undefined
+    ? await q.query('UPDATE agent_runs SET folder=$4,"updatedAt"=now() WHERE id=$1 AND "userId"=$2 AND "workspaceId"=$3 AND "deletedAt" IS NULL RETURNING folder', [chain.rootRunId, actor.ownerId, actor.workspaceId, folder])
+    : await q.query('SELECT folder FROM agent_runs WHERE id=$1 AND "userId"=$2 AND "workspaceId"=$3 AND "deletedAt" IS NULL', [chain.rootRunId, actor.ownerId, actor.workspaceId])
+  return row ? { threadId: chain.rootRunId, folder: (row.folder as string | null) ?? null } : null
+}
+
+/** Distinct non-empty thread folders for the owner in this workspace. */
+export async function listWorkspaceThreadFolders(q: RunChainQueryable, ownerId: string, workspaceId: string): Promise<string[]> {
+  const { rows } = await q.query(
+    `SELECT DISTINCT folder FROM agent_runs
+     WHERE "userId"=$1 AND "workspaceId"=$2 AND "deletedAt" IS NULL AND folder IS NOT NULL AND btrim(folder) <> ''
+     ORDER BY folder ASC LIMIT 100`,
+    [ownerId, workspaceId],
+  )
+  return rows.map(row => String(row.folder))
 }
 
 /**

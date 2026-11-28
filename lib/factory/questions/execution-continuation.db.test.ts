@@ -34,6 +34,12 @@ test('real PG: question receipts preserve one execution without opening a repair
   const target = new URL(url!); target.pathname = '/' + database
   const pool = new Pool({ connectionString: target.toString(), max: 8 })
   let closeWorkspaceDatabase: (() => Promise<void>) | undefined
+  const originalE2BKey = process.env.E2B_API_KEY
+  process.env.E2B_API_KEY = 'synthetic-question-e2b-key'
+  t.after(() => {
+    if (originalE2BKey === undefined) delete process.env.E2B_API_KEY
+    else process.env.E2B_API_KEY = originalE2BKey
+  })
   const previousByos = process.env.MIKKA_BYOS_ENABLED, previousRoutes = process.env.MIKKA_BYOS_VALIDATED_MODEL_ROUTES
   process.env.MIKKA_BYOS_ENABLED = '1'; process.env.MIKKA_BYOS_VALIDATED_MODEL_ROUTES = 'claude_cpa,codex_cpa'
   try {

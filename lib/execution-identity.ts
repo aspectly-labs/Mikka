@@ -2,13 +2,15 @@ import type { Pool, PoolClient } from 'pg'
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import type { WorkerDefinitionSnapshot } from './agent-kit/worker'
-import { organizationResourceAllowed, assertOrganizationModelProvider } from './governance/resource-access'
+import { assertOrganizationModelProvider } from './governance/resource-access'
 import { McpValidationError, PluginError } from './plugins/contracts'
+import { hasE2BRuntimeCredential } from './secrets/e2b-owner-sql'
 
 /** Authority is host data, never a Decision/model argument. References only: no credentials. */
 const resource = z.object({
   kind: z.enum(['device', 'api_key', 'subscription', 'e2b', 'cloudflare_sponsored', 'mcp']), id: z.string().min(1), ownerId: z.string().min(1),
-  access: z.enum(['owner', 'workspace_share']), revision: z.string().optional(),
+  // 'workspace': the workspace's own resource (a workspace API key, decision 2026-11-27-1740); ownerId is the workspace id.
+  access: z.enum(['owner', 'workspace_share', 'workspace']), revision: z.string().optional(),
   grantId: z.uuid().optional(), workspaceId: z.uuid().optional(),
 })
 const account = z.object({
@@ -65,29 +67,36 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
       if (error.code === 'mcpUnavailable') throw new ExecutionMcpAuthorityError({ cause: error })
       throw new ExecutionIdentityError({ cause: error })
     })
+    // Validation admits only the requester's own servers (decision 2026-11-27-1700) and the
+    // workspace's servers; a "member" workspace server uses the requester's own account.
     for (const grant of authority.servers) resourceBindings.push({ kind: 'mcp', id: grant.id, ownerId: grant.ownerId,
-      access: grant.grantId ? 'workspace_share' : 'owner', revision: String(grant.revision),
-      ...(grant.grantId ? { grantId: grant.grantId } : {}), ...(authority.workspaceId ? { workspaceId: authority.workspaceId } : {}),
+      access: grant.source === 'workspace' ? 'workspace_share' : 'owner', revision: String(grant.revision), ...(authority.workspaceId ? { workspaceId: authority.workspaceId } : {}),
     })
   }
   let model: ExecutionIdentity['billingAccount']['model'] = { kind: 'native_login', ownerId: run.userId, resourceId: run.deviceId, amount: 'provider_unknown' }
   if (definition.apiKey && definition.subscription) return denied()
   if (definition.apiKey) {
     if (workspaceId) await assertOrganizationModelProvider(workspaceId, 'api-key', membership)
-    const { rows: [key] } = await query.query<{ ownerId: string; shared: boolean }>(`SELECT k."ownerId", EXISTS (
-      SELECT 1 FROM model_api_key_shares s WHERE s."keyId"=k.id AND s."workspaceId"=$2
-      AND NOT EXISTS (SELECT 1 FROM workspace_personal_policies p WHERE p."workspaceId"=$2 AND NOT p.subscriptions)) AS shared
-      FROM model_api_keys k WHERE k.id=$1`, [definition.apiKey.keyId, workspaceId])
-    if (!key || (key.ownerId !== run.userId && (!workspaceId || !key.shared || !await executionMembersActive(workspaceId, [run.userId, key.ownerId], membership)))) return denied()
-    if (key.ownerId !== run.userId && !await organizationResourceAllowed(workspaceId!, 'api_key', definition.apiKey.keyId, key.ownerId, membership)) return denied()
-    resourceBindings.push({ kind: 'api_key', id: definition.apiKey.keyId, ownerId: key.ownerId, access: key.ownerId === run.userId ? 'owner' : 'workspace_share' })
-    model = { kind: 'api_key', ownerId: key.ownerId, resourceId: definition.apiKey.keyId, amount: 'provider_unknown' }
+    // The run owner's own key, or the key of the workspace the run is in (decision 2026-11-27-1740). Never another member's key.
+    const { rows: [key] } = await query.query<{ ownerId: string | null; workspaceId: string | null }>('SELECT "ownerId","workspaceId"::text AS "workspaceId" FROM model_api_keys WHERE id=$1', [definition.apiKey.keyId])
+    // The run owner's own key only while the workspace's admin switch allows members' own keys.
+    const own = !!key && key.ownerId === run.userId && (!workspaceId || await (await import('./personal-policy')).workspaceMemberCredentialsAllowed(query, workspaceId))
+    if (!key || (!own && (!workspaceId || key.workspaceId !== workspaceId || !await executionMembersActive(workspaceId, [run.userId], membership)))) return denied()
+    const keyOwner = own ? run.userId : workspaceId!
+    resourceBindings.push(own ? { kind: 'api_key', id: definition.apiKey.keyId, ownerId: keyOwner, access: 'owner' }
+      : { kind: 'api_key', id: definition.apiKey.keyId, ownerId: keyOwner, access: 'workspace', workspaceId: workspaceId! })
+    model = { kind: 'api_key', ownerId: keyOwner, resourceId: definition.apiKey.keyId, amount: 'provider_unknown' }
   } else if (definition.subscription) {
     const { rows: [binding] } = await query.query<{ ownerId: string; workspaceId: string; revision: string; modelId: string; route: string }>(`SELECT b."ownerId",b."workspaceId",b."connectionRevision"::text AS revision,b."modelId",b.route
       FROM byos_bindings b JOIN byos_connections c ON c.id=b."connectionId" AND c."ownerId"=b."ownerId"
       AND c.state='connected' AND NOT c.paused AND c.epoch=b."connectionRevision" WHERE b.id=$1`, [definition.subscription.bindingId])
-    // A subscription serves its owner only (decision 2026-11-17).
+    // A subscription serves its owner only (decision 2026-11-17), and in a team workspace only while
+    // the team switch allows members' own credentials (decision 2026-11-27-1740).
     if (!binding || binding.modelId !== definition.subscription.modelId || binding.route !== definition.subscription.route || binding.ownerId !== run.userId) return denied()
+    const { workspaceMemberCredentialsAllowed } = await import('./personal-policy')
+    for (const scope of new Set([workspaceId, binding.workspaceId].filter((value): value is string => !!value))) {
+      if (!await workspaceMemberCredentialsAllowed(query, scope)) return denied()
+    }
     resourceBindings.push({ kind: 'subscription', id: definition.subscription.bindingId, ownerId: binding.ownerId, access: 'owner', revision: binding.revision })
     model = { kind: 'subscription', ownerId: binding.ownerId, resourceId: definition.subscription.bindingId, amount: 'provider_unknown' }
   // A credits-only definition bills the catalogue model through Mikka's native login — the
@@ -95,13 +104,13 @@ export async function freezeExecutionIdentity(query: Query, run: RunAuthority, m
   } else if (!definition.credits && device.kind === 'cloud') return denied()
   const placement=definition.taskMachine
   if (placement) {
-    if (device.kind!=='cloud'||placement.provider!=='cloudflare'||placement.payer!=='mikka'||placement.ownerId!==run.userId||placement.botId!==run.botId||placement.workspaceId!==workspaceId||
-        !definition.subscription||!['codex','claude_code'].includes(definition.harness)||definition.projectExecution?.repositoryKey!==placement.repositoryKey) return denied()
+    if (device.kind!=='cloud'||placement.provider!=='cloudflare'||placement.payer!=='mikka'||placement.ownerId!==run.userId||(run.botId!==null&&placement.botId!==run.botId)||placement.workspaceId!==workspaceId||
+        (definition.taskCompute ? definition.taskCompute.provider!=='cloudflare' : !placement.requestEventId)||
+        !['codex','claude_code'].includes(definition.harness)||definition.projectExecution?.repositoryKey!==placement.repositoryKey) return denied()
     await (await import('./cloud-computer/sponsored-task')).verifySponsoredChoice(query,placement)
     resourceBindings.push({kind:'cloudflare_sponsored',id:workspaceId!,ownerId:'mikka-hosted',access:'workspace_share',workspaceId:workspaceId!})
   } else if (device.kind === 'cloud') {
-    const { rows: [key] } = await query.query(`SELECT 1 FROM user_e2b_keys WHERE "userId"=$1 UNION ALL SELECT 1 FROM workspace_e2b_keys WHERE "createdBy"=$1 LIMIT 1`, [run.userId])
-    if (!key) return denied()
+    if (!await hasE2BRuntimeCredential(query, run.userId)) return denied()
     resourceBindings.push({ kind: 'e2b', id: run.userId, ownerId: run.userId, access: 'owner' })
   }
   return { version: 1, requester: run.userId, botId: run.botId, botOwner: bot?.ownerId ?? null,

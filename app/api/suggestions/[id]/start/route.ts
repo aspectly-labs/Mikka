@@ -1,18 +1,17 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { z } from 'zod'
-import { auth } from '@/lib/api-auth'
+import type { ApiSession } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { WorkspaceError } from '@/lib/workspace-error'
 import { resolveSuggestionStartWorkspace, startSuggestion } from '@/lib/cloud-computer/suggestions'
 import { ComputerError } from '@/lib/computer/store'
 import { wakeCoordinator } from '@/lib/coordinator/wake'
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+import { defineRoute } from '@/lib/primitives/define-route'
+async function handlePOST(request: Request, session: ApiSession, { params }: { params: Promise<{ id: string }> }) {
   const respond = (value: unknown, status: number) => RouteResponse.json(value, { status, headers: { 'Cache-Control': 'private, no-store' } })
   try {
-    const session = await auth.api.getSession({ headers: request.headers })
-    if (!session?.user) return respond({ error: 'authRequired' }, 401)
     if (request.headers.get('origin') !== new URL(request.url).origin) return respond({ error: 'Invalid origin' }, 403)
     const id = z.uuid().parse((await params).id)
     const workspaceId =
@@ -28,3 +27,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return respond({ error: 'Task start unavailable' }, 503)
   }
 }
+
+export const POST = defineRoute<'session', 'none', { id: string }>(
+  {
+    route: '/api/suggestions/[id]/start',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none', write: true,
+  },
+  async ({ request, session, params }) => handlePOST(request, session, { params: Promise.resolve(params) }),
+)

@@ -1,8 +1,9 @@
 import { isCloudEdition } from './edition'
 import { mobileMembersPage, mobileWebTarget } from './mobile-web-target'
+import { getPublicUiOverlaySha } from './env/public'
 
 export function pairedMobileCloudUI() {
-  return isCloudEdition() && /^[0-9a-f]{40}$/i.test(process.env.MIKKA_UI_OVERLAY_SHA ?? '')
+  return isCloudEdition() && /^[0-9a-f]{40}$/i.test(getPublicUiOverlaySha())
 }
 
 export class MobileWebScopeError extends Error { constructor() { super('mobile_handoff_scope_unavailable') } }

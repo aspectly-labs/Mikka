@@ -1,22 +1,19 @@
 import { withRequestLog } from '@/lib/request-log'
 import { RouteResponse } from '@/lib/server-runtime/server'
-import { afterJob } from '@/lib/background'
 import { cookies } from '@/lib/server-runtime/headers'
 import { requireUser } from '@/lib/issue-access'
-import { exchangeLinearCode, LINEAR_OAUTH_CALLBACK_PATH, LINEAR_OAUTH_STATE_COOKIE } from '@/lib/linear-sync/oauth'
+import { exchangeLinearCode, stateCookieOptions, LINEAR_OAUTH_STATE_COOKIE } from '@/lib/linear-sync/oauth'
 import { withBasePath } from '@/lib/base-path'
-import { bootstrapSuggestions } from '@/lib/suggestions/sources'
-import { linearSyncDisabledResponse, linearSyncEnabled } from '@/lib/linear-sync/flags'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 async function handleGET(request: Request) {
-  if (!await linearSyncEnabled()) return linearSyncDisabledResponse()
   const url = new URL(request.url)
   const failure = new URL(withBasePath('/?linear=error'), url.origin)
   const cookieStore = await cookies()
   const redirect = (destination: URL) => {
     const response = RouteResponse.redirect(destination)
-    response.cookies.set(LINEAR_OAUTH_STATE_COOKIE, '', { httpOnly: true, sameSite: 'lax', secure: true, path: LINEAR_OAUTH_CALLBACK_PATH, maxAge: 0 })
+    response.cookies.set(LINEAR_OAUTH_STATE_COOKIE, '', stateCookieOptions(0))
     return response
   }
   if (url.searchParams.has('error')) return redirect(failure)
@@ -26,12 +23,18 @@ async function handleGET(request: Request) {
   try {
     const user = await requireUser()
     await exchangeLinearCode(state, code, user.id)
-    const timeZone = request.headers.get('x-vercel-ip-timezone')
-    afterJob('after:suggestions-bootstrap', () => bootstrapSuggestions(user.id, 'linear', timeZone))
     return redirect(new URL(withBasePath('/?linear=connected'), url.origin))
   } catch {
     return redirect(failure)
   }
 }
 
-export const GET = withRequestLog('/api/integrations/linear/callback', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/linear/callback', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request),
+)

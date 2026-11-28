@@ -3,14 +3,15 @@ import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { linearConnections } from '@/lib/db/schema'
+import { readEnv } from '@/lib/env/server'
 import { seal, unseal } from './crypto'
 import { LinearApiError } from './graphql'
 
 const tokenPayload = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive() })
 
 export function oauthCredentials() {
-  const clientId = process.env.LINEAR_CLIENT_ID
-  const clientSecret = process.env.LINEAR_CLIENT_SECRET
+  const clientId = readEnv('LINEAR_CLIENT_ID')
+  const clientSecret = readEnv('LINEAR_CLIENT_SECRET')
   if (!clientId || !clientSecret) throw new Error('Linear OAuth is not configured')
   return { clientId, clientSecret }
 }
@@ -30,7 +31,10 @@ export async function postToken(form: URLSearchParams) {
   } catch (error) {
     throw Object.assign(new LinearApiError('Could not reach Linear OAuth', true), { cause: error })
   }
-  if (!response.ok) throw new LinearApiError('Linear OAuth token exchange failed', response.status >= 500 || response.status === 429, response.status)
+  if (!response.ok) {
+    const reason = response.status === 400 ? await response.json().catch(() => null) : null
+    throw new LinearApiError('Linear OAuth token exchange failed', response.status >= 500 || response.status === 429, response.status, reason?.error === 'invalid_grant')
+  }
   return tokenPayload.parse(await response.json())
 }
 
@@ -58,7 +62,7 @@ export async function linearAccessToken(userId: string) {
     // the next read can tell, so the refusal is reported as retryable. Settling it
     // here would let an ordinary race fail a live connection for good.
     throw error instanceof LinearApiError && !error.retryable
-      ? new LinearApiError(`${error.message} (a concurrent refresh may have spent this token)`, true, error.status)
+      ? new LinearApiError(`${error.message} (a concurrent refresh may have spent this token)`, true, error.status, error.credentialRejected)
       : error
   }
   // Compare-and-set on the refresh token that was read: the refresh runs outside

@@ -4,8 +4,8 @@
  *
  * - `created`: a new thread is named from what it was asked. A run that continues a thread takes that
  *   thread's title instead of asking the model again.
- * - `first_run_ended` and `pull_opened`: the thread is named again once its real content is known (Capy's
- *   `titleTriggers`), only while its title is still a generated one.
+ * - `first_run_ended` and `pull_opened`: the thread is named again once its real content is known (as Capy
+ *   rewrites a thread's title), only while its title is still a generated one.
  * - `regenerate`: the person asked for a new generated title; this is the one trigger that replaces a manual title.
  */
 import { cleanShortTitle, isCjk } from './short-title'

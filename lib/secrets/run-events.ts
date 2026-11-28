@@ -44,11 +44,15 @@ function reportsExecution(chunk: Record<string, unknown>): boolean {
 }
 
 async function subscriptionRun(runId: string) {
+  // Gateway runs record usage at the provider boundary. This lookup includes
+  // expired assignments because the daemon may deliver an older batch later.
   const { rows: [run] } = await pool.query<{ workspaceId: string; ownerId: string; route: string }>(`
     SELECT r."workspaceId",r."userId" AS "ownerId",b.route
     FROM byos_native_runs n JOIN agent_runs r ON r.id=n."runId"
     JOIN byos_bindings b ON b.id=n."bindingId"
-    WHERE r.id=$1 AND r."workspaceId" IS NOT NULL`, [runId])
+    WHERE r.id=$1 AND r."workspaceId" IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM model_gateway_tokens g WHERE g."runId"=r.id
+        AND g."ownerId"=r."userId" AND g."sourceKind"='subscription')`, [runId])
   if (!run) return null
   const threadId = (await readRunChain(pool, run.ownerId, runId))?.rootRunId ?? null
   return { ...run, threadId }

@@ -8,6 +8,7 @@ import { cloudClient, cloudRequest } from '@/lib/cloud-services/runtime'
 import { CloudServiceError } from '@/lib/cloud-services/errors'
 import { readCloudJson } from '@/lib/cloud-services/transport'
 import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
+import { readEnv } from '@/lib/env/server'
 
 const EXPO = 'https://exp.host/--/api/v2/push'
 type Notification = { to: string[]; title: string; body: string; data: Record<string, unknown>; collapseId?: string; silent?: boolean }
@@ -29,8 +30,9 @@ export function phonePushPayload(message: Notification, content: 'full' | 'remin
 
 async function expo(path: 'send' | 'getReceipts', body: unknown) {
   let response: Response
+  const expoAccessToken = readEnv('EXPO_ACCESS_TOKEN')
   try { response = await fetch(`${EXPO}/${path}`, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', accept: 'application/json',
-    ...(process.env.EXPO_ACCESS_TOKEN ? { authorization: `Bearer ${process.env.EXPO_ACCESS_TOKEN}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }) }
+    ...(expoAccessToken ? { authorization: `Bearer ${expoAccessToken}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }) }
   catch (cause) { throw new CloudServiceError('cloud_unavailable', 'network', cause) }
   return readCloudJson(response)
 }

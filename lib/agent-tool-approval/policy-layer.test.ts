@@ -12,18 +12,18 @@ test('CLI policy layers accept the four existing CLI actions', () => {
   assert.deepEqual(cliPolicyLayerSchema.parse({ permissions }), { permissions })
   assert.deepEqual(cliPolicyLayerSchema.parse({}), {})
   for (const action of ['install_dependency', 'network']) {
-    for (const decision of ['allow', 'ask', 'deny']) {
+    for (const decision of ['allow', 'deny']) {
       const layer = { permissions: { [action]: decision } }
       assert.deepEqual(cliPolicyLayerSchema.parse(layer), layer)
     }
+    // A stored ask predates ADR 2026-11-27-1615 and reads as allow.
+    assert.deepEqual(cliPolicyLayerSchema.parse({ permissions: { [action]: 'ask' } }), { permissions: { [action]: 'allow' } })
   }
   // Push is what the GitHub App grants (decision 2026-11-01-1310): allow or deny; a stored ask reads as allow.
   for (const decision of ['allow', 'deny']) assert.deepEqual(cliPolicyLayerSchema.parse({ permissions: { git_push: decision } }), { permissions: { git_push: decision } })
   assert.deepEqual(cliPolicyLayerSchema.parse({ permissions: { git_push: 'ask' } }), { permissions: { git_push: 'allow' } })
-  for (const decision of ['ask', 'deny']) {
-    const layer = { permissions: { write_outside_repo: decision } }
-    assert.deepEqual(cliPolicyLayerSchema.parse(layer), layer)
-  }
+  assert.deepEqual(cliPolicyLayerSchema.parse({ permissions: { write_outside_repo: 'deny' } }), { permissions: { write_outside_repo: 'deny' } })
+  assert.deepEqual(cliPolicyLayerSchema.parse({ permissions: { write_outside_repo: 'ask' } }), { permissions: { write_outside_repo: 'allow' } })
 })
 
 test('CLI policy layers reject computer authority rather than accepting or stripping it', () => {

@@ -1,3 +1,4 @@
+import type { WorkspaceCapabilities } from '@/lib/governance/capabilities'
 import type { BillingView, CreditBillingView, ResourceBudgetView, BudgetPeriod, BudgetScope } from './contract'
 
 export type BillingScope = { kind: 'workspace' | 'organization'; id: string }
@@ -12,7 +13,13 @@ export type BillingManagementView = {
   platformAccountWorkspaceId: string | null
   canManageRecharge: boolean
   canManageBudget: boolean
-  capacity: { plan: 'free' | 'pro' | 'enterprise'; hostedMaxInFlight: number; activeHumanLimit: number | null }
+  capacity: {
+    plan: 'free' | 'pro' | 'enterprise'
+    hostedMaxInFlight: number
+    activeHumanLimit: number | null
+    /** Returned by servers that publish structured workspace capabilities. Older servers omit this field. */
+    capabilities?: WorkspaceCapabilities
+  }
   organizations: { id: string; name: string }[]
   organization: { id: string; name: string; role: 'owner' | 'admin'; accountWorkspaceId: string | null;
     canDesignate: boolean; accounts: { id: string; name: string; selectable: boolean }[] } | null
@@ -33,6 +40,7 @@ export type BillingManagementOperation = (
   | { action: 'budget'; workspaceId: string; budget: BillingBudgetInput }
   | { action: 'account'; workspaceId: string | null }
   | { action: 'recharge'; policy: { enabled: false; expectedRevision: number; thresholdPoints: number; amountPoints: 1000 | 2500 | 5000; monthlyCapPoints: number } }
+  | { action: 'overage'; policy: { enabled: boolean; monthlyCapPoints: number | null; expectedRevision: number } }
   | { action: 'checkout' | 'portal' }
   | { action: 'topup'; amount: number; locale: string }
 ) & { accountWorkspaceId?: string }

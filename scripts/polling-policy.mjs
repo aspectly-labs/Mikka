@@ -33,7 +33,6 @@ const db = (replaceWith, reason, hits) => ({
   reason,
   hits,
 });
-const ui = (reason, hits) => ({ kind: "ui-timer", reason, hits });
 const external = (reason, hits) => ({ kind: "external", reason, hits });
 const local = (reason, hits) => ({ kind: "local", reason, hits });
 const harness = (reason, hits) => ({ kind: "harness", reason, hits });
@@ -51,6 +50,10 @@ const retry = (reason, hits) => ({ kind: "retry", reason, hits });
  * - tracking '#1212': a database poll still waiting to be replaced by push, through `replaceWith`.
  */
 export const pollingAllowlist = {
+  "apps/desktop/src/main/index.ts": external(
+    "installed desktop checks the external release feed every four hours for C7 background updates",
+    1,
+  ),
   "packages/subscription-worker/native_broker.go": db(
     daemon,
     "active native request authorization rechecked every second while upstream is silent; must replace with revocation events without widening authorization in #2820",
@@ -173,10 +176,6 @@ export const pollingAllowlist = {
     "bounded production acceptance waits for its explicitly created group conversation result",
     1,
   ),
-  "scripts/ops/issues-1516-welcome-acceptance.mjs": harness(
-    "bounded acceptance cleanup verifies only its owned bot and work state",
-    1,
-  ),
   "scripts/ops/posthog-export-evidence.mjs": external(
     "bounded wait for an explicit third-party PostHog export job to finish",
     1,
@@ -187,6 +186,10 @@ export const pollingAllowlist = {
   ),
   "scripts/release/ci-gate.mjs": external(
     "bounded release gate reads GitHub Actions status during an explicit release operation",
+    1,
+  ),
+  "scripts/release/cloudflare-promoted-web.mjs": retry(
+    "at most four requests to production's public version endpoint in total (no inner 503 retry), with exponential backoff, only after it answered unavailable or without a build; a named build ends it at once",
     1,
   ),
   "scripts/release/web-deploy.mjs": external(
@@ -264,10 +267,6 @@ export const pollingAllowlist = {
   ),
   "packages/daemon/src/agents/machine-github.ts": external(
     "credential refresh at its actual expiration deadline, including the platform maximum timer boundary",
-    1,
-  ),
-  "packages/daemon/src/subscription-credentials.ts": external(
-    "subscription credential refresh at the active lease expiration, not a fixed status interval",
     1,
   ),
   "packages/daemon/src/outbox.ts": local(
@@ -356,23 +355,7 @@ export const pollingAllowlist = {
       "pings the device gateway WebSocket so live push stays connected; reads no data",
     hits: 1,
   },
-  // UI timers: read no data.
-  "apps/mobile/components/beui/components/loader/loader.tsx": ui(
-    "loader animation frames",
-    3,
-  ),
-  "apps/mobile/components/beui/components/loading-states/agent-progress.tsx":
-    ui("progress animation", 1),
-  "apps/mobile/components/beui/components/loading-states/reasoning-text.tsx":
-    ui("reasoning text animation", 2),
-  "apps/mobile/components/beui/components/tool-result/tool-result.tsx": ui(
-    "elapsed-time clock",
-    1,
-  ),
-  "apps/mobile/features/chat/screens/chat-screen.tsx": ui(
-    "the 1 s elapsed clock of a reply in progress; the chat and its proposals are pushed (lib/live.ts)",
-    1,
-  ),
+  // UI timers: read no data. (Legacy apps/mobile UI timers retired with apps/mobile.)
 }
 
 const delayCall =

@@ -1,5 +1,18 @@
 import { createServer } from 'node:http'
-import type { LinearIssueSnapshot } from '../../lib/linear-sync/client'
+interface LinearIssueSnapshot {
+  id: string
+  identifier: string
+  title: string
+  description: string | null
+  dueDate: string | null
+  priority: number
+  url: string
+  updatedAt: string
+  state: { id: string; name: string; type: string } | null
+  team: { id: string; key: string; name: string }
+  assignee: { id: string; name: string; email: string | null } | null
+  labels: { id: string; name: string; color: string | null }[]
+}
 
 type Variables = { id?: string; input?: Record<string, unknown> }
 type RequestRecord = { operation: string; variables: Variables }

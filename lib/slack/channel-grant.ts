@@ -1,3 +1,5 @@
+import { resolveInternalProductOrigin } from '../env/hosts'
+import { readEnv } from '../env/server'
 import { internalEveHeaders } from '../eve/auth'
 import { slackGrantProof } from './grant-proof'
 import type { EveScope } from '../eve/scope'
@@ -6,11 +8,9 @@ export type SlackGrantScope = EveScope & { installationId: string; linkId: strin
 
 /** Uncached native credential callback. Only the business service opens the workspace ciphertext. */
 export async function nativeSlackToken(scope: SlackGrantScope) {
-  const hosted = process.env.MIKKA_EVE_HOST === 'cloudflare'
-  const origin = hosted
-    ? 'https://product.internal'
-    : (process.env.MIKKA_APP_ORIGIN ?? process.env.BETTER_AUTH_URL ?? 'http://127.0.0.1:3000')
-  const capability = hosted ? process.env.MIKKA_EVE_PRODUCT_TOKEN : undefined
+  const hosted = readEnv('MIKKA_EVE_HOST') === 'cloudflare'
+  const origin = resolveInternalProductOrigin(hosted)
+  const capability = hosted ? readEnv('MIKKA_EVE_PRODUCT_TOKEN') : undefined
   if (hosted && !capability) throw new Error('slackUnavailable')
   const internal = internalEveHeaders({
     ownerId: scope.ownerId,

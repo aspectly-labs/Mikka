@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { Sandbox } from 'e2b'
 import { runtimeRefreshRefusal } from './runtime-refresh-refusal'
 import { recordCloudBootstrapPhases } from './startup-tracing'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 export const OFFICIAL_E2B_TEMPLATES = ['desktop', 'claude', 'codex'] as const
 export type OfficialE2BTemplate = typeof OFFICIAL_E2B_TEMPLATES[number]
@@ -38,7 +39,7 @@ function foregroundRuntimeCommand(command: string, maximumMs: number, budget?: R
 /** New instances only: all additions live under /opt/mikka (plus the private
  * runtime authority directory). Never edit an E2B template or its packages. */
 export async function bootstrapOfficialInstance(sandbox: Pick<Sandbox, 'commands'>, template: OfficialE2BTemplate,
-  env: Record<string, string | undefined> = process.env,
+  env: EnvMap = runtimeEnv(),
   script = () => readFile(join(process.cwd(), 'packages/daemon/scripts/official-e2b-instance-bootstrap.sh'), 'utf8')) {
   const commit = env.MIKKA_CLOUD_WORKER_SOURCE_COMMIT, sha = env.MIKKA_CLOUD_WORKER_SHA
   if (!isOfficialE2BTemplate(template) || !commit || !/^[a-f0-9]{40}$/.test(commit) || !sha || !/^[a-f0-9]{40}$/.test(sha)) throw new Error('Official worker release is not configured')
@@ -56,7 +57,7 @@ export async function bootstrapOfficialInstance(sandbox: Pick<Sandbox, 'commands
 
 /** Stage a fixed public release without changing the running worker, CLI or user home. */
 export async function stageOfficialWorkerRelease(sandbox: Pick<Sandbox, 'commands'>, template: OfficialE2BTemplate, previousSha: string,
-  env: Record<string, string | undefined> = process.env,
+  env: EnvMap = runtimeEnv(),
   script = () => readFile(join(process.cwd(), 'packages/daemon/scripts/official-e2b-instance-bootstrap.sh'), 'utf8'), budget?: RuntimeBudget) {
   const commit = env.MIKKA_CLOUD_WORKER_SOURCE_COMMIT, sha = env.MIKKA_CLOUD_WORKER_SHA
   if (!isOfficialE2BTemplate(template) || !commit || !/^[a-f0-9]{40}$/.test(commit) || !sha || !/^[a-f0-9]{40}$/.test(sha) || !/^[a-f0-9]{40}$/.test(previousSha)) throw new Error('Official worker release is not configured')

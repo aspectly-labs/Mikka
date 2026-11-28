@@ -8,6 +8,7 @@ import { COMPOSIO_FLOW_COOKIE, composioFlowCookieOptions, encodeComposioFlow } f
 import { claimComposioConnectIntent, linkComposioConnectIntent, linkedComposioConnectIntent, readComposioConnectIntent } from '@/lib/composio-connect-intent'
 import { pool } from '@/lib/db'
 import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /**
  * What the desktop app opens in the system browser for a Composio link:
@@ -74,4 +75,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/integrations/composio/connect', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/composio/connect', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request),
+)

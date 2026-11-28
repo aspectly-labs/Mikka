@@ -6,7 +6,6 @@
     "build/**",
     "packages/**",
     "apps/desktop/**",
-    "apps/mobile/**",
     "apps/frontend/dist/**",
     "apps/frontend/node_modules/**",
     "apps/api/generated/**",
@@ -17,6 +16,9 @@
     ".output/**",
     ".vercel/**",
     ".hosted-ui/**"
+  ],
+  "jsPlugins": [
+    "./scripts/oxlint-plugin-mikka.mjs"
   ],
   "rules": {
     "no-restricted-imports": [
@@ -32,6 +34,10 @@
           }
         ]
       }
-    ]
+    ],
+    "mikka/no-raw-process-env": "error",
+    "mikka/no-plan-name-branching": "error",
+    "mikka/no-hardcoded-model-ids": "error",
+    "mikka/no-hardcoded-hosts": "error"
   }
 }

@@ -5,6 +5,7 @@ import { posthogConfig } from '@/lib/posthog-config'
 import { redactReplayRequest, sanitizeAnalyticsEvent } from '@/lib/analytics-policy'
 import { setLiveTelemetrySink } from '@/lib/live/telemetry'
 import { acceptanceReplayOptIn, installReplayReadiness } from '@/lib/replay-readiness'
+import { getNodeEnv } from '@/lib/env/public'
 
 if (posthogConfig.token) {
   const replayReadiness = installReplayReadiness(window)
@@ -16,10 +17,14 @@ if (posthogConfig.token) {
   reuseAnonymousId: true,
   opt_out_useragent_filter: acceptanceReplayOptIn(window),
   person_profiles: 'identified_only',
-  // Saved so the SDK can attach them; lib/analytics-policy.ts still decides
-  // what actually leaves (bounded UTM labels and referring domains only).
-  save_campaign_params: true,
-  save_referrer: true,
+  // Off: with either on, the SDK stores the first page's raw URL and referrer
+  // ($initial_person_info) before before_send runs, and sends them, query and
+  // share token included, as person_properties on every /flags request, which
+  // no hook sanitizes. Acquisition comes from lib/first-touch.ts and the SDK's
+  // $session_entry_* properties, both bounded by lib/analytics-policy.ts.
+  // tests/posthog-flags-privacy.test.mjs runs the real SDK to hold this.
+  save_campaign_params: false,
+  save_referrer: false,
   disable_capture_url_hashes: true,
   disable_conversations: true,
   autocapture: false,
@@ -60,7 +65,7 @@ if (posthogConfig.token) {
   },
     loaded: client => {
       replayReadiness.bind(client)
-      client.register({ app: 'mikka', environment: process.env.NODE_ENV, runtime: window.mikka?.app?.runtime === 'electron' ? 'electron' : 'browser' })
+      client.register({ app: 'mikka', environment: getNodeEnv(), runtime: window.mikka?.app?.runtime === 'electron' ? 'electron' : 'browser' })
       setLiveTelemetrySink((event, properties) => { client.capture(event, properties) })
     },
   })

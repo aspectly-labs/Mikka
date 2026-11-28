@@ -7,8 +7,8 @@ defaults, repository automation and the existing execution boundaries.
 
 Each section is a small heading over one card of rows, as in
 Comma's 「模型与 API」 (decision 2026-10-30). This is the open-source default
-settings surface; the hosted settings are affectUI screens used as shipped
-([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+settings surface; the hosted settings are affectUI screens edited to match the reference product
+([2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 `components/settings/primitives.tsx` owns the shapes; product code only
 supplies content.
 
@@ -42,10 +42,56 @@ open the sidebar from the page header.
 ## Sections
 
 The section list is `SETTINGS_SECTIONS` in `lib/settings-sections.ts`; the
-sidebar, URL parsing and page body all read it.
+sidebar, URL parsing and page body all read it. The table below is generated
+from that source; edit the source, then run `pnpm docs:generate`.
 
-- **Personal (account):** Account, Security, Preferences, Threads, Notifications, Memory, Connections, 模型与订阅 (subscriptions, API keys, 运行位置 and 优先使用的模型; it replaced API 与订阅 and Bot 与 Agents), Secrets and logins, Data and privacy, Devices. Threads holds the current workspace's personal and shared title settings; the other account settings are the same in every workspace. Personal access tokens are built but hidden (`unbuilt`).
-- **Workspace:** General, Run permissions, Members, Teams, Team permissions (admins), Secrets and environment, Run environments, Audit log (admins), Usage, Billing, Mikka Cloud (server administrators). A personal workspace has its own workspace settings ([decision 2026-11-02-0216](design/decisions/2026-11-02-0216-personal-workspace-has-workspace-settings.md), with the full table).
+<!-- generated:settings-sections -->
+Source: `SETTINGS_SECTIONS` in `lib/settings-sections.ts`.
+
+| Group | Section id | Title |
+| --- | --- | --- |
+| `personal` | `preferences` | General |
+| `personal` | `appearance` | Appearance |
+| `personal` | `account` | Profile |
+| `personal` | `security` | Security |
+| `personal` | `notifications` | Notifications |
+| `personal` | `shortcuts` | Shortcuts |
+| `personal` | `privacy` | Data and privacy |
+| `personal` | `logins` | Secrets and logins |
+| `compute` | `models` | Models and subscriptions |
+| `compute` | `environments` | Cloud environments |
+| `compute` | `computers` | Devices |
+| `compute` | `secrets` | Secrets & Credentials |
+| `compute` | `integrations` | Integrations |
+| `compute` | `connections` | Connectors and MCP |
+| `compute` | `mcp` | Custom MCP |
+| `compute` | `developer` | API |
+| `agent` | `instructions` | Instructions |
+| `agent` | `team-skills` | Skills |
+| `agent` | `threads` | Threads |
+| `agent` | `git` | Git and pull requests |
+| `agent` | `agent-configs` | Agent configurations |
+| `agent` | `memory` | Memory |
+| `review` | `review-repositories` | Review repositories |
+| `review` | `review-config` | Review config |
+| `workspace` | `general` | Workspace general |
+| `workspace` | `identity` | Identity and access |
+| `workspace` | `issue-states` | Task states |
+| `workspace` | `members` | Members |
+| `workspace` | `teams` | Teams |
+| `workspace` | `permissions` | Team permissions |
+| `workspace` | `billing` | Billing |
+| `workspace` | `usage` | Usage |
+| `workspace` | `activity` | Activity |
+| `workspace` | `audit` | Audit log |
+| `workspace` | `organization` | Organization |
+| `workspace` | `cloud` | Mikka Cloud |
+| `personal` | `referrals` | Referrals |
+| `personal` | `experiments` | Experiments |
+| `personal` | `cloud-credentials` | Cloud credentials |
+<!-- /generated:settings-sections -->
+
+A personal workspace has its own workspace settings ([decision 2026-11-02-0216](design/decisions/2026-11-02-0216-personal-workspace-has-workspace-settings.md), with the full table).
 
 Account and Security hold how the person signs in, including linking Google
 to the Mikka account. Connections holds connected apps (Gmail, Calendar,
@@ -71,7 +117,7 @@ The official UI composes this page through the existing `settings-preferences`
 slot (`page: 'threads'`, `workspaceId`) and reuses `useThreadTitleSettings` and its existing
 read/write actions. Preferences keeps its ordinary personal settings; General
 keeps workspace identity, transfer and deletion. Neither repeats the title
-settings. See the [Threads settings decision](design/decisions/2026-11-19-threads-settings.md).
+settings. See the [Threads settings decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-19-threads-settings.md).
 
 
 The [organization security contract](design/decisions/2026-11-20-1900-settings-organization-security.md)

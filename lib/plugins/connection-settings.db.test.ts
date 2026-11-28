@@ -114,12 +114,11 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       failCheck = false
       assert.equal((await connections.check(owner, installed.id)).status, 'connected')
     })
-    await t.test('shared members see only enabled tools and cannot change owner settings; other workspaces see nothing', async () => {
-      await shares.share(owner, { serverId: installed.id, workspaceId: workspace, shared: true })
-      const shared = await connections.detail(member, installed.id, workspace)
-      assert.deepEqual(shared.tools.map(tool => tool.name), ['read_docs']); assert.equal(shared.authorizationUrl, null)
-      assert.equal((await connections.search(member, { workspaceId: workspace, query: 'write_docs' })).count, 0)
+    await t.test('a member never sees or changes another person\'s server; other workspaces see nothing', async () => {
+      await assert.rejects(connections.detail(member, installed.id, workspace), /mcpNotFound/)
+      assert.equal((await connections.search(member, { workspaceId: workspace })).count, 0)
       assert.equal((await connections.search(owner, { workspaceId: workspace, query: 'write_docs' })).count, 1)
+      assert.equal((await connections.search(owner, { workspaceId: workspace })).canShare, false)
       await assert.rejects(connections.detail(outsider, installed.id, elsewhere), /mcpNotFound/)
       await assert.rejects(connections.search(outsider, { workspaceId: workspace }), /workspaceAccessDenied/)
       await assert.rejects(connections.check(member, installed.id), /mcpNotFound/)
@@ -128,38 +127,111 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       await assert.rejects(oauth.start(member, installed.id), /mcpNotFound/)
     })
     await t.test('disabled tools cannot be discovered or executed, and native grants carry the same filter', async () => {
-      const snapshot = await personal.snapshot(member, pool, workspace)
+      assert.equal((await personal.snapshot(member, pool, workspace)).servers.length, 0)
+      const snapshot = await personal.snapshot(owner, pool, workspace)
       const runtime = createPersonalMcpRuntime(personal, { transport })
-      const listed = await runtime(member, snapshot, { serverId: installed.id }) as { tools: { name: string }[] }
+      const listed = await runtime(owner, snapshot, { serverId: installed.id }) as { tools: { name: string }[] }
       assert.deepEqual(listed.tools.map(tool => tool.name), ['read_docs'])
-      assert.deepEqual(await runtime(member, snapshot, { serverId: installed.id, name: 'write_docs', arguments: {} }), { error: 'mcpToolDisabled' })
+      assert.deepEqual(await runtime(owner, snapshot, { serverId: installed.id, name: 'write_docs', arguments: {} }), { error: 'mcpToolDisabled' })
       assert.equal(toolCalls, 0)
-      assert.ok(!('error' in await runtime(member, snapshot, { serverId: installed.id, name: 'read_docs', arguments: {} })))
+      assert.ok(!('error' in await runtime(owner, snapshot, { serverId: installed.id, name: 'read_docs', arguments: {} })))
       assert.equal(toolCalls, 1)
-      assert.deepEqual((await personal.nativeMcpConnections(member, snapshot.mcpAuthority!))[0].disabledTools, ['write_docs'])
+      assert.deepEqual((await personal.nativeMcpConnections(owner, snapshot.mcpAuthority!))[0].disabledTools, ['write_docs'])
     })
-    await t.test('environment bindings narrow both personal and shared grants and cannot reference another tenant', async () => {
+    await t.test('tool switches keep running tasks, apply on the next call, and belong to the credential owner alone', async () => {
+      const workspaceAdmin = 'settings-admin'
+      await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())', [workspaceAdmin, `${workspaceAdmin}@example.invalid`])
+      await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,\'admin\',\'active\')', [workspace, workspaceAdmin, `${workspaceAdmin}@example.invalid`])
+      const revision = async () => (await personal.listMcp(owner)).find(server => server.id === installed.id)!.revision
+      const before = await revision()
+      // A task admitted now in a thread the owner started (teammates who message that thread
+      // use the owner's server there) keeps this frozen snapshot for its whole run.
+      const running = await personal.snapshot(owner, pool, workspace)
+      const runtime = createPersonalMcpRuntime(personal, { transport })
+      const call = (name: string) => runtime(owner, running, { serverId: installed.id, name, arguments: {} })
+      const calls = toolCalls
+      assert.ok(!('error' in await call('read_docs')))
+
+      // Switching another tool on does not cut the running task off, and the new tool works on its next call.
+      await connections.setTool(owner, installed.id, 'write_docs', true, { expectedEnabled: false })
+      assert.equal(await revision(), before)
+      await shares.validate(owner, running.mcpAuthority!)
+      assert.ok(!('error' in await call('read_docs')))
+      assert.ok(!('error' in await call('write_docs')))
+      assert.equal(toolCalls, calls + 3)
+
+      // Switching a tool off is refused from the very next call of the same run, and hidden from its listing.
+      await connections.setTool(owner, installed.id, 'read_docs', false)
+      assert.equal(await revision(), before)
+      assert.deepEqual(await call('read_docs'), { error: 'mcpToolDisabled' })
+      assert.equal(toolCalls, calls + 3)
+      assert.deepEqual((await runtime(owner, running, { serverId: installed.id }) as { tools: { name: string }[] }).tools.map(tool => tool.name), ['write_docs'])
+      assert.ok(!('error' in await call('write_docs')))
+      assert.equal(toolCalls, calls + 4)
+      // A switch made during the handshake applies to that same listing: it is filtered with the
+      // switches re-read after the server initialized, not the ones read before it.
+      let reads = 0
+      const handshake = createPersonalMcpRuntime({ mcpConnection: async (...args: Parameters<typeof personal.mcpConnection>) => {
+        const connection = await personal.mcpConnection(...args)
+        return reads++ === 0 ? { ...connection, disabledTools: [...connection.disabledTools, 'write_docs'] } : connection
+      } }, { transport })
+      assert.deepEqual((await handshake(owner, running, { serverId: installed.id }) as { tools: { name: string }[] }).tools.map(tool => tool.name), ['write_docs'])
+      assert.equal(reads, 2)
+      // One switch for every run that uses the connection: a run without the frozen snapshot sees the same list.
+      assert.deepEqual((await personal.mcpConnection(owner, installed.id)).disabledTools, ['read_docs'])
+      await connections.setTool(owner, installed.id, 'read_docs', true)
+
+      // The connection runs on the owner's credential: no admin or member of the owner's
+      // workspace can see it or switch its tools, in either direction.
+      await assert.rejects(connections.detail(workspaceAdmin, installed.id, workspace), /mcpNotFound/)
+      await connections.setTool(owner, installed.id, 'write_docs', false, { expectedEnabled: true })
+      for (const user of [workspaceAdmin, member, outsider]) {
+        await assert.rejects(connections.setTool(user, installed.id, 'write_docs', true), /mcpNotFound/)
+        await assert.rejects(connections.setTool(user, installed.id, 'read_docs', false), /mcpNotFound/)
+      }
+      assert.deepEqual((await personal.mcpConnection(owner, installed.id)).disabledTools, ['write_docs'])
+
+      // Two switches from the same stale view: one applies, the other is a 409 and changes nothing.
+      const raced = await Promise.allSettled([
+        connections.setTool(owner, installed.id, 'write_docs', true, { expectedEnabled: false }),
+        connections.setTool(owner, installed.id, 'write_docs', true, { expectedEnabled: false }),
+      ])
+      assert.equal(raced.filter(result => result.status === 'fulfilled').length, 1)
+      const conflict = raced.find(result => result.status === 'rejected') as PromiseRejectedResult
+      assert.equal(conflict.reason.code, 'mcpConnectionChanged'); assert.equal(conflict.reason.status, 409)
+      await assert.rejects(connections.setTool(owner, installed.id, 'write_docs', false, { expectedEnabled: false }), /mcpConnectionChanged/)
+      assert.equal((await connections.detail(owner, installed.id)).tools.find(tool => tool.name === 'write_docs')?.enabled, true)
+      await connections.setTool(owner, installed.id, 'write_docs', false, { expectedEnabled: true })
+      assert.equal(await revision(), before)
+    })
+    await t.test('environment bindings narrow personal and workspace references and cannot reference another tenant', async () => {
       await assert.rejects(connections.setEnvironments(owner, installed.id, { workspaceId: workspace, environmentIds: [wrongEnvironment] }), /environmentAccessDenied/)
       await assert.rejects(connections.setEnvironments(owner, installed.id, { workspaceId: elsewhere, environmentIds: [wrongEnvironment] }), /workspaceAccessDenied/)
       await connections.setEnvironments(owner, installed.id, { workspaceId: workspace, environmentIds: [environment] })
       assert.equal((await personal.snapshot(owner)).servers.length, 0)
-      assert.equal((await personal.snapshot(member, pool, workspace)).servers.length, 0)
-      const scoped = await personal.snapshot(member, pool, workspace, environment)
+      assert.equal((await personal.snapshot(owner, pool, workspace)).servers.length, 0)
+      const scoped = await personal.snapshot(owner, pool, workspace, environment)
       assert.equal(scoped.servers.length, 1)
-      const scopedBot = randomUUID()
-      await pool.query('INSERT INTO bots(id,"ownerId","workspaceId","environmentId",name) VALUES($1,$2,$3,$4,\'Scoped MCP fixture\')', [scopedBot, member, workspace, environment])
-      const botSnapshot = await personal.snapshotForBot(member, scopedBot, workspace, pool)
+      assert.equal((await personal.snapshot(member, pool, workspace, environment)).servers.length, 0)
+      const scopedBot = randomUUID(), memberBot = randomUUID()
+      for (const [id, user] of [[scopedBot, owner], [memberBot, member]]) await pool.query('INSERT INTO bots(id,"ownerId","workspaceId","environmentId",name) VALUES($1,$2,$3,$4,\'Scoped MCP fixture\')', [id, user, workspace, environment])
+      const botSnapshot = await personal.snapshotForBot(owner, scopedBot, workspace, pool)
       assert.deepEqual(botSnapshot.servers.map(server => server.id), [installed.id])
       assert.equal(botSnapshot.mcpAuthority?.environmentId, environment)
-      assert.equal((await personal.snapshotForBot(owner, scopedBot, workspace, pool)).servers.length, 0)
+      assert.equal((await personal.snapshotForBot(member, memberBot, workspace, pool)).servers.length, 0, 'a member\'s Bot in the same environment gets none of the owner\'s servers')
+      await pool.query(`UPDATE workspace_environments SET scope='personal',"ownerId"=$2 WHERE id=$1`, [environment, member])
+      assert.equal((await personal.snapshotForBot(owner, scopedBot, workspace, pool)).servers.length, 0, 'an environment that became another member\'s personal one serves none of the owner\'s servers')
+      await assert.rejects(connections.setEnvironments(owner, installed.id, { workspaceId: workspace, environmentIds: [environment] }), /environmentAccessDenied/)
+      await pool.query(`UPDATE workspace_environments SET scope='workspace' WHERE id=$1`, [environment])
       await pool.query('UPDATE bots SET "environmentId"=NULL WHERE id=$1', [scopedBot])
-      assert.equal((await personal.snapshotForBot(member, scopedBot, workspace, pool)).servers.length, 0)
-      await assert.rejects(shares.validate(member, { ...scoped.mcpAuthority!, environmentId: wrongEnvironment }), /mcpUnavailable/)
-      assert.equal((await personal.nativeMcpConnections(member, scoped.mcpAuthority!, environment)).length, 1)
-      assert.deepEqual(await personal.nativeMcpConnections(member, scoped.mcpAuthority!, wrongEnvironment), [])
-      assert.deepEqual(await personal.nativeMcpConnections(member, scoped.mcpAuthority!, null), [])
+      assert.equal((await personal.snapshotForBot(owner, scopedBot, workspace, pool)).servers.length, 0)
+      await assert.rejects(shares.validate(owner, { ...scoped.mcpAuthority!, environmentId: wrongEnvironment }), /mcpUnavailable/)
+      await assert.rejects(shares.validate(member, { ...scoped.mcpAuthority!, requester: member }), /mcpUnavailable/)
+      assert.equal((await personal.nativeMcpConnections(owner, scoped.mcpAuthority!, environment)).length, 1)
+      assert.deepEqual(await personal.nativeMcpConnections(owner, scoped.mcpAuthority!, wrongEnvironment), [])
+      assert.deepEqual(await personal.nativeMcpConnections(owner, scoped.mcpAuthority!, null), [])
       await connections.setEnvironments(owner, installed.id, { workspaceId: workspace, environmentIds: [] })
-      assert.equal((await personal.snapshot(member, pool, workspace)).servers.length, 1)
+      assert.equal((await personal.snapshot(owner, pool, workspace)).servers.length, 1)
     })
     await t.test('SDK authorization code uses PKCE/state, tokens are encrypted, callbacks are single-use and refresh rotates under a row lock', async () => {
       requireAuth = true
@@ -192,15 +264,16 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
         assert.equal((await connections.detail(owner, installed.id)).status, 'check_failed')
       } finally { failRefresh = false }
       assert.equal((await connections.check(owner, installed.id)).status, 'connected')
-      const { mcpAuthority } = await personal.snapshot(member, pool, workspace)
+      const { mcpAuthority } = await personal.snapshot(owner, pool, workspace)
       assert.ok(mcpAuthority)
-      const [native] = await personal.nativeMcpConnections(member, mcpAuthority)
+      await assert.rejects(personal.nativeMcpConnections(member, { ...mcpAuthority, requester: member }), /mcpUnavailable/)
+      const [native] = await personal.nativeMcpConnections(owner, mcpAuthority)
       assert.ok(native && native.transport !== 'stdio')
       assert.equal(native.headers.Authorization, `Bearer ${fixtureToken}`)
       assert.deepEqual(await Promise.all([oauth.accessToken(owner, installed.id), oauth.accessToken(owner, installed.id)]), [fixtureToken, fixtureToken])
       assert.equal(refreshes, 1)
       assert.deepEqual((await personal.mcpConnection(owner, installed.id)).headers, { 'X-Account': 'fixture-account', Authorization: `Bearer ${fixtureToken}` })
-      assert.equal((await connections.detail(member, installed.id, workspace)).authorizationUrl, null)
+      await assert.rejects(connections.detail(member, installed.id, workspace), /mcpNotFound/)
       assert.ok(!JSON.stringify(await personal.listMcp(owner)).includes(fixtureToken))
     })
     await t.test('lost OAuth credentials change persisted state and explicit disconnect removes tokens', async () => {
@@ -277,7 +350,7 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
     await t.test('real API handlers reject unauthenticated, delegated, nonowner and cross-workspace calls before mutations', async () => {
       let actor: string | null = owner
       mock.module('../api-auth.ts', { namedExports: { auth: { api: { getSession: async () => actor ? { user: { id: actor } } : null } } } })
-      mock.module('../request-log.ts', { namedExports: { noteLogUser() {}, noteLogRpcAction() {} } })
+      mock.module('../request-log.ts', { namedExports: { noteLogUser() {}, noteLogRpcAction() {}, withRequestLog: (_name: string, handler: unknown) => handler } })
       mock.module('./runtime.ts', { namedExports: { personalPlugins: personal, workspaceMcp: shares, mcpConnections: connections, mcpDeviceChecks: deviceChecks } })
       // The directory uses real HTTP payloads; public DNS protection is owned by plugins.test.ts.
       mock.module('./public-fetch.ts', { namedExports: { publicMcpFetch: () => transport() } })
@@ -304,6 +377,8 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
         environments.PATCH(request('/api/integrations/mcp/id/environments', 'PATCH', { workspaceId: workspace, environmentIds: [] }), context),
         start.POST(request('/api/integrations/mcp/id/oauth/start', 'POST', {}), context), callback.GET(request('/api/integrations/mcp/id/oauth/callback?code=fixture-code&state=wrong'), context),
       ])) assert.equal(result.status, 404)
+      assert.equal((await detail.GET(request(`/api/integrations/mcp/id?workspaceId=${workspace}`), context)).status, 404, 'a teammate cannot read the owner\'s server')
+      actor = owner
       assert.equal((await detail.GET(request(`/api/integrations/mcp/id?workspaceId=${workspace}`), context)).status, 200)
       actor = outsider
       assert.equal((await detail.GET(request(`/api/integrations/mcp/id?workspaceId=${elsewhere}`), context)).status, 404)
@@ -318,6 +393,18 @@ test('MCP settings persist real discovery, owner-only tools and environment scop
       assert.equal(requested.status, 200); assert.equal((await requested.json()).deviceCheck.status, 'pending')
       assert.equal((await check.POST(request('/api/integrations/mcp/id/check', 'POST', { deviceId: device, userId: outsider }), localContext)).status, 400)
       assert.equal((await connections.detail(owner, installed.id)).tools.find(tool => tool.name === 'read_docs')?.enabled, true)
+      const toolSwitch = (body: object) => tool.PATCH(request('/api/integrations/mcp/id/tools/read_docs', 'PATCH', body), context)
+      actor = 'settings-admin'
+      assert.equal((await toolSwitch({ enabled: false, expectedEnabled: true })).status, 404)
+      assert.equal((await toolSwitch({ enabled: false, workspaceId: workspace })).status, 400)
+      actor = owner
+      const switched = await toolSwitch({ enabled: false, expectedEnabled: true })
+      assert.equal(switched.status, 200); assert.equal((await switched.json()).tools.find((row: { name: string }) => row.name === 'read_docs').enabled, false)
+      const stale = await toolSwitch({ enabled: false, expectedEnabled: true })
+      assert.equal(stale.status, 409); assert.deepEqual(await stale.json(), { error: 'mcpConnectionChanged' })
+      assert.equal((await toolSwitch({ enabled: true, expectedEnabled: 'false' })).status, 400)
+      assert.equal((await toolSwitch({ enabled: true, expectedEnabled: false })).status, 200)
+      actor = owner
       const directory = await catalog.GET(request('/api/integrations/mcp/catalog?q=docs'))
       assert.equal(directory.status, 200)
       assert.deepEqual(await directory.json(), { entries: [{ name: 'io.example/docs', description: 'Directory fixture', version: '1.2.3', remotes: [{ index: 0, url: 'https://catalogue.example.com/mcp', transport: 'http' }] }], nextCursor: 'page-two' })

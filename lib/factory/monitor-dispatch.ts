@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { deviceIsOnline } from "../device-presence";
-import {applyApprovalMode,defaultRunPolicy} from "@mikka/protocol/agent-policy";
+import {readOnlyRunPolicy,defaultRunPolicy} from "@mikka/protocol/agent-policy";
 import { FactoryError } from "./contract";
 import type { FactoryTask } from "./store";
 import { digest } from "./evidence";
@@ -181,6 +181,6 @@ export async function factoryMonitorDispatchAssignment(
   return {
     baseBranch: receipt.candidate.sha,
     verifyCommand: row.output.monitorDispatch.command as string,
-    policy: applyApprovalMode(intersectRunPolicy({...defaultRunPolicy(),networkAllow:[]},row.agentDefinition?.policyCeiling),"read_only"),
+    policy: readOnlyRunPolicy(intersectRunPolicy({...defaultRunPolicy(),networkAllow:[]},row.agentDefinition?.policyCeiling)),
   };
 }

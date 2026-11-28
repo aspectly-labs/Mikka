@@ -12,7 +12,7 @@ const target = process.env.E2E_DATABASE_URL
 const valid = isE2eTarget(target) && target === process.env.MIKKA_DATABASE_URL && target === process.env.DATABASE_URL
 if (process.env.REQUIRE_DB === '1' && !valid) throw new Error('Account deletion due tests require matching isolated loopback _e2e URLs')
 
-const TABLES = ['account_deletion_guards', 'account_deletion_jobs', 'chat_attachments', 'chat_attachment_retirements']
+const TABLES = ['account_deletion_guards', 'account_deletion_jobs', 'chat_attachments', 'chat_attachment_retirements', 'task_attachments']
 
 test('account-deletion due times match what the sweeps select', { skip: !valid }, async t => {
   const schema = `account_deletions_due_${randomUUID().replaceAll('-', '')}`

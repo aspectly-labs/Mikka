@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import type { HarnessInfo } from '@mikka/protocol/harness'
 import { daemonTestMode } from '@mikka/protocol/repository'
+import { runtimeEnv } from '@/lib/env/server'
 
-export function localExecutionHarnesses(infos: readonly HarnessInfo[], env: Record<string, string | undefined> = process.env): string[] {
+export function localExecutionHarnesses(infos: readonly HarnessInfo[], env: Record<string, string | undefined> = runtimeEnv()): string[] {
   return [...new Set(infos.filter(info => info.installed &&
     (info.harness === 'claude_code' || info.harness === 'codex' || info.harness === 'cursor' || (info.harness === 'mock' && daemonTestMode(env))))
     .map(info => info.harness))].sort()

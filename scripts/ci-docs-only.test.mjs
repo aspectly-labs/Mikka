@@ -28,9 +28,7 @@ test('approved documentation paths are documentation-only', () => {
     'REVIEW.md',
     '.github/workflows/README.md',
     'packages/subscription-worker/README.md',
-    'apps/mobile/README.md',
     'agents/README.md',
-    'apps/mobile/DESIGN.md',
     'packages/daemon/THIRD_PARTY_NOTICES.md',
     'scripts/acceptance/run-observability.md',
     '.claude/skills/README.md',
@@ -289,7 +287,7 @@ test('CI partitions DB suites across isolated jobs and requires source and daemo
   assert(Object.values(JSON.parse(readFileSync('scripts/ci/tasks.json'))).some(t => t.kind === 'integration' && t.command === 'pnpm test:issues'))
   assert(!job('ui-policy-full').includes('run: pnpm test:issues'))
   const checks = job('source-checks')
-  for (const command of ['pnpm lint:code', 'node apps/api/scripts/generate-routes.mjs --check', 'pnpm typecheck', 'pnpm --filter @mikka/protocol typecheck', 'pnpm --filter @mikka/mobile typecheck']) assert(checks.includes(`run: ${command}\n`), command)
+  for (const command of ['pnpm lint:code', 'node apps/api/scripts/generate-routes.mjs --check', 'pnpm typecheck', 'pnpm --filter @mikka/protocol typecheck']) assert(checks.includes(`run: ${command}\n`), command)
   const daemon = job('daemon-checks')
   // Runs use no sandbox (decision 2026-11-01-2335): the daemon lane runs its unit suite, no sandbox acceptance.
   assert(daemon.includes('pnpm --filter @mikka/daemon exec vitest run'))

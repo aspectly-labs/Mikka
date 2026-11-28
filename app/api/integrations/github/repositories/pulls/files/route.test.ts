@@ -16,7 +16,7 @@ stub("../../../../../../../lib/auth.ts", {
     api: {
       getSession: async ({ headers }: { headers: Headers }) => {
         calls.push(["session", headers]);
-        return owner ? { user: { id: owner } } : null;
+        return owner ? { user: { id: owner }, session: { id: 'owner-session' } } : null;
       },
     },
   },
@@ -25,7 +25,7 @@ stub("../../../../../../../lib/desktop-rpc/handler.ts", {
   humanSessionHeaders: (request: Request) => request.headers,
 });
 stub("../../../../../../../lib/request-log.ts", {
-  withRequestLog: (_path: string, handler: unknown) => handler,
+  noteLogUser: () => {}, noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler,
 });
 stub("../../../../../../../lib/github/user-access.ts", {
   GitHubAccessError: class GitHubAccessError extends Error {
@@ -40,8 +40,10 @@ stub("../../../../../../../lib/github/user-access.ts", {
     userId: string,
     repo: string,
     number: number,
+    _budget: unknown,
+    options?: { includePatch?: boolean },
   ) => {
-    calls.push(["read", userId, repo, number]);
+    calls.push(["read", userId, repo, number, Boolean(options?.includePatch)]);
     if (failure) throw failure;
     return result;
   },
@@ -72,7 +74,11 @@ test("reads one pull request's files for the authenticated owner, from its repos
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), result);
   assert.equal(response.headers.get("cache-control"), "private, no-store");
-  assert.deepEqual(calls[1], ["read", "owner", "Owner/Repo", 7]);
+  assert.deepEqual(calls[1], ["read", "owner", "Owner/Repo", 7, false]);
+
+  const patchResponse = await route.GET(request("?repo=Owner%2FRepo&number=7&format=patch"));
+  assert.equal(patchResponse.status, 200);
+  assert.deepEqual(calls[3], ["read", "owner", "Owner/Repo", 7, true]);
 });
 
 test("requires a human session and rejects malformed or attacker-added request fields", async () => {
@@ -87,6 +93,9 @@ test("requires a human session and rejects malformed or attacker-added request f
     "?repo=Owner%2FRepo&number=07",
     "?repo=Owner%2FRepo&number=7&url=https%3A%2F%2Fevil.example%2Fpull%2F7",
     "?repo=Owner%2FRepo&number=7&number=8",
+    "?repo=Owner%2FRepo&number=7&format=raw",
+    "?repo=Owner%2FRepo&number=7&format=",
+    "?repo=Owner%2FRepo&number=7&format=patch&format=patch",
   ]) {
     assert.equal(
       (await route.GET(request(query))).status,

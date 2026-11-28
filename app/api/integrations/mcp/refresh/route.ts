@@ -6,11 +6,12 @@ import { mcpToolName } from '@/lib/plugins/connection-contracts'
 import { pluginBody, pluginResponse } from '@/lib/plugins/http'
 import { personalPlugins, mcpConnections } from '@/lib/plugins/runtime'
 import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const TOOL_PAGE = 50
 const inputSchema = z.object({ serverId: z.uuid(), cursor: mcpToolName.optional() }).strict()
 
-export const POST = freshSessionRoute(withRequestLog('/api/integrations/mcp/refresh', request => pluginResponse(async () => {
+const unguardedPOST = freshSessionRoute(withRequestLog('/api/integrations/mcp/refresh', request => pluginResponse(async () => {
   const owner = await pluginActor(request, { humanOnly: true })
   const command = await pluginBody(request, inputSchema)
   const installation = (await personalPlugins.listMcp(owner)).find(server => server.id === command.serverId)
@@ -27,3 +28,12 @@ export const POST = freshSessionRoute(withRequestLog('/api/integrations/mcp/refr
   return { serverId: command.serverId, tools: page.map(name => ({ name })),
     nextCursor: available.length > TOOL_PAGE ? page.at(-1) : null }
 })))
+export const POST = defineRoute(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPOST(request),
+)

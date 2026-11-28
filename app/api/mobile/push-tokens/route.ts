@@ -1,9 +1,10 @@
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
+import { noteLogUser } from '@/lib/request-log'
 import { db, pool } from '@/lib/db'
 import { mobilePushTokens } from '@/lib/db/schema'
 import { pushSession, removePushBinding, withPushSession } from '@/lib/mobile-push-session'
 import { forbiddenOrigin, json, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 const EXPO_TOKEN = z.string().regex(/^(?:Exponent|Expo)PushToken\[[A-Za-z0-9_-]{10,200}\]$/)
@@ -58,6 +59,32 @@ async function handleDELETE(request: Request) {
   return removePushBinding(session, body.data)
 }
 
-export const GET = withRequestLog('/api/mobile/push-tokens', handleGET)
-export const POST = withRequestLog('/api/mobile/push-tokens', handlePOST)
-export const DELETE = withRequestLog('/api/mobile/push-tokens', handleDELETE)
+export const GET = defineRoute<'mobile-or-session', 'none'>(
+  {
+    route: '/api/mobile/push-tokens',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'none', freshSession: true,
+  },
+  async ({ request }) => handleGET(request),
+)
+
+export const POST = defineRoute<'mobile-or-session', 'none'>(
+  {
+    route: '/api/mobile/push-tokens',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request }) => handlePOST(request),
+)
+
+export const DELETE = defineRoute<'mobile-or-session', 'none'>(
+  {
+    route: '/api/mobile/push-tokens',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request }) => handleDELETE(request),
+)

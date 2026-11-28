@@ -7,8 +7,9 @@ import { pool } from '@/lib/db';
 import { FactoryError } from '@/lib/factory/contract';
 import { factoryLifecycleEnabled, factoryRuntimeForBot } from '@/lib/factory/runtime';
 import { questionRecoverySchema } from '@/lib/factory/questions/contract';
+import { defineRoute } from '@/lib/primitives/define-route'
 export const maxDuration = 300;
-export async function POST(request: Request, {params}: {params:Promise<{questionId:string}>}) {
+async function unguardedPOST(request: Request, {params}: {params:Promise<{questionId:string}>}) {
   if(!factoryLifecycleEnabled()) return RouteResponse.json({error:'factoryLifecycleUnavailable'},{status:404});
   const sessionHeaders=request.headers.has('authorization')?humanSessionHeaders(request):request.headers;
   if(!sessionHeaders) return RouteResponse.json({error:'authRequired'},{status:401});
@@ -34,3 +35,12 @@ export async function POST(request: Request, {params}: {params:Promise<{question
   });
 
 }
+export const POST = defineRoute<'public','none',{ questionId: string }>(
+  {
+    route: '/api/factory/questions/[questionId]/recover',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, params }) => unguardedPOST(request, { params: Promise.resolve(params) }),
+)

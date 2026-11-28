@@ -13,6 +13,7 @@ import { listComposioPages } from '@/lib/composio-pagination'
 import { isComposioCallbackVerifierConfigured } from '@/lib/composio-config'
 import { COMPOSIO_AUTH_CALLBACK_PATH } from '@/lib/auth-return'
 import { bootstrapSuggestions } from '@/lib/suggestions/sources'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const SESSION_COOKIE = 'mikka_composio_session_uri'
 const noStore = { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }
@@ -125,4 +126,12 @@ async function handleGET(request: RouteRequest) {
   }
 }
 
-export const GET = withRequestLog('/api/integrations/composio/callback', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/composio/callback', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request as RouteRequest),
+)

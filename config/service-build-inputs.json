@@ -28,6 +28,7 @@
       "scripts/cloudflare-ci.mjs",
       "scripts/cloudflare-source.mjs",
       "lib/deployment-id.mjs",
+      "lib/env/runtime.mjs",
       ".github/workflows/cloudflare-api-image.yml",
       ".github/actions/cloudflare-registry-credentials/**"
     ],
@@ -75,7 +76,6 @@
       "i18n/**",
       "postcss.config.mjs",
       "scripts/build-installation.mjs",
-      "scripts/generate-agent-ui-prompt.mjs",
       "instrumentation-client.ts",
       "apps/desktop/src/startup.ts",
       "scripts/release/hosted-ui.mjs",
@@ -124,6 +124,8 @@
         "scripts/build-cloudflare-world.mjs",
         "packages/eve-cloudflare-world/**",
         "cloudflare/litellm/request.mjs",
+        "cloudflare/litellm/subscription-chat.mjs",
+        "cloudflare/web/route-path.mjs",
         "cloudflare/bounded-json.mjs",
         "cloudflare/task-sandbox/process-socket.mjs",
         "cloudflare/credential-identity/transport.mjs",
@@ -169,9 +171,9 @@
         "scripts/build-cloudflare-world.mjs",
         "scripts/compile-cloudflare-eve-host.sh",
         "scripts/build-cloudflare-eve-image.sh",
-        "scripts/generate-agent-ui-prompt.mjs",
         "cloudflare/api/ingress/services.mjs",
         "cloudflare/litellm/request.mjs",
+        "cloudflare/litellm/subscription-chat.mjs",
         "cloudflare/api/ingress/request.mjs"
       ],
       "entrypoints": [
@@ -199,6 +201,7 @@
         "packages/protocol/**",
         "packages/daemon/**",
         "cloudflare/task-sandbox/**",
+        "lib/env/hosts-constants.mjs",
         "scripts/e2b/terminal-gateway.py",
         "scripts/e2b/preview-gateway.py",
         "scripts/e2b/preview_firewall.py",
@@ -245,6 +248,7 @@
       "paths": [
         "deploy/litellm/**",
         "cloudflare/litellm/**",
+        "lib/model-gateway/gateway-generation-id.mjs",
         "lib/model-gateway/protocol-fields.mjs"
       ],
       "entrypoints": [

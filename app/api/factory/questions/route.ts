@@ -4,8 +4,9 @@ import { RouteResponse } from '@/lib/server-runtime/server';
 import { auth } from '@/lib/api-auth';
 import { factoryLifecycleEnabled, factoryRuntimeForBot } from '@/lib/factory/runtime';
 import { handleFactoryQuestionList } from '@/lib/factory/questions/ask-user';
+import { defineRoute } from '@/lib/primitives/define-route'
 /** GET /api/factory/questions[?taskId=|?runId=] — pending questions in AskUserQuestion shape. */
-export async function GET(request: Request) {
+async function unguardedGET(request: Request) {
   if (!factoryLifecycleEnabled()) return RouteResponse.json({error:'factoryLifecycleUnavailable'},{status:404});
   const sessionHeaders=request.headers.has('authorization')?humanSessionHeaders(request):request.headers;
   if (!sessionHeaders) return RouteResponse.json({error:'authRequired'},{status:401});
@@ -18,3 +19,12 @@ export async function GET(request: Request) {
   });
 
 }
+export const GET = defineRoute(
+  {
+    route: '/api/factory/questions',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request),
+)

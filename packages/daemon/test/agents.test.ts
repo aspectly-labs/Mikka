@@ -9,7 +9,7 @@ import { join } from "node:path"
 import { execa } from "execa"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { defaultRunPolicy, PACKAGE_REGISTRY_DOMAINS } from "@mikka/protocol/agent-policy"
+import { defaultRunPolicy } from "@mikka/protocol/agent-policy"
 import { normalizeRepository } from "@mikka/protocol/repository"
 
 import { onLines } from "../src/agents/child"
@@ -651,7 +651,7 @@ describe("run context", () => {
       expect(JSON.parse(result.result.content[0].text).exitCode).toBe(0)
     } finally { client.close() }
   })
-  it("lets the run write its worktree and run dir, never git's files, and always reach its harness API", async () => {
+  it("lets the run write its worktree and run dir, never git's files, and reach any host", async () => {
     const repo = await makeRepo()
     const ctx = new RunContext({
       harness: "codex",
@@ -660,8 +660,8 @@ describe("run context", () => {
       extraWrite: ["/tmp/codex-auth.json"],
       runDir: tempDir(),
       privateDir: tempDir("orvp-"),
-      // A person limited the network; the run still reaches its harness API.
-      policy: { ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, network: "ask" } },
+      // An older server's network deny restricts nothing (ADR 2026-11-27-1615).
+      policy: { ...defaultRunPolicy(), permissions: { ...defaultRunPolicy().permissions, network: "deny" } },
     })
     const policy = ctx.policy()
     expect(policy).toMatchObject({
@@ -677,11 +677,7 @@ describe("run context", () => {
         "*.openai.com",
         "chatgpt.com",
         "*.chatgpt.com",
-        // The workspace's default allow-list (ADR 0028), then the repo's.
-        "github.com",
-        "*.github.com",
-        "*.githubusercontent.com",
-        ...PACKAGE_REGISTRY_DOMAINS,
+        "*",
       ],
     })
     expect(policy.allowWrite).not.toContain(ctx.gitDir)

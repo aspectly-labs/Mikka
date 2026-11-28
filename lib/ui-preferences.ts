@@ -15,6 +15,14 @@ export type RunKeyAction = (typeof RUN_KEY_ACTIONS)[number]
 export const SIDEBAR_LAYOUTS = ['hybrid', 'columns'] as const
 export const COLOR_SCHEMES = ['light', 'dark', 'system'] as const
 export const CODE_SIZES = ['default', 'small', 'large'] as const
+/** 线程字体 (Alex, R-S10, worded per copy rule C-09; Claude's Chat font, Codex's Content font, Perplexity's Answer font). */
+export const CHAT_FONTS = ['default', 'sans', 'system', 'readable'] as const
+const CHAT_FONT_STACKS: Record<(typeof CHAT_FONTS)[number], string | null> = {
+  default: null,
+  sans: 'Inter, ui-sans-serif, system-ui, sans-serif',
+  system: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+  readable: '"Atkinson Hyperlegible", Verdana, "Trebuchet MS", sans-serif',
+}
 export const DIFF_VIEWS = ['unified', 'split'] as const
 export const DIFF_COLORS = ['redGreen', 'blue'] as const
 export const HIDDEN_FILES = ['generated', 'none', 'all'] as const
@@ -72,6 +80,7 @@ export interface UiPreferences {
   backgroundEffect: (typeof BACKGROUND_EFFECTS)[number]
   customThemes: CustomTheme[]
   codeSize: (typeof CODE_SIZES)[number]
+  chatFont: (typeof CHAT_FONTS)[number]
   diffView: (typeof DIFF_VIEWS)[number]
   diffColor: (typeof DIFF_COLORS)[number]
   hiddenFiles: (typeof HIDDEN_FILES)[number]
@@ -101,6 +110,7 @@ export const DEFAULT_UI: UiPreferences = {
   backgroundEffect: 'colorful',
   customThemes: [],
   codeSize: 'default',
+  chatFont: 'default',
   diffView: 'unified',
   diffColor: 'redGreen',
   hiddenFiles: 'generated',
@@ -131,6 +141,7 @@ export const uiPreferencesSchema = z.object({
   customThemes: z.array(z.object({ id: z.string().min(1).max(40), name: z.string().min(1).max(40), accent: HEX, fill: HEX, foreground: HEX })).max(24),
   sidebarPages: z.array(z.enum(RAIL_PAGE_IDS)).max(RAIL_PAGE_IDS.length).nullable(),
   codeSize: z.enum(CODE_SIZES),
+  chatFont: z.enum(CHAT_FONTS),
   diffView: z.enum(DIFF_VIEWS),
   diffColor: z.enum(DIFF_COLORS),
   hiddenFiles: z.enum(HIDDEN_FILES),
@@ -164,6 +175,7 @@ export const APPEARANCE_REGISTRY_KEYS = [
   'appearanceAccentColor',
   'appearanceBackgroundEffect',
   'codeFontSize',
+  'chatFont',
   'diffView',
   'diffColors',
   'hiddenFiles',
@@ -264,6 +276,7 @@ export function resolveUiPreferencesFromSettings(
     backgroundEffect: !appearanceSync && local.backgroundEffect ? local.backgroundEffect : (values.appearanceBackgroundEffect?.value ?? DEFAULT_UI.backgroundEffect),
     customThemes: local.customThemes ?? [],
     codeSize: values.codeFontSize?.value ?? DEFAULT_UI.codeSize,
+    chatFont: values.chatFont?.value ?? DEFAULT_UI.chatFont,
     diffView: values.diffView?.value ?? DEFAULT_UI.diffView,
     diffColor: values.diffColors?.value ?? DEFAULT_UI.diffColor,
     hiddenFiles: values.hiddenFiles?.value ?? DEFAULT_UI.hiddenFiles,
@@ -297,6 +310,7 @@ export function splitUiPreferencesPatch(
   if (parsed.modEnterAction !== undefined) registryValues.modEnterAction = parsed.modEnterAction
   if (parsed.altEnterAction !== undefined) registryValues.altEnterAction = parsed.altEnterAction
   if (parsed.codeSize !== undefined) registryValues.codeFontSize = parsed.codeSize
+  if (parsed.chatFont !== undefined) registryValues.chatFont = parsed.chatFont
   if (parsed.diffView !== undefined) registryValues.diffView = parsed.diffView
   if (parsed.diffColor !== undefined) registryValues.diffColors = parsed.diffColor
   if (parsed.hiddenFiles !== undefined) registryValues.hiddenFiles = parsed.hiddenFiles
@@ -368,6 +382,7 @@ export function publishUiPreferences(ui: UiPreferences, root: HTMLElement | null
   root.dataset.scrollNewToTop = String(ui.scrollNewToTop)
   root.dataset.openInDesktop = String(ui.openInDesktop)
   root.dataset.codeSize = ui.codeSize
+  root.dataset.chatFont = ui.chatFont
   root.dataset.diffView = ui.diffView
   root.dataset.diffColor = ui.diffColor
   root.dataset.hiddenFiles = ui.hiddenFiles
@@ -377,6 +392,10 @@ export function publishUiPreferences(ui: UiPreferences, root: HTMLElement | null
   root.style.setProperty('--ui-fill', fill)
   root.style.setProperty('--ui-foreground', foreground)
   root.style.setProperty('--code-font-size', ui.codeSize === 'small' ? '12px' : ui.codeSize === 'large' ? '16px' : '14px')
+  // 线程字体 ("chat font"): the chat's text reads `font-family: var(--mikka-chat-font, inherit)`; 默认 leaves the app's font.
+  const chatFont = CHAT_FONT_STACKS[ui.chatFont]
+  if (chatFont) root.style.setProperty('--mikka-chat-font', chatFont)
+  else root.style.removeProperty('--mikka-chat-font')
   paintToken(root, '--mk-accent', custom ? accent : null)
   paintToken(root, '--primary', custom ? accent : null)
   paintToken(root, '--background', custom ? fill : null)

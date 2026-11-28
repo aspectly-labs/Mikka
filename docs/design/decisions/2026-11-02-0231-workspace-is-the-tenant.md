@@ -13,7 +13,7 @@ tenant: what is bound to the person (sign-in, devices, connections, model
 credentials, profile memory) follows them into every workspace and is stored
 once, per account.
 
-Rules, cited by id in [information-architecture.md](../information-architecture.md):
+Rules, cited by id in [information-architecture.md](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/information-architecture.md):
 
 - **T1** One tenant per workspace. Every bot, chat, task, thread, Artifact,
   secret, credit and invoice belongs to exactly one workspace.

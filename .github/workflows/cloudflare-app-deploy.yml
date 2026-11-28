@@ -14,7 +14,7 @@ on:
         description: Reviewed deployment phase; never compiles product source
         type: choice
         required: true
-        options: [stage-all, stage-verify, stage-worlds, stage-task, stage-eve, stage-litellm, stage-api, stage-web, stage-sessions, production-reserve, production-litellm, production-eve, production-eve-maintenance, production-eve-postgres, production-worlds-prepare, production-api, production-worlds-register, production-web, production-verify, production-migrate-database, production-task, gateway-prepare, gateway-observe, eve-retire, service-stage, service-production, pipeline-stage, pipeline-rollback, cloud-services-stage, cloud-services-production]
+        options: [stage-all, stage-verify, stage-worlds, stage-task, stage-eve, stage-litellm, stage-api, stage-web, stage-sessions, production-reserve, production-litellm, production-eve, production-eve-maintenance, production-eve-postgres, production-worlds-prepare, production-api, production-worlds-register, production-web, production-verify, production-migrate-database, production-task, gateway-prepare, gateway-observe, eve-retire, service-stage, service-production, pipeline-stage, pipeline-rollback, pipeline-promote, cloud-services-stage, cloud-services-promote, cloud-services-production]
       database_window:
         description: Existing reviewed database migration window; used only by production-migrate-database
         type: string
@@ -37,7 +37,16 @@ on:
         type: string
         required: false
       pipeline_run:
-        description: Previous deployment pipeline run to roll back in staging
+        description: Staging run to roll back or promote, including cloud-services-promote
+        type: string
+        required: false
+      cloud_stage_attempt:
+        description: cloud-services-promote only, the successful staging run attempt
+        type: string
+        default: '1'
+        required: false
+      promote_source:
+        description: pipeline-promote only, the exact public main commit that pipeline_run staged and that production should serve
         type: string
         required: false
       staging_failure_drill:
@@ -56,8 +65,11 @@ env:
   MIKKA_PRIVATE_GITHUB_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
   MIKKA_HOSTED_UI_GITHUB_OWNER: ${{ vars.MIKKA_HOSTED_UI_GITHUB_OWNER }}
 jobs:
+  # Manual phases need a promoter (config/release-promoters.json). Owner-only: the break-glass phases that
+  # write production without pipeline-promote evidence (production-*, service-production,
+  # cloud-services-production), eve-retire and gateway-observe; agents promote through evidence-gated phases.
   deploy-application:
-    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !startsWith(inputs.phase, 'pipeline-')
+    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !startsWith(inputs.phase, 'pipeline-') && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor)) && (!(startsWith(inputs.phase, 'production-') || inputs.phase == 'service-production' || inputs.phase == 'cloud-services-production' || inputs.phase == 'eve-retire' || inputs.phase == 'gateway-observe') || (github.actor_id == '183887963' && github.actor == 'alexj11324' && github.triggering_actor == 'alexj11324'))
     outputs:
       serving-release: ${{ steps.apply.outputs.serving-release }}
     runs-on: ubuntu-latest
@@ -76,6 +88,8 @@ jobs:
       MIKKA_OPERATIONS_CI_RUN_ATTEMPT: ${{ inputs.qualification_attempt }}
       MIKKA_OPERATIONS_CI_ARTIFACT_ID: ${{ inputs.qualification_artifact }}
       MIKKA_DEPLOYMENT_PHASE: ${{ inputs.phase }}
+      MIKKA_CLOUD_STAGE_RUN: ${{ inputs.pipeline_run }}
+      MIKKA_CLOUD_STAGE_ATTEMPT: ${{ inputs.cloud_stage_attempt }}
       DATABASE_WINDOW: ${{ inputs.database_window }}
       CLOUDFLARE_ACCOUNT_ID: d8f6630c7869111a5139bc5ed4d24ace
     steps:
@@ -235,7 +249,7 @@ jobs:
 
 
   pipeline:
-    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_run' && (github.actor_id == '183887963' || (github.actor_id == '118344674' && github.actor == 'github-merge-queue[bot]' && (github.triggering_actor == 'github-merge-queue[bot]' || github.triggering_actor == 'alexj11324'))) && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.id == github.event.repository.id) || (github.event_name == 'workflow_dispatch' && (inputs.phase == 'pipeline-stage' || inputs.phase == 'pipeline-rollback')))
+    if: (github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274')) && github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_run' && (github.actor_id == '183887963' || (github.actor_id == '118344674' && github.actor == 'github-merge-queue[bot]' && (github.triggering_actor == 'github-merge-queue[bot]' || github.triggering_actor == 'alexj11324'))) && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.id == github.event.repository.id) || (github.event_name == 'workflow_dispatch' && (inputs.phase == 'pipeline-stage' || inputs.phase == 'pipeline-rollback') && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor))))
     runs-on: ubuntu-latest
     environment: cloudflare-runtime-release
     timeout-minutes: 45
@@ -344,6 +358,7 @@ jobs:
           repositories: mikka-hosted-ui
           permission-contents: read
           permission-actions: read
+          permission-checks: read
       - name: Remove App credentials before loading private operations code
         run: |
           echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
@@ -376,6 +391,9 @@ jobs:
           path: operations/product
           fetch-depth: 0
           persist-credentials: false
+      # The one switch: deploy-pipeline.json autoProduction in private operations main. Only an exact
+      # `true` promotes automatically; `false` (manual) or an unreadable policy leaves production to an
+      # owner dispatch of pipeline-promote. Staging continues either way.
       - name: Read the reviewed production enablement policy
         if: steps.select.outputs.status == 'selected'
         id: policy
@@ -383,10 +401,15 @@ jobs:
         run: |
           node --input-type=module <<'JS'
           import {readFile, appendFile} from 'node:fs/promises'
-          import assert from 'node:assert/strict'
-          const policy = JSON.parse(await readFile('docs/operations/releases/deploy-pipeline.json', 'utf8'))
-          assert.equal(typeof policy.autoProduction, 'boolean')
-          await appendFile(process.env.GITHUB_OUTPUT, 'enabled=' + policy.autoProduction + '\n')
+          let enabled = false
+          try {
+            const policy = JSON.parse(await readFile('docs/operations/releases/deploy-pipeline.json', 'utf8'))
+            enabled = policy?.version === 1 && policy.autoProduction === true
+            if (!enabled) console.log('::notice title=Production promotion is manual::autoProduction is not true; production waits for an owner dispatch of pipeline-promote.')
+          } catch {
+            console.log('::warning title=Production policy unreadable::Automatic production promotion stays off; staging continues.')
+          }
+          await appendFile(process.env.GITHUB_OUTPUT, 'enabled=' + enabled + '\n')
           JS
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
         if: steps.select.outputs.status == 'selected'
@@ -482,15 +505,22 @@ jobs:
           PIPELINE_SOURCE: ${{ needs.pipeline.outputs.source || github.event.workflow_run.head_sha || github.sha }}
         run: node scripts/release/pipeline-record.mjs
 
+  # Automatic: a merge-triggered run whose staging passed, while the private policy says autoProduction.
+  # Manual: a dispatch of pipeline-promote on main naming the staging run and commit. The job runs only
+  # for a promoter in config/release-promoters.json (actor id, actor and re-run actor) before any secret;
+  # the select step then requires the same list on private main and the staged evidence before the
+  # deployment credential, and the private publisher checks the policy again.
   pipeline-production:
     needs: [pipeline, pipeline-record]
-    if: github.event_name == 'workflow_run' && needs.pipeline.result == 'success' && needs.pipeline-record.result == 'success' && needs.pipeline.outputs.production-enabled == 'true'
+    if: >-
+      !cancelled() && ((github.event_name == 'workflow_run' && needs.pipeline.result == 'success' && needs.pipeline-record.result == 'success' && needs.pipeline.outputs.production-enabled == 'true') || (github.event_name == 'workflow_dispatch' && inputs.phase == 'pipeline-promote' && github.repository_id == '1427517699' && (github.repository_owner_id == '183887963' || github.repository_owner_id == '359279274') && github.ref == 'refs/heads/main' && (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor))))
     runs-on: ubuntu-latest
     environment: cloudflare-runtime-release
     timeout-minutes: 45
     permissions:
       contents: read
       actions: read
+      checks: read
       issues: read
       id-token: write
     outputs:
@@ -591,10 +621,13 @@ jobs:
           repositories: mikka-hosted-ui
           permission-contents: read
           permission-actions: read
+          permission-checks: read
       - name: Remove App credentials before loading private operations code
         run: |
           echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
           echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+      # status=not-ready (automatic only: a required check or the daemon floor is not met yet) skips every
+      # step below without failing the run, so the staging run stays promotable by a pipeline-promote dispatch.
       - name: Select the verified staging result and production baseline
         id: select
         env:
@@ -602,6 +635,9 @@ jobs:
           MIKKA_PUBLIC_ACTIONS_TOKEN: ${{ github.token }}
           INPUT_OPERATIONS_SOURCE: ${{ needs.pipeline.outputs.operations }}
           INPUT_STAGE_ARTIFACT: ${{ needs.pipeline.outputs.artifact }}
+          INPUT_PIPELINE_RUN: ${{ inputs.pipeline_run }}
+          INPUT_PROMOTE_SOURCE: ${{ inputs.promote_source }}
+          INPUT_CLOUD_SOURCE: ${{ inputs.cloud_source_sha }}
         run: node scripts/release/pipeline-inputs.mjs promote
       - name: Check out the pinned operations source
         if: steps.select.outputs.status == 'selected'

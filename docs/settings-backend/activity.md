@@ -119,7 +119,7 @@ type ActivitySummary =
 
 字段确认（读过写入点）：
 
-- `pending_actions.decidedAt` 只在本人决定时写入：`decidePendingAction`（`lib/pending-actions.ts`）和 `lib/operations/approved-writes.ts`。仓库推送审批已经去掉（Agent 用自己的 GitHub 凭据推送，#1023）；以前留下的 `approve_repository_push` 行仍显示仓库名。策略自动放行的写操作直接以 `running` 插入、`decidedAt` 为空，所以不算“用户批准/拒绝”，不进时间线。Coordinator 直接发出的、未被判为破坏性操作的邮件和日历写入（`writeAccountAction`，R-77）同样如此：发出前插入 `running`，结束后改为 `done` / `failed`，结果不明时保持 `running`。`decision` 由 `status` 推出：`declined` 为拒绝，其余（`running` / `done` / `failed`）为批准；`status` 原样返回，UI 可以显示“已批准但执行失败”。
+- `pending_actions.decidedAt` 只出现在旧行上：以前本人批准/拒绝时写入。ADR 2026-11-27-1615 之后不再有审批，新写入都不带 `decidedAt`；迁移 `20261127162323_retire_write_approvals.sql` 把仍在等待的行关为 `declined`（`error='approvalRetired'`，`decidedAt` 仍为空，所以不进时间线）。仓库推送审批已经去掉（Agent 用自己的 GitHub 凭据推送，#1023）；以前留下的 `approve_repository_push` 行仍显示仓库名。策略自动放行的写操作直接以 `running` 插入、`decidedAt` 为空，所以不算“用户批准/拒绝”，不进时间线。Coordinator 直接发出的、未被判为破坏性操作的邮件和日历写入（`writeAccountAction`，R-77）同样如此：发出前插入 `running`，结束后改为 `done` / `failed`，结果不明时保持 `running`。`decision` 由 `status` 推出：`declined` 为拒绝，其余（`running` / `done` / `failed`）为批准；`status` 原样返回，UI 可以显示“已批准但执行失败”。
 - `summary` 只带操作类型和少量定位信息（浏览器/登录操作的 `origin`、旧仓库推送行的 `repo`），不带邮件正文、收件人等 `input` 内容；详情用 `pendingActionId` 跳转。
 - `attention_log.reason` 是 Coordinator 记录的原因原文（模型写的文本，或系统写的 `told without recording` 等），原样返回，不翻译。`url` 是 matter 的来源链接。
 - 只把 `notify`（告诉了用户）当成提醒；`handoff` / `quiet` / `snooze` / `handled` 是内部决策，不进时间线。

@@ -50,14 +50,14 @@ test('Issue threads open on the right as a conversation; comments are cards with
   await threads.getByRole('button', { name: '打开线程 Model the routing table', exact: true }).click()
   let panel = page.getByRole('region', { name: 'Model the routing table', exact: true })
   await expect(panel.getByRole('list', { name: '线程对话' })).toContainText('线程回复 for Model the routing table')
-  await expect(panel.getByRole('textbox', { name: '告诉 Codex 下一步做什么…' })).toBeVisible()
+  await expect(panel.getByRole('textbox', { name: '提出后续变更要求' })).toBeVisible()
   await expect(panel.getByRole('button', { name: '停止', exact: true })).toHaveCount(0)
   expect(feedbackRequests).toEqual([])
 
   // A running thread ends in the composer; what is said there goes to the agent and stays in the thread.
   await threads.getByRole('button', { name: '打开线程 Route group replies', exact: true }).click()
   panel = page.getByRole('region', { name: 'Route group replies', exact: true })
-  await panel.getByRole('textbox', { name: '告诉 Codex 下一步做什么…' }).fill('Check the fallback timer')
+  await panel.getByRole('textbox', { name: '提出后续变更要求' }).fill('Check the fallback timer')
   await panel.getByRole('button', { name: '发送', exact: true }).click()
   await expect(panel.getByRole('list', { name: '线程对话' })).toContainText('Check the fallback timer')
   expect(feedbackRequests).toEqual([])
@@ -152,7 +152,7 @@ test(`The owner stops a working thread from its composer; one waiting for an ans
 
   await threads.getByRole('button', { name: '打开线程 Trim the bundle', exact: true }).click()
   panel = page.getByRole('region', { name: 'Trim the bundle', exact: true })
-  const composer = panel.getByRole('textbox', { name: '告诉 Codex 下一步做什么…' })
+  const composer = panel.getByRole('textbox', { name: '提出后续变更要求' })
   const stop = panel.locator('[data-slot="thread-composer"]').getByRole('button', { name: '停止', exact: true })
   // A working thread: the header keeps stop as well.
   await expect(panel.locator('[data-slot="thread-stop"]')).toBeVisible()

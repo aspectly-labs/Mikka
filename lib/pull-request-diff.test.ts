@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import test from 'node:test'
-import { pullRequestDiffText } from './pull-request-diff'
+import { pullRequestDiffText, pullRequestUnifiedPatch } from './pull-request-diff'
 import { parseUnifiedDiff } from './thread-changes'
 
 const hunk = '@@ -1,2 +1,3 @@\n context\n-removed\n+added\n+and this\n'
@@ -37,5 +38,26 @@ test('a file GitHub sent no patch for still lists, with no lines and no invented
 
 test('no files is an empty diff, not a broken one', () => {
   assert.equal(pullRequestDiffText([]), '')
+  assert.equal(pullRequestUnifiedPatch([]), '')
   assert.deepEqual(parseUnifiedDiff(pullRequestDiffText([])), { files: [], additions: 0, deletions: 0 })
+})
+
+test('pullRequestUnifiedPatch emits valid unified diff headers accepted by git apply --stat', () => {
+  const patch = pullRequestUnifiedPatch([
+    { path: 'lib/app.ts', previousPath: null, status: 'modified', patch: hunk },
+    { path: 'new/file.ts', previousPath: null, status: 'added', patch: '@@ -0,0 +1,1 @@\n+first\n' },
+    { path: 'gone/old.ts', previousPath: null, status: 'deleted', patch: '@@ -1,1 +0,0 @@\n-last\n' },
+    { path: 'renamed/to.ts', previousPath: 'renamed/from.ts', status: 'renamed', patch: '@@ -1,1 +1,1 @@\n-old\n+new\n' },
+    { path: 'asset/logo.png', previousPath: null, status: 'modified', patch: null },
+  ])
+  assert.match(patch, /--- a\/lib\/app\.ts\n\+\+\+ b\/lib\/app\.ts\n@@ -1,2 \+1,3 @@/)
+  assert.match(patch, /--- \/dev\/null\n\+\+\+ b\/new\/file\.ts\n@@ -0,0 \+1,1 @@/)
+  assert.match(patch, /--- a\/gone\/old\.ts\n\+\+\+ \/dev\/null\n@@ -1,1 \+0,0 @@/)
+  assert.match(patch, /--- a\/renamed\/from\.ts\n\+\+\+ b\/renamed\/to\.ts\n@@ -1,1 \+1,1 @@/)
+  assert.match(patch, /Binary files a\/asset\/logo\.png and b\/asset\/logo\.png differ/)
+
+  const stat = execFileSync('git', ['apply', '--stat'], { input: patch, encoding: 'utf8' })
+  assert.match(stat, /lib\/app\.ts\s+\|\s+3 \+\+-/)
+  assert.match(stat, /new\/file\.ts\s+\|\s+1 \+/)
+  assert.match(stat, /gone\/old\.ts\s+\|\s+1 -/)
 })

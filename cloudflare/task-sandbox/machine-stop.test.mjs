@@ -16,8 +16,8 @@ test('parking a native writer prunes archives once, after persisting its stop an
   try { ({ TaskMachine } = await import('./machine.mjs')) } finally { hooks.deregister() }
 
   const grant = machineGrant({ ownerId: 'owner', workspaceId: randomUUID(), taskId: randomUUID(), runId: randomUUID(),
-    operationId: randomUUID(), repositoryKey: 'v2/github.com/owner/repo', expiresAt: Date.now() + 60_000 })
-  const data = new Map([['nativeWriter', 'writer'], ['run', { grant, admittedAt: Date.now(), state: 'running' }]])
+    operationId: randomUUID(), repositoryKey: 'v2/github.com/owner/repo', expiresAt: Date.now() + 60_000, metered: true })
+  const data = new Map([['nativeWriter', 'writer'], ['run', { grant, expiresAt: grant.expiresAt, admittedAt: Date.now(), state: 'running' }]])
   const checkpoint = { id: randomUUID(), sha256: 'a'.repeat(64), bytes: 3 }
   const events = []
   const container = {
@@ -40,10 +40,19 @@ test('parking a native writer prunes archives once, after persisting its stop an
       },
     },
   })
+  const cleanupGrant = { ...grant, expiresAt: 0, archiveOnly: true }
+  await assert.rejects(machine.withMachine(cleanupGrant, () => {}), /lease expired/)
+  assert.equal(await machine.withMachine(cleanupGrant, () => 'archive', true), 'archive')
   const result = await machine.park(grant)
   assert.deepEqual(result.checkpoint, checkpoint)
   assert.equal(result.state, 'stopped')
   assert.deepEqual(events, ['quiesce', 'backup', 'destroy', 'release', 'prune'])
+
+  const abandoned = { ...grant, operationId: randomUUID(), expiresAt: 0, metered: true }
+  assert.deepEqual(await machine.park(abandoned), { state: 'absent' })
+  assert.deepEqual(await machine.meter(abandoned, 0, false), { notStarted: true })
+  assert.equal(data.get('closed-operation:' + abandoned.operationId), true)
+  assert.equal(data.get('run').grant.operationId, grant.operationId)
 })
 
 test('the machine starts the billed instance type its grant carries, defaulting to standard-3', async () => {
@@ -157,6 +166,17 @@ test('a live lease only re-arms its alarm; a settled lease still stops through t
   assert.equal(settled.data.get('run').outcome, 'settled', 'the recorded outcome survives the backstop alarm')
   assert.ok(settled.events.includes('destroy') && settled.events.includes('release'),
     'a lease already settling still releases its compute')
+
+  const stuck = fixture({ grant: { ...grant, metered: true }, state: 'stopping', expiresAt: grant.expiresAt,
+    settledAt: Date.now() - 61_000, outcome: 'settled' })
+  const saved = { id: randomUUID(), size: 3, sha256: 'a'.repeat(64) }
+  stuck.data.set('checkpoint', saved)
+  await stuck.machine.alarm()
+  const stopped = stuck.data.get('run')
+  assert.equal(stopped.state, 'stopped')
+  assert.equal(stopped.outcome, 'interrupted')
+  assert.deepEqual(stopped.checkpoint, { id: saved.id, bytes: saved.size, sha256: saved.sha256 })
+  assert.deepEqual(stuck.events, ['destroy', 'release', 'prune', 'dealarm'])
 })
 
 test('an uncommitted first checkpoint is reclaimed without removing a committed checkpoint or other files', async () => {

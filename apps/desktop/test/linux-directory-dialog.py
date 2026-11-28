@@ -1,14 +1,21 @@
 """Choose a visible child folder in the smoke job's real, isolated X11 dialog."""
 import csv
 import io
+import os
 import subprocess
 import sys
 import time
 
 
-def run(*args, data=None):
-    return subprocess.run(args, input=data, stdout=subprocess.PIPE,
+def run(*args, data=None, env=None):
+    return subprocess.run(args, input=data, stdout=subprocess.PIPE, env=env,
                           stderr=subprocess.DEVNULL, timeout=8, check=True).stdout
+
+
+# Tesseract's OpenMP threads spin against every other process on a busy runner:
+# one small dialog frame then took from 0.1 s to past the 8 s limit. One thread
+# reads it in about 0.1 s every time.
+SINGLE_THREAD = {**os.environ, "OMP_THREAD_LIMIT": "1"}
 
 
 def xdo(*args):
@@ -31,9 +38,13 @@ allowed = {"fixture", "source", "cancel", "open", "choose", "select",
 
 def read_labels():
     image = run("import", "-silent", "-window", window, "-resize", "200%", "png:-")
-    words = run("tesseract", "stdin", "stdout", "--psm", "11", "tsv", data=image)
+    words = run("tesseract", "stdin", "stdout", "--psm", "11", "tsv", data=image, env=SINGLE_THREAD)
     labels = {}
-    for row in csv.DictReader(io.StringIO(words.decode()), delimiter="\t"):
+    # Tesseract's TSV has no quoting: a recognised `"` (it reads one from the
+    # path bar once the dialog is inside the fixture, depending on the random
+    # folder name) would otherwise open a CSV quoted field that swallows every
+    # later row, leaving only the words before it (Recent).
+    for row in csv.DictReader(io.StringIO(words.decode()), delimiter="\t", quoting=csv.QUOTE_NONE):
         word = (row.get("text") or "").strip(" _|[]").casefold()
         if word in allowed:
             x = (int(row["left"]) + int(row["width"]) // 2) // 2
@@ -57,12 +68,16 @@ def click(point):
     xdo("mousemove", "--window", window, str(point[0]), str(point[1]), "click", "1")
 
 
-if sys.argv[1] == "choose":
+def open_fixture():
     entries = wait_for("fixture")
-    # The bookmark is the left sidebar item, even if the current folder name
-    # also appears in the location bar.
+    # The bookmark is the left sidebar item, even if the current folder
+    # name also appears in the location bar.
     click(min(entries["fixture"]))
-    entries = wait_for("source")
+    return wait_for("source")
+
+
+if sys.argv[1] == "choose":
+    entries = open_fixture()
     click(max(entries["source"], key=lambda p: p[1]))
     print("selected visible Source row in Fixture", flush=True)
 

@@ -5,11 +5,12 @@ import {
   readPullRequestFiles,
   type PullRequestFiles,
 } from "@/lib/github/user-access";
+import { defineRoute } from '@/lib/primitives/define-route'
 import { pullFilesQuery } from "@/lib/pull-directory";
 import { withRequestLog } from "@/lib/request-log";
 
 const headers = { "Cache-Control": "private, no-store" };
-export const GET = withRequestLog(
+const unguardedGET = withRequestLog(
   "/api/integrations/github/repositories/pulls/files",
   async (request: Request) => {
     const sessionHeaders = humanSessionHeaders(request);
@@ -22,11 +23,14 @@ export const GET = withRequestLog(
     if (!session?.user)
       return Response.json({ error: "authRequired" }, { status: 401, headers });
     const params = new URL(request.url).searchParams;
-    const allowed = new Set(["repo", "number"]);
+    const allowed = new Set(["repo", "number", "format"]);
     if (
       [...params.keys()].some((key) => !allowed.has(key)) ||
       [...allowed].some((key) => params.getAll(key).length > 1)
     )
+      return Response.json({ error: "invalidInput" }, { status: 400, headers });
+    const format = params.get("format");
+    if (format !== null && format !== "patch")
       return Response.json({ error: "invalidInput" }, { status: 400, headers });
     const input = pullFilesQuery.safeParse({
       repo: params.get("repo"),
@@ -40,6 +44,7 @@ export const GET = withRequestLog(
         input.data.repo,
         Number(input.data.number),
         { deadline: Date.now() + 25_000, signal: request.signal },
+        format === "patch" ? { includePatch: true } : undefined,
       );
       return Response.json(files, { headers });
     } catch (error) {
@@ -55,3 +60,12 @@ export const GET = withRequestLog(
     }
   },
 );
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedGET(request),
+)

@@ -3,6 +3,7 @@ import { defineRoute } from '@/lib/primitives/define-route'
 import { enrollmentHTTP, enrollmentOperator, EnrollmentClient } from '@/lib/subscription-enrollment'
 import { enrollmentConfiguration } from '@/lib/subscription-enrollment-runtime'
 import { byosEnrollmentEnabled } from '@/lib/cloud-computer-flag'
+import { readEnv } from '@/lib/env/server'
 
 export const maxDuration = 120
 
@@ -10,7 +11,7 @@ export const maxDuration = 120
 // It never pretends that an operator token is a Mikka account/workspace session.
 const handleEnrollment = enrollmentHTTP({
   authorize: async request => byosEnrollmentEnabled()
-    ? enrollmentOperator(request, process.env.MIKKA_BYOS_ENROLLMENT_OPERATOR_TOKEN) : null,
+    ? enrollmentOperator(request, readEnv('MIKKA_BYOS_ENROLLMENT_OPERATOR_TOKEN')) : null,
   client: () => new EnrollmentClient(enrollmentConfiguration()),
 })
 

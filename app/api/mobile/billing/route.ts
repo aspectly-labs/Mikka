@@ -1,14 +1,13 @@
 import { z } from 'zod'
-import { auth } from '@/lib/api-auth'
-import { freshSessionRoute } from '@/lib/fresh-session'
+import type { ApiSession } from '@/lib/api-auth'
 import { GovernanceError } from '@/lib/governance/errors'
 import { governanceJson } from '@/lib/governance/http'
-import { forbiddenOrigin, json, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
 import { parseMobileBillingGetQuery, parseMobileBillingPostBody } from '@/lib/mobile-billing-contract'
 import { readMobileBilling, runMobileBillingMutation } from '@/lib/mobile-billing'
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { isActionErrorCode } from '@/lib/workspace-admin/action'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 function mapBillingError(error: unknown) {
   if (error instanceof z.ZodError) return json({ error: 'validationGeneric' }, 400)
@@ -41,14 +40,8 @@ function mapBillingError(error: unknown) {
  * through the same owning reader as `/api/workspaces/:id/billing`. Non-admin
  * members without a billing scope receive `{ available: false, billingScope: null, view: null }`.
  */
-async function handleGET(request: Request) {
+async function handleGET(request: Request, session: ApiSession) {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-      query: { disableCookieCache: true },
-    })
-    noteLogUser(session?.user?.id)
-    if (!session?.user) return unauthorized()
     const query = parseMobileBillingGetQuery(new URL(request.url).searchParams)
     if (!query) return json({ error: 'validationGeneric' }, 400)
     return json(await readMobileBilling(session, query))
@@ -62,15 +55,8 @@ async function handleGET(request: Request) {
  * `portal`, `topup`, `budget`, `recharge`, `account`) with the mobile origin
  * policy (`writeAllowed`) and fresh session verification.
  */
-async function handlePOST(request: Request) {
-  if (!writeAllowed(request)) return forbiddenOrigin()
+async function handlePOST(request: Request, session: ApiSession) {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-      query: { disableCookieCache: true },
-    })
-    noteLogUser(session?.user?.id)
-    if (!session?.user) return unauthorized()
     if (!request.headers.get('content-type')?.startsWith('application/json')) {
       return json({ error: 'validationGeneric' }, 400)
     }
@@ -82,5 +68,22 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const GET = freshSessionRoute(withRequestLog('/api/mobile/billing', handleGET))
-export const POST = freshSessionRoute(withRequestLog('/api/mobile/billing', handlePOST))
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/billing',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped', freshSession: true,
+  },
+  async ({ request, session }) => handleGET(request, session),
+)
+
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/billing',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true, freshSession: true,
+  },
+  async ({ request, session }) => handlePOST(request, session),
+)

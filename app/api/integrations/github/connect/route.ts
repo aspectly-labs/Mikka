@@ -6,6 +6,7 @@ import { githubAuthorizeURL, githubConnectConfigured, sealGitHubSecret, startGit
 import { GITHUB_PLUGIN_PATH } from '@/lib/github/connect-callback'
 import { claimConnectIntent, isIntentToken, startLoopbackIntent } from '@/lib/github/connect-intent'
 import { pool } from '@/lib/db'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 /**
@@ -51,4 +52,12 @@ async function handleGET(request: Request) {
   return response
 }
 
-export const GET = withRequestLog('/api/integrations/github/connect', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/github/connect', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request),
+)

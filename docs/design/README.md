@@ -1,33 +1,29 @@
 # Design docs: start here
 
-Read this page before any design, spec or UI work, in Figma or in code. It
-says which source wins when two disagree, and where each kind of rule lives.
+This folder holds Mikka's product and backend design: the words, the
+orchestration model, feature specs that public code implements, and the
+backend, product, architecture and process decision records.
+
+UI rules and UI design live in the private hosted repository
+(`mikka-hosted-ui/docs/design/`), not here (owner decision, 2026-11-27): the
+design system, `rules.md`, `components.md`, `copy.md`, `brand.md`, the
+information architecture, UI-only decision records, design research and
+screenshots. Research derived from competitor apps is in
+`mikka-hosted-ui/docs/research/` and `mikka-hosted-ui/docs/tasks/`. Start UI
+work at `mikka-hosted-ui/docs/design/README.md`.
 
 ## Read in this order
 
 1. [`glossary.md`](glossary.md): what bot, chat, task and thread mean.
-2. [`design-system.md`](design-system.md): Design System v2 — exact tokens,
-   restricted primitives, chat viewport budgets, the mandatory 7-state contract,
-   copy density limits and automated CI enforcement
-   ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)).
-3. [`rules.md`](rules.md): the product and visual rules. Every rule has an id
-   (`R-12`) so reviews can cite it.
-4. [`components.md`](components.md): which component to use for each job, and
-   the old components that must not come back. Look up the existing
-   component before you draw or build anything (R-90); a design or PR that
-   redraws one fails review.
-5. [`copy.md`](copy.md): how every visible string is written (C-01…C-10), and
-   which products set the precedent.
-6. [`orchestration.md`](orchestration.md): models, Agents, machines,
+2. [`orchestration.md`](orchestration.md): models, Agents, machines,
    scheduling, credentials in runs and who pays.
-7. [`decisions/`](decisions/README.md): read the **applicable latest, non-superseded** decision when a behavior is disputed. The frozen [`decisions.md`](decisions.md) is historical context, **not** a live instruction source.
-8. The accepted Figma frames for your feature (listed in `decisions/` or `decisions.md`).
-9. [`../review-checklist.md`](../review-checklist.md): run it before you show UI
-   to anyone.
-
-Full-product UX, discoverability, missing buttons/actions, status/role/permission parity and error-recovery audits start at [`ux-quality-audit.md`](ux-quality-audit.md) and `.claude/skills/mikka-ux-quality-audit/SKILL.md`. They do not supersede this design-source priority, as-shipped paid components or the existing issue owners.
-
-New feature? Copy [`spec-template.md`](spec-template.md) first.
+3. [`decisions/`](decisions/README.md): read the **applicable latest,
+   non-superseded** decision when a behavior is disputed. The frozen
+   [`decisions.md`](decisions.md) is historical context, **not** a live
+   instruction source.
+4. The feature's own spec in this folder, if it has one.
+5. [`../review-checklist.md`](../review-checklist.md): run it before you ask
+   for review.
 
 ## When sources disagree
 
@@ -36,64 +32,33 @@ source is now out of date and who owns it.
 
 | # | Source | Decides |
 | --- | --- | --- |
-| 1 | Alex's latest explicit decision, reflected in current `AGENTS.md`, active design rules and current source | Anything it names; historical decision records never override a later decision |
+| 1 | Alex's latest explicit decision, reflected in current `AGENTS.md`, active rules and current source | Anything it names; historical decision records never override a later decision |
 | 2 | `glossary.md` | Words and the bot / chat / thread model |
-| 3 | `design-system.md` | Visual tokens, restricted primitives, viewport budgets, 7-state contract and copy density (wins over older visual clauses in `rules.md`) |
-| 4 | `rules.md` | Product behavior and domain-specific UI rules |
-| 5 | A Figma draft Alex is reviewing now | Layout: what goes where, sizes, order, grouping |
-| 6 | The running app on `main` ([decision 2026-11-01-0015](decisions/2026-11-01-0015-main-is-the-design.md)) | Layout everywhere else; it wins over any other Figma frame |
-| 7 | ChatGPT / Codex + Claude Code (chat, strips, composer) & Capy (right rail, sidebar, task panel) | Look, density, quiet chrome and interaction craft when Mikka's own spec is silent ([2026-11-24-1518](decisions/2026-11-24-1518-design-system-v2-chatgpt-cc-standard.md)) |
-| 8 | reUI / shadcn defaults | Only what nothing above covers |
+| 3 | The latest applicable record in `decisions/` | The behavior it decides |
+| 4 | Feature specs in this folder | What the feature does and its stated evidence |
 
-A paid block or component (BoardUI Pro, affectUI, beUI Pro) is outside this
-order: the library's shipped demo decides its look, and only data and text
-change ([2026-11-09-0050](decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+Chat messages, project memory and handoff notes are not sources. Record a
+lasting decision in `decisions/` (backend, product, architecture, process) or
+in `mikka-hosted-ui/docs/design/decisions/` (UI only). Feature specs record
+requirements and their stated implementation evidence; acceptance of a design
+does not establish that it shipped. Dated audits and research keep their
+original revision and findings.
 
-Notes:
-
-- A Figma frame counts only if an active decision or the approved current design lists it as accepted. Frames on
-  the 「归档」 page, or marked 已废弃, never count.
-- Figma decides layout, not look. `design-system.md` (ChatGPT / Codex + Claude Code + Capy standard) decides the look and interaction craft of Mikka's own UI; Comma is retired. Old Figma frames use
-  zinc greys; the neutral tokens in `design-system.md` §1 win.
-- The vendored design skills `unslop` and `interface-design`
-  (`.claude/skills/`) win over `rules.md` for product and visual rules in
-  Mikka's own UI by default (decision 2026-10-31), never inside a paid block; a skill rule that does not fit a dense SaaS
-  product is skipped with a reason. Change the rule, its check and the code
-  in the same PR.
-- Library defaults are the lowest source for Mikka's own UI. A shadcn default
-  that breaks a rule there (for example the `border-input` hairline, R-31) is a
-  bug, not a choice. A paid block's shipped look is not a default: it stays.
-- A measured value (a width, a gap) that differs between Figma and code is a
-  conflict. Do not pick one quietly: use the order above, and if it is still
-  unclear ask Alex.
-- Chat messages, project memory and handoff notes are not sources. Record a
-  lasting decision in `decisions/` and update its rule in `rules.md`.
-- Feature specs record requirements and their stated implementation evidence.
-  Acceptance of a design does not establish that it shipped. Dated audits and
-  research keep their original revision and findings.
-- There is one UI ([decision](decisions/2026-11-08-2133-one-ui.md)). Describe
-  and review what the official build renders. Some pages come from
-  `mikka-hosted-ui` through [slots](../ui-overlay.md); the defaults in this
-  repository only have to compile and are not a second design.
+There is one UI ([decision](decisions/2026-11-08-2133-one-ui.md)), and all of
+its code lives in `mikka-hosted-ui`
+([decision](decisions/2026-11-24-1000-all-ui-in-hosted.md)).
 
 ## Where things live and who keeps them
 
 | What | Where | Kept by |
 | --- | --- | --- |
 | Words | `docs/design/glossary.md` | Whoever changes the model, in the same PR |
-| Design System v2 (tokens, primitives, viewport budgets, 7 states) | `docs/design/design-system.md` & `mikka-hosted-ui/preview/design-system/` | Frontend threads, after Alex decides |
-| Product and visual rules | `docs/design/rules.md` | Any thread, after Alex decides; the coordinator assigns new ids |
-| Components | `docs/design/components.md` | The thread that adds or retires a component |
-| Decisions | `docs/design/decisions/`, one file each (`decisions.md` is frozen) | Whoever hears the decision, the same day |
-| Brand mark | `docs/design/brand.md` | Any thread, after Alex decides |
-| Figma file | `zPe5LKycb2XuT1ivCLRw07`, style guide section `98:2` | Any thread; new work goes on its own page, named with the feature and date |
-| Tokens in code | `mikka-hosted-ui/styles/palette.css` (`apps/mobile/styles/tokens.css` on iOS), mapped in `design-system.md` §1 | Frontend and mobile threads |
-| Enforced rules | `scripts/lint-ui.mjs`, `scripts/*-policy.mjs`, `ui-policy.json`, `mikka-hosted-ui/scripts/{paid-overrides.mjs,design-system-geometry.test.mjs,copy-budget.test.mjs}` | Frontend threads |
+| Backend, product and process decisions | `docs/design/decisions/`, one file each (`decisions.md` is frozen) | Whoever hears the decision, the same day |
+| UI rules, design system, components, copy, brand, UI decisions | `mikka-hosted-ui/docs/design/` | Frontend threads, after Alex decides |
+| Enforced UI rules that run here | `scripts/lint-ui.mjs`, `scripts/*-policy.mjs`, `ui-policy.json` | Frontend threads |
 | UI copy | `messages/zh-CN.json`, `messages/en.json` | The thread that writes the UI |
-| Objects, owners, settings levels and the navigation tree | `docs/design/information-architecture.md` | Whoever adds an object, a settings section or a global entry, in the same PR |
-| Feature specs | `docs/design/<feature>.md` from `spec-template.md` | The feature's thread |
+| Feature specs | `docs/design/<feature>.md` | The feature's thread |
 | Review and done | `docs/review-checklist.md` | Any thread; Alex decides changes to the definition of done |
 
 Project memory keeps only context that does not belong in the repo (Figma
-node ids for work in progress, open questions, who is doing what). Rules
-move here.
+node ids for work in progress, open questions, who is doing what).

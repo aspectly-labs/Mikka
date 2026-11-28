@@ -8,11 +8,9 @@ import { authenticateDevice } from '@/lib/device-link'
 import { persistRunCompletion } from '@/lib/run-publications'
 import { startRunPublication } from '@/lib/run-publication-workflow'
 import { wakeCoordinator } from '@/lib/coordinator/wake'
-import { dispatchLinearIssueSync } from '@/lib/linear-sync/dispatch'
 import { stopRecordingsAfter } from '@/lib/captures/run-end'
 import { db } from '@/lib/db'
 import { agentRuns, devices } from '@/lib/db/schema'
-import { dispatchCompletedIssue } from '@/lib/run-completion'
 import { UNFINISHED_RUN_STATUSES } from '@/lib/agent-run-statuses'
 import { ImprovementError } from '@/lib/self-improvement/contract'
 import { secretMaskerFor } from '@/lib/secrets/runtime'
@@ -52,7 +50,6 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ runI
     try { await startRunPublication(runId) }
     catch { return RouteResponse.json({ error: 'Result publication is temporarily unavailable.' }, { status: 503, headers: { 'Retry-After': '15' } }) }
   } else {
-    await dispatchCompletedIssue(result, dispatchLinearIssueSync)
     afterJob('after:coordinator-wake', () => wakeCoordinator(result.userId))
     // How it came out, for the right column (R-52); a run still publishing is judged by the minute sweep.
     afterJob('after:run-outcome-judge', () => judgeRunOutcome(runId).catch(() => null))
