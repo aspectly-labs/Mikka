@@ -46,6 +46,16 @@ function fakePosthog() {
       }
       return clone(dashboard)
     },
+    createDashboardTextTile: async (id, { body, layouts }) => {
+      writes.push(['createDashboardTextTile', id])
+      dashboards.find(item => item.id === id).tiles.push({ id: next++, text: { body }, layouts: clone(layouts) })
+    },
+    updateDashboardTextTile: async (id, tileId, { body, layouts }) => {
+      writes.push(['updateDashboardTextTile', id, tileId])
+      const tile = dashboards.find(item => item.id === id).tiles.find(item => item.id === tileId)
+      if (body !== undefined) tile.text.body = body
+      if (layouts !== undefined) tile.layouts = clone(layouts)
+    },
     alerts: async () => clone(alerts),
     createAlert: async body => { writes.push(['createAlert', body.name]); const a = { id: `alert-${next++}`, ...clone(body), threshold: { configuration: body.threshold.configuration } }; alerts.push(a); return clone(a) },
     updateAlert: async (id, body) => { writes.push(['updateAlert', id, Object.keys(body)]); Object.assign(alerts.find(a => a.id === id), clone(body)); return {} },
@@ -53,7 +63,7 @@ function fakePosthog() {
   }
 }
 
-test('a fresh project gets the dashboard, every insight, the note and all alerts; a second run writes nothing', async () => {
+test('a fresh project gets the dashboard, every insight, the notes and all alerts; a second run writes nothing', async () => {
   const posthog = fakePosthog()
   const first = await sync(posthog, { apply: true })
   assert.equal(posthog.store.dashboards.length, 1)
@@ -62,7 +72,8 @@ test('a fresh project gets the dashboard, every insight, the note and all alerts
   const [dashboard] = posthog.store.dashboards
   assert.equal(dashboard.name, DASHBOARD.name)
   assert.equal(dashboard.tiles.filter(tile => tile.insight).length, INSIGHTS.filter(item => item.tile).length)
-  assert.equal(dashboard.tiles.find(tile => tile.text)?.text.body, DASHBOARD.note.body)
+  assert.deepEqual(dashboard.tiles.filter(tile => tile.text).map(tile => ({ body: tile.text.body, layout: tile.layouts.sm })),
+    DASHBOARD.notes.map(({ body, layout }) => ({ body, layout })))
   for (const definition of INSIGHTS.filter(item => item.tile)) {
     const insight = posthog.store.insights.find(item => item.name === definition.name)
     assert.ok(insight.tags.includes(MANAGED_TAG) && insight.tags.includes(`key:${definition.key}`))
@@ -75,6 +86,121 @@ test('a fresh project gets the dashboard, every insight, the note and all alerts
   const second = await sync(posthog, { apply: true })
   assert.deepEqual(second.actions, [])
   assert.deepEqual(posthog.writes, [])
+})
+
+test('production notes are updated by tile ID and an unrelated text tile is preserved', async () => {
+  const posthog = fakePosthog()
+  await sync(posthog, { apply: true })
+  const [dashboard] = posthog.store.dashboards
+  const previousId = dashboard.id
+  dashboard.id = DASHBOARD.id
+  for (const insight of posthog.store.insights) {
+    insight.dashboards = insight.dashboards.map(id => id === previousId ? dashboard.id : id)
+  }
+  const notes = dashboard.tiles.filter(tile => tile.text)
+  for (const [index, note] of notes.entries()) note.id = DASHBOARD.notes[index].id
+  notes[1].text.body = 'Edited heading'
+  notes[1].text.agent_context = 'Existing context'
+  const mobile = { h: 2, w: 1, x: 0, y: 8 }
+  notes[1].layouts = { sm: { h: 1, w: 12, x: 0, y: 64 }, xs: mobile }
+  const unrelated = { id: 999999, text: { body: 'Unrelated note' }, layouts: { sm: { h: 1, w: 1, x: 0, y: 73 } } }
+  dashboard.tiles.unshift(structuredClone(unrelated))
+  posthog.writes.length = 0
+
+  assert.deepEqual((await sync(posthog)).actions, [`update dashboard ${dashboard.id} note ${notes[1].id}`])
+  assert.deepEqual(posthog.writes, [])
+  await sync(posthog, { apply: true })
+  assert.deepEqual(posthog.writes, [['updateDashboardTextTile', dashboard.id, notes[1].id]])
+  assert.deepEqual(dashboard.tiles.filter(tile => tile.text).map(tile => tile.id), [unrelated.id, ...DASHBOARD.notes.map(note => note.id)])
+  assert.deepEqual(dashboard.tiles[0], unrelated)
+  assert.equal(notes[1].text.body, DASHBOARD.notes[1].body)
+  assert.equal(notes[1].text.agent_context, 'Existing context')
+  assert.deepEqual(notes[1].layouts, { sm: DASHBOARD.notes[1].layout, xs: mobile })
+  assert.deepEqual((await sync(posthog)).actions, [])
+
+  // A renamed pinned tile cannot double as another note whose ID is gone.
+  dashboard.tiles = dashboard.tiles.filter(tile => tile.id !== notes[1].id)
+  notes[0].text.body = DASHBOARD.notes[1].body
+  posthog.writes.length = 0
+  await assert.rejects(sync(posthog, { apply: true }), /ambiguous tile identity/)
+  assert.deepEqual(posthog.writes, [])
+})
+
+test('a duplicate fallback heading is ambiguous and never selects a note to write', async () => {
+  const posthog = fakePosthog()
+  await sync(posthog, { apply: true })
+  const [dashboard] = posthog.store.dashboards
+  const note = dashboard.tiles.find(tile => tile.text)
+  dashboard.tiles.push({ ...structuredClone(note), id: 999999 })
+  posthog.writes.length = 0
+  await assert.rejects(sync(posthog, { apply: true }), /ambiguous tile identity/)
+  assert.deepEqual(posthog.writes, [])
+})
+
+test('the dashboard text transport validates through the CLI and keeps the key in the child environment', () => {
+  const key = 'phx_fixture_token'
+  const host = 'https://posthog.example.test'
+  const calls = []
+  const api = posthogApi({ key, host, project: '42', execFileImpl: (file, args, options) => {
+    calls.push({ file, args, options })
+    return JSON.stringify(args.includes('--dry-run') ? { dryRun: true, valid: true, tool: args.at(-2) } : { id: 20 })
+  } })
+  api.createDashboardTextTile(10, { body: 'New note' })
+  api.updateDashboardTextTile(10, 20, { body: 'Edited note' })
+  const prefix = ['--host', host, 'api', 'call', '--project-id', '42', '--json']
+  assert.deepEqual(calls.map(call => call.args.slice(0, prefix.length)), [prefix, prefix, prefix, prefix])
+  assert.deepEqual(calls.map(call => call.args.slice(prefix.length, -1)), [
+    ['--dry-run', 'dashboard-create-tile'], ['dashboard-create-tile'],
+    ['--dry-run', 'dashboard-update-text-tile'], ['dashboard-update-text-tile'],
+  ])
+  assert.deepEqual(calls.map(call => JSON.parse(call.args.at(-1))), [
+    { id: 10, type: 'text', body: 'New note' }, { id: 10, type: 'text', body: 'New note' },
+    { id: 10, tile_id: 20, body: 'Edited note' }, { id: 10, tile_id: 20, body: 'Edited note' },
+  ])
+  for (const { file, args, options } of calls) {
+    assert.equal(file, 'posthog-cli')
+    assert.equal(args.some(arg => arg.includes(key)), false)
+    assert.equal(options.env.POSTHOG_API_KEY, key)
+    assert.equal(options.env.POSTHOG_CLI_API_KEY, key)
+  }
+
+  const failed = posthogApi({ key, execFileImpl: () => { throw new Error(key) } })
+  assert.throws(() => failed.updateDashboardTextTile(10, 20, { body: 'Edited note' }), { message: 'PostHog dashboard-update-text-tile failed for dashboard 10' })
+
+  calls.length = 0
+  const invalid = posthogApi({ key, execFileImpl: (file, args) => {
+    calls.push(args)
+    return JSON.stringify({ dryRun: true, valid: false, tool: args.at(-2) })
+  } })
+  assert.throws(() => invalid.createDashboardTextTile(10, { body: '' }), /dashboard-create-tile failed/)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].includes('--dry-run'), true)
+})
+
+test('missing or mismatched dashboard readback does not write a tile patch', async () => {
+  const posthog = fakePosthog()
+  await sync(posthog, { apply: true })
+  const [dashboard] = posthog.store.dashboards
+  const getDashboard = posthog.dashboard
+  for (const response of [null, { id: dashboard.id }, { id: dashboard.id + 1, tiles: [] }]) {
+    let reads = 0
+    posthog.dashboard = async id => ++reads === 1 ? getDashboard(id) : response
+    posthog.writes.length = 0
+    await assert.rejects(sync(posthog, { apply: true }), /tile state unavailable/)
+    assert.deepEqual(posthog.writes, [])
+  }
+  posthog.dashboard = getDashboard
+  assert.deepEqual((await sync(posthog)).actions, [])
+})
+
+test('sync rejects an acknowledged note write that does not change the saved tile', async () => {
+  const posthog = fakePosthog()
+  await sync(posthog, { apply: true })
+  const [dashboard] = posthog.store.dashboards
+  const tile = dashboard.tiles.find(tile => tile.text)
+  tile.text.body += '\nChanged manually'
+  posthog.updateDashboardTextTile = async () => ({ id: tile.id })
+  await assert.rejects(sync(posthog, { apply: true }), /note readback did not match/)
 })
 
 test('the plan is read-only and names only what differs', async () => {
