@@ -248,6 +248,7 @@
       "paths": [
         "deploy/litellm/**",
         "cloudflare/litellm/**",
+        "lib/model-gateway/gateway-generation-id.mjs",
         "lib/model-gateway/protocol-fields.mjs"
       ],
       "entrypoints": [

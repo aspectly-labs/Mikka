@@ -39,5 +39,6 @@ output=$(NODE_OPTIONS=--test-reporter=tap MIKKA_LITELLM_TEST_URL=http://127.0.0.
 }
 printf '%s\n' "$output" | grep -E '^ok |^# (pass|fail|skipped)'
 # Require both conversion and provider-native cases to run.
-printf '%s\n' "$output" | grep -qx '# pass 13' && printf '%s\n' "$output" | grep -qx '# skipped 0'
+printf '%s\n' "$output" | grep -qx '# pass 13'
+printf '%s\n' "$output" | grep -qx '# skipped 0'
 echo "LiteLLM conversion proof passed"
