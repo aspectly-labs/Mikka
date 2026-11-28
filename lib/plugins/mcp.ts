@@ -20,6 +20,7 @@ type McpResult = { tools: unknown[]; nextCursor: string | null } | Record<string
  */
 export async function runMcpCommand(target: () => Promise<McpTarget>, command: McpCommand, dependencies: McpDependencies = {}, hooks: {
   ready?: () => Promise<unknown>; code?: (error: unknown) => string | undefined;
+  beforeCall?: (client: MCPClient, command: Extract<McpCommand, { name: string }>, signal: AbortSignal) => Promise<unknown>;
 } = {}): Promise<McpResult | { error: string }> {
   let client: MCPClient | undefined
   let transport: ReturnType<typeof publicMcpFetch> | undefined
@@ -43,6 +44,7 @@ export async function runMcpCommand(target: () => Promise<McpTarget>, command: M
     await hooks.ready?.()
     stage = 'name' in command ? 'call' : 'list'
     if ('name' in command) {
+      await hooks.beforeCall?.(client, command, signal)
       dispatched = true
       const result = await abortable(() => client!.callTool({ name: command.name, arguments: command.arguments, options: { signal } }), signal)
       return redact(result, connection.secrets)
@@ -117,6 +119,7 @@ export function mcpFailure(error: unknown, stage: McpStage, host?: string) {
 export function createPersonalMcpRuntime(store: Pick<PersonalPluginStore, 'mcpConnection'>, dependencies: McpDependencies = {}) {
   return async (userId: string, snapshot: PersonalPluginSnapshot | undefined, command: PersonalMcpCommand, guard?: () => Promise<unknown>) => {
     let revision: number | undefined
+    let disabledTools: string[] = []
     const result = await runMcpCommand(async () => {
       await guard?.()
       const entry = snapshot?.servers.find(server => server.id === command.serverId)
@@ -124,15 +127,18 @@ export function createPersonalMcpRuntime(store: Pick<PersonalPluginStore, 'mcpCo
       const connection = await store.mcpConnection(userId, command.serverId, entry?.revision, snapshot?.mcpAuthority)
       if (connection.transport === 'stdio') throw new PluginError('mcpUnavailable', 400)
       revision = connection.revision
-      // The connection may belong to a teammate. Mask its own secret values,
-      // not only the requester's secret registry; the endpoint also stays private.
+      disabledTools = connection.disabledTools ?? []
+      if ('name' in command && disabledTools.includes(command.name)) throw new PluginError('mcpToolDisabled', 403)
+      // Mask the connection's own secret values, not only the requester's
+      // secret registry; the endpoint also stays out of results.
       return { url: connection.url, transport: connection.transport, headers: connection.headers, secrets: [...Object.values(connection.headers), connection.url] }
     }, command, dependencies, {
       // A setting changed while the server initialized: do not dispatch with an old credential.
-      ready: async () => { await guard?.(); await store.mcpConnection(userId, command.serverId, revision, snapshot?.mcpAuthority) },
+      // A switch made during the handshake applies too: the listing below is filtered with these.
+      ready: async () => { await guard?.(); const current = await store.mcpConnection(userId, command.serverId, revision, snapshot?.mcpAuthority); disabledTools = current.disabledTools ?? []; if ('name' in command && disabledTools.includes(command.name)) throw new PluginError('mcpToolDisabled', 403) },
       code: error => error instanceof PluginError ? error.code : undefined,
     })
-    return 'name' in command || 'error' in result ? result : { serverId: command.serverId, ...result }
+    return 'name' in command || 'error' in result ? result : { serverId: command.serverId, ...result, tools: (result.tools as { name: string }[]).filter(tool => !disabledTools.includes(tool.name)) }
   }
 }
 

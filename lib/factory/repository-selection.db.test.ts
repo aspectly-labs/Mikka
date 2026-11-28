@@ -39,7 +39,7 @@ test('Agent repository selection creates an authorized new execution, retaining 
     await pool.query(`INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES ('owner','Fixture','repository-selection@example.invalid',true,now(),now())`)
     const personalWorkspace = await seedFixtureWorkspace(pool, 'owner')
     const deviceId = randomUUID(), agentId = randomUUID(), repoId = randomUUID()
-    await pool.query(`INSERT INTO devices(id,"ownerId",name,"lastSeenAt",harnesses) VALUES ($1,'owner','Fixture',now(),'[{"harness":"codex","installed":true}]')`, [deviceId])
+    await pool.query(`INSERT INTO devices(id,"ownerId",name,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,'owner','Fixture',now(),'[{"harness":"codex","installed":true}]',now())`, [deviceId])
     await pool.query(`INSERT INTO agents(id,"userId",name,harness,"deviceId") VALUES ($1,'owner','Fixture','codex',$2)`, [agentId, deviceId])
     await pool.query(`INSERT INTO device_repos(id,"deviceId","userId","repoPath","remoteUrl") VALUES ($1,$2,'owner','v2/github.com/example/wrong','https://github.com/example/wrong.git')`, [repoId, deviceId])
     const subscription = { id: randomUUID(), modelId: 'fixture-subscription-model', route: 'codex_cli' }
@@ -133,9 +133,19 @@ test('Agent repository selection creates an authorized new execution, retaining 
         assert.equal((await pool.query('SELECT count(*) FROM agent_runs WHERE "issueId"=$1', [f.issueId])).rows[0].count, '1')
       } finally { repositorySelectionRuntime.queueLocal = originalQueue }
     })
-    await t.test('the real cloud queue reauthorizes the same subscription and defers machine handoff until commit', async () => {
+    await t.test('the real cloud queue reauthorizes the same subscription and defers machine handoff until commit', async child => {
+      const { templateModelsFixture } = await import('../../tests/support/template-models')
+      const templates = templateModelsFixture([subscription.modelId], { hostedSizes: true })
+      const originalE2BKey = process.env.E2B_API_KEY
+      process.env.E2B_API_KEY = 'synthetic-repository-selection-e2b-key'
+      child.after(() => {
+        templates.restore()
+        if (originalE2BKey === undefined) delete process.env.E2B_API_KEY
+        else process.env.E2B_API_KEY = originalE2BKey
+      })
       const workspaceId = randomUUID(), botId = randomUUID(), connectionId = randomUUID()
       await pool.query(`INSERT INTO mikka_workspaces(id,"userId",name) VALUES($1,'owner','Repository selection fixture')`, [workspaceId])
+      await pool.query(`INSERT INTO mikka_workspace_entitlements("workspaceId",plan,source) VALUES($1,'pro','cloud')`, [workspaceId])
       await pool.query(`INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,'owner','Fixture','repository-selection@example.invalid','admin','active')`, [workspaceId])
       const key = sealSecret('synthetic-e2b-fixture', userE2bKeyAad('owner'), { WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
       await pool.query(`INSERT INTO user_e2b_keys("userId",ciphertext,iv,"keyVersion",last4) VALUES('owner',$1,$2,$3,'test')`, [key.ciphertext, key.iv, key.keyVersion])

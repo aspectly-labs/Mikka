@@ -3,9 +3,10 @@ import { builtinGateway } from '../../../lib/builtin-gateway/runtime'
 import { gatewayRequest, gatewayUpgrade } from '../../../lib/builtin-gateway/request'
 import type { GatewaySocket } from '../../../lib/builtin-gateway/hub'
 import type { GatewayHub } from '../../../lib/builtin-gateway/hub'
+import { runtimeEnv, type EnvMap } from '../../../lib/env/server'
 
 export function createGatewayHandler(getRuntime: () => { hub: GatewayHub; bus: { ready(): Promise<void> } } | null = builtinGateway,
-  env: Readonly<Record<string, string | undefined>> = process.env) {
+  env: EnvMap = runtimeEnv()) {
   return defineWebSocketHandler({
   async upgrade(request) {
     const authorization = gatewayUpgrade(request, env)

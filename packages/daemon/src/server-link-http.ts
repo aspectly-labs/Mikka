@@ -2,6 +2,7 @@ import { nativeCoordinatorClaimSchema, nativeCoordinatorToolResultSchema, type N
 import { WORKSPACE_REQUEST_HEADER, type WorkspaceReadReceipt } from '@mikka/protocol/coding-workspace'
 import { WORKSPACE_DIFF_REQUEST_HEADER } from '@mikka/protocol/coding-workspace-review'
 import { WORKSPACE_GIT_REQUEST_HEADER } from '@mikka/protocol/coding-workspace-git'
+import { MCP_CHECK_HEADER } from '@mikka/protocol/mcp-check'
 // HTTP transport for `ServerLink`: the routes apps/server serves for the
 // daemon (ADR 0016). Paths and payloads come from packages/protocol
 // (`devicePaths`, `runCompletePath` and their zod schemas); responses are
@@ -12,34 +13,48 @@ import { WORKSPACE_GIT_REQUEST_HEADER } from '@mikka/protocol/coding-workspace-g
 // complete), uses the daemon's device session (Bearer). Agents hold no server
 // credential; they hand in to the daemon, which reports for them.
 //
+// Every request carries DEVICE_SESSION_HEADER (decision 2026-11-17-2215).
+//
 // Status handling: network errors, 5xx and 429 mean "try again later"
-// (`ServerUnreachableError`, the outbox keeps the item); 409 on a claim is
-// `RunNotPinnedHereError`; any other 4xx is a refusal (`DaemonError`) that
-// retrying cannot fix.
+// (`ServerUnreachableError`, the outbox keeps the item); 426 from any route is
+// `DaemonUpgradeRequiredError` and tells `onUpgradeRequired` listeners; 409 on
+// a claim is `DeviceSessionRequiredError` (redial first) or
+// `RunNotPinnedHereError`; 503 `deviceGatewayRequired` on the ticket is
+// `DeviceGatewayRequiredError`; any other 4xx is a refusal (`DaemonError`)
+// that retrying cannot fix.
 import { z } from "zod"
 import { chatFileDownloadSchema, chatFileTransferSchema, CHAT_FILE_MAX_BYTES } from '@mikka/protocol/chat-attachments'
-import { ToolApprovalGate, type RunControlMode } from "./agents/tool-approval"
-import type { ServerDecide, ServerDecisionAnswer } from "./server-decision"
+import { ToolApprovalGate } from "./agents/tool-approval"
 import { POLICY_SNAPSHOT_HEADER, POLICY_SNAPSHOT_VERSION, POLICY_SNAPSHOT_REFRESH_MS, policyDistributionContextSchema, policyIssuer, signedPolicySnapshotSchema } from '@mikka/protocol/policy-snapshot'
 import { TASK_SECRETS_HEADER, TASK_SECRETS_VERSION } from '@mikka/protocol/task-secrets'
 import { verifyPolicySnapshot } from '@mikka/protocol/node-policy-snapshot'
 import { SKILL_ARTIFACT_HEADER, TEAM_SKILL_HEADER, skillReceiptRevalidationSchema } from '@mikka/protocol/skill'
-import { TASK_MCP_HEADER, TASK_MCP_VERSION } from '@mikka/protocol'
-import { nativeBrokerContextSchema, nativeLeaseSchema, SUBSCRIPTION_MODEL_CATALOGUE_HEADER, type NativeBrokerRequest } from '@mikka/protocol/subscription'
-import { computerSyncPath, computerSyncResponse, type LocalComputerRequest } from '@mikka/protocol/computer'
+import { TASK_MCP_HEADER, TASK_MCP_TOOL_FILTER_HEADER, TASK_MCP_VERSION } from '@mikka/protocol'
+import { nativeBrokerContextSchema, SUBSCRIPTION_GATEWAY_HEADER, SUBSCRIPTION_MODEL_CATALOGUE_HEADER } from '@mikka/protocol/subscription'
 import { captureCompleteResponse, capturePaths, captureUploadResponse, screenCaptureResponse, type CaptureUploadRequest, type CaptureUploadResponse, type ScreenCaptureRequest } from '@mikka/protocol/capture'
 
 import {
   CLIENT_VERSION_HEADER,
+  HOSTED_API_HEADERS,
+  hostedApiUpgrade,
   REPO_ORIGIN_HEADER,
   PROJECT_ENVIRONMENT_HEADER,
+  ENVIRONMENT_SNAPSHOT_HEADER,
+  PORTABLE_TASK_WORKSPACE_HEADER,
+  ENVIRONMENT_REPOSITORIES_HEADER,
   RECOVERY_WORKTREE_HEADER,
   MODEL_CREDENTIAL_HEADER,
+  MODEL_GATEWAY_LOOPBACK_HEADER,
   RUN_CREDENTIALS_HEADER,
   INITIAL_REPOSITORY_HEADER,
+  CUSTOM_TASK_BRANCH_HEADER,
   MAILBOX_NOTICE_HEADER,
   ACTIVE_TURN_STEER_HEADER,
+  RUN_CONTROL_COMMANDS_HEADER,
   DAEMON_RPC_ERRORS,
+  DEVICE_SESSION_HEADER,
+  DEVICE_SESSION_VERSION,
+  COMMANDS_SKIP_PARAM,
   devicePaths,
   fsPaths,
   fsRequestsResponse,
@@ -47,7 +62,7 @@ import {
   deviceRegistered,
   deviceReposResponse,
   deviceGatewaySchema,
-  heartbeatResultSchema,
+  deviceReportResultSchema,
   pendingRunsResponse,
   runAssignmentSchema,
   runCheckpointReceiptSchema,
@@ -56,7 +71,8 @@ import {
   daemonVersionsSchema,
   runCompletePath,
   runEventsAccepted,
-  type HeartbeatResult,
+  type DeviceReport,
+  type DeviceReportResult,
   type RunCommand,
   type RunCheckpoint,
   type RunCompletion,
@@ -65,12 +81,18 @@ import {
 
 import {
   DaemonError,
+  DaemonUpgradeRequiredError,
+  DeviceGatewayRequiredError,
+  DeviceSessionRequiredError,
   InvalidIdError,
   RunNotPinnedHereError,
   ServerUnreachableError,
 } from "./errors"
 import { DAEMON_VERSION } from "./paths"
 import { createRunMailbox } from './run-mailbox'
+import { createRunDrive } from './run-drive'
+import { homedir } from 'node:os'
+import { join as joinPath } from 'node:path'
 import { daemonTracer, routeTemplate } from "./tracing"
 import { runRuntimeTimings } from "./run-runtime-timing"
 import type {
@@ -81,10 +103,15 @@ import type {
   ServerLink,
 } from "./server-link"
 
-/** How long a run's liveness check may go unanswered (timeouts, 5xx) before
- * the run is treated as not live. A 90 s run lease bounds it from the server. */
-export const LIVENESS_UNREACHABLE_GRACE_MS = 30_000
 const deviceSessionRejection = z.object({ error: z.enum(["Unauthorized", "authRequired"]) }).strict()
+/** A refusal's machine-readable reason, under `code` or `error`. */
+const refusalCode = (body: unknown) => {
+  if (typeof body !== "object" || body === null) return undefined
+  const { code, error } = body as { code?: unknown; error?: unknown }
+  return typeof code === "string" ? code : typeof error === "string" ? error : undefined
+}
+/** The header every daemon request sends; without it the server answers 426. */
+export const deviceSessionHeaders = { [DEVICE_SESSION_HEADER]: String(DEVICE_SESSION_VERSION), ...HOSTED_API_HEADERS } as const
 
 /**
  * Ids go into the path as one escaped segment each. `.` and `..` survive
@@ -118,9 +145,11 @@ interface CallOptions<T> {
   schema?: z.ZodType<T>
   /** Endpoint-specific success decoding, including an older empty response. */
   decodeResponse?: (response: Response) => Promise<unknown>
-  /** Map 409 to `RunNotPinnedHereError` for this run. */
+  /** Map 409 to `DeviceSessionRequiredError` or `RunNotPinnedHereError` for this run. */
   claimOf?: string
-  /** Default 15 s; long-polls wait longer. */
+  /** Map 503 `deviceGatewayRequired` to `DeviceGatewayRequiredError`. */
+  gatewayRequired?: true
+  /** Default 15 s. */
   timeoutMs?: number
   signal?: AbortSignal
 }
@@ -133,16 +162,14 @@ export function serverUrl(base: string, path: string): URL {
 
 export class HttpServerLink implements ServerLink {
   private readonly runControls = new Set<ToolApprovalGate>()
-  private runControlMode: RunControlMode = 'legacy'
+  private readonly upgradeListeners = new Set<(latest?: string) => void>()
 
   /** Wake local waiters; the same push drains authoritative stop commands. */
   invalidateRunControls() {
     for (const gate of this.runControls) gate.invalidate()
   }
-  /** The daemon reports whether the gateway can push run control to this run. */
-  setRunControlMode(mode: RunControlMode) {
-    this.runControlMode = mode
-    for (const gate of this.runControls) gate.setControlMode(mode)
+  onUpgradeRequired(listener: (latest?: string) => void) {
+    this.upgradeListeners.add(listener)
   }
   async downloadChatFile(assignment: RunAssignment, id: string, signal: AbortSignal) {
     const transfer = await this.call('GET', `/v1/devices/${seg(assignment.deviceId)}/runs/${seg(assignment.runId)}/attachments/${seg(id)}`, { schema: chatFileTransferSchema, signal, timeoutMs: 60000 })
@@ -187,30 +214,19 @@ export class HttpServerLink implements ServerLink {
     Object.freeze(assignment.policy)
     return context
   }
-  /** Asks the server's Decisions API for one run. Never throws; null on any failure. */
-  decide: ServerDecide = async (runId, request, signal) => {
-    const answer = z.discriminatedUnion('type', [
-      z.object({ type: z.literal('predicate'), name: z.string(), probability: z.number() }),
-      z.object({ type: z.literal('choice'), name: z.string(), choice: z.string() }),
-    ])
-    try {
-      const { answers } = await this.call('POST', `/v1/runs/${seg(runId)}/decision`, { body: request, schema: z.object({ answers: z.array(answer).nullable() }), signal, timeoutMs: 6000 })
-      return answers ? new Map<string, ServerDecisionAnswer>(answers.map(item => [item.name, item])) : null
-    } catch { return null }
-  }
 
   async prepareRunToolApproval(assignment: RunAssignment, signal: AbortSignal, check: () => void) {
     if (!assignment.policy || !assignment.policyRevision) throw new Error('Run policy unavailable')
     // The claim and entry policy verification already bind this task to its
     // owner and device. Operation-time checks use the held local lease only.
-    // Server revocations arrive through the existing commands push/heartbeat,
-    // whose stop command revokes this gate and terminates the CLI group.
+    // Server revocations are pushed through the device session; the stop
+    // command they deliver revokes this gate and terminates the CLI group.
     const gate = new ToolApprovalGate(assignment.runId, {
       isLive: () => {
         if (signal.aborted) return false
         try { check(); return true } catch { return false }
       },
-    }, this.runControlMode)
+    })
     this.runControls.add(gate)
     const abort = () => gate.revoke()
     gate.onRevoke(() => { this.runControls.delete(gate); signal.removeEventListener('abort', abort) })
@@ -220,7 +236,12 @@ export class HttpServerLink implements ServerLink {
   }
   async prepareRunMailbox(assignment: RunAssignment, signal: AbortSignal, check: () => void) {
     return createRunMailbox({ assignment, signal, check, endpoint: serverUrl(this.baseUrl, '/api/mcp'), fetch: (url, init) => this.taskFetch(assignment.runId, 'mailbox_operation', url, init),
-      headers: { [CLIENT_VERSION_HEADER]: this.clientVersion, ...(this.protectionBypass ? { 'x-vercel-protection-bypass': this.protectionBypass } : {}) } })
+      headers: { [CLIENT_VERSION_HEADER]: this.clientVersion, ...deviceSessionHeaders, ...(this.protectionBypass ? { 'x-vercel-protection-bypass': this.protectionBypass } : {}) } })
+  }
+  async prepareRunDrive(assignment: RunAssignment, signal: AbortSignal) {
+    return createRunDrive({ assignment, signal, endpoint: serverUrl(this.baseUrl, '/api/mcp'), root: joinPath(process.env.HOME || homedir(), '.mikka', 'drive'),
+      fetch: (url, init) => this.taskFetch(assignment.runId, 'task_data', url, init),
+      headers: { [CLIENT_VERSION_HEADER]: this.clientVersion, ...deviceSessionHeaders, ...(this.protectionBypass ? { 'x-vercel-protection-bypass': this.protectionBypass } : {}) } })
   }
   async claimCoordinator(deviceId: string, signal: AbortSignal) {
     const response = await this.send("POST",`/v1/devices/${seg(deviceId)}/coordinator`,{ operation: "claim" },this.credential,{ signal })
@@ -261,8 +282,18 @@ export class HttpServerLink implements ServerLink {
     try {
       const response = await this.fetchImpl(input, init)
       status = response.status
+      if (response.status === 426 && endpoint !== 'storage_transfer') await this.refuseUpgrade(response)
       return response
     } finally { measured(status) }
+  }
+
+  /** Only the Mikka server's refusal can retire this daemon's active link. */
+  private async refuseUpgrade(response: Response): Promise<never> {
+    const refused: unknown = await response.json().catch(() => null)
+    const versions = typeof refused === 'object' && refused !== null ? (refused as { daemonVersions?: unknown }).daemonVersions : undefined
+    const latest = daemonVersionsSchema.safeParse(versions).data?.latest
+    for (const listener of [...this.upgradeListeners]) listener(latest)
+    throw new DaemonUpgradeRequiredError(latest, hostedApiUpgrade(refused)?.cause)
   }
 
   private async send(
@@ -305,18 +336,28 @@ export class HttpServerLink implements ServerLink {
           [TEAM_SKILL_HEADER]: '1',
           [REPO_ORIGIN_HEADER]: '1',
           [PROJECT_ENVIRONMENT_HEADER]: '1',
+          [ENVIRONMENT_SNAPSHOT_HEADER]: '1',
+          [PORTABLE_TASK_WORKSPACE_HEADER]: '1',
+          [ENVIRONMENT_REPOSITORIES_HEADER]: '1',
           [RECOVERY_WORKTREE_HEADER]: '1',
           [MODEL_CREDENTIAL_HEADER]: '1',
+          [MODEL_GATEWAY_LOOPBACK_HEADER]: '1',
           [TASK_SECRETS_HEADER]: TASK_SECRETS_VERSION,
           [RUN_CREDENTIALS_HEADER]: '1',
+          [CUSTOM_TASK_BRANCH_HEADER]: '1',
           [TASK_MCP_HEADER]: TASK_MCP_VERSION,
+          [TASK_MCP_TOOL_FILTER_HEADER]: '1',
           ...(initialRepository ? { [INITIAL_REPOSITORY_HEADER]: '1' } : {}),
           [SUBSCRIPTION_MODEL_CATALOGUE_HEADER]: '1',
+          [SUBSCRIPTION_GATEWAY_HEADER]: '1',
           [MAILBOX_NOTICE_HEADER]: '1',
           [ACTIVE_TURN_STEER_HEADER]: '1',
+          [RUN_CONTROL_COMMANDS_HEADER]: '1',
           [WORKSPACE_REQUEST_HEADER]: '1',
           [WORKSPACE_DIFF_REQUEST_HEADER]: '1',
           [WORKSPACE_GIT_REQUEST_HEADER]: '1',
+          [MCP_CHECK_HEADER]: '1',
+          ...deviceSessionHeaders,
           ...daemonTracer.headers(),
           ...(token ? { authorization: `Bearer ${token}` } : {}),
           ...(this.protectionBypass ? { 'x-vercel-protection-bypass': this.protectionBypass } : {}),
@@ -331,6 +372,8 @@ export class HttpServerLink implements ServerLink {
       // Deployment protection is not device-session rejection; never follow it with credentials.
       if (response.redirected || (response.status >= 300 && response.status < 400))
         throw new Error(`Unexpected server redirect (${response.status})`)
+      // Any route, including the ones this daemon reads directly: too old to be served.
+      if (response.status === 426) await this.refuseUpgrade(response)
       if (response.status === 401) {
         // Only the device API's exact rejection contracts can revoke a saved credential.
         const body: unknown = await response.clone().json().catch(() => null)
@@ -339,6 +382,7 @@ export class HttpServerLink implements ServerLink {
       }
       return response
     } catch (error) {
+      if (error instanceof DaemonUpgradeRequiredError) throw error
       throw new ServerUnreachableError(error)
     } finally {
       measured(status)
@@ -357,13 +401,17 @@ export class HttpServerLink implements ServerLink {
       this.credential,
       { timeoutMs: options.timeoutMs, signal: options.signal, initialRepository: options.initialRepository }
     )
+    if (response.status === 503 && options.gatewayRequired) {
+      const body: unknown = await response.clone().json().catch(() => null)
+      if (refusalCode(body) === 'deviceGatewayRequired') throw new DeviceGatewayRequiredError()
+    }
     if (response.status >= 500 || response.status === 429)
       throw new ServerUnreachableError(response.status)
     if (response.status === 401) throw new SessionRejectedError()
     if (response.status === 409 && options.claimOf) {
-      const body = await response.json().catch(() => null) as { code?: unknown; daemonVersions?: unknown } | null
-      const upgradeRequired = body?.code === 'daemonUpgradeRequired'
-      throw new RunNotPinnedHereError(options.claimOf, upgradeRequired, upgradeRequired ? daemonVersionsSchema.safeParse(body?.daemonVersions).data?.latest : undefined)
+      const body: unknown = await response.json().catch(() => null)
+      if (refusalCode(body) === 'deviceSessionRequired') throw new DeviceSessionRequiredError()
+      throw new RunNotPinnedHereError(options.claimOf)
     }
     if (!response.ok) {
       const detail = await response
@@ -405,13 +453,10 @@ export class HttpServerLink implements ServerLink {
     return { deviceId, tracing }
   }
 
-  async heartbeat(
-    deviceId: string,
-    status: Parameters<ServerLink["heartbeat"]>[1]
-  ): Promise<HeartbeatResult> {
-    return this.call("POST", devicePaths.heartbeat(checkId(deviceId)), {
-      body: status,
-      schema: heartbeatResultSchema,
+  async report(deviceId: string, report: DeviceReport): Promise<DeviceReportResult> {
+    return this.call("POST", devicePaths.report(checkId(deviceId)), {
+      body: report,
+      schema: deviceReportResultSchema,
     })
   }
 
@@ -424,28 +469,28 @@ export class HttpServerLink implements ServerLink {
     return repos
   }
 
-  async pendingRuns(deviceId: string) {
+  async pendingRuns(deviceId: string, skip: readonly string[] = []) {
     const { runIds } = await this.call(
       "GET",
-      devicePaths.pendingRuns(checkId(deviceId)),
+      devicePaths.pendingRuns(checkId(deviceId)) + (skip.length ? `&${new URLSearchParams({ [COMMANDS_SKIP_PARAM]: skip.join(",") })}` : ""),
       { schema: pendingRunsResponse }
     )
     return runIds
   }
 
   async claimRun(deviceId: string, runId: string, signal?: AbortSignal, options?: { initialRepository: true }): Promise<RunAssignment> {
-    return this.call(
+    const assignment = await this.call(
       "POST",
       devicePaths.claim(checkId(deviceId), checkId(runId)),
       { schema: runAssignmentSchema, claimOf: runId, signal, initialRepository: options?.initialRepository }
     )
+    const model = assignment.modelCredential
+    if (model?.kind === 'provider' && new URL(model.baseUrl).protocol === 'http:'
+      && new URL(model.baseUrl).origin !== new URL(this.baseUrl).origin) throw new Error('Loopback model gateway unavailable')
+    return assignment
   }
   async validateSkillReceipt(runId:string,receiptId:string) {
     return this.call('GET',`/v1/runs/${seg(runId)}/skill-receipt?receiptId=${encodeURIComponent(checkId(receiptId))}`,{schema:skillReceiptRevalidationSchema})
-  }
-  async syncComputerReviews(deviceId: string, requests: LocalComputerRequest[], signal?: AbortSignal) {
-    const result = await this.call("POST", computerSyncPath(checkId(deviceId)), { body: { requests }, schema: computerSyncResponse, signal })
-    return result.decisions
   }
   async localComputerAuthority(deviceId: string, runId: string) {
     return this.call('GET', `${devicePaths.claim(checkId(deviceId), checkId(runId)).replace(/\/claim$/, '')}/computer-authority`, {
@@ -455,23 +500,13 @@ export class HttpServerLink implements ServerLink {
   async nativeContext(deviceId:string,runId:string,signal?:AbortSignal,requireModelCatalogue?:boolean) {
     return this.call('POST', `${devicePaths.claim(checkId(deviceId),checkId(runId)).replace(/\/claim$/, '')}/subscription`, {body:{action:'context',...(requireModelCatalogue ? {requireModelCatalogue:true} : {})},schema:nativeBrokerContextSchema,signal})
   }
-  async nativeLease(deviceId:string,runId:string,signal?:AbortSignal) {
-    return this.call('POST', `${devicePaths.claim(checkId(deviceId),checkId(runId)).replace(/\/claim$/, '')}/subscription-lease`, {schema:nativeLeaseSchema,signal})
-  }
-  async githubLease(deviceId: string, runId: string, signal?: AbortSignal) {
-    return this.call('POST', `/v1/devices/${seg(deviceId)}/github-token?runId=${seg(runId)}`, {
+
+  async githubLease(deviceId: string, runId: string, signal?: AbortSignal, startupRepository?: string) {
+    const query = new URLSearchParams({runId: checkId(runId)})
+    if (startupRepository) query.set('startupRepository',startupRepository)
+    return this.call('POST', `/v1/devices/${seg(deviceId)}/github-token?${query}`, {
       schema: runGitHubCredentialSchema, signal,
     })
-  }
-
-  async nativeRequest(deviceId:string,runId:string,payload:NativeBrokerRequest,signal?:AbortSignal) {
-    const response=await this.send('POST',`${devicePaths.claim(checkId(deviceId),checkId(runId)).replace(/\/claim$/, '')}/subscription`,{action:'request',payload},this.credential,{signal,timeoutMs:275_000})
-    const contentType=response.headers.get('content-type')?.split(';')[0]
-    if(!response.ok || !response.body || (contentType!=='text/event-stream' && contentType!=='application/json')) {
-      await response.body?.cancel()
-      throw new Error('subscription_native_unavailable')
-    }
-    return {contentType,body:response.body}
   }
 
   async beginCapture(runId: string, request: CaptureUploadRequest, signal?: AbortSignal) {
@@ -490,13 +525,14 @@ export class HttpServerLink implements ServerLink {
       response = await this.taskFetch(runId, server ? "task_data" : "storage_transfer", server ? serverUrl(this.baseUrl, capturePaths.upload(checkId(runId), checkId(captureId))) : upload.url, {
         method: "PUT",
         headers: server
-          ? { "content-type": contentType, [CLIENT_VERSION_HEADER]: this.clientVersion, ...(this.credential ? { authorization: `Bearer ${this.credential}` } : {}), ...(this.protectionBypass ? { 'x-vercel-protection-bypass': this.protectionBypass } : {}) }
+          ? { "content-type": contentType, [CLIENT_VERSION_HEADER]: this.clientVersion, ...deviceSessionHeaders, ...(this.credential ? { authorization: `Bearer ${this.credential}` } : {}), ...(this.protectionBypass ? { 'x-vercel-protection-bypass': this.protectionBypass } : {}) }
           : upload.headers,
         body: bytes,
         redirect: "error",
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
       })
     } catch (error) {
+      if (error instanceof DaemonUpgradeRequiredError) throw error
       throw new ServerUnreachableError(error)
     }
     if (response.status >= 500 || response.status === 429) throw new ServerUnreachableError(response.status)
@@ -539,6 +575,8 @@ export class HttpServerLink implements ServerLink {
       schema: deviceGatewaySchema,
       signal,
       timeoutMs: 10_000,
+      // A server without a gateway has no devices: a refusal, not an outage.
+      gatewayRequired: true,
     })
   }
 
@@ -553,6 +591,7 @@ export class HttpServerLink implements ServerLink {
       onUpdates,
       workspaceSkip = [],
       onWorkspaceRequests,
+      onMcpChecks,
     }: FetchCommandsOptions = {}
   ): Promise<RunCommand[]> {
     const response = await this.call(
@@ -571,6 +610,7 @@ export class HttpServerLink implements ServerLink {
     )
     if (response.queuedRuns?.length) onQueuedRuns?.(response.queuedRuns)
     if (response.workspaceRequests?.length) onWorkspaceRequests?.(response.workspaceRequests)
+    if (response.mcpChecks?.length) onMcpChecks?.(response.mcpChecks)
     if (response.daemonVersions || response.deviceCommands?.length) onUpdates?.({ daemonVersions: response.daemonVersions, deviceCommands: response.deviceCommands ?? [] })
     return response.commands
   }

@@ -4,6 +4,7 @@ import { localTestAccountsMode } from '@/scripts/test-accounts/database-target.m
 import { isLoopbackHost } from '@/lib/loopback'
 import { isCloudEdition } from '@/lib/edition'
 import { CodedError } from '@mikka/protocol/coded-error'
+import { DEFAULT_LOCAL_DEV_ORIGIN } from '@/lib/env/hosts'
 
 type AuthEnvironment = Record<string, string | undefined>
 export const MOBILE_APP_ORIGIN = 'mikka://'
@@ -83,7 +84,7 @@ export function authEffectiveTrustedOrigins(env: AuthEnvironment) {
   return [...new Set([
     ...authTrustedOrigins(env),
     ...(isCloudEdition(env) ? [MOBILE_APP_ORIGIN] : []),
-    ...(env.NODE_ENV === 'development' ? ['http://localhost:3000', 'exp://'] : []),
+    ...(env.NODE_ENV === 'development' ? [DEFAULT_LOCAL_DEV_ORIGIN, 'exp://'] : []),
   ])]
 }
 

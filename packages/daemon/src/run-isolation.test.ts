@@ -100,7 +100,7 @@ describe("run homes", () => {
     const binary = recordingCli("fake-claude.mjs", record, join(runDir, "native-home", ".claude", ".credentials.json"))
     const adapter = new ClaudeAdapter({ stateDir, sandbox: new NoSandbox(), binary })
     const session = await adapter.start({ runId: "claude-isolated", cwd: await makeRepo(), prompt: "MODEL", env: buildChildEnv(),
-      log: createLogger(), toolApproval: gate("claude-isolated"), credential: { kind: "api_key", key: "run-key-claude" } })
+      log: createLogger(), toolApproval: gate("claude-isolated"), credential: { kind: "provider", protocol: "anthropic", baseUrl: "https://mikka.test/api/model-gateway/anthropic", key: "run-key-claude" } })
     expect((await runToExit(session))?.outcome).toBe("succeeded")
     const [home, configDir, , key] = readFileSync(record, "utf8").split("\n")
     expect(key).toBe("run-key-claude")
@@ -119,7 +119,7 @@ describe("run homes", () => {
     const binary = recordingCli("fake-codex.mjs", record, join(runDir, "codex-home", "auth.json"))
     const adapter = new CodexAdapter({ stateDir, sandbox: new NoSandbox(), binary })
     const session = await adapter.start({ runId: "codex-isolated", cwd: await makeRepo(), prompt: "MODEL", env: buildChildEnv(),
-      log: createLogger(), toolApproval: gate("codex-isolated"), credential: { kind: "api_key", key: "run-key-codex" } })
+      log: createLogger(), toolApproval: gate("codex-isolated"), credential: { kind: "provider", protocol: "openai", baseUrl: "https://mikka.test/api/model-gateway/openai/v1", key: "run-key-codex" } })
     expect((await runToExit(session))?.outcome).toBe("succeeded")
     const [, , codexHome, key] = readFileSync(record, "utf8").split("\n")
     expect(key).toBe("run-key-codex")
@@ -133,6 +133,14 @@ describe("run homes", () => {
   it("a new Codex home never links or copies the person's auth.json", () => {
     const home = prepareCodexHome(join(tempDir(), "codex-home"), createLogger())
     expect(readdirSync(home.home)).toEqual(["config.toml"])
+  })
+
+  it("a Codex home config never asks for tool approval (#3076)", () => {
+    const home = prepareCodexHome(join(tempDir(), "codex-home"), createLogger())
+    const config = readFileSync(join(home.home, "config.toml"), "utf8")
+    expect(config).toContain('approval_policy = "never"')
+    expect(config).toContain('sandbox_mode = "danger-full-access"')
+    expect(config).not.toMatch(/approval_policy\s*=\s*"(?!never")[^"]+"/)
   })
 })
 

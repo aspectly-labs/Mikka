@@ -1,6 +1,6 @@
 import { daemonRequestTooOld, daemonUpgradeResponse } from '@/lib/daemon-release'
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from 'next/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { eq, sql } from 'drizzle-orm'
 import { deviceRegistration } from '@mikka/protocol/device'
 import { db, pool } from '@/lib/db'
@@ -10,7 +10,6 @@ import { authenticateDevice, linkDeviceToken, WORKSPACE_ID } from '@/lib/device-
 import { daemonTraceSettings } from '@/lib/tracing/config'
 import { ownerListChanged } from '@/lib/live/lists'
 
-export const dynamic = 'force-dynamic'
 
 /**
  * `POST /v1/devices/register`: the daemon's first call, and its re-register
@@ -21,9 +20,9 @@ export const dynamic = 'force-dynamic'
  */
 async function handlePOST(request: Request) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const parsed = deviceRegistration.safeParse(await request.json().catch(() => null))
-  if (!parsed.success) return NextResponse.json({ error: 'Invalid registration.' }, { status: 400 })
+  if (!parsed.success) return RouteResponse.json({ error: 'Invalid registration.' }, { status: 400 })
   const info = parsed.data
   // Also verify registration metadata: a newer/missing transport header cannot
   // turn an old client into an admitted device.
@@ -42,15 +41,15 @@ async function handlePOST(request: Request) {
     await db.update(devices).set({ ...fields, name: sql`CASE WHEN ${devices.nameLocked} THEN ${devices.name} ELSE ${info.name} END` }).where(eq(devices.id, info.deviceId))
     await ensureDeviceAgents(pool, caller.userId, info.deviceId, info.harnesses)
     await ownerListChanged(db, caller.userId, ['device_list'])
-    return NextResponse.json({ deviceId: info.deviceId, workspaceId: caller.scopeWorkspaceId ?? WORKSPACE_ID, ...(tracing ? { tracing } : {}) })
+    return RouteResponse.json({ deviceId: info.deviceId, workspaceId: caller.scopeWorkspaceId ?? WORKSPACE_ID, ...(tracing ? { tracing } : {}) })
   }
-  if (caller.scopeDeviceId) return NextResponse.json({ error: 'Cloud device is unavailable.' }, { status: 403 })
+  if (caller.scopeDeviceId) return RouteResponse.json({ error: 'Cloud device is unavailable.' }, { status: 403 })
   const deviceId = crypto.randomUUID()
   await db.insert(devices).values({ id: deviceId, ownerId: caller.userId, name: info.name, ...fields })
   await linkDeviceToken(caller, deviceId)
   await ensureDeviceAgents(pool, caller.userId, deviceId, info.harnesses)
   await ownerListChanged(db, caller.userId, ['device_list'])
-  return NextResponse.json({ deviceId, workspaceId: caller.scopeWorkspaceId ?? WORKSPACE_ID, ...(tracing ? { tracing } : {}) })
+  return RouteResponse.json({ deviceId, workspaceId: caller.scopeWorkspaceId ?? WORKSPACE_ID, ...(tracing ? { tracing } : {}) })
 }
 
 export const POST = withDeviceRoute(handlePOST)

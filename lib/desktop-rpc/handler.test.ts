@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { z } from 'zod'
+import { createBrowserRpc } from '../browser-rpc/handler'
 import { createDesktopRpc, desktopBearerHeaders, humanSessionHeaders } from './handler'
 import { desktopActionSchemas } from './schemas'
 import { currentDesktopSession, withDesktopSession, safeDesktopSession } from './session'
@@ -38,7 +39,7 @@ function fixture() {
 
 test('RPC never authenticates a cookie-only, revoked, invalid or delegated token', async () => {
   const f = fixture()
-  for (const authorization of ['', 'Basic invalid', 'Bearer missing_12345678901234567890', `Bearer mkp_${'a'.repeat(43)}`, `Bearer mka_${'a'.repeat(43)}`, `Bearer mkr_${'a'.repeat(43)}`]) {
+  for (const authorization of ['', 'Basic invalid', 'Bearer missing_12345678901234567890', `Bearer mkp_${'a'.repeat(43)}`, `Bearer mka_${'a'.repeat(43)}`, `Bearer mkr_${'a'.repeat(43)}`, `Bearer mkmr_${'a'.repeat(43)}`]) {
     const response = await f.handle(request('fixture.read', [], { authorization, cookie: 'better-auth.session_token=valid-other-account' }))
     assert.equal(response.status, 401)
   }
@@ -102,7 +103,10 @@ test('request attribution records only registry-owned RPC actions without argume
     { request: request('fixture.read', [], {}, 99), status: 426 },
   ]
   for (const value of cases) {
-    assert.equal((await handler(value.request)).status, value.status)
+    const response = await handler(value.request)
+    assert.equal(response.status, value.status)
+    // Only an unknown action tells the page it is older than the server (lib/app-build.ts).
+    assert.equal(response.headers.get('x-mikka-action-not-found'), value.status === 404 ? '1' : null)
     const entry = JSON.parse(lines.at(-1)!)
     assert.equal(entry.rpcAction, value.action)
     assert.equal(Object.hasOwn(entry, 'rpcAction'), value.action !== undefined)
@@ -156,7 +160,6 @@ test('registry schemas reject forged authority, malformed nested input and extra
     ['desktop.workspaceLink', ['valid-slug', { userId: peer }]],
     ['desktop.workspaceLink', ['../private']],
     ['workspace.switchWorkspace', [{ workspaceId: owner, ownerId: peer }]],
-    ['coordinator.sendCoordinatorMessage', ['hello', null, null, owner, { kind: 'device', deviceId: 'invalid' }]],
     ['issue-metadata.updateIssueMetadata', [{ id: owner, revision: 1, patch: { userId: peer } }]],
     ['account.changePassword', [{ currentPassword: 'password', newPassword: 'password', userId: peer }]],
     ['workspace-secrets.createSecret', [{ name: 'KEY', kind: 'secret', value: 'fixture', scope: { type: 'repository', repository: {} } }]],
@@ -165,9 +168,59 @@ test('registry schemas reject forged authority, malformed nested input and extra
     ['teams.deleteTeam', ['not-a-team', 'Design']],
     ['teams.deleteTeam', [owner]],
     ['teams.getTeamDeletionImpact', [owner, { workspaceId: peer }]],
+    ['agents.createDeviceToken', [{ name: '' }]],
+    ['agents.createDeviceToken', [{ name: 'x'.repeat(61) }]],
+    ['agents.createDeviceToken', [{ name: 'MacBook', userId: peer }]],
   ]
   for (const [name, args] of cases) assert.equal(desktopActionSchemas[name].safeParse(args).success, false, name)
+  assert.equal(desktopActionSchemas['agents.createDeviceToken'].safeParse([{ name: 'MacBook Pro' }]).success, true)
   assert.equal(desktopActionSchemas['coordinator.pollCoordinatorChat'].safeParse([null, undefined, { after: 2, cursor: 1, prefix: 'a'.repeat(32) }]).success, true)
+})
+
+test('browser settings saves forward supported patches and reject invalid input before writing', async () => {
+  const origin = 'https://app.example'
+  const personal = 'settings.patchPersonalSettings'
+  const workspace = 'workspace-settings.updateWorkspace'
+  const calls: unknown[][] = []
+  const invoke = async (args: never[]) => { calls.push(args); return args[0] }
+  const handle = createBrowserRpc({
+    trustedBaseURL: origin,
+    authenticate: async headers => headers.get('cookie') === 'session=settings' ? owner : null,
+    scope: async (_session, work) => work(),
+    actions: {
+      [personal]: { args: desktopActionSchemas[personal], invoke },
+      [workspace]: { args: desktopActionSchemas[workspace], invoke },
+    },
+  })
+  const save = (action: string, args: unknown[]) => handle(new Request(`${origin}/api/rpc`, {
+    method: 'POST',
+    headers: { origin, cookie: 'session=settings', 'x-mikka-rpc': '1', 'content-type': 'application/json' },
+    body: JSON.stringify({ version: 1, action, args: encode(args) }),
+  }))
+  const valid = [
+    [personal, [{ values: { sidebarLayout: 'columns' } }, owner]],
+    [personal, [{ values: { appearanceColorScheme: 'dark' } }, owner]],
+    [workspace, [{ taskPrefix: 'QAPR' }, owner]],
+  ] as const
+  for (const [action, args] of valid) {
+    const response = await save(action, [...args])
+    assert.equal(response.status, 200, JSON.stringify(args))
+    assert.deepEqual(decode((await response.json()).result), args[0])
+  }
+  assert.deepEqual(calls, valid.map(([, args]) => args))
+
+  const invalid: [string, unknown[]][] = [
+    [personal, [{ userId: peer, values: { appearanceColorScheme: 'dark' } }, owner]],
+    [workspace, [{ taskPrefix: 'TOOLONG' }, owner]],
+    [workspace, [{ allowPrivate: true }, owner]],
+    [workspace, [{ userId: peer }, owner]],
+  ]
+  for (const [action, args] of invalid) {
+    const response = await save(action, args)
+    assert.equal(response.status, 400, JSON.stringify(args))
+    assert.equal((await response.json()).error.code, 'desktop_rpc_request_invalid')
+  }
+  assert.equal(calls.length, valid.length)
 })
 
 test('Board status moves accept an optional checked block change across the shared RPC boundary', () => {
@@ -237,33 +290,8 @@ test('Task presentation batch rejects forged authority and oversized input befor
   assert.equal(calls, 2, 'empty and bounded inputs still enter the reader and its membership checks')
 })
 
-test('Coordinator submission accepts an optional captured workspace without widening its authority tuple', () => {
-  const schema = desktopActionSchemas['coordinator.sendCoordinatorMessage']
-  const legacy = ['hello', null, null, owner, undefined, undefined, undefined, undefined, undefined]
-  for (const args of [['hello'], legacy, [...legacy, undefined], [...legacy, peer], [...legacy, peer.toUpperCase()]]) {
-    assert.equal(schema.safeParse(args).success, true)
-  }
-  for (const expected of [null, '', 'invalid', { workspaceId: peer }, { userId: owner }]) {
-    assert.equal(schema.safeParse([...legacy, expected]).success, false)
-  }
-  assert.equal(schema.safeParse([...legacy, peer, { admin: true }]).success, false)
-})
-
-test('Coordinator task titles cross the shared Web and desktop RPC boundary', () => {
-  const schema = desktopActionSchemas['coordinator.sendCoordinatorMessage']
-  const args = ['Task description', null, null, owner, undefined, undefined, undefined, undefined, undefined]
-  for (const workspaceId of [undefined, peer]) {
-    const parsed = schema.safeParse([...args, workspaceId, '  修复登录后回跳  '])
-    assert.equal(parsed.success, true)
-    if (parsed.success) {
-      assert.ok(Array.isArray(parsed.data))
-      assert.equal(parsed.data[10], '修复登录后回跳')
-    }
-    for (const title of ['', ' ', 'x'.repeat(61), 'two\nlines', null, { admin: true }]) {
-      assert.equal(schema.safeParse([...args, workspaceId, title]).success, false)
-    }
-  }
-  assert.equal(schema.safeParse([...args, peer, 'Title', { admin: true }]).success, false)
+test('retired Coordinator submission has no registered RPC schema', () => {
+  assert.equal(Object.hasOwn(desktopActionSchemas, 'coordinator.sendCoordinatorMessage'), false)
 })
 
 test('billing re-export consumers accept only the existing workspace selector and purchase amounts', () => {
@@ -322,3 +350,44 @@ test('cached detail and bootstrap accept identity-free selectors while preservin
   for (const args of [[], [undefined], [owner]]) assert.equal(desktopActionSchemas['desktop.bootstrap'].safeParse(args).success, true)
   for (const args of [[null], ['invalid'], [{ workspaceId: owner, role: 'admin' }], [owner, peer]]) assert.equal(desktopActionSchemas['desktop.bootstrap'].safeParse(args).success, false)
 })
+
+test('自动化 lists accept 我的 and 定时 and nothing wider', () => {
+  const list = desktopActionSchemas['automations.listAutomations']
+  const workspace = '3f0c9d2e-5b1a-4c7e-9f00-1a2b3c4d5e6f'
+  assert.equal(list.safeParse([{ owner: 'me', trigger: 'schedule', deleted: false }, workspace]).success, true)
+  assert.equal(list.safeParse([{ owner: 'someone' }, workspace]).success, false)
+  assert.equal(list.safeParse([{ trigger: 'github' }, workspace]).success, false)
+})
+
+test('bundled desktop accepts merged threads and group mentions', () => {
+  const validate = desktopActionSchemas['desktop-notifications.chooseDesktopNotifications']
+  assert.ok(validate.safeParse([[{ id: 'merged:one', kind: 'merged', runId: 'one' }, { id: 'mentioned:two', kind: 'mentioned', messageId: peer }]]).success)
+  assert.equal(validate.safeParse([[{ id: 'mentioned:two', kind: 'mentioned', issueId: peer }]]).success, false)
+})
+
+test('retired model favorite RPCs are removed while model menu, route and option RPCs stay registered', () => {
+  const registry = readFileSync(new URL('./registry.ts', import.meta.url), 'utf8')
+  const retired = [
+    'execution-settings.addModelFavorite',
+    'execution-settings.updateModelFavorite',
+    'execution-settings.removeModelFavorite',
+    'execution-settings.reorderModelFavorites',
+    'execution-settings.chooseModelFavorite',
+  ]
+  for (const name of retired) {
+    assert.equal(Object.hasOwn(desktopActionSchemas, name), false, `${name} must not have an RPC schema`)
+    assert.equal(registry.includes(`'${name}':`), false, `${name} must not be registered in registry.ts`)
+  }
+  assert.equal(desktopActionSchemas['execution-settings.getBotModelMenu'].safeParse([null]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.refreshBotModelMenuAction'].safeParse([owner]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.chooseBotModel'].safeParse([owner, 'credits:anthropic/claude-sonnet-5.5']).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setPreferredModelRoute'].safeParse([owner, 'anthropic/claude-sonnet-5-5', 'credits:anthropic/claude-sonnet-5.5']).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: false, ultrafast: false, pro: true, daybreak: false } }]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: false, ultrafast: false, pro: false, daybreak: true } }]).success, true)
+  assert.equal(desktopActionSchemas['execution-settings.setChatModelOptions'].safeParse([owner, { modes: { fast: true, ultrafast: false, pro: false, daybreak: true } }]).success, true)
+  assert.equal(Object.hasOwn(desktopActionSchemas, 'model-api-keys.refreshApiKeyDaybreak'), true)
+  assert.equal(registry.includes(`'model-api-keys.refreshApiKeyDaybreak':`), true)
+  assert.equal(desktopActionSchemas['model-api-keys.refreshApiKeyDaybreak'].safeParse([owner]).success, true)
+  assert.equal(desktopActionSchemas['model-api-keys.refreshApiKeyDaybreak'].safeParse(['not-a-uuid']).success, false)
+})
+

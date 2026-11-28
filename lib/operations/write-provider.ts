@@ -31,6 +31,14 @@ export function composioWriteProvider(client: ComposioActionClient | null, actio
     if (active.length !== 1) throw new OperationError('integrationAccountUnavailable')
     return active[0].id
   }
+  /** Readback of a recorded write: the owner's active, enabled accounts must
+   * still include the exact account it was sent through. Another account, even
+   * the only one, is never used; a second connection does not make it unavailable. */
+  async function boundAccountActive(owner: string, accountId: string) {
+    if (!client) throw new OperationError('composioNotConfigured')
+    const rows = await listComposioPages(cursor => client.connectedAccounts.list({ userIds: [owner], toolkitSlugs: [d.toolkit], statuses: ['ACTIVE'], cursor }))
+    if (!rows.some(a => a.id === accountId && a.toolkit.slug === d.toolkit && a.status === 'ACTIVE' && !a.isDisabled)) throw new OperationError('integrationAccountUnavailable')
+  }
   async function version(slug: string) {
     const tool = await client!.tools.getRawComposioToolBySlug(slug)
     if (!tool.version || tool.version === 'latest') throw new OperationError('integrationActionVersionUnavailable')
@@ -102,7 +110,8 @@ export function composioWriteProvider(client: ComposioActionClient | null, actio
     },
     async lookup(input) {
       if (action !== 'send_slack_message' || !slackDelivery || input.version !== SLACK_DELIVERY_CONTRACT) return null
-      if (await account(input.ownerId) !== input.accountId) throw new OperationError('integrationAccountUnavailable')
+      await boundAccountActive(input.ownerId, input.accountId)
+      input.signal?.throwIfAborted()
       return slackDelivery.lookup(input)
     },
   }

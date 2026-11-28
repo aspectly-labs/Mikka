@@ -6,23 +6,7 @@ import { ModelAdmissionError } from "./model-admission/contract";
 import type { SubscriptionService } from "./subscription-service";
 import { subscriptionNativeTiming } from "./subscription-native-timing";
 
-const input = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("context"), requireModelCatalogue: z.literal(true).optional() }).strict(),
-  z
-    .object({
-      action: z.literal("request"),
-      payload: z
-        .object({
-          path: z.string().min(1).max(128),
-          headers: z
-            .record(z.string().max(128), z.string().max(4096))
-            .refine((value) => Object.keys(value).length <= 32),
-          body: z.unknown(),
-        })
-        .strict(),
-    })
-    .strict(),
-]);
+const input = z.object({ action: z.literal("context"), requireModelCatalogue: z.literal(true).optional() }).strict();
 export function subscriptionNativeHTTP(deps: {
   authorize(request: Request, deviceId: string): Promise<string | null>;
   service(): SubscriptionService;
@@ -79,26 +63,21 @@ export function subscriptionNativeHTTP(deps: {
         bytes.set(part, offset);
         offset += part.length;
       }
-      const body = input.parse(JSON.parse(new TextDecoder().decode(bytes)));
+      const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
+      if (value && typeof value === "object" && "action" in value && value.action === "request") {
+        operation = "request";
+        outcome = "error";
+        return Response.json({ error: "subscription_gateway_required" }, { status: 410, headers });
+      }
+      const body = input.parse(value);
       operation = body.action;
       phase = "runtime";
       const service = deps.service();
       phase = "binding";
       const use = await timing.measure('binding', () => service.nativeRun(owner, deviceId, runId));
-      if (body.action === "context") {
-        phase = "context";
-        return Response.json(await timing.measure('context', () => service.nativeContext(use, request.signal, body.requireModelCatalogue)), {
-          headers,
-        });
-      }
-      phase = "request";
-      const upstream = await timing.measure('request', () => service.nativeRequest(
-        use,
-        body.payload,
-        request.signal,
-      ));
-      return new Response(upstream.body, {
-        headers: { ...headers, "content-type": upstream.contentType },
+      phase = "context";
+      return Response.json(await timing.measure('context', () => service.nativeContext(use, request.signal, body.requireModelCatalogue)), {
+        headers,
       });
     } catch (error) {
       outcome = 'error';

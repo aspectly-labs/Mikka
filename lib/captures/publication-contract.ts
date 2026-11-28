@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { CAPTURE_CONTENT_TYPES, CAPTURE_MAX_BYTES } from '@mikka/protocol/capture'
+import { isLoopbackHost, LOCALHOST_HOSTNAME } from '@/lib/env/hosts'
 
 const uuid = z.uuid()
 const sha = z.string().regex(/^[a-f0-9]{40}$/)
@@ -23,7 +24,7 @@ export function publicCaptureToken(value: string) {
   let url: URL
   try { url = new URL(value) } catch { return null }
   if (url.href !== value || url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.port) return null
-  if (url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname.startsWith('[')
+  if (isLoopbackHost(url.hostname, { allowSubdomain: true }) || url.hostname.endsWith(`.${LOCALHOST_HOSTNAME}`) || url.hostname.startsWith('[')
     || /^\d+(?:\.\d+){3}$/.test(url.hostname)) return null
   return url.pathname.match(/^(?:\/[\w-]+)*\/api\/captures\/shared\/(mkc_[A-Za-z0-9_-]{32})$/)?.[1] ?? null
 }

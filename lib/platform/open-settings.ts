@@ -3,16 +3,19 @@ import { withBasePath } from '@/lib/base-path'
 
 export type SettingsHandoff = 'browser' | 'desktop' | 'unsupported'
 
+export type BrowserSettingsSection = 'account' | 'connections' | 'integrations'
+
 /**
  * Opens a settings section in the system browser from the desktop shell.
  * Account-linking providers must run their OAuth callback in a real browser,
  * so the desktop never starts the link flow in its own window.
  */
 export async function openSettingsInBrowser(
-  section: 'account' | 'integrations',
+  section: BrowserSettingsSection,
   target: MikkaWindow | null | undefined = typeof window === 'undefined' ? null : window as MikkaWindow,
 ): Promise<SettingsHandoff> {
-  return openPathInBrowser(withBasePath(`/?settings=${section}`), target)
+  const canonical = section === 'integrations' ? 'connections' : section
+  return openPathInBrowser(withBasePath(`/settings?section=${canonical}`), target)
 }
 
 /** Opens the page the person is on in the system browser, keeping its query. */

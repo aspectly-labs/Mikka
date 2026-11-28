@@ -97,6 +97,118 @@ export function findBannedThreadWords(messages) {
   return problems
 }
 
+/**
+ * G2 (no-business-literals-in-i18n): pricing, exchange rates, billing rates,
+ * and machine SKU specs belong in server data / runtime config, never hardcoded
+ * in translation catalogs. Parameterize copy via ICU placeholders instead.
+ */
+export const I18N_BUSINESS_LITERALS_BASELINE_PATH = 'scripts/baselines/i18n-business-literals.json'
+
+export const BUSINESS_LITERAL_RULES = Object.freeze([
+  { category: 'currency amount', pattern: /(?:US\$|\$|¥|€|£)\s*\d+(?:[.,]\d+)?/i },
+  { category: 'currency amount', pattern: /\b\d+(?:[.,]\d+)?\s*(?:(?:USD|CNY|EUR|GBP)\b|美元|人民币|元(?!素))/i },
+  { category: 'hardcoded rate', pattern: /\b\d+(?:\.\d+)?\s*\/\s*(?:(?:hr|hour|wk|week|mo|month|yr|year)\b|小时|周|月|年)/i },
+  { category: 'hardcoded rate', pattern: /(?:US\$|\$|¥|€|£)\s*\d+(?:[.,]\d+)?[^,，。<>]*\/\s*(?:(?:hr|hour|wk|week|mo|month|yr|year)\b|小时|周|月|年)/i },
+  { category: 'machine SKU spec', pattern: /\b\d+(?:\.\d+)?\s*(?:vCPU|GiB)\b/i },
+  { category: 'credit conversion rate', pattern: /\b\d+(?:[.,]\d+)?\s*(?:(?:credits|points)\b|额度|点数)\s*=\s*/i },
+])
+
+function normalizeBusinessLiteralsBaseline(raw, sourceLabel = I18N_BUSINESS_LITERALS_BASELINE_PATH) {
+  const allowed = new Set()
+  if (raw == null) return { allowed, error: null }
+  if (raw instanceof Set) {
+    for (const entry of raw) if (typeof entry === 'string' && entry.trim()) allowed.add(entry)
+    return { allowed, error: null }
+  }
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (typeof entry !== 'string' || !entry.trim()) {
+        return { allowed: new Set(), error: `${sourceLabel}: baseline array entries must be non-empty "locale:key" strings` }
+      }
+      allowed.add(entry)
+    }
+    return { allowed, error: null }
+  }
+  if (typeof raw !== 'object') {
+    return { allowed: new Set(), error: `${sourceLabel}: baseline must be an array or JSON object` }
+  }
+  if (Array.isArray(raw.keys)) return normalizeBusinessLiteralsBaseline(raw.keys, sourceLabel)
+  if (Array.isArray(raw.entries)) return normalizeBusinessLiteralsBaseline(raw.entries, sourceLabel)
+
+  const target = raw.files && typeof raw.files === 'object' && !Array.isArray(raw.files) ? raw.files : raw
+  for (const [key, value] of Object.entries(target)) {
+    if (key === 'version' || key === 'rule' || key === 'description' || key === '$schema') continue
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item !== 'string' || !item.trim()) {
+          return { allowed: new Set(), error: `${sourceLabel}: locale "${key}" baseline array must contain non-empty key strings` }
+        }
+        allowed.add(`${key}:${item}`)
+      }
+    } else if (value && typeof value === 'object') {
+      for (const [nestedKey, nestedCount] of Object.entries(value)) {
+        if (nestedCount === true || (Number.isInteger(nestedCount) && nestedCount > 0)) {
+          allowed.add(`${key}:${nestedKey}`)
+        } else if (nestedCount !== false && nestedCount !== 0) {
+          return { allowed: new Set(), error: `${sourceLabel}: invalid baseline count for "${key}:${nestedKey}"` }
+        }
+      }
+    } else if (value === true || (Number.isInteger(value) && value > 0)) {
+      allowed.add(key)
+    } else if (value !== false && value !== 0) {
+      return { allowed: new Set(), error: `${sourceLabel}: invalid baseline entry for "${key}"` }
+    }
+  }
+  return { allowed, error: null }
+}
+
+export function loadBusinessLiteralsBaseline(baselinePath = path.join(ROOT, I18N_BUSINESS_LITERALS_BASELINE_PATH)) {
+  if (!fs.existsSync(baselinePath)) return { exists: false, allowed: new Set(), error: null }
+  let parsed
+  try {
+    parsed = JSON.parse(fs.readFileSync(baselinePath, 'utf8'))
+  } catch (error) {
+    return { exists: true, allowed: new Set(), error: `Invalid baseline JSON at ${baselinePath}: ${error.message}` }
+  }
+  const normalized = normalizeBusinessLiteralsBaseline(parsed, baselinePath)
+  return { exists: true, ...normalized }
+}
+
+export function findBusinessLiteralsInMessages(messages, options = {}) {
+  const problems = []
+  let allowed = new Set()
+
+  if (options.baseline !== undefined) {
+    const normalized = normalizeBusinessLiteralsBaseline(options.baseline)
+    if (normalized.error) problems.push(normalized.error)
+    else allowed = normalized.allowed
+  } else if (options.baselinePath) {
+    const loaded = loadBusinessLiteralsBaseline(options.baselinePath)
+    if (loaded.error) problems.push(loaded.error)
+    else allowed = loaded.allowed
+  }
+
+  for (const [locale, catalog] of Object.entries(messages ?? {})) {
+    if (!catalog || typeof catalog !== 'object') continue
+    for (const [key, value] of flattenMessages(catalog)) {
+      if (typeof value !== 'string') continue
+      const categories = []
+      for (const rule of BUSINESS_LITERAL_RULES) {
+        if (rule.pattern.test(value) && !categories.includes(rule.category)) {
+          categories.push(rule.category)
+        }
+      }
+      if (!categories.length) continue
+      const entryId = `${locale}:${key}`
+      if (allowed.has(entryId)) continue
+      problems.push(
+        `${locale}: "${key}" contains hardcoded business literal (${categories.join(', ')}) in "${value}"; parameterize via ICU placeholders and supply values from runtime config or server data`,
+      )
+    }
+  }
+  return problems
+}
+
 export function checkErrorCodes(codes, messages) {
   const problems = []
   for (const locale of LOCALES) {
@@ -302,6 +414,8 @@ export function checkRepository() {
   problems.push(...compareMessages(messages))
   problems.push(...findThreadOwnership(messages))
   problems.push(...findBannedThreadWords(messages))
+  const businessBaselineFile = path.join(ROOT, I18N_BUSINESS_LITERALS_BASELINE_PATH)
+  problems.push(...findBusinessLiteralsInMessages(messages, fs.existsSync(businessBaselineFile) ? { baselinePath: businessBaselineFile } : {}))
   const codeFile = path.join(ROOT, 'lib/action-result.ts')
   if (fs.existsSync(codeFile)) {
     const codes = extractActionErrorCodes(fs.readFileSync(codeFile, 'utf8'))
@@ -315,6 +429,7 @@ export function checkRepository() {
     problems.push(...findHardcodedText(file, source))
     problems.push(...findMissingTranslationKeys(file, source, reference))
   }
+  // The active iOS app lives in private mikka-hosted-ui (mobile-next/) and enforces its own i18n checks there.
   return problems
 }
 

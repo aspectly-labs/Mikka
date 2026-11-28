@@ -1,6 +1,7 @@
 # The store lists every Composio app, including own-key and no-connection ones
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator: Exa, Firecrawl, Cloudflare and others are in Composio but missing from Mikka's store. Import all of Composio's apps, and make the ones that need the person's own token work too.
 - Rule: R-35 (connections per person), R-40 (data, not filler)
 - Replaces: the 现状 note in `personal-plugins-backend.md` that left own-credential and no-auth toolkits out (decision 2026-10-31)

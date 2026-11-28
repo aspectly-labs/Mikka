@@ -13,17 +13,22 @@ import { assertFlashTestModel } from '../test-model-policy.mjs'
 import {
   AcceptanceError as ProviderAcceptanceError, assertRunEvidence, assertWorkspaceIdle,
   caseOrderPlan, orderFingerprint, ownedSource, providerReceipt, verifyCheckRuns,
-} from './model-provider-fallback.mjs'
+} from './model-order-cases.mjs'
+import { discoverRpcActions, releaseHeaders, releaseVersionGuard, RPC_HEADERS, rpcBody, rpcResult } from './rpc-actions.mjs'
+import { publicRepositoryId } from '../cloudflare-source.mjs'
+import { lastPublishedRelease, runtimeInputsDigest } from '../e2b/runtime-inputs.mjs'
+import { assertReportIdentity, downloadReleaseReport, readReleaseArtifact, TEMPLATE_KINDS } from '../e2b/runtime-report.mjs'
 
 export const ORIGIN = 'https://app.aspectlylabs.com'
-export const REPOSITORY = 'alexj11324/Mikka'
+export const REPOSITORY = 'aspectly-labs/Mikka'
 export const MARKER = '[project-map-acceptance]'
 export const CASES = Object.freeze([
   { id: 'api_deepseek', model: 'deepseek-flash', provider: 'deepseek', harness: 'claude_code', kind: 'api_key' },
   { id: 'official_claude', model: 'claude-haiku-5-5', provider: 'claude', harness: 'claude_code', kind: 'subscription' },
   { id: 'official_codex', model: 'gpt-6-luna', provider: 'codex', harness: 'codex', kind: 'subscription' },
 ])
-const ACTIONS = new Set(['saveProject', 'listProjects', 'saveIssue', 'setProjectIssues', 'getIssueThread', 'changeModelOrder'])
+const ACTIONS = Object.freeze({ saveProject: 'projects.saveProject', listProjects: 'projects.listProjects', saveIssue: 'issues.saveIssue',
+  setProjectIssues: 'projects.setProjectIssues', getIssueThread: 'agents.getIssueThread', changeModelOrder: 'model-order.changeModelOrder' })
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value)
 const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value)
 const digest = value => createHash('sha256').update(value).digest('hex')
@@ -105,17 +110,145 @@ export function triggerGuard(env, event) {
     && (event?.inputs?.mode ?? 'preflight') === mode, 'trigger_rejected')
   return { revision, mode }
 }
+const WORKER_RELEASE_NAME = 'E2B additive runtime release'
+const WORKER_RELEASE_PATH = '.github/workflows/e2b-official-runtime.yml'
+const WORKER_INPUTS_STEP = 'Compare canonical worker inputs across this push and check failed attempts'
+const WORKER_PROMOTED_WEB_STEP = 'Verify the promoted Cloudflare Web before allocating template builders'
+const WORKER_VALIDATE_STEP = 'Build private versioned candidates and require official file conservation'
+const WORKER_PUBLISH_STEP = 'Make only fully accepted candidates public'
+const WORKER_REPORT_STEP = 'Preserve the complete public release report'
+const PUBLIC_REPOSITORY_ID = Number(publicRepositoryId)
+
+export function matchingReleases(runs, revision, kind) {
+  const name = kind === 'web' ? 'Web deploy' : WORKER_RELEASE_NAME
+  const path = kind === 'web' ? '.github/workflows/web-deploy.yml' : WORKER_RELEASE_PATH
+  // E2B additive runtime release never publishes on push (github.event_name != 'push');
+  // it evaluates or publishes only on workflow_run (Cloudflare promotion) or workflow_dispatch.
+  const events = kind === 'web' ? ['push', 'workflow_dispatch'] : ['workflow_run', 'workflow_dispatch']
+  return (Array.isArray(runs) ? runs : []).filter(run => Number.isSafeInteger(run?.id) && run.id > 0
+    && run.name === name && run.path === path && events.includes(run.event)
+    && run.head_branch === 'main' && run.head_sha === revision
+    && (!run.repository || run.repository.full_name === REPOSITORY)
+    && run.head_repository?.full_name === REPOSITORY
+    && run.status === 'completed' && run.conclusion === 'success')
+}
+
 export function successfulRelease(runs, revision, kind) {
-  const name = kind === 'web' ? 'Web deploy' : 'E2B official instance runtime'
-  const path = kind === 'web' ? '.github/workflows/web-deploy.yml' : '.github/workflows/e2b-official-runtime.yml'
-  return (Array.isArray(runs) ? runs : []).find(run => Number.isSafeInteger(run?.id) && run.id > 0
-    && run.name === name && run.path === path && ['push', 'workflow_dispatch'].includes(run.event)
-    && run.head_branch === 'main' && run.head_sha === revision && run.head_repository?.full_name === REPOSITORY
-    && run.status === 'completed' && run.conclusion === 'success') ?? null
+  return matchingReleases(runs, revision, kind)[0] ?? null
+}
+
+function workerReleaseJobs(worker, jobs) {
+  if (!worker || !Number.isSafeInteger(worker.id) || worker.id <= 0
+    || !['workflow_run', 'workflow_dispatch'].includes(worker.event)) {
+    return { status: 'unproven', code: 'release_missing' }
+  }
+  if (!Array.isArray(jobs)) return { status: 'unproven', code: 'jobs_unavailable', runId: worker.id }
+  const dispatch = worker.event === 'workflow_dispatch'
+  const byName = name => jobs.filter(job => job?.name === name && job.run_id === worker.id
+    && (!Number.isSafeInteger(worker.run_attempt) || (!dispatch && job.run_attempt === undefined) || job.run_attempt === worker.run_attempt)
+    && (!sha(worker.head_sha) || (!dispatch && job.head_sha === undefined) || job.head_sha === worker.head_sha))
+  const one = (name, conclusion) => {
+    const matches = byName(name)
+    return matches.length === 1 && matches[0].status === 'completed' && matches[0].conclusion === conclusion ? matches[0] : null
+  }
+  const stepDone = (job, name) => {
+    const matches = (Array.isArray(job?.steps) ? job.steps : []).filter(step => step?.name === name
+      && step.status === 'completed' && step.conclusion === 'success')
+    return matches.length === 1 ? matches[0] : null
+  }
+  const testJob = one('test', 'success'), checkJob = one('check', 'success')
+  if (!testJob || !checkJob) return { status: 'unproven', code: 'jobs_unavailable', runId: worker.id }
+  // On workflow_run after a failed Cloudflare deploy, trigger.outputs.ready is false
+  // and this step is skipped; such a run never evaluated or published this revision.
+  if (!stepDone(checkJob, WORKER_INPUTS_STEP)) return { status: 'unproven', code: 'publish_unproven', runId: worker.id }
+  const webReady = one('web-ready', 'success')
+  const validate = one('release / validate / build', 'success')
+  const templates = one('release / templates', 'success')
+  if (webReady && validate && templates) {
+    const promoted = stepDone(webReady, WORKER_PROMOTED_WEB_STEP)
+    const built = stepDone(validate, WORKER_VALIDATE_STEP)
+    const published = stepDone(templates, WORKER_PUBLISH_STEP)
+    const reported = stepDone(templates, WORKER_REPORT_STEP)
+    const ordered = !Number.isSafeInteger(published?.number) || !Number.isSafeInteger(reported?.number) || published.number < reported.number
+    if (!promoted || !built || !published || !reported || !ordered || !Number.isSafeInteger(validate.id) || validate.id <= 0
+      || !Number.isSafeInteger(templates.id) || templates.id <= 0) {
+      return { status: 'unproven', code: 'publish_unproven', runId: worker.id }
+    }
+    return { status: 'published', runId: worker.id, validateJobId: validate.id, publishJobId: templates.id }
+  }
+  const skippedWebReady = one('web-ready', 'skipped'), skippedRelease = one('release', 'skipped')
+  const hasNested = jobs.some(job => job?.run_id === worker.id && typeof job.name === 'string' && job.name.startsWith('release / '))
+  if (skippedWebReady && skippedRelease && !hasNested) {
+    // Skipped release jobs occur for both unchanged worker inputs and retry suppression
+    // of previously failed worker inputs (scripts/e2b/runtime-inputs.mjs); never treat as proven.
+    return { status: 'not_published', code: 'publish_skipped', runId: worker.id }
+  }
+  return { status: 'unproven', code: 'publish_unproven', runId: worker.id }
+}
+
+/** Verify that an E2B additive runtime release run actually published templates for
+ * worker.head_sha. workflow_run enforces record.product === GITHUB_SHA in web-ready
+ * (scripts/release/cloudflare-promoted-web.mjs); workflow_dispatch may publish an
+ * earlier served commit and therefore requires the verified release report artifact. */
+export function workerReleaseProof(worker, jobs, { report } = {}) {
+  const checked = workerReleaseJobs(worker, jobs)
+  if (checked.status !== 'published') return checked
+  if (worker.event === 'workflow_dispatch' || report !== undefined) {
+    if (!report || !Number.isSafeInteger(worker.run_attempt) || worker.run_attempt <= 0 || !sha(worker.head_sha)) {
+      return { status: 'unproven', code: 'publish_unproven', runId: worker.id }
+    }
+    try {
+      assertReportIdentity(report, { sourceCommit: worker.head_sha, workerSha: report?.workerSha,
+        runId: String(worker.id), runAttempt: String(worker.run_attempt) })
+    } catch {
+      return { status: 'unproven', code: 'publish_unproven', runId: worker.id }
+    }
+    if (!TEMPLATE_KINDS.every(kind => report.templates?.[kind]?.public === true && report.templates?.[kind]?.buildStatus === 'ready')) {
+      return { status: 'unproven', code: 'publish_unproven', runId: worker.id }
+    }
+  }
+  return checked
+}
+
+async function readPublishedReleaseReport(worker, { readGithub, token, fetchImpl, now }) {
+  if (worker?.event !== 'workflow_dispatch' || !Number.isSafeInteger(worker.id) || worker.id <= 0
+    || !Number.isSafeInteger(worker.run_attempt) || worker.run_attempt <= 0 || !sha(worker.head_sha)) return null
+  const validRun = run => run?.id === worker.id && run.run_attempt === worker.run_attempt
+    && run.head_sha === worker.head_sha && run.event === 'workflow_dispatch'
+    && run.path === WORKER_RELEASE_PATH && run.name === WORKER_RELEASE_NAME && run.head_branch === 'main'
+    && run.status === 'completed' && run.conclusion === 'success'
+    && run.repository?.id === PUBLIC_REPOSITORY_ID && run.head_repository?.id === PUBLIC_REPOSITORY_ID
+    && run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY
+  try {
+    const latest = await readGithub('/actions/runs/' + worker.id)
+    if (!validRun(latest)) return null
+    const expected = { sourceCommit: worker.head_sha, runId: worker.id, runAttempt: worker.run_attempt,
+      repositoryId: PUBLIC_REPOSITORY_ID, repositoryFullName: REPOSITORY }
+    const artifact = await readReleaseArtifact(expected, latest, { read: readGithub, now })
+    const bytes = await downloadReleaseReport({ selected: true, artifact }, { token, fetchImpl })
+    const report = JSON.parse(bytes)
+    const after = await readGithub('/actions/runs/' + worker.id)
+    if (!validRun(after)) return null
+    return report
+  } catch {
+    return null
+  }
+}
+
+export async function verifyWorkerReleaseCandidate(candidate, jobs, { readGithub, token, fetchImpl, now }) {
+  const checked = workerReleaseJobs(candidate, jobs)
+  if (checked.status !== 'published' || candidate.event !== 'workflow_dispatch') {
+    return workerReleaseProof(candidate, jobs)
+  }
+  const report = await readPublishedReleaseReport(candidate, { readGithub, token, fetchImpl, now })
+  return workerReleaseProof(candidate, jobs, { report })
 }
 
 /** Runs before the Infisical action, with no smoke-account environment access. */
-export async function attestDeployment({ env = process.env, event, fetchImpl = fetch, wait = delay, now = Date.now } = {}) {
+export async function attestDeployment({
+  env = process.env, event, fetchImpl = fetch, wait = delay, now = Date.now,
+  workerHash = runtimeInputsDigest, latestPublished = lastPublishedRelease,
+} = {}) {
   const guard = triggerGuard(env, event)
   check(typeof env.GH_TOKEN === 'string' && env.GH_TOKEN.length > 0, 'configuration_required')
   async function read(url, github = false) {
@@ -129,146 +262,69 @@ export async function attestDeployment({ env = process.env, event, fetchImpl = f
     check(body !== null, 'deployment_proof')
     return body
   }
-  const pin = async () => check((await read(ORIGIN + '/mikka/api/version')).build === guard.revision, 'build_mismatch')
-  const runs = async workflow => read('https://api.github.com/repos/' + REPOSITORY + '/actions/workflows/' + workflow
-    + '/runs?head_sha=' + guard.revision + '&per_page=100', true)
+  const readGithub = path => read('https://api.github.com/repos/' + REPOSITORY + path, true)
+  const sameRelease = releaseVersionGuard(guard.revision)
+  const pin = async () => check(sameRelease(await read(ORIGIN + '/mikka/api/version')), 'build_mismatch')
+  const runs = async workflow => readGithub('/actions/workflows/' + workflow + '/runs?head_sha=' + guard.revision + '&per_page=100')
+  const runJobs = async candidate => readGithub(candidate.event === 'workflow_dispatch'
+    && Number.isSafeInteger(candidate.run_attempt) && candidate.run_attempt > 0
+    ? '/actions/runs/' + candidate.id + '/attempts/' + candidate.run_attempt + '/jobs?per_page=100'
+    : '/actions/runs/' + candidate.id + '/jobs?filter=latest&per_page=100')
   await pin()
   const deadline = now() + (guard.mode === 'active' ? 900000 : 0)
-  let worker
+  let worker, proof
   do {
     await pin()
-    worker = successfulRelease((await runs('e2b-official-runtime.yml')).workflow_runs, guard.revision, 'worker')
+    const candidates = matchingReleases((await runs('e2b-official-runtime.yml')).workflow_runs, guard.revision, 'worker')
+    let skipped = null
+    for (const candidate of candidates) {
+      const evaluated = await verifyWorkerReleaseCandidate(candidate, (await runJobs(candidate)).jobs,
+        { readGithub, token: env.GH_TOKEN, fetchImpl, now })
+      if (evaluated.status === 'published') {
+        worker = candidate; proof = evaluated; break
+      }
+      if (evaluated.status === 'not_published' && !skipped) skipped = { candidate, evaluated }
+    }
+    if (!worker && skipped) {
+      // Skipped release jobs cover both genuinely unchanged inputs and retry suppression of
+      // previously failed inputs. Accept reuse only when the latest verified published release
+      // has the exact canonical worker hash of guard.revision.
+      let expectedHash = null, published = null
+      try { expectedHash = workerHash({ ref: guard.revision }) } catch { expectedHash = null }
+      if (sha(expectedHash)) {
+        try { published = await latestPublished({ token: env.GH_TOKEN, fetchImpl, now }) } catch { published = null }
+      }
+      if (published && sha(published.sourceCommit) && published.workerSha === expectedHash
+        && Number.isSafeInteger(published.runId) && published.runId > 0) {
+        worker = { id: published.runId }
+        proof = { status: 'reused', runId: published.runId, sourceCommit: published.sourceCommit }
+      }
+    }
     if (worker || now() >= deadline) break
     await wait(30000)
   } while (!worker && now() <= deadline)
   check(worker, 'worker_release')
   await pin()
   return { status: 'ready', issue: 1245, repository: REPOSITORY, ...guard,
-    workerReleaseRunId: worker.id, workerReleaseSha: guard.revision, checkedAt: new Date(now()).toISOString() }
+    workerReleaseRunId: worker.id, workerReleaseSha: guard.revision, workerReleaseStatus: proof.status,
+    ...(proof.sourceCommit ? { workerReleaseSourceCommit: proof.sourceCommit } : {}),
+    checkedAt: new Date(now()).toISOString() }
 }
 
 const ACTION_PAGES = ['/en', '/en?section=projects', '/en/settings?section=models']
-const CHUNK_PREFIX = '/mikka/_next/static/chunks/'
-// Next's compiler emits five arguments. Turbopack may use long bracket-member
-// imports; production minification may use direct or dot-member references.
-const identifier = String.raw`[$A-Z_a-z][$\w]*`
-const member = identifier + String.raw`(?:\s*(?:\.\s*` + identifier
-  + String.raw`|\[\s*(?:"` + identifier + String.raw`"|'` + identifier + String.raw`')\s*\]))*`
-const referenceCall = new RegExp(
-  String.raw`(?:\bcreateServerReference|\[\s*(?:"createServerReference"|'createServerReference')\s*\])\s*\)?\s*\(\s*(["'])([a-f0-9]{40,64})\1\s*,\s*`
-  + member + String.raw`\s*,\s*(?:void\s+0|undefined)\s*,\s*` + member
-  + String.raw`\s*,\s*(["'])([A-Za-z]+)\3\s*\)`, 'g')
 
-function publicChunk(value) {
-  try {
-    const raw = value.startsWith('static/chunks/') ? '/mikka/_next/' + value : value
-    const url = new URL(raw, ORIGIN)
-    if (url.origin !== ORIGIN || url.username || url.password || !url.pathname.startsWith(CHUNK_PREFIX)) return null
-    const path = raw.split(/[?#]/, 1)[0]
-    const parts = /(?:^|\/)static\/chunks\/(.+\.js)$/.exec(path)?.[1].split('/').map(decodeURIComponent)
-    if (!parts?.length || parts.some(part => !part || part === '.' || part === '..' || /[/\\]/.test(part))) return null
-    return CHUNK_PREFIX + parts.map(encodeURIComponent).join('/') + url.search
-  } catch { return null }
-}
-
-// Public Turbopack loader factories associate .A(moduleId) with literal chunks.
-// Decode that generated shape without evaluating downloaded JavaScript.
-const loaderModule = /(?:^|,)\s*(\d+)\s*,\s*([$A-Z_a-z][$\w]*)\s*=>\s*\{\s*\2\.v\(\s*([$A-Z_a-z][$\w]*)\s*=>\s*Promise\.all\(\s*(\[\s*(?:"[^"\\\r\n]*"\s*,?\s*)*\])\s*\.map\(\s*([$A-Z_a-z][$\w]*)\s*=>\s*\2\.l\(\s*\5\s*\)\s*\)\s*\)\s*\.then\(\s*\(\s*\)\s*=>\s*\3\(\s*\d+\s*\)\s*\)\s*\)\s*\}/g
-const lazyImport = /[$A-Z_a-z][$\w]*\s*\.\s*A\s*\(\s*(\d+)\s*\)/g
-const literalChunk = /(["'])((?:static\/chunks\/|\/mikka\/_next\/static\/chunks\/)[^"'\\\r\n]+\.js(?:\?[^"'\\\r\n]*)?)\1/g
-
-/** Only deployment-published named UI Server Actions; no manifest or private server access. */
+/** Only actions this deployment's web UI publishes, named as its RPC registry names them.
+ * diagnostics.deploymentId names the release that published them. */
 export async function discoverActions(request, diagnostics = {}) {
-  const pending = new Map(), seen = new Set(), refs = {}
-  const loaders = new Map(), imports = new Map()
-  Object.assign(diagnostics, { required: [...ACTIONS], found: [], missing: [...ACTIONS],
-    pagesRead: 0, pagesFailed: 0, chunksRead: 0, chunksFailed: 0, chunksRemaining: 0 })
-  const enqueue = (value, priority) => {
-    const path = publicChunk(value)
-    if (!path || seen.has(path)) return
-    const previous = pending.get(path)
-    // A component can promote a path first queued by the whole-app table.
-    if (previous !== undefined) {
-      if (priority < previous) pending.set(path, priority)
-    } else if (pending.size < 3000) pending.set(path, priority)
-  }
-  const resolveImport = id => {
-    const priority = imports.get(id), paths = loaders.get(id)
-    if (priority === undefined || !paths) return
-    for (const path of paths) enqueue(path, Math.max(priority, paths.length))
-  }
-  try {
-    for (const path of ACTION_PAGES) {
-      const response = await request(path).catch(() => null)
-      if (!response?.ok) { diagnostics.pagesFailed++; continue }
-      const html = await response.text()
-      diagnostics.pagesRead++
-      check(html.length <= 8_000_000, 'response_invalid')
-      for (const match of html.matchAll(/(?:src|href)\s*=\s*(["'])([^"']+\.js(?:\?[^"']*)?)\1/g))
-        enqueue(match[2].replaceAll('&amp;', '&'), 0)
-    }
-    while (pending.size && seen.size < 200 && Object.keys(refs).length < ACTIONS.size) {
-      // Page seeds first, then small component branches. A whole-app loader
-      // table remains a bounded fallback, rather than consuming the scan budget.
-      const batch = [...pending].sort((left, right) => left[1] - right[1]).slice(0, Math.min(20, 200 - seen.size))
-      for (const [path] of batch) { pending.delete(path); seen.add(path) }
-      const reads = await Promise.allSettled(batch.map(async ([path, priority]) => {
-        const response = await request(path).catch(() => null)
-        if (!response?.ok) { diagnostics.chunksFailed++; return }
-        const source = await response.text()
-        diagnostics.chunksRead++
-        check(source.length <= 8_000_000, 'response_invalid')
-        for (const match of source.matchAll(referenceCall))
-          if (ACTIONS.has(match[4])) refs[match[4]] = match[2]
-        for (const match of source.matchAll(loaderModule)) {
-          if (!loaders.has(match[1]) && loaders.size >= 3000) continue
-          let paths
-          try { paths = JSON.parse(match[4]) } catch { continue }
-          loaders.set(match[1], [...new Set(paths.map(publicChunk).filter(Boolean))])
-          // Imports can arrive before their table in concurrent chunk reads.
-          resolveImport(match[1])
-        }
-        const ids = new Set([...source.matchAll(lazyImport)].map(match => match[1]))
-        const importPriority = Math.max(priority, ids.size)
-        for (const id of ids) {
-          if (!imports.has(id) && imports.size >= 3000) continue
-          imports.set(id, Math.min(imports.get(id) ?? Infinity, importPriority))
-          resolveImport(id)
-        }
-        const paths = [...new Set([...source.matchAll(literalChunk)].map(match => publicChunk(match[2])).filter(Boolean))]
-        for (const dependency of paths) enqueue(dependency, Math.max(priority, paths.length))
-      }))
-      for (const read of reads) if (read.status === 'rejected') throw read.reason
-    }
-    return refs
-  } finally {
-    diagnostics.found = [...ACTIONS].filter(name => refs[name])
-    diagnostics.missing = [...ACTIONS].filter(name => !refs[name])
-    diagnostics.chunksRemaining = pending.size
-  }
+  const { refs, diagnostics: found } = await discoverRpcActions(request, { origin: ORIGIN, pages: ACTION_PAGES, actions: ACTIONS })
+  Object.assign(diagnostics, found)
+  return refs
 }
 
-export function actionResult(text, name) {
-  check(ACTIONS.has(name), 'action_not_allowed')
-  const rows = new Map()
-  for (const line of text.split('\n')) {
-    const match = /^([a-f0-9]+):(.*)$/.exec(line)
-    if (!match) continue
-    try { rows.set(match[1], JSON.parse(match[2])) } catch { /* Flight imports are not results. */ }
-  }
-  let result = rows.get('0')?.a
-  for (let i = 0; i < 8 && typeof result === 'string' && /^\$@?[a-f0-9]+$/.test(result); i++)
-    result = rows.get(result.replace(/^\$@?/, ''))
-  if (result === undefined) {
-    const shape = value => value && typeof value === 'object' && (value.error
-      || (name === 'listProjects' && Array.isArray(value))
-      || (['saveProject', 'setProjectIssues'].includes(name) && value.project)
-      || (name === 'saveIssue' && value.issue)
-      || (name === 'getIssueThread' && value.thread && Array.isArray(value.chunks))
-      || (name === 'changeModelOrder' && Array.isArray(value.entries) && typeof value.customized === 'boolean'))
-    result = [...rows.values()].find(shape)
-  }
-  check(result !== undefined && !result?.error, 'action_refused')
+export function actionResult(data, name) {
+  check(Object.hasOwn(ACTIONS, name), 'action_not_allowed')
+  const { result, failure } = rpcResult(data)
+  check(!failure && result !== undefined && !result?.error, 'action_refused')
   return result
 }
 
@@ -366,14 +422,14 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
   const report = { issue: 1245, revision: guard.revision, mode: guard.mode, status: 'running',
     workerReleaseRunId: attestation.workerReleaseRunId,
     startedAt: new Date(now()).toISOString(), cases: [], botRecord: null }
-  let cookie = '', ownerId, workspaceId, refs = {}, safeWorkspace = true
+  let cookie = '', ownerId, workspaceId, refs = {}, safeWorkspace = true, deploymentId = ''
   async function request(path, body, method = body === undefined ? 'GET' : 'POST', extra = {}) {
     const url = new URL(path.startsWith('/mikka/') ? path : '/mikka' + path, ORIGIN)
     check(url.origin === ORIGIN && url.pathname.startsWith('/mikka/') && !url.username && !url.password, 'origin_rejected')
     try {
       return await fetchImpl(url, { method, redirect: 'error', signal: AbortSignal.timeout(30000),
         headers: { origin: ORIGIN, 'cache-control': 'no-store', ...(cookie ? { cookie } : {}),
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...extra },
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...releaseHeaders(url.pathname, deploymentId), ...extra },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
     } catch { throw new AcceptanceError('request_failed') }
   }
@@ -383,13 +439,14 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
     check(response.ok && value !== null && !value?.error, 'http_refused', 'blocked', { httpStatus: response.status })
     return value
   }
-  const pin = async () => check((await json('/api/version')).build === guard.revision, 'build_mismatch')
+  const sameRelease = releaseVersionGuard(guard.revision)
+  const pin = async () => check(sameRelease(await json('/api/version')), 'build_mismatch')
   async function action(name, args) {
-    check(ACTIONS.has(name), 'action_not_allowed')
-    check(typeof refs[name] === 'string', 'action_missing')
-    const response = await request('/en', args, 'POST', { 'next-action': refs[name], accept: 'text/x-component' })
-    check(response.ok, 'action_refused')
-    return actionResult(await response.text(), name)
+    check(Object.hasOwn(ACTIONS, name), 'action_not_allowed')
+    check(refs[name] === ACTIONS[name], 'action_missing')
+    const response = await request('/api/rpc', rpcBody(refs[name], args), 'POST', RPC_HEADERS)
+    check(response.ok, 'action_refused', 'blocked', { httpStatus: response.status })
+    return actionResult(await response.json().catch(() => null), name)
   }
   const readOrder = () => json('/api/settings/model-order?workspace=' + workspaceId)
   async function installOrder(current, wanted, remember) {
@@ -445,7 +502,7 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
     try {
       check(safeWorkspace, 'cleanup_incomplete')
       await pin()
-      check([...ACTIONS].every(name => refs[name]), 'action_missing')
+      check(Object.keys(ACTIONS).every(name => refs[name]), 'action_missing')
       originalOrder = await readOrder()
       const keys = item.kind === 'api_key' ? await json('/api/settings/api-keys?workspace=' + workspaceId) : { keys: [] }
       source = ownedSource(item, { order: originalOrder, keys, connections: await json('/api/subscriptions?workspace=' + workspaceId), ownerId })
@@ -496,7 +553,11 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
       const prompt = buildTaskPrompt({ marker, projectId: project.id, workspaceId, issueId: issue.id, item, botRecord })
       if (item.kind === 'api_key') assertFlashTestModel(item.model)
       await pin()
-      await json('/api/mobile/chat', { botId: bot.id, text: prompt, submissionId: deterministicId(marker) })
+      const submitted = await request('/api/agents/eve/v1/session?botId=' + bot.id, { message: prompt, clientContext: { expectedOwnerId: ownerId, expectedWorkspaceId: workspaceId } }, 'POST', { 'x-mikka-submission-id': deterministicId(marker) })
+      const receipt = await submitted.json().catch(() => null)
+      check(submitted.status === 202, 'http_refused', 'blocked', { httpStatus: submitted.status })
+      check(receipt?.ok === true && /^wrun_[A-Za-z0-9_-]+$/.test(receipt.sessionId ?? '')
+        && typeof receipt.deliveryId === 'string' && receipt.deliveryId.length > 0, 'response_invalid')
       const deadline = now() + 600000
       while (now() < deadline) {
         await pin()
@@ -689,6 +750,8 @@ export async function runProjectDecisionsAcceptance({ env = process.env, event, 
     workspaceId = bots[0].workspaceId
     report.actionDiscovery = {}
     refs = await discoverActions(request, report.actionDiscovery)
+    // Every later fixture read and write goes to the release that published these actions.
+    deploymentId = report.actionDiscovery.deploymentId ?? ''
     // A refused API path does not gate or substitute either official subscription path.
     for (const item of CASES) report.cases.push(await runCase(item))
     await pin()
@@ -716,7 +779,7 @@ async function output(name, report) {
       'Actions found: ' + (report.actionDiscovery.found.join(', ') || 'none'),
       'Actions missing: ' + (report.actionDiscovery.missing.join(', ') || 'none'),
       'Public pages read/failed: ' + report.actionDiscovery.pagesRead + '/' + report.actionDiscovery.pagesFailed,
-      'Public chunks read/failed/remaining: ' + report.actionDiscovery.chunksRead + '/' + report.actionDiscovery.chunksFailed + '/' + report.actionDiscovery.chunksRemaining] : []),
+      'Public action lists read/failed: ' + report.actionDiscovery.manifestsRead + '/' + report.actionDiscovery.manifestsFailed] : []),
     '', 'Only fixed metadata, IDs and hashes are reported. A blocked path is not a pass.',
     'Synthetic project, Bot and decision evidence is retained; owned live work is stopped.', ''].join('\n')
   if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, summary)

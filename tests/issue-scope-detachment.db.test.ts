@@ -4,13 +4,11 @@ import { tokenWorkspace } from '../lib/tokens/principal'
 import { SCOPE_DATABASES } from '../scripts/scope-acceptance-policy.mjs'
 import { scopeSubtest, scopeResumeBootstrap } from './support/scope-acceptance.mjs'
 import './fixtures/scope-request-runtime.mjs'
-import 'next/dist/server/node-environment-baseline'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { readIssueMetadata } from '../lib/issue-metadata'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
@@ -66,66 +64,41 @@ test('provider policy preserves task tenancy and independent membership gates on
   const issueScopeActions = await import('../app/actions/issues')
   const { saveIssue, previewIssuePersonalScope } = issueScopeActions
   const { collectIssueEffects } = await import('../lib/issue-effects')
-  // This suite isolates tenant, provider-generation and claim fences. The archive worker and
-  // real HTTP readback are exercised by linear-archive.db.test.ts instead.
   const setIssueScope = (input: Parameters<typeof issueScopeActions.setIssueScope>[0]) => collectIssueEffects([], () => issueScopeActions.setIssueScope(input))
   const confirmIssuePersonalScope = (input: Parameters<typeof issueScopeActions.confirmIssuePersonalScope>[0]) => collectIssueEffects([], () => issueScopeActions.confirmIssuePersonalScope(input))
-  const { retryLinearIssue } = await import('../app/actions/linear-sync')
-  const { linearRequestTimeout } = await import('../lib/linear-sync/graphql')
-  // The two tests below hold an old provider request until it times out. The
-  // timeout is real (AbortSignal), only shorter than production's 12 s.
-  assert.equal(linearRequestTimeout.ms, 12_000)
-  const withShortLinearTimeout = async (callback: () => Promise<void>) => {
-    linearRequestTimeout.ms = 2_000
-    try { await callback() } finally { linearRequestTimeout.ms = 12_000 }
-  }
-  const { AfterContext } = await import('next/dist/server/after/after-context')
-  const { workAsyncStorage } = await import('next/dist/server/app-render/work-async-storage.external')
-  const { workUnitAsyncStorage } = await import('next/dist/server/app-render/work-unit-async-storage.external')
-  const { createRequestStoreForAPI } = await import('next/dist/server/async-storage/request-store')
-  const { NextRequest } = await import('next/server')
-  // Native HTTP has no Next request context. Run the same after callbacks that
-  // Next runs when a request closes, and fail if an asynchronous effect fails.
+  const { createRequestScope, runRequestScope } = await import('../apps/api/src/context')
+  const { RouteRequest } = await import('../lib/server-runtime/server')
+  // Run the request scope and its after queue the way the API dispatcher does,
+  // so a deferred effect that fails fails this test too.
   async function withRequestContext<T>(fn: () => Promise<T>, beforeClose?: () => Promise<void>) {
-    const waits: Promise<unknown>[] = [], errors: unknown[] = []
-    const closes: Array<() => void> = []
-    const afterContext = new AfterContext({ waitUntil: promise => { waits.push(promise) }, onClose: callback => { closes.push(callback) }, onTaskError: error => { errors.push(error) } })
-    const request = new NextRequest('http://127.0.0.1/mikka')
-    // Next 16.4 adds an optional HMR hash to the API request-store factory;
-    // supplying it also works with the local 16.1 acceptance dependencies.
-    const requestStore: ReturnType<typeof createRequestStoreForAPI> = Reflect.apply(createRequestStoreForAPI, undefined, [request, new URL(request.url), { tags: [], expirationsByCacheKind: new Map() }, undefined, undefined, undefined])
-    return workAsyncStorage.run({ afterContext } as NonNullable<ReturnType<typeof workAsyncStorage.getStore>>, () => workUnitAsyncStorage.run(requestStore, async () => {
+    const scope = createRequestScope(new RouteRequest('http://127.0.0.1/mikka'))
+    return runRequestScope(scope, async () => {
       try { const result = await fn(); await beforeClose?.(); return result }
-      finally { for (const close of closes) close(); await Promise.all(waits); assert.deepEqual(errors, []) }
-    }))
+      finally { await scope.after.finish() }
+    })
   }
   const inWorkspace = <T>(userId: string, fn: () => Promise<T>, workspaceId: string = workspace) => actAs({ id: userId, [tokenWorkspace]: workspaceId }, fn)
   const action = <T>(fn: () => Promise<T>, beforeClose?: () => Promise<void>) => withRequestContext(() => inWorkspace(owner, fn), beforeClose)
   const { issueForUser } = await import('../lib/issue-access')
   const { readRun, queueRun, visibleRuns } = await import('../lib/agent-runs')
   const { issueRunToken, verifyRunToken } = await import('../lib/mcp/worker')
-  const { renewRunLeases } = await import('../lib/run-leases')
   const { completeRunForDevice, dispatchCompletedIssue } = await import('../lib/run-completion')
   const { persistRunCompletion, prepareRunPublication, publishRunResult } = await import('../lib/run-publications')
   const { authorizedClaimResponse } = await import('../lib/run-claim-response')
-  const { createAppIssueFromLinear, applyLinearIssueToApp, syncAppIssueToLinear } = await import('../lib/linear-sync/issue-sync')
-  const { processLinearIssueOutbox, processLinearInboxDelivery } = await import('../lib/linear-sync/worker')
   const { hashDeviceToken } = await import('../lib/device-link')
   const complete = await import('../app/v1/runs/[runId]/complete/route')
   const claim = await import('../app/v1/devices/[deviceId]/runs/[runId]/claim/route')
   const { db } = await import('../lib/db')
-  const { linearTeamSyncs, linearIssueLinks } = await import('../lib/db/schema')
-  const { eq } = await import('drizzle-orm')
   const owner = `scope-owner-${randomUUID()}`, member = `scope-member-${randomUUID()}`
   const workspace = randomUUID(), team = randomUUID(), sync = randomUUID(), device = randomUUID(), agent = randomUUID(), repo = randomUUID()
   const ownerDevice=randomUUID(),ownerAgent=randomUUID(),ownerRepo=randomUUID()
   const issue = randomUUID(), memberRun = randomUUID(), ownerRun = randomUUID()
   const fixtureIds: string[] = [issue]
   const noExternalFetch = globalThis.fetch
-  const originalFlagKey = process.env.NEXT_PUBLIC_POSTHOG_KEY
+  const originalFlagKey = process.env.MIKKA_PUBLIC_POSTHOG_KEY
   const flagKey = `synthetic-scope-flag-${randomUUID()}`
-  process.env.NEXT_PUBLIC_POSTHOG_KEY = flagKey
-  t.after(() => { if(originalFlagKey===undefined) delete process.env.NEXT_PUBLIC_POSTHOG_KEY;else process.env.NEXT_PUBLIC_POSTHOG_KEY=originalFlagKey })
+  process.env.MIKKA_PUBLIC_POSTHOG_KEY = flagKey
+  t.after(() => { if(originalFlagKey===undefined) delete process.env.MIKKA_PUBLIC_POSTHOG_KEY;else process.env.MIKKA_PUBLIC_POSTHOG_KEY=originalFlagKey })
   let rejectedExternalRequests = 0
   let linearLoopbackOrigin: string | undefined
   globalThis.fetch = (async (input, init) => {
@@ -151,68 +124,18 @@ test('provider policy preserves task tenancy and independent membership gates on
   for (const id of [owner,member]) await pool.query('insert into mikka_workspace_members ("workspaceId","userId",name,email,role,status) values ($1,$2,\'Synthetic\',$3,\'member\',\'active\')', [workspace,id,`${id}@example.invalid`])
   await pool.query('insert into mikka_teams (id,"workspaceId","userId",name,identifier) values ($1,$2,$3,\'Scope\',\'MIK\')', [team,workspace,owner])
   await pool.query('insert into linear_team_syncs (id,"ownerId","linearTeamId","linearTeamKey","linearTeamName","workspaceId") values ($1,$2,$3,\'MIK\',\'Synthetic\',$4)', [sync,owner,team,workspace])
-  const legacyFailed=randomUUID(), legacyImported=randomUUID(), legacyLink=randomUUID()
-  const policyFunctions = ['prevent_blocked_linear_publish','enqueue_linear_issue_sync','detach_personal_issue','protect_verified_linear_target','require_explicit_workspace_scope','preserve_linear_block','preserve_linear_archive_request']
-  const policyTriggers = ['prevent_blocked_linear_outbox','prevent_blocked_linear_link','preserve_linear_block','protect_verified_linear_target','preserve_linear_archive_request']
-  const readPolicyFunctions = () => pool.query<{ name: string; definition: string }>(`SELECT p.proname AS name,pg_get_functiondef(p.oid) AS definition FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.proname=ANY($1::text[]) ORDER BY p.proname`,[policyFunctions]).then(result=>result.rows)
-  const currentFunctions = await readPolicyFunctions()
-  const currentTriggers = (await pool.query<{ table: string; name: string; definition: string }>(`SELECT c.relname AS table,t.tgname AS name,pg_get_triggerdef(t.oid) AS definition FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal AND t.tgname=ANY($1::text[]) ORDER BY t.tgname`,[policyTriggers])).rows
-  const currentOutboxIndex = (await pool.query<{ definition: string }>(`SELECT pg_get_indexdef('linear_sync_outbox_open_issue_key'::regclass) AS definition`)).rows[0].definition
-  try {
-    // Recreate the pre-verification migration state in this fresh synthetic DB
-    // so an unlinked terminal job can exist exactly as it could before 2242.
-    // Only this fresh fixture database receives the historical DDL. Its current
-    // function/trigger definitions are restored exactly before application reads.
-    // Restore the old index contract too: 2241's ON CONFLICT predicate predates
-    // the archive operation column. This is the newly created fixture DB only.
-    await pool.query(`drop index linear_sync_outbox_open_issue_key;
-    create unique index linear_sync_outbox_open_issue_key on linear_sync_outbox("issueId") where status in ('queued','processing')`)
-    await pool.query(await readFile(new URL('../drizzle/20261029043641_team_issue_creation_gate.sql',import.meta.url),'utf8'))
-    await registeredTask(pool, owner, workspace, legacyFailed, client => client.query('insert into issues (id,"userId",title,content,status,priority,scope,"workspaceId","ownershipState","linearSyncPolicy") values ($1,$2,\'Legacy failed-only task\',$3,\'todo\',\'normal\',\'workspace\',$4,\'bound\',\'explicit\')',[legacyFailed,owner,doc,workspace]))
-    await pool.query('update linear_sync_outbox set status=\'failed\',attempts=8 where "issueId"=$1',[legacyFailed])
-    assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and status=\'failed\'',[legacyFailed])).rows[0].n,1)
-    fixtureIds.push(legacyFailed)
-    // A synthetic legacy Linear-origin task imported before verified-target
-    // migration, now on generation 2. The trusted migration derives the flag
-    // from its immutable revision-1 Linear history; no fixture sets it directly.
-    await registeredTask(pool, owner, workspace, legacyImported, client => client.query('insert into issues (id,"userId",title,content,status,priority,scope,"scopeVersion",revision,"workspaceId","ownershipState","linearSyncPolicy") values ($1,$2,\'Legacy imported task\',$3,\'todo\',\'normal\',\'workspace\',2,1,$4,\'bound\',\'explicit\')',[legacyImported,owner,doc,workspace]))
-    await pool.query('insert into issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id) values ($1,$2,$3,1,\'Legacy imported task\',$4,\'todo\',\'normal\',\'system\',\'linear\')',[randomUUID(),legacyImported,owner,doc])
-    await pool.query('insert into linear_issue_links (id,"issueId","ownerId","teamSyncId","linearIssueId","linearIdentifier") values ($1,$2,$3,$4,$2::uuid::text,\'MIK-legacy\')',[legacyLink,legacyImported,owner,sync])
-    await pool.query('update linear_sync_outbox set status=\'done\' where "issueId"=$1',[legacyImported])
-    assert.equal((await pool.query('select "externalTargetVerified" from linear_issue_links where id=$1',[legacyLink])).rows[0].externalTargetVerified,false)
-    // Replay the tracked migration's legacy backfill while the isolated DB has
-    // only this synthetic legacy fixture. It includes its normal trigger DDL.
-    await pool.query(await readFile(new URL('../drizzle/20261029043643_require_verified_team_promotion.sql',import.meta.url),'utf8'))
-    // Restore the subsequent tracked scope gate; the older migration replaces
-    // its function body. The finally block then restores the current P0 policy.
-    await pool.query(await readFile(new URL('../drizzle/20261029043644_team_issue_promotions.sql',import.meta.url),'utf8'))
-    await pool.query(await readFile(new URL('../drizzle/20261031050735_archive_linear_on_personal_scope.sql',import.meta.url),'utf8'))
-    assert.equal((await pool.query('select "externalTargetVerified" from linear_issue_links where id=$1',[legacyLink])).rows[0].externalTargetVerified,true)
-    fixtureIds.push(legacyImported)
-  } finally {
-    for (const saved of currentFunctions) await pool.query(saved.definition)
-    for (const saved of currentTriggers) {
-      await pool.query(`DROP TRIGGER "${saved.name}" ON "${saved.table}"`)
-      await pool.query(saved.definition)
-    }
-    await pool.query('DROP INDEX linear_sync_outbox_open_issue_key')
-    await pool.query(currentOutboxIndex)
-  }
-  assert.deepEqual(await readPolicyFunctions(),currentFunctions,'historical backfill must not replace the current tenant/provider policy')
   const claimHarnesses = JSON.stringify([{harness:'codex',installed:true,toolApproval:true}])
   const memberRemote = `https://github.com/mikka-ci/scope-member-${device}.git`
   const ownerRemote = `https://github.com/mikka-ci/scope-owner-${ownerDevice}.git`
-  await pool.query('insert into devices (id,"ownerId",name,"protocolVersion",harnesses) values ($1,$2,\'Synthetic\',$3,$4)', [device,member,DAEMON_PROTOCOL_VERSION,claimHarnesses])
+  await pool.query('insert into devices (id,"ownerId",name,"protocolVersion",harnesses,"sessionOpenedAt") values ($1,$2,\'Synthetic\',$3,$4,now())', [device,member,DAEMON_PROTOCOL_VERSION,claimHarnesses])
   await pool.query('insert into agents (id,"userId",harness,name,"deviceId") values ($1,$2,\'codex\',\'Synthetic\',$3)', [agent,member,device])
   await pool.query('insert into device_repos (id,"deviceId","userId","repoPath","remoteUrl","baseBranch") values ($1,$2,$3,$4,$5,\'main\')', [repo,device,member,remoteKey(memberRemote),memberRemote])
-  await pool.query('insert into devices (id,"ownerId",name,"protocolVersion",harnesses) values ($1,$2,\'Synthetic owner\',$3,$4)', [ownerDevice,owner,DAEMON_PROTOCOL_VERSION,claimHarnesses])
+  await pool.query('insert into devices (id,"ownerId",name,"protocolVersion",harnesses,"sessionOpenedAt") values ($1,$2,\'Synthetic owner\',$3,$4,now())', [ownerDevice,owner,DAEMON_PROTOCOL_VERSION,claimHarnesses])
   await pool.query('insert into agents (id,"userId",harness,name,"deviceId") values ($1,$2,\'codex\',\'Synthetic owner\',$3)', [ownerAgent,owner,ownerDevice])
   await pool.query('insert into device_repos (id,"deviceId","userId","repoPath","remoteUrl") values ($1,$2,$3,$4,$5)', [ownerRepo,ownerDevice,owner,remoteKey(ownerRemote),ownerRemote])
   const deviceToken = `synthetic-${randomUUID()}`
   await pool.query('insert into device_tokens (id,"userId","tokenHash") values ($1,$2,$3)', [randomUUID(),member,hashDeviceToken(deviceToken)])
-  const [teamSync] = await db.select().from(linearTeamSyncs).where(eq(linearTeamSyncs.id,sync))
-  const remote = (id: string) => ({ id, identifier:'MIK-184', title:'Stale external title', description:'Old workspace description', dueDate:null, priority:0, url:'https://example.invalid/synthetic',updatedAt:new Date(Date.now()+60000).toISOString(),state:null,team:{id:team,key:'MIK',name:'Synthetic'},assignee:null,labels:[] })
-  const { loadIssueDocument, encodedIssueDocument } = await import('../lib/linear-sync/document')
+  const { loadIssueDocument, encodedIssueDocument } = await import('../lib/task-comments/issue-document')
   async function seed(id: string, remoteId = id, linked = true) {
     if (!fixtureIds.includes(id)) fixtureIds.push(id)
     const content = id === issue ? mainDoc : doc
@@ -242,14 +165,13 @@ test('provider policy preserves task tenancy and independent membership gates on
   }
   const setMembership = (userId: string,status: 'active' | 'suspended',workspaceId: string=workspace) => pool.query('update mikka_workspace_members set status=$3 where "workspaceId"=$1 and "userId"=$2',[workspaceId,userId,status])
   await seed(issue)
-  const [originalLink] = await db.select().from(linearIssueLinks).where(eq(linearIssueLinks.issueId, issue))
   for (const [id,user] of [[memberRun,member],[ownerRun,owner]]) await pool.query('insert into agent_runs (id,"userId","issueId","agentId","deviceId","deviceRepoId",status,"leaseExpiresAt") values ($1,$2,$3,$4,$5,$6,\'queued\',now()+interval \'1 minute\')', [id,user,issue,user===owner?ownerAgent:agent,user===owner?ownerDevice:device,user===owner?ownerRepo:repo])
   await pool.query('update agent_runs set status=\'running\' where id=$1',[ownerRun])
   const memberToken = (await issueRunToken({id:memberRun,userId:member})).token
   const ownerToken = (await issueRunToken({id:ownerRun,userId:owner})).token
   async function withClaimServer(check: (origin: string)=>Promise<void>, runId = memberRun) {
     const server = createServer(async (incoming,outgoing) => {
-      const request = new Request(`http://127.0.0.1${incoming.url}`,{method:'POST',headers:{'x-mikka-client-version':incoming.headers['x-mikka-client-version']?.toString()??'',authorization:incoming.headers.authorization??'',[REPO_ORIGIN_HEADER]:incoming.headers[REPO_ORIGIN_HEADER]?.toString()??''}})
+      const request = new Request(`http://127.0.0.1${incoming.url}`,{method:'POST',headers:{'x-mikka-device-session': '1', 'x-mikka-client-version':incoming.headers['x-mikka-client-version']?.toString()??'',authorization:incoming.headers.authorization??'',[REPO_ORIGIN_HEADER]:incoming.headers[REPO_ORIGIN_HEADER]?.toString()??''}})
       try {
         const response = await claim.POST(request,{params:Promise.resolve({deviceId:device,runId})})
         outgoing.writeHead(response.status,Object.fromEntries(response.headers));outgoing.end(await response.text())
@@ -283,7 +205,7 @@ test('provider policy preserves task tenancy and independent membership gates on
     assert.ok('preview' in next && next.preview);assert.equal(next.preview.externalCopyPossible,true);assert.equal(next.preview.hasLinearLink,false)
     assert.ok('issue' in await inWorkspace(owner,()=>confirmIssuePersonalScope({id,revision:next.preview.revision,confirmation:next.preview.confirmation})))
     assert.deepEqual((await pool.query('select scope,"workspaceId","linearSyncPolicy" from issues where id=$1',[id])).rows[0],{scope:'workspace',workspaceId:workspace,linearSyncPolicy:'disabled'})
-    assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and operation=\'archive\'',[id])).rows[0].n,1)
+    assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and operation=\'archive\'',[id])).rows[0].n,0)
     const linkedId=randomUUID();await seed(linkedId)
     const linked=await inWorkspace(owner,()=>previewIssuePersonalScope(linkedId))
     assert.ok('preview' in linked && linked.preview);assert.equal(linked.preview.hasLinearLink,true);assert.equal(linked.preview.externalCopyPossible,true)
@@ -306,7 +228,7 @@ test('provider policy preserves task tenancy and independent membership gates on
   })
   await scopeSubtest(t, 'the same native claim route succeeds while workspace access is still active', async () => {
     await withClaimServer(async origin=>{
-      const response=await fetch(`${origin}/claim`,{method:'POST',headers:{'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`,[REPO_ORIGIN_HEADER]:'1'}})
+      const response=await fetch(`${origin}/claim`,{method:'POST',headers:{'x-mikka-device-session': '1', 'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`,[REPO_ORIGIN_HEADER]:'1'}})
       assert.equal(response.status,200,await response.clone().text())
       const claimed=await response.json()
       assert.equal(claimed.runId,memberRun)
@@ -330,7 +252,7 @@ test('provider policy preserves task tenancy and independent membership gates on
       const pid=(await blocker.query('select pg_backend_pid() pid')).rows[0].pid
       await withClaimServer(async origin=>{
         try {
-          responsePromise=fetch(`${origin}/claim`,{method:'POST',headers:{'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`,[REPO_ORIGIN_HEADER]:'1'}})
+          responsePromise=fetch(`${origin}/claim`,{method:'POST',headers:{'x-mikka-device-session': '1', 'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`,[REPO_ORIGIN_HEADER]:'1'}})
           await waitFor(async()=>Boolean((await pool.query("select 1 from pg_stat_activity a where a.wait_event_type='Lock' and $1=any(pg_blocking_pids(a.pid))",[pid])).rowCount),'claim did not pause before token issuance')
           assert.equal((await pool.query('select status from agent_runs where id=$1',[run])).rows[0].status,'preparing')
           const preview=await inWorkspace(owner,()=>previewIssuePersonalScope(id))
@@ -399,7 +321,6 @@ test('provider policy preserves task tenancy and independent membership gates on
     assert.ok(await readRun(member,memberRun))
     assert.ok((await visibleRuns(member,{issueId:issue})).some(run=>run.id===memberRun))
     assert.ok(await verifyRunToken(new Request('http://127.0.0.1/'),memberToken))
-    assert.ok((await renewRunLeases(device,[memberRun])).leases[memberRun])
     const generation=(await pool.query('select "scopeVersion" from issues where id=$1',[issue])).rows[0].scopeVersion
     await setMembership(member,'suspended')
     try {
@@ -410,12 +331,8 @@ test('provider policy preserves task tenancy and independent membership gates on
       assert.ok(await readRun(owner,ownerRun))
       assert.equal(Boolean(await verifyRunToken(new Request('http://127.0.0.1/'),memberToken)),false)
       assert.ok(await verifyRunToken(new Request('http://127.0.0.1/'),ownerToken))
-      const renewal = await renewRunLeases(device,[memberRun])
-      assert.deepEqual(renewal.revoked,[memberRun])
-      assert.ok((await renewRunLeases(ownerDevice,[ownerRun])).leases[ownerRun])
-      const row = (await pool.query('select status,"leaseExpiresAt","stopRequestedAt","workspaceId" from agent_runs where id=$1',[memberRun])).rows[0]
-      assert.equal(row.status,'preparing'); assert.ok(row.stopRequestedAt);assert.equal(row.workspaceId,workspace)
-      assert.ok(new Date(row.leaseExpiresAt).getTime()<=Date.now())
+      // There is no lease renewal to revoke at (decision 2026-11-17-2215): the
+      // membership writer (lib/workspace-admin/members.ts) stops the runs it affects.
       const runCount=(await pool.query('select count(*)::int n from agent_runs where "issueId"=$1',[issue])).rows[0].n
       await assert.rejects(queueRun(member,{issueId:issue,agentId:agent,repo:'https://github.com/mikka-ci/scope-fixture.git',model:'fixture-model'}),/issueNotFound/)
       await assert.rejects(issueRunToken({id:memberRun,userId:member}))
@@ -428,7 +345,7 @@ test('provider policy preserves task tenancy and independent membership gates on
     try {
       await withClaimServer(async origin=>{
         assert.equal((await fetch(`${origin}/claim`,{method:'POST'})).status,401)
-        const response=await fetch(`${origin}/claim`,{method:'POST',headers:{'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`}})
+        const response=await fetch(`${origin}/claim`,{method:'POST',headers:{'x-mikka-device-session': '1', 'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`}})
         assert.equal(response.status,409)
         assert.equal((await response.text()).includes('prompt'),false)
       })
@@ -440,42 +357,9 @@ test('provider policy preserves task tenancy and independent membership gates on
       assert.equal(await issueForUser(owner,issue),null)
       assert.equal(await readRun(owner,ownerRun),null)
       assert.equal(Boolean(await verifyRunToken(new Request('http://127.0.0.1/'),ownerToken)),false)
-      assert.deepEqual((await renewRunLeases(ownerDevice,[ownerRun])).revoked,[ownerRun])
       await assert.rejects(issueRunToken({id:ownerRun,userId:owner}))
       assert.ok(await issueForUser(member,issue),'another active member keeps the shared task')
     } finally { await setMembership(owner,'active') }
-  })
-  await scopeSubtest(t, 'replayed imports, forced snapshots and outbox retries cannot re-enable disabled synchronization', async () => {
-    for (let index=0;index<2;index++) assert.equal(await createAppIssueFromLinear(teamSync,remote(issue)),null)
-    assert.equal(await applyLinearIssueToApp(teamSync,remote(issue),true),null)
-    await pool.query('insert into linear_sync_outbox (id,"issueId") values ($1,$2)',[randomUUID(),issue])
-    await processLinearIssueOutbox(issue)
-    await syncAppIssueToLinear(issue)
-    assert.deepEqual((await pool.query('select scope,"workspaceId","linearSyncPolicy" from issues where id=$1',[issue])).rows[0],{scope:'workspace',workspaceId:workspace,linearSyncPolicy:'disabled'})
-    assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and operation=\'sync\' and status<>\'done\'',[issue])).rows[0].n,0)
-    await assert.rejects(pool.query('insert into linear_issue_links (id,"issueId","ownerId","teamSyncId","linearIssueId","linearIdentifier") values ($1,$2,$3,$4,$5,\'MIK-184\')',[randomUUID(),issue,owner,sync,issue]),(error:unknown)=>(error as {code:string}).code==='23514')
-  })
-  await scopeSubtest(t, 'delayed issue and comment deliveries finish without fetching the external provider', async () => {
-    for (const type of ['Issue','Comment']) {
-      const deliveryId=`scope-${randomUUID()}`
-      const data=type==='Issue'?{id:issue,teamId:team}:{id:randomUUID(),issueId:issue,issue:{id:issue,teamId:team}}
-      const payload={type,action:'update',organizationId:'synthetic',data}
-      await pool.query('insert into linear_sync_inbox ("deliveryId","organizationId","eventType",payload) values ($1,\'synthetic\',$2,$3)',[deliveryId,type,JSON.stringify(payload)])
-      await processLinearInboxDelivery(deliveryId)
-      await processLinearInboxDelivery(deliveryId)
-      assert.equal((await pool.query('select status,attempts from linear_sync_inbox where "deliveryId"=$1',[deliveryId])).rows[0].status,'done')
-    }
-    const { applyLinearCommentToApp }=await import('../lib/linear-sync/comment-sync')
-    const [oldIssue]=(await pool.query('select * from issues where id=$1',[issue])).rows
-    const beforeDocument=(await pool.query('select state from issue_documents where "issueId"=$1',[issue])).rows[0]?.state
-    await applyLinearCommentToApp({issue:oldIssue,issueLink:originalLink,id:randomUUID(),body:'late external comment',author:'Synthetic',parentId:null,createdAt:new Date().toISOString(),action:'update'})
-    assert.equal((await pool.query('select state from issue_documents where "issueId"=$1',[issue])).rows[0]?.state,beforeDocument)
-  })
-  await scopeSubtest(t, 'a detached remote UUID different from the local UUID cannot create a second workspace task', async () => {
-    const id = randomUUID(),remoteId=randomUUID()
-    await seed(id,remoteId);await localFlip(id)
-    assert.equal(await createAppIssueFromLinear(teamSync,remote(remoteId)),null)
-    assert.equal((await pool.query('select count(*)::int n from issues where id=$1',[remoteId])).rows[0].n,0)
   })
   await scopeSubtest(t, 'version write failure rolls back provider policy, tombstone, link and outbox together', async () => {
     const id=randomUUID();await seed(id)
@@ -538,7 +422,7 @@ test('provider policy preserves task tenancy and independent membership gates on
     const server=createServer(async(incoming,outgoing)=>{
       const chunks:Buffer[]=[];for await(const chunk of incoming) chunks.push(Buffer.from(chunk))
       const body=Buffer.concat(chunks).toString()
-      const request=new Request(`http://127.0.0.1${incoming.url}`,{method:'POST',headers:{'x-mikka-client-version':incoming.headers['x-mikka-client-version']?.toString()??'',authorization:incoming.headers.authorization??''},body})
+      const request=new Request(`http://127.0.0.1${incoming.url}`,{method:'POST',headers:{'x-mikka-device-session': '1', 'x-mikka-client-version':incoming.headers['x-mikka-client-version']?.toString()??'',authorization:incoming.headers.authorization??''},body})
       request.json=async()=>{prepared.resolve();await release.promise;return JSON.parse(body)}
       try {const response=await withRequestContext(()=>complete.POST(request,{params:Promise.resolve({runId:run})}));outgoing.writeHead(response.status);outgoing.end(await response.text())}
       catch(error) {handlerErrors.push(error);outgoing.writeHead(500);outgoing.end('Completion failed')}
@@ -548,7 +432,7 @@ test('provider policy preserves task tenancy and independent membership gates on
     try {
       const origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`
       const report={summary:'Synthetic verified completion',filesChanged:[],verify:{status:'passed'},openQuestions:[],nextStep:null}
-      responsePromise=fetch(`${origin}/complete`,{method:'POST',headers:{'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`,'content-type':'application/json'},body:JSON.stringify({stopReason:'submitted',report})})
+      responsePromise=fetch(`${origin}/complete`,{method:'POST',headers:{'x-mikka-device-session': '1', 'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`,'content-type':'application/json'},body:JSON.stringify({stopReason:'submitted',report})})
       await prepared.promise
       const changed=await inWorkspace(localOwner,()=>setIssueScope({id,revision:1,scope:'personal'}))
       assert.ok('issue' in changed)
@@ -875,7 +759,7 @@ test('provider policy preserves task tenancy and independent membership gates on
       assert.equal(Boolean(await verifyRunToken(new Request('http://127.0.0.1/'),token)),false)
       assert.equal(await completeRunForDevice(control.actor,{id:fixture.run,issueId:fixture.id},{stopReason:'error'}),null)
       assert.equal((await pool.query('select count(*)::int n from coordinator_events where "runId"=$1',[fixture.run])).rows[0].n,1)
-      if(control.actor===member) assert.equal((await complete.POST(new Request('http://127.0.0.1/complete',{method:'POST',headers:{'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`},body:'invalid-json'}),{params:Promise.resolve({runId:fixture.run})})).status,204)
+      if(control.actor===member) assert.equal((await complete.POST(new Request('http://127.0.0.1/complete',{method:'POST',headers:{'x-mikka-device-session': '1', 'x-mikka-client-version':'0.0.456',authorization:`Bearer ${deviceToken}`},body:'invalid-json'}),{params:Promise.resolve({runId:fixture.run})})).status,204)
     }
     const orphan=await completionFixture(owner,owner,'personal','implement',false)
     const completed=await completeRunForDevice(owner,{id:orphan.run,issueId:null},{stopReason:'error'})
@@ -949,30 +833,6 @@ test('provider policy preserves task tenancy and independent membership gates on
     for(let n=0;n<300;n++) {if(await check()) return;await new Promise(resolve=>setTimeout(resolve,20))}
     assert.fail(label)
   }
-  async function setDiscussion(id:string,body:string) {
-    const {loadIssueDocument,upsertLinearComment,encodedIssueDocument}=await import('../lib/linear-sync/document')
-    const document=loadIssueDocument(null,{type:'doc',content:[]})
-    try {
-      upsertLinearComment(document,{threadId:'scope-thread',messageId:'scope-message',author:'Synthetic',body,at:new Date().toISOString()})
-      await pool.query('insert into issue_documents ("issueId","userId",state) values ($1,$2,$3) on conflict ("issueId") do update set state=excluded.state',[id,owner,encodedIssueDocument(document)])
-    } finally {document.destroy()}
-  }
-  async function privatize(id:string,title='personal-only-draft') {
-    const revision=(await pool.query('select revision from issues where id=$1',[id])).rows[0].revision
-    assert.ok('issue' in await localFlip(id,revision))
-    const privateContent={type:'doc',attrs:{mikka:{}},content:[{type:'paragraph',content:[{type:'text',text:'privatebodysecret'}]}]}
-    await pool.query('update issues set title=$2,content=$3,revision=revision+1,"updatedAt"=now() where id=$1',[id,title,JSON.stringify(privateContent)])
-  }
-  async function republish(id:string,title='new-publication-title') {
-    await pool.query('update issues set title=$2,revision=revision+1,"updatedAt"=now() where id=$1',[id,title])
-    const revision=(await pool.query('select revision from issues where id=$1',[id])).rows[0].revision
-    const result=await promoteExistingIssueForUser(owner,{requestId:randomUUID(),issueId:id,revision,teamId:team,expectedTeamId:team})
-    assert.ok('issue' in result && result.issue);assert.equal(result.issue.scope,'workspace');assert.equal(result.issue.linearSyncBlocked,true)
-    assert.deepEqual(result.linearSync,{enabled:false,reason:'no_explicit_target'})
-    await processLinearIssueOutbox(id)
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-    return result.issue
-  }
   await scopeSubtest(t, 'public app and MCP creation use the explicit tenant without inferring Linear consent',async()=>{
     const calls=provider.requests.length
     const {createIssue}=await import('../lib/mcp/actions')
@@ -997,256 +857,6 @@ test('provider policy preserves task tenancy and independent membership gates on
       }
     }
     assert.equal(provider.requests.length,calls)
-  })
-  async function inbound(type:'Issue'|'Comment',action:string,data:Record<string,unknown>) {
-    const deliveryId=`scope-inbound-${randomUUID()}`
-    await pool.query('insert into linear_sync_inbox ("deliveryId","organizationId","eventType",payload) values ($1,\'synthetic\',$2,$3)',[deliveryId,type,JSON.stringify({type,action,organizationId:'synthetic',data})])
-    await processLinearInboxDelivery(deliveryId)
-    assert.equal((await pool.query('select status from linear_sync_inbox where "deliveryId"=$1',[deliveryId])).rows[0].status,'done')
-  }
-  await scopeSubtest(t, 'verified issue and comment removal events preserve links and acknowledge the remote removal',async()=>{
-    const id=randomUUID();await seed(id)
-    const link=(await pool.query('select id from linear_issue_links where "issueId"=$1',[id])).rows[0]
-    const commentId=randomUUID(),commentLinkId=randomUUID()
-    await pool.query('insert into linear_comment_links (id,"issueLinkId","threadId","messageId","linearCommentId","bodyHash") values ($1,$2,\'remove-thread\',\'remove-message\',$3,\'synthetic\')',[commentLinkId,link.id,commentId])
-    const calls=provider.requests.length
-    await inbound('Comment','remove',{id:commentId,issueId:id})
-    assert.equal((await pool.query('select "syncStatus" from linear_comment_links where id=$1',[commentLinkId])).rows[0].syncStatus,'remote_removed')
-    await inbound('Issue','remove',{id,teamId:team})
-    const current=(await pool.query('select "externalTargetVerified","syncStatus","remoteRemovedAt" is not null removed from linear_issue_links where id=$1',[link.id])).rows[0]
-    assert.deepEqual(current,{externalTargetVerified:true,syncStatus:'remote_removed',removed:true})
-    assert.equal(provider.requests.length,calls)
-  })
-  await scopeSubtest(t, 'removal waiting for the issue lock cannot write after retirement commits',async()=>{
-    const id=randomUUID();await seed(id)
-    const locker=await pool.connect();let delivery:Promise<void>|undefined
-    const beforeCalls=provider.requests.length
-    try {
-      await locker.query('begin');await locker.query('select id from issues where id=$1 for update',[id])
-      delivery=inbound('Issue','remove',{id,teamId:team})
-      await waitFor(async()=>Boolean((await pool.query("select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%issues%for update%' and pid<>pg_backend_pid()")).rows[0]),'remove did not wait for the issue lock')
-      await locker.query('update issues set "linearSyncPolicy"=\'disabled\',"linearSyncBlocked"=true,revision=revision+1 where id=$1',[id])
-      await locker.query('commit')
-      const snapshot=(await pool.query('select title,status,scope,revision,"updatedAt" from issues where id=$1',[id])).rows[0]
-      await delivery
-      assert.deepEqual((await pool.query('select title,status,scope,revision,"updatedAt" from issues where id=$1',[id])).rows[0],snapshot)
-      assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-      assert.equal(provider.requests.length,beforeCalls)
-    } finally {await locker.query('rollback');locker.release();if(delivery) await Promise.allSettled([delivery])}
-  })
-  await scopeSubtest(t, 'external UUID collision with personal task cannot clear diagnostics or change personal data',async()=>{
-    const result=await withRequestContext(()=>inWorkspace(owner,()=>saveIssue({title:'Personal external collision',content:JSON.parse(doc),status:'todo',priority:'normal'}),ownerPersonal))
-    assert.ok('issue' in result && result.issue);const id=result.issue.id;fixtureIds.push(id)
-    provider.issues.set(id,remote(id))
-    await pool.query('update linear_team_syncs set "lastError"=\'preserved-personal-diagnostic\' where id=$1',[sync])
-    const snapshot=(await pool.query('select title,status,scope,revision,"updatedAt" from issues where id=$1',[id])).rows[0]
-    const calls=provider.requests.length
-    await inbound('Issue','update',{id,teamId:team})
-    assert.deepEqual((await pool.query('select title,status,scope,revision,"updatedAt" from issues where id=$1',[id])).rows[0],snapshot)
-    assert.equal((await pool.query('select "lastError" from linear_team_syncs where id=$1',[sync])).rows[0].lastError,'preserved-personal-diagnostic')
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-    assert.ok(provider.requests.length>calls)
-    assert.ok(provider.requests.slice(calls).every(call=>call.operation==='MikkaLinearIssue'))
-  })
-  await scopeSubtest(t, 'retired reservations cannot trigger incoming lookups or clear later diagnostics',async()=>{
-    const id=randomUUID();await seed(id,id,false)
-    const remoteId=randomUUID(),reservation=randomUUID()
-    await pool.query('insert into linear_issue_publications (id,"issueId","ownerId","teamSyncId","scopeVersion","linearIssueId") values ($1,$2,$3,$4,1,$5)',[reservation,id,owner,sync,remoteId])
-    await privatize(id);const promoted=await republish(id)
-    await assert.rejects(pool.query('insert into linear_issue_publications (id,"issueId","ownerId","teamSyncId","scopeVersion","linearIssueId") values ($1,$2,$3,$4,$5,$6)',[randomUUID(),id,owner,sync,promoted.scopeVersion,randomUUID()]),(error:unknown)=>(error as {code:string}).code==='23514')
-    assert.equal((await pool.query('select "retiredAt" is not null retired from linear_issue_publications where id=$1',[reservation])).rows[0].retired,true)
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_publications where "issueId"=$1',[id])).rows[0].n,1)
-    provider.issues.set(remoteId,remote(remoteId))
-    await pool.query('update linear_team_syncs set "lastError"=\'preserved-blocked-diagnostic\' where id=$1',[sync])
-    const snapshot=(await pool.query('select title,status,scope,revision,"updatedAt" from issues where id=$1',[id])).rows[0]
-    const calls=provider.requests.length
-    await inbound('Issue','update',{id:remoteId,teamId:team})
-    assert.deepEqual((await pool.query('select title,status,scope,revision,"updatedAt" from issues where id=$1',[id])).rows[0],snapshot)
-    assert.equal((await pool.query('select "lastError" from linear_team_syncs where id=$1',[sync])).rows[0].lastError,'preserved-blocked-diagnostic')
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-    assert.equal(provider.requests.length,calls,'the retained retired identity is rejected before any provider lookup')
-  })
-  await scopeSubtest(t, 'a genuinely new remote task still imports through the authorized team and clears its diagnostic',async()=>{
-    const id=randomUUID();provider.issues.set(id,remote(id))
-    await pool.query('update linear_team_syncs set "lastError"=\'new-remote-control\' where id=$1',[sync])
-    const calls=provider.requests.length
-    await inbound('Issue','update',{id,teamId:team})
-    const current=(await pool.query('select i.id,i.scope,i."workspaceId",i."ownershipState",i."linearSyncPolicy",i."linearSyncBlocked",l."externalTargetVerified" from issues i join linear_issue_links l on l."issueId"=i.id where l."linearIssueId"=$1',[id])).rows[0]
-    assert.ok(current);assert.notEqual(current.id,id);fixtureIds.push(current.id)
-    assert.deepEqual(current,{id:current.id,scope:'workspace',workspaceId:workspace,ownershipState:'bound',linearSyncPolicy:'explicit',linearSyncBlocked:false,externalTargetVerified:true})
-    assert.equal((await pool.query('select "lastError" from linear_team_syncs where id=$1',[sync])).rows[0].lastError,null)
-    assert.ok(provider.requests.length>calls)
-    assert.ok(provider.requests.slice(calls).every(call=>call.operation==='MikkaLinearIssue'))
-  })
-  await scopeSubtest(t, 'an in-flight old update cannot write personal state or upload its captured comments',async()=>{
-    const id=randomUUID();await seed(id)
-    provider.issues.set(id,{...remote(id),updatedAt:'2020-01-01T00:00:00.000Z'})
-    await setDiscussion(id,'old-publication-comment')
-    const hold=provider.hold('MikkaLinearUpdateIssue'),request=processLinearIssueOutbox(id)
-    try {
-      await hold.arrived
-      await privatize(id)
-      const snapshot=(await pool.query('select scope,title from issues where id=$1',[id])).rows[0]
-      assert.deepEqual(snapshot,{scope:'workspace',title:'personal-only-draft'})
-      const before=provider.requests.length
-      hold.release();await request
-      assert.deepEqual((await pool.query('select scope,title from issues where id=$1',[id])).rows[0],snapshot)
-      assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-      assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and operation=\'sync\' and status<>\'done\'',[id])).rows[0].n,0)
-      await syncAppIssueToLinear(id);await processLinearIssueOutbox(id)
-      assert.ok(provider.requests.slice(before).every(call=>['MikkaLinearArchiveState','MikkaLinearArchiveIssue'].includes(call.operation)), 'only the explicit old-target archive may run after retirement')
-      assert.equal(JSON.stringify(provider.requests.filter(record=>record.variables.id===id||record.variables.input?.id===id)).includes('personal-only-draft'),false)
-      assert.equal(JSON.stringify(provider.requests.filter(record=>record.variables.id===id||record.variables.input?.id===id)).includes('privatebodysecret'),false)
-      assert.equal([...provider.comments.values()].some(comment=>comment.issue.id===id),false)
-    } finally {hold.release();await request}
-  })
-  await scopeSubtest(t, 'old in-flight update cannot attach, publish edits or upload comments after explicit Mikka promotion',()=>withShortLinearTimeout(async()=>{
-    const id=randomUUID();await seed(id);provider.issues.set(id,{...remote(id),updatedAt:'2020-01-01T00:00:00.000Z'})
-    await setDiscussion(id,'old-publication-comment')
-    const hold=provider.hold('MikkaLinearUpdateIssue'),old=processLinearIssueOutbox(id)
-    try {
-      await hold.arrived
-      const oldPublication=(await pool.query('select * from linear_issue_publications where "issueId"=$1',[id])).rows[0]
-      assert.ok(oldPublication)
-      await privatize(id);await setDiscussion(id,'new-private-comment')
-      const promoted=await republish(id)
-      assert.equal(promoted.id,id);assert.equal(promoted.linearSyncBlocked,true)
-      const before=provider.requests.length
-      hold.release();await old
-      // Requeue the actual retained first-generation job, rather than a new
-      // INSERT rejected by the current gate. A stale claimant must not obtain
-      // a usable claim or publish even after workspace scope returns.
-      await pool.query('update linear_sync_outbox set status=\'queued\',"claimToken"=$2 where "issueId"=$1 and operation=\'sync\' and "scopeVersion"=1',[id,randomUUID()])
-      assert.deepEqual((await pool.query('select status,"claimToken","scopeVersion" from linear_sync_outbox where "issueId"=$1 and operation=\'sync\' and "scopeVersion"=1',[id])).rows[0],{status:'failed',claimToken:null,scopeVersion:1})
-      await pool.query('update issues set title=\'post-promotion-edit\' where id=$1',[id])
-      await setDiscussion(id,'post-promotion-comment')
-      assert.deepEqual(await action(()=>retryLinearIssue(id)),{error:'linearIssueInvalid'})
-      await syncAppIssueToLinear(id);await processLinearIssueOutbox(id)
-      assert.ok(provider.requests.slice(before).every(call=>['MikkaLinearArchiveState','MikkaLinearArchiveIssue'].includes(call.operation)), 'a new Mikka generation cannot authorize old sync writes')
-      assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-      assert.equal((await pool.query('select count(*)::int n from linear_issue_publications where "issueId"=$1',[id])).rows[0].n,1)
-      assert.equal((await pool.query('select "retiredAt" is not null retired from linear_issue_publications where id=$1',[oldPublication.id])).rows[0].retired,true)
-      assert.equal(JSON.stringify(provider.requests).includes('privatebodysecret'),false)
-      assert.equal(JSON.stringify(provider.requests).includes('post-promotion-edit'),false)
-      assert.equal([...provider.comments.values()].some(comment=>comment.issue.id===id),false)
-    } finally {hold.release();await old}
-  }))
-  await scopeSubtest(t, 'late retired provider failure cannot attach a link or change later diagnostics',()=>withShortLinearTimeout(async()=>{
-    const id=randomUUID();await seed(id);provider.issues.set(id,{...remote(id),updatedAt:'2020-01-01T00:00:00.000Z'})
-    const hold=provider.hold('MikkaLinearUpdateIssue','after',true),old=processLinearIssueOutbox(id)
-    try {
-      await hold.arrived;await privatize(id);await republish(id)
-      await pool.query('update linear_team_syncs set "lastError"=\'new-generation-diagnostic\' where id=$1',[sync])
-      hold.release();await old
-      assert.equal((await pool.query('select "lastError" from linear_team_syncs where id=$1',[sync])).rows[0].lastError,'new-generation-diagnostic')
-      assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-      assert.equal((await pool.query('select count(*)::int n from linear_issue_publications where "issueId"=$1',[id])).rows[0].n,1)
-    } finally {hold.release();await old}
-  }))
-  await scopeSubtest(t, 'webhook paused in HTTP cannot mutate promoted task or later diagnostics',async()=>{
-    const id=randomUUID();await seed(id);provider.issues.set(id,{...remote(id),updatedAt:'2020-01-01T00:00:00.000Z'})
-    const deliveryId=`held-webhook-${randomUUID()}`
-    await pool.query('insert into linear_sync_inbox ("deliveryId","organizationId","eventType",payload) values ($1,\'synthetic\',\'Issue\',$2)',[deliveryId,JSON.stringify({type:'Issue',action:'update',organizationId:'synthetic',data:{id,teamId:team}})])
-    const hold=provider.hold('MikkaLinearIssue'),inbox=processLinearInboxDelivery(deliveryId)
-    try {
-      await hold.arrived;await privatize(id);await republish(id)
-      await pool.query('update linear_team_syncs set "lastError"=\'new-inbox-generation\' where id=$1',[sync])
-      hold.release();await inbox
-      assert.equal((await pool.query('select "lastError" from linear_team_syncs where id=$1',[sync])).rows[0].lastError,'new-inbox-generation')
-      assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-      assert.equal((await pool.query('select title from issues where id=$1',[id])).rows[0].title,'new-publication-title')
-    } finally {hold.release();await inbox}
-  })
-  await scopeSubtest(t, 'no verified Linear target means promotion, editing, old claims and manual retry cannot publish',async()=>{
-    const id=randomUUID();fixtureIds.push(id)
-    await registeredTask(pool, owner, workspace, id, client => client.query('insert into issues (id,"userId",title,content,status,priority,scope,"workspaceId","ownershipState") values ($1,$2,\'Explicit team control\',$3,\'todo\',\'normal\',\'personal\',$4,\'bound\')',[id,owner,doc,workspace]))
-    const before=provider.requests.length
-    assert.deepEqual(await action(()=>setIssueScope({id,revision:1,scope:'workspace'})),{error:'issueScopeTeamRequired'})
-    const result=await promoteExistingIssueForUser(owner,{requestId:randomUUID(),issueId:id,revision:1,teamId:team,expectedTeamId:null})
-    assert.ok('issue' in result && result.issue);assert.equal(result.issue.linearSyncBlocked,true)
-    assert.equal((await pool.query('select "scopeVersion" from issues where id=$1',[id])).rows[0].scopeVersion,1,'grouping alone cannot grant a new provider generation')
-    await pool.query('update issues set title=\'blocked edit\' where id=$1',[id])
-    await setDiscussion(id,'blocked comment')
-    await pool.query('insert into linear_sync_outbox (id,"issueId","scopeVersion",status,"claimToken") values ($1,$2,1,\'processing\',$3)',[randomUUID(),id,randomUUID()])
-    assert.deepEqual(await action(()=>retryLinearIssue(id)),{error:'linearIssueInvalid'})
-    await processLinearIssueOutbox(id);await syncAppIssueToLinear(id)
-    assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1',[id])).rows[0].n,0)
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[id])).rows[0].n,0)
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_publications where "issueId"=$1',[id])).rows[0].n,0)
-    assert.equal(provider.requests.length,before)
-  })
-  await scopeSubtest(t, 'public retry revalidates retirement while waiting and makes no provider call',async()=>{
-    const id=randomUUID();await seed(id)
-    const lock=await pool.connect();let retry:Promise<unknown>|undefined
-    try {
-      await lock.query('begin');await lock.query('select id from issues where id=$1 for update',[id])
-      retry=action(()=>retryLinearIssue(id))
-      await waitFor(async()=>Boolean((await pool.query("select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%issues%for update%' and pid<>pg_backend_pid()")).rows[0]),'retry did not reach the task lock')
-      await lock.query('update issues set "linearSyncPolicy"=\'disabled\',"linearSyncBlocked"=true,revision=revision+1 where id=$1',[id])
-      const calls=provider.requests.length;await lock.query('commit')
-      assert.deepEqual(await retry,{error:'linearIssueInvalid'});assert.equal(provider.requests.length,calls)
-      assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and operation=\'sync\' and status<>\'done\'',[id])).rows[0].n,0)
-    } finally {await lock.query('rollback');lock.release();if(retry) await retry}
-  })
-  await scopeSubtest(t, 'retiring an uncertain publication retains archive work without guessing an external target',async()=>{
-    const id=randomUUID();await seed(id,id,false)
-    const publication=randomUUID()
-    await pool.query('insert into linear_issue_publications (id,"issueId","ownerId","teamSyncId","scopeVersion","linearIssueId") values ($1,$2,$3,$4,1,$5)',[publication,id,owner,sync,randomUUID()])
-    const calls=provider.requests.length
-    assert.ok('issue' in await inWorkspace(owner,()=>setIssueScope({id,revision:1,scope:'personal'})))
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_publications where id=$1',[publication])).rows[0].n,1)
-    assert.deepEqual((await pool.query('select scope,revision from issues where id=$1',[id])).rows[0],{scope:'workspace',revision:2})
-    assert.equal((await pool.query('select "archiveTarget" from linear_sync_outbox where "issueId"=$1 and operation=\'archive\'',[id])).rows[0].archiveTarget.targetVerified,false)
-    assert.equal(provider.requests.length,calls)
-  })
-  await scopeSubtest(t, 'retained failed sync retires locally while keeping unresolved archive work',async()=>{
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_links where "issueId"=$1',[legacyFailed])).rows[0].n,0)
-    assert.equal((await pool.query('select count(*)::int n from linear_issue_publications where "issueId"=$1',[legacyFailed])).rows[0].n,0)
-    assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and status=\'failed\'',[legacyFailed])).rows[0].n,1)
-    assert.ok('issue' in await inWorkspace(owner,()=>setIssueScope({id:legacyFailed,revision:1,scope:'personal'})))
-  })
-  await scopeSubtest(t, 'legacy generation 2 verified import is retried by the public action with generation 2',async()=>{
-    provider.issues.set(legacyImported,{...remote(legacyImported),title:'Legacy imported task',updatedAt:'2020-01-01T00:00:00.000Z'})
-    assert.equal((await pool.query('select count(*)::int n from linear_sync_outbox where "issueId"=$1 and status in (\'queued\',\'processing\',\'failed\')',[legacyImported])).rows[0].n,0)
-    const calls=provider.requests.length
-    assert.deepEqual(await action(()=>retryLinearIssue(legacyImported),async()=>{
-      const job=(await pool.query('select "scopeVersion" from linear_sync_outbox where "issueId"=$1 and status=\'queued\'',[legacyImported])).rows[0]
-      assert.equal(job.scopeVersion,2)
-    }),{success:true})
-    assert.ok(provider.requests.length>calls)
-    const link=(await pool.query('select "linearIssueId","externalTargetVerified","syncStatus" from linear_issue_links where "issueId"=$1',[legacyImported])).rows[0]
-    assert.deepEqual(link,{linearIssueId:legacyImported,externalTargetVerified:true,syncStatus:'synced'})
-    assert.equal((await pool.query('select "scopeVersion" from linear_issue_publications where "issueId"=$1',[legacyImported])).rows[0].scopeVersion,2)
-  })
-  await scopeSubtest(t, 'manual retry reaches the explicitly imported verified target and retains its generation',async()=>{
-    const id=randomUUID();await seed(id);provider.issues.set(id,{...remote(id),updatedAt:'2020-01-01T00:00:00.000Z'})
-    await pool.query('update linear_sync_outbox set status=\'done\' where "issueId"=$1',[id])
-    const calls=provider.requests.length
-    assert.deepEqual(await action(()=>retryLinearIssue(id),async()=>{
-      const job=(await pool.query('select "scopeVersion" from linear_sync_outbox where "issueId"=$1 and status=\'queued\'',[id])).rows[0]
-      assert.equal(job.scopeVersion,1)
-    }),{success:true})
-    assert.ok(provider.requests.length>calls)
-    const link=(await pool.query('select "linearIssueId","externalTargetVerified","syncStatus" from linear_issue_links where "issueId"=$1',[id])).rows[0]
-    assert.deepEqual(link,{linearIssueId:id,externalTargetVerified:true,syncStatus:'synced'})
-  })
-  await scopeSubtest(t, 'a reclaimed outbox claim fences the old response and refreshes its snapshot after the writer lock',async()=>{
-    const id=randomUUID();await seed(id);provider.issues.set(id,{...remote(id),updatedAt:'2020-01-01T00:00:00.000Z'})
-    await pool.query('update linear_issue_links set "linearUpdatedAt"=\'2020-01-01T00:00:00Z\' where "issueId"=$1',[id])
-    const hold=provider.hold('MikkaLinearUpdateIssue'),old=processLinearIssueOutbox(id)
-    let reclaimed:Promise<void>|undefined
-    try {
-      await hold.arrived
-      const token=(await pool.query('select "claimToken" from linear_sync_outbox where "issueId"=$1',[id])).rows[0].claimToken
-      await pool.query('update issues set title=\'newer-same-generation\',"updatedAt"=now() where id=$1',[id])
-      await pool.query('update linear_sync_outbox set "lastAttemptAt"=now()-interval \'6 minutes\' where "issueId"=$1',[id])
-      reclaimed=processLinearIssueOutbox(id)
-      await waitFor(async()=>Boolean((await pool.query('select 1 from linear_sync_outbox where "issueId"=$1 and "claimToken"<>$2',[id,token])).rows[0]),'new claim did not take ownership')
-      hold.release();await old;await reclaimed
-      assert.equal(provider.issues.get(id)?.title,'newer-same-generation')
-      assert.equal((await pool.query('select "syncStatus" from linear_issue_links where "issueId"=$1',[id])).rows[0].syncStatus,'synced')
-      assert.deepEqual((await pool.query('select status,attempts from linear_sync_outbox where "issueId"=$1',[id])).rows[0],{status:'done',attempts:2})
-    } finally {hold.release();await Promise.allSettled([old,reclaimed].filter(Boolean))}
   })
   const privacyEvidence: { caller: string; denied: boolean; safePublicDuplicate: boolean }[] = []
   await scopeSubtest(t, 'in-flight actions cannot mix content across a provider-generation change', async () => {

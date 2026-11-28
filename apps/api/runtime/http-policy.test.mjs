@@ -1,31 +1,40 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { NextRequest as OriginalNextRequest } from 'next/server.js'
-import customRoutes from 'next/dist/lib/load-custom-routes.js'
-import { getPathMatch } from 'next/dist/shared/lib/router/utils/path-match.js'
-import { prepareDestination } from 'next/dist/shared/lib/router/utils/prepare-destination.js'
-import { getRedirectStatus } from 'next/dist/lib/redirect-status.js'
 import { applySecurityHeaders, isMachinePath, localizePage, pageRedirect, pageResponse } from './http-policy.mjs'
 
 const request = (path, init) => new Request(`https://example.test${path}`, init)
 const render = () => '<html lang="zh-CN"><body>shared app</body></html>'
 
-test('literal trailing slashes match installed Next redirects before machine dispatch for GET and POST', async () => {
-  const { redirects } = await customRoutes.default({ basePath: '/mikka', trailingSlash: false, skipTrailingSlashRedirect: false })
-  for (const method of ['GET', 'POST']) for (const path of [
-    '/mikka/api/version/', '/mikka/w/a%20b/', '/mikka/.well-known/oauth-authorization-server/',
-    '/.well-known/workflow/v1/flow/', '/mikka/%61pi/missing/', '/mikka/api%2Fmissing/', '/mikka/api/%E0%A4%A/',
-  ]) {
+/** The locale the SDK's cookie parser resolved for each cookie header, recorded
+ * before the migration. The last well-formed value of the locale cookie wins.
+ * The cookie was then named `NEXT_LOCALE`; it is `mikka-locale` now, and the
+ * legacy name is still read the same way (i18n/locale-cookie.mjs). */
+const FROZEN_LOCALES = new Map([
+  ['C=en; C=zh-CN', 'zh-CN'],
+  ['C=zh-CN; C=en', 'en'],
+  ['C=en; C=%E0%A4%A', 'en'],
+  ['C=%; C=%65n', 'en'],
+  ['C=%FF', 'zh-CN'],
+  ['C="en"; C=en+', 'zh-CN'],
+])
+
+test('a literal trailing slash redirects before machine dispatch for GET and POST', async () => {
+  // Frozen from the redirects this application served before the migration:
+  // strip the trailing slash, keep the query string, answer 308.
+  const cases = [
+    ['/mikka/api/version/', '/mikka/api/version'],
+    ['/mikka/w/a%20b/', '/mikka/w/a%20b'],
+    ['/mikka/.well-known/oauth-authorization-server/', '/mikka/.well-known/oauth-authorization-server'],
+    ['/.well-known/workflow/v1/flow/', '/.well-known/workflow/v1/flow'],
+    ['/mikka/%61pi/missing/', '/mikka/%61pi/missing'],
+    ['/mikka/api%2Fmissing/', '/mikka/api%2Fmissing'],
+    ['/mikka/api/%E0%A4%A/', '/mikka/api/%E0%A4%A'],
+  ]
+  for (const method of ['GET', 'POST']) for (const [path, expected] of cases) {
     const input = request(`${path}?x=a%2Fb&x=c+d`, { method, ...(method === 'POST' ? { body: 'unchanged payload' } : {}) })
-    const url = new URL(input.url)
-    const rule = redirects.find(value => getPathMatch(value.source, { strict: true })(url.pathname))
-    assert.ok(rule)
-    const params = getPathMatch(rule.source, { strict: true })(url.pathname)
-    const target = prepareDestination({ destination: rule.destination, params, query: {}, appendParamsToQuery: false }).parsedDestination.pathname
-    const original = Response.redirect(new URL(target + url.search, url), getRedirectStatus(rule))
     const migrated = await pageResponse(input, () => { throw new Error('REDIRECT_MUST_PRECEDE_SPA') })
-    assert.equal(migrated.status, original.status)
-    assert.equal(migrated.headers.get('location'), original.headers.get('location'))
+    assert.equal(migrated.status, 308, path)
+    assert.equal(migrated.headers.get('location'), `https://example.test${expected}?x=a%2Fb&x=c+d`, path)
     assert.equal(input.bodyUsed, false)
   }
   const encodedFinal = await pageResponse(request('/mikka/api/version%2F?x=1'), render)
@@ -34,22 +43,71 @@ test('literal trailing slashes match installed Next redirects before machine dis
 })
 
 test('page locale uses the same last valid cookie as the installed SDK', async () => {
-  for (const cookie of [
-    'NEXT_LOCALE=en; NEXT_LOCALE=zh-CN',
-    'NEXT_LOCALE=zh-CN; NEXT_LOCALE=en',
-    'NEXT_LOCALE=en; NEXT_LOCALE=%E0%A4%A',
-    'NEXT_LOCALE=%; NEXT_LOCALE=%65n',
-    'NEXT_LOCALE=%FF',
-    'NEXT_LOCALE="en"; NEXT_LOCALE=en+',
-  ]) {
+  for (const name of ['mikka-locale', 'NEXT_LOCALE']) for (const [template, expected] of FROZEN_LOCALES) {
+    const cookie = template.replaceAll('C=', `${name}=`)
     const input = request('/mikka/settings', { headers: { cookie, 'accept-language': 'zh-CN', 'sec-fetch-dest': 'document' } })
-    const originalValue = new OriginalNextRequest(input).cookies.get('NEXT_LOCALE')?.value
-    const expected = originalValue === 'en' ? 'en' : 'zh-CN'
-    assert.equal(localizePage(input).locale, expected)
+    // Frozen from the SDK's cookie parser: the last valid value wins, and any
+    // undecodable or unknown value falls back to the default locale.
+    assert.equal(localizePage(input).locale, expected, cookie)
     const response = await pageResponse(input, render)
     if (expected === 'en') assert.equal(response.headers.get('location'), 'https://example.test/mikka/en/settings')
     else assert.match(await response.text(), /lang="zh-CN"/)
     assert.equal(input.headers.get('cookie'), cookie)
+  }
+})
+
+// Phase 1 of the rename (i18n/locale-cookie.mjs): every write stores both
+// names with one value and one set of attributes, and nothing expires the old
+// cookie, so a rollback to a release that reads only the old name keeps it.
+const BOTH_EN = ['mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax', 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax']
+const BOTH_ZH = ['mikka-locale=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax', 'NEXT_LOCALE=zh-CN; Max-Age=31536000; Path=/mikka; SameSite=Lax']
+const page = (path, cookie, dest = 'document') => pageResponse(request(path, { headers: { cookie, 'accept-language': 'zh-CN', ...(dest ? { 'sec-fetch-dest': dest } : {}) } }), render)
+
+test('a document with only the legacy cookie keeps the choice and writes it under both names', async () => {
+  const english = await page('/mikka/settings?section=general', 'NEXT_LOCALE=en; other=kept')
+  assert.equal(english.status, 307)
+  assert.equal(english.headers.get('location'), 'https://example.test/mikka/en/settings?section=general')
+  assert.deepEqual(english.headers.getSetCookie(), BOTH_EN)
+  const chinese = await page('/mikka/settings', 'NEXT_LOCALE=zh-CN')
+  assert.equal(chinese.status, 200)
+  assert.match(await chinese.text(), /lang="zh-CN"/)
+  assert.deepEqual(chinese.headers.getSetCookie(), BOTH_ZH)
+  // The browser stores both before following the redirect, so the next document is quiet.
+  assert.deepEqual((await page('/mikka/en/settings?section=general', 'other=kept; mikka-locale=en; NEXT_LOCALE=en')).headers.getSetCookie(), [])
+  // A legacy value that names no locale is ignored, as before, and overwritten.
+  assert.deepEqual((await page('/mikka/settings', 'NEXT_LOCALE=fr')).headers.getSetCookie(), BOTH_ZH)
+  // No response in this phase expires the legacy cookie.
+  for (const cookie of ['NEXT_LOCALE=en', 'NEXT_LOCALE=zh-CN; mikka-locale=en', 'mikka-locale=en']) {
+    for (const value of (await page('/mikka/en', cookie)).headers.getSetCookie()) assert.doesNotMatch(value, /Max-Age=0|Expires=/, cookie)
+  }
+})
+
+test('the new cookie wins over the legacy one, and Set-Cookie goes out only while either differs', async () => {
+  for (const cookie of ['mikka-locale=en; NEXT_LOCALE=zh-CN', 'NEXT_LOCALE=zh-CN; mikka-locale=en']) {
+    const input = request('/mikka/settings', { headers: { cookie, 'accept-language': 'zh-CN', 'sec-fetch-dest': 'document' } })
+    assert.equal(localizePage(input).locale, 'en', cookie)
+    const response = await pageResponse(input, render)
+    assert.equal(response.headers.get('location'), 'https://example.test/mikka/en/settings')
+    assert.deepEqual(response.headers.getSetCookie(), BOTH_EN, cookie)
+  }
+  // A new cookie that names no locale falls back to the legacy choice and both are rewritten.
+  assert.deepEqual((await page('/mikka/en', 'mikka-locale=fr; NEXT_LOCALE=en')).headers.getSetCookie(), BOTH_EN)
+  // A browser that holds only the new cookie (after a rollback from phase 2) gets the old one back.
+  assert.deepEqual((await page('/mikka/en/settings', 'mikka-locale=en')).headers.getSetCookie(), BOTH_EN)
+  for (const [path, cookie] of [['/mikka/en/settings', 'mikka-locale=en; NEXT_LOCALE=en'], ['/mikka/settings', 'NEXT_LOCALE=zh-CN; mikka-locale=zh-CN']]) {
+    const response = await page(path, cookie)
+    assert.equal(response.status, 200)
+    assert.deepEqual(response.headers.getSetCookie(), [], cookie)
+  }
+  // An explicit language in the path replaces the stored one under both names, once.
+  assert.deepEqual((await page('/mikka/en', 'mikka-locale=zh-CN; NEXT_LOCALE=zh-CN')).headers.getSetCookie(), BOTH_EN)
+})
+
+test('only document requests write; other requests still read the legacy choice', async () => {
+  for (const dest of ['empty', null]) {
+    const response = await page('/mikka/settings', 'NEXT_LOCALE=en', dest)
+    assert.equal(response.headers.get('location'), 'https://example.test/mikka/en/settings')
+    assert.deepEqual(response.headers.getSetCookie(), [])
   }
 })
 
@@ -89,7 +147,7 @@ test('token pages keep private headers in both locales; document requests alone 
     assert.equal(response.headers.get('cache-control'), 'no-store')
   }
   const document = await pageResponse(request('/mikka/en', { headers: { 'sec-fetch-dest': 'document' } }), render)
-  assert.equal(document.headers.get('set-cookie'), 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax')
+  assert.deepEqual(document.headers.getSetCookie(), BOTH_EN)
   assert.equal((await pageResponse(request('/mikka/en'), render)).headers.get('set-cookie'), null)
 })
 

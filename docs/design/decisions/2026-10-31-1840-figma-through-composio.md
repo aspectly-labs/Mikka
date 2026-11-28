@@ -1,6 +1,7 @@
 # Figma connects through Composio, not Figma's official MCP
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, after hearing that Figma's remote MCP only lets clients on its approved list connect (Mikka is not on that list) and that it needs OAuth: 「就算了，还是用composio」
 - Rule: —
 - Replaces: —

@@ -21,7 +21,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
   await createTestDatabase(admin, database, 'template0')
   console.info(JSON.stringify({ event: 'claim_locked_run_owned_database', database }))
   const target = new URL(dbUrl); target.pathname = '/' + database
-  const saved = Object.fromEntries(['E2E_DATABASE_URL', 'DATABASE_URL', 'MIKKA_DATABASE_URL', 'MIKKA_BYOS_ENABLED', 'MIKKA_BYOS_VALIDATED_MODEL_ROUTES'].map(k => [k, process.env[k]]))
+  const saved = Object.fromEntries(['E2E_DATABASE_URL', 'DATABASE_URL', 'MIKKA_DATABASE_URL', 'MIKKA_BYOS_ENABLED', 'MIKKA_BYOS_VALIDATED_MODEL_ROUTES', 'E2B_API_KEY'].map(k => [k, process.env[k]]))
   const pool = new Pool({ connectionString: target.toString(), max: 6, options: '-c statement_timeout=15000 -c lock_timeout=5000' })
   // As the application's pool is: a claim's after-commit effects (the task moving to 进行中) see its COMMIT.
   observePoolCommits(pool)
@@ -34,7 +34,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
   })
   const migrations = new URL('../drizzle/', import.meta.url)
   for (const file of orderMigrations((await readdir(migrations)).filter(f => f.endsWith('.sql')))) await pool.query(await readFile(new URL(file, migrations), 'utf8'))
-  Object.assign(process.env, { E2E_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), MIKKA_DATABASE_URL: target.toString(), MIKKA_BYOS_ENABLED: '1', MIKKA_BYOS_VALIDATED_MODEL_ROUTES: 'claude_cpa,codex_cpa' })
+  Object.assign(process.env, { E2E_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), MIKKA_DATABASE_URL: target.toString(), MIKKA_BYOS_ENABLED: '1', MIKKA_BYOS_VALIDATED_MODEL_ROUTES: 'claude_cpa,codex_cpa', E2B_API_KEY: 'synthetic-profile-lock-e2b' })
   const runtime = await import('../lib/subscription-runtime')
   let allowanceCalls = 0
   t.mock.module(new URL('../lib/subscription-runtime.ts', import.meta.url).href, { namedExports: {
@@ -55,7 +55,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
     import('../lib/execution-identity'), import('../lib/run-claim-response'),
   ])
   appPool = app; workspacePool = workspace
-  const template = templateModelsFixture(['claude-haiku-5-5', 'gpt-6-luna']); t.after(() => template.restore())
+  const template = templateModelsFixture(['claude-haiku-5-5', 'gpt-6-luna'], { hostedSizes: true }); t.after(() => template.restore())
   const profileStore = new profiles.AgentProfileStore(pool)
   const clients = new Set<PoolClient>()
   const wrapped = new WeakSet<PoolClient>()
@@ -114,6 +114,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
     // A subscription serves its owner only (decision 2026-11-17): the requester pays with their own.
     const ownerId = await seedUser(pool, 'locked-requester'), payer = ownerId
     const { id: workspaceId } = await seedWorkspace(pool, ownerId, [{ userId: ownerId, role: 'admin' }])
+    await pool.query('INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,\'pro\',\'cloud\')', [workspaceId])
     const payerWorkspace = workspaceId
     const botId = await seedBot(pool, workspaceId, ownerId), issueId = await seedIssue(pool, ownerId, workspaceId)
     const deviceId = randomUUID(), repoId = randomUUID(), agentId = randomUUID(), connection = randomUUID()
@@ -121,7 +122,7 @@ test('cloud locked run Profile: fresh authority and normal Task database budget'
     const actor = { userId: ownerId, workspaceId }, scope = { ownerId, workspaceId, botId }
     await pool.query('INSERT INTO user_e2b_keys ("userId",ciphertext,iv,"keyVersion",last4) VALUES ($1,\'synthetic-unopened\',\'synthetic-unopened\',1,\'test\')', [ownerId])
     await pool.query('INSERT INTO model_order_settings ("ownerId","workspaceId",location,customized) VALUES ($1,$2,\'cloud\',true)', [ownerId, workspaceId])
-    await pool.query('INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses) VALUES ($1,$2,\'Fixture\',\'cloud\',true,now(),$3)', [deviceId, ownerId, JSON.stringify([{ harness, installed: true, models: [model], subscriptionBroker: true, computerBroker: true }])])
+    await pool.query('INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,$2,\'Fixture\',\'cloud\',true,now(),$3,now())', [deviceId, ownerId, JSON.stringify([{ harness, installed: true, models: [model], subscriptionBroker: true, computerBroker: true }])])
     await pool.query('INSERT INTO cloud_machines ("workspaceId","ownerId","deviceId","sandboxId","operationId",state,"runtimeReady") VALUES ($1,$2,$3,$4,$5,\'running\',true)', [workspaceId, ownerId, deviceId, 'synthetic-' + deviceId, randomUUID()])
     await pool.query('INSERT INTO bot_desktops ("botId","workspaceId","ownerId",display) VALUES ($1,$2,$3,1)', [botId, workspaceId, ownerId])
     await pool.query('INSERT INTO agents (id,"userId",name,harness,"deviceId") VALUES ($1,$2,\'Fixture\',$3,$4)', [agentId, ownerId, harness, deviceId])

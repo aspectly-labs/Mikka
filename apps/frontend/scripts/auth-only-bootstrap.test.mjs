@@ -7,13 +7,18 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { applicationPlugin } from './application-plugin.mjs'
+import { needsOfficialUi, officialUi } from './application-test-build.mjs'
 import { Window } from 'happy-dom'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
+// The renderer's runtime (location, transport, RPC) is this repository's; the application around it is the official UI's
+// core/renderer (lib/ui-overlay.mjs), which only an official checkout has. Without one these tests skip; mikka-hosted-ui's
+// CI runs them with its checkout mounted.
 const renderer = resolve(repository, 'apps/desktop/src/renderer')
 const web = resolve(repository, 'apps/frontend/src/web')
+const official = officialUi.dir && resolve(officialUi.dir, 'core/renderer')
 const require = createRequire(import.meta.url)
 const directory = await mkdtemp(join(tmpdir(), 'mikka-auth-only-bootstrap-'))
 const key = Symbol.for('mikka.test.auth-only-bootstrap')
@@ -21,39 +26,40 @@ const handoff = '/mikka/en/sign-in?desktop=1&desktop_state=abcdefghijklmnop&desk
 const stateAccess = 'globalThis[Symbol.for("mikka.test.auth-only-bootstrap")]'
 const wrapper = '({ children }) => children'
 const fixtureModules = new Map([
-  ['next-intl', `export const NextIntlClientProvider = ${wrapper}; export const useTranslations = () => value => value; export const useLocale = () => 'en';`],
-  ['lucide-react', 'export const ArrowLeft = () => null;'],
+  ['@/lib/intl/i18n-client', `export const NextIntlClientProvider = ${wrapper}; export const IntlProvider = ${wrapper}; export const useTranslations = () => value => value; export const useLocale = () => 'en';`],
+  ['lucide-react', 'export const ArrowLeft = () => null; export const ArrowRight = () => null; export const Plus = () => null; export const X = () => null;'],
   ['sonner', 'export const toast = { error() {}, dismiss() {} };'],
   ['@/messages/en.json', 'export default {};'], ['@/messages/zh-CN.json', 'export default {};'],
-  ['@/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
-  ['@/components/swr-defaults', `export const SWRDefaults = ${wrapper};`],
-  ['@/components/ui/sonner', 'export const Toaster = () => null;'],
-  ['@/components/ui/button', `export const Button = ${wrapper}; export const buttonVariants = () => '';`],
-  ['@/components/blocks/auth-19/components/auth', `export const Auth = ${wrapper};`],
-  ['@/components/blocks/auth-19/components/auth-card', `export const AuthCard = ${wrapper};`],
-  ['@/components/workspace/workspace-loading', 'import { createElement } from "react"; export const WorkspaceLoading = () => createElement("div", { "data-loading": true });'],
-  ['@/components/workspace/create-workspace-form', 'export const CreateWorkspaceForm = () => null;'],
-  ['@/components/workspace/invitation-card', `import { createElement } from 'react'; export const InvitationCard = () => createElement('div', { 'data-workspace-invitation': true }); export const OrganizationInvitationCard = () => createElement('div', { 'data-organization-invitation': true });`],
-  ['@/components/device-authorization', 'export const DeviceAuthorization = () => null;'],
-  ['@/components/plugins/github-settings', 'export const GitHubSettings = () => null;'],
-  ['@/components/app-shell/not-found', 'export default () => null;'],
-  ['@/components/auth-form', `import { createElement } from 'react'; import { useSWRConfig } from 'swr'; export const AuthForm = props => { ${stateAccess}.authCache = useSWRConfig().cache; return createElement('div', { 'data-auth': true, 'data-owner': props.signedInAs?.name ?? 'signed-out', 'data-handoff': Boolean(props.desktopFlow), 'data-email-enabled': props.emailEnabled }); };`],
-  ['@/components/auth/forgot-password-form', 'export const ForgotPasswordForm = () => null;'],
-  ['@/components/auth/reset-password-form', 'export const ResetPasswordForm = () => null;'],
-  ['@/components/auth/verify-email-form', 'export const VerifyEmailForm = () => null;'],
-  ['@/components/oauth-consent', 'export const OAuthConsent = () => null;'],
-  ['@/components/version-guard', 'export const VersionGuard = () => null;'],
-  ['@/components/posthog-analytics', 'export const PostHogAnalytics = () => null;'],
-  ['@/components/plugins/github-settings', `import { createElement, useLayoutEffect } from 'react'; export const GitHubSettings = () => { useLayoutEffect(() => { ${stateAccess}.githubMounts++; }, []); return createElement('div', { 'data-github-handoff': true }); };`],
+  ['@hosted/core/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
+  ['@hosted/core/components/swr-defaults', `export const SWRDefaults = ${wrapper};`],
+  ['@hosted/core/components/ui/sonner', 'export const Toaster = () => null;'],
+  ['@hosted/web/components/ui/context-menu', 'import { createElement } from "react"; export const ContextMenu = ({ children }) => children; export const ContextMenuTrigger = ({ children, ...p }) => createElement("div", p, children); export const ContextMenuContent = ({ children }) => createElement("div", null, children); export const ContextMenuItem = ({ children, ...p }) => createElement("button", p, children); export const ContextMenuSeparator = () => null;'],
+  ['@hosted/core/components/ui/button', `export const Button = ${wrapper}; export const buttonVariants = () => '';`],
+  ['@hosted/core/components/blocks/auth-19/components/auth', `export const Auth = ${wrapper};`],
+  ['@hosted/core/components/blocks/auth-19/components/auth-card', `export const AuthCard = ${wrapper};`],
+  ['@hosted/core/components/workspace/workspace-loading', 'import { createElement } from "react"; export const WorkspaceLoading = () => createElement("div", { "data-loading": true });'],
+  ['@hosted/core/components/workspace/create-workspace-form', 'export const CreateWorkspaceForm = () => null;'],
+  ['@hosted/core/components/workspace/invitation-card', `import { createElement } from 'react'; export const InvitationCard = () => createElement('div', { 'data-workspace-invitation': true }); export const OrganizationInvitationCard = () => createElement('div', { 'data-organization-invitation': true }); export const InvitationLanding = ({ kind }) => createElement('div', kind === 'workspace' ? { 'data-workspace-invitation': true } : { 'data-organization-invitation': true });`],
+  ['@hosted/core/components/device-authorization', 'export const DeviceAuthorization = () => null;'],
+  ['@hosted/core/components/plugins/github-settings', 'export const GitHubSettings = () => null;'],
+  ['@hosted/core/components/app-shell/not-found', 'export default () => null;'],
+  ['@hosted/core/components/auth-form', `import { createElement } from 'react'; import { useSWRConfig } from 'swr'; export const AuthForm = props => { ${stateAccess}.authCache = useSWRConfig().cache; return createElement('div', { 'data-auth': true, 'data-owner': props.signedInAs?.name ?? 'signed-out', 'data-handoff': Boolean(props.desktopFlow), 'data-email-enabled': props.emailEnabled }); };`],
+  ['@hosted/core/components/auth/forgot-password-form', 'export const ForgotPasswordForm = () => null;'],
+  ['@hosted/core/components/auth/reset-password-form', 'export const ResetPasswordForm = () => null;'],
+  ['@hosted/core/components/auth/verify-email-form', 'export const VerifyEmailForm = () => null;'],
+  ['@hosted/core/components/oauth-consent', 'export const OAuthConsent = () => null;'],
+  ['@hosted/core/components/version-guard', 'export const VersionGuard = () => null;'],
+  ['@hosted/core/components/posthog-analytics', 'export const PostHogAnalytics = () => null;'],
+  ['@hosted/core/components/plugins/github-settings', `import { createElement, useLayoutEffect } from 'react'; export const GitHubSettings = () => { useLayoutEffect(() => { ${stateAccess}.githubMounts++; }, []); return createElement('div', { 'data-github-handoff': true }); };`],
   ['@/lib/posthog-config', 'export const posthogConfig = { token: "" };'],
-  ['@/lib/auth-client', `export const authClient = { $store: { atoms: { session: { subscribe: listener => ${stateAccess}.subscribe(listener) } } } }; export const cloudAuthClient = authClient;`],
-  ['@/lib/swr/persistent-cache', `export const clearPersistentReadCaches = async () => { ${stateAccess}.cacheClears++; };`],
+  ['@/lib/auth-client', `export const authClient = { $store: { atoms: { session: { subscribe: listener => ${stateAccess}.subscribe(listener) } } } }; export const cloudAuthClient = authClient; export const endSession = async () => ({ error: null });`],
+  ['@/lib/swr/persistent-cache', `export const clearPersistentReadCaches = async () => { ${stateAccess}.cacheClears++; }; export class PersistentReadCache extends Map {} export const readCacheShareNamespace = () => null;`],
 ])
-const application = await applicationPlugin('web')
-const compiled = await build({
+const application = needsOfficialUi ? null : await applicationPlugin('web', { overlay: officialUi })
+const compiled = needsOfficialUi ? null : await build({
   absWorkingDir: repository,
-  stdin: { contents: 'export { App } from "./app"; export { navigate, installNavigation, refresh } from "./location"; export { getClientConfiguration } from "./client-configuration"; export { getTransportState } from "./transport-state";', resolveDir: renderer, sourcefile: 'auth-only-contract.ts', loader: 'ts' },
-  bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2023', jsx: 'automatic', logLevel: 'silent',
+  stdin: { contents: `export { App } from ${JSON.stringify(resolve(official ?? renderer, 'app'))}; export { navigate, installNavigation, refresh } from "./location"; export { getClientConfiguration } from "./client-configuration"; export { getTransportState } from "./transport-state";`, resolveDir: renderer, sourcefile: 'auth-only-contract.ts', loader: 'ts' },
+  bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2023', jsx: 'automatic', logLevel: 'silent', loader: { '.css': 'empty' },
   tsconfig: resolve(repository, 'apps/frontend/tsconfig.json'),
   define: { 'process.env.NODE_ENV': '"test"', 'process.env.MIKKA_BASE_PATH': '"/mikka"', 'process.env': '{}' },
   plugins: [{ name: 'auth-only-public-boundaries', setup(builder) {
@@ -61,23 +67,24 @@ const compiled = await build({
     // Use the same client-side RPC modules as a production Web build.
     builder.onResolve({ filter: /^@\/app\/actions\/[\w-]+$/ }, async args => ({ path: await application.resolveId(args.path), namespace: 'web-action' }))
     builder.onLoad({ filter: /.*/, namespace: 'web-action' }, async args => ({ contents: await application.load(args.path), resolveDir: repository }))
-    builder.onResolve({ filter: /^mikka:platform$/ }, () => ({ path: resolve(web, 'platform.tsx') }))
+    builder.onResolve({ filter: /^mikka:platform$/ }, () => ({ path: officialUi.application.webPlatform }))
     builder.onResolve({ filter: /.*/ }, args => fixtureModules.has(args.path) ? { path: args.path, namespace: 'auth-fixture' } : undefined)
     builder.onResolve({ filter: /^(?:\.\/|\.\.\/).*rpc$/ }, args => {
       if (resolve(dirname(args.importer), args.path) === resolve(renderer, 'rpc') && args.importer !== resolve(web, 'rpc.ts')) return { path: resolve(web, 'rpc.ts') }
     })
-    builder.onResolve({ filter: /^\.\/workspace$/ }, args => args.importer === resolve(renderer, 'workspace-loader.ts') ? { path: 'workspace', namespace: 'auth-fixture' } : undefined)
-    builder.onResolve({ filter: /^\.\/offline$/ }, args => args.importer === resolve(renderer, 'app.tsx') ? { path: 'offline', namespace: 'auth-fixture' } : undefined)
-    builder.onResolve({ filter: /^\.\/deep-link-routes$/ }, args => args.importer === resolve(renderer, 'app.tsx') ? { path: 'deep-links', namespace: 'auth-fixture' } : undefined)
+    builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args => args.importer === resolve(official, 'workspace-loader.ts') ? { path: 'workspace', namespace: 'auth-fixture' } : undefined)
+    builder.onResolve({ filter: /^\.\/offline$/ }, args => args.importer === resolve(official, 'app.tsx') ? { path: 'offline', namespace: 'auth-fixture' } : undefined)
+    builder.onResolve({ filter: /^\.\/deep-link-routes$/ }, args => args.importer === resolve(official, 'app.tsx') ? { path: 'deep-links', namespace: 'auth-fixture' } : undefined)
+    builder.onResolve({ filter: /^@hosted\// }, args => builder.resolve(`./${args.path.slice('@hosted/'.length)}`, { resolveDir: officialUi.dir, kind: args.kind, importer: args.importer }))
     builder.onLoad({ filter: /.*/, namespace: 'auth-fixture' }, args => ({ loader: 'js', contents:
-      args.path === 'workspace' ? `import { createElement, useLayoutEffect } from 'react'; export default function Workspace({ user, bootstrap }) { useLayoutEffect(() => { ${stateAccess}.workspaceMounts++; }, []); return createElement('div', { 'data-workspace': true, 'data-owner': user.id, 'data-role': bootstrap.cacheWorkspace?.role ?? 'none' }); }`
+      args.path === 'workspace' ? `import { createElement, useLayoutEffect } from 'react'; export function Workspace({ user, bootstrap }) { useLayoutEffect(() => { ${stateAccess}.workspaceMounts++; }, []); return createElement('div', { 'data-workspace': true, 'data-owner': user.id, 'data-role': bootstrap.cacheWorkspace?.role ?? 'none' }); }`
         : args.path === 'offline' ? 'import { createElement } from "react"; export const Offline = () => createElement("div", { "data-offline": true });'
           : args.path === 'deep-links' ? 'export const SharedArtifactRoute = () => null; export const WorkspaceLinkRoute = () => null;'
           : fixtureModules.get(args.path) }))
   } }],
 })
 const filename = join(directory, 'application.mjs')
-await writeFile(filename, compiled.outputFiles[0].contents)
+if (compiled) await writeFile(filename, compiled.outputFiles[0].contents)
 after(() => rm(directory, { recursive: true, force: true }))
 
 const session = (id = 'owner', sessionId = 'session') => ({ user: { id, name: id, email: 'fixture@example.invalid', image: null }, session: { id: sessionId } })
@@ -126,7 +133,7 @@ async function fixture(t, { path = handoff, fetch: fetchResponse, desktopBridge 
     owner: identity => act(async () => { state.identity = identity; for (const listener of state.listeners) listener({ data: identity, isPending: false }) }) }
 }
 
-test('a valid system-browser PKCE page reads only the existing session and public login methods', async t => {
+test('a valid system-browser PKCE page reads only the existing session and public login methods', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   assert.ok(f.container.querySelector('[data-auth]'))
   assert.deepEqual(f.state.requests.filter(item => item.action).map(item => item.action), ['desktop.session'])
@@ -135,7 +142,7 @@ test('a valid system-browser PKCE page reads only the existing session and publi
   assert.equal(f.container.querySelector('[data-auth]').getAttribute('data-owner'), 'owner')
 })
 
-test('a server authentication document preserves the PKCE identity-only boundary', async t => {
+test('a server authentication document preserves the PKCE identity-only boundary', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t, { serverDocument: 'authentication' })
   assert.equal(f.container.querySelector('[data-auth]').getAttribute('data-owner'), 'owner')
   assert.deepEqual(f.state.requests.filter(item => item.action).map(item => item.action), ['desktop.session'])
@@ -149,7 +156,7 @@ for (const [kind, prefix, card] of [
   ['Workspace', '/invite/', '[data-workspace-invitation]'],
 ]) {
   const invitation = prefix + 'b'.repeat(64)
-  test(kind + ' invitations reach the account handoff even when workspace bootstrap is unavailable', async t => {
+  test(kind + ' invitations reach the account handoff even when workspace bootstrap is unavailable', { skip: needsOfficialUi }, async t => {
     const path = '/mikka/en' + invitation
     for (const [label, serverDocument] of [['official Web', undefined], ['Server-only', 'authentication']]) {
       await t.test(label, async t => {
@@ -164,7 +171,7 @@ for (const [kind, prefix, card] of [
     }
   })
 
-  test('a signed-out account can sign in or register and return to its ' + kind + ' invitation during a workspace outage', async t => {
+  test('a signed-out account can sign in or register and return to its ' + kind + ' invitation during a workspace outage', { skip: needsOfficialUi }, async t => {
     for (const mode of ['sign-in', 'sign-up']) {
       await t.test(mode, async t => {
         let signedIn = false
@@ -187,7 +194,7 @@ for (const [kind, prefix, card] of [
   })
 }
 
-test('ordinary and ambiguous sign-in returns keep the existing workspace bootstrap', async t => {
+test('ordinary and ambiguous sign-in returns keep the existing workspace bootstrap', { skip: needsOfficialUi }, async t => {
   const next = encodeURIComponent(`/organization-invite/${'b'.repeat(64)}`)
   for (const [label, search] of [['settings', '?next=%2Fsettings'], ['duplicate next', `?next=${next}&next=${next}`],
     ['separate account flow', `?next=${next}&addAccount=1`], ['short invitation', '?next=%2Forganization-invite%2Fabc'],
@@ -201,7 +208,7 @@ test('ordinary and ambiguous sign-in returns keep the existing workspace bootstr
   }
 })
 
-test('a signed-in server GitHub document renders only its handoff before and after intent cleanup', async t => {
+test('a signed-in server GitHub document renders only its handoff before and after intent cleanup', { skip: needsOfficialUi }, async t => {
   const path = '/mikka/en?section=plugins&app=github'
   const f = await fixture(t, { path: `${path}&intent=ghi_${'a'.repeat(43)}`, serverDocument: 'github' })
   assert.deepEqual(f.state.requests.filter(item => item.action).map(item => item.action), ['desktop.bootstrap'])
@@ -216,7 +223,7 @@ test('a signed-in server GitHub document renders only its handoff before and aft
   assert.equal(f.state.requests.filter(item => item.action === 'desktop.bootstrap').length, 1)
 })
 
-test('a server GitHub document cannot bypass a rejected session', async t => {
+test('a server GitHub document cannot bypass a rejected session', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t, { path: '/mikka/en?section=plugins&app=github', serverDocument: 'github',
     fetch: request => request.action === 'desktop.bootstrap' ? new Response('', { status: 401 }) : undefined })
   assert.equal(f.container.querySelector('[data-auth]').getAttribute('data-owner'), 'signed-out')
@@ -225,14 +232,14 @@ test('a server GitHub document cannot bypass a rejected session', async t => {
   assert.equal(f.state.workspaceMounts, 0)
 })
 
-test('the official app without a server document marker keeps its normal workspace route', async t => {
+test('the official app without a server document marker keeps its normal workspace route', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t, { path: '/mikka/en?section=plugins&app=github' })
   assert.ok(f.container.querySelector('[data-workspace]'))
   assert.equal(f.state.workspaceMounts, 1)
   assert.equal(f.state.githubMounts, 0)
 })
 
-test('Back to a different workspace waits for the authorized switch and never mounts a refused workspace', async t => {
+test('Back to a different workspace waits for the authorized switch and never mounts a refused workspace', { skip: needsOfficialUi }, async t => {
   const workspace = 'bf0f49e9-60ef-42a2-9e46-519b6010d7ef'
   for (const accepted of [true, false]) await t.test(accepted ? 'active membership' : 'suspended membership', async t => {
     let selected = false
@@ -256,7 +263,7 @@ test('Back to a different workspace waits for the authorized switch and never mo
   })
 })
 
-test('leaving PKCE with the same null workspace selector requires fresh bootstrap before any workspace mounts', async t => {
+test('leaving PKCE with the same null workspace selector requires fresh bootstrap before any workspace mounts', { skip: needsOfficialUi }, async t => {
   const ready = deferred()
   const f = await fixture(t, { fetch: request => request.action === 'desktop.bootstrap' && request.location === '/mikka/en/' ? ready.promise : undefined })
   assert.ok(f.container.querySelector('[data-auth]'))
@@ -271,7 +278,7 @@ test('leaving PKCE with the same null workspace selector requires fresh bootstra
   assert.equal(f.api.getClientConfiguration().features.cloudComputer, true)
 })
 
-test('malformed handoffs and an Electron-hosted page retain the ordinary full bootstrap', async t => {
+test('malformed handoffs and an Electron-hosted page retain the ordinary full bootstrap', { skip: needsOfficialUi }, async t => {
   for (const options of [{ path: `${handoff}&desktop_state=duplicate-value` }, { desktopBridge: true }]) {
     await t.test(options.desktopBridge ? 'Electron host' : 'duplicate state', async t => {
       const f = await fixture(t, options)
@@ -281,7 +288,7 @@ test('malformed handoffs and an Electron-hosted page retain the ordinary full bo
   }
 })
 
-test('pending identity and workspace reads never join across phases or mount from a late identity result', async t => {
+test('pending identity and workspace reads never join across phases or mount from a late identity result', { skip: needsOfficialUi }, async t => {
   const identity = deferred(), workspace = deferred()
   const f = await fixture(t, { fetch: request => request.action === 'desktop.session' ? identity.promise
     : request.action === 'desktop.bootstrap' ? workspace.promise : undefined })
@@ -297,7 +304,7 @@ test('pending identity and workspace reads never join across phases or mount fro
   assert.equal(f.container.querySelector('[data-workspace]').getAttribute('data-role'), 'member')
 })
 
-test('a late full bootstrap cannot replace a newly opened PKCE identity page or its anonymous configuration', async t => {
+test('a late full bootstrap cannot replace a newly opened PKCE identity page or its anonymous configuration', { skip: needsOfficialUi }, async t => {
   const old = deferred()
   const f = await fixture(t, { path: '/mikka/en/', fetch: request => request.action === 'desktop.bootstrap' ? old.promise : undefined })
   await f.navigate(handoff)
@@ -309,7 +316,7 @@ test('a late full bootstrap cannot replace a newly opened PKCE identity page or 
   assert.equal(f.api.getClientConfiguration().features.cloudComputer, false)
 })
 
-test('a retired workspace request cannot expire or disconnect the current PKCE identity page', async t => {
+test('a retired workspace request cannot expire or disconnect the current PKCE identity page', { skip: needsOfficialUi }, async t => {
   for (const status of [401, 503]) await t.test(String(status), async t => {
     const old = deferred()
     const f = await fixture(t, { path: '/mikka/en/', fetch: request => request.action === 'desktop.bootstrap' ? old.promise : undefined })
@@ -322,7 +329,7 @@ test('a retired workspace request cannot expire or disconnect the current PKCE i
   })
 })
 
-test('account and same-account session changes invalidate a pending identity response and clear prior caches', async t => {
+test('account and same-account session changes invalidate a pending identity response and clear prior caches', { skip: needsOfficialUi }, async t => {
   for (const nextOwner of ['other-owner', 'owner']) {
     await t.test(nextOwner === 'owner' ? 'same owner, new session' : 'different owner', async t => {
       const old = deferred()
@@ -342,7 +349,7 @@ test('account and same-account session changes invalidate a pending identity res
   }
 })
 
-test('only a confirmed session expiry renders signed-out PKCE; network failure remains unavailable', async t => {
+test('only a confirmed session expiry renders signed-out PKCE; network failure remains unavailable', { skip: needsOfficialUi }, async t => {
   for (const status of [401, 503]) await t.test(String(status), async t => {
     const f = await fixture(t, { fetch: request => request.action === 'desktop.session' ? new Response('', { status }) : undefined })
     assert.equal(f.state.requests.filter(item => item.path === '/mikka/api/desktop/config').length, 1)
@@ -353,7 +360,7 @@ test('only a confirmed session expiry renders signed-out PKCE; network failure r
   })
 })
 
-test('a new session for the same owner retires the actual in-memory SWR cache', async t => {
+test('a new session for the same owner retires the actual in-memory SWR cache', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   const old = f.state.authCache
   old.set('private-session-read', { data: 'previous-session-only' })

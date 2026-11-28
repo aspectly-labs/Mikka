@@ -1,6 +1,7 @@
 # The machine picker defaults to the first usable machine
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 新建任务 picked Mikka Cloud
   by default with a green dot although a person without an E2B key has no
   cloud computer, so a new user's task went to a machine that does not exist

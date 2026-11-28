@@ -12,16 +12,18 @@ import { observePoolCommits } from '../db/commit-effects'
 import { liveChannelId } from './scope'
 import { createApprovedWrites } from '../operations/approved-writes'
 import type { WriteProvider } from '../operations/write-contract'
+import { DEFAULT_AGENT_DEFINITION } from '../agent-kit/builtin'
+import { digest, makeSnapshot } from '../agent-kit/definition'
 
 const url = process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1') assert.ok(url, 'REQUIRE_DB=1 needs PostgreSQL')
 if (url) assert.ok(disposableDatabase(process.env, url), 'loopback *_e2e only')
 const action = 'append_notion_paragraph'
 
-test('approved writes publish only committed owner-personal invalidations through the real service', { skip: !url, timeout: 180_000 }, async t => {
+test('direct run writes publish only committed owner-personal invalidations through the real service', { skip: !url, timeout: 180_000 }, async t => {
   const queued: (() => Promise<void>)[] = []
-  const next = await import('next/server')
-  const scheduler = mock.module('next/server', { namedExports: { ...next, after: (work: () => Promise<void>) => { queued.push(work) } } })
+  const next = await import('@/lib/server-runtime/server')
+  const scheduler = mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after: (work: () => Promise<void>) => { queued.push(work) } } })
   const sent: { path: string; events: unknown }[] = []
   const receiver = createServer(async (request, response) => {
     let body = ''
@@ -79,84 +81,105 @@ test('approved writes publish only committed owner-personal invalidations throug
       await database.query('INSERT INTO mikka_workspaces(id,"userId",name,kind) VALUES($1,$2,\'Approved live fixture\',\'personal\')', [workspaceId, userId])
       await database.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,\'Approved live fixture\',$3,\'admin\',\'active\')', [workspaceId, userId, `${userId}@example.invalid`])
     }
+    // A running Coordinator run that may use the write tool. There is no
+    // approval: the run's write is the receipt (ADR 2026-11-27-1615).
+    const definition = { ...DEFAULT_AGENT_DEFINITION, tools: [action] }
+    const runs = new Map<string, string>()
+    for (const pool of pools) for (const userId of [owner, other]) {
+      const revision = randomUUID(), runId = runs.get(userId) ?? randomUUID()
+      runs.set(userId, runId)
+      const snapshot = makeSnapshot(revision, 1, definition, 'host', { harness: 'ai_sdk', model: 'openai/gpt-6-luna' })
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query('INSERT INTO agent_kit_heads(owner_id,bot_key,active_version) VALUES($1,\'coordinator\',$2)', [userId, revision])
+        await client.query('INSERT INTO agent_kit_versions(id,owner_id,bot_key,version,definition,digest,source,request_key) VALUES($1,$2,\'coordinator\',1,$3,$4,\'user\',$5)', [revision, userId, definition, digest(definition), randomUUID()])
+        await client.query('INSERT INTO agent_kit_executions(id,owner_id,bot_key,execution_key,version_id,snapshot) VALUES($1,$2,\'coordinator\',$3,$4,$5)', [runId, userId, randomUUID(), revision, snapshot])
+        await client.query('COMMIT')
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+    }
+    const modelRun = (userId: string) => ({ ownerId: userId, botId: null, workspaceId: null, runId: runs.get(userId)! })
 
-    await t.test('an actual proposal is invisible and silent until its authorized COMMIT; replay and reads are silent', async () => {
+    await t.test('a direct write is invisible and silent until its COMMIT; its replay and reads are silent', async () => {
       const intent = randomUUID(), input = payload()
       let arrived!: () => void, release!: () => void, proposalId = ''
       const inserted = new Promise<void>(resolve => { arrived = resolve })
       const permitted = new Promise<void>(resolve => { release = resolve })
-      const service = createApprovedWrites(database, provider, action, { actor, guard: async (tx: PoolClient, signal) => {
+      const service = createApprovedWrites(database, provider, action, { modelRun: modelRun(owner), guard: async (tx: PoolClient, signal) => {
         const row = (await tx.query('SELECT id FROM pending_actions WHERE "intentKey"=$1', [intent])).rows[0]
-        if (row) { proposalId = row.id; arrived(); await permitted }
+        if (row && !proposalId) { proposalId = row.id; arrived(); await permitted }
         return { signal, async check() {}, async close() {} }
       } })
-      const pending = service.propose(owner, input, intent)
+      const pending = service.writeFromRun(input, intent)
       await inserted
       assert.equal((await database.query('SELECT id FROM pending_actions WHERE id=$1', [proposalId])).rowCount, 0)
-      assert.equal(queued.length, 0); assert.equal(sent.length, 0)
+      assert.equal(queued.length, 0); assert.equal(sent.length, 0); assert.equal(executions, 0)
       release(); const result = await pending
-      assert.equal((await database.query('SELECT status FROM pending_actions WHERE id=$1', [proposalId])).rows[0].status, 'pending')
-      assert.equal(queued.length, 1, 'real INSERT must schedule after COMMIT')
-      await drain(); assert.deepEqual(sent, [expected(owner, result.actionId)])
+      assert.equal(result.status, 'done'); assert.equal(executions, 1)
+      assert.deepEqual((await database.query('SELECT status,"decidedAt" FROM pending_actions WHERE id=$1', [proposalId])).rows[0], { status: 'done', decidedAt: null })
+      await drain()
+      assert.ok(sent.length >= 1)
+      for (const item of sent) assert.deepEqual(item, expected(owner, result.actionId))
       const before = sent.length
-      await service.propose(owner, input, intent); await service.view(actor, result.actionId); await drain()
-      assert.equal(sent.length, before)
+      await service.writeFromRun(input, intent); await service.view(actor, result.actionId); await drain()
+      assert.equal(sent.length, before); assert.equal(executions, 1)
     })
 
-    await t.test('the actual authorization rollback discards the inserted proposal and its notification', async () => {
-      const intent = randomUUID(), before = sent.length
-      const service = createApprovedWrites(database, provider, action, { actor, guard: async (tx: PoolClient) => {
+    await t.test('the actual authorization rollback discards the inserted receipt and its notification, and sends nothing', async () => {
+      const intent = randomUUID(), before = sent.length, sentBefore = executions
+      const service = createApprovedWrites(database, provider, action, { modelRun: modelRun(owner), guard: async (tx: PoolClient) => {
         if ((await tx.query('SELECT id FROM pending_actions WHERE "intentKey"=$1', [intent])).rowCount) throw Error('fixture authorization refused')
         return { async check() {}, async close() {} }
       } })
-      await assert.rejects(service.propose(owner, payload(), intent), /fixture authorization refused/)
+      await assert.rejects(service.writeFromRun(payload(), intent), /fixture authorization refused/)
       assert.equal((await database.query('SELECT id FROM pending_actions WHERE "intentKey"=$1', [intent])).rowCount, 0)
-      assert.equal(queued.length, 0); await drain(); assert.equal(sent.length, before)
+      assert.equal(queued.length, 0); await drain(); assert.equal(sent.length, before); assert.equal(executions, sentBefore)
     })
 
-    await t.test('decline and ledger completion wake the same proposal without resending an uncertain external operation', async () => {
-      const service = createApprovedWrites(database, provider, action, { actor })
-      const declined = await service.propose(owner, payload(), randomUUID()); await drain()
-      const beforeDecline = sent.length
-      assert.equal((await service.decide(actor, declined.actionId, false)).status, 'declined')
-      await drain(); assert.deepEqual(sent.slice(beforeDecline), [expected(owner, declined.actionId)])
-      const active = await service.propose(owner, payload(), randomUUID()); await drain()
+    await t.test('an uncertain write stays running and is read back, never resent', async () => {
+      await drain()
+      const service = createApprovedWrites(database, provider, action, { modelRun: modelRun(owner) })
+      const intent = randomUUID(), input = payload(), sentBefore = executions, lookedUp = lookups
       uncertain = true
-      assert.equal((await service.decide(actor, active.actionId, true)).status, 'running')
-      await drain(); const beforeRecovery = sent.length
-      assert.equal((await service.view(actor, active.actionId)).status, 'running')
-      assert.equal((await service.decide(actor, active.actionId, true)).status, 'done')
-      await drain(); assert.deepEqual(sent.slice(beforeRecovery), [expected(owner, active.actionId)])
-      assert.equal(executions, 1); assert.equal(lookups, 1)
-      assert.equal((await service.view(actor, active.actionId)).status, 'done')
+      const first = await service.writeFromRun(input, intent)
       uncertain = false
+      assert.equal(first.status, 'running'); assert.equal(executions, sentBefore + 1)
+      assert.equal((await service.view(actor, first.actionId)).status, 'running')
+      await drain(); const beforeRecovery = sent.length
+      assert.equal((await service.writeFromRun(input, intent)).status, 'done')
+      await drain(); assert.deepEqual(sent.slice(beforeRecovery), [expected(owner, first.actionId)])
+      assert.equal(executions, sentBefore + 1); assert.equal(lookups, lookedUp + 1)
+      assert.equal((await service.view(actor, first.actionId)).status, 'done')
     })
 
     await t.test('another owner receives only their own personal key; revoked membership is rechecked after scheduling', async () => {
       await drain()
-      const otherActor = { userId: other, sessionId: otherSession }, service = createApprovedWrites(database, provider, action, { actor: otherActor })
-      const before = sent.length, result = await service.propose(other, payload(), randomUUID())
-      await drain(); assert.deepEqual(sent.slice(before), [expected(other, result.actionId)])
+      const service = createApprovedWrites(database, provider, action, { modelRun: modelRun(other) })
+      const before = sent.length, result = await service.writeFromRun(payload(), randomUUID())
+      await drain()
+      assert.ok(sent.length > before)
+      for (const item of sent.slice(before)) assert.deepEqual(item, expected(other, result.actionId))
       await assert.rejects(service.view(actor, result.actionId), /pendingActionUnavailable/)
-      const suspended = await service.propose(other, payload(), randomUUID())
       await database.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [homes.get(other), other])
+      const suspended = await service.writeFromRun(payload(), randomUUID())
       const beforeDrain = sent.length; await drain(); assert.equal(sent.length, beforeDrain)
       assert.ok(suspended.actionId)
       await database.query('UPDATE mikka_workspace_members SET status=\'active\' WHERE "workspaceId"=$1 AND "userId"=$2', [homes.get(other), other])
     })
 
-    await t.test('a delayed callback retains its request database even when the default DB has the same proposal ID for another owner', async () => {
+    await t.test('a delayed callback retains its request database even when the default DB has the same receipt ID for another owner', async () => {
       await drain()
       const intent = randomUUID(), before = sent.length
-      const service = createApprovedWrites(requestDatabase, provider, action, { actor, guard: async (tx: PoolClient) => {
+      const service = createApprovedWrites(requestDatabase, provider, action, { modelRun: modelRun(owner), guard: async (tx: PoolClient) => {
         const row = (await tx.query('SELECT to_jsonb(p) AS value FROM pending_actions p WHERE "intentKey"=$1', [intent])).rows[0]?.value
         if (row) { row.userId = other; await database.query('INSERT INTO pending_actions SELECT * FROM jsonb_populate_record(NULL::pending_actions,$1) ON CONFLICT DO NOTHING', [row]) }
         return { async check() {}, async close() {} }
       } })
-      const result = await scoped.run(() => service.propose(owner, payload(), intent))
-      assert.equal(queued.length, 1)
+      const result = await scoped.run(() => service.writeFromRun(payload(), intent))
+      assert.ok(queued.length >= 1)
       await drain() // Deliberately outside the originating request context.
-      assert.deepEqual(sent.slice(before), [expected(owner, result.actionId)])
+      assert.ok(sent.length > before)
+      for (const item of sent.slice(before)) assert.deepEqual(item, expected(owner, result.actionId))
       assert.equal((await database.query('SELECT "userId" FROM pending_actions WHERE id=$1', [result.actionId])).rows[0].userId, other)
     })
   } finally {

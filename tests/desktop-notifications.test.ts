@@ -8,15 +8,26 @@ test('desktop decisions read completion preferences only for a currently owned c
   let runs: { issueId: string; status: string; issueTitle: string; agentName: string }[] = []
   let preferences = { proactive: true, pushFinished: true }
   let preferenceFailure: Error | null = null
-  let runReads = 0, preferenceReads = 0, decisions = 0
+  let runtime = {
+    dnd: { enabled: false, start: '22:00', end: '08:00', days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const },
+    timeZone: null as string | null,
+    mobile: { decide: null, review: null, finished: null, briefing: null },
+    desktop: { decide: null as boolean | null, review: null, finished: null as boolean | null, briefing: null },
+    emailInvitations: null,
+    sound: 'default' as const,
+    legacyPushDecide: null as boolean | null,
+  }
+  let runReads = 0, threadReads = 0, preferenceReads = 0, runtimeReads = 0, decisions = 0
+  let threads: { id: string; pullState: string | null; title: string | null; prompt: string; agentName: string }[] = []
   const judged: string[][] = []
   const mocks = [
-    mock.module('next/headers', { namedExports: { headers: async () => requestHeaders } }),
+    mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => requestHeaders } }),
     mock.module(new URL('../lib/auth.ts', import.meta.url).href, { namedExports: { auth: { api: {
       getSession: async (input: { headers: Headers }) => { assert.equal(input.headers, requestHeaders); return session },
     } } } }),
     mock.module(new URL('../app/actions/task-runs.ts', import.meta.url).href, { namedExports: {
       listTaskRuns: async () => { runReads++; return runs },
+      listThreads: async () => { threadReads++; return threads },
     } }),
     mock.module(new URL('../lib/preferences.ts', import.meta.url).href, { namedExports: {
       readPreferences: async (owner: string) => {
@@ -24,6 +35,13 @@ test('desktop decisions read completion preferences only for a currently owned c
         preferenceReads++
         if (preferenceFailure) throw preferenceFailure
         return preferences
+      },
+    } }),
+    mock.module(new URL('../lib/settings/notification-preferences.ts', import.meta.url).href, { namedExports: {
+      readDesktopNotificationRuntime: async (owner: string) => {
+        assert.equal(owner, userId, 'desktop notification runtime always belongs to the authenticated person')
+        runtimeReads++
+        return runtime
       },
     } }),
     mock.module(new URL('../lib/coordinator/decide.ts', import.meta.url).href, { namedExports: {
@@ -90,6 +108,36 @@ test('desktop decisions read completion preferences only for a currently owned c
       preferenceFailure = new Error('fixture preference unavailable')
       await assert.rejects(chooseDesktopNotifications([candidate('finished')]), error => error === preferenceFailure)
       assert.equal(preferenceReads, 5); assert.equal(decisions, 3)
+      preferenceFailure = null
+    })
+    await t.test('scheduled DND and per-channel desktop overrides filter candidates before asking the model', async () => {
+      runs = [owned('finished', 'succeeded'), owned('awaiting', 'waiting_input')]
+      preferences = { proactive: true, pushFinished: false }
+      runtime = { ...runtime, desktop: { ...runtime.desktop, decide: false, finished: true } }
+      assert.deepEqual(await chooseDesktopNotifications([candidate('finished'), candidate('awaiting')]), { show: [candidate('finished').id] })
+      assert.equal(decisions, 4)
+
+      runtime = { ...runtime, dnd: { enabled: true, start: '00:00', end: '00:00', days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] } }
+      const beforeReads = preferenceReads
+      assert.deepEqual(await chooseDesktopNotifications([candidate('finished'), candidate('awaiting')]), { show: [] })
+      assert.equal(preferenceReads, beforeReads, 'active DND exits before reading legacy preferences or calling decide')
+      assert.equal(decisions, 4)
+      assert.ok(runtimeReads >= 2)
+    })
+    await t.test('a merged pull request is judged only for a thread of the person that the list says merged', async () => {
+      runtime = { ...runtime, dnd: { ...runtime.dnd, enabled: false }, desktop: { ...runtime.desktop, decide: true } }
+      threads = [
+        { id: 'run-merged', pullState: 'merged', title: 'Login fix', prompt: 'Fix login', agentName: 'Codex' },
+        { id: 'run-open', pullState: 'open', title: null, prompt: 'Other', agentName: 'Codex' },
+      ]
+      const before = decisions, runsBefore = runReads
+      const merged = (runId: string) => ({ id: `merged:${runId}`, kind: 'merged', runId })
+      assert.deepEqual(await chooseDesktopNotifications([merged('run-merged'), merged('run-open'), merged('run-foreign')]), { show: ['merged:run-merged'] })
+      assert.equal(decisions, before + 1)
+      assert.deepEqual(judged.at(-1), ['merged:run-merged'])
+      assert.equal(threadReads, 1)
+      assert.equal(runReads, runsBefore, 'no task-run read without a run candidate')
+      assert.deepEqual(await chooseDesktopNotifications([{ id: 'mentioned:x', kind: 'mentioned', messageId: 'not-a-uuid' }]), { show: [] }, 'a malformed mention is dropped before any read')
     })
   } finally { for (const handle of mocks.reverse()) handle.restore() }
 })

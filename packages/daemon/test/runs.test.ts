@@ -8,7 +8,7 @@ import { RepositoryCache } from "../src/repositories"
 import { runPolicy } from "../src/permissions"
 import { runIdHash } from "../src/tracing"
 
-import { DAEMON_RPC_ERRORS } from "@mikka/protocol"
+import { DAEMON_RPC_ERRORS, DEVICE_SESSION_LOCAL_GRACE_MS } from "@mikka/protocol"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { RunChunk } from "../src/chunks"
@@ -20,7 +20,7 @@ import {
   MemoryServer,
   type SetupRecipe,
 } from "../src/server-link"
-import { makeRepo, tempDir, waitFor } from "./helpers"
+import { loseDeviceSession, makeRepo, tempDir, waitFor } from "./helpers"
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim()
@@ -44,7 +44,6 @@ async function boot(
     credential: "cred-1",
     harnesses: [{ harness: "mock", installed: true, version: "test" }],
     mockSpeed: speed,
-    heartbeatMs: 50,
     stallMs,
     fixturesDir,
     collectCliTiming,
@@ -123,11 +122,10 @@ describe("mock runs", () => {
       return { ...assignment, remoteUrl: undefined }
     }
     link.nativeContext = async () => { throw new Error('Mock delivery must not request a model credential') }
-    link.nativeRequest = async () => { throw new Error('Mock delivery must not call a provider') }
     const daemon = await new Daemon({ dataDir, flavor: 'dev', agentSandbox: null, link, credential: 'cred-1',
       hostedSubscriptions: true, harnesses: [{ harness: 'mock', installed: true, version: 'test' }],
       harnessBinaries: { claude_code: resolve(import.meta.dirname, 'fakes/fake-claude-subscription.mjs') },
-      fixturesDir, mockSpeed: Number.POSITIVE_INFINITY, heartbeatMs: 60_000, quotaSource: null }).start()
+      fixturesDir, mockSpeed: Number.POSITIVE_INFINITY, quotaSource: null }).start()
     daemons.push(daemon)
     await daemon.syncWithServer()
     const runId = server.queueRun(DEVICE, { issueId: 'readonly-delivery', repoId: 'repo-1', baseBranch: 'main',
@@ -162,7 +160,6 @@ describe("mock runs", () => {
     const link = server.link()
     const claim = link.claimRun.bind(link)
     link.nativeContext = async () => { throw new Error('Mock file checks must not request a model credential') }
-    link.nativeRequest = async () => { throw new Error('Mock file checks must not call a provider') }
     // A no-repository cloud workspace has no remote URL. MemoryServer normally
     // supplies a file URL for local fixtures; reproduce the actual claim instead.
     link.claimRun = async (...args) => ({ ...await claim(...args), remoteUrl: undefined,
@@ -170,7 +167,7 @@ describe("mock runs", () => {
     const daemon = await new Daemon({ dataDir, flavor: 'dev', agentSandbox: null, link, credential: 'cred-1',
       hostedSubscriptions: true, harnesses: [{ harness: 'mock', installed: true, version: 'test' }],
       harnessBinaries: { claude_code: resolve(import.meta.dirname, 'fakes/fake-claude-subscription.mjs') },
-      mockSpeed: Number.POSITIVE_INFINITY, heartbeatMs: 60_000, quotaSource: null }).start()
+      mockSpeed: Number.POSITIVE_INFINITY, quotaSource: null }).start()
     daemons.push(daemon)
     await daemon.syncWithServer()
     const runId = server.queueRun(DEVICE, { issueId: 'hosted-delivery', repoId: 'repo-1', baseBranch: snapshot,
@@ -301,11 +298,13 @@ describe("mock runs", () => {
     const cases = [
       // Only the server's allow (an admitted GitHub App grant) fetches and pushes the issue branch; a local approval no longer stands in.
       { decision: "allow", approved: false, expected: true },
+      { decision: "allow", approved: false, expected: false, fresh: true },
       { decision: "ask", approved: true, expected: false },
       { decision: "ask", approved: false, expected: false },
       { decision: "deny", approved: true, expected: false },
     ] as const
-    for (const { decision, approved, expected } of cases) {
+    for (const item of cases) {
+      const { decision, approved, expected } = item
       const server = new MemoryServer(DEVICE)
       server.addRepo(DEVICE, { repoId: "repo-1", name: "fixture", path: origin, push: { approved, remote: "origin" } })
       const daemon = await boot(server, tempDir())
@@ -313,7 +312,7 @@ describe("mock runs", () => {
       const runId = server.queueRun(DEVICE, {
         issueId: `issue-${decision}-${approved}`, repoId: "repo-1",
         remoteUrl: pathToFileURL(origin).href, harness: "mock", prompt: "inspect",
-        pushBranch: "mikka/issue-1", fixture: "turn-ended",
+        pushBranch: "mikka/issue-1", fixture: "turn-ended", ...("fresh" in item ? { freshEnvironmentCheckout: true as const } : {}),
         // ask is what an older server could still send over the wire; it carries no push authority.
         policy: { ...defaults, permissions: { ...defaults.permissions, git_push: decision as "allow" | "deny" } },
       })
@@ -458,7 +457,7 @@ describe("mock runs", () => {
     })
     const daemon = await new Daemon({ dataDir: tempDir(), flavor: "dev", agentSandbox: null, link, credential: "cred-1",
       harnesses: [{ harness: "mock", installed: true, version: "test" }], mockSpeed: Number.POSITIVE_INFINITY,
-      heartbeatMs: 60_000, quotaSource: null }).start()
+     quotaSource: null }).start()
     daemons.push(daemon)
     await daemon.syncWithServer()
     const runId = server.queueRun(DEVICE, { issueId: "issue-new-repo", repoId: "repo-new", baseBranch: "main",
@@ -991,6 +990,27 @@ describe("follow-up runs", () => {
 // reason, and the issue gets a next owner or a named wait reason. Only a
 // submission whose verify passed goes to review.
 describe("run stops", () => {
+  it("publishes the local supervisor activity snapshot and final idle edge", async () => {
+    const { server, dataDir } = await setup()
+    const daemon = await boot(server, dataDir, Number.POSITIVE_INFINITY, 60_000)
+    const control = await connectDaemonInDataDir(dataDir, { name: "activity-control", version: "1" })
+    const watcher = await connectDaemonInDataDir(dataDir, { name: "activity-observer", version: "1" })
+    try {
+      const runId = queue(server, "stall")
+      await control.request("runs.start", { runId })
+      await waitFor(() => daemon.supervisor.activeRunIds().includes(runId))
+      const active: boolean[] = []
+      await watcher.watchRunActivity(value => active.push(value))
+      expect(active).toEqual([true])
+      await control.request("runs.cancel", { runId })
+      await waitFor(() => active.length === 2)
+      expect(active).toEqual([true, false])
+    } finally {
+      watcher.close()
+      control.close()
+    }
+  })
+
   it.each(['blocked', 'cancelled'] as const)('retains a clean repository-selection handoff only when it ended blocked (%s)', async stopReason => {
     const { repo, server, dataDir } = await setup()
     // The daemon clones this real local fixture into its own repository cache.
@@ -1123,10 +1143,10 @@ describe("run stops", () => {
     expect(server.unownedRuns()).toEqual([])
   })
 
-  it("lease: a run whose lease cannot be renewed stops as device_lost", async () => {
-    const { server, dataDir } = await setup(undefined, 300)
+  it("lease: a run keeps going while its session is open and stops as device_lost a minute after the socket is lost", async () => {
+    const { server, dataDir } = await setup()
     // Git/child startup on a busy runner is not a lease-timer assertion. Keep
-    // real I/O/timers, but advance the shared host/server clock deliberately.
+    // real I/O/timers, but advance the host clock deliberately.
     let now = Date.now()
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now)
     try {
@@ -1134,29 +1154,27 @@ describe("run stops", () => {
       const runId = queue(server, "stall")
       await daemon.syncWithServer()
       await waitFor(() => daemon.supervisor.get(runId).state === "running")
-      const firstLease = Date.parse(daemon.supervisor.get(runId).leaseExpiresAt!)
-      expect(firstLease).toBe(now + 300)
-      expect(daemon.supervisor.computerRunAllowed(runId)).toBe(true)
-      // A real heartbeat renews the same 300ms lease before it expires.
-      now += 200
-      await daemon.syncWithServer()
-      const renewed = Date.parse(daemon.supervisor.get(runId).leaseExpiresAt!)
-      expect(renewed).toBe(now + 300)
-      expect(renewed).toBeGreaterThan(firstLease)
+      await waitFor(() => daemon.status().session === "open")
+      // Minutes with the socket open (inside the watchdog limit): nothing to renew, the run holds.
+      now += 5 * 60_000
+      daemon.supervisor.check()
       expect(daemon.supervisor.get(runId).state).toBe("running")
       expect(daemon.supervisor.computerRunAllowed(runId)).toBe(true)
 
+      // The network goes: the socket drops and cannot be redialed.
       server.online = false
-      now = renewed - 1
+      const dropped = now
+      server.closeSessions()
+      await waitFor(() => daemon.status().session === "connecting")
+      expect(Date.parse(daemon.supervisor.get(runId).leaseExpiresAt!)).toBe(dropped + DEVICE_SESSION_LOCAL_GRACE_MS)
+      now = dropped + DEVICE_SESSION_LOCAL_GRACE_MS - 1
+      daemon.supervisor.check()
       expect(daemon.supervisor.computerRunAllowed(runId)).toBe(true)
-      now = renewed
+      now = dropped + DEVICE_SESSION_LOCAL_GRACE_MS + 1
       expect(daemon.supervisor.computerRunAllowed(runId)).toBe(false)
-      now += 1
+      daemon.supervisor.check()
       await daemon.supervisor.idle()
       expect(daemon.supervisor.get(runId).stopReason).toBe("device_lost")
-      expect(daemon.supervisor.computerRunAllowed(runId)).toBe(false)
-      // Meanwhile the server sees an active run without a fresh lease.
-      expect(server.unownedRuns()).toEqual([runId])
 
       server.online = true
       await waitFor(() => daemon.status().pendingUploads === 0)
@@ -1170,18 +1188,18 @@ describe("run stops", () => {
     }
   })
 
-  it("lease: a run the server took back stops at the next heartbeat", async () => {
+  it("lease: a socket back within the grace keeps the run", async () => {
     const { server, dataDir } = await setup()
     const daemon = await boot(server, dataDir)
     const runId = queue(server, "stall")
     await daemon.syncWithServer()
     await waitFor(() => daemon.supervisor.get(runId).state === "running")
-    // The server gave up on this run (its lease ran out) and queued a retry.
-    const held = server.runs.get(runId)
-    if (held) held.state = "failed"
-    await daemon.syncWithServer()
-    await daemon.supervisor.idle()
-    expect(daemon.supervisor.get(runId).stopReason).toBe("device_lost")
+    await waitFor(() => daemon.status().session === "open")
+    server.closeSessions()
+    // The memory gateway takes the redial at once.
+    await waitFor(() => daemon.status().session === "open")
+    daemon.supervisor.check(Date.now() + 2 * DEVICE_SESSION_LOCAL_GRACE_MS)
+    expect(daemon.supervisor.get(runId).state).toBe("running")
   })
 
   it("lease: the retry works on in the lost attempt's worktree", async () => {
@@ -1195,6 +1213,9 @@ describe("run stops", () => {
     writeFileSync(join(worktree, "PARTIAL.md"), "half done\n")
     const held = server.runs.get(first)
     if (held) held.state = "failed"
+    // The socket stayed down past the local grace: the run stopped here too.
+    loseDeviceSession(daemon.supervisor)
+    daemon.supervisor.sessionOpened() // and the socket is back for the next claim
     const retry = server.queueRun(DEVICE, {
       issueId: "issue-stall",
       repoId: "repo-1",
@@ -1260,6 +1281,8 @@ describe("run stops", () => {
 
     // The machine is gone; the run goes on elsewhere with only the checkpoint.
     if (held) held.state = "failed"
+    loseDeviceSession(daemon.supervisor)
+    daemon.supervisor.sessionOpened() // and the socket is back for the next claim
     const takeover = server.queueRun(DEVICE, {
       issueId: "issue-stall",
       repoId: "repo-1",

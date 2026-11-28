@@ -8,7 +8,7 @@ import type { SecretsTx } from './store'
 
 export type SecretChange = { name: string } & (
   | { ownerId: string }
-  | { id: string; workspaceId: string; scopeType: 'workspace' | 'repository'; scopeRef: string }
+  | { id: string; workspaceId: string; scopeType: 'workspace' | 'repository' | 'thread'; scopeRef: string }
 )
 
 type Candidate = {
@@ -20,7 +20,9 @@ const key = (...parts: (string | null)[]) => JSON.stringify(parts)
 /**
  * Called inside the secret write transaction. Stop already-admitted consumers and expire
  * their lease; the existing control push and recovery timer handle acknowledgement/offline
- * devices. Claim and heartbeat compare the frozen secret revision to cover concurrent claims.
+ * devices. Claim compares the frozen secret revision to cover concurrent claims, and
+ * every egress use re-reads the run (lib/secrets/egress-binding.ts), so a stopped run's
+ * capability is refused at once.
  * No plaintext is read and no provider request adds a database/auth round-trip.
  */
 export async function stopRunsForSecretChanges(tx: SecretsTx, changes: readonly SecretChange[]): Promise<number> {
@@ -56,7 +58,8 @@ export async function stopRunsForSecretChanges(tx: SecretsTx, changes: readonly 
     // No Environment preserves the ordinary workspace/repository inheritance.
     // An Environment, including an empty selection, admits only its frozen IDs.
     const selected = run.hasEnvironment
-      ? new Set(Array.isArray(run.environmentSecretIds) ? run.environmentSecretIds.filter((id): id is string => typeof id === 'string') : [])
+      // Postgres reports UUIDs lowercase; a stored uppercase id must still match.
+      ? new Set(Array.isArray(run.environmentSecretIds) ? run.environmentSecretIds.filter((id): id is string => typeof id === 'string').map(id => id.toLowerCase()) : [])
       : null
     return changes.some(change => {
       if ('ownerId' in change) return change.ownerId === run.userId

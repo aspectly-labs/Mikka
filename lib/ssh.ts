@@ -52,27 +52,6 @@ export interface SshResult {
   stderr: string
 }
 
-/**
- * One non-interactive ssh command. `BatchMode` means a host that needs a
- * password fails immediately instead of hanging on a prompt.
- */
-export function sshRun(target: string, command: string, timeoutMs = 60_000): Promise<SshResult> {
-  if (!isSafeTarget(target)) return Promise.resolve({ code: 1, stdout: '', stderr: 'Refused an unsafe ssh target.' })
-  return new Promise(resolve => {
-    execFile(
-      'ssh',
-      ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=accept-new', target, command],
-      { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        const code = error && typeof (error as { code?: unknown }).code === 'number'
-          ? (error as { code: number }).code
-          : error ? 1 : 0
-        resolve({ code, stdout: String(stdout), stderr: String(stderr) })
-      },
-    )
-  })
-}
-
 /** `rsync -az` of one local path to a remote path; directories included. */
 export function rsync(localPath: string, target: string, remotePath: string, extra: string[] = []): Promise<SshResult> {
   if (!isSafeTarget(target)) return Promise.resolve({ code: 1, stdout: '', stderr: 'Refused an unsafe ssh target.' })

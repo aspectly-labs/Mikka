@@ -1,4 +1,5 @@
 import { withBasePath } from '@/lib/base-path'
+import { LOCALHOST_HOSTNAME, LOOPBACK_IPV4 } from './env/hosts-constants.mjs'
 
 /** The nonce the desktop stores before sending the person to the browser. */
 export const DESKTOP_AUTH_STATE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/
@@ -21,10 +22,10 @@ export function desktopLoopbackCallback(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 512) return null
   try {
     const url = new URL(value)
-    if (url.protocol !== 'http:' || (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') || !url.port) return null
+    if (url.protocol !== 'http:' || (url.hostname !== LOOPBACK_IPV4 && url.hostname !== LOCALHOST_HOSTNAME) || !url.port) return null
     if (url.username || url.password || url.search || url.hash || url.pathname !== '/auth/callback') return null
-    // NextURL normalizes 127.0.0.1 to localhost inside query values too.
-    url.hostname = '127.0.0.1'
+    // Callers may send either loopback name; the Electron listener binds 127.0.0.1.
+    url.hostname = LOOPBACK_IPV4
     return `${url.origin}${url.pathname}`
   } catch {
     return null

@@ -13,7 +13,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { Pool, type PoolClient } from 'pg'
 import { orderMigrations } from '../../scripts/migration-order.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-test-database'
-import { applyApprovalMode, defaultRunPolicy } from '@mikka/protocol/agent-policy'
+import { readOnlyRunPolicy, defaultRunPolicy } from '@mikka/protocol/agent-policy'
 
 import { createFactoryDispatch, defaultFactoryDispatchAdapters, factoryBinding, type FactoryQueue } from './dispatch'
 import { createFactoryHumanStore } from './human-store'
@@ -64,7 +64,7 @@ test('legacy delivery snapshot recovery binds a fresh live observation without r
       await seedFixtureWorkspace(pool, 'owner', 'team', workspaceId)
       await pool.query(`INSERT INTO issues(id,"userId",title,content,status,priority,"workspaceId","ownershipState",scope) VALUES ($1,'owner','Synthetic legacy delivery','{"type":"doc","content":[]}','todo','normal',$2,'bound','workspace')`, [issueId, workspaceId])
       await pool.query(`INSERT INTO bots(id,"workspaceId","ownerId",name) VALUES($1,$2,'owner','Fixture Bot')`, [botId, workspaceId])
-      await pool.query(`INSERT INTO devices(id,"ownerId",name,kind,"lastSeenAt",harnesses) VALUES($1,'owner','Fixture cloud','cloud',now(),'[{"harness":"codex","installed":true}]')`, [deviceId])
+      await pool.query(`INSERT INTO devices(id,"ownerId",name,kind,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES($1,'owner','Fixture cloud','cloud',now(),'[{"harness":"codex","installed":true}]',now())`, [deviceId])
       await pool.query(`INSERT INTO agents(id,"userId",name,harness,"deviceId") VALUES($1,'owner',$3,'codex',$2)`, [agentId, deviceId, `Fixture Codex ${agentId}`])
       await pool.query(`INSERT INTO device_repos(id,"deviceId","userId","repoPath") VALUES($1,$2,'owner',$3)`, [repoId, deviceId, repoPath])
       // The database suite exercises check admission, not provider startup.
@@ -120,7 +120,7 @@ test('legacy delivery snapshot recovery binds a fresh live observation without r
       // assigned the diff baseline before the new no-fallback check existed.
       const oldReviewId = (await queue(pool as unknown as PoolClient, 'owner', { issueId, agentId, deviceRepoId: repoId }, botId, { sourceEventId, attemptId: pending.attemptId })).runId
       await pool.query(`UPDATE agent_runs SET kind='acceptance',"baseBranch"=$2 WHERE id=$1`, [oldReviewId, base])
-      await pool.query('UPDATE factory_attempts SET output=output||$2::jsonb WHERE id=$1', [pending.attemptId, JSON.stringify({ check: { stage: 'review', requestEpoch: sourceEventId, candidateId: oldCandidateId, sha: base, repository: repoPath, environment: `device:${deviceId}`, deviceRepoId: repoId, command: null, reportOnly: true, policy: applyApprovalMode(defaultRunPolicy(), 'read_only') } })])
+      await pool.query('UPDATE factory_attempts SET output=output||$2::jsonb WHERE id=$1', [pending.attemptId, JSON.stringify({ check: { stage: 'review', requestEpoch: sourceEventId, candidateId: oldCandidateId, sha: base, repository: repoPath, environment: `device:${deviceId}`, deviceRepoId: repoId, command: null, reportOnly: true, policy: readOnlyRunPolicy(defaultRunPolicy()) } })])
       await store.apply('owner', factoryBinding(pending), randomUUID(), { action: 'bind_run', runId: oldReviewId })
       await pool.query(`UPDATE agent_runs SET status='stopped',"stopReason"='blocked',"sessionId"='old-independent-review',"startedAt"=now()-interval '5 minutes',"finishedAt"=now()-interval '3 minutes',report=$2 WHERE id=$1`,
       [oldReviewId, JSON.stringify({ summary: 'Artifact inspection refused or unavailable.', blockedOn: 'mikka.inspect_artifact_unavailable', check: { sha: base, readOnly: true }, verify: { status: 'not_run' }, filesChanged: [] })])

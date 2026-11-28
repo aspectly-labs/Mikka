@@ -5,8 +5,8 @@ Later decisions govern navigation and task state presentation. Lists contain
 [tasks only](decisions/2026-11-07-2045-tasks-only-threads-inside.md). A task has
 [one conversation across attempts](decisions/2026-11-07-2300-one-conversation-per-task.md),
 with chronological activity and an attempt link scrolling to its section.
-Task rows use their own [state icons](decisions/2026-11-07-2230-one-icon-per-task-state.md)
-and [semantic colours](decisions/2026-11-08-0130-task-state-icon-colours.md).
+Task rows use their own [state icons](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-2230-one-icon-per-task-state.md)
+and [semantic colours](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0130-task-state-icon-colours.md).
 The older thread-list and iOS subtitle frames below are historical layout references.
 The [2026-11-08 coding-review decision](decisions/2026-11-08-1230-coding-workspace.md)
 also supersedes Part 2's PR-review layout with one dedicated review page,
@@ -23,11 +23,11 @@ the later task-title/current-Agent header. The SwiftUI popover described by
 the original frame is not an implementation instruction.
 
 - **Status:** accepted with two changes (Alex, 2026-11-06): icons only in the title bar; an Artifact button that is always there
-- **Figma:** file `zPe5LKycb2XuT1ivCLRw07`, page 「待 Alex 确认 · 线程运行位置与 PR 验收（2026-11-06）」 `1052:6875`
+- **Figma:** file `zPe5LKycb2XuT1ivCLRw07`, 「线程运行位置与 PR 验收」评审页 `1052:6875`
 - **Owner thread:** run-location mark and hover card (web, desktop, iOS) in this
   thread; the PR review view goes to the Factory delivery thread once confirmed.
 
-Screenshots of the key frames are in [`thread-run-location/`](thread-run-location/).
+Screenshots of the key frames are in [`thread-run-location/`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/thread-run-location).
 
 ## What the user does
 
@@ -49,8 +49,8 @@ Screenshots of the key frames are in [`thread-run-location/`](thread-run-locatio
 | Parts: mark variants (`1054:77`), hover cards, icons | `1053:2` |
 
 - **Icons only** (Alex, 2026-11-06: 「这些都只留图标，文字必须要 hover 上去才能看得见」).
-  After the title come two icons and no text: the device type icon (lucide
-  `Cloud`, `Laptop`, `Server`) with the StatusDot on its top right (R-24),
+  After the title come two icons and no text: the device type icon (`Cloud`,
+  `Laptop`, `Server`) with the StatusDot on its top right (R-24),
   then the Agent's mark. Hovering the device icon opens the card below; the
   Agent mark has a tooltip 「Claude Code · Mikka Frontend 派出」. The mark
   component's 「显示名称」 property is off in headers and on inside the identity

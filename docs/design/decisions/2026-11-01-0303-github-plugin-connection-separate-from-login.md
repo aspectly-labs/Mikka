@@ -1,6 +1,7 @@
 # GitHub plugin connection is separate from the login identity
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, MVP bug triage: 「我说是 GitHub App 可以连接到多个账号的，但是登录只能是一个邮箱登录一个账号，一个 GitHub 账号登录一个账户」
 - Rule: —
 - Replaces: —

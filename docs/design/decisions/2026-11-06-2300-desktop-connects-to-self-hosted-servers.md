@@ -1,6 +1,7 @@
 # The desktop app connects to Mikka Cloud or a self-hosted server
 
 - Date: 2026-11-06
+- **Status:** Accepted
 - Source: Alex, 2026-11-06, in issues #1556 and #1557: 「同一个官方桌面 App，既能连 Mikka 云，也能连用户自己部署的服务器」, following LobeHub's desktop. 「官方 App 连接任何服务器都用 App 自带的界面，暂定这样」.
 - Rule: —
 - Replaces: —

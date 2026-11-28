@@ -42,7 +42,7 @@ test("pending Factory questions list by task and by run in AskUserQuestion shape
     const fixture: Record<string, { deviceId: string; agentId: string; repoId: string }> = {};
     for (const user of ["owner", "intruder"]) {
       const f = (fixture[user] = { deviceId: randomUUID(), agentId: randomUUID(), repoId: randomUUID() });
-      await pool.query(`INSERT INTO devices (id,"ownerId",name,"lastSeenAt",harnesses) VALUES ($1,$2,'Disposable',now(),'[{"harness":"codex","installed":true}]')`, [f.deviceId, user]);
+      await pool.query(`INSERT INTO devices (id,"ownerId",name,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,$2,'Disposable',now(),'[{"harness":"codex","installed":true}]',now())`, [f.deviceId, user]);
       await pool.query(`INSERT INTO agents (id,"userId",name,harness,"deviceId") VALUES ($1,$2,'Fixture','codex',$3)`, [f.agentId, user, f.deviceId]);
       await pool.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath") VALUES ($1,$2,$3,'/fixture/repo')`, [f.repoId, f.deviceId, user]);
     }
@@ -125,7 +125,12 @@ test("pending Factory questions list by task and by run in AskUserQuestion shape
       assert.equal(res.status, 200);
       const [item] = (res.body as { questions: { reference: { binding: { issueId: string } } }[] }).questions;
       assert.equal(item.reference.binding.issueId, a.issueId);
-      assert.deepEqual((res.body as { questions: unknown[] }).questions.map((q) => { const { reference: _r, ...rest } = q as Record<string, unknown>; return rest; }), [{
+      assert.deepEqual((res.body as { questions: unknown[] }).questions.map((q) => {
+        const { reference: _r, createdAt, ...rest } = q as Record<string, unknown>;
+        // When it was asked, as an ISO time, so the Inbox can order and date it.
+        assert.equal(new Date(String(createdAt)).toISOString(), createdAt);
+        return rest;
+      }), [{
         questionId: a.questionId, taskId: a.taskId, runId: a.runId, status: "open", type: "decision",
         originalText: "Which API should we keep?", question: "Which API should we keep?", header: "Decision",
         options: [{ label: "REST", description: "", value: "REST" }, { label: "GraphQL", description: "", value: "GraphQL" }], multiSelect: false,
@@ -386,9 +391,9 @@ test("pending Factory questions list by task and by run in AskUserQuestion shape
       const firstBot = randomUUID(), secondBot = randomUUID(), foreignBot = randomUUID();
       for (const [id, user] of [[firstBot, "owner"], [secondBot, "owner"], [foreignBot, "intruder"]])
         await pool.query(`INSERT INTO bots (id,"workspaceId","ownerId",name) VALUES ($1,$2,$3,$4)`, [id, await seedFixtureWorkspace(pool, user), user, `Question fixture ${id}`]);
-      const first = await asked("permission", "Continue the original task?", ["Continue"], "owner", firstBot);
+      const first = await asked("decision", "Continue the original task?", ["Continue"], "owner", firstBot);
       const second = await asked("external", "Wait for the external service?", ["Continue"], "owner", secondBot);
-      const foreign = await asked("permission", "Other person's task", ["Continue"], "intruder", foreignBot);
+      const foreign = await asked("decision", "Other person's task", ["Continue"], "intruder", foreignBot);
       const before = await dbHash();
       const ids = (res: Awaited<ReturnType<typeof get>>) => (res.body as { questions: { questionId: string }[] }).questions.map(q => q.questionId);
       for (const q of [first, second]) {

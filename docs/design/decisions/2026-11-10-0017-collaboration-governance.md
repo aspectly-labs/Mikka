@@ -2,7 +2,7 @@
 
 - Date: 2026-11-10 00:17 UTC (2026-11-09 in America/New_York).
 - Source: Alex's [#1849](https://github.com/alexj11324/Mikka/issues/1849) and its implementation assignment: “团队内默认协作、私人内容真正私有、个人订阅不作为其他成员可直接选择的资源池”.
-- Status: accepted product decision; deployment and acceptance are recorded per PR in #1849.
+- **Status:** Accepted product decision; deployment and acceptance are recorded per PR in #1849.
 - Rule: R-26, R-62, R-76; orchestration §§ 1, 2, 6, 7.
 - Replaces: the view-only/shared-chat parts of [2026-11-01-2300](2026-11-01-2300-thread-visibility-follows-warp.md), cross-member personal subscription sharing, implicit single-member Shared Workspace personal-credit fallback in [2026-11-02-1500](2026-11-02-1500-personal-first-team-needs-two.md), and seat-based Cloud Team admission and checkout. Independent Workspace tenancy, native Agent execution and protected Secrets remain authoritative.
 

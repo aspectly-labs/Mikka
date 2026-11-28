@@ -64,16 +64,14 @@ export async function readmitLostLocalRun(original: Run, target: AdmittedTakeove
       const targetPolicy = await lockCliAgentPolicy(tx, run.userId, target.agentId, run.botId, { ...scope, ...(originalPolicy.hierarchy ? { hierarchy: originalPolicy.hierarchy } : {}) })
       if (!isNoLooserThan(originalPolicy.policy, targetPolicy.policy) || !networkDomainsWithin(targetPolicy.policy.networkAllow, originalPolicy.policy.networkAllow))
         return { retried: false, blocked: 'The available device has a broader execution policy than the original worker. Keep the original restrictions before retrying this task.' }
-      const { rows: devices } = await tx.query(`SELECT id,kind,enabled,"removedAt","protocolVersion","lastSeenAt" FROM devices
+      const { rows: devices } = await tx.query(`SELECT id,kind,enabled,"removedAt","protocolVersion","sessionOpenedAt","sessionClosedAt" FROM devices
         WHERE id=ANY($1::uuid[]) AND "ownerId"=$2 ORDER BY id FOR SHARE`, [[target.deviceId, ...(run.deviceId ? [run.deviceId] : [])], run.userId])
       const destination = devices.find(device => device.id === target.deviceId)
       if (!destination?.enabled || destination.removedAt || destination.kind !== 'local' || destination.protocolVersion < DAEMON_PROTOCOL_VERSION)
         return { retried: false, blocked: 'The selected recovery device is no longer authorized and available. Select an available device to retry this task.' }
-      // Idle gateway daemons have no HTTP heartbeat. Presence has one bounded
-      // lookup per device; ownership/scheduling authority remains the locked SQL.
-      // Policy/row locks may have waited while a real heartbeat arrived. The
-      // lease snapshot still fences the attempt; it is not the presence clock.
-      const presence = await deviceOnlineStates(devices)
+      // Presence is the device session, read with the locked rows; the lease
+      // snapshot still fences the attempt.
+      const presence = deviceOnlineStates(devices)
       const source = devices.find(device => device.id === run.deviceId)
       if (queued && source?.enabled && !source.removedAt && presence.get(source.id)) return { retried: false }
       if (!presence.get(target.deviceId))
@@ -149,7 +147,7 @@ export async function readmitLostLocalRun(original: Run, target: AdmittedTakeove
             AND "sandboxId"=$4 AND "deviceId"=$5 AND "operationId"=$6 AND "repoId"=$7 AND state='paused'`, [run.id, run.userId, cloudMachine.workspaceId, cloudMachine.sandboxId, run.deviceId, cloudMachine.operationId, run.deviceRepoId])
           if (!parked.rowCount) throw new CloudPauseUnconfirmed()
           await tx.query('UPDATE device_tokens SET "revokedAt"=COALESCE("revokedAt",now()) WHERE "boundDeviceId"=$1 AND "userId"=$2', [run.deviceId, run.userId])
-        } catch { throw new CloudPauseUnconfirmed() }
+        } catch (error) { throw Object.assign(new CloudPauseUnconfirmed(), { cause: error }) }
       }
       await recordCoordinatorEvent(db, runRetriedEvent(run, { runId: retryId, attempt: retry.attempt, maxAttempts: MAX_RUN_ATTEMPTS,
         movedToDeviceId: target.deviceId, movedTo: { kind: 'device', deviceId: target.deviceId } }))

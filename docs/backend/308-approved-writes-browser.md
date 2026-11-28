@@ -1,5 +1,18 @@
 # Personal approved-write endpoint
 
+> **Since [ADR 2026-11-27-1615](../design/decisions/2026-11-27-1615-no-permission-approvals.md)
+> nothing waits for approval.** A run's write goes straight through
+> `writeFromRun` (receipt inserted `running`, then the ledger's single
+> invocation). The browser endpoint only reads receipts (`list`, `view`);
+> `propose` is gone and `decide` is answered `409 pendingActionUnavailable`
+> for one release while the official UI still sends it. A receipt still
+> `running` after its run ended is read back by the reconcile sweep
+> (`lib/operations/write-receipt-sweep.ts`, read/reconcile phases only, never a
+> resend); one whose invoke gate never committed is closed `failed`
+> (`writeRunEnded`). The sweep also closes any late `pending` row as
+> `declined` / `approvalRetired`. The text below is the
+> original contract, kept for its ledger, binding and recovery rules.
+
 Depends on the transaction foundation in PR373. The endpoint POST `/api/approved-writes` (normal app base path applies), Coordinator tool registry and owner/session approval services share one operation ledger. The feature does not replace existing email/calendar-create/update handlers. Availability defaults on in every deployment scope. The PostHog flag `mikka-personal-writes-off` is the incident kill switch (`lib/deployment-switches.ts`); the old `MIKKA_PERSONAL_WRITES_ENABLED` variable is no longer read. Request input cannot override it. Disabled calls return 503/approvedWritesDisabled before auth, application Pool or provider runtime loads. Availability grants no provider permission and does not expand existing frozen tool snapshots.
 
 ## Existing-schema compatibility
@@ -27,9 +40,14 @@ Supported actions: append_notion_paragraph `{page_id:UUID,text:1..2000}`, send_s
 
 HTTP400invalid envelope/input,401session/Bearer rejection,403Origin,409domain/uncertain COMMIT,503unavailable/disabled.200is a typed result, not automatic provider success. View/list statuses pending/running/done/declined; running+operationUncertain remains unresolved. COMMIT errors retain explicit committed/unconfirmed state from the foundation; clients keep IDs and inspect the same result. No automatic transaction-body retry.
 
-## Default permission (2026-10-31, R-77)
+## Connected-app writes
 
-Explicit `ask` and `deny` in the workspace's `external_write_permissions` still narrow, and an explicit `allow` runs without a model call. Only when no setting names the action (`lockWritePolicy` reports `defaulted`) does `proposeFromRun` ask the injected `judgeWrite` (`lib/operations/write-judgment.ts`, on the existing Decisions route via `decide`) one predicate, `destructive`. Its input is the action, the write tool's slug and Composio tags (the MCP hints, from `composioWriteProvider.prepare`, which already fetches the tool) and the concrete payload. Every call is judged, a `readOnlyHint` tool included (the hint is input); probability ≥ 0.5 (the existing predicate cut-off) asks; an unavailable, refused or malformed answer shows no card: the agent's own call goes ahead and the log records `Write judgment fallback` (decision 2026-11-01-1330). The result is frozen in `operationBinding.run.approvalDefault` and the ledger `policyScope`, so every later check (insert, decide, ledger phases) resolves the same way. Bindings made before this change keep `ask`. The Coordinator's Gmail/Calendar writes use the same judge in `writeAccountAction`.
+The run still needs current access to the tool and its account. An
+authorized call dispatches without an additional approval judgment.
+Run-backed records use the `direct` policy version. Records with numeric
+policy versions retain their stored-policy checks. The operation ledger
+continues to pin the account, target, content, execution and invocation.
+See [authorized MCP connections](../design/decisions/2026-11-19-native-mcp-authorization.md).
 
 ## Product approval integration
 

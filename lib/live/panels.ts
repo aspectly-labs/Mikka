@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit, databaseCommitScope } from '../db/commit-effects'
 import { LIVE_ID, type LiveInvalidation } from './events'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -90,15 +91,31 @@ export async function documentLiveWorkspace(database: Database, workspaceDatabas
 }
 
 export async function runLiveTargets(database: Database, workspaceDatabase: Database, runId: string, kind: 'run' | 'thread') {
-  const { rows: [run] } = await database.query<{ userId: string; issueId: string | null; retryOf: string | null; continuesRunId: string | null; origin: string | null }>(
-    `SELECT "userId","issueId","retryOf","continuesRunId","questionContinuation"->>'originRunId' AS origin FROM agent_runs WHERE id=$1`, [runId],
+  const { rows: [run] } = await database.query<{ userId: string; workspaceId: string | null; issueId: string | null; retryOf: string | null; continuesRunId: string | null; origin: string | null; parentRunId: string | null }>(
+    `SELECT "userId","workspaceId","issueId","retryOf","continuesRunId","questionContinuation"->>'originRunId' AS origin,"parentRunId" FROM agent_runs WHERE id=$1`, [runId],
   )
   if (!run) return []
   const ids = [runId]
   if (kind === 'run') {
-    const parents = [run.retryOf, run.continuesRunId, run.origin].filter((id): id is string => typeof id === 'string' && LIVE_ID.test(id))
+    const parents = [run.retryOf, run.continuesRunId, run.parentRunId, run.origin].filter((id): id is string => typeof id === 'string' && LIVE_ID.test(id))
     if (parents.length) {
-      const { rows } = await database.query<{ id: string }>('SELECT id FROM agent_runs WHERE id=ANY($1::uuid[]) AND "userId"=$2 AND "issueId" IS NOT DISTINCT FROM $3::uuid', [parents, run.userId, run.issueId])
+      // A sub-agent may run on another task in the same workspace; its parent
+      // link follows ownership, not issueId. The other parents stay task-bound.
+      const { rows } = await database.query<{ id: string }>(
+        'SELECT id FROM agent_runs WHERE id=ANY($1::uuid[]) AND "userId"=$2 AND ("issueId" IS NOT DISTINCT FROM $3::uuid OR id=$4::uuid)',
+        [parents, run.userId, run.issueId, run.parentRunId ?? '00000000-0000-0000-0000-000000000000'])
+      ids.push(...rows.map(row => row.id))
+    }
+    // A sub-agent's change also wakes the thread that dispatched it (#2939): its card there shows the new state. The
+    // parent may belong to another task; the edge itself is fenced to one owner and Workspace.
+    // A continuation of the sub-agent's thread finds the parent through the run it goes on from.
+    if (run.workspaceId && (run.parentRunId || run.retryOf || run.continuesRunId)) {
+      const { rows } = await database.query<{ id: string }>(`WITH RECURSIVE up AS (
+          SELECT id,"parentRunId","retryOf","continuesRunId",0 AS depth FROM agent_runs WHERE id=$1
+          UNION ALL SELECT r.id,r."parentRunId",r."retryOf",r."continuesRunId",up.depth+1 FROM up JOIN agent_runs r
+            ON r.id=coalesce(up."continuesRunId",up."retryOf") AND r."userId"=$2 AND r."workspaceId"=$3
+            WHERE up."parentRunId" IS NULL AND up.depth<64)
+        SELECT p.id FROM up JOIN agent_runs p ON p.id=up."parentRunId" AND p."userId"=$2 AND p."workspaceId"=$3 LIMIT 1`, [runId, run.userId, run.workspaceId])
       ids.push(...rows.map(row => row.id))
     }
   }
@@ -137,8 +154,8 @@ export async function runChangeTargets(database: Database, workspaceDatabase: Da
   return [...merged.values()]
 }
 
-async function changed(executor: object, kind: 'issue_document' | 'run' | 'thread', id: string) {
-  if (!liveGatewayConfig(process.env)) return
+async function changed(executor: object, kind: 'issue_document' | 'issue_threads' | 'run' | 'thread', id: string) {
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive } = await import('./notify')
   const databaseScope = databaseCommitScope(executor)
   const publish = async () => {
@@ -146,6 +163,7 @@ async function changed(executor: object, kind: 'issue_document' | 'run' | 'threa
     const { workspacePool } = await import('../workspace-db')
     await withoutDatabaseClient(async () => {
       const targets = kind === 'issue_document' ? await documentLiveTargets(pool, workspacePool, id)
+        : kind === 'issue_threads' ? await issueThreadTargets(pool, workspacePool, id)
         : kind === 'run' ? await runChangeTargets(pool, workspacePool, id)
         : await runLiveTargets(pool, workspacePool, id, kind)
       await (await import('./publish')).sendLiveTargets(pool, targets)
@@ -160,11 +178,22 @@ export const documentChanged = (executor: object, issueId: string) => {
   armDueTimerAfterCommit(executor, 'run-recovery')
   return changed(executor, 'issue_document', issueId)
 }
+/**
+ * A task's comment reactions changed. They ride the document's own key (its
+ * audience, its gateway kind): an open task page re-reads its discussion, and
+ * a document poll with an unchanged version costs no body. No new wire kind,
+ * so no gateway release has to precede this one.
+ */
+export const taskCommentsChanged = (executor: object, issueId: string) => changed(executor, 'issue_document', issueId)
+/** An issue's thread list changed (for example, a thread was linked, moved or unlinked). */
+export const issueThreadsChanged = (executor: object, issueId: string) => changed(executor, 'issue_threads', issueId)
 /** A semantic run write also wakes the already mounted immediate parent of a new continuation,
  * and its issue's thread list for every member who can see the issue. */
 export const runChanged = (executor: object, runId: string) => {
   // A cloud run's thread-machine lifecycle waits on this instead of re-reading every 30 s (#1212).
   wakeWorkflowAfterCommit(executor, wakeTokens.threadMachine(runId))
+  // Publication retries wake on a committed run transition instead of waiting for the next backoff.
+  wakeWorkflowAfterCommit(executor, wakeTokens.runPublication(runId))
   armDueTimerAfterCommit(executor, 'run-recovery')
   return changed(executor, 'run', runId)
 }
@@ -174,7 +203,7 @@ export const threadChanged = (executor: object, runId: string) => changed(execut
 /** Capture only from the writer's locked issue, before its scope changes. An
  * invalidation contains the already-known ID, never the old or new body. */
 export async function documentScopesBeforeChange(issue: { id: string; userId: string; scope: string; workspaceId: string | null }): Promise<LiveScope[]> {
-  if (!liveGatewayConfig(process.env)) return []
+  if (!liveGatewayConfig(runtimeEnv())) return []
   try {
     const { workspacePool } = await import('../workspace-db')
     return await documentScopes(workspacePool, issue.workspaceId ? [issue.workspaceId] : [])
@@ -187,7 +216,7 @@ export async function documentScopesBeforeChange(issue: { id: string; userId: st
 /** Old subscriptions must reauthorize and move to the new canonical channel.
  * Membership is rechecked after COMMIT, including for previously allowed keys. */
 export async function documentScopeChanged(executor: object, issueId: string, previous: LiveScope[]) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterDatabaseCommit(executor, `issue-scope:${issueId}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

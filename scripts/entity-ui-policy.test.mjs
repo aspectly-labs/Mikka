@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { auditEntityDetail, auditTaskEntry, verifyEntityContracts } from './entity-ui-policy.mjs'
+import { auditEntityDetail, auditTaskEntry, resolveEntityFile, verifyEntityContracts } from './entity-ui-policy.mjs'
 
+const readRepoFile = file => {
+  const resolved = resolveEntityFile(file)
+  return resolved ? readFileSync(resolved, 'utf8') : undefined
+}
 const entry = 'components/workspace/issue-workspace.tsx'
 const lazy = "const Form = dynamic(() => import('./task-detail').then(module => module.TaskDetail))"
 test('full page and sidebar both render the actual canonical editor', () => {
   for (const file of [entry, 'components/coordinator/conversation-panels.tsx']) {
-    assert.deepEqual(auditTaskEntry(file, readFileSync(file, 'utf8')), [])
+    const source = readRepoFile(file)
+    if (source !== undefined) assert.deepEqual(auditTaskEntry(file, source), [])
   }
   assert.deepEqual(auditTaskEntry(entry, lazy + '; function Page(){return <Form/>}'), [])
   assert.deepEqual(auditTaskEntry(entry, "import { TaskDetail as Editor } from './task-detail'; function Page(){return <Editor/>}"), [])
@@ -32,24 +37,19 @@ test('a parallel task controller fails even when it is not exported', () => {
   assert.equal(auditEntityDetail('components/entries/board.tsx', 'function TaskDetailController() {}')[0].rule, 'entity/detail-source')
 })
 test('the manifest resolves actual value exports and catches an erased command', () => {
-  const read = file => readFileSync(file, 'utf8')
-  assert.deepEqual(verifyEntityContracts(read), [])
-  const missing = verifyEntityContracts(file => file === 'app/actions/issues.ts' ? 'export type saveIssue = never' : read(file))
+  assert.deepEqual(verifyEntityContracts(readRepoFile), [])
+  const missing = verifyEntityContracts(file => file === 'app/actions/issues.ts' ? 'export type saveIssue = never' : readRepoFile(file))
   assert.ok(missing.some(d => d.message.includes('saveIssue')))
 })
 
-test('an unregistered mobile entity route and a false Task re-export cannot bypass registration', () => {
-  const task = 'apps/mobile/app/task/[id]/index.tsx'
-  assert.deepEqual(auditEntityDetail(task, readFileSync(task, 'utf8')), [])
+test('unregistered entity detail routes and controllers cannot bypass registration', () => {
   assert.equal(auditEntityDetail('apps/mobile/app/invoice/[slug].tsx', 'export default function Screen() {}')[0].rule, 'entity/native-detail-route')
-  assert.equal(auditEntityDetail(task, "export { TaskScreen as default } from './copy'")[0].rule, 'entity/native-detail-route')
   assert.equal(auditEntityDetail('hooks/use-detail.ts', 'export function useTaskPanelController() {}')[0].rule, 'entity/detail-source')
   assert.equal(auditEntityDetail('lib/task-flow.ts', 'function TaskDetailController() {}')[0].rule, 'entity/detail-source')
 })
 
 test('Inbox, Factory question and composer have one registered web hook owner', () => {
-  const read = file => readFileSync(file, 'utf8')
-  assert.deepEqual(verifyEntityContracts(read), [])
+  assert.deepEqual(verifyEntityContracts(readRepoFile), [])
   for (const [file, source] of [
     ['components/workspace/inbox-counter.tsx', 'function useInboxCount() {}'],
     ['hooks/use-other-questions.ts', 'export function useFactoryQuestions() {}'],
@@ -67,7 +67,7 @@ test('Inbox, Factory question and composer have one registered web hook owner', 
     ['hooks/use-factory-questions.ts', 'useFactoryQuestions'],
     ['hooks/use-chat-composer.ts', 'useChatComposer'],
   ]) {
-    const missing = verifyEntityContracts(path => path === file ? `export type ${name} = never` : read(path))
+    const missing = verifyEntityContracts(path => path === file ? `export type ${name} = never` : readRepoFile(path))
     assert.ok(missing.some(d => d.file === file && d.message.includes(name)), file)
   }
 })

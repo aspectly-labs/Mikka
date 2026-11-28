@@ -15,7 +15,7 @@ export const ORIGIN = 'https://app.aspectlylabs.com'
 export const OPS_REF = 'refs/heads/ops/issue1415-production-functional'
 const BASE = '/mikka', AUTH = BASE + '/api/auth', MCP = BASE + '/api/mcp'
 const CALLBACK = 'http://127.0.0.1:45123/callback'
-const REPOSITORY = 'alexj11324/Mikka', SHA = /^[a-f0-9]{40}$/
+const REPOSITORY = 'aspectly-labs/Mikka', SHA = /^[a-f0-9]{40}$/
 const clientIdValid = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(value)
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 const codes = new Set(['trigger_rejected', 'application_binding', 'account_required', 'request_denied',
@@ -166,7 +166,7 @@ export async function runProductionMcpProof({
         deployment = await waitForWebDeployment({ expectedBuild: binding.applicationSha, token: env.GH_TOKEN,
           fetchImpl, maxWaitMs: 30_000, intervalMs: 1000 })
       } catch { throw new ProbeError('application_binding') }
-      report.deployment = { webRunId: deployment.webRunId, webAttempt: deployment.webAttempt,
+      report.deployment = { provider: deployment.provider, verifiedAt: deployment.verifiedAt,
         exactApplication: deployment.sourceCommit === binding.applicationSha && deployment.publicBuild === binding.applicationSha }
     }
     need(report.deployment.exactApplication, 'application_binding')

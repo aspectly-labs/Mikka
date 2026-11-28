@@ -25,6 +25,7 @@ import { RunContextPropagator, withRunSpan, withTraceMetadata } from '../../lib/
 import { createPgInstrumentation, createTracerProvider, SafeExporter } from '../../lib/tracing/node'
 import { createLogProvider } from '../../lib/tracing/logs'
 import { localDatabaseTarget } from '../test-accounts/database-target.mjs'
+import { publicEnv } from '../../lib/public-env.mjs'
 
 // These are test-environment failures, never production coding runs. There is
 // no endpoint, request-count or token-kind override on the export path.
@@ -32,11 +33,11 @@ export function controlledFailureSettings(args: string[], env: NodeJS.ProcessEnv
   if (!args.length) return undefined
   if (args.length !== 1 || args[0] !== '--export-controlled-failures') throw new Error('invalid_trace_benchmark_mode')
   if (env.GITHUB_ACTIONS !== 'true' || env.GITHUB_EVENT_NAME !== 'workflow_dispatch'
-    || env.GITHUB_REPOSITORY !== 'alexj11324/Mikka' || env.GITHUB_REF !== 'refs/heads/main'
+    || env.GITHUB_REPOSITORY !== 'aspectly-labs/Mikka' || env.GITHUB_REF !== 'refs/heads/main'
     || !/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '') || env.GITHUB_SHA !== env.MIKKA_EXPECTED_DEPLOYMENT_SHA) {
     throw new Error('controlled_failure_source_binding_required')
   }
-  const token = env.NEXT_PUBLIC_POSTHOG_KEY
+  const token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', env)
   if (!token || !/^phc_[a-zA-Z0-9_-]{1,256}$/.test(token)) throw new Error('controlled_failure_project_token_required')
   localDatabaseTarget(env.E2E_DATABASE_URL)
   return { endpoint: 'https://us.i.posthog.com/i/v1/traces', token, version: env.GITHUB_SHA, environment: 'dev', requests: 20 } as const

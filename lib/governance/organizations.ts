@@ -46,6 +46,14 @@ export async function listOrganizations(userId: string, organizationId?: string)
       organizationId === undefined ? undefined : eq(organizations.id, organizationId))).orderBy(asc(organizations.createdAt))
 }
 
+/** Whether a workspace is currently linked to an active (non-archived) organization. */
+export async function isWorkspaceBoundToOrganization(workspaceId: string): Promise<boolean> {
+  const [link] = await workspaceDb.select({ id: organizationWorkspaces.organizationId }).from(organizationWorkspaces)
+    .innerJoin(organizations, eq(organizations.id, organizationWorkspaces.organizationId))
+    .where(and(eq(organizationWorkspaces.workspaceId, workspaceId), isNull(organizations.archivedAt))).limit(1)
+  return Boolean(link)
+}
+
 /** Only a current owner may see the retained name after archiving. */
 export async function listArchivedOrganizations(userId: string) {
   return workspaceDb.select({ id: organizations.id, name: organizations.name }).from(organizations)

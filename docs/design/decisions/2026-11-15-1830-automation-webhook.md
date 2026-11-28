@@ -1,5 +1,7 @@
 # 自动化：Webhook 地址
 
+- **Status:** Accepted
+
 2026-11-15：Alex 要求把自动化补齐到 Capy 的程度（「补齐」）。这是第 4 步：每个自动化有自己的 Webhook 地址，可以把一段时间内的请求合成一次运行。延续 [2026-11-15-1704](2026-11-15-1704-automation-github-triggers.md)。
 
 ## 决定

@@ -6,7 +6,7 @@ import { ORIGIN, REPOSITORY } from './project-decisions.mjs'
 export const DEPLOYED_TARGET_MODE = 'deployed-target'
 export const DEPLOYED_WORKFLOW = '.github/workflows/issue1415-deployed-production.yml'
 const API = 'https://api.github.com/repos/' + REPOSITORY
-const OWNER = 'alexj11324'
+const OWNER = 'aspectly-labs'
 const SHA = /^[a-f0-9]{40}$/
 const CODES = new Set(['target_configuration', 'target_driver', 'target_issue',
   'target_attestation', 'target_changed', 'target_unproven'])

@@ -1,6 +1,7 @@
 # Connected apps in device runs
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, 2026-10-31: 「那你就按照这个最佳实践去做吧，指向我们的米卡就行了」
 - Rule: —
 - Replaces: —

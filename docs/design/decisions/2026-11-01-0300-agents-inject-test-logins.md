@@ -1,6 +1,7 @@
 # Agents never ask Alex for passwords; they inject test logins themselves
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex: 「开发过程中不允许向我要密码，直接给我注入这个真实密码。」 and
   「你按道理你可以直接注入这个…登录信息才对的呀，凭什么你要被卡在这个地方？」
 - Rule: —
@@ -39,3 +40,7 @@
 | --- | --- | --- |
 | MVP end-to-end runs (GitHub-linked) | `zhixuanj@andrew.cmu.edu` | `MVP_TEST_EMAIL`, `MVP_TEST_PASSWORD` |
 | YC demo recording (Acme, English) | `alex@acme.aspectlylabs.com` | `ACME_DEMO_EMAIL`, `ACME_DEMO_PASSWORD` |
+
+Mikka signs in through Better Auth only. A login from another identity
+provider (for example a Clerk test user from the retired Orvilo app) never works
+here; give agents a Better Auth credential set up as above.

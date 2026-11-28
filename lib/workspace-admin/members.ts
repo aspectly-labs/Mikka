@@ -72,6 +72,9 @@ export async function transferBots(tx: MainTransaction, workspaceId: string, fro
   await tx.execute(sql`delete from agent_kit_heads where bot_id in ${ids}`)
   // A bot handed over runs on its new owner's resources, never on the previous owner's credentials.
   await tx.update(bots).set({ ownerId: toUserId, archivedAt: null, updatedAt: new Date() }).where(and(inArray(bots.id, ids), eq(bots.workspaceId, workspaceId), ownedBy))
+  // The Bot's access policy follows its owner, so the new owner can manage and share it and the old one no longer can.
+  await tx.execute(sql`select set_config('mikka.acl_actor',${toUserId},true),set_config('mikka.acl_source','bot_transfer',true)`)
+  await tx.execute(sql`update resource_access_policies set "ownerId"=${toUserId} where kind='bot' and id in ${ids} and "ownerId" is distinct from ${toUserId}`)
   for (const id of ids) await botListChanged(tx, id)
   if (fromUserId) await ownerListChanged(tx, fromUserId, ['thread_list', 'task_run_list', 'bot_chat_list'])
   await workspaceListChanged(tx, workspaceId, ['bot_list'])
@@ -93,11 +96,11 @@ export async function releaseDepartingMember(workspaceId: string, userId: string
   // A card they designated keeps paying through its grace period; admins see when it stops (计费).
   await releasePaymentDesignation(workspaceId, userId)
   await db.transaction(async main => {
-    await main.execute(sql`delete from personal_mcp_workspace_shares g using personal_mcp_servers s where g.server_id=s.id and s.user_id=${userId} and g.workspace_id=${workspaceId}`)
     await main.execute(sql`delete from personal_skill_workspace_shares g using personal_skills s where g.skill_id=s.id and s.user_id=${userId} and g.workspace_id=${workspaceId}`)
+    // Their own account on the workspace's "member" MCP servers goes with them; every use also checks membership.
+    await main.execute(sql`delete from workspace_mcp_oauth o using workspace_mcp_servers s where o.server_id=s.id and s.workspace_id=${workspaceId} and o.user_id=${userId}`)
     // Their credits stop paying for the team at once (lib/credit-shares.ts).
     await main.execute(sql`delete from workspace_credit_shares where "userId" = ${userId} and "workspaceId" = ${workspaceId}`)
-    await main.execute(sql`delete from model_api_key_shares s using model_api_keys k where k.id = s."keyId" and k."ownerId" = ${userId} and s."workspaceId" = ${workspaceId}`)
     const archived = await main.update(bots).set({ archivedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(bots.workspaceId, workspaceId), eq(bots.ownerId, userId), isNull(bots.archivedAt))).returning({ id: bots.id })
     for (const { id } of archived) await botListChanged(main, id)
@@ -106,7 +109,11 @@ export async function releaseDepartingMember(workspaceId: string, userId: string
   })
   // Runs there on their subscription stop now, including other members' bots they had shared it with.
   await stopRunsUsingSubscriptions(pool, { ownerId: userId, workspaceId })
+  // Their runs there on their own API keys stop. The workspace's own keys stay the workspace's,
+  // whoever added them (decision 2026-11-27-1740).
   await stopRunsUsingApiKeys(pool, { ownerId: userId, workspaceId })
+  // Every run there that lost its authority (theirs, and others' on Bots handed over) stops now (decision 2026-11-17-2215).
+  await (await import('@/lib/run-authority-stop')).stopRunsWithoutAuthority({ workspaceId })
 }
 
 /** Reactivation brings a suspended member's own bots back; their subscription stays unshared until they share it again. */
@@ -125,7 +132,7 @@ async function activeMemberIds(tx: WorkspaceTransaction, workspaceId: string) {
 /** An admin takes over a paused bot of someone who left, was suspended or deleted their account (null owner); it then runs on the admin's own resources. */
 export async function takeOverBot(actorId: string, workspaceId: string, botId: string): Promise<AssetTransfer> {
   z.uuid().parse(botId)
-  return workspaceDb.transaction(async tx => {
+  const transfer = await workspaceDb.transaction(async tx => {
     const { membership } = await requireWorkspace(tx, workspaceId, actorId, true)
     return db.transaction(async main => {
       const [bot] = await main.select({ ownerId: bots.ownerId, name: bots.name }).from(bots)
@@ -144,6 +151,9 @@ export async function takeOverBot(actorId: string, workspaceId: string, botId: s
       return transferBots(main, workspaceId, bot.ownerId, actorId, [botId], tx)
     })
   })
+  // A new owner changes the runs' execution identity; those runs stop now.
+  await (await import('@/lib/run-authority-stop')).stopRunsWithoutAuthority({ botId })
+  return transfer
 }
 
 /** Paused bots of people who left, were suspended, or deleted their account; not an active member's own archive. */

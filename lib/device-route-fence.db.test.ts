@@ -23,10 +23,10 @@ async function routeFiles(dir: string): Promise<string[]> {
 
 test('every device route refuses a token revoked after authentication before it calls out or issues anything', { skip: !url }, async t => {
   // The issuing steps of the three routes that hand out credentials record any call.
-  const [githubAccess, runtime] = await Promise.all([import('./github/user-access'), import('./subscription-runtime')])
-  mock.module(new URL('./github/user-access.ts', import.meta.url).href, { namedExports: {
-    ...githubAccess,
-    githubTokenForUser: async () => { issued.push('github-token'); return { token: 'fixture', expiresAt: null } },
+  const [githubConnection, runtime] = await Promise.all([import('./github/connection'), import('./subscription-runtime')])
+  mock.module(new URL('./github/connection.ts', import.meta.url).href, { namedExports: {
+    ...githubConnection,
+    githubConnectionToken: async () => { issued.push('github-token'); return { token: 'fixture', githubAccountId: '42', expiresAt: null } },
   } })
   mock.module(new URL('./subscription-runtime.ts', import.meta.url).href, { namedExports: {
     ...runtime,
@@ -61,19 +61,23 @@ test('every device route refuses a token revoked after authentication before it 
         const handler = route[method] as ((request: Request, context: { params: Promise<Record<string, string>> }) => Promise<Response>) | undefined
         if (!handler) continue
         const path = file.replace(/^app/, '').replace(/\/route\.ts$/, '').replaceAll('[deviceId]', device).replace(/\[[^\]]+\]/g, () => randomUUID())
-        const request = new Request(`http://127.0.0.1/mikka${path}?deviceId=${device}`, {
-          method, headers: { authorization: 'Bearer revoked', 'content-type': 'application/json' },
+        const request = (session: boolean) => new Request(`http://127.0.0.1/mikka${path}?deviceId=${device}`, {
+          method, headers: { authorization: 'Bearer revoked', 'content-type': 'application/json', ...(session ? { 'x-mikka-device-session': '1' } : {}) },
           ...(method === 'GET' ? {} : { body: JSON.stringify({ deviceId: device }) }),
         })
-        const params = Promise.resolve({ deviceId: device, runId: randomUUID(), captureId: randomUUID(), requestId: randomUUID() })
-        const response = await deviceRequestCaller.run(caller, () => handler(request, { params }))
+        const params = () => Promise.resolve({ deviceId: device, runId: randomUUID(), captureId: randomUUID(), requestId: randomUUID() })
+        // Decision 2026-11-17-2215: without the device session header, every device route answers 426 first.
+        const unsessioned = await deviceRequestCaller.run(caller, () => handler(request(false), { params: params() }))
+        assert.equal(unsessioned.status, 426, `${method} ${file} answered ${unsessioned.status} without the device session header`)
+        assert.equal((await unsessioned.json()).code, 'daemonUpgradeRequired')
+        const response = await deviceRequestCaller.run(caller, () => handler(request(true), { params: params() }))
         assert.ok(response.status >= 400, `${method} ${file} answered ${response.status} for a revoked token`)
         fenced.push(`${method} ${file} ${response.status}`)
       }
     }
     t.diagnostic(JSON.stringify({ routes: fenced.length }))
-    // The three routes that hand out credentials answer a revoked token as what it is, an authentication failure.
-    for (const route of ['POST app/v1/devices/[deviceId]/github-token/route.ts', 'GET app/v1/runs/[runId]/policy-snapshot/route.ts', 'POST app/v1/devices/[deviceId]/runs/[runId]/subscription-lease/route.ts']) {
+    // The routes that hand out credentials answer a revoked token as what it is, an authentication failure.
+    for (const route of ['POST app/v1/devices/[deviceId]/github-token/route.ts', 'GET app/v1/runs/[runId]/policy-snapshot/route.ts']) {
       assert.ok(fenced.includes(`${route} 401`), `${route} answered ${fenced.find(line => line.startsWith(route)) ?? 'nothing'}`)
     }
     assert.deepEqual(issued, [], 'nothing was issued for a revoked token')

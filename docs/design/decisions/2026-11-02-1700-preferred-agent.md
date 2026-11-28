@@ -1,6 +1,7 @@
 # 优先使用的 Agent, a row's Agent, and the empty 允许使用的模型
 
 - Date: 2026-11-02
+- **Status:** Superseded in part by [2026-11-02-1830](2026-11-02-1830-preferred-models-and-agent.md)
 - Source: Alex, Harness draft (Artifact GnZnsPYEDJdkHBUJHzB5SJ, Version 2; Figma zPe5LKycb2XuT1ivCLRw07 page 855:2, screens 1–3) and the coordination draft's decision 1 (Artifact NXhjpSTmgDq1aVNqzLYP2x, Version 2); C8 of the second usability review (Artifact NwyzbbJRzXTVNc1orNenjE), relayed by the coordinator session.
 - Rule: R-41 (an empty state is one line and one button)
 - Superseded in part by: [2026-11-02-1830](2026-11-02-1830-preferred-models-and-agent.md) (优先使用的 Agent moves into the 优先使用的模型 card); [2026-11-05-0400](2026-11-05-0400-per-agent-model-lists.md) (switching 优先使用的 Agent moves no rows)

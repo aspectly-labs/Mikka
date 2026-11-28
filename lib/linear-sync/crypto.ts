@@ -1,8 +1,9 @@
 import 'server-only'
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import { readEnv } from '@/lib/env/server'
 
 function encryptionKey() {
-  const value = process.env.LINEAR_TOKEN_ENCRYPTION_KEY ?? ''
+  const value = readEnv('LINEAR_TOKEN_ENCRYPTION_KEY') ?? ''
   if (!/^[a-f\d]{64}$/i.test(value)) throw new Error('Linear token encryption is not configured')
   return Buffer.from(value, 'hex')
 }

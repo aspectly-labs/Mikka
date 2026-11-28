@@ -1,4 +1,7 @@
 import { decisionsHttp } from '@/lib/project-map/http'
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) { return decisionsHttp(request, (await context.params).projectId, true) }
+import { defineRoute } from '@/lib/primitives/define-route'
+
+export const POST = defineRoute(
+  { route: '/api/projects/[projectId]/decisions/from-message', auth: 'public', origin: 'any', workspace: 'none' },
+  ({ request, params }) => decisionsHttp(request, params.projectId, true),
+)

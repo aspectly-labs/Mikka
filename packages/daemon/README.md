@@ -46,13 +46,54 @@ For background operation, install a service after signing in:
 mikka daemon service install --server https://app.aspectlylabs.com/mikka --device-type laptop
 ```
 
-For public npm installations running under launchd or systemd, the server names
-a newer stable release in a heartbeat, command response or refused claim. The
-daemon installs that exact version when idle. A failed install keeps the running
-version, waits 5 minutes, then 30
-minutes, then 2 hours before retrying that version, and is reported to the server
-by code. Running work drains before installation and restart. Installation runs
-in the background so heartbeats remain available.
+## The device session
+
+The daemon works only while it holds one WebSocket to the server's device
+gateway (decision `docs/design/decisions/2026-11-17-2215-device-session-no-heartbeat.md`).
+The open socket is the device's session: it is how the server knows the device
+is online and that its runs are alive. There is no heartbeat and no fallback.
+
+- The daemon registers, takes a gateway ticket and opens the socket. It pings
+  every 10 seconds and drops a socket that has said nothing for 30 seconds.
+- When the socket opens, and on every `work` push, the daemon reads once: run
+  messages and stops, device commands, repository settings and queued runs. It
+  then claims queued runs, delivers buffered run output and resumes runs.
+- When something changed (harnesses and models, device commands it finished,
+  a failed update, quotas), and once after each socket opens, it sends one
+  report. The report renews nothing.
+- A dropped socket is redialed after 0.5 seconds, then 1, 2, 4 and so on up
+  to 30 seconds, with jitter. A socket that stayed open for a minute resets
+  the wait. While the socket is down the daemon only redials: it does not read
+  commands, run controls or reviews, and claims nothing.
+- A run keeps running while the socket is open. When the socket drops, the run
+  may go on for 60 seconds; if no socket opens in that time, the daemon stops
+  it as `device_lost`.
+- A server without a gateway has no devices. The daemon asks for a ticket again
+  every 30 seconds and does no work until the server has one.
+- A cloud worker asks for its next token once, an hour before the current one
+  expires.
+
+The daemon's local timer checks run deadlines and the watchdog, rescans agent
+CLIs every 5 minutes and asks them for models every 6 hours. It sends nothing
+unless the result changed and the session is open. Run checkpoints are sent
+only when a run's work changed.
+
+## Updates
+
+A daemon older than the server's minimum gets `426 daemonUpgradeRequired` on
+every request, and the gateway closes its socket with code `4001`. The daemon
+then stops connecting and claims no work; `mikka daemon status` shows
+`"session": "update_required"`. Update it with
+`npm install -g @aspectlylabs/mikka@latest` (or update Mikka Desktop), then sign
+in again if asked.
+
+For public npm installations running under launchd or systemd, updates are
+automatic. The server names a newer stable release in a report answer or a
+commands read; a daemon the server refused installs the release named in the
+refusal, or else npm's `latest`. The daemon installs that exact version when no
+run is active. A failed install keeps the running version, waits 5 minutes,
+then 30 minutes, then 2 hours before retrying that version, and is reported to
+the server by code. Running work drains before installation and restart.
 The service keeps its server, data directory and device identity. Foreground,
 development and embedded daemons do not update themselves.
 
@@ -77,7 +118,11 @@ index for inspection. The test daemon still performs its normal lifecycle
 cleanup inside the new dedicated fixture; previously retained resources are
 not part of that fixture.
 
-No global `tsx` or separate `@mikka/protocol` package is needed. A push to `main`
+No global `tsx` or separate `@mikka/protocol` package is needed. The MCP
+connection-check client and its JavaScript dependencies are also bundled;
+the build appends their complete upstream licenses to `THIRD_PARTY_NOTICES.md`.
+SDKs that need native binaries or runtime assets remain external dependencies.
+A push to `main`
 that changes the daemon, the protocol, shared config, the lockfile or the
 release scripts publishes through `.github/workflows/publish-daemon.yml` after
 daemon checks and the installed-package runtime test pass. The workflow uses npm
@@ -105,5 +150,7 @@ Node then runs the installed CLI and bundled mock daemon through a real
 clone/worktree/verification/commit/push against a disposable local bare origin.
 It verifies the pushed file and preserves the personal checkout. The test logs
 the tarball digest; its control plane and model are explicit in-memory fixtures.
+The installed daemon also starts a local STDIO MCP fixture, discovers its tools
+without invoking them, and returns a receipt with credential values redacted.
 This is not real Claude Code/Codex, native-helper, live GitHub App or production
 device-authorization acceptance.

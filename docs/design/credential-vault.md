@@ -1,7 +1,7 @@
 # 密码箱（Secured Login）：调研与交接给 Codex
 
 日期 2026-10-27。对象：负责救 #313 的 Codex。范围：网页分身的登录与密码保存（#180）。
-设计来源：`rules.md` R-72、`cloud-computer-backend.md` § 2「Login」、`decisions.md`
+设计来源：`mikka-hosted-ui/docs/design/rules.md` R-72、`cloud-computer-backend.md` § 2「Login」、`decisions.md`
 2026-10-27 各行；Figma `zPe5LKycb2XuT1ivCLRw07` 页「建议卡片 · 点一下就开始（v2）」
 帧 E `332:5816`、过渡 `342:6595`、F `342:6337`、G `332:6066`，组件 Mobile/LoginCard
 `340:6372`。
@@ -172,7 +172,7 @@ Infisical 身份被盗用，这两种都能读到全部密码。所以 broker �
 | Neon 泄露或备份泄露 | Neon 里只有随机代号，没有密码。**防得住** |
 | Infisical 项目泄露 | 只有应用层密文，没有 `CREDENTIAL_MASTER_KEY` 解不开。**防得住** |
 | 用户 A 拿到用户 B 的密码 | 见「用户之间的隔离」六条。**防得住**，除非服务器和总钥匙一起被攻破 |
-| Next.js 应用服务器被攻破 | 主应用读不了 Infisical 那个目录，也没有总钥匙；只能为该用户运行中的线程或分身、在匹配的 origin 上申请 lease，有限速和审计。**部分防住** |
+| 应用服务器被攻破 | 主应用读不了 Infisical 那个目录，也没有总钥匙；只能为该用户运行中的线程或分身、在匹配的 origin 上申请 lease，有限速和审计。**部分防住** |
 | 对模型的提示注入 | 模型拿不到值；origin 校验挡住填到别的站。**防不住**：分身在已登录会话里被诱导乱操作（Comet 事故） |
 | 钓鱼或仿冒域名 | 精确 origin 绑定，broker 填写前再核一次 |
 | 内部人员 | broker 身份单独管理，Infisical 有审计日志，broker 部署双人审批。**防不住**：恶意的 broker 部署 |

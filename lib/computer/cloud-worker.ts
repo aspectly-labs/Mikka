@@ -9,6 +9,8 @@ import { CloudWorkerError } from './worker-error'
 import { CLOUD_WORKER_COMMAND } from './worker-command'
 import { desktopGitHubConfig, installDesktopGitHub } from './desktop-github'
 import { deviceIsOnline } from '../device-presence'
+import { vercelPreviewProtectionBypass } from './preview-transport'
+import { DEVICE_REGISTRATION_CHANNEL, subscribeShared } from '../db/listen'
 
 type Actor = { userId: string; workspaceId: string }
 
@@ -17,8 +19,7 @@ type Actor = { userId: string; workspaceId: string }
 export async function startCloudWorker(pool: Pool, actor: Actor, sandbox: Sandbox, server: string, sourceSha: string, _runtime = provider) {
   const url = new URL(server)
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || !/^[a-f0-9]{40}$/.test(sourceSha)) throw new Error('Invalid cloud worker configuration')
-  const protectionBypass = process.env.VERCEL_ENV === 'preview' ? process.env.MIKKA_CLOUD_PREVIEW_BYPASS : undefined
-  if (protectionBypass && (!url.hostname.endsWith('.vercel.app') || !/^[A-Za-z0-9_-]{20,256}$/.test(protectionBypass))) throw new Error('Invalid cloud worker configuration')
+  const protectionBypass = vercelPreviewProtectionBypass(url.toString())
   const leaseId = randomUUID()
   if (!await claimWorkerLease(pool, actor, sandbox.sandboxId, leaseId)) throw new Error('Cloud worker provisioning is busy or unavailable')
   const temporary = `/run/mikka-viewer/worker-${leaseId}.next`
@@ -29,11 +30,11 @@ export async function startCloudWorker(pool: Pool, actor: Actor, sandbox: Sandbo
   try {
     const pinned = await sandbox.files.read('/opt/mikka/worker-source-sha', { user: 'root' })
     if (pinned.trim() !== sourceSha) throw new CloudWorkerError('worker_version_mismatch', sandbox.sandboxId)
-    const existing = await pool.query(`SELECT d.id,d."lastSeenAt" FROM cloud_machines m JOIN devices d ON d.id=m."deviceId"
+    const existing = await pool.query(`SELECT d.id,d."sessionOpenedAt",d."sessionClosedAt" FROM cloud_machines m JOIN devices d ON d.id=m."deviceId"
       JOIN device_tokens t ON t."boundDeviceId"=d.id AND t."boundWorkspaceId"=m."workspaceId" AND t."userId"=m."ownerId"
       WHERE m."workspaceId"=$1 AND m."ownerId"=$2 AND m."sandboxId"=$3 AND d."ownerId"=$2 AND d.kind='cloud'
         AND t."revokedAt" IS NULL AND t."expiresAt">now()+interval '1 hour' LIMIT 1`, [actor.workspaceId, actor.userId, sandbox.sandboxId])
-    if (existing.rowCount && await deviceIsOnline(existing.rows[0])) { await github(existing.rows[0].id as string); return { deviceId: existing.rows[0].id as string } }
+    if (existing.rowCount && deviceIsOnline(existing.rows[0])) { await github(existing.rows[0].id as string); return { deviceId: existing.rows[0].id as string } }
     // Hosted tasks run the CLI directly on the machine (no sandbox, no container).
     // Pulling the obsolete hosted image here added 32s to a cold start.
     if (!await renewWorkerLease(pool, actor, leaseId)) throw new Error('Cloud worker lease expired')
@@ -50,13 +51,22 @@ export async function startCloudWorker(pool: Pool, actor: Actor, sandbox: Sandbo
     // variable set in the claim response (taskEnv) and the hosted runner passes only that into the task container.
     await sandbox.commands.run(`{ ${CLOUD_WORKER_COMMAND}; } > /home/user/.mikka/worker-bootstrap.log 2>&1`, { user: 'user', background: true, timeoutMs: 0 })
     const deadline = Date.now() + 30_000
-    do {
-      const ready = await pool.query(`SELECT 1 FROM devices d JOIN device_tokens t ON t."boundDeviceId"=d.id
-        WHERE d.id=$1 AND d."ownerId"=$2 AND d.kind='cloud' AND d."lastSeenAt">=$3
-          AND t."tokenHash"=$4 AND t."revokedAt" IS NULL AND t."lastUsedAt">=$3`, [credential.deviceId, actor.userId, started, hash])
-      if (ready.rowCount) return { deviceId: credential.deviceId }
-      await new Promise(resolve => setTimeout(resolve, 500))
-    } while (Date.now() < deadline)
+    // Subscribe before the first read so a heartbeat during that read is retained.
+    const registration = await subscribeShared(pool, DEVICE_REGISTRATION_CHANNEL, [credential.deviceId]).catch(() => null)
+    try {
+      let ready = false
+      do {
+        registration?.reset()
+        ready = Boolean((await pool.query(`SELECT 1 FROM devices d JOIN device_tokens t ON t."boundDeviceId"=d.id
+          WHERE d.id=$1 AND d."ownerId"=$2 AND d.kind='cloud' AND d."lastSeenAt">=$3
+            AND t."tokenHash"=$4 AND t."revokedAt" IS NULL AND t."lastUsedAt">=$3`, [credential.deviceId, actor.userId, started, hash])).rowCount)
+        if (ready) return { deviceId: credential.deviceId }
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        if (!registration || registration.lost) await new Promise(resolve => setTimeout(resolve, Math.min(500, remaining)))
+        else await registration.next(remaining)
+      } while (Date.now() < deadline)
+    } finally { registration?.close() }
     throw new CloudWorkerError('worker_not_registered', sandbox.sandboxId)
   } finally {
     // A generation-specific path prevents a stale handoff deleting a newer one.

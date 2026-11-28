@@ -7,7 +7,9 @@ const origin = 'http://localhost:3100'
 test('browser diagnostics retain HTTP and reviewed network categories without raw text', () => {
   assert.deepEqual(browserConsoleDiagnostic('Failed to load resource: the server responded with a status of 404 (Not Found)', `${origin}/mikka/api/auth/get-session`, origin), { category: 'resource-http', status: 404, route: 'auth-session' })
   assert.deepEqual(browserConsoleDiagnostic('Failed to load resource: net::ERR_BLOCKED_BY_CLIENT', 'https://example.test/favicon.ico', origin), { category: 'resource-network', code: 'ERR_BLOCKED_BY_CLIENT', route: 'other-origin' })
-  assert.deepEqual(browserConsoleDiagnostic('Minified React error #418; visit a diagnostic URL', `${origin}/mikka/_next/static/chunks/hash.js`, origin), { category: 'react-minified', code: 418, route: 'next-chunk' })
+  assert.deepEqual(browserConsoleDiagnostic('Minified React error #418; visit a diagnostic URL', `${origin}/mikka/assets/index-aBc123.js?dpl=release-1`, origin), { category: 'react-minified', code: 418, route: 'asset-script' })
+  assert.deepEqual(browserResponseDiagnostic(404, `${origin}/mikka/assets/index-aBc123.css`, origin), { category: 'http-response', status: 404, route: 'asset' })
+  assert.deepEqual(browserResponseDiagnostic(500, `${origin}/mikka/api/rpc`, origin), { category: 'http-response', status: 500, route: 'rpc' })
   assert.deepEqual(browserResponseDiagnostic(503, `${origin}/mikka/api/coordinator/messages`, origin), { category: 'http-response', status: 503, route: 'coordinator-messages' })
 })
 

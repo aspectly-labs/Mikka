@@ -2,11 +2,11 @@ import { isCloudEdition } from '@/lib/edition'
 import { readGitHubAppConfig } from '@/lib/github/app-config'
 import { readGitHubWebhookBody } from '@/lib/github/webhook-dispatch'
 import { workflowResult, verifyWorkflowResult } from '@/lib/github/workflow-result'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const runtime = 'nodejs'
 
 /** Only the official edge consumer signs this bounded, domain-separated projection. */
-export async function POST(request: Request): Promise<Response> {
+async function handlePOST(request: Request): Promise<Response> {
   if (!isCloudEdition()) return new Response(null, { status: 404 })
   const secret = (await readGitHubAppConfig()).webhookSecret
   if (!secret) return new Response(null, { status: 503 })
@@ -20,3 +20,13 @@ export async function POST(request: Request): Promise<Response> {
   await (await import('@/lib/github/workflow-result-store')).acceptWorkflowResult(result.data)
   return new Response(null, { status: 204 })
 }
+
+export const POST = defineRoute(
+  {
+    route: '/api/internal/github/workflow-result',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handlePOST(request),
+)

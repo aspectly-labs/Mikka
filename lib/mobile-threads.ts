@@ -14,12 +14,12 @@ import { issueAttrsContent } from '@/lib/issue-summary-columns'
 import { groupThreads, pullRequestsOf, THREAD_GROUPS, threadGroup, type GroupIssue, type PrGroup, type ThreadGroup } from '@/lib/thread-groups'
 import { pinnedByDefault } from '@/lib/chat-preferences'
 import { notThreadMachineDevice } from '@/lib/cloud-computer/thread-devices'
-import { DEVICE_ONLINE_WINDOW_MS, isDeviceOnline } from '@mikka/protocol/device'
 import { devicePresenceGrant } from '@/lib/device-presence-grant'
 import { readHomeScopeProof } from '@/lib/live/home-scope-proof'
 import { liveGatewayConfig } from '@/lib/live/scope'
 import type { ListLiveRead } from '@/lib/live/list-read'
 import type { PresenceDevice } from '@/lib/live/presence'
+import { runtimeEnv } from '@/lib/env/server'
 
 export { mobileThreadStatus, type MobileThreadStatus } from '@/lib/mobile-thread-status'
 import { mobileThreadStatus, type MobileThreadStatus } from '@/lib/mobile-thread-status'
@@ -84,7 +84,7 @@ async function runRows(userId: string, filter: SQL | undefined, limit: number) {
   }).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId))
     .leftJoin(devices, eq(devices.id, agentRuns.deviceId))
     .leftJoin(conversationReads, joinThreadRead(userId))
-    .where(and(eq(agentRuns.userId, userId), filter))
+    .where(and(eq(agentRuns.userId, userId), isNull(agentRuns.deletedAt), filter))
     .orderBy(desc(agentRuns.createdAt)).limit(limit)
   const sources = rows.length ? await citationSources(userId, [], rows.map(row => row.id)) : {}
   // The tasks' state and PRs, for the group; only tasks the person can see (citationSources checked them).
@@ -118,19 +118,17 @@ export async function mobileThreads(userId: string, limit = 60, homeScopeToken?:
     runRows(userId, and(sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`,
       workspaceId === undefined ? undefined : workspaceId ? eq(agentRuns.workspaceId, workspaceId) : sql`false`), limit).then(listed),
     // A task's own cloud sandbox is not one of the person's machines (Alex, 2026-11-01).
-    db.select({ id: devices.id, name: devices.name, platform: devices.platform, kind: devices.kind, lastSeenAt: devices.lastSeenAt }).from(devices)
+    db.select({ id: devices.id, name: devices.name, platform: devices.platform, kind: devices.kind, sessionOpenedAt: devices.sessionOpenedAt, sessionClosedAt: devices.sessionClosedAt }).from(devices)
       .where(and(eq(devices.ownerId, userId), isNull(devices.removedAt), notThreadMachineDevice)),
   ])
-  const observedAt = Date.now()
-  const presence = await deviceOnlineStates(machines, observedAt)
+  const presence = deviceOnlineStates(machines)
   // The ticket already resolved the actual personal home in the workspace DB.
   // Verify it after this fresh owned-device read; expiry cannot be renewed by a slow read.
-  const config = liveGatewayConfig(process.env), issuedAt = Date.now()
+  const config = liveGatewayConfig(runtimeEnv()), issuedAt = Date.now()
   const scope = config && homeScopeToken ? readHomeScopeProof(homeScopeToken, userId, config.secret, issuedAt) : null
   const live: ListLiveRead = { ownerId: userId, workspaceId: scope?.workspaceId ?? null }
   if (machines.length) {
-    const observed = machines.map((device): PresenceDevice => [device.id, presence.get(device.id) ?? false,
-      scope && device.lastSeenAt && isDeviceOnline(device.lastSeenAt, observedAt) ? Math.min(device.lastSeenAt.getTime() + DEVICE_ONLINE_WINDOW_MS, scope.expiresAt) : 0])
+    const observed = machines.map((device): PresenceDevice => [device.id, presence.get(device.id) ?? false, 0])
     live.presence = scope && config ? devicePresenceGrant(scope, observed, config.secret, issuedAt, scope.expiresAt) : null
   }
   return {

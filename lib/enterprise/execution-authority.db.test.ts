@@ -34,12 +34,12 @@ test('Enterprise execution authority keeps verified device/workflow/cron provena
   const previousPools = { app: globals.mikkaPool, workspace: globals.workspacePool }
   const envKeys = ['E2E_DATABASE_URL', 'MIKKA_DATABASE_URL', 'DATABASE_URL', 'ORVILO_DATABASE_URL',
     'MIKKA_EDITION', 'MIKKA_BYOS_ENABLED', 'VERCEL_ENV', 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET',
-    'WORKSPACE_SECRETS_KEY', 'CRON_SECRET', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
+    'WORKSPACE_SECRETS_KEY', 'CRON_SECRET', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY', 'E2B_API_KEY'] as const
   const previous = Object.fromEntries(envKeys.map(key => [key, process.env[key]]))
   Object.assign(process.env, { E2E_DATABASE_URL: url, MIKKA_DATABASE_URL: url, DATABASE_URL: url, ORVILO_DATABASE_URL: url,
-    MIKKA_EDITION: 'cloud', MIKKA_BYOS_ENABLED: '1', BETTER_AUTH_URL: 'http://localhost:3100', NEXT_PUBLIC_POSTHOG_KEY: '',
+    MIKKA_EDITION: 'cloud', MIKKA_BYOS_ENABLED: '1', BETTER_AUTH_URL: 'http://localhost:3100', MIKKA_PUBLIC_POSTHOG_KEY: '', NEXT_PUBLIC_POSTHOG_KEY: '',
     BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'),
-    CRON_SECRET: randomBytes(32).toString('hex') })
+    CRON_SECRET: randomBytes(32).toString('hex'), E2B_API_KEY: 'synthetic-enterprise-e2b-key' })
   delete process.env.VERCEL_ENV
   globals.mikkaPool = app; globals.workspacePool = workspace
   let flush: (() => Promise<void>) | undefined, restoreSwitches: (() => void) | undefined
@@ -61,13 +61,13 @@ test('Enterprise execution authority keeps verified device/workflow/cron provena
     await control.query(await readFile(new URL(name, directory), 'utf8'))
 
   const context = await import('../../apps/api/src/context')
-  const framework = await import('next/headers')
-  mock.module('next/headers', { namedExports: { ...framework,
+  const framework = await import('@/lib/server-runtime/headers')
+  mock.module('@/lib/server-runtime/headers', { namedExports: { ...framework,
     headers: async () => context.requireRequestScope().headers,
     cookies: async () => context.requireRequestScope().cookies,
   } })
-  const next = await import('next/server')
-  mock.module('next/server', { namedExports: { ...next,
+  const next = await import('@/lib/server-runtime/server')
+  mock.module('@/lib/server-runtime/server', { namedExports: { ...next,
     after: (work: () => unknown) => context.requireRequestScope().after.add(work),
   } })
   const requestScope = async <T,>(request: Request, work: (request: Request) => Promise<T>): Promise<T> => {
@@ -129,8 +129,8 @@ test('Enterprise execution authority keeps verified device/workflow/cron provena
   const beta = (await seedWorkspace(control, userId, [{ userId, role: 'admin' }])).id
   const alphaBot = await seedBot(control, alpha, userId), betaBot = await seedBot(control, beta, userId)
   const agentId = await seedAgent(control, userId), deviceId = randomUUID()
-  await control.query(`INSERT INTO devices(id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt")
-    VALUES($1,$2,'Enterprise device fixture','local',true,3,now())`, [deviceId, userId])
+  await control.query(`INSERT INTO devices(id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt","sessionOpenedAt")
+    VALUES($1,$2,'Enterprise device fixture','local',true,3,now(),now())`, [deviceId, userId])
   const organizationId = randomUUID()
   await control.query('INSERT INTO mikka_organizations(id,name,"createdBy") VALUES($1,$2,$3)', [organizationId, 'Execution fixture', userId])
   for (const workspaceId of [alpha, beta]) await control.query('INSERT INTO mikka_organization_workspaces("workspaceId","organizationId") VALUES($1,$2)', [workspaceId, organizationId])
@@ -187,7 +187,7 @@ test('Enterprise execution authority keeps verified device/workflow/cron provena
       catch (error) { if (denied(error)) return Response.json({ error: 'workspaceAccessDenied' }, { status: 403 }); throw error }
     })
     const request = new Request('http://localhost:3100/v1/devices/' + (options.deviceId ?? deviceId) + '/runs/' + (options.runId ?? randomUUID()) + '/claim', {
-      method: 'POST', headers: { authorization: 'Bearer ' + (options.token ?? deviceToken), [CLIENT_VERSION_HEADER]: '999.0.0' },
+      method: 'POST', headers: { authorization: 'Bearer ' + (options.token ?? deviceToken), 'x-mikka-device-session': '1', [CLIENT_VERSION_HEADER]: '999.0.0' },
     })
     return requestScope(request, handler)
   }
@@ -236,11 +236,11 @@ test('Enterprise execution authority keeps verified device/workflow/cron provena
     assert.equal(app.totalCount, 1); assert.equal(workspace.totalCount, 1)
   })
 
-  await t.test('protected Secret renewal rechecks current Enterprise authority on the same admitted run with pools of one', async () => {
+  await t.test('protected Secret egress rechecks current Enterprise authority at every use of the admitted run', async () => {
     const { createWorkspaceSecret } = await import('../secrets/store')
     const { taskSecretInjection } = await import('../secrets/runtime')
     const { issueEgressCapability, openEgressCapability } = await import('../secrets/egress-capability')
-    const { renewTaskSecretAccess } = await import('../secrets/task-renewal')
+    const { egressBindingActive } = await import('../secrets/egress-binding')
     const connectionId = randomUUID(), directoryId = randomUUID(), providerId = 'secret-renewal-' + randomUUID()
     const runId = await queuedRun(), canary = 'synthetic-enterprise-secret-' + randomBytes(24).toString('hex')
     const name = 'ENTERPRISE_RENEWAL_TOKEN'
@@ -278,26 +278,11 @@ test('Enterprise execution authority keeps verified device/workflow/cron provena
       assert.ok(secret?.revision)
       const binding = { ownerId: userId, workspaceId: alpha, repository: null, runId, deviceId, deviceTokenId: tokenId, attempt: admitted.attempt }
       const grant = issueEgressCapability({ ...binding, name, secret: canary, secretId, revision: secret.revision, http, leaseExpiresAt: lease })
-      const renew = () => renewTaskSecretAccess({ caller: { userId, tokenId }, deviceId,
-        runs: [{ runId, secretCapabilities: [grant.capability] }], leases: { [runId]: lease.toISOString() },
-        endpoint: id => `https://mikka.example.invalid/v1/task-secrets/${id}` })
+      // The device holds its session; egress checks the live run, its session and authority at use.
+      await control.query('UPDATE devices SET "sessionOpenedAt"=clock_timestamp(),"sessionClosedAt"=NULL WHERE id=$1', [deviceId])
       const checkRenewal = async (authorized: boolean) => {
-        const response = await native(renew, { runId })
-        assert.equal(response.status, 200)
-        const wire = await response.text(), result = JSON.parse(wire).value
-        for (const value of [canary, Buffer.from(canary).toString('base64')]) assert.equal(wire.includes(value), false)
-        if (authorized) {
-          assert.deepEqual(result.revoked, [])
-          assert.equal(result.taskSecrets[runId].grants.length, 1)
-          const claims = openEgressCapability(result.taskSecrets[runId].grants[0].capability, binding)
-          assert.equal(claims.secret, canary); assert.equal(claims.secretId, secretId)
-          assert.ok(claims.expiresAt <= lease.getTime())
-        } else {
-          assert.deepEqual(result, { taskSecrets: {}, revoked: [runId] })
-          assert.equal(wire.includes('mikka-egress-v1.'), false, 'refused authority returns no sealed capability')
-        }
-        assert.deepEqual(await state(), admitted, 'renewal does not extend or rewrite the admitted run lease, attempt or token')
-        assert.equal(app.totalCount, 1); assert.equal(workspace.totalCount, 1)
+        assert.equal(await egressBindingActive(openEgressCapability(grant.capability, binding)), authorized)
+        assert.deepEqual(await state(), admitted, 'a use does not extend or rewrite the admitted run lease, attempt or token')
       }
       await checkRenewal(true)
       await control.query('UPDATE enterprise_org_policy SET "allowMachineCredentials"=false WHERE "organizationId"=$1', [organizationId])

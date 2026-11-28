@@ -1,4 +1,4 @@
-import { getTranslations } from 'next-intl/server'
+import { getTranslations } from '@/lib/intl/i18n-server'
 import 'server-only'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -45,7 +45,7 @@ export async function requireTeam(tx: WorkspaceTransaction, id: string, userId: 
     .where(and(eq(workspaceMembers.workspaceId, scope.workspaceId), eq(workspaceMembers.userId, userId), eq(workspaceMembers.status, 'active'))).for('share').limit(1)
   if (!actor) throw new WorkspaceError('workspaceAccessDenied')
   await lockTeamRelations(tx)
-  const [team] = await tx.select({ id: teams.id, workspaceId: teams.workspaceId, name: teams.name, archivedAt: teams.archivedAt }).from(teams)
+  const [team] = await tx.select({ id: teams.id, workspaceId: teams.workspaceId, name: teams.name, identifier: teams.identifier, archivedAt: teams.archivedAt }).from(teams)
     .where(and(eq(teams.id, id), eq(teams.workspaceId, scope.workspaceId))).for('update').limit(1)
   if (!team) throw new WorkspaceError(i18nText("FeatureCopy.c_f061da49"))
   const [membership] = await tx.select({ role: teamMembers.role }).from(teamMembers).where(and(eq(teamMembers.teamId, id), eq(teamMembers.userId, userId))).limit(1)

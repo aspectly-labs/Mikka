@@ -5,6 +5,7 @@
 // secret configuration and tests use a random per-run key. Associated data binds a ciphertext to its row (workspace, kind,
 // scope, name), so a ciphertext copied onto another row will not decrypt.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { runtimeEnv } from '@/lib/env/server'
 
 export const SECRETS_KEY_VERSION = 1
 
@@ -12,7 +13,7 @@ export class SecretsKeyMissingError extends Error {
   constructor() { super('Workspace secrets encryption is not configured'); this.name = 'SecretsKeyMissingError' }
 }
 
-export function secretsKey(env: Record<string, string | undefined> = process.env): Buffer {
+export function secretsKey(env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Buffer {
   const raw = env.WORKSPACE_SECRETS_KEY?.trim() ?? ''
   let key: Buffer | null = null
   if (/^[a-f\d]{64}$/i.test(raw)) key = Buffer.from(raw, 'hex')
@@ -23,7 +24,7 @@ export function secretsKey(env: Record<string, string | undefined> = process.env
 
 export interface Sealed { ciphertext: string; iv: string; keyVersion: number }
 
-export function sealSecret(plaintext: string, aad: string, env?: Record<string, string | undefined>): Sealed {
+export function sealSecret(plaintext: string, aad: string, env?: Readonly<Record<string, string | undefined>>): Sealed {
   const key = secretsKey(env)
   const iv = randomBytes(12)
   const cipher = createCipheriv('aes-256-gcm', key, iv)
@@ -32,7 +33,7 @@ export function sealSecret(plaintext: string, aad: string, env?: Record<string, 
   return { ciphertext: body.toString('base64'), iv: iv.toString('base64'), keyVersion: SECRETS_KEY_VERSION }
 }
 
-export function openSecret(sealed: Sealed, aad: string, env?: Record<string, string | undefined>): string {
+export function openSecret(sealed: Sealed, aad: string, env?: Readonly<Record<string, string | undefined>>): string {
   if (sealed.keyVersion !== SECRETS_KEY_VERSION) throw new Error(`Unsupported secrets key version ${sealed.keyVersion}`)
   const key = secretsKey(env)
   const body = Buffer.from(sealed.ciphertext, 'base64')

@@ -21,7 +21,7 @@ import { RunSupervisor, type SupervisorDeps } from '../src/runs/supervisor'
 import { runDiagnosticsEnabled } from '../src/run-runtime-timing'
 import { runIdHash } from '../src/tracing'
 import { WorktreeManager } from '../src/worktrees'
-import { cleanupTempDirs, makeRepo, tempDir } from './helpers'
+import { cleanupTempDirs, loseDeviceSession, makeRepo, tempDir } from './helpers'
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void
@@ -31,7 +31,7 @@ function deferred<T = void>() {
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); cleanupTempDirs() })
 
-async function fixture(options: { cloneFailure?: boolean; legacyCatalogue?: boolean; pendingMailbox?: boolean; diagnostics?: 'task' | 'host' } = {}) {
+async function fixture(options: { cloneFailure?: boolean; legacyCatalogue?: boolean; pendingMailbox?: boolean; checkoutTools?: boolean; diagnostics?: 'task' | 'host' } = {}) {
   const root = realpathSync(tempDir('mikka-prewarm-supervisor-')), source = await makeRepo(), home = join(root, 'home')
   const stateDir = join(root, 'adapters'); mkdirSync(stateDir); mkdirSync(home)
   const remote = pathToFileURL(options.cloneFailure ? join(root, 'missing.git') : source).href
@@ -43,22 +43,28 @@ async function fixture(options: { cloneFailure?: boolean; legacyCatalogue?: bool
     leaseExpiresAt: new Date(Date.now() + 600_000).toISOString(),
     ...(options.diagnostics === 'task' ? { taskEnv: { CLOUD_STARTUP_TIMING: '1' } } : {}),
     subscriptionBinding: { bindingId: randomUUID(), ownerId: randomUUID(), workspaceId: randomUUID(), consumerId: randomUUID(), route: 'claude_code_cli' },
-    subscriptionLease: { accountId: 'fixture-account', revision: 1, route: 'claude_code_cli', modelId: 'claude-haiku-5-5',
-      accessToken: 'synthetic-fixture-only', expiresAt: new Date(Date.now() + 600_000).toISOString() },
+    modelCredential: { kind: 'provider', protocol: 'anthropic', key: 'mkg_' + 'a'.repeat(43),
+      baseUrl: 'https://mikka.invalid/api/model-gateway/anthropic' },
+    subscriptionContext: { accountId: 'fixture-account', revision: 1, route: 'claude_code_cli', modelId: 'claude-haiku-5-5', expiresAt: new Date(Date.now() + 600_000).toISOString() },
     mcp: { url: endpoint.href, token: 'mkw_' + 'x'.repeat(43), mailbox: true,
+      decisionCatalogue: { version: 1, tool: { name: 'record_decision', title: 'Record fixture', description: 'Fixture canonical decision',
+        inputSchema: { type: 'object' }, annotations: { idempotentHint: true } } },
       ...(!options.legacyCatalogue ? { mailboxCatalogue: { version: 1, transport: 'mikka-stateless-2025-06-18', tools: ['mailbox_inbox'] } } : {}) } }
+  if (options.checkoutTools) assignment.kind = 'implement'
+  const mikkaCatalogue = deferred<unknown>(), mikkaTool = deferred<unknown>()
   const cloneEntered = deferred(), cloneRelease = deferred(), parked = deferred(), user = deferred(), agentStarted = deferred()
   const mailboxEntered = deferred(), mailboxAborted = deferred()
   const children: ChildProcess[] = [], events: Array<Record<string, unknown>> = [], records: OutboxItem[] = []
-  const adapter = new ClaudeAdapter({ stateDir, subscriptionAuth: { accountId: 'fixture-account', automaticRefresh: true,
-    token: async () => ({ accountId: 'fixture-account', accessToken: 'synthetic-fixture-only', expiresAt: assignment.subscriptionLease!.expiresAt }) },
+  const adapter = new ClaudeAdapter({ stateDir,
     spawnHosted(config) {
-      const child = spawn(process.execPath, [resolve(import.meta.dirname, 'fakes/fake-claude-prewarm.mjs'), ...config.args],
+      const child = spawn(process.execPath, [resolve(import.meta.dirname, 'fakes/fake-claude-prewarm.mjs'), ...config.args, ...(options.checkoutTools ? ['--fixture-mikka-tools'] : [])],
         { cwd: config.cwd, env: config.env, detached: true, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] })
       children.push(child); child.stderr?.resume()
       child.on('message', value => {
         const event = value as Record<string, unknown>
         events.push(event); if (event.event === 'user') user.resolve()
+        if (event.event === 'mikka_catalogue') mikkaCatalogue.resolve(event.names)
+        if (event.event === 'mikka_tool') mikkaTool.resolve(event.result)
       })
       config.signal?.addEventListener('abort', () => { void stopGroup(child, 1000) }, { once: true })
       return child as ChildProcessWithoutNullStreams
@@ -68,7 +74,7 @@ async function fixture(options: { cloneFailure?: boolean; legacyCatalogue?: bool
     const value = nativeOptions(input)
     const prepared = prepareAgentStart(signal, control => adapter.startPrepared(value, { ...claimed.subscriptionBinding!,
       runId: claimed.runId, sessionId: randomUUID(), cwd: value.cwd, deviceId: claimed.deviceId,
-      accountId: claimed.subscriptionLease!.accountId, revision: claimed.subscriptionLease!.revision, model: claimed.model!, policyHash: value.policyHash ?? null,
+      accountId: claimed.subscriptionContext!.accountId, revision: claimed.subscriptionContext!.revision, model: claimed.model!, policyHash: value.policyHash ?? null,
     }, { ...control, finalOptions: control.finalOptions.then(nativeOptions) }, async () => { await Promise.all(children.map(child => stopGroup(child, 1000))) }),
     runDiagnosticsEnabled(claimed.taskEnv, options.diagnostics === 'host') ? { runId: claimed.runId, harness: 'claude_code' } : undefined)
     void prepared.ready.then(() => parked.resolve(), () => undefined)
@@ -94,7 +100,7 @@ async function fixture(options: { cloneFailure?: boolean; legacyCatalogue?: bool
     },
     prepareRunToolApproval: async (claimed, signal, check) => new ToolApprovalGate(claimed.runId, {
       isLive: () => { if (signal.aborted) return false; try { check(); return true } catch { return false } },
-    }, 'push'),
+    }),
     prepareRunMailbox: async (claimed, signal, check) => {
       mailboxEntered.resolve()
       if (options.pendingMailbox) await new Promise<void>((_done, reject) => {
@@ -111,7 +117,7 @@ async function fixture(options: { cloneFailure?: boolean; legacyCatalogue?: bool
   }
   const supervisor = new RunSupervisor(deps)
   cleanups.push(async () => { cloneRelease.resolve(); await supervisor.stop(); await supervisor.idle(); await Promise.all(children.map(child => stopGroup(child, 1000))) })
-  return { supervisor, deps, assignment, worktrees, cloneEntered, cloneRelease, parked, user, agentStarted, children, events, records, prepare, ordinary, methods, mailboxEntered, mailboxAborted }
+  return { supervisor, deps, assignment, worktrees, cloneEntered, cloneRelease, parked, user, agentStarted, children, events, records, prepare, ordinary, methods, mailboxEntered, mailboxAborted, mikkaCatalogue, mikkaTool }
 }
 
 it.each(['ordinary', 'task', 'host'] as const)('emits the earlier task-owned clock only on the existing opted-in stage (%s)', async diagnostics => {
@@ -127,10 +133,9 @@ it.each(['ordinary', 'task', 'host'] as const)('emits the earlier task-owned clo
     const { startupTiming, preparationTiming } = stages[2].data
     expect(startupTiming).toMatchObject({ runIdHash: runIdHash(f.assignment.runId), outcome: 'ok', phases: [] })
     expect(preparationTiming).toMatchObject({ source: 'prepared_agent_start', runIdHash: runIdHash(f.assignment.runId), harness: 'claude_code', outcome: 'ok', truncated: false })
-    expect(preparationTiming?.phases).toEqual(expect.arrayContaining([
+    expect(preparationTiming?.phases).toEqual([
       expect.objectContaining({ name: 'daemon.adapter.cli_init.prewarm', outcome: 'ok' }),
-      expect.objectContaining({ name: 'daemon.adapter.cli_init', outcome: 'ok' }),
-    ]))
+    ])
     expect(preparationTiming!.startedAt).toBeLessThanOrEqual(startupTiming!.startedAt)
     expect(preparationTiming!.endedAt).toBeLessThanOrEqual(startupTiming!.endedAt)
   }
@@ -146,6 +151,20 @@ it('overlaps the actual native initialize with clone, then joins checkout and pa
   f.cloneRelease.resolve(); await f.user.promise
   expect(f.events.filter(event => event.event === 'user')).toHaveLength(1)
   expect(f.prepare).toHaveBeenCalledOnce(); expect(f.ordinary).not.toHaveBeenCalled()
+  await f.supervisor.stop(); await f.supervisor.idle()
+})
+
+it('keeps checkout tools available throughout gateway prewarm and binds them to the final Git worktree', async () => {
+  const f = await fixture({ checkoutTools: true })
+  f.supervisor.start(f.assignment)
+  await f.cloneEntered.promise; await f.parked.promise
+  expect(await f.mikkaCatalogue.promise).toEqual(expect.arrayContaining(['submit', 'switch_repository']))
+  expect(existsSync(f.worktrees.pathFor(f.assignment.runId))).toBe(false)
+  f.cloneRelease.resolve()
+  await f.user.promise
+  expect(await f.mikkaTool.promise).toMatchObject({
+    result: { content: [{ type: 'text', text: expect.stringContaining('Repository selection recorded') }] },
+  })
   await f.supervisor.stop(); await f.supervisor.idle()
 })
 
@@ -168,7 +187,7 @@ it('aborts the mailbox dependency before draining a preparation that has not rea
 it.each(['cancel', 'revoke', 'shutdown'] as const)('a %s during clone drains the real native spare without releasing task input', async mode => {
   const f = await fixture(); f.supervisor.start(f.assignment); await f.parked.promise
   const stopping = mode === 'cancel' ? f.supervisor.cancel(f.assignment.runId)
-    : mode === 'shutdown' ? f.supervisor.stop() : Promise.resolve(f.supervisor.revokeLeases([f.assignment.runId]))
+    : mode === 'shutdown' ? f.supervisor.stop() : Promise.resolve(loseDeviceSession(f.supervisor))
   f.cloneRelease.resolve(); await stopping; await f.supervisor.idle()
   expect(f.events.filter(event => event.event === 'user')).toHaveLength(0)
   expect(f.children.every(child => child.exitCode !== null || child.signalCode !== null)).toBe(true)

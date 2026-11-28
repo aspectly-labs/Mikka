@@ -5,10 +5,11 @@ import type { PoolClient } from 'pg'
 import { db, withDatabaseClient } from '@/lib/db'
 import { deviceRepos, repositorySettings } from '@/lib/db/schema'
 import { ownerListChanged } from './live/lists'
+import { runtimeEnv } from '@/lib/env/server'
 
 /** A scheduling record, not an allow-list or a path on the person's machine. */
 export async function ensureDeviceRepository(userId: string, deviceId: string, input: string, existing?: PoolClient) {
-  const options = { allowFile: daemonTestMode(process.env) }
+  const options = { allowFile: daemonTestMode(runtimeEnv()) }
   const repository = normalizeRepository(input, options)
   const prepare = async (tx: Pick<typeof db, 'execute' | 'select' | 'update' | 'insert'>) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`device-repo:${deviceId}:${repository.key}`},0))`)
@@ -40,7 +41,7 @@ export async function ensureDeviceRepository(userId: string, deviceId: string, i
   return existing ? withDatabaseClient(existing, () => prepare(db)) : db.transaction(prepare)
 }
 
-/** Setup and network allow-list for a daemon heartbeat. Push approval stays on the claim, so this poll does not read it. */
+/** Setup and network allow-list for the daemon's repository read. Push approval stays on the claim, so this read does not take it. */
 export async function readRepositoryDaemonSettings(userId: string, remoteUrl: string) {
   let key: string
   try { key = remoteKey(remoteUrl) } catch { return null }

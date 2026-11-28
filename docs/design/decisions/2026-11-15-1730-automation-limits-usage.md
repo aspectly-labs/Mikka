@@ -1,5 +1,7 @@
 # 自动化：每日上限、用量和自动停用
 
+- **Status:** Accepted
+
 Alex，2026-11-15：自动化按 Capy 的 Automations 补齐，第二步是每日运行上限、按天用量和自动停用。延续 [2026-11-15-1337](2026-11-15-1337-automations-v1.md) 和 [2026-11-15-1704](2026-11-15-1704-automation-github-triggers.md)。
 
 ## 决定

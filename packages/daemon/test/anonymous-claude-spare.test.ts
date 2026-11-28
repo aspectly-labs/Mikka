@@ -168,7 +168,7 @@ it.each(['normal', 'project_settings', 'refuse_claim', 'normal_diagnostics', 'pr
   if (timing) cleanups.push(async () => { await timing.close({ cliExitObserved: true }); observation?.close() })
   const { spawn, execFileSync } = await import('node:child_process')
   const { stopGroup } = await import('../src/process-group')
-  const gate = new ToolApprovalGate(f.hint.runId, { isLive: () => !f.lifetime.signal.aborted }, 'push')
+  const gate = new ToolApprovalGate(f.hint.runId, { isLive: () => !f.lifetime.signal.aborted })
   const children: import('node:child_process').ChildProcess[] = []
   let replacementSpawns = 0
   const ledger: string[] = []
@@ -234,75 +234,6 @@ it('rejects a modified adopted temporary directory before claim', async () => {
   expect(candidate.state).toBe('closed')
   expect(f.events().filter(e => e.type === 'claim_session' || e.event === 'user')).toEqual([])
 })
-
-it.each([false, true, 'host'] as const)('the actual hosted runner adopts one bootstrap process with diagnostics=%s and no credential RPC', async diagnosticMode => {
-  const diagnostics = diagnosticMode !== false, hostOnly = diagnosticMode === 'host'
-  // A fresh worker has not invoked query/prewarm before this bootstrap.
-  vi.stubEnv('CLAUDE_AGENT_SDK_VERSION', undefined)
-  const f = fixture('normal', diagnostics)
-  for (const key of ['HOME', 'PATH', 'FIXTURE_MODE', 'FIXTURE_TRACE'] as const) vi.stubEnv(key, f.env[key])
-  const fullEnv = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-  const candidate = f.start({ env: fullEnv })!
-  await candidate.ready
-  const { createHostedBotRunner } = await import('../src/subscription-hosted-runner')
-  const { MemoryServer } = await import('../src/server-link')
-  const { ToolApprovalGate } = await import('../src/agents/tool-approval')
-  const { createLogger } = await import('../src/log')
-  const { runRuntimeTimings } = await import('../src/run-runtime-timing')
-  const { execFileSync } = await import('node:child_process')
-  let credentialCalls = 0
-  const never = async () => { credentialCalls++; throw Error('Unexpected credential RPC') }
-  const link = Object.assign(new MemoryServer(f.bootstrap.deviceId).link(), { nativeLease: never, nativeContext: never, nativeRequest: never, githubLease: never })
-  const runner = await createHostedBotRunner({ stateDir: f.stateDir, link, binaries: { claude_code: join(f.root, 'claude') }, anonymousClaudeCandidate: candidate,
-    ...(hostOnly ? { collectCliTiming: true } : {}) })
-  const assignment = {
-    runId: f.hint.runId, deviceId: f.bootstrap.deviceId, issueId: randomUUID(), repoId: randomUUID(),
-    baseBranch: 'main', harness: 'claude_code' as const, prompt: 'offline local task', model: f.hint.model, effort: f.hint.effort,
-    ...(diagnostics && !hostOnly ? { taskEnv: { CLOUD_STARTUP_TIMING: '1' } } : {}),
-    subscriptionBinding: { bindingId: randomUUID(), ownerId: randomUUID(), workspaceId: f.bootstrap.workspaceId, consumerId: randomUUID(), route: 'claude_code_cli' as const },
-    subscriptionLease: { route: 'claude_code_cli' as const, accountId: 'fixture-account', revision: 1,
-      modelId: f.hint.model, accessToken: 'fixture-token', expiresAt: new Date(Date.now() + 3600000).toISOString() },
-  }
-  if (hostOnly) expect(assignment.taskEnv).toBeUndefined()
-  const gate = new ToolApprovalGate(f.hint.runId, { isLive: () => !f.lifetime.signal.aborted }, 'push')
-  const options = { runId: f.hint.runId, cwd: f.cwd, env: buildChildEnv({ runId: f.hint.runId }), model: f.hint.model, effort: f.hint.effort,
-    policy: f.hint.policy, policyHash: policySnapshotHash(f.hint.policy), kind: 'implement' as const,
-    toolApproval: gate, prompt: 'offline local task', mcp: { url: 'https://fixture.invalid/api/mcp',
-      token: 'mkw_' + 'A'.repeat(43), decisionCatalogue: f.hint.decisionCatalogue }, log: createLogger({ stdout: false }) }
-  const observation = runRuntimeTimings.begin(f.hint.runId, f.bootstrap.deviceId, 'claude_code')
-  const prepared = runner.prepare(assignment, options, f.lifetime.signal)
-  cleanups.push(async () => { await prepared.cancel(); observation.close() })
-  await prepared.ready
-  expect(f.events().filter(row => row.event === 'spawn')).toHaveLength(1)
-  expect(f.events().filter(row => row.event === 'user')).toEqual([])
-  f.readyRepository(); execFileSync('git', ['init', '-q', f.cwd])
-  let late: import('../src/tracing').DaemonStartupTiming | undefined
-  const session = await daemonTracer.span('daemon.adapter.start', { 'mikka.run.id_hash': runIdHash(f.hint.runId), 'mikka.harness': 'claude_code' },
-    () => prepared.start(options), { onStartupTiming: value => { late = value } })
-  await expect.poll(() => f.events().filter(row => row.event === 'user')).toHaveLength(1)
-  await session.cancel()
-  expect(credentialCalls).toBe(0)
-  expect(f.events().filter(row => row.event === 'spawn')).toHaveLength(1)
-  expect(f.events().filter(row => row.type === 'claim_session')).toHaveLength(1)
-  const receipt = observation.finish()!
-  if (diagnostics) {
-    expect(prepared.preparationTiming).toMatchObject({ source: 'bootstrap_claude_start', outcome: 'ok', truncated: false, claimAuthentication: 'oauth_environment', observedAuthSource: 'oauth_environment' })
-    expect(prepared.preparationTiming!.phases.map(row => row.name)).toEqual(expect.arrayContaining(['daemon.adapter.cli_init.prewarm', 'daemon.adapter.cli_init']))
-    expect(prepared.preparationTiming!.startedAt).toBeLessThanOrEqual(receipt.startedAt)
-    expect(receipt.officialCliTiming).toMatchObject({ runIdHash: runIdHash(f.hint.runId), cliExitObserved: true })
-    const readerUrl = new URL('../../../scripts/acceptance/cloud-startup.mjs', import.meta.url)
-    const { observeChunks, hasStartupInitialization } = await import(readerUrl.href)
-    const record = { runIdHash: runIdHash(f.hint.runId), harness: 'claude_code' }
-    observeChunks(record, { chunks: [{ at: new Date(late!.endedAt).toISOString(), chunk: { type: 'data-run-stage', data: {
-      stage: 'agent_start', ms: late!.ms, ok: true, startupTiming: late, preparationTiming: prepared.preparationTiming,
-    } } }] }, Date.now())
-    expect(hasStartupInitialization(record)).toBe(true)
-  } else {
-    expect(prepared.preparationTiming).toBeUndefined()
-    expect(receipt.officialCliTiming).toBeUndefined()
-    expect(receipt.mcpHttpTiming).toBeUndefined()
-  }
-}, 10000)
 
 it('transfers one collector with actual preclaim events only to the matching identity', async () => {
   const f = fixture('normal', true), candidate = f.start()!

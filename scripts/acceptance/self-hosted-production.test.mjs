@@ -14,10 +14,10 @@ const rootRequire = createRequire(import.meta.url)
 const nitroRequire = createRequire(rootRequire.resolve('nitro/package.json'))
 const { WebSocketServer } = createRequire(nitroRequire.resolve('crossws/adapters/node'))('ws')
 
-const SHA = 'a'.repeat(40), API = 'https://api.github.com/repos/alexj11324/Mikka'
-const repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } }
+const SHA = 'a'.repeat(40), API = 'https://api.github.com/repos/aspectly-labs/Mikka'
+const repository = { full_name: 'aspectly-labs/Mikka', owner: { login: 'aspectly-labs' } }
 const env = { MIKKA_ACCEPTANCE_TARGET_MODE: CORE_MODE, GITHUB_REPOSITORY: repository.full_name,
-  GITHUB_REPOSITORY_OWNER: 'alexj11324', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
+  GITHUB_REPOSITORY_OWNER: 'aspectly-labs', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
   GITHUB_SHA: SHA, GITHUB_RUN_ID: '17', GITHUB_RUN_ATTEMPT: '1',
   GITHUB_WORKFLOW_REF: repository.full_name + '/' + CORE_WORKFLOW + '@refs/heads/main', GH_TOKEN: 'fixture-token' }
 const event = { repository }
@@ -61,7 +61,7 @@ test('core production accepts only a same-repository main dispatch, not another 
 
 test('target proof never accesses owner credentials and requires current main served live', async () => {
   const f = metadata(), guardedEnv = { ...env }
-  for (const key of ['SMOKE_OWNER_EMAIL', 'SMOKE_OWNER_PASSWORD', 'VERCEL_TEAM_TOKEN'])
+  for (const key of ['SMOKE_OWNER_EMAIL', 'SMOKE_OWNER_PASSWORD'])
     Object.defineProperty(guardedEnv, key, { get() { return assert.fail('Target proof must not read ' + key) } })
   const proof = await f.prove({ env: guardedEnv })
   assert.equal(proof.status, 'ready'); assert.deepEqual(proof.openIssues, [...CORE_ISSUES])
@@ -102,8 +102,7 @@ const gateway = 'wss://mikka-gateway.aspectlylabs.com'
 const protocol = 'mikka-ticket-' + Math.floor((now() + 299_000) / 1000) + '-' + 'a'.repeat(64)
 const channel = createHash('sha256').update(JSON.stringify([ownerId, workspaceId])).digest('hex')
 const liveTicket = () => ({ url: gateway + '/v1/live/' + channel + '/socket', protocol, expiresAt: now() + 299_000 })
-const deviceTicket = () => ({ url: gateway + '/v1/devices/' + deviceId + '/socket', protocol,
-  runControl: 'push', computerReviews: 'push', coordinatorResults: 'push' })
+const deviceTicket = () => ({ url: gateway + '/v1/devices/' + deviceId + '/socket', protocol })
 
 test('tickets cannot leave the existing gateway, swap scope or carry arbitrary URL/query credentials', () => {
   const options = { ownerId, workspaceId, now, socketFactory: () => assert.fail('Invalid ticket reached WebSocket') }

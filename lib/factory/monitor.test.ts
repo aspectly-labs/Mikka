@@ -156,12 +156,13 @@ test(
   "PG17 monitor: real transactions, concurrent dedupe, original issue, restart/rollback, fences, repair and recovery",
   { skip: !target, timeout: 120_000 },
   async (t) => {
-    // Only resolve Next's compile-time marker; use actual document/Yjs/SQL behavior.
+    // Resolve the compile-time marker to an empty module; use actual
+    // document/Yjs/SQL behavior.
     const marker = registerHooks({
       resolve(specifier, context, next) {
         return next(
           specifier === "server-only"
-            ? "next/dist/compiled/server-only/empty.js"
+            ? "data:text/javascript,export {}"
             : specifier,
           context,
         );
@@ -169,9 +170,7 @@ test(
     });
     const { appendMonitorEvidence } = await import("./monitor-evidence");
     const { loadIssueDocument, readIssueThreads } =
-      await import("../linear-sync/document");
-    const { createAppIssueFromLinear } = await import("../linear-sync/issue-sync");
-    const { withDatabaseClient } = await import("../db");
+      await import("../task-comments/issue-document");
     marker.deregister();
     const previousWake = coordinatorWakeTransport.wake;
     coordinatorWakeTransport.wake = async () => undefined;
@@ -260,9 +259,9 @@ test(
       const cached = ownerFixtures.get(owner);
       if (cached) {
         // This helper prepares an explicitly online Harness identity for the
-        // next scenario. Earlier scenarios can outlive the real heartbeat TTL.
+        // next scenario: an earlier scenario may have closed its session.
         const heartbeat = await pool.query(
-          'UPDATE devices SET "lastSeenAt"=clock_timestamp() WHERE id=$1 AND "ownerId"=$2',
+          'UPDATE devices SET "lastSeenAt"=clock_timestamp(),"sessionOpenedAt"=clock_timestamp(),"sessionClosedAt"=NULL WHERE id=$1 AND "ownerId"=$2',
           [cached.deviceId, owner],
         );
         assert.equal(heartbeat.rowCount, 1, "the owned fixture device still exists");
@@ -287,7 +286,7 @@ test(
         [randomUUID(), owner, "fixture-" + owner],
       );
       await pool.query(
-        `INSERT INTO devices (id,"ownerId",name,enabled,"lastSeenAt",harnesses) VALUES ($1,$2,'Local identity fixture',true,now(),'[{"harness":"codex","installed":true}]')`,
+        `INSERT INTO devices (id,"ownerId",name,enabled,"lastSeenAt","sessionOpenedAt",harnesses) VALUES ($1,$2,'Local identity fixture',true,now(),now(),'[{"harness":"codex","installed":true}]')`,
         [f.deviceId, owner],
       );
       await pool.query(
@@ -727,49 +726,38 @@ test(
       // rows live in its isolated schema, as in a split-database deployment.
       const workspaceId = await seedFixtureWorkspace(pool, 'owner', 'team');
       workspaceFixtures.set(JSON.stringify(['owner', 'workspace:a']), workspaceId);
-      const { rows: [linearTeam] } = await pool.query<Parameters<typeof createAppIssueFromLinear>[0]>(
+      const { rows: [linearTeam] } = await pool.query(
         "INSERT INTO linear_team_syncs (id,\"ownerId\",\"linearTeamId\",\"linearTeamKey\",\"linearTeamName\",\"workspaceId\") VALUES ($1,'owner','fixture-team','FIX','Fixture team',$2) RETURNING *",
         [teamId, workspaceId],
       );
-      const importClient = await pool.connect();
-      try {
-        const imported = await withDatabaseClient(importClient, () => createAppIssueFromLinear(linearTeam, {
-          id: linearIssueId, identifier: "FIX-195", title: "Monitor layer fixture", description: "Synthetic remote issue for monitor evidence.",
-          dueDate: null, priority: 0, url: `https://linear.app/fixture/issue/FIX-195`, updatedAt: new Date().toISOString(),
-          state: { id: "fixture-state", name: "Todo", type: "unstarted" },
-          team: { id: "fixture-team", key: "FIX", name: "Fixture team" }, assignee: null, labels: [],
-        }));
-        assert.ok(imported);
-        issueId = imported.id;
-        assert.notEqual(issueId, linearIssueId, 'the imported provider id does not choose the local task identity');
-        assert.equal(imported.workspaceId, workspaceId);
-      } finally { importClient.release(); }
+      const { historicalLinearTask } = await import('../../tests/helpers/historical-linear-task');
+      issueId = (await historicalLinearTask(pool, 'owner', workspaceId, linearTeam.id, linearIssueId, 'FIX-195', 'Monitor layer fixture')).id;
       scopes.set(issueId, "workspace:a");
       assert.deepEqual((await pool.query('SELECT "externalTargetVerified","linearIssueId" FROM linear_issue_links WHERE "issueId"=$1', [issueId])).rows[0], { externalTargetVerified: true, linearIssueId });
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM linear_sync_outbox WHERE "issueId"=$1', [issueId])).rows[0].n, 0, "an incoming import must not enqueue itself");
       await t.test(
-        "preparing the online fixture renews an expired heartbeat without changing its authority",
+        "preparing the online fixture reopens a closed session without changing its authority",
         async () => {
           const fixture = await ensureOwner("owner");
-          const stale = await pool.query(
-            `UPDATE devices SET "lastSeenAt"=clock_timestamp()-interval '61 seconds'
+          const closed = await pool.query(
+            `UPDATE devices SET "sessionClosedAt"=clock_timestamp()
              WHERE id=$1 AND "ownerId"=$2
-             RETURNING id,"ownerId",enabled,harnesses,"lastSeenAt"`,
+             RETURNING id,"ownerId",enabled,harnesses,"sessionOpenedAt","sessionClosedAt"`,
             [fixture.deviceId, "owner"],
           );
-          assert.equal(stale.rowCount, 1);
-          assert.equal(isDeviceOnline(stale.rows[0].lastSeenAt), false);
+          assert.equal(closed.rowCount, 1);
+          assert.equal(isDeviceOnline(closed.rows[0]), false);
           assert.equal(await ensureOwner("owner"), fixture);
-          const renewed = await pool.query(
-            'SELECT id,"ownerId",enabled,harnesses,"lastSeenAt" FROM devices WHERE id=$1 AND "ownerId"=$2',
+          const reopened = await pool.query(
+            'SELECT id,"ownerId",enabled,harnesses,"sessionOpenedAt","sessionClosedAt" FROM devices WHERE id=$1 AND "ownerId"=$2',
             [fixture.deviceId, "owner"],
           );
-          assert.equal(renewed.rowCount, 1);
-          const { lastSeenAt: previousHeartbeat, ...previousIdentity } = stale.rows[0];
-          const { lastSeenAt: currentHeartbeat, ...currentIdentity } = renewed.rows[0];
+          assert.equal(reopened.rowCount, 1);
+          const { sessionOpenedAt: previousOpen, sessionClosedAt: _closedAt, ...previousIdentity } = closed.rows[0];
+          const { sessionOpenedAt: currentOpen, sessionClosedAt: _reopened, ...currentIdentity } = reopened.rows[0];
           assert.deepEqual(currentIdentity, previousIdentity);
-          assert.ok(currentHeartbeat.getTime() > previousHeartbeat.getTime());
-          assert.equal(isDeviceOnline(currentHeartbeat), true);
+          assert.ok(currentOpen.getTime() > previousOpen.getTime());
+          assert.equal(isDeviceOnline(reopened.rows[0]), true);
         },
       );
       const first = await toMonitor("owner", issueId);
@@ -822,7 +810,8 @@ test(
                 [issueId],
               )
             ).rows[0].n,
-            1,
+            0,
+            "local monitor evidence does not enqueue a retired Linear mirror write",
           );
           assert.equal(
             (
@@ -1125,14 +1114,16 @@ test(
             ).rows[0].n,
             0,
           );
-          // #195 never closes or hides the actual issue.
+          // #195 never closes or hides the actual issue; the person's earlier
+          // explicit cancel closed it (#1863) and monitor recovery must not
+          // reopen it.
           assert.equal(
             (
               await pool.query("SELECT status FROM issues WHERE id=$1", [
                 issueId,
               ])
             ).rows[0].status,
-            "todo",
+            "canceled",
           );
         },
       );

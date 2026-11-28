@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from 'pg'
 import { ownerListChanged } from '@/lib/live/lists'
 import { botChatChanged } from '@/lib/live/chats'
 import { applyCliFold, applyExternalFold, foldCliRunPolicy, foldExternalWritePermissions } from '@/lib/operations/workspace-policy-fold'
+import { readEnv } from '@/lib/env/server'
 
 /**
  * The person's Coordinator is an ordinary bot (glossary), one per person per
@@ -129,7 +130,9 @@ export async function listOwnerBots(ownerId: string, workspaceId: string) {
   const [{ db }, { bots }, { and, asc, desc, eq, isNull, sql }] = await Promise.all([import('@/lib/db'), import('@/lib/db/schema'), import('drizzle-orm')])
   const { botId } = await coordinatorBot(ownerId, workspaceId)
   const isCoordinator = sql<boolean>`${bots.id} = ${botId}`
-  return db.select({ id: bots.id, name: bots.name, color: bots.color, shape: bots.shape, coordinator: isCoordinator }).from(bots)
+  // The row menu's Share and Move to show the current access and Environment (lib/bot-access.ts).
+  const visibility = sql<'shared' | 'private'>`coalesce((select p.visibility from resource_access_policies p where p.kind='bot' and p.id="bots"."id"),'private')`
+  return db.select({ id: bots.id, name: bots.name, color: bots.color, shape: bots.shape, coordinator: isCoordinator, environmentId: bots.environmentId, visibility }).from(bots)
     // An archived bot leaves the person's lists (lib/bot-lifecycle.ts); its chat stays reachable by address.
     .where(and(eq(bots.ownerId, ownerId), eq(bots.workspaceId, workspaceId), isNull(bots.archivedAt)))
     .orderBy(desc(isCoordinator), asc(bots.createdAt))
@@ -305,7 +308,7 @@ async function moveExecutionRows(client: PoolClient, ownerId: string, botId: str
  * the next turn would drop it as unverified. One that does not verify stays as it was.
  */
 async function movedSummary(ownerId: string, botId: string, summary: string): Promise<string> {
-  const key = process.env.BETTER_AUTH_SECRET ?? ''
+  const key = readEnv('BETTER_AUTH_SECRET') ?? ''
   if (key.length < 32) return summary
   const { rescopeSummary } = await import('./message-safety')
   return rescopeSummary(summary, { key, scope: JSON.stringify([ownerId, null]) }, { key, scope: JSON.stringify([ownerId, botId]) }) ?? summary

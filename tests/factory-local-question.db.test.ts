@@ -61,8 +61,8 @@ test('a local Factory question preserves the original Profile, worker definition
   const model = 'gpt-6-luna'
   const harnesses = [{ harness: 'codex', installed: true, subscriptionBroker: true,
     models: [model] }]
-  await pool.query(`INSERT INTO devices(id,"ownerId",name,kind,"deviceType",enabled,"lastSeenAt",harnesses)
-    VALUES ($1,$2,'Local question fixture','local','laptop',true,now(),$3)`, [deviceId, owner, JSON.stringify(harnesses)])
+  await pool.query(`INSERT INTO devices(id,"ownerId",name,kind,"deviceType",enabled,"lastSeenAt",harnesses,"sessionOpenedAt")
+    VALUES ($1,$2,'Local question fixture','local','laptop',true,now(),$3,now())`, [deviceId, owner, JSON.stringify(harnesses)])
   await pool.query(`INSERT INTO agents(id,"userId","deviceId",harness,name)
     VALUES ($1,$2,$3,'codex','Local question worker')`, [agentId, owner, deviceId])
   await pool.query(`INSERT INTO byos_connections(id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject","modelCatalog",quota)
@@ -95,7 +95,7 @@ test('a local Factory question preserves the original Profile, worker definition
   // Use the real null-Bot admission path, rather than rewriting a Bot run into
   // an incompatible historical identity. The original service supports it.
   const policyCeiling: RunPolicy = { permissions: { install_dependency: 'deny', write_outside_repo: 'deny',
-    git_push: 'deny', network: 'ask', computer_use: 'deny' }, networkAllow: ['github.com'], networkCeiling: ['github.com'] }
+    git_push: 'deny', network: 'allow', computer_use: 'deny' }, networkAllow: ['github.com'], networkCeiling: ['github.com'] }
   const initial = await queueTaskRun(owner, { issueId, agentId, repo: 'octo/repo',
     requestKey: `local-question:${randomUUID()}`, model, subscriptionBindingId: bindingId,
     modelDispatch: { mode: 'picked', location: 'local', entry: selection.target.entry }, agentProfile: selection.agentProfile, policyCeiling }, null)

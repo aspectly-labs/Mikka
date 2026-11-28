@@ -1,20 +1,21 @@
 import { createHash } from 'node:crypto'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Env = Record<string, string | undefined>
 export type MailMessage = { to: string; subject: string; text: string; idempotencyKey?: string }
 export type MailOptions = { env?: Env; apiKey?: string; fetch?: typeof fetch }
 
-export function mailFrom(env: Env = process.env): string {
+export function mailFrom(env: Env = runtimeEnv()): string {
   return env.MIKKA_EMAIL_FROM?.trim() || 'Mikka <noreply@aspectlylabs.com>'
 }
-export function mailConfigured(env: Env = process.env, apiKey = env.RESEND_API_KEY): boolean {
+export function mailConfigured(env: Env = runtimeEnv(), apiKey = env.RESEND_API_KEY): boolean {
   return Boolean(env.SMTP_URL?.trim() || apiKey)
 }
 
 /** One delivery boundary for authentication, account and operator mail.
  * Provider errors never expose recipients, authentication links or credentials. */
 export async function deliverMail(message: MailMessage, options: MailOptions = {}): Promise<void> {
-  const env = options.env ?? process.env
+  const env = options.env ?? runtimeEnv()
   const from = mailFrom(env), smtpUrl = env.SMTP_URL?.trim()
   try {
     if ([from, message.to, message.subject].some(value => /[\r\n\0]/.test(value))) throw new Error()

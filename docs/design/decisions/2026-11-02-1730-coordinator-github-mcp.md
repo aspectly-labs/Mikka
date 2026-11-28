@@ -1,6 +1,7 @@
 # The Coordinator uses GitHub's hosted MCP server with the person's own token
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: the Coordinator does GitHub
   operations directly through GitHub's official hosted MCP server with the
   person's own GitHub credential, and its Bot desktop's git and gh have that

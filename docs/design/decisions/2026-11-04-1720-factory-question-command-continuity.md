@@ -1,6 +1,7 @@
 # Command evidence across a Factory question
 
 - Date: 2026-11-04
+- **Status:** Accepted
 - Source: Alex, [#1237](https://github.com/alexj11324/Mikka/issues/1237) and [the 17:20 decision](https://github.com/alexj11324/Mikka/issues/1210#issuecomment-6637112423): “把有恢复回执严格绑定的前一段命令算作这次执行的证据，并堵上绕过修复次数上限的那条路。”
 - Rule: —
 - Replaces: The checker prompt's prohibition on using the receipt-bound predecessor's commands to satisfy the producer's execution requirements.

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "claims": [
+    {
+      "id": "eve-oracle-production",
+      "text": "production Eve is the Oracle VM behind",
+      "paths": ["docs/operations/zero-residency-baseline.md"],
+      "reason": "Eve moved back to the Cloudflare-hosted production path; Oracle/relay wording is only legacy rollback context."
+    }
+  ]
+}

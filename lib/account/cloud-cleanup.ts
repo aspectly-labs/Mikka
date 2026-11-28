@@ -1,7 +1,11 @@
 import 'server-only'
+import { bindE2BResource, e2bResourceAccount } from '@/lib/secrets/e2b-resource'
+import { isExternalE2BResource } from './e2b-external-custody'
 import type { Pool } from 'pg'
+import { randomUUID } from 'node:crypto'
 import { observePoolCommits } from '@/lib/db/commit-effects'
 import { machineChanged } from '@/lib/live/computer-state'
+import { cleanupErrorIdentifier, type AccountCleanupOptions } from './cleanup-result'
 
 export interface AccountCloudProvider {
   kill(workspaceId: string, sandboxId: string): Promise<void>
@@ -9,25 +13,27 @@ export interface AccountCloudProvider {
   deleteSnapshot(workspaceId: string, snapshotId: string): Promise<void>
   endRuns(userId: string, runIds: string[]): Promise<void>
 }
-/** Everything cleaned up here is the owner's, on the owner's own E2B key (orchestration § 2). */
+/** Retire resources managed by this installation during owner deletion. */
 const ownerProvider = (ownerId: string): AccountCloudProvider => ({
   async kill(_workspaceId, sandboxId) {
+    if (await isExternalE2BResource(ownerId, 'sandbox', sandboxId)) return
     const { Sandbox } = await import('e2b')
-    const { e2bApiKey } = await import('@/lib/secrets/e2b-runtime')
-    await Sandbox.kill(sandboxId, { apiKey: await e2bApiKey(ownerId, 'Cloud cleanup unavailable'), requestTimeoutMs: 20_000 })
+    await Sandbox.kill(sandboxId, { apiKey: (await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey, requestTimeoutMs: 20_000 })
   },
   async snapshots(_workspaceId, sandboxId) {
+    if (await isExternalE2BResource(ownerId, 'sandbox', sandboxId)) return []
     const { Sandbox } = await import('e2b')
-    const { e2bApiKey } = await import('@/lib/secrets/e2b-runtime')
-    const options = { apiKey: await e2bApiKey(ownerId, 'Cloud cleanup unavailable'), requestTimeoutMs: 20_000 }
+    const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
+    const options = { apiKey: account.apiKey, requestTimeoutMs: 20_000 }
     const pages = Sandbox.listSnapshots({ ...options, sandboxId }), ids: string[] = []
     while (pages.hasNext) ids.push(...(await pages.nextItems(options)).map(row => row.snapshotId))
+    for (const id of ids) await bindE2BResource(ownerId, 'snapshot', id, account.scope)
     return ids
   },
   async deleteSnapshot(_workspaceId, snapshotId) {
+    if (await isExternalE2BResource(ownerId, 'snapshot', snapshotId)) return
     const { Sandbox } = await import('e2b')
-    const { e2bApiKey } = await import('@/lib/secrets/e2b-runtime')
-    await Sandbox.deleteSnapshot(snapshotId, { apiKey: await e2bApiKey(ownerId, 'Cloud cleanup unavailable'), requestTimeoutMs: 20_000 })
+    await Sandbox.deleteSnapshot(snapshotId, { apiKey: (await e2bResourceAccount(ownerId, 'snapshot', snapshotId)).apiKey, requestTimeoutMs: 20_000 })
   },
   async endRuns(userId, runIds) {
     if (!runIds.length) return
@@ -39,7 +45,15 @@ const ownerProvider = (ownerId: string): AccountCloudProvider => ({
 })
 
 /** Main Bot computers are keyed by workspace AND owner (20261029080001), never workspace alone. */
-export async function cleanupOwnedCloudMachines(ownerId: string, database: Pool, runtime = ownerProvider(ownerId)): Promise<string[]> {
+export async function cleanupOwnedCloudMachines(ownerId: string, database: Pool, runtime = ownerProvider(ownerId), { job, blockerErrors = {} }: AccountCleanupOptions = {}): Promise<string[]> {
+  if (!job) return drain(ownerId, database, runtime, blockerErrors)
+  const grant = randomUUID(), key = 'mikka-account-cloud-cleanup:' + job.id + ':' + grant
+  await job.client.query('SELECT pg_advisory_lock(hashtextextended($1,0))', [key])
+  try { return await drain(ownerId, database, runtime, blockerErrors, grant) }
+  finally { await job.client.query('SELECT pg_advisory_unlock(hashtextextended($1,0))', [key]) }
+}
+
+async function drain(ownerId: string, database: Pool, runtime: AccountCloudProvider, blockerErrors: Record<string, string>, grant?: string): Promise<string[]> {
   observePoolCommits(database)
   const reasons = new Set<string>()
   const machines = (await database.query<{ workspaceId: string }>('SELECT "workspaceId" FROM cloud_machines WHERE "ownerId"=$1 ORDER BY "workspaceId"', [ownerId])).rows
@@ -48,10 +62,13 @@ export async function cleanupOwnedCloudMachines(ownerId: string, database: Pool,
     let sandboxId: string | null = null, runs: string[] = [], pending = false
     try {
       await client.query('BEGIN')
+      // Only the backend holding this deletion job can authorize its guarded cleanup.
+      if (grant) await client.query("SELECT set_config('mikka.account_cloud_cleanup_grant',$1,true)", [grant])
       const row = (await client.query('SELECT * FROM cloud_machines WHERE "workspaceId"=$1 AND "ownerId"=$2 FOR UPDATE', [machine.workspaceId, ownerId])).rows[0]
       if (!row) { await client.query('COMMIT'); continue }
       // An expired lease is not proof an external allocation did not happen.
-      pending = Boolean(row.provisionLeaseId || row.provisionLeaseUntil)
+      pending = Boolean(row.provisionLeaseId || row.provisionLeaseUntil) &&
+        !(grant && row.operationId && await isExternalE2BResource(ownerId, 'operation', row.operationId, client))
       if (!pending) {
         sandboxId = row.sandboxId
         runs = (await client.query<{ id: string }>(`UPDATE agent_runs r SET status='stopped',"stopRequestedAt"=COALESCE(r."stopRequestedAt",now()),"finishedAt"=COALESCE(r."finishedAt",now())
@@ -62,11 +79,11 @@ export async function cleanupOwnedCloudMachines(ownerId: string, database: Pool,
       }
       if (!pending) await machineChanged(client, database, ownerId, machine.workspaceId)
       await client.query('COMMIT')
-    } catch { await client.query('ROLLBACK'); reasons.add('cloud_runtime_cleanup_required'); continue }
+    } catch (error) { blockerErrors.cloud_runtime_cleanup_required = cleanupErrorIdentifier(error); await client.query('ROLLBACK'); reasons.add('cloud_runtime_cleanup_required'); continue }
     finally { client.release() }
     if (pending) { reasons.add('cloud_provision_cleanup_pending'); continue }
     try { await runtime.endRuns(ownerId, runs); if (sandboxId) await runtime.kill(machine.workspaceId, sandboxId) }
-    catch { reasons.add('cloud_runtime_cleanup_required') }
+    catch (error) { blockerErrors.cloud_runtime_cleanup_required = cleanupErrorIdentifier(error); reasons.add('cloud_runtime_cleanup_required') }
   }
   // Keep source references until every provider deletion acknowledges. Repeated
   // DELETE of a known owned object is idempotent; no mapping disappears first.
@@ -81,11 +98,11 @@ export async function cleanupOwnedCloudMachines(ownerId: string, database: Pool,
   const owned = new Map(snapshots.map(row => [`${row.workspaceId}:${row.snapshotId}`, row]))
   for (const source of sources) {
     try { for (const snapshotId of await runtime.snapshots(source.workspaceId, source.sandboxId)) owned.set(`${source.workspaceId}:${snapshotId}`, { workspaceId: source.workspaceId, snapshotId }) }
-    catch { reasons.add('cloud_snapshot_inventory_pending') }
+    catch (error) { blockerErrors.cloud_snapshot_inventory_pending = cleanupErrorIdentifier(error); reasons.add('cloud_snapshot_inventory_pending') }
   }
   for (const snapshot of owned.values()) {
     try { await runtime.deleteSnapshot(snapshot.workspaceId, snapshot.snapshotId) }
-    catch { reasons.add('cloud_snapshot_cleanup_required') }
+    catch (error) { blockerErrors.cloud_snapshot_cleanup_required = cleanupErrorIdentifier(error); reasons.add('cloud_snapshot_cleanup_required') }
   }
   return [...reasons]
 }

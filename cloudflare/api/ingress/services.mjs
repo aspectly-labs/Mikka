@@ -1,5 +1,8 @@
+import { isLiteLlmRoute } from '../../litellm/request.mjs'
+import { decodeHostedCallId } from '../../../lib/model-gateway/hosted-call-id.mjs'
 import { timingSafeEqual } from 'node:crypto'
 import { apiRequest } from './request.mjs'
+import { GITHUB_REDELIVERY_ORIGIN } from '../../../lib/env/hosts-constants.mjs'
 
 const no = status => new Response(null, { status, headers: { 'cache-control': 'no-store' } })
 const eveProductHeaders = new Set([
@@ -10,6 +13,17 @@ const worldMethods = new Map([
   ['/world/rpc', ['POST']], ['/world/run-terminal', ['GET']], ['/world/stream', ['GET', 'DELETE']],
   ['/world/queue/publish', ['POST']], ['/world/queue/claim', ['POST']], ['/world/queue/release', ['POST']],
 ])
+
+/** App-wide maintenance has one private operation and no caller-selected authority. */
+export function githubRedeliveryRequest(request, binding) {
+  const url = new URL(request.url)
+  if (url.origin !== GITHUB_REDELIVERY_ORIGIN || url.username || url.password || url.search || url.hash
+    || url.pathname !== '/redeliver' || request.method !== 'POST' || request.body !== null) return no(404)
+  if (!binding) return no(503)
+  return binding.fetch(new Request(GITHUB_REDELIVERY_ORIGIN + '/redeliver', {
+    method: 'POST', redirect: 'error', cache: 'no-store', signal: request.signal,
+  }))
+}
 
 export function businessWorldRequest(request, binding, capability) {
   const url = new URL(request.url)
@@ -25,18 +39,21 @@ export function businessWorldRequest(request, binding, capability) {
   return binding.fetch(new Request(request, { headers, redirect: 'manual' }))
 }
 
-// The model gateway's protocol converter (decision 2026-11-15-2000): the exact
-// conversion routes the gateway calls, POST only, with the LiteLLM master key
-// the API holds. The person's provider key rides in the JSON body.
-const liteLlmPaths = new Set(['/v1/messages', '/v1/messages/count_tokens', '/v1/responses'])
 export function liteLlmRequest(request, binding) {
   const url = new URL(request.url)
-  if (url.origin !== 'https://litellm.internal' || url.username || url.password || url.hash || url.search
-      || request.method !== 'POST' || !liteLlmPaths.has(url.pathname)) return no(404)
+  if (url.origin !== 'https://litellm.internal' || url.username || url.password || url.hash
+      || !isLiteLlmRoute(request.method, url.pathname, url.search)) return no(404)
   if (!binding) return no(503)
+  const callId = request.headers.get('x-litellm-call-id')
+  if (callId !== null && !decodeHostedCallId(callId)) return no(400)
   const headers = new Headers()
-  for (const name of ['accept', 'content-type', 'authorization', 'x-api-key', 'anthropic-version', 'anthropic-beta']) {
+  for (const name of ['accept', 'content-type', 'authorization', 'x-litellm-api-key', 'x-litellm-call-id', 'anthropic-version', 'anthropic-beta', 'openai-beta', 'x-litellm-num-retries']) {
     if (request.headers.has(name)) headers.set(name, request.headers.get(name))
+  }
+  if (url.pathname.startsWith('/v1/mikka/subscription/claude/') || url.pathname === '/v1/mikka/subscription/codex/responses') {
+    for (const name of ['user-agent', 'originator', 'chatgpt-account-id']) {
+      if (request.headers.has(name)) headers.set(name, request.headers.get(name))
+    }
   }
   return binding.fetch(new Request(request, { headers, redirect: 'manual' }))
 }

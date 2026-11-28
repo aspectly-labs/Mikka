@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import test, { mock } from 'node:test'
 import { dbUrl, seedAgent, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import type { BillingManagementView } from '../lib/billing/management-contract'
+import type { OveragePolicyView } from '../lib/billing/contract'
 
 let actor: string | null = null
 mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async (options: { query?: { disableCookieCache?: boolean } }) => {
@@ -152,7 +153,12 @@ test('billing management HTTP preserves independent tenants, owners and immutabl
     await pool.query(`insert into mikka_workspace_entitlements("workspaceId",plan,source) values($1,'enterprise','cloud')
       on conflict ("workspaceId") do update set plan='enterprise',source='cloud',"expiresAt"=null`, [first.id])
     const view = await (await orgGet()).json() as BillingManagementView
-    assert.deepEqual(view.capacity, { plan: 'enterprise', hostedMaxInFlight: 128, activeHumanLimit: null })
+    assert.equal(view.capacity.plan, 'enterprise')
+    assert.equal(view.capacity.hostedMaxInFlight, 128)
+    assert.equal(view.capacity.activeHumanLimit, null)
+    assert.equal(view.capacity.capabilities?.canUseEnterpriseGovernance, true)
+    assert.equal(view.capacity.capabilities?.canUseSso, true)
+    assert.equal(view.capacity.capabilities?.isPaidPlan, true)
     const day = (await pool.query<{ date: string }>(`select to_char("createdAt" at time zone 'UTC','YYYY-MM-DD') date
       from hosted_usage where "workspaceId"=$1 and state='settled'`, [first.id])).rows[0].date
     assert.deepEqual(view.usage.daily?.find(row => row.date === day), { date: day, costMicroUsd: 2500000, reservedMicroUsd: 400000, unknownCalls: 1 })
@@ -172,6 +178,55 @@ test('billing management HTTP preserves independent tenants, owners and immutabl
     assert.equal(((await (await orgGet()).json()) as BillingManagementView).usage.memberDetail, undefined)
     actor = member
     assert.equal((await orgGet(organizationId, {}, `?usageMember=${member}`)).status, 403)
+  })
+
+  await t.test('historical ?month=YYYY-MM queries that exact UTC month while rejecting malformed month values', async () => {
+    actor = owner
+    const pastMonth = '2026-08'
+    const pastCall = randomUUID()
+    try {
+      await pool.query(
+        `insert into hosted_usage(id,"workspaceId","usageWorkspaceId","actorId",model,state,"costMicroUsd","freeMicroUsd","purchasedMicroUsd","createdAt")
+         values ($1,$2,$2,$3,'synthetic-historical','settled',1750000,0,1750000,'2026-08-15T12:00:00Z')`,
+        [pastCall, first.id, member],
+      )
+      const pastRes = await get(first.id, {}, `?month=${pastMonth}`)
+      assert.equal(pastRes.status, 200)
+      const pastView = await pastRes.json() as BillingManagementView
+      assert.equal(pastView.usage.month, pastMonth)
+      assert.equal(pastView.usage.costMicroUsd, 1750000)
+      assert.equal(pastView.usage.reservedMicroUsd, 0)
+      assert.deepEqual(pastView.usage.daily?.find(row => row.date === '2026-08-15'), {
+        date: '2026-08-15',
+        costMicroUsd: 1750000,
+        reservedMicroUsd: 0,
+        unknownCalls: 0,
+      })
+      assert.equal(pastView.usage.daily?.length, 31)
+
+      const orgPastRes = await orgGet(organizationId, {}, `?month=${pastMonth}&usageMember=${member}`)
+      assert.equal(orgPastRes.status, 200)
+      const orgPastView = await orgPastRes.json() as BillingManagementView
+      assert.equal(orgPastView.usage.month, pastMonth)
+      assert.deepEqual(orgPastView.usage.memberDetail, {
+        id: member,
+        models: [{ model: 'synthetic-historical', costMicroUsd: 1750000, inputTokens: '0', outputTokens: '0', unknownCalls: 0 }],
+      })
+
+      // Default query still reports the current month and excludes historical-month spend.
+      const currentView = await (await get(first.id)).json() as BillingManagementView
+      assert.notEqual(currentView.usage.month, pastMonth)
+      assert.equal(currentView.usage.costMicroUsd, 2500000)
+
+      // Malformed ?month= values fail validation with 400.
+      for (const bad of ['2026-13', '2026-00', 'not-a-month', '']) {
+        const res = await get(first.id, {}, `?month=${encodeURIComponent(bad)}`)
+        assert.equal(res.status, 400, `month=${JSON.stringify(bad)}`)
+        assert.deepEqual(await res.json(), { error: 'validationGeneric' })
+      }
+    } finally {
+      await pool.query('delete from hosted_usage where id=$1', [pastCall])
+    }
   })
 
   await t.test('organization cost attribution ranks confirmed spend and resolves ties consistently', async () => {
@@ -233,5 +288,40 @@ test('billing management HTTP preserves independent tenants, owners and immutabl
       assert.equal(called, false)
       await pool.query('update mikka_workspace_members set status=\'active\' where "workspaceId"=$1 and "userId"=$2', [first.id, owner])
     } finally { await independent.end() }
+  })
+
+  await t.test('owner-only overage policy requires positive monthly cap when enabled and preserves optimistic revision', async () => {
+    actor = owner
+    const initialView = await (await get(first.id)).json() as BillingManagementView
+    assert.ok(initialView.billing)
+    assert.deepEqual(initialView.billing.overage, { enabled: false, monthlyCapPoints: null, spentOveragePoints: 250, remainingOveragePoints: null, revision: 0 })
+
+    // Missing or non-positive cap is rejected when enabling overage
+    const badCap = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: true, monthlyCapPoints: null, expectedRevision: 0 } }, first.id)
+    assert.equal(badCap.status, 409)
+    assert.deepEqual(await badCap.json(), { error: 'billingOverageCapRequired' })
+    const zeroCap = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: true, monthlyCapPoints: 0, expectedRevision: 0 } }, first.id)
+    assert.equal(zeroCap.status, 409)
+    assert.deepEqual(await zeroCap.json(), { error: 'billingOverageCapRequired' })
+
+    // Admin without owner authority cannot mutate overage
+    actor = admin
+    const adminRes = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: true, monthlyCapPoints: 2500, expectedRevision: 0 } }, first.id)
+    assert.equal(adminRes.status, 403)
+
+    // Owner enables overage with positive monthly cap
+    actor = owner
+    const enabledRes = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: true, monthlyCapPoints: 2500, expectedRevision: 0 } }, first.id)
+    assert.equal(enabledRes.status, 200)
+    const enabledView = await enabledRes.json() as OveragePolicyView
+    assert.deepEqual(enabledView, { enabled: true, monthlyCapPoints: 2500, spentOveragePoints: 250, remainingOveragePoints: 2250, revision: 1 })
+
+    // Stale revision conflicts
+    const staleRes = await post({ action: 'overage', accountWorkspaceId: first.id, policy: { enabled: false, monthlyCapPoints: 2500, expectedRevision: 0 } }, first.id)
+    assert.equal(staleRes.status, 409)
+
+    // Audit event recorded
+    const audit = (await pool.query(`select action from workspace_audit_events where "workspaceId"=$1 and action='billing.overage_changed'`, [first.id])).rows
+    assert.equal(audit.length, 1)
   })
 })

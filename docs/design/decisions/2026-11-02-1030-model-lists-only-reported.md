@@ -1,6 +1,7 @@
 # Model lists show only what was reported
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session, after 设置 › Bot 与 Agents › 任务默认 showed Codex with the model `opus` (Claude's mark), a list holding only `opus`, and 未保存 on save: 「模型列表只能用 CLI 或 daemon 回报上来的值，不许写死。」
 - Rule: — (R-74 marks stand)
 - Replaces: [decisions.md](../decisions.md) 2026-10-30 row "No 自动 anywhere in execution settings", as to the initial value "on its `opus` slot" only; the rest of that row stands.

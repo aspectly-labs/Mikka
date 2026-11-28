@@ -31,10 +31,10 @@ test('background Factory transactions use persisted tenants before the APP pool 
   const globals = globalThis as unknown as { mikkaPool?: Pool; workspacePool?: Pool }
   const oldPools = { app: globals.mikkaPool, workspace: globals.workspacePool }
   const envNames = ['E2E_DATABASE_URL', 'MIKKA_DATABASE_URL', 'DATABASE_URL', 'ORVILO_DATABASE_URL', 'VERCEL_ENV', 'MIKKA_EDITION',
-    'MIKKA_BYOS_ENABLED', 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET', 'WORKSPACE_SECRETS_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
+    'MIKKA_BYOS_ENABLED', 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET', 'WORKSPACE_SECRETS_KEY', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
   const prior = Object.fromEntries(envNames.map(key => [key, process.env[key]]))
   Object.assign(process.env, { E2E_DATABASE_URL: url, MIKKA_DATABASE_URL: url, DATABASE_URL: url, ORVILO_DATABASE_URL: url,
-    MIKKA_EDITION: 'cloud', MIKKA_BYOS_ENABLED: '1', BETTER_AUTH_URL: 'http://localhost:3100', NEXT_PUBLIC_POSTHOG_KEY: '',
+    MIKKA_EDITION: 'cloud', MIKKA_BYOS_ENABLED: '1', BETTER_AUTH_URL: 'http://localhost:3100', MIKKA_PUBLIC_POSTHOG_KEY: '', NEXT_PUBLIC_POSTHOG_KEY: '',
     BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
   delete process.env.VERCEL_ENV
   globals.mikkaPool = app; globals.workspacePool = workspace
@@ -242,7 +242,7 @@ test('background Factory transactions use persisted tenants before the APP pool 
       writing = runtime.store.apply(owner, factoryBinding(f.task), randomUUID(), { action: 'cancel', reason: 'Serialize the real background transition' })
       await Promise.race([
         waitFor(async () => (await controls.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
-          AND application_name='factory_background_app' AND wait_event_type='Lock' AND query LIKE '%FROM issues%'`)).rowCount! > 0, 'background writer must hold WS and wait for the real issue row'),
+          AND application_name='factory_background_app' AND wait_event_type='Lock' AND query LIKE '%issues%'`)).rowCount! > 0, 'background writer must hold WS and wait for the real issue row'),
         writing.then(() => { throw new Error('Background write escaped the held issue lock') }),
       ])
       revoking = (async () => {
@@ -298,7 +298,7 @@ test('background Factory transactions use persisted tenants before the APP pool 
   })
 
   const deviceId = randomUUID()
-  await controls.query('INSERT INTO devices(id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt") VALUES($1,$2,\'Background local fixture\',\'local\',true,3,now())', [deviceId, owner])
+  await controls.query('INSERT INTO devices(id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt","sessionOpenedAt") VALUES($1,$2,\'Background local fixture\',\'local\',true,3,now(),now())', [deviceId, owner])
   const run = async (workspaceId: string | null) => {
     const id = randomUUID()
     await controls.query('INSERT INTO agent_runs(id,"userId","workspaceId","agentId","deviceId",status,prompt) VALUES($1,$2,$3,$4,$5,\'queued\',\'Synthetic claim; no executor\')', [id, owner, workspaceId, agentId, deviceId])
@@ -399,7 +399,7 @@ test('background Factory transactions use persisted tenants before the APP pool 
     assert.deepEqual(await monitor.reconcile(retired), { observed: 0 })
     assert.deepEqual(await sweepFactoryWatchdog(pool, {
       runtime: botId => { runtimeReads++; return factoryRuntimeForBot(botId) },
-      dispatch: async () => { dispatches++ },
+      dispatch: async () => { dispatches++; return undefined },
       wake: async () => { watchdogWakes++ },
     }, new Date(), Date.now() + 5000, { userId: retired, runId: retained[1].runId }),
     { scanned: 0, recovered: 0, blocked: 0, deferred: 0, failed: 0 })

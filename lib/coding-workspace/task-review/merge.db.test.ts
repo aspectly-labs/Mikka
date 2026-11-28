@@ -12,8 +12,7 @@ import { orderMigrations } from '../../../scripts/migration-order.mjs'
 import { disposableDatabase, E2E_DB_RULE } from '../../../tests/helpers/e2e-target.mjs'
 import { addFactoryPublicationEvidence, addFactoryVisualEvidence } from '../../../tests/helpers/factory-visual-evidence'
 import { createTestDatabase, dropTestDatabase } from '../../../tests/support/drop-test-database'
-import { GitHubAccessError } from '../../github/user-access-error'
-import type { RequestBudget } from '../../request-budget'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import type { FactoryTask } from '../../factory/store'
 import type { ReviewActor } from '../diff/authority'
 import type { TaskReviewHttpInput } from './http'
@@ -28,7 +27,7 @@ const fullName = 'mikka-fixtures/task-review-merge', repositoryKey = 'v2/github.
 const remote = `https://github.com/${fullName}.git`, repositoryId = '61393725', apiPath = '/repos/' + fullName
 const number = 7, pullUrl = `https://github.com/${fullName}/pull/${number}`
 const baseSha = 'a'.repeat(40), headSha = 'b'.repeat(40), mergeSha = 'c'.repeat(40), otherHeadSha = 'd'.repeat(40)
-type Projection = { state: string; reviewRef: TaskReviewRef; mergeId?: string; merged?: boolean; reviewedHeadMerged?: boolean;
+type Projection = { state: string; reviewRef?: TaskReviewRef; pullRef?: unknown; mergeId?: string; merged?: boolean; reviewedHeadMerged?: boolean;
   expectedHeadSha?: string; actualHeadSha?: string | null; mergeCommitSha?: string | null; pullRequestUrl?: string;
   checksFingerprint?: string; failing?: number; error?: string; reason?: string }
 type MergeRow = { id: string; taskId: string; candidateId: string; eventId: string; sha: string; status: string;
@@ -52,34 +51,37 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
   const environment = { MIKKA_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), ORVILO_DATABASE_URL: target.toString(),
     E2E_DATABASE_URL: target.toString(), BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
     BETTER_AUTH_URL: 'http://127.0.0.1:3199', WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'),
-    GITHUB_CLIENT_ID: 'fixture-client', GITHUB_CLIENT_SECRET: 'fixture-client-secret' }
+    GITHUB_CLIENT_ID: 'fixture-client', GITHUB_CLIENT_SECRET: 'fixture-client-secret', GITHUB_APP_ID: '4840908' }
   const previous = Object.fromEntries(Object.keys(environment).map(name => [name, process.env[name]]))
   Object.assign(process.env, environment)
   let appPool: Pool | undefined, workspacePool: Pool | undefined
   const tokens = new Map<string, { token: string; githubAccountId: string; expiresAt: Date }>()
   const deniedCredentials = new Set<string>(), credentialReads: string[] = []
+  const realFetch = globalThis.fetch
+  const githubHttp = await startGitHubAccessHttp({
+    getRepositories: req => [...tokens.values()].some(value => `Bearer ${value.token}` === req.headers.authorization)
+      ? [{ id: repositoryId, full_name: fullName, private: true }] : [],
+    getUser: req => {
+      const entry = [...tokens.entries()].find(([, value]) => `Bearer ${value.token}` === req.headers.authorization)
+      if (!entry) return null
+      const [userId, credential] = entry
+      credentialReads.push(userId)
+      if (deniedCredentials.has(userId)) return null
+      return { id: credential.githubAccountId, login: 'merge-fixture' }
+    },
+  })
+  const routedAuth = githubHttp.routeFetch(realFetch)
   try {
     const migrations = new URL('../../../drizzle/', import.meta.url)
     for (const name of orderMigrations((await readdir(migrations)).filter(name => name.endsWith('.sql'))))
       await pool.query(await readFile(new URL(name, migrations), 'utf8'))
-    const next = await import('next/server')
-    mock.module('next/server', { namedExports: { ...next, after() {} } })
-    mock.module('next/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({
+    const next = await import('@/lib/server-runtime/server')
+    mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after() {} } })
+    mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({
       get: () => undefined, getAll: () => [], has: () => false, set() {}, delete() {},
     }) } })
-    mock.module('next-intl/server', { namedExports: { getLocale: async () => 'en',
+    mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en',
       getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
-    const userAccess = await import('../../github/user-access')
-    mock.module(new URL('../../github/user-access.ts', import.meta.url).href, { namedExports: { ...userAccess,
-      githubTokenForUser: async (userId: string, options: { minValidityMs?: number; budget?: RequestBudget } = {}) => {
-        credentialReads.push(userId)
-        if (deniedCredentials.has(userId)) throw new GitHubAccessError('githubReconnectRequired', 401)
-        const token = tokens.get(userId)
-        assert.ok(token, 'merge must acquire the actual owner user credential')
-        assert.equal(options.minValidityMs, 60_000); assert.ok(options.budget && options.budget.deadline > Date.now())
-        return token
-      },
-    } })
     const { saveGitHubConnection } = await import('../../github/connection')
     const { factoryHumanStore } = await import('../../factory/server')
     const { approvalEvidence } = await import('../../factory/evidence')
@@ -91,9 +93,12 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
     const { gitBlobHash } = await import('../diff/patch')
     const { secretMaskerFor } = await import('../../secrets/runtime')
     const { mergeTaskReview, taskReviewMergeRequest } = await import('./merge')
+    const { readTaskReviewSummary } = await import('./read')
+    const { githubDiffProvider } = await import('../diff/github')
+    const { summarySchema } = await import('../../code-review/read-contract')
     const { TaskReviewDenied } = await import('./http')
     appPool = (await import('../../db')).pool; workspacePool = (await import('../../workspace-db')).workspacePool
-    type MergeInput = z.infer<typeof taskReviewMergeRequest>
+    type MergeInput = Extract<z.infer<typeof taskReviewMergeRequest>, { reviewRef: TaskReviewRef }>
     async function user() {
       const id = 'task-merge-' + randomUUID(), sessionId = randomUUID()
       await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())',
@@ -196,7 +201,7 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
         factory: { taskId, candidateId, producerRunId: producer.id, sha: headSha },
       }, mask))
       const binding = { taskId, issueId, candidateId, attemptId: approvalId, revision: 7 }
-      const state = { head: headSha, merged: false, mergeCommit: null as string | null,
+      const state = { head: headSha, base: baseSha, merged: false, mergeCommit: null as string | null,
         check: 'passed' as 'passed' | 'failed' | 'pending', checkLog: 'The selected commit was checked.',
         putMode: 'success' as 'success' | 'timeout' | 'http503' | 'forbidden', putReached: false,
         beforePut: undefined as (() => Promise<void>) | undefined, onPull: undefined as (() => Promise<void>) | undefined,
@@ -204,16 +209,28 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
       const calls: { method: string; path: string; body?: Record<string, unknown> }[] = []
       context.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
         const target = new URL(String(input)), method = init.method ?? 'GET'
+        if (target.origin === 'https://api.github.com' && method === 'GET' && (target.pathname === '/user' || target.pathname.startsWith('/user/'))) {
+          return routedAuth(input, init)
+        }
         assert.equal(target.origin, 'https://api.github.com'); assert.equal(init.redirect, 'error')
         assert.equal(new Headers(init.headers).get('authorization'), 'Bearer ' + token.token)
         const body = init.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
         calls.push({ method, path: target.pathname, body })
-        if (method === 'GET' && target.pathname === apiPath) return Response.json({ id: repositoryId, full_name: fullName,
-          allow_merge_commit: false, allow_squash_merge: true, allow_rebase_merge: false })
+        if (method === 'GET' && target.pathname === apiPath) return Response.json({ id: repositoryId, full_name: fullName, private: true,
+          permissions: { pull: true, push: true }, allow_merge_commit: false, allow_squash_merge: true, allow_rebase_merge: false })
+        if (method === 'POST' && target.pathname === '/graphql') {
+          assert.match(String(body?.query), /query WorkspaceReviewSummary/)
+          assert.deepEqual(body?.variables, { owner: fullName.split('/')[0], name: fullName.split('/')[1], number })
+          return Response.json({ data: { repository: { pullRequest: {
+            number, headRefOid: state.head, baseRefOid: state.base, state: state.merged ? 'MERGED' : 'OPEN', reviewDecision: null,
+            repository: { fullDatabaseId: repositoryId, nameWithOwner: fullName }, changedFiles: 1, additions: 1, deletions: 1,
+            isDraft: false, mergeable: 'MERGEABLE', commits: { nodes: [{ commit: { oid: state.head, statusCheckRollup: null } }] },
+          } } } })
+        }
         if (method === 'GET' && target.pathname === `${apiPath}/pulls/${number}`) {
           await state.onPull?.()
           return Response.json({ number, html_url: pullUrl, state: state.merged ? 'closed' : 'open', merged: state.merged,
-            changed_files: 1, base: { sha: baseSha, repo: { id: repositoryId, full_name: fullName } }, head: { sha: state.head },
+            changed_files: 1, base: { sha: state.base, repo: { id: repositoryId, full_name: fullName } }, head: { sha: state.head },
             mergeable_state: 'clean', merge_commit_sha: state.mergeCommit })
         }
         const commit = `${apiPath}/commits/${headSha}`
@@ -241,6 +258,16 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
       })
       const input = (change: Partial<MergeInput> = {}): MergeInput => ({ reviewRef: { snapshotId: snapshot.id, sourceVersion: snapshot.revision.version },
         binding, expectedHeadSha: headSha, idempotencyKey: randomUUID(), confirmFailedChecks: false, ...change })
+      const nativeInput = () => ({ pullRef: { runId: producer.id, repoId, repositoryId, number, baseSha, producerRunId: producer.id },
+        binding, expectedHeadSha: headSha, idempotencyKey: randomUUID(), confirmFailedChecks: false })
+      const summary = async () => {
+        const request = new Request(`http://127.0.0.1:3199/api/tasks/${issueId}/review/summary`)
+        const result = await readTaskReviewSummary({ request, deps: { ...deps, external: githubDiffProvider(pool, who.userId, request.signal) },
+          actor: who, taskId: issueId, input: {} })
+        assert.ok(result.context)
+        return withReviewTransaction(pool, pool, who, result.context.scope.identity.runId, result.context.scope.identity.repoId,
+          async (client, fresh) => summarySchema.parse((await result.render(client, fresh)).body))
+      }
       const merge = async (value: Record<string, unknown>, person = who) => {
         const request: TaskReviewHttpInput = { request: new Request(`http://127.0.0.1:3199/api/tasks/${issueId}/review/merge`, { method: 'POST' }),
           deps, actor: person, taskId: issueId, input: value }
@@ -282,7 +309,7 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
         return { candidateId: nextCandidate, runId: run.id, attemptId }
       }
       return { owner, member, workspaceId, who, viewer, issueId, taskId, candidateId, approvalId, runId: producer.id,
-        repoId, scope, snapshot, binding, state, calls, puts, input, merge, rows, replaceCandidate }
+        repoId, scope, snapshot, binding, state, calls, puts, input, nativeInput, summary, merge, rows, replaceCandidate }
     }
     type Fixture = Awaited<ReturnType<typeof fixture>>
     async function unclaimed(f: Fixture) {
@@ -290,12 +317,14 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
       assert.equal(saved.merges.length, 0); assert.equal(saved.receipts.length, 0); assert.equal(saved.events.length, 0)
       assert.equal(saved.task.stage, 'approval'); assert.equal(saved.task.status, 'waiting'); assert.equal(f.puts().length, 0)
     }
-    async function merged(f: Fixture, result: Awaited<ReturnType<Fixture['merge']>>) {
+    async function merged(f: Fixture, result: Awaited<ReturnType<Fixture['merge']>>,
+      reference: { reviewRef?: TaskReviewRef; pullRef?: unknown } = { reviewRef: f.input().reviewRef }) {
       assert.equal(result.status, 200); assert.equal(result.body.state, 'merged')
       assert.equal(result.body.merged, true); assert.equal(result.body.reviewedHeadMerged, true)
       assert.equal(result.body.expectedHeadSha, headSha); assert.equal(result.body.actualHeadSha, headSha)
       assert.equal(result.body.mergeCommitSha, mergeSha); assert.equal(result.body.pullRequestUrl, pullUrl)
-      assert.deepEqual(result.body.reviewRef, f.input().reviewRef)
+      assert.deepEqual(result.body.reviewRef, reference.reviewRef)
+      assert.deepEqual(result.body.pullRef, reference.pullRef)
       const saved = await f.rows()
       assert.equal(saved.merges.length, 1); assert.equal(saved.merges[0]!.id, result.body.mergeId)
       assert.equal(saved.merges[0]!.status, 'merged'); assert.equal(saved.merges[0]!.sha, headSha)
@@ -307,6 +336,18 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
 
     // Each case calls the production facade and renders under a fresh real
     // authority transaction. No database service is replaced with a stub.
+    await t.test('legacy merge requests keep the durable fingerprints produced before the native contract expansion', () => {
+      // Frozen from main 98e611724e23809be399493b8f7c270d2ed1c2b0; includes
+      // both the outer request and Factory binding's original parse order.
+      const ids = Array.from({ length: 5 }, (_, i) => `20000000-0000-4000-8000-00000000000${i + 1}`)
+      const input = { idempotencyKey: 'original-merge-intent', expectedHeadSha: 'b'.repeat(40), confirmFailedChecks: false,
+        binding: { candidateId: ids[4], revision: 7, attemptId: ids[3], issueId: ids[2], taskId: ids[1] },
+        reviewRef: { sourceVersion: 'a'.repeat(64), snapshotId: ids[0] } }
+      assert.equal(digest(JSON.stringify(taskReviewMergeRequest.parse(input))), '2179d3dd6065daf31262c12278602e8db972f788671e26d2e157a42c0c24fb1c')
+      assert.equal(digest(JSON.stringify(taskReviewMergeRequest.parse({ ...input, confirmFailedChecks: true,
+        confirmedChecksFingerprint: 'c'.repeat(64) }))), 'e10eb6820659329f58cce1289cad7a73670edfd13c30602c45b8e6e392af5806')
+    })
+
     await t.test('the exact Factory claim and Task receipt commit before the only PUT; real approval and publish gates complete', async t => {
       const f = await fixture(t), input = f.input()
       let observed = false
@@ -329,14 +370,128 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
       assert.equal(f.puts().length, 1); assert.equal((await f.rows()).receipts.length, 2)
     })
 
+    await t.test('a native PR intent merges the approved current commit without a retained snapshot and replays the same receipt', async t => {
+      const f = await fixture(t), input = f.nativeInput()
+      await pool.query('DELETE FROM coding_workspace_snapshots WHERE "boardId"=$1', [f.scope.boardId])
+      assert.equal((await pool.query('SELECT count(*)::int AS count FROM coding_workspace_snapshots WHERE "boardId"=$1', [f.scope.boardId])).rows[0].count, 0)
+      const result = await f.merge(input)
+      await merged(f, result, { pullRef: input.pullRef })
+      assert.equal(f.puts().length, 1)
+      assert.deepEqual((await f.merge(input)).body, result.body)
+      assert.equal(f.puts().length, 1)
+    })
+
+    await t.test('the real live summary supplies the native merge target from the host publication with no archive', async t => {
+      const f = await fixture(t)
+      await pool.query('DELETE FROM coding_workspace_snapshots WHERE "boardId"=$1', [f.scope.boardId])
+      const summary = await f.summary(), input = f.nativeInput()
+      assert.deepEqual(summary.nativeMergeTarget, { pullRef: input.pullRef, binding: input.binding, expectedHeadSha: input.expectedHeadSha })
+      assert.equal(summary.reviewRef, null); assert.equal(summary.mergeTarget, null)
+      assert.equal(summary.permissions.canMerge, false)
+      assert.equal(summary.pr?.headSha, headSha)
+      assert.equal((await pool.query('SELECT count(*)::int AS count FROM coding_workspace_snapshots WHERE "boardId"=$1', [f.scope.boardId])).rows[0].count, 0)
+      const result = await f.merge({ ...summary.nativeMergeTarget, idempotencyKey: input.idempotencyKey, confirmFailedChecks: false })
+      await merged(f, result, { pullRef: input.pullRef }); assert.equal(f.puts().length, 1)
+    })
+
+    await t.test('native locators cannot substitute another Task, repository, publication, producer or candidate', async t => {
+      const f = await fixture(t), input = f.nativeInput()
+      for (const field of ['runId', 'repoId'] as const)
+        await assert.rejects(() => f.merge({ ...input, pullRef: { ...input.pullRef, [field]: randomUUID() } }), code('workspace_not_found'))
+      for (const pullRef of [{ ...input.pullRef, number: number + 1 }, { ...input.pullRef, producerRunId: randomUUID() }])
+        await assert.rejects(() => f.merge({ ...input, pullRef }), code('workspace_snapshot_outdated'))
+      for (const binding of [{ ...input.binding, issueId: randomUUID() }, { ...input.binding, candidateId: randomUUID() },
+        { ...input.binding, taskId: randomUUID() }, { ...input.binding, candidateId: null }])
+        await assert.rejects(() => f.merge({ ...input, binding }), code('workspace_snapshot_outdated'))
+      assert.equal(f.calls.length, 0, 'unassociated locators are refused before native GitHub reads')
+      await assert.rejects(() => f.merge({ ...input, pullRef: { ...input.pullRef, repositoryId: '999' } }), code('workspace_review_github_forbidden'))
+      assert.ok(f.calls.every(call => call.method === 'GET' && call.path === apiPath))
+      await assert.rejects(() => f.merge({ ...input, reviewRef: f.input().reviewRef }), z.ZodError)
+      await assert.rejects(() => f.merge({ ...input, pullRef: { ...input.pullRef, baseSha: 'main' } }), z.ZodError)
+      await unclaimed(f)
+    })
+
+    await t.test('an existing native source in another tenant is not a Task merge capability', async t => {
+      const f = await fixture(t), foreign = await fixture(t)
+      await assert.rejects(() => f.merge({ ...f.nativeInput(), pullRef: foreign.nativeInput().pullRef }), code('workspace_not_found'))
+      assert.equal(f.calls.length, 0); assert.equal(foreign.calls.length, 0)
+      await unclaimed(f); await unclaimed(foreign)
+    })
+
+    await t.test('a native publication changed during upstream checks cannot return a confirmation challenge', async t => {
+      const f = await fixture(t); f.state.check = 'failed'
+      f.state.onChecks = async () => {
+        await pool.query('UPDATE run_publications SET "pullRequest"=$2 WHERE "runId"=$1', [f.runId, { url: pullUrl.replace('/7', '/8') }])
+      }
+      await assert.rejects(() => f.merge(f.nativeInput()), code('workspace_snapshot_outdated'))
+      await unclaimed(f)
+    })
+
+    await t.test('membership revocation during native checks prevents a claim and PUT', async t => {
+      const f = await fixture(t)
+      f.state.onChecks = async () => {
+        await pool.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2', [f.workspaceId, f.owner.id])
+      }
+      await assert.rejects(() => f.merge(f.nativeInput()), code('workspace_not_found'))
+      await unclaimed(f)
+    })
+
+    for (const field of ['head', 'base'] as const) await t.test(`native ${field} movement before claim refuses the frozen intent`, async t => {
+      const f = await fixture(t), input = f.nativeInput()
+      f.state[field] = otherHeadSha
+      await assert.rejects(() => f.merge(input), code('workspace_snapshot_outdated'))
+      await unclaimed(f)
+    })
+
+    await t.test('native base movement after the durable claim refuses the PUT and retains the failed receipt', async t => {
+      const f = await fixture(t), input = f.nativeInput()
+      f.state.onPull = async () => { if ((await f.rows()).merges.length) f.state.base = otherHeadSha }
+      const result = await f.merge(input)
+      assert.equal(result.status, 409); assert.equal(result.body.state, 'rejected')
+      assert.equal(result.body.reviewedHeadMerged, false); assert.equal(f.puts().length, 0)
+      assert.deepEqual(result.body.pullRef, input.pullRef)
+      const saved = await f.rows()
+      assert.equal(saved.merges.length, 1); assert.equal(saved.merges[0].status, 'failed')
+      assert.equal(saved.task.stage, 'approval'); assert.equal(saved.events.length, 0)
+    })
+
+    await t.test('native failed-check confirmation remains bound to the same live intent and exact check evidence', async t => {
+      const f = await fixture(t), input = f.nativeInput(); f.state.check = 'failed'
+      const needs = await f.merge(input)
+      assert.equal(needs.status, 409); assert.equal(needs.body.state, 'needs_confirm')
+      assert.deepEqual(needs.body.pullRef, input.pullRef); assert.equal(needs.body.reviewRef, undefined)
+      await assert.rejects(() => f.merge({ ...input, confirmFailedChecks: true }), z.ZodError)
+      f.state.check = 'pending'
+      assert.equal((await f.merge({ ...input, confirmFailedChecks: true, confirmedChecksFingerprint: needs.body.checksFingerprint })).body.state, 'checks_pending')
+      await unclaimed(f)
+      f.state.check = 'failed'
+      const result = await f.merge({ ...input, idempotencyKey: randomUUID(), confirmFailedChecks: true, confirmedChecksFingerprint: needs.body.checksFingerprint })
+      await merged(f, result, { pullRef: input.pullRef }); assert.equal(f.puts().length, 1)
+    })
+
+    await t.test('native completed receipts survive candidate replacement and credential revocation, without accepting a changed intent', async t => {
+      const f = await fixture(t), input = f.nativeInput(), first = await f.merge(input)
+      await merged(f, first, { pullRef: input.pullRef })
+      const replacement = await f.replaceCandidate(), calls = f.calls.length, credentials = credentialReads.length
+      f.state.head = otherHeadSha; deniedCredentials.add(f.owner.id)
+      assert.deepEqual((await f.merge(input)).body, first.body)
+      assert.equal((await f.rows()).task.candidateId, replacement.candidateId)
+      assert.equal(f.calls.length, calls); assert.equal(credentialReads.length, credentials); assert.equal(f.puts().length, 1)
+      await assert.rejects(() => f.merge({ ...input, pullRef: { ...input.pullRef, baseSha: otherHeadSha } }), code('workspace_review_conflict'))
+      await assert.rejects(() => f.merge(f.input({ idempotencyKey: input.idempotencyKey })), code('workspace_review_conflict'))
+      assert.equal(f.puts().length, 1)
+    })
+
     await t.test('only the owner human session may merge, regardless of Task visibility or a valid owner PAT', async t => {
       const f = await fixture(t), input = f.input(), patId = randomUUID()
       await pool.query(`INSERT INTO personal_access_tokens(id,"userId","workspaceId",name,"tokenHash",hint,"expiresAt")
         VALUES($1,$2,$3,'Task merge PAT',$4,'test',now()+interval '1 hour')`, [patId, f.owner.id, f.workspaceId, digest(randomUUID())])
       for (const person of [f.viewer, { ...f.who, credential: { kind: 'pat' as const, id: patId } }])
-        await assert.rejects(() => f.merge(input, person), error => error instanceof TaskReviewDenied && error.reason === 'not_owner_merge')
+        for (const intent of [input, f.nativeInput()])
+          await assert.rejects(() => f.merge(intent, person), error => error instanceof TaskReviewDenied && error.reason === 'not_owner_merge')
       await pool.query('UPDATE "session" SET "expiresAt"=now()-interval \'1 second\' WHERE id=$1', [f.owner.sessionId])
       await assert.rejects(() => f.merge(input), code('workspace_not_found'))
+      await assert.rejects(() => f.merge(f.nativeInput()), code('workspace_not_found'))
       await unclaimed(f); assert.equal(f.calls.length, 0); assert.ok(!credentialReads.includes(f.owner.id))
     })
 
@@ -424,9 +579,9 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
       await merged(f, await f.merge(input)); assert.equal(f.puts().length, 1)
     })
 
-    for (const mode of ['timeout', 'http503'] as const)
-      await t.test(`${mode} after PUT stays unknown; explicit retries only read back until a positive merge receipt appears`, async t => {
-        const f = await fixture(t), input = f.input(); f.state.putMode = mode
+    for (const mode of ['timeout', 'http503'] as const) for (const native of [false, true])
+      await t.test(`${native ? 'native' : 'archived'} ${mode} after PUT stays unknown; explicit retries only read back until a positive merge receipt appears`, async t => {
+        const f = await fixture(t), input = native ? f.nativeInput() : f.input(); f.state.putMode = mode
         const pending = await f.merge(input)
         assert.equal(pending.status, 202); assert.equal(pending.body.state, 'pending')
         assert.equal(pending.body.merged, false); assert.equal(pending.body.reviewedHeadMerged, false)
@@ -441,7 +596,8 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
         assert.equal(f.puts().length, 1); assert.equal((await f.rows()).merges.length, 1)
         f.state.merged = true; f.state.mergeCommit = mergeSha
         const recovered = await f.merge(input)
-        await merged(f, recovered); assert.equal(recovered.body.mergeId, pending.body.mergeId)
+        await merged(f, recovered, 'pullRef' in input ? { pullRef: input.pullRef } : { reviewRef: input.reviewRef })
+        assert.equal(recovered.body.mergeId, pending.body.mergeId)
         assert.equal(f.puts().length, 1)
         assert.equal((await f.merge(input)).body.mergeId, recovered.body.mergeId)
         assert.equal(f.puts().length, 1)
@@ -504,6 +660,7 @@ test('Task review merge uses the real Factory receipt and exact source on Postgr
     })
   } finally {
     mock.restoreAll()
+    await githubHttp.close()
     for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value }
     await dropTestDatabase(admin, database, pool, appPool, workspacePool)
     await admin.end()

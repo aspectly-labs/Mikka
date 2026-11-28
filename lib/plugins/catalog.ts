@@ -1,6 +1,6 @@
 import { isToolkitSlug, OWN_INTEGRATIONS } from '@/lib/composio-accounts'
 import { PluginError } from './contracts'
-import { connectKind, type ConnectKind } from './connect-kind'
+import { connectKind, detailAuthSchemes, type ConnectKind } from './connect-kind'
 
 // The 插件 store: every Composio toolkit (decisions 2026-10-31 and
 // 2026-11-02), whether it connects in one click (Composio-managed auth), with
@@ -10,6 +10,14 @@ import { connectKind, type ConnectKind } from './connect-kind'
 export type StoreCategory = { id: string; name: string }
 /** `connect`: one click (managed), the person's own credentials, nothing to connect, or not connectable from Mikka yet. */
 export type StoreApp = { id: string; name: string; description: string; iconUrl: string | null; categories: StoreCategory[]; createdAt: string | null; connect: ConnectKind }
+/** A clearly equivalent API-key variant (e.g. ahrefs_mcp → ahrefs) when Composio exposes exactly one. */
+export function findCredentialAlternative(app: Pick<StoreApp, 'id' | 'connect'>, apps: readonly Pick<StoreApp, 'id' | 'name' | 'connect'>[]) {
+  if (app.connect !== 'oauthSetupRequired') return null
+  const provider = (id: string) => id.replace(/_(?:mcp|basic|api)$/i, '')
+  const matches = apps.filter(candidate => candidate.id !== app.id && candidate.connect === 'credentials' && provider(candidate.id) === provider(app.id))
+  return matches.length === 1 ? { id: matches[0].id, name: matches[0].name } : null
+}
+
 export type StoreCatalog = {
   /** In Composio's usage order (`sort_by=usage`), most used first. */
   apps: StoreApp[]
@@ -28,11 +36,15 @@ type RawToolkit = {
   no_auth?: boolean | null
   composio_managed_auth_schemes?: string[] | null
   auth_schemes?: string[] | null
+  /** The detail endpoint can name schemes only inside auth_config_details. */
+  auth_config_details?: unknown
   meta?: { description?: string | null; logo?: string | null; created_at?: string | null; categories?: { id?: string | null; name?: string | null }[] | null } | null
 }
 type RawPage = { items: RawToolkit[]; next_cursor?: string | null }
 /** The one call the store needs: `composio.getClient().toolkits.list`. */
 export type ToolkitLister = (query: { sort_by: 'usage'; limit: number; cursor?: string }) => Promise<RawPage>
+/** A toolkit's own detail record (`composio.getClient().toolkits.retrieve`). */
+export type ToolkitRetriever = (slug: string) => Promise<RawToolkit>
 
 export const SECTION_SIZE = 12
 const PAGE_LIMIT = 1000
@@ -124,9 +136,38 @@ export function composioToolkitLister(client: { getClient: () => { toolkits: { l
   return query => client.getClient().toolkits.list(query as never, { signal: AbortSignal.timeout(10_000) }) as Promise<RawPage>
 }
 
-/** A new connection must be a store app that connects that way. */
-export async function assertCatalogToolkit(list: ToolkitLister, id: string, kind: ConnectKind = 'managed') {
-  if (!(await listStoreCatalog(list)).apps.some(app => app.id === id && app.connect === kind)) throw new PluginError('integrationToolkitNotSupported', 400)
+/** The real Composio client's per-toolkit detail read, with a timeout. */
+export function composioToolkitRetriever(client: { getClient: () => { toolkits: { retrieve: (slug: string, query?: never, options?: { signal?: AbortSignal }) => Promise<unknown> } } }): ToolkitRetriever {
+  return slug => client.getClient().toolkits.retrieve(slug, undefined, { signal: AbortSignal.timeout(10_000) }) as Promise<RawToolkit>
+}
+
+/** A detail-verified kind is kept on the cached entry so the store and the admission check agree until the next list read. A failed list read is still not kept. */
+function patchCachedConnect(id: string, kind: ConnectKind) {
+  if (!cached) return
+  const entry = { at: cached.at, value: cached.value.then(catalog => ({ ...catalog, apps: catalog.apps.map(app => app.id === id ? { ...app, connect: kind } : app) })) }
+  cached = entry
+  entry.value.catch(() => { if (cached === entry) cached = null })
+}
+
+/**
+ * A new connection must be a store app that connects that way. The bulk list
+ * can carry reduced auth metadata — a missing managed-schemes field is not
+ * proof a project cannot manage the toolkit — so when the list does not show
+ * the kind, the toolkit's own detail record is the admission check (#1920).
+ * A detail read that fails or disagrees is an explicit refusal, never an admit.
+ */
+export async function assertCatalogToolkit(list: ToolkitLister, id: string, kind: ConnectKind = 'managed', verify?: ToolkitRetriever) {
+  const app = (await listStoreCatalog(list)).apps.find(app => app.id === id)
+  if (app?.connect === kind) return
+  if (app && verify) {
+    try {
+      const detail = await verify(id)
+      if (connectKind({ ...detail, auth_schemes: detail.auth_schemes ?? detailAuthSchemes(detail.auth_config_details) }) === kind) { patchCachedConnect(id, kind); return }
+    } catch (cause) {
+      throw new PluginError('integrationToolkitNotSupported', 400, { cause })
+    }
+  }
+  throw new PluginError('integrationToolkitNotSupported', 400)
 }
 
 /** Whether an app needs no connection at all (its tools run on the person's id alone). */

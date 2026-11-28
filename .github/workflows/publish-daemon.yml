@@ -1,6 +1,10 @@
 name: Publish daemon
 
 # Keep this filename: npm trusted publishing authorizes this workflow identity.
+# A main push publishes to the npm `next` dist-tag only. Installed daemons follow `latest`, which
+# moves only when a promoter (config/release-promoters.json) dispatches this workflow with
+# `staged_run`, a successful push run whose daemon inputs match current main
+# (scripts/release/daemon-promotion.mjs; docs/operations/build-source-of-truth.md#production-promotion-switch).
 on:
   push:
     branches: [main]
@@ -19,6 +23,11 @@ on:
       - 'config/release-security.json'
       - '.github/workflows/publish-daemon.yml'
   workflow_dispatch:
+    inputs:
+      staged_run:
+        description: Successful push run of this workflow that published the same daemon inputs to npm next; this dispatch publishes main to latest
+        type: string
+        required: true
 
 concurrency:
   group: publish-daemon
@@ -36,7 +45,7 @@ env:
 
 jobs:
   publish:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main'
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor)))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -45,6 +54,8 @@ jobs:
       id-token: write
     env:
       MIKKA_DAEMON_PACKAGE_NAME: '@aspectlylabs/mikka'
+      # Automatic pushes publish to next; only a verified promoter dispatch publishes to latest.
+      MIKKA_DAEMON_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && 'latest' || 'next' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -55,12 +66,87 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
+      # A dispatch to latest reads the authoritative promoters from private mikka-cloud main with a
+      # read-only contents token before anything is built or published.
+      - name: Select the source App before policy access
+        if: github.event_name == 'workflow_dispatch'
+        id: source-app
+        env:
+          SOURCE_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324' }}
+          ORG_SECRET_PATH: ${{ vars.MIKKA_ORG_GITHUB_SECRET_PATH }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs'
+          const owner = process.env.SOURCE_OWNER
+          if (!['alexj11324', 'aspectly-labs'].includes(owner)) throw Error('CI_SOURCE_APP_OWNER_REQUIRED')
+          const path = owner === 'aspectly-labs' ? process.env.ORG_SECRET_PATH?.trim() : '/github'
+          if (!path || /[\r\n]/.test(path)) throw Error('CI_SOURCE_APP_SECRET_PATH_REQUIRED')
+          appendFileSync(process.env.GITHUB_OUTPUT, `owner=${owner}\nsecret-path=${path}\napp-id=${owner === 'aspectly-labs' ? '5853576' : '4840908'}\n`)
+          JS
+      - name: Read the existing source App id
+        if: github.event_name == 'workflow_dispatch'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+      - name: Read the existing source App private key
+        if: github.event_name == 'workflow_dispatch'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+      - name: Verify the selected source App
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SOURCE_APP_ID: ${{ steps.source-app.outputs.app-id }}
+        run: node -e 'if (!process.env.EXPECTED_SOURCE_APP_ID || process.env.GITHUB_APP_ID !== process.env.EXPECTED_SOURCE_APP_ID) throw Error("CI_SOURCE_APP_ID_MISMATCH")'
+      - name: Read the reviewed release policy token
+        if: github.event_name == 'workflow_dispatch'
+        id: policy-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          repositories: mikka-cloud
+          permission-contents: read
+      - name: Remove App credentials before reading the policy
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
+          echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+      - name: Verify the staged daemon run before publishing to latest
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STAGED_RUN: ${{ inputs.staged_run }}
+          MIKKA_OPERATIONS_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          MIKKA_OPERATIONS_READ_TOKEN: ${{ steps.policy-token.outputs.token }}
+        run: node scripts/release/daemon-promotion.mjs
       - run: npm install --global npm@11.19.0
       - name: Prepare release version and check registry
         id: release
         run: node packages/daemon/scripts/release.mjs
       - run: pnpm install --frozen-lockfile
-      - run: node --test packages/daemon/test/release.node-test.mjs
+      # The self-test must pass in either job channel; a promotion runs it with latest in the job env.
+      - name: Test the release script under both channels
+        run: |
+          MIKKA_DAEMON_CHANNEL=next node --test packages/daemon/test/release.node-test.mjs
+          MIKKA_DAEMON_CHANNEL=latest node --test packages/daemon/test/release.node-test.mjs
       - run: pnpm --filter @mikka/daemon typecheck
       - name: Ensure FFmpeg for daemon recording regressions
         run: |

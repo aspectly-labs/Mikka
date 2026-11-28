@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
+import { captureFixtureLiveEffects } from '../tests/support/live-runtime'
+import type { PoolClient } from 'pg'
+import { observeCommitEffects } from './db/commit-effects'
+
+const scheduledAfter = captureFixtureLiveEffects()
 import { type SQL } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { agentRuns, agents, deviceRepos, devices } from './db/schema'
@@ -22,6 +27,7 @@ const lost = { id: '28700000-0000-4000-8000-000000000041', userId: 'synthetic-ow
 let inserted: Record<string, unknown> | undefined
 let transactions = 0
 let workspaceTransactions = 0, resourceLocked = false, resourceReads = 0
+let strandedReads = 0
 const dialect = new PgDialect()
 const normalize = (sql: string) => sql.replace(/\s+/g, ' ').trim()
 function queryOf(statement: SQL) {
@@ -29,7 +35,13 @@ function queryOf(statement: SQL) {
   return { ...query, sql: normalize(query.sql) }
 }
 const events: { botId?: string | null }[] = [], revoked: string[] = []
+const client = { async query(command: string) {
+  assert.ok(['BEGIN', 'COMMIT', 'ROLLBACK'].includes(command))
+  return { command, rows: [] }
+} } as unknown as PoolClient
+observeCommitEffects(client)
 const tx = {
+  session: { client },
   execute: async () => { throw Error('Unexpected transactional SQL in legacy retry fixture') },
   update(table: unknown) { assert.equal(table, agentRuns); return { set() { return { where() { return { returning: async () => [{ id: lost.id }] } } } } } },
   insert(table: unknown) { assert.equal(table, agentRuns); return { values: async (value: Record<string, unknown>) => { inserted = value } } },
@@ -37,8 +49,12 @@ const tx = {
 const database = {
   execute: async (statement: SQL) => {
     const query = queryOf(statement)
-    assert.deepEqual(query.params, [lost.id, lost.userId])
     assert.ok(resourceLocked, 'recovery reads hold the live resource lease')
+    if (query.sql === 'select "environmentId" from bots where id=$1 and "workspaceId"=$2 and "ownerId"=$3 and "archivedAt" is null') {
+      assert.deepEqual(query.params, [botId, workspaceId, lost.userId])
+      return { rows: [{ environmentId: null }] }
+    }
+    assert.deepEqual(query.params, [lost.id, lost.userId])
     assert.ok([
       'select b."workspaceId",m."sandboxId",m."operationId",m."deviceId",m."repoId" from computer_run_bindings b left join thread_machines m on m."runId"=b."runId" and m."ownerId"=b."ownerId" and m."workspaceId"=b."workspaceId" where b."runId"=$1 and b."ownerId"=$2',
       'select 1 from computer_run_bindings where "runId"=$1 and "ownerId"=$2',
@@ -50,16 +66,15 @@ const database = {
     const selection = {
       from(value: unknown) { table = value; return selection }, where(value: SQL) { condition = value; return selection }, innerJoin(value: unknown) { assert.equal(value, devices); return selection },
       limit: async () => {
-        const params = queryOf(condition).params
+        const { params, sql: text } = queryOf(condition)
         if (table === agentRuns) {
           assert.ok(params.includes(lost.userId))
           if (!fields) return scenario === 'retry' ? [lost] : []
-          assert.ok('run' in fields && 'lastSeenAt' in fields, 'only the stranded retry projection is expected')
-          if (scenario === 'queued') {
-            await Promise.resolve()
-            observedAt = now.getTime() + 20
-            return [{ run: { ...lost, status: 'queued', retryOf: 'previous-attempt' }, lastSeenAt: new Date(observedAt) }]
-          }
+          assert.deepEqual(Object.keys(fields), ['run'], 'only the stranded retry projection is expected')
+          // Stranded means the device has no open session (decision 2026-11-17-2215), decided in SQL.
+          assert.ok(text.includes('"sessionOpenedAt" IS NOT NULL'), 'stranded retries are read from the device session')
+          strandedReads++
+          // The queued retry's device holds its session, so the database returns nothing stranded.
           return []
         }
         assert.ok(resourceLocked)
@@ -72,17 +87,24 @@ const database = {
         assert.equal(table, devices)
         const params = queryOf(condition).params
         assert.ok(params.includes(lost.userId) && params.includes(true) && params.includes('local'))
-        assert.equal(scenario, 'retry', 'a device that heartbeats during the read must keep its queued run')
-        await Promise.resolve()
-        observedAt = now.getTime() + 20
-        return [{ deviceId: 'other-device', lastSeenAt: new Date(observedAt), harnesses: [{ harness: 'codex', installed: true }], deviceType: 'server', autoSchedule: null }]
+        assert.equal(scenario, 'retry', 'a queued retry whose device holds its session is never moved')
+        assert.ok(queryOf(condition).sql.includes('"sessionOpenedAt" IS NOT NULL'), 'only a device with an open session takes the run')
+        return [{ deviceId: 'other-device', harnesses: [{ harness: 'codex', installed: true }], deviceType: 'server', autoSchedule: null }]
       },
     }
     return selection
   },
   transaction: async (fn: (transaction: typeof tx) => Promise<unknown>) => {
     assert.ok(resourceLocked && workspaceTransactions > 0, 'the retry APP write must remain inside the resource and membership lease')
-    transactions++; return fn(tx)
+    transactions++
+    const scheduledBefore = scheduledAfter.length
+    await client.query('BEGIN')
+    try {
+      const result = await fn(tx)
+      assert.equal(scheduledAfter.length, scheduledBefore, 'retry effects stay behind COMMIT')
+      await client.query('COMMIT')
+      return result
+    } catch (error) { await client.query('ROLLBACK'); throw error }
   },
 }
 mock.module(new URL('./db/index.ts', import.meta.url).href, { namedExports: { db: database, withDatabaseClient: () => { throw Error('Held-client work is outside the legacy retry fixture') }, pool: { query: async (statement: string, params: unknown[]) => {
@@ -135,6 +157,10 @@ const workspaceTx = {
     if (query.sql === 'select mode,"repositoryKeys",revision from workspace_repository_policies where "workspaceId"=$1') {
       assert.deepEqual(query.params, [workspaceId]); return { rows: [] }
     }
+    if (query.sql === 'select (select "environmentId" from workspace_task_environments where "issueId"=$1 and "workspaceId"=$2) as "environmentId", (select "baseBranch" from workspace_task_legacy_repository_branches where "workspaceId"=$3 and "issueId"=$4 and "repositoryKey"=$5) as "legacyBranch"') {
+      assert.deepEqual(query.params, [lost.issueId, workspaceId, workspaceId, lost.issueId, repository.repoPath])
+      return { rows: [{ environmentId: null, legacyBranch: null }] }
+    }
     assert.equal(query.sql, 'select p.id,p.revision,p."archivedAt" from workspace_project_tasks t join workspace_projects p on p.id=t."projectId" and p."workspaceId"=t."workspaceId" where t."issueId"=$1 and t."workspaceId"=$2')
     assert.deepEqual(query.params, [lost.issueId, workspaceId]); return { rows: [] }
   },
@@ -178,12 +204,11 @@ const recoveryHandoff = mock.fn(async (_pool: unknown, identity: unknown, prompt
 })
 mock.module(new URL('./factory/handoff.ts', import.meta.url).href, { namedExports: { factoryRecoveryHandoff: recoveryHandoff } })
 
-test('actual reclaim writer keeps the trusted private Bot when the target heartbeats after the lease snapshot', async t => {
+test('actual reclaim writer keeps the trusted private Bot when it moves the run to a device with an open session', async t => {
   t.mock.method(Date, 'now', () => observedAt)
   const { reclaimLostRuns } = await import('./run-leases')
-  // The async device query advances the observation clock after the immutable
-  // lease cutoff. The new heartbeat is current when read, not in the future.
   await reclaimLostRuns(lost.userId, now)
+  assert.ok(scheduledAfter.length > 0, 'the real retry writer registers live effects after COMMIT')
   assert.ok(inserted)
   assert.equal(recoveryHandoff.mock.callCount(), 1)
   assert.equal(readmit.mock.callCount(), 0)
@@ -201,7 +226,7 @@ test('actual reclaim writer keeps the trusted private Bot when the target heartb
   assert.equal(workspaceTransactions, 0)
 })
 
-test('a heartbeat arriving during the queued-run query prevents migration or finalization', async t => {
+test('a queued retry whose device holds its session is neither moved nor finalized', async t => {
   scenario = 'queued'
   observedAt = now.getTime()
   transactions = 0
@@ -213,7 +238,7 @@ test('a heartbeat arriving during the queued-run query prevents migration or fin
   t.mock.method(Date, 'now', () => observedAt)
   const { reclaimLostRuns } = await import('./run-leases')
   await reclaimLostRuns(lost.userId, now)
-  assert.ok(observedAt > now.getTime(), 'the heartbeat arrived after the lease snapshot')
+  assert.ok(strandedReads > 0, 'the stranded read ran')
   assert.equal(transactions, 0)
   assert.equal(inserted, undefined)
   assert.deepEqual(events, [])

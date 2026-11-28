@@ -1,0 +1,62 @@
+// A Bot's saved reasoning effort reaches every chat model call (lib/model-effort.ts).
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { withModelEffort, withModelServiceTier } from './model-effort'
+import { extractProviderSpeedModes, resolveSpeedModesFromEvidence } from './model-routing'
+
+type Model = Parameters<typeof withModelEffort>[0]
+function recorder(modelId: string) {
+  const calls: unknown[] = []
+  const model = {
+    specificationVersion: 'v4', provider: 'test', modelId, supportedUrls: {},
+    doStream: async (options: { providerOptions?: unknown }) => { calls.push(options.providerOptions); return { stream: new ReadableStream() } },
+    doGenerate: async (options: { providerOptions?: unknown }) => { calls.push(options.providerOptions); return {} },
+  } as unknown as Model
+  return { model, calls }
+}
+
+test('a supported effort is added to each call; the call\'s own options win', async () => {
+  const { model, calls } = recorder('claude-haiku-5-5')
+  const wrapped = withModelEffort(model, 'high')
+  await wrapped.doStream({ prompt: [], providerOptions: { anthropic: { effort: 'low', cacheControl: true } } } as never)
+  await wrapped.doGenerate({ prompt: [] } as never)
+  assert.deepEqual(calls[0], { openai: { reasoningEffort: 'high' }, openaiCompatible: { reasoningEffort: 'high' }, anthropic: { effort: 'low', cacheControl: true } })
+  assert.deepEqual((calls[1] as { anthropic: unknown }).anthropic, { effort: 'high' })
+  const codex = recorder('openai/gpt-6-luna')
+  await withModelEffort(codex.model, 'xhigh').doStream({ prompt: [] } as never)
+  assert.deepEqual((codex.calls[0] as { openai: unknown }).openai, { reasoningEffort: 'xhigh' })
+})
+
+test('no effort, or one a known model does not list, leaves the model as it is', () => {
+  const { model } = recorder('claude-haiku-5-5')
+  assert.equal(withModelEffort(model, null), model)
+  assert.equal(withModelEffort(model, undefined), model)
+  assert.equal(withModelEffort(recorder('gpt-5.5').model, 'max').modelId, 'gpt-5.5')
+  const gpt55 = recorder('gpt-5.5').model
+  assert.equal(withModelEffort(gpt55, 'max'), gpt55, 'gpt-5.5 has no max effort')
+  // A model Mikka's built-in list does not know keeps the level the turn froze: freezeBotModel already checked it
+  // against the provider's own catalogue (lib/model-capabilities.ts, decision 2026-11-25-1700).
+  const unknown = recorder('some-new-model').model
+  assert.notEqual(withModelEffort(unknown, 'low'), unknown)
+  assert.equal(withModelEffort(unknown, null), unknown)
+})
+
+test('speed capabilities come strictly from server evidence and withModelServiceTier maps fast/ultrafast', async () => {
+  assert.deepEqual(extractProviderSpeedModes({ service_tiers: [{ id: 'priority' }, { id: 'ultrafast' }] }), ['fast', 'ultrafast'])
+  assert.deepEqual(extractProviderSpeedModes({ service_tiers: [{ id: 'priority' }] }), ['fast'])
+  assert.deepEqual(extractProviderSpeedModes({ service_tiers: [] }), [])
+  assert.deepEqual(extractProviderSpeedModes({ supports_fast_mode: true }), ['fast'])
+  assert.deepEqual(extractProviderSpeedModes({ tags: ['fast', 'reasoning'] }), ['fast'])
+  assert.equal(extractProviderSpeedModes({ id: 'gpt-6-astra' }), undefined)
+  assert.deepEqual(resolveSpeedModesFromEvidence({}), [])
+  assert.deepEqual(resolveSpeedModesFromEvidence({ prioritySupported: true, ultrafastSupported: false }), ['fast'])
+  assert.deepEqual(resolveSpeedModesFromEvidence({ prioritySupported: true, ultrafastSupported: true }), ['fast', 'ultrafast'])
+  assert.deepEqual(resolveSpeedModesFromEvidence({ advertised: [] }), [])
+
+  const { model, calls } = recorder('openai/gpt-6-astra')
+  await withModelServiceTier(model, 'ultrafast').doStream({ prompt: [] } as never)
+  assert.deepEqual(calls[0], { openai: { serviceTier: 'ultrafast' }, openaiCompatible: { service_tier: 'ultrafast' } })
+  const fastRec = recorder('anthropic/claude-opus-5.5')
+  await withModelServiceTier(fastRec.model, 'fast').doStream({ prompt: [] } as never)
+  assert.deepEqual(fastRec.calls[0], { openai: { serviceTier: 'priority' }, openaiCompatible: { service_tier: 'priority' }, anthropic: { speed: 'fast' } })
+})

@@ -14,7 +14,7 @@ export function devPackageEnvironment(source) {
   if (url.username || url.password || !['http:', 'https:'].includes(url.protocol) || (!local && url.protocol !== 'https:')) {
     throw new Error('The test backend must be loopback HTTP(S) or credential-free HTTPS')
   }
-  if (url.hostname === 'app.aspectlylabs.com' || url.hostname === 'mikka.vercel.app') {
+  if (url.hostname === 'app.aspectlylabs.com') {
     throw new Error('Mikka Dev acceptance packages cannot connect to production')
   }
   const env = Object.fromEntries(Object.entries(source).filter(([name]) => !/^(?:(?:WIN_)?CSC_|APPLE_)/.test(name)))
@@ -29,7 +29,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const env = devPackageEnvironment(process.env)
   const buildArgs = ['node_modules/electron-builder/cli.js', '--config', `electron-builder.${variant}.yml`, '--mac', '--arm64', '--publish', 'never', ...(variant === 'acceptance' ? ['--dir'] : [])]
   const renderer = ['scripts/build.mjs']
-  if (variant === 'acceptance' && !env.MIKKA_UI_OVERLAY_DIR && !env.MIKKA_UI_OVERLAY_SHA) renderer.push('--public-test-fixture')
   for (const command of [renderer, buildArgs]) {
     const result = spawnSync(process.execPath, command, { cwd, env, stdio: 'inherit' })
     if (result.error) throw new Error('Mikka Dev packaging could not start', { cause: result.error })

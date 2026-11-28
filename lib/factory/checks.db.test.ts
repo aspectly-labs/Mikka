@@ -1,11 +1,12 @@
 import { coordinatorWakeTransport } from '../coordinator/wake-after-commit';
+import { builtinGateway } from '../builtin-gateway/runtime';
 import { syncFactoryPresentation } from './stage-progress';
 import { readFactoryFlow } from './public-flow';
 import { createFactorySpecApproval } from './spec-approval';
 import { createFactoryHumanStore } from './human-store';
 import { handleFactoryFlow } from './flow-http';
 import { handleFactory } from './http';
-import { readIssueThreads, loadIssueDocument, encodedIssueDocument } from '../linear-sync/document';
+import { readIssueThreads, loadIssueDocument, encodedIssueDocument } from '../task-comments/issue-document';
 import { runArtifactSubmissions } from '../artifacts/run-submissions';
 // Real #192 migrations/store/dispatch/questions/claim and #193 consumers.
 // Run production code over isolated PG; queue, actor and terminal reports are fixtures.
@@ -14,14 +15,13 @@ import { runArtifactSubmissions } from '../artifacts/run-submissions';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID, createHash } from "node:crypto";
-import { DECISION_MODEL, DECISIONS_URL } from "../coordinator/decision";
+import { DECISION_MODEL, DECISIONS_PATH } from "../coordinator/decision";
 import { invokeDecision } from "../coordinator/decide";
 import { readFile, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import {
   defaultRunPolicy,
-  DEFAULT_NETWORK_ALLOW,
   type RunPolicy,
 } from "@mikka/protocol/agent-policy";
 import { Pool } from "pg";
@@ -184,7 +184,7 @@ test(
         sha = "a".repeat(40),
         command = "node acceptance.mjs";
       await db.query(
-        `INSERT INTO devices(id,"ownerId",name,"lastSeenAt",harnesses) VALUES ($1,'owner','Disposable check device',now(),'[{"harness":"codex","installed":true}]')`,
+        `INSERT INTO devices(id,"ownerId",name,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,'owner','Disposable check device',now(),'[{"harness":"codex","installed":true}]',now())`,
         [deviceId],
       );
       await db.query(
@@ -225,11 +225,11 @@ test(
           // The fixture device is "online" only within the 90 s presence window (lib/device-presence.ts),
           // and this file runs for minutes: keep its heartbeat current so a slow runner cannot age it out.
           review: async (tx, task, id) => {
-            await tx.query(`UPDATE devices SET "lastSeenAt"=now() WHERE id=$1`, [deviceId]);
+            await tx.query(`UPDATE devices SET "lastSeenAt"=now(),"sessionOpenedAt"=now(),"sessionClosedAt"=NULL WHERE id=$1`, [deviceId]);
             return configureFactoryCheck(tx, task, id, selectedPolicy);
           },
           verify: async (tx, task, id) => {
-            await tx.query(`UPDATE devices SET "lastSeenAt"=now() WHERE id=$1`, [deviceId]);
+            await tx.query(`UPDATE devices SET "lastSeenAt"=now(),"sessionOpenedAt"=now(),"sessionClosedAt"=NULL WHERE id=$1`, [deviceId]);
             return configureFactoryCheck(tx, task, id, selectedPolicy);
           },
         },
@@ -285,11 +285,12 @@ test(
       let replyAnswers: unknown[] | undefined,
         replyConfidence: number | undefined;
       assert.equal(
-        Object.hasOwn(process.env, "AI_GATEWAY_API_KEY"),
+        Object.hasOwn(process.env, "MIKKA_LITELLM_MASTER_KEY"),
         false,
         "Offline tests must not inherit a provider credential",
       );
-      process.env.AI_GATEWAY_API_KEY = "synthetic-offline-fixture";
+      process.env.MIKKA_LITELLM_MASTER_KEY = "synthetic-offline-fixture";
+      process.env.MIKKA_LITELLM_URL = "https://litellm.example";
       installedGatewayFixture = true;
       const networkRequests: unknown[] = [];
       const originalFetch = globalThis.fetch;
@@ -302,7 +303,7 @@ test(
           networkRequests.push(body);
           assert.equal(request.headers.authorization,"Bearer synthetic-offline-fixture");
           assert.equal(body.model, DECISION_MODEL);
-          response.writeHead(200,{"content-type":"application/json"}).end(JSON.stringify({
+          response.writeHead(200,{"content-type":"application/json", "x-litellm-call-id": `fixture_generation_${modelCalls}`, "x-litellm-response-cost": "0.000001"}).end(JSON.stringify({
             model: DECISION_MODEL,
             provider_metadata: {
               gateway: { generationId: `fixture_generation_${modelCalls}`, cost: "0.000001" },
@@ -329,7 +330,7 @@ test(
           options?: Parameters<typeof fetch>[1],
         ) => {
           const url = String(resource);
-          if (url === DECISIONS_URL) {
+          if (url === "https://litellm.example" + DECISIONS_PATH) {
             assert.equal(options?.redirect,"error");
             return originalFetch(providerUrl,options);
           }
@@ -481,7 +482,7 @@ test(
         // A positive local-device fixture represents a daemon which is still
         // online. Refresh its real heartbeat for each dispatch, rather than
         // relying on the suite finishing inside the 60-second presence window.
-        await db.query('UPDATE devices SET "lastSeenAt"=now() WHERE id=$1 AND "ownerId"=\'owner\' AND kind=\'local\'', [deviceId]);
+        await db.query('UPDATE devices SET "lastSeenAt"=now(),"sessionOpenedAt"=now(),"sessionClosedAt"=NULL WHERE id=$1 AND "ownerId"=\'owner\' AND kind=\'local\'', [deviceId]);
         return dispatch("owner", {
           binding: factoryBinding(task),
           agentId,
@@ -857,7 +858,7 @@ test(
         delete process.env.DEVICE_GATEWAY_URL;
         delete process.env.DEVICE_GATEWAY_PUSH_SECRET;
         try {
-          await db.query('UPDATE devices SET "lastSeenAt"=now()-interval \'61 seconds\' WHERE id=$1', [deviceId]);
+          await db.query('UPDATE devices SET "lastSeenAt"=now()-interval \'61 seconds\',"sessionClosedAt"=clock_timestamp() WHERE id=$1', [deviceId]);
           const stale = (await db.query('SELECT "lastSeenAt" FROM devices WHERE id=$1', [deviceId])).rows[0].lastSeenAt;
           // The normal fixture refreshes presence in its adapter. This refusal
           // exercises the unwrapped production adapter so it sees the stale row.
@@ -878,7 +879,7 @@ test(
           assert.equal(admitted.task.stage, 'review');
           await store.apply("owner", factoryBinding(admitted.task), randomUUID(), { action: "cancel", reason: "Presence fixture complete" });
         } finally {
-          await db.query('UPDATE devices SET "lastSeenAt"=now() WHERE id=$1', [deviceId]);
+          await db.query('UPDATE devices SET "lastSeenAt"=now(),"sessionOpenedAt"=now(),"sessionClosedAt"=NULL WHERE id=$1', [deviceId]);
           if (gateway.url === undefined) delete process.env.DEVICE_GATEWAY_URL; else process.env.DEVICE_GATEWAY_URL = gateway.url;
           if (gateway.secret === undefined) delete process.env.DEVICE_GATEWAY_PUSH_SECRET; else process.env.DEVICE_GATEWAY_PUSH_SECRET = gateway.secret;
         }
@@ -1582,7 +1583,7 @@ test(
         assert.deepEqual(await state(pending.task.id),pending);
         assert.deepEqual((await db.query('SELECT id FROM agent_runs WHERE "issueId"=$1 ORDER BY id',[pending.task.issueId])).rows,beforeRuns);
       });
-      for (const decision of ["allow", "ask", "deny"] as const)
+      for (const decision of ["allow", "deny"] as const)
         await t.test(
           `claim retains host network ${decision} and its frozen domain list`,
           async () => {
@@ -1640,9 +1641,8 @@ test(
             );
             assert.equal(extras.baseBranch, sha);
             assert.equal(extras.verifyCommand, command);
-            assert.deepEqual((extras.policy as any).networkAllow, [
-              ...DEFAULT_NETWORK_ALLOW,
-            ]);
+            // No domain list: network access is open (ADR 2026-11-27-1615).
+            assert.deepEqual((extras.policy as any).networkAllow, []);
             await tx.query("ROLLBACK");
           } finally {
             await tx.query("ROLLBACK");
@@ -1954,7 +1954,7 @@ test(
               await assert.rejects(cloudClaim(tx, 'owner', childDevice, run.id, new Date(Date.now() + 60000).toISOString()),
                 (error: unknown) => error instanceof FactoryError && error.code === 'factoryQuestionContinuationUnavailable');
               await tx.query('ROLLBACK TO SAVEPOINT worker_not_ready');
-              await tx.query('UPDATE devices SET "lastSeenAt"=now() WHERE id=$1', [childDevice]);
+              await tx.query('UPDATE devices SET "lastSeenAt"=now(),"sessionOpenedAt"=now(),"sessionClosedAt"=NULL WHERE id=$1', [childDevice]);
               await tx.query("UPDATE thread_machines SET state='running' WHERE \"runId\"=$1", [run.id]);
               const extras = await cloudClaim(tx, 'owner', childDevice, run.id, new Date(Date.now() + 60000).toISOString());
               assert.equal(extras.requireSessionResume, true);
@@ -2010,7 +2010,7 @@ test(
               const tx = await db.connect();
               try {
                 await tx.query('BEGIN');
-                await tx.query('UPDATE devices SET "lastSeenAt"=now() WHERE id=$1', [childDevice]);
+                await tx.query('UPDATE devices SET "lastSeenAt"=now(),"sessionOpenedAt"=now(),"sessionClosedAt"=NULL WHERE id=$1', [childDevice]);
                 await tx.query("UPDATE thread_machines SET state='running' WHERE \"runId\"=$1", [recoveryRun.id]);
                 const extras = await createFactoryClaim(store, cloudQuestions, assignment)(tx, 'owner', childDevice, recoveryRun.id, new Date(Date.now() + 60000).toISOString());
                 assert.equal(extras.followUp, recoveryRun.questionContinuation.followUp);
@@ -2027,9 +2027,15 @@ test(
             assert.equal(replay.replayed, true);
             assert.equal((await db.query('SELECT "questionContinuation" FROM agent_runs WHERE id=$1', [recoveryRun.id])).rows[0].questionContinuation.followUp,
               recoveryRun.questionContinuation.followUp);
-            // Evidence delivery is not acceptance. This test stops at the
-            // strict native claim and does not alter the existing recovery gate.
-            assert.equal((await state(pending.task.id)).task.status, 'running');
+            // #1451: the recovered continuation's own terminal clears the same
+            // independence gate via its receipted recovery chain, without
+            // rewriting the first answer's immutable result.
+            await terminal(recoveryRun.id, nativeSession, true);
+            await reconcile('owner');
+            const failed = await state(pending.task.id);
+            assert.equal(failed.task.status, 'failed');
+            assert.equal(failed.attempts.find(a => a.runId === recoveryRun.id)!.status, 'failed');
+            assert.equal((failed.attempts.find(a => a.runId === recoveryRun.id)!.output.completion as { trustedFailureProvenance: boolean }).trustedFailureProvenance, true);
             return;
           }
           await terminal(run.id, nativeSession);
@@ -2940,6 +2946,22 @@ test(
         await reconcile("owner");
         return { snapshot: await state(r.task.id), runId: d.runId };
       }
+      await t.test('default Factory recovery establishes billing scope with only LiteLLM configured', async () => {
+        const { snapshot } = await failedReview();
+        assert.equal(process.env.AI_GATEWAY_API_KEY, undefined);
+        assert.ok(process.env.MIKKA_LITELLM_URL);
+        assert.ok(process.env.MIKKA_LITELLM_MASTER_KEY);
+        chosenAction = "retry_check";
+        const before = networkRequests.length;
+        const recoverDefault = createFactoryCheckRecovery(db, store);
+        const next = await modelDatabase!.run(() => recoverDefault("owner", { binding: factoryBinding(snapshot.task) }));
+        assert.ok("task" in next, JSON.stringify(next));
+        assert.equal(next.task.stage, "review");
+        assert.equal(next.task.status, "pending");
+        assert.equal(networkRequests.length, before + 1);
+        const recovery = next.attempts.find(attempt => attempt.id === next.task.attemptId)!.output.recovery as { execution: { modelId: string } };
+        assert.equal(recovery.execution.modelId, DECISION_MODEL);
+      });
       for (const mode of [
         "null",
         "refusal",
@@ -3318,11 +3340,13 @@ test(
       );
       await t.test('first-use cloud single-review flow keeps its task VM without waking or installing a parent', async () => {
         const { beginFactoryTransaction, commitFactoryTransaction, rollbackFactoryTransaction } = await import('./transaction');
-        const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'NEXT_PUBLIC_POSTHOG_KEY'] as const;
+        const names = ['MIKKA_EDITION', 'WORKSPACE_SECRETS_KEY', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const;
         const saved = new Map(names.map(name => [name, process.env[name]]));
+        process.env.MIKKA_EDITION = 'community';
         process.env.WORKSPACE_SECRETS_KEY = createHash('sha256').update(randomUUID()).digest('hex');
         process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1';
         process.env.MIKKA_BYOS_ENABLED = '1';
+        delete process.env.MIKKA_PUBLIC_POSTHOG_KEY;
         delete process.env.NEXT_PUBLIC_POSTHOG_KEY;
         const { fakeThreadMachines } = await import('../../tests/support/thread-machine-fake');
         const machines = await fakeThreadMachines(db, [{ harness: 'codex', installed: true, toolApproval: true }]);
@@ -3505,7 +3529,9 @@ test(
           // This suite retains its isolated database, including the actual
           // computer bindings. Do not delete their owner as if Workspace rows
           // still lived alone in a second shared database.
+          const gateway = builtinGateway();
           for (const name of names) { const value = saved.get(name); if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+          await gateway?.stop();
         }
       });
       await t.test('the owner Artifact reader retains its report task hint and media without exposing them to another reader', async () => {
@@ -3530,7 +3556,7 @@ test(
         } finally { workspaceRead.mock.restore(); }
       });
     } finally {
-      if (installedGatewayFixture) delete process.env.AI_GATEWAY_API_KEY;
+      if (installedGatewayFixture) { delete process.env.MIKKA_LITELLM_MASTER_KEY; delete process.env.MIKKA_LITELLM_URL; }
       await modelDatabase?.close();
       await closeWorkspaceDatabase?.();
       await pool?.end();

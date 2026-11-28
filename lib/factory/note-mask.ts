@@ -4,6 +4,8 @@
 // factory token patterns (redactFactoryCheckText). Once #438 merges, pass its
 // workspaceSecretMasker through `extraSecrets`/replace this with lib/secrets/mask.
 import { redactFactoryCheckText } from "./checks";
+import type { Masker } from '@/lib/secrets/mask'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 export const NOTE_MASK_MIN_LENGTH = 8;
 /** Server secrets that #438's masker also always masks. */
@@ -29,7 +31,7 @@ function needlePattern(form: string): string {
   return form.split(/(%[0-9A-Fa-f]{2})/).map((part, i) => (i % 2 ? `%${anyCase(part[1])}${anyCase(part[2])}` : escapeRe(part))).join("");
 }
 
-export function serverNoteSecrets(env: NodeJS.ProcessEnv = process.env): NoteSecret[] {
+export function serverNoteSecrets(env: EnvMap = runtimeEnv()): NoteSecret[] {
   return SERVER_SECRET_ENV.flatMap((name) => (env[name] ? [{ name, value: env[name]! }] : []));
 }
 
@@ -38,13 +40,20 @@ export function serverNoteSecrets(env: NodeJS.ProcessEnv = process.env): NoteSec
 // escaping, base64 at an offset (value not at a 3-byte boundary) and base64 inside
 // base64, the {"GITHUB_TOKEN":"..."} JSON form, keys split across words, and
 // provider tokens such as AKIA…, JWTs and xoxb-.
-export function maskFactoryNote(text: string, secrets: readonly NoteSecret[] = serverNoteSecrets()): string {
+export function maskFactoryNote(text: string, extra?: Masker | readonly NoteSecret[]): string {
+  // A resolved workspace Masker composes with the built-in pipeline instead of
+  // replacing it: the Masker knows saved workspace and user secrets, the
+  // pipeline knows the server's own E2B key and the NAME_KEY=value forms. Each
+  // alone leaves a gap — the Masker never reads process.env, and the pipeline
+  // never reads saved secrets.
+  const masker = typeof extra === "function" ? extra : undefined;
+  const secrets = masker || !Array.isArray(extra) ? serverNoteSecrets() : extra;
   const needles = new Map<string, string>();
   for (const { value } of secrets) {
     if ([...value].length < NOTE_MASK_MIN_LENGTH) continue;
     for (const form of forms(value)) if (form.length >= NOTE_MASK_MIN_LENGTH && !needles.has(form)) needles.set(form, "[secret]");
   }
-  let out = text;
+  let out = masker ? masker(text) : text;
   for (const [needle, label] of [...needles].sort((a, b) => b[0].length - a[0].length))
     out = out.replace(new RegExp(needlePattern(needle), "g"), label);
   // NAME_KEY=value / NAME_TOKEN: value forms the word-boundary patterns miss (E2B_API_KEY=…).

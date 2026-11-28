@@ -1,8 +1,8 @@
 import { BASE_PATH } from '@/lib/base-path'
+import { defineRoute } from '@/lib/primitives/define-route'
 import en from '@/messages/en.json'
 import zh from '@/messages/zh-CN.json'
 
-export const dynamic = 'force-dynamic'
 
 const safeHeaders = {
   'Cache-Control': 'private, no-store',
@@ -19,10 +19,12 @@ const safeHeaders = {
  * trades the code and the verifier it kept for a one-minute token, exchanges it for the Electron session cookie,
  * then returns to the requested in-app page.
  */
-export async function GET(request: Request) {
-  const chinese = request.headers.get('accept-language')?.startsWith('zh')
-  const copy = (chinese ? zh : en).DesktopHandoff
-  const html = `<!doctype html><html lang="${chinese ? 'zh-CN' : 'en'}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${copy.finishTitle}</title><style>body{font:16px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f5f4;color:#1c1917}main{max-width:28rem;padding:2rem;text-align:center}a{display:inline-block;margin-top:1rem;padding:.7rem 1.2rem;border-radius:.75rem;background:#1c1917;color:#fff;text-decoration:none}</style><main><h1>${copy.finishTitle}</h1><p id="status">${copy.finishBody}</p><a id="signin" href="${BASE_PATH}/sign-in?oauth=failed" hidden>${copy.openSignIn}</a></main><script>
+export const GET = defineRoute(
+  { auth: 'public', origin: 'any', workspace: 'none' },
+  async ({ request }) => {
+    const chinese = request.headers.get('accept-language')?.startsWith('zh')
+    const copy = (chinese ? zh : en).DesktopHandoff
+    const html = `<!doctype html><html lang="${chinese ? 'zh-CN' : 'en'}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${copy.finishTitle}</title><style>body{font:16px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f5f4;color:#1c1917}main{max-width:28rem;padding:2rem;text-align:center}a{display:inline-block;margin-top:1rem;padding:.7rem 1.2rem;border-radius:.75rem;background:#1c1917;color:#fff;text-decoration:none}</style><main><h1>${copy.finishTitle}</h1><p id="status">${copy.finishBody}</p><a id="signin" href="${BASE_PATH}/sign-in?oauth=failed" hidden>${copy.openSignIn}</a></main><script>
 (() => {
   const base = ${JSON.stringify(BASE_PATH)};
   const key = 'mikka:desktop-oauth';
@@ -60,5 +62,6 @@ export async function GET(request: Request) {
     .catch(fail);
 })()
 </script></html>`
-  return new Response(html, { headers: { ...safeHeaders, 'Content-Type': 'text/html; charset=utf-8' } })
-}
+    return new Response(html, { headers: { ...safeHeaders, 'Content-Type': 'text/html; charset=utf-8' } })
+  },
+)

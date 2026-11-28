@@ -6,6 +6,7 @@ import { platformEffectiveTools } from './builtin'
 import { compareReports, type EvalReport } from './evals'
 import { assertSafeImprovement, caseFromFailure, proposeImprovement, type FailureCode, type FailureEvidence } from './improvement'
 import type { ToolOutcome } from './instrument'
+import { jsonbSafeIntSql } from '../primitives/jsonb-predicates'
 
 export interface AgentScope { ownerId: string; botId: string | null; workspaceId: string | null }
 export interface DefinitionVersion { id: string; version: number; definition: AgentDefinition; digest: string; source: 'builtin' | 'user' | 'improvement'; base_version: string | null; created_at?: Date | string }
@@ -169,8 +170,8 @@ export class AgentKitStore {
     // The ordinary id projection stays unchanged. Recovery selects the id in
     // this same scoped/locked query, never by loading the immutable snapshot.
     const query = byId
-      ? `select status,coalesce(snapshot->'effectiveTools' ? $4::text,false) as tool_allowed,coalesce(snapshot->'definition'->'hooks' ? 'failure_cases',false) as failure_cases,(snapshot->>'revision')::int as revision,snapshot->>'revisionId' as revision_id from agent_kit_executions where owner_id=$1 and bot_key=$2 and id=$3${lock ? ' for update' : ''}`
-      : "select id,status,coalesce(snapshot->'effectiveTools' ? $4::text,false) as tool_allowed,coalesce(snapshot->'definition'->'hooks' ? 'failure_cases',false) as failure_cases,(snapshot->>'revision')::int as revision,snapshot->>'revisionId' as revision_id from agent_kit_executions where owner_id=$1 and bot_key=$2 and execution_key=$3 for update"
+      ? `select status,coalesce(snapshot->'effectiveTools' ? $4::text,false) as tool_allowed,coalesce(snapshot->'definition'->'hooks' ? 'failure_cases',false) as failure_cases,${jsonbSafeIntSql('snapshot', 'revision')} as revision,snapshot->>'revisionId' as revision_id from agent_kit_executions where owner_id=$1 and bot_key=$2 and id=$3${lock ? ' for update' : ''}`
+      : `select id,status,coalesce(snapshot->'effectiveTools' ? $4::text,false) as tool_allowed,coalesce(snapshot->'definition'->'hooks' ? 'failure_cases',false) as failure_cases,${jsonbSafeIntSql('snapshot', 'revision')} as revision,snapshot->>'revisionId' as revision_id from agent_kit_executions where owner_id=$1 and bot_key=$2 and execution_key=$3 for update`
     const { rows } = await client.query<ExecutionState>(query,[...params(scope),value,toolName ?? ''])
     if (!rows[0]) {
       if (!byId) return null

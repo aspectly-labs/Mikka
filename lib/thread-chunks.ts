@@ -7,14 +7,15 @@ import { chainChunks } from '@/lib/issue-run-conversation'
 
 /**
  * Where a client's copy of a thread's chunks ends. `chain` is the runs the
- * thread was read across; `runs` how many of them had chunks (chainChunks
- * renames ids once a second run has any, so that must not change underneath);
- * `count` how many chunks precede the cursor.
+ * thread was read across; `runs` how many of them had chunks (kept for older
+ * clients: ids are run-scoped from the first run on, so a second run no longer
+ * forces a full read); `count` how many chunks precede the cursor.
  */
 export const threadChunkCursor = z.object({
   chain: z.string().max(4000),
   runId: z.uuid().nullable(),
-  seq: z.number().int().min(0),
+  // Negative too: a fork's copied history holds negative seqs (#2936).
+  seq: z.number().int(),
   runs: z.number().int().min(0),
   /** How many chunks the client holds: a batch stored late, below the cursor, makes the counts differ. */
   count: z.number().int().min(0),
@@ -45,13 +46,14 @@ export async function readThreadChunks(runIds: string[], after: ThreadChunkCurso
         .where(and(inArray(runChunks.runId, runIds), sql`not (${later})`)),
     ])
     const runs = after.runs + new Set(rows.map(row => row.runId).filter(id => id !== after.runId)).size
-    // A second run's first chunks rename every id, and a batch stored below the cursor would be missed: read everything then.
-    if ((after.runs > 1) === (runs > 1) && held?.count === after.count) return { chunks: chainChunks(rows, runs > 1), cursor: cursorAfter(chain, rows, after, runs), append: true }
+    // Ids are scoped to their run from the first run on (chainChunks), so a second run appends like any chunk. A batch
+    // stored below the cursor would be missed: read everything then.
+    if (held?.count === after.count) return { chunks: chainChunks(rows), cursor: cursorAfter(chain, rows, after, runs), append: true }
   }
   const rows: Row[] = await db.select(select).from(runChunks).innerJoin(agentRuns, eq(agentRuns.id, runChunks.runId))
     .where(inArray(runChunks.runId, runIds)).orderBy(asc(agentRuns.createdAt), asc(runChunks.seq))
   const runs = new Set(rows.map(row => row.runId)).size
-  return { chunks: chainChunks(rows, runs > 1), cursor: cursorAfter(chain, rows, null, runs), append: false }
+  return { chunks: chainChunks(rows), cursor: cursorAfter(chain, rows, null, runs), append: false }
 }
 
 function cursorAfter(chain: string, rows: Row[], after: ThreadChunkCursor | null, runs: number): ThreadChunkCursor {

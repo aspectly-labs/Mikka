@@ -33,7 +33,6 @@ test('provider health persists across dispatches without changing credential own
     await pool.query('DELETE FROM model_api_keys WHERE "ownerId"=ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId"=ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId"=ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId"=ANY($1)', [users])
     await pool.query('DELETE FROM agents WHERE "userId"=ANY($1)', [users])
     await pool.query('DELETE FROM devices WHERE "ownerId"=ANY($1)', [users])
     await pool.query('DELETE FROM bots WHERE "ownerId"=ANY($1)', [users])
@@ -92,10 +91,10 @@ test('provider health persists across dispatches without changing credential own
     }
     assert.ok(first.entries.some(entry => entry.source.kind === 'api_key' && entry.source.keyId === ready.id && first.states.get(entry.id)?.credential.usable))
     const deviceId = randomUUID()
-    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses) VALUES ($1,$2,'Fixture device','local',true,now(),$3)`,
+    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,$2,'Fixture device','local',true,now(),$3,now())`,
       [deviceId, scope.ownerId, JSON.stringify([{ harness: 'codex', installed: true }])])
     await pool.query('UPDATE agents SET "deviceId"=$2 WHERE id=$1', [scope.agentId, deviceId])
-    const fallback = first.candidates.find(candidate => candidate.source.kind === 'api_key' && candidate.source.keyId === ready.id)!
+    const fallback = first.candidates.find(candidate => candidate.harness === 'codex' && candidate.source.kind === 'api_key' && candidate.source.keyId === ready.id)!
     await order.changeOrder(pool, scope, { kind: 'add', entries: [fallback] })
     for (let task = 0; task < 2; task++) {
       const dispatch = await resolveModelDispatch(pool, scope, undefined, 'local')
@@ -130,8 +129,8 @@ test('provider health persists across dispatches without changing credential own
     const entries = (await order.readOrder(pool, scope)).entries
     await order.changeOrder(pool, scope, { kind: 'reorder', ids: wanted.map(item => entries.find(entry => entryKey(entry) === entryKey(item))!.id) })
     const deviceId = randomUUID(), alternateDeviceId = randomUUID()
-    for (const id of [deviceId, alternateDeviceId]) await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses)
-      VALUES ($1,$2,'Fixture device','local',true,now(),$3)`, [id, scope.ownerId,
+    for (const id of [deviceId, alternateDeviceId]) await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses,"sessionOpenedAt")
+      VALUES ($1,$2,'Fixture device','local',true,now(),$3,now())`, [id, scope.ownerId,
       JSON.stringify([{ harness: 'codex', installed: true }, { harness: 'claude_code', installed: true }])])
     await pool.query('UPDATE agents SET "deviceId"=$2 WHERE id=$1', [scope.agentId, deviceId])
     for (const [id, harness] of [[deviceId, 'claude_code'], [alternateDeviceId, 'codex'], [alternateDeviceId, 'claude_code']]) {
@@ -171,7 +170,8 @@ test('provider health persists across dispatches without changing credential own
     const source = { kind: 'api_key' as const, keyId: saved.id }
     await run(scope, source, { kind: 'unavailable', retryable: true, status: 503 }, now - 1_000, { finishedAt: now, status: 'finishing', model: 'fixture-outage' })
     const blocked = await read(scope, now + 119_999)
-    assert.deepEqual(blocked.states.get(blocked.entries[0].id)?.credential, { usable: false, reason: 'providerUnavailable', resetsAt: new Date(now + 120_000).toISOString() })
+    const blockedCodex = blocked.entries.find(entry => entry.harness === 'codex')!
+    assert.deepEqual(blocked.states.get(blockedCodex.id)?.credential, { usable: false, reason: 'providerUnavailable', resetsAt: new Date(now + 120_000).toISOString() })
     assert.ok([...(await read(scope, now + 120_000)).states.values()].every(state => state.credential.usable))
     await run(scope, source, { kind: 'balance', retryable: false }, now - 2_000)
     assert.deepEqual([...(await read(scope, now + 120_000)).states.values()][0].credential, { usable: false, reason: 'balance' })
@@ -190,7 +190,9 @@ test('provider health persists across dispatches without changing credential own
     await run(scope, source, { kind: 'auth', retryable: false }, now - 10_000, { status: 'succeeded', stopReason: 'completed' })
     assert.ok([...(await read(scope)).states.values()].every(state => state.credential.usable), 'stale successful metadata is not failure evidence')
     await run(scope, source, { kind: 'unavailable', retryable: true }, now - 1_000, { status: 'finishing', finishedAt: now, model: 'fixture-cancelled' })
-    assert.deepEqual([...(await read(scope)).states.values()][0].credential, { usable: false, reason: 'providerUnavailable', resetsAt: new Date(now + 120_000).toISOString() }, 'a genuine provider stop remains visible while completion is finishing')
+    const finishing = await read(scope)
+    const finishingCodex = finishing.entries.find(entry => entry.harness === 'codex')!
+    assert.deepEqual(finishing.states.get(finishingCodex.id)?.credential, { usable: false, reason: 'providerUnavailable', resetsAt: new Date(now + 120_000).toISOString() }, 'a genuine provider stop remains visible while completion is finishing')
   })
 
   await t.test('a model outage leaves the next model on the same key runnable and needs its own later success', async () => {
@@ -200,15 +202,15 @@ test('provider health persists across dispatches without changing credential own
     await run(scope, source, { kind: 'unavailable', retryable: true, status: 502 }, now - 10_000, { model: 'fixture-outage' })
     await run(scope, source, null, now - 8_000, { model: 'fixture-ready' })
     const first = await read(scope)
-    const outage = first.entries.find(entry => entry.model === 'fixture-outage')!
-    const ready = first.entries.find(entry => entry.model === 'fixture-ready')!
+    const outage = first.entries.find(entry => entry.harness === 'codex' && entry.model === 'fixture-outage')!
+    const ready = first.entries.find(entry => entry.harness === 'codex' && entry.model === 'fixture-ready')!
     assert.equal(first.states.get(outage.id)?.credential.usable, false, 'success on another model does not clear this outage')
     assert.deepEqual(first.states.get(ready.id)?.credential, { usable: true })
     // The untouched default contains one Codex model, not the entire /models
     // catalogue. Explicitly append the person's second preference.
     await order.changeOrder(pool, scope, { kind: 'add', entries: [ready] })
     const deviceId = randomUUID()
-    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses) VALUES ($1,$2,'Fixture device','local',true,now(),$3)`,
+    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,$2,'Fixture device','local',true,now(),$3,now())`,
       [deviceId, scope.ownerId, JSON.stringify([{ harness: 'codex', installed: true }])])
     await pool.query('UPDATE agents SET "deviceId"=$2 WHERE id=$1', [scope.agentId, deviceId])
     const dispatch = await resolveModelDispatch(pool, scope, undefined, 'local')
@@ -234,6 +236,23 @@ test('provider health persists across dispatches without changing credential own
     assert.deepEqual([...(await read(scope)).states.values()][0].credential, { usable: false, reason: 'keyRefused' })
   })
 
+  await t.test('the team switch off withholds the owner\'s own key from credential states and provider health (decision 2026-11-27-1740)', async () => {
+    const scope = await person('provider-switch')
+    const own = await key(scope, ['fixture-switch'])
+    const source = { kind: 'api_key' as const, keyId: own.id }
+    await run(scope, source, { kind: 'balance', retryable: false }, now - 5_000)
+    const entry: StoredEntry = { id: 'switch-entry', harness: 'codex', model: 'fixture-switch', source }
+    const candidate = { ...entry, name: entry.model, provider: 'custom', credentialOwnerId: scope.ownerId }
+    const { providerHealthStates } = await import('../lib/model-provider-health')
+    assert.deepEqual((await order.credentialStates(pool, scope, [entry], [candidate], now, { probe: false })).get(entry.id)?.credential, { usable: false, reason: 'balance' }, 'on: the own key is a source and its failure is remembered')
+    assert.ok((await providerHealthStates(pool, scope, [candidate], now)).size > 0)
+    await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)', [scope.workspaceId])
+    try {
+      assert.deepEqual((await order.credentialStates(pool, scope, [entry], [candidate], now, { probe: false })).get(entry.id)?.credential, { usable: false, reason: 'missing' }, 'off: even a stale candidate cannot make the own key a source')
+      assert.equal((await providerHealthStates(pool, scope, [candidate], now)).size, 0, 'off: provider health reads no own key')
+    } finally { await pool.query('DELETE FROM workspace_personal_policies WHERE "workspaceId"=$1', [scope.workspaceId]) }
+  })
+
   await t.test('history is scoped to the requesting owner and workspace; order entries cannot grant a key', async () => {
     const scope = await person('provider-owner')
     const stranger = await person('provider-stranger')
@@ -253,16 +272,16 @@ test('provider health persists across dispatches without changing credential own
       const states = await order.credentialStates(pool, scope, [foreign], candidates, now, { probe: false })
       assert.deepEqual(states.get(foreign.id)?.credential, { usable: false, reason: 'missing' })
     }
-    await pool.query('INSERT INTO model_api_key_shares ("keyId","workspaceId") VALUES ($1,$2)', [theirs.id, scope.workspaceId])
-    await pool.query('UPDATE model_api_keys SET "modelsError"=NULL WHERE id=$1', [theirs.id])
+    // A person's key is never shared (decision 2026-11-27-1740); a key the workspace owns serves every member there.
+    await pool.query('UPDATE model_api_keys SET "modelsError"=NULL,"ownerId"=NULL,"workspaceId"=$2 WHERE id=$1', [theirs.id, scope.workspaceId])
     const shared = await read(scope)
     const sharedEntry = shared.entries.find(entry => entry.source.kind === 'api_key' && entry.source.keyId === theirs.id)!
     assert.ok(shared.states.get(sharedEntry.id)?.credential.usable)
     await run(scope, { kind: 'api_key', keyId: theirs.id }, { kind: 'balance', retryable: false }, now - 3_000, { snapshotWorkspace: false })
     assert.equal([...(await read(scope)).states.values()].some(state => !state.credential.usable && state.credential.reason === 'balance'), true, 'legacy snapshots use the owned bot workspace')
-    await pool.query('DELETE FROM model_api_key_shares WHERE "keyId"=$1 AND "workspaceId"=$2', [theirs.id, scope.workspaceId])
+    await pool.query('UPDATE model_api_keys SET "workspaceId"=NULL,"ownerId"=$2 WHERE id=$1', [theirs.id, stranger.ownerId])
     const revoked = await order.credentialStates(pool, scope, [sharedEntry], shared.candidates, now, { probe: false })
-    assert.deepEqual(revoked.get(sharedEntry.id)?.credential, { usable: false, reason: 'missing' }, 'withdrawal takes precedence over remembered runtime health, even with old candidates')
+    assert.deepEqual(revoked.get(sharedEntry.id)?.credential, { usable: false, reason: 'missing' }, 'a key no longer the workspace\'s takes precedence over remembered runtime health, even with old candidates')
   })
 
   await t.test('subscription failures follow the frozen binding revision; pause and missing authority win', async () => {

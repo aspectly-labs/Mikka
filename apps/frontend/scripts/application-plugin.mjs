@@ -4,7 +4,7 @@ import { readFile, readdir } from 'node:fs/promises'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
-import { overlayAliases, resolveOverlaySpecifier, UI_SLOT_EXPORTS, SLOT_PREFIX } from '../../../lib/ui-overlay.mjs'
+import { uiOverlay, resolveOverlaySpecifier } from '../../../lib/ui-overlay.mjs'
 import { actionReferences, actionSignatures, nativeOfflineView, bundledIconCatalogue, bundledSyntaxCatalogue } from '../../desktop/scripts/renderer-transforms.mjs'
 
 export const frontend = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -13,29 +13,33 @@ const renderer = resolve(repository, 'apps/desktop/src/renderer')
 const actionDirectory = resolve(repository, 'app/actions')
 const slash = value => value.split(sep).join('/')
 const builtins = new Set(builtinModules.flatMap(name => [name, `node:${name}`]))
-const officialSlot = '\0mikka:official-slot:'
-const officialContract = 'mikka:official-slot-contract'
+// A build without the official UI checkout compiles this page alone (lib/ui-overlay.mjs).
+const headlessEntry = resolve(frontend, 'src/headless.ts')
 const virtualAction = '\0mikka:action:'
-const commonAliases = new Map([
-  ['next/navigation', 'next-navigation.ts'], ['next/link', 'next-link.tsx'], ['next/dynamic', 'dynamic.tsx'],
-  ['@/i18n/navigation', 'i18n-navigation.tsx'],
-])
-const desktopAliases = new Map([
-  ['@/lib/auth-client', 'auth-client.ts'], ['@/components/auth-form', 'auth-form.tsx'],
+export const desktopAliases = new Map([
+  ['@/lib/auth-client', 'auth-client.ts'],
   ['@/lib/platform/open-settings', 'open-settings.ts'], ['@/lib/platform/client-config', 'client-config.ts'],
-  ['@/hooks/use-feature-availability', 'feature-availability.ts'], ['@/lib/live/browser-runtime', 'live-runtime.ts'],
-  ['@/lib/computer/request', 'computer-request.ts'], ['@novnc/novnc/lib/rfb.js', 'novnc.ts'],
+  ['@/hooks/use-feature-availability', 'feature-availability.ts'], ['@hosted/web/hooks/use-feature-availability', 'feature-availability.ts'],
+  ['@/lib/live/browser-runtime', 'live-runtime.ts'], ['@/lib/computer/request', 'computer-request.ts'], ['@novnc/novnc/lib/rfb.js', 'novnc.ts'],
 ])
 
 export function serverSpecifier(source) {
-  return source === 'server-only' || source === 'next-intl/server' || source.startsWith('node:') || builtins.has(source)
-    || /^next\/(?:headers|server|font)(?:\/|$)/.test(source)
+  // The framework specifiers are gone from the source, but a browser bundle
+  // that reaches for one must fail loudly rather than pull in a real package.
+  return source === 'server-only' || source.startsWith('@/lib/intl/i18n-server') || source.startsWith('node:') || builtins.has(source)
+    || /^next(?:\/|$)/.test(source) || source.startsWith('next-intl')
     || source === 'better-auth' || source === 'pg' || source === 'postgres'
 }
 
 function serverFile(filename) {
   const path = slash(relative(repository, filename.split('?')[0]))
-  return path.startsWith('app/api/') || /^lib\/(?:auth|db|session)\.ts$/.test(path) || path.startsWith('lib/db/')
+  // Match the resolved path as well as the specifier: a relative or absolute
+  // import of a server module must fail even when the module's own imports
+  // happen to stay browser-safe.
+  return path.startsWith('app/api/') || path.startsWith('lib/server-runtime/')
+    || /^lib\/intl\/i18n-server(?:\.ts|$)/.test(path)
+    || path === 'lib/server-only.ts'
+    || /^lib\/(?:auth|db|session)\.ts$/.test(path) || path.startsWith('lib/db/')
     || /^lib\/desktop-rpc\/(?:registry|schemas|handler|bootstrap|authentication|session(?:-cache(?:-context)?)?)\.ts$/.test(path)
     || /\/next\/dist\/(?:server|compiled\/webpack)/.test(slash(filename))
 }
@@ -67,7 +71,12 @@ function fileLoader(plugin) {
   return loader
 }
 
-export async function applicationPlugin(target, { deploymentId = '', serverPages = false, publicTestFixture = false } = {}) {
+// Desktop replaces these official UI modules with its own, from the checkout (lib/ui-overlay.mjs OVERLAY_APPLICATION).
+export const desktopOverlayAliases = new Map([
+  ['@hosted/core/components/auth-form', 'desktopAuthForm'],
+])
+
+export async function applicationPlugin(target, { deploymentId = '', overlay = uiOverlay(repository) } = {}) {
   if (!['web', 'desktop'].includes(target)) throw new Error('FRONTEND_TARGET_INVALID')
   const allowed = registryActionNames(await readFile(resolve(repository, 'lib/desktop-rpc/registry.ts'), 'utf8'))
   const actions = new Map()
@@ -75,9 +84,8 @@ export async function applicationPlugin(target, { deploymentId = '', serverPages
   const offline = fileLoader(nativeOfflineView())
   const catalogues = [fileLoader(bundledIconCatalogue()), fileLoader(bundledSyntaxCatalogue())]
   const webRpc = resolve(frontend, 'src/web/rpc.ts')
-  // UI slots and the hosted layer's `@hosted/` imports, resolved exactly as the
-  // desktop renderer's build resolves them (docs/ui-overlay.md).
-  const uiSlots = overlayAliases(repository)
+  // The official UI checkout and its `@hosted/` imports (docs/ui-overlay.md).
+  const headless = !overlay.dir
   let development = false
   let inventory
   return {
@@ -86,8 +94,11 @@ export async function applicationPlugin(target, { deploymentId = '', serverPages
     configResolved(config) { development = config.command === 'serve' },
     async resolveId(source, importer, options) {
       if (source.startsWith('\0mikka:')) return source
-      if (source === officialContract && uiSlots.dir) return '\0' + source
-      if (source === 'mikka:platform') return resolve(target === 'desktop' ? renderer : resolve(frontend, 'src/web'), 'platform.tsx')
+      if (source === 'mikka:application') return headless ? headlessEntry : overlay.application.entry
+      if (source === 'mikka:platform') {
+        if (headless) throw new Error('FRONTEND_PLATFORM_WITHOUT_UI')
+        return target === 'desktop' ? overlay.application.desktopPlatform : overlay.application.webPlatform
+      }
       if (source === 'mikka:frontend-runtime' || source === 'mikka:native-offline' || source === 'mikka:native-offline.css') return `\0${source}`
       if (source === 'mikka:renderer-build') {
         if (development) return '\0mikka:renderer-build'
@@ -96,50 +107,35 @@ export async function applicationPlugin(target, { deploymentId = '', serverPages
       if (serverSpecifier(source)) throw new Error(`FRONTEND_SERVER_IMPORT: ${source}`)
       const action = /^@\/app\/actions\/([\w-]+)$/.exec(source)
       if (action) return `${virtualAction}${action[1]}`
-      const alias = commonAliases.get(source) ?? (target === 'desktop' ? desktopAliases.get(source) : undefined)
-      if (alias && importer?.split('?')[0] !== resolve(renderer, alias)) return resolve(renderer, alias)
-      if (source === 'next/script') {
-        if (target === 'desktop') throw new Error('FRONTEND_DESKTOP_REMOTE_SCRIPT_FORBIDDEN')
-        return resolve(frontend, 'src/web/next-script.tsx')
-      }
-      if (uiSlots.dir && source.startsWith(SLOT_PREFIX)) {
-        const name = source.slice(SLOT_PREFIX.length)
-        if (!Object.hasOwn(UI_SLOT_EXPORTS, name)) throw new Error(`UI_SLOT_UNKNOWN: ${source}`)
-        return officialSlot + name
-      }
-      const candidate = resolveOverlaySpecifier(source, uiSlots) ?? (source.startsWith('@/') ? resolve(repository, source.slice(2)) : source)
+      // An alias target goes through the bundler's own resolver, so the file's package format (`"type": "module"`)
+      // is read the same way every time. A bare path returned from here left that to whichever importer reached the
+      // module first, and the CommonJS interop for React (`__toESM(…, 1)`) then differed between two builds of one
+      // tree, changing chunk hashes and the renderer identity (apps/frontend/scripts/build.test.mjs).
+      const bundlerResolved = path => this.resolve(path, importer, { ...options, skipSelf: true })
+      const desktopAlias = target === 'desktop' ? desktopAliases.get(source) : undefined
+      if (desktopAlias && importer?.split('?')[0] !== resolve(renderer, desktopAlias)) return bundlerResolved(resolve(renderer, desktopAlias))
+      const desktopOverlayAlias = target === 'desktop' && !headless ? overlay.application[desktopOverlayAliases.get(source)] : undefined
+      if (desktopOverlayAlias && importer?.split('?')[0] !== desktopOverlayAlias) return bundlerResolved(desktopOverlayAlias)
+      // The official UI's one-load script loader (core/lib/client-runtime/script.tsx) is web-only.
+      if (source === '@hosted/core/lib/client-runtime/script' && target === 'desktop') throw new Error('FRONTEND_DESKTOP_REMOTE_SCRIPT_FORBIDDEN')
+      if (source.startsWith('@ui-slot/')) throw new Error(`UI_SLOT_RETIRED: ${source}`)
+      const candidate = resolveOverlaySpecifier(source, overlay) ?? (source.startsWith('@/') ? resolve(repository, source.slice(2)) : source)
       // Keep require-call/import semantics when resolving conditional package
       // exports; a CommonJS helper must not become an ESM namespace object.
       const resolved = await this.resolve(candidate, importer, { ...options, skipSelf: true })
       if (!resolved) return null
       const id = resolved.id.split('?')[0]
-      // This module is the single lazy boundary between server handoff pages
-      // and the installed workspace. Resolve its imports before bundling so
-      // the self-hosted distribution never ships a dormant workspace chunk.
-      if (serverPages && id === resolve(renderer, 'workspace-loader.ts')) return resolve(frontend, 'src/web/server-workspace-loader.ts')
+      if (target === 'desktop' && !headless && id === resolve(overlay.dir, 'web/hooks/use-feature-availability.ts')
+          && importer?.split('?')[0] !== resolve(renderer, 'feature-availability.ts')) {
+        return bundlerResolved(resolve(renderer, 'feature-availability.ts'))
+      }
       if (serverFile(id)) throw new Error(`FRONTEND_SERVER_MODULE: ${slash(relative(repository, id))}`)
       if (target === 'web' && id === resolve(renderer, 'rpc.ts') && importer?.split('?')[0] !== webRpc) return webRpc
       if (isAbsolute(id) && dirname(id) === actionDirectory && id.endsWith('.ts')) return `${virtualAction}${id.slice(actionDirectory.length + 1, -3)}`
       return resolved
     },
     async load(id) {
-      if (id === '\0' + officialContract) {
-        // Link every mandatory export, including providers for lazy or disabled
-        // surfaces. The validation imports must not initialize unused features.
-        const code = Object.keys(UI_SLOT_EXPORTS).map(name => `import ${JSON.stringify(SLOT_PREFIX + name)}`).join('\n')
-        return { code, moduleSideEffects: false }
-      }
-      if (id.startsWith(officialSlot)) {
-        const name = id.slice(officialSlot.length)
-        const provider = JSON.stringify(uiSlots.absolute[SLOT_PREFIX + name])
-        // Explicit re-exports force the linker to validate exports even when a
-        // consumer uses a namespace import with an optional-property check.
-        return `export * from ${provider}; export { ${UI_SLOT_EXPORTS[name].join(', ')} } from ${provider};`
-      }
-      if (id === '\0mikka:frontend-runtime') {
-        const runtime = frontendRuntimeSource(target, { development, frontend, renderer })
-        return uiSlots.dir && !development ? `import ${JSON.stringify(officialContract)};\n${runtime}` : runtime
-      }
+      if (id === '\0mikka:frontend-runtime') return headless ? '' : frontendRuntimeSource(target, { development, frontend, overlay: overlay.dir })
       if (id === '\0mikka:renderer-build') return 'export const rendererBuild = "development";'
       if (id === '\0mikka:native-offline' || id === '\0mikka:native-offline.css') return (await offline.load({ path: id.slice(1) })).contents
       if (!id.startsWith(virtualAction)) return null
@@ -164,7 +160,7 @@ export async function applicationPlugin(target, { deploymentId = '', serverPages
       const modules = Object.fromEntries([...actions].sort(([a], [b]) => a.localeCompare(b)))
       inventory = {
         version: 1, target, modules, exports: Object.values(modules).reduce((sum, names) => sum + names.length, 0),
-        ...(serverPages && { serverPages: true }), ...(publicTestFixture && { publicTestFixture: true }),
+        ...(headless && { headless: true }),
         usedActions: [...used].sort(), sourceActions: (await readdir(actionDirectory)).filter(name => name.endsWith('.ts')).length,
         inputs: [...inputs].map(path => slash(relative(repository, path))).sort(), serverModules: [],
       }

@@ -8,6 +8,7 @@ import { pullRequestStatusChanged } from '@/lib/live/pull-requests'
 import { issueListChanged, runListChanged } from '@/lib/live/lists'
 import { ADVANCE_MERGED_TASKS } from '@/lib/task-status-advance'
 import { reviewCheckEvent } from './review-checks'
+import { jsonbFlagIsTrueSql, jsonbSafeNumericExprSql, jsonbSafeNumericSql } from '../primitives/jsonb-predicates'
 
 const pullRequestEvent = z.object({
   action: z.string().optional(),
@@ -21,6 +22,8 @@ const pullRequestEvent = z.object({
     changed_files: z.number().int().nonnegative().optional(),
     head: z.object({ sha: z.string().regex(/^[a-f0-9]{40,64}$/i), ref: z.string().min(1).max(1024).optional() }).optional(),
     updated_at: z.iso.datetime({ offset: true }).optional(),
+    created_at: z.iso.datetime({ offset: true }).optional(),
+    user: z.object({ login: z.string().max(100) }).nullable().optional(),
   }),
 })
 
@@ -89,13 +92,13 @@ export async function refreshPublishedPullRequest(event: string, payload: unknow
     // redelivery. Only the exact repository and current PR head can change.
     const { rows } = await database.query<{ id: string }>(`WITH saved AS (
       UPDATE run_publications p SET "pullRequest"=jsonb_set(p."pullRequest",'{reviewChecks}',jsonb_build_object(
-        'headSha',$2::text,'complete',CASE WHEN p."pullRequest"#>>'{reviewChecks,headSha}'=$2 THEN coalesce((p."pullRequest"#>>'{reviewChecks,complete}')::boolean,false) ELSE false END,
+        'headSha',$2::text,'complete',CASE WHEN p."pullRequest"#>>'{reviewChecks,headSha}'=$2 THEN ${jsonbFlagIsTrueSql(`p."pullRequest"->'reviewChecks'`, 'complete')} ELSE false END,
         'updatedAt',greatest(coalesce(p."pullRequest"#>>'{reviewChecks,updatedAt}',''),$4::jsonb->>'at'),
         'entries',(CASE WHEN p."pullRequest"#>>'{reviewChecks,headSha}'=$2 THEN coalesce(p."pullRequest"#>'{reviewChecks,entries}','{}'::jsonb) ELSE '{}'::jsonb END)||jsonb_build_object($3::text,$4::jsonb))),"updatedAt"=now()
       WHERE starts_with(lower(p."pullRequest"->>'url'),$1) AND p."pullRequest"->>'headSha'=$2
         AND (p."pullRequest"#>>'{reviewChecks,headSha}' IS DISTINCT FROM $2 OR p."pullRequest"#>ARRAY['reviewChecks','entries',$3] IS NULL
-          OR (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id'])::numeric<($4::jsonb->>'id')::numeric
-          OR ((p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id'])::numeric=($4::jsonb->>'id')::numeric
+          OR (${jsonbSafeNumericExprSql(`p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id']`)})<(${jsonbSafeNumericSql('$4::jsonb', 'id')})
+          OR ((${jsonbSafeNumericExprSql(`p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id']`)})=(${jsonbSafeNumericSql('$4::jsonb', 'id')})
             AND p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'state']<>$4::jsonb->>'state'
             AND (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'state']='pending'
               OR ($4::jsonb->>'state'<>'pending' AND (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'at'])<($4::jsonb->>'at')))))
@@ -118,9 +121,11 @@ export async function refreshPublishedPullRequest(event: string, payload: unknow
   const state = pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open'
   const lines = pr.additions !== undefined && pr.deletions !== undefined ? { additions: pr.additions, deletions: pr.deletions } : null
   const patch = JSON.stringify({ title: pr.title, state, ...lines,
+    ...(pr.merged_at && Number.isFinite(Date.parse(pr.merged_at)) ? { mergedAt: new Date(pr.merged_at).toISOString() } : {}),
     ...(pr.changed_files === undefined ? {} : { changedFiles: pr.changed_files }),
     ...(pr.head ? { headSha: pr.head.sha.toLowerCase(), ...(pr.head.ref ? { branch: pr.head.ref } : {}) } : {}),
-    ...(pr.updated_at ? { githubUpdatedAt: new Date(pr.updated_at).toISOString() } : {}) })
+    ...(pr.updated_at ? { githubUpdatedAt: new Date(pr.updated_at).toISOString() } : {}),
+    ...(pr.user?.login ? { author: pr.user.login } : {}), ...(pr.created_at ? { createdAt: new Date(pr.created_at).toISOString() } : {}) })
   const { rows } = await database.query<{ id: string | null; issueId: string | null; runId: string; changed: boolean }>(`WITH matched AS (
       SELECT "runId","userId","issueId" FROM run_publications WHERE lower(rtrim("pullRequest"->>'url','/'))=$1
         AND (NOT $2::jsonb ? 'githubUpdatedAt' OR coalesce("pullRequest"->>'githubUpdatedAt','')<=$2::jsonb->>'githubUpdatedAt')
@@ -149,6 +154,38 @@ export async function refreshPublishedPullRequest(event: string, payload: unknow
   await Promise.all([...new Set(rows.filter(row => row.changed).map(row => row.runId))].map(id => runListChanged(database, id, true)))
   // The PR badge on each task it was delivered on asks GitHub again (#1212); the state itself never crosses.
   await pullRequestStatusChanged(database, rows.flatMap(row => row.issueId ? [row.issueId] : []))
+  // The task's metadata copy is the single source the Factory read prefers (#1863): mirror the
+  // new state there, under each issue's own tenant. Every matched delivery is considered, not
+  // only ones this event changed, so a redelivery still repairs a mirror that failed before.
+  const metaIssues = [...new Set(rows.flatMap(row => row.issueId ? [row.issueId] : []))]
+  if (metaIssues.length) {
+    await database.query(
+      `WITH locked AS MATERIALIZED (
+         SELECT i.id FROM issues i WHERE i.id = ANY($3::uuid[])
+           AND jsonb_typeof(i.content #> '{attrs,mikka,pullRequests}')='array'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') e
+             WHERE lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')) AND e->>'state' IS DISTINCT FROM $2)
+         ORDER BY i.id FOR UPDATE OF i
+       ), saved AS (
+         UPDATE issues i SET content=jsonb_set(i.content,'{attrs,mikka,pullRequests}',(
+             SELECT jsonb_agg(CASE WHEN lower(rtrim(e->>'url','/'))=lower(rtrim($1,'/')) THEN e || jsonb_build_object('state',$2) ELSE e END ORDER BY n)
+             FROM jsonb_array_elements(i.content #> '{attrs,mikka,pullRequests}') WITH ORDINALITY AS list(e,n))),
+           revision=i.revision+1,"updatedAt"=now()
+         FROM locked WHERE i.id=locked.id
+           -- The mirror is a separate autocommitted statement: a newer webhook may have moved a
+           -- delivery on since this one's update committed. Recheck under the issue lock that
+           -- every delivery of this PR for the task still holds this event's patch, so an older
+           -- event cannot paint over a newer event's state.
+           AND EXISTS (SELECT 1 FROM run_publications p WHERE p."issueId"=i.id
+             AND lower(rtrim(p."pullRequest"->>'url','/'))=lower(rtrim($1,'/')) AND p."pullRequest" @> $4::jsonb)
+           AND NOT EXISTS (SELECT 1 FROM run_publications p WHERE p."issueId"=i.id
+             AND lower(rtrim(p."pullRequest"->>'url','/'))=lower(rtrim($1,'/')) AND NOT p."pullRequest" @> $4::jsonb)
+         RETURNING i.id,i."userId",i.revision,i.title,i.content,i.status,i.priority)
+       INSERT INTO issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id)
+       SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'system','publication-webhook' FROM saved`,
+      [key, state, metaIssues, patch],
+    )
+  }
   // 已完成 once the last PR Mikka delivered on a task is merged: forward only, and a status the person set since the
   // work began is kept (lib/task-status-advance.ts). A redelivery finds the task already there and changes nothing.
   if (state === 'merged') {

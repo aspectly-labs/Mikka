@@ -3,7 +3,8 @@ import type { PoolClient } from 'pg'
 import type { DecisionExecution } from './decide'
 import type { GroupRoute, RoutingMember } from './group-routing'
 import { getGroupDecisionPolicy, GROUP_POLICY_VERSIONS, type GroupPolicyVersion } from './group-decision-policy'
-import { DECISION_MODEL } from './decision'
+import { isDecisionReceiptModel } from './decision'
+import { jsonbSafeIntSql } from '../primitives/jsonb-predicates'
 import { GROUP_DECISION_PROTOCOL, GROUP_MAX_ROUTING_DECISIONS, GROUP_RETAINED_DECISIONS, groupDecisionFailures, groupDecisionPhases, groupDecisionTotals, type GroupDecisionFailure, type GroupDecisionStep } from './group-decision-chain'
 
 type Client = Pick<PoolClient, 'query'>
@@ -50,7 +51,7 @@ const token = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9_.:-]
 /** An allowlist prevents provider objects, role text and credentials from being
  * copied into diagnostics even when an adapter accidentally adds extra fields. */
 export function groupDecisionReceipt(receipt: DecisionExecution | undefined): DecisionExecution | null {
-  if (!receipt || receipt.modelId !== DECISION_MODEL || !token(receipt.executionId) || !token(receipt.providerGenerationId) || !/^[a-f0-9]{64}$/.test(receipt.requestDigest) || !Array.isArray(receipt.imageDigests)) return null
+  if (!receipt || !isDecisionReceiptModel(receipt.modelId) || !token(receipt.executionId) || !token(receipt.providerGenerationId) || !/^[a-f0-9]{64}$/.test(receipt.requestDigest) || !Array.isArray(receipt.imageDigests)) return null
   const start = Date.parse(receipt.startedAt), end = Date.parse(receipt.completedAt)
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null
   return {
@@ -85,11 +86,12 @@ export function traceDecisionSteps(trace: Pick<GroupDecisionTrace,'decisions'|'e
 export async function priceGroupDecisions(client: Client, steps: readonly GroupDecisionStep[]) {
   const ids=[...new Set(steps.flatMap(step=>step.receipt?[step.receipt.providerGenerationId]:[]))]
   if (!ids.length) return steps.map(step=>({...step,decisionCostUsd:null}))
-  const {rows}=await client.query<{generationId:string;amount:number|null}>(`SELECT "generationId",
+  const models=[...new Set(steps.flatMap(step=>step.receipt?[step.receipt.modelId]:[]))]
+  const {rows}=await client.query<{generationId:string;model:string;amount:number|null}>(`SELECT "generationId",model,
     CASE WHEN bool_and(state='settled' AND "costMicroUsd" IS NOT NULL) THEN sum("costMicroUsd")::float8 ELSE NULL END AS amount
-    FROM hosted_usage WHERE "generationId"=ANY($1::text[]) AND model=$2 GROUP BY "generationId"`,[ids,DECISION_MODEL])
-  const costs=new Map(rows.map(row=>[row.generationId,row.amount==null?null:row.amount/1_000_000]))
-  return steps.map(step=>({...step,decisionCostUsd:step.receipt?costs.get(step.receipt.providerGenerationId)??null:null}))
+    FROM hosted_usage WHERE "generationId"=ANY($1::text[]) AND model=ANY($2::text[]) GROUP BY "generationId",model`,[ids,models])
+  const costs=new Map(rows.map(row=>[`${row.model}:${row.generationId}`,row.amount==null?null:row.amount/1_000_000]))
+  return steps.map(step=>({...step,decisionCostUsd:step.receipt?costs.get(`${step.receipt.modelId}:${step.receipt.providerGenerationId}`)??null:null}))
 }
 
 /** A retry appends its genuine chain instead of erasing paid failed attempts.
@@ -105,7 +107,7 @@ export async function recordGroupDecisionSteps(client: Client, messageId: string
   ) UPDATE group_turns t SET trace=t.trace || jsonb_build_object(
     'decisions',COALESCE((SELECT jsonb_agg(e ORDER BY ord) FROM jsonb_array_elements(m.entries) WITH ORDINALITY x(e,ord)
       WHERE ord>GREATEST(0,jsonb_array_length(m.entries)-$3)),'[]'::jsonb),
-    'decisionsOmitted',COALESCE((t.trace->>'decisionsOmitted')::integer,0)+GREATEST(0,jsonb_array_length(m.entries)-$3),
+    'decisionsOmitted',COALESCE(${jsonbSafeIntSql('t.trace', 'decisionsOmitted')},0)+GREATEST(0,jsonb_array_length(m.entries)-$3),
     'decisionFailure',$4::text) || $5::jsonb
     FROM merged m WHERE t."messageId"=m."messageId"`,[messageId,JSON.stringify(safe),GROUP_RETAINED_DECISIONS,failure??null,
       JSON.stringify({...(safe[0]?.index===0?{execution:safe[0].receipt,executionPhase:safe[0].phase}:{}),...(version?{policyVersion:version}:{})}),

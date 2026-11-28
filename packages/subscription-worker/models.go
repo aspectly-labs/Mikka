@@ -15,10 +15,23 @@ import (
 // ModelOption is the only provider catalogue data sent to the web process.
 // Credentials, descriptions, other capabilities and provider error bodies stay here.
 type ModelOption struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	PrioritySupported *bool  `json:"prioritySupported,omitempty"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	PrioritySupported  *bool  `json:"prioritySupported,omitempty"`
+	UltrafastSupported *bool  `json:"ultrafastSupported,omitempty"`
+	FastSupported      *bool  `json:"fastSupported,omitempty"`
+	WebSearchSupported *bool  `json:"webSearchSupported,omitempty"`
+	// Efforts are the reasoning levels the provider lists for this model, in its
+	// order; nil when the provider said nothing (unknown), empty when it says none.
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
+	// Daybreak lists the Trusted Access for Cyber tiers ("blue", "red") the account's
+	// catalogue accepts for this model; omitted when it offers none or says nothing.
+	Daybreak []string `json:"daybreak,omitempty"`
 }
+
+// effortPattern keeps a provider's level names to short lowercase words.
+var effortPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,15}$`)
 
 var modelIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 
@@ -77,14 +90,20 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 		}
 		var body struct {
 			Models []struct {
-				Slug         string          `json:"slug"`
-				Name         string          `json:"display_name"`
-				Visibility   string          `json:"visibility"`
-				ServiceTiers json.RawMessage `json:"service_tiers"`
+				Slug            string          `json:"slug"`
+				Name            string          `json:"display_name"`
+				Visibility      string          `json:"visibility"`
+				ServiceTiers    json.RawMessage `json:"service_tiers"`
+				ReasoningLevels json.RawMessage `json:"supported_reasoning_levels"`
+				DefaultLevel    string          `json:"default_reasoning_level"`
+				AccessPrograms  json.RawMessage `json:"available_access_programs"`
+				SupportsSearch  *bool           `json:"supports_search_tool"`
 			} `json:"models"`
 			Data []struct {
-				ID   string `json:"id"`
-				Name string `json:"display_name"`
+				ID               string          `json:"id"`
+				Name             string          `json:"display_name"`
+				SupportsFastMode *bool           `json:"supports_fast_mode"`
+				Capabilities     json.RawMessage `json:"capabilities"`
 			} `json:"data"`
 			HasMore bool   `json:"has_more"`
 			LastID  string `json:"last_id"`
@@ -99,7 +118,17 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 			}
 			for _, m := range body.Models {
 				if m.Visibility == "" || m.Visibility == "list" {
-					entries = append(entries, ModelOption{ID: m.Slug, Name: m.Name, PrioritySupported: codexPrioritySupported(m.ServiceTiers)})
+					efforts := codexEfforts(m.ReasoningLevels)
+					entries = append(entries, ModelOption{
+						ID:                 m.Slug,
+						Name:               m.Name,
+						PrioritySupported:  codexPrioritySupported(m.ServiceTiers),
+						UltrafastSupported: codexUltrafastSupported(m.ServiceTiers),
+						WebSearchSupported: m.SupportsSearch,
+						Efforts:            efforts,
+						DefaultEffort:      defaultEffort(efforts, m.DefaultLevel),
+						Daybreak:           codexDaybreakTiers(m.AccessPrograms),
+					})
 				}
 			}
 		} else {
@@ -107,7 +136,13 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 				return nil, ErrProvider
 			}
 			for _, m := range body.Data {
-				entries = append(entries, ModelOption{ID: m.ID, Name: m.Name})
+				entries = append(entries, ModelOption{
+					ID:                 m.ID,
+					Name:               m.Name,
+					FastSupported:      claudeFastSupported(m.SupportsFastMode, m.Capabilities),
+					WebSearchSupported: claudeWebSearchSupported(m.Capabilities),
+					Efforts:            claudeEfforts(m.Capabilities),
+				})
 			}
 		}
 		if len(entries) > 500 {
@@ -148,9 +183,23 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 	return options, nil
 }
 
-// codexPrioritySupported projects only the account's current model catalogue.
+func claudeWebSearchSupported(capabilities json.RawMessage) *bool {
+	var value struct {
+		ServerTools struct {
+			WebSearch struct {
+				Supported *bool `json:"supported"`
+			} `json:"web_search"`
+		} `json:"server_tools"`
+	}
+	if json.Unmarshal(capabilities, &value) != nil {
+		return nil
+	}
+	return value.ServerTools.WebSearch.Supported
+}
+
+// codexServiceTierSupported projects only the account's current model catalogue.
 // Missing or malformed capability data is unknown, never evidence of support.
-func codexPrioritySupported(raw json.RawMessage) *bool {
+func codexServiceTierSupported(raw json.RawMessage, target string) *bool {
 	var tiers []map[string]json.RawMessage
 	if json.Unmarshal(raw, &tiers) != nil || tiers == nil {
 		return nil
@@ -161,7 +210,168 @@ func codexPrioritySupported(raw json.RawMessage) *bool {
 		if json.Unmarshal(tier["id"], &id) != nil || id == "" {
 			return nil
 		}
-		supported = supported || id == "priority"
+		supported = supported || id == target
 	}
 	return &supported
+}
+
+func codexPrioritySupported(raw json.RawMessage) *bool {
+	return codexServiceTierSupported(raw, "priority")
+}
+
+func codexUltrafastSupported(raw json.RawMessage) *bool {
+	return codexServiceTierSupported(raw, "ultrafast")
+}
+
+// claudeFastSupported projects explicit Anthropic fast-mode capability from /v1/models
+// without reading Codex service_tiers or legacy speed aliases.
+func claudeFastSupported(explicit *bool, capabilities json.RawMessage) *bool {
+	if explicit != nil {
+		v := *explicit
+		return &v
+	}
+	if len(capabilities) == 0 {
+		return nil
+	}
+	var parsed struct {
+		FastMode *struct {
+			Supported *bool `json:"supported"`
+		} `json:"fast_mode"`
+	}
+	if json.Unmarshal(capabilities, &parsed) != nil || parsed.FastMode == nil || parsed.FastMode.Supported == nil {
+		return nil
+	}
+	v := *parsed.FastMode.Supported
+	return &v
+}
+
+// codexDaybreakTiers reads a Codex catalogue entry's available_access_programs:
+// {"cyber": ["standard", "daybreak_blue", "daybreak_red", ...], "daybreak_availability": "available"}.
+// Source: openai/codex codex-rs/protocol/src/openai_models.rs (ModelInfo) and
+// openai_models/access_programs.rs (ModelAccessPrograms, DaybreakAvailability).
+// Unknown programs are skipped, as Codex skips them. A model the server says needs
+// enrollment, or is unavailable for, offers no tier. Malformed or absent data is none.
+func codexDaybreakTiers(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var programs struct {
+		Cyber        []json.RawMessage `json:"cyber"`
+		Availability json.RawMessage   `json:"daybreak_availability"`
+	}
+	if json.Unmarshal(raw, &programs) != nil {
+		return nil
+	}
+	var availability string
+	_ = json.Unmarshal(programs.Availability, &availability)
+	if availability == "enrollment_required" || availability == "unavailable_for_model" {
+		return nil
+	}
+	tiers := []string{}
+	for _, item := range programs.Cyber {
+		var program string
+		if json.Unmarshal(item, &program) != nil {
+			continue
+		}
+		switch program {
+		case "daybreak_blue":
+			tiers = appendUnique(tiers, "blue")
+		case "daybreak_red":
+			tiers = appendUnique(tiers, "red")
+		}
+	}
+	if len(tiers) == 0 {
+		return nil
+	}
+	return tiers
+}
+
+// codexEfforts reads supported_reasoning_levels ([{effort, description}], or
+// plain names). Descriptions stay here; malformed data is unknown (nil).
+func codexEfforts(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(raw, &items) != nil {
+		return nil
+	}
+	efforts := []string{}
+	for _, item := range items {
+		var name string
+		if json.Unmarshal(item, &name) != nil {
+			var preset struct {
+				Effort string `json:"effort"`
+			}
+			if json.Unmarshal(item, &preset) != nil {
+				return nil
+			}
+			name = preset.Effort
+		}
+		if !effortPattern.MatchString(name) {
+			return nil
+		}
+		efforts = appendUnique(efforts, name)
+	}
+	return efforts
+}
+
+// claudeEfforts reads Anthropic's capabilities.effort: {supported, <level>: {supported}}.
+// Levels are kept in Anthropic's documented order; absent data is unknown (nil).
+func claudeEfforts(capabilities json.RawMessage) []string {
+	if len(capabilities) == 0 {
+		return nil
+	}
+	var parsed struct {
+		Effort map[string]json.RawMessage `json:"effort"`
+	}
+	if json.Unmarshal(capabilities, &parsed) != nil || parsed.Effort == nil {
+		return nil
+	}
+	var supported *bool
+	if raw, ok := parsed.Effort["supported"]; ok && json.Unmarshal(raw, &supported) != nil {
+		return nil
+	}
+	if supported != nil && !*supported {
+		return []string{}
+	}
+	efforts := []string{}
+	for _, level := range []string{"low", "medium", "high", "xhigh", "max"} {
+		raw, ok := parsed.Effort[level]
+		if !ok {
+			continue
+		}
+		var flag struct {
+			Supported *bool `json:"supported"`
+		}
+		if json.Unmarshal(raw, &flag) != nil || flag.Supported == nil {
+			return nil
+		}
+		if *flag.Supported {
+			efforts = append(efforts, level)
+		}
+	}
+	if len(efforts) == 0 && supported == nil {
+		return nil
+	}
+	return efforts
+}
+
+// defaultEffort keeps the provider's default only when it is one of the listed levels.
+func defaultEffort(efforts []string, level string) string {
+	for _, effort := range efforts {
+		if effort == level {
+			return level
+		}
+	}
+	return ""
+}
+
+func appendUnique(list []string, value string) []string {
+	for _, item := range list {
+		if item == value {
+			return list
+		}
+	}
+	return append(list, value)
 }

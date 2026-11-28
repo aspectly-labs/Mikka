@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 import { withBasePath } from '../base-path'
 import { auth, apiWorkspaceAllowed } from '@/lib/api-auth'
 import { logCodedError } from '@mikka/protocol/coded-error'

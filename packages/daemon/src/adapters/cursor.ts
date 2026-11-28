@@ -90,6 +90,7 @@ export async function acpPermissionResponse(params: PermissionRequest): Promise<
 export class AcpChunker {
   private open: { kind: "text" | "reasoning"; id: string } | null = null
   private count = 0
+  private plans = 0
 
   constructor(private readonly prefix: string) {}
 
@@ -161,6 +162,20 @@ export class AcpChunker {
                 toolCallId: update.toolCallId,
                 output,
               },
+        ]
+      }
+      // The agent's plan, the whole list each time: the same plan call Codex's plan becomes (codexPlanChunks).
+      case "plan": {
+        const toolCallId = `${this.prefix}-plan-${++this.plans}`
+        return [
+          ...this.close(),
+          {
+            type: "tool-input-available",
+            toolCallId,
+            toolName: "update_plan",
+            input: { plan: update.entries.map(({ content, status }) => ({ step: content, status })) },
+          },
+          { type: "tool-output-available", toolCallId, output: "Plan updated" },
         ]
       }
       default:
@@ -235,7 +250,7 @@ export class CursorAdapter implements AgentAdapter {
     // and `session/load` finds the session again on resume.
     // The path as given, not its real path: with `/private/tmp/...` Cursor
     // 2026.09 stopped using CURSOR_DATA_DIR and wrote to `/tmp/.cursor`.
-    const configDir = prepareCursorHome(join(paths.runDir, "cursor-home"))
+    const configDir = prepareCursorHome(join(paths.runDir, "cursor-home"), (options.apps?.servers ?? []).flatMap(server => (server.disabledTools ?? []).map(name => `Mcp(${server.name}:${name})`)))
     const ctx = new RunContext({
       github: options.github,
       githubEnvironment: options.githubEnvironment,

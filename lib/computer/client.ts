@@ -3,11 +3,12 @@ import { botViewSchema, computerStateSchema, viewerGrantSchema } from '@mikka/pr
 import { withBasePath } from '@/lib/base-path'
 import { computerRequest as call } from '@/lib/computer/request'
 import { ComputerRequestError } from './request-error'
-import { MOCK_HOSTS, mockComputer, mockSetup } from './mock'
-import type { ApprovalDecision, ApprovalView, ComputerEvent, ComputerState, KnownHost, SetupStep, SetupStepState, ViewerGrant, ViewerMode } from './types'
+import { mockComputer, mockSetup } from './mock'
+import type { ComputerEvent, ComputerState, SetupStep, SetupStepState, ViewerGrant, ViewerMode } from './types'
+import { getPublicComputerMock } from '@/lib/env/public'
 
 /** Explicit demo mode; real Bot IDs use the authenticated E2B routes by default. */
-export const computerMock = process.env.NEXT_PUBLIC_COMPUTER_MOCK === '1'
+export const computerMock = getPublicComputerMock() === '1'
 /** The component library's demo bots (ids start with "demo-") always play the mock. */
 export const isMockedComputer = (botId: string) => computerMock || botId.startsWith('demo-')
 
@@ -30,10 +31,6 @@ export const computerApi = {
   viewer: (botId: string, mode: ViewerMode) => isMockedComputer(botId) ? mockComputer.viewer(botId, mode) : call<ViewerGrant>(botPath(botId, '/viewer'), { method: 'POST', json: { mode } }).then(value => viewerGrantSchema.parse(value)),
   takeover: (botId: string, userId: string) => isMockedComputer(botId) ? mockComputer.takeover(botId, userId) : call<ViewerGrant>(botPath(botId, '/takeover'), { method: 'POST' }).then(value => viewerGrantSchema.parse(value)),
   handback: (botId: string) => isMockedComputer(botId) ? mockComputer.handback(botId) : call<null>(botPath(botId, '/handback'), { method: 'POST' }),
-  /** Answers "queued", never an invented success: the agent goes on when the daemon picks it up. */
-  decide: (approval: ApprovalView, decision: ApprovalDecision) => isMockedComputer(approval.botId)
-    ? mockComputer.decide(approval, decision)
-    : call<{ queued: true }>(`/api/computer/approvals/${encodeURIComponent(approval.id)}`, { method: 'POST', json: decision }),
 }
 
 /**
@@ -45,18 +42,6 @@ export const computerApi = {
 export function subscribeComputerEvents(listener: (event: ComputerEvent) => void, mocked = computerMock): () => void {
   if (mocked) return mockComputer.subscribe(listener)
   return () => {}
-}
-
-/**
- * Hosts from the user's ~/.ssh/config and Tailnet, which their own Mikka
- * reports. Without one the list is empty and the user types a host.
- */
-export async function listKnownHosts(fallback: () => Promise<KnownHost[]>): Promise<KnownHost[]> {
-  if (computerMock) return MOCK_HOSTS
-  try { return await call<KnownHost[]>('/api/devices/hosts') } catch (error) {
-    if (error instanceof ComputerRequestError && error.status === 404) return fallback()
-    throw error
-  }
 }
 
 /** Runs the SSH install and reports each of 登录 → 检查主机 → 安装 Mikka → 启动服务 → 连接. */

@@ -1,5 +1,5 @@
 import 'server-only'
-import { NextResponse } from 'next/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { MOBILE_APP_ORIGIN } from '@/lib/auth'
 import { auth } from '@/lib/api-auth'
 import { appOrigin } from '@/lib/mcp/resource'
@@ -11,7 +11,7 @@ import { appOrigin } from '@/lib/mcp/resource'
  */
 export const NO_STORE = { 'Cache-Control': 'private, no-store' }
 
-export const json = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: NO_STORE })
+export const json = (body: unknown, status = 200) => RouteResponse.json(body, { status, headers: NO_STORE })
 
 export async function mobileUser(request: Request) {
   const session = await auth.api.getSession({ headers: request.headers })

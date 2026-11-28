@@ -1,24 +1,26 @@
 import 'server-only'
-import { FEATURED_MODELS } from './model-catalog'
-import { selfHostedDefaultModelConfig } from './default-model-config'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
 import { WorkspaceError } from './workspace-error'
 import { reconcileSubscriptionModels, type ModelSettings } from './enabled-models-policy'
 import { modelDisplayName } from './model-display-name'
+import { jsonbFlagIsNotFalseSql } from './primitives/jsonb-predicates'
 
-type Scope = { ownerId: string; workspaceId: string }
+/** `manageWorkspaceKeys`: an admin of a team workspace, who also lists and changes the workspace's own keys (decision 2026-11-27-1740). */
+type Scope = { ownerId: string; workspaceId: string; manageWorkspaceKeys?: boolean }
 export type ModelSourceKind = 'subscription' | 'api_key' | 'hosted'
 export interface EnabledModelsSource {
   id: string; kind: ModelSourceKind
-  models: { id: string; family: string | null; enabled: boolean; fresh: boolean }[]
+  /** `known`: Mikka's LiteLLM catalogue has the model (lib/model-known.ts); a listed model it lacks is added by its own id. */
+  models: { id: string; family: string | null; enabled: boolean; fresh: boolean; known: boolean }[]
   enabledCount: number; total: number; freshCount: number; autoEnable?: boolean
   refreshedAt: string | null; refreshError: 'invalid' | 'unavailable' | null
 }
 type SourceRow = { id: string; kind: ModelSourceKind; ids: string[]; settings: ModelSettings | null; refreshedAt: string | null; refreshError: EnabledModelsSource['refreshError'] }
-const project = (row: SourceRow): EnabledModelsSource => {
+const project = (row: SourceRow, known: ReadonlySet<string>): EnabledModelsSource => {
   const models = row.ids.map(id => ({ id, family: modelDisplayName(id).family,
-    enabled: row.settings?.models[id]?.enabled ?? true, fresh: row.settings?.models[id]?.fresh ?? false }))
+    enabled: row.settings?.models[id]?.enabled ?? true, fresh: row.settings?.models[id]?.fresh ?? false,
+    known: row.kind === 'hosted' || known.has(id) }))
   return { id: row.id, kind: row.kind, models, total: models.length, enabledCount: models.filter(item => item.enabled).length,
     freshCount: models.filter(item => item.fresh).length, ...(row.kind === 'subscription' ? { autoEnable: row.settings?.autoEnable ?? true } : {}),
     refreshedAt: row.refreshedAt, refreshError: row.refreshError }
@@ -29,20 +31,26 @@ async function sources(query: Pick<Pool | PoolClient, 'query'>, scope: Scope): P
     "modelSettings"->>'refreshedAt' AS "refreshedAt",NULL AS "refreshError" FROM byos_connections
     WHERE "ownerId"=$1 AND "removedAt" IS NULL ORDER BY "createdAt",id`, [scope.ownerId])
   const keys = await query.query<SourceRow>(`SELECT id::text,'api_key' AS kind,models AS ids,"modelSettings" AS settings,
-    "modelSettings"->>'refreshedAt' AS "refreshedAt","modelsError" AS "refreshError" FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`, [scope.ownerId])
+    "modelSettings"->>'refreshedAt' AS "refreshedAt","modelsError" AS "refreshError" FROM model_api_keys
+    WHERE "ownerId"=$1 OR ($3::boolean AND "workspaceId"=$2::uuid) ORDER BY ("ownerId" IS NULL),"createdAt",id`,
+  [scope.ownerId, z.uuid().safeParse(scope.workspaceId).success ? scope.workspaceId : null, scope.manageWorkspaceKeys === true])
   const hosted = await query.query<{ enabled: boolean }>('SELECT "hostedModelEnabled" AS enabled FROM "user" WHERE id=$1', [scope.ownerId])
-  const localModel = selfHostedDefaultModelConfig()
-  const target = localModel ? await (await import('./default-model')).defaultModelTarget(scope.ownerId) : null
-  // Mikka 额度 serves the catalogue (decision 2026-11-15-1900); its one switch covers every model on it.
-  // A self-hosted server lists the one model its own provider serves. The internal background model is never listed.
-  const hostedIds = target?.kind === 'self-hosted' ? [localModel!.modelId] : [...FEATURED_MODELS]
+  const { creditsModels } = await import('./credits-models')
+  const hostedIds = (await creditsModels(scope.ownerId)).map(model => model.id)
   const hostedEnabled = hosted.rows[0]?.enabled ?? true
   return [...subscriptions.rows, ...keys.rows, { id: 'hosted', kind: 'hosted', ids: hostedIds,
     settings: { autoEnable: false, models: Object.fromEntries(hostedIds.map(id => [id, { enabled: hostedEnabled, fresh: false, manual: true }])) },
     refreshedAt: null, refreshError: null }]
 }
+/** Which listed ids Mikka's catalogue knows, read once per answer. */
+async function knownIds(rows: readonly SourceRow[]) {
+  const { knownModelCatalogue, knownModels } = await import('./model-known')
+  return knownModels(rows.flatMap(row => row.kind === 'hosted' ? [] : row.ids), await knownModelCatalogue())
+}
 export async function readEnabledModels(query: Pick<Pool | PoolClient, 'query'>, scope: Scope) {
-  return { sources: (await sources(query, scope)).map(project) }
+  const rows = await sources(query, scope)
+  const known = await knownIds(rows)
+  return { sources: rows.map(row => project(row, known)) }
 }
 export type ModelSettingsChange = { kind: 'model'; modelId: string; enabled: boolean } | { kind: 'all'; enabled: boolean }
   | { kind: 'auto'; enabled: boolean } | { kind: 'seen' }
@@ -51,7 +59,7 @@ const changeInput = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('all'), enabled: z.boolean() }), z.strictObject({ kind: z.literal('auto'), enabled: z.boolean() }),
   z.strictObject({ kind: z.literal('seen') }),
 ])
-/** Only the credential owner can change its catalogue, including when shared.
+/** Only the credential owner can change its catalogue: a person's own, or a workspace key through the workspace's admin.
  * Every mutation/refresh serializes on the same credential row. Runs already
  * frozen on a credential are neither stopped nor rewritten. */
 export async function changeEnabledModels(pool: Pool, scope: Scope, sourceId: string, input: ModelSettingsChange) {
@@ -66,7 +74,8 @@ export async function changeEnabledModels(pool: Pool, scope: Scope, sourceId: st
       const subscription = await client.query('SELECT id FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND "removedAt" IS NULL FOR UPDATE', [sourceId, scope.ownerId])
       kind = subscription.rowCount ? 'subscription' : 'api_key'
       if (!subscription.rowCount) {
-        const key = await client.query('SELECT id FROM model_api_keys WHERE id=$1 AND "ownerId"=$2 FOR UPDATE', [sourceId, scope.ownerId])
+        const key = await client.query(`SELECT id FROM model_api_keys WHERE id=$1 AND ("ownerId"=$2 OR ($4::boolean AND "workspaceId"=$3::uuid)) FOR UPDATE`,
+          [sourceId, scope.ownerId, z.uuid().safeParse(scope.workspaceId).success ? scope.workspaceId : null, scope.manageWorkspaceKeys === true])
         if (!key.rowCount) throw new WorkspaceError('executionModelUnknown')
       }
     }
@@ -82,20 +91,22 @@ export async function changeEnabledModels(pool: Pool, scope: Scope, sourceId: st
       const prior = settings.models[id] ?? { enabled: true, fresh: false, manual: false }
       settings.models[id] = change.kind === 'seen' ? { ...prior, fresh: false } : { enabled: change.enabled, fresh: false, manual: true }
     }
-    if (kind === 'hosted') await client.query('UPDATE "user" SET "hostedModelEnabled"=$2 WHERE id=$1', [scope.ownerId, change.kind === 'model' || change.kind === 'all' ? change.enabled : settings.models[row.ids[0]].enabled])
-    else {
+    if (kind === 'hosted') {
+      if (change.kind === 'model' || change.kind === 'all') await client.query('UPDATE "user" SET "hostedModelEnabled"=$2 WHERE id=$1', [scope.ownerId, change.enabled])
+    } else {
       // The table name is selected solely from this closed, server-derived set.
       const table = kind === 'subscription' ? 'byos_connections' : 'model_api_keys'
-      await client.query(`UPDATE ${table} SET "modelSettings"=$3::jsonb WHERE id=$1 AND "ownerId"=$2`, [sourceId, scope.ownerId, JSON.stringify(settings)])
+      // The row was locked above under the same owner rule; the id alone names it.
+      await client.query(`UPDATE ${table} SET "modelSettings"=$2::jsonb WHERE id=$1`, [sourceId, JSON.stringify(settings)])
       const disabled = Object.entries(settings.models).filter(([, item]) => !item.enabled).map(([id]) => id)
       await client.query('DELETE FROM model_order_entries WHERE "sourceKind"=$1 AND "sourceId"=$2::uuid AND model=ANY($3::text[])', [kind, sourceId, disabled])
     }
     await client.query('COMMIT')
-    return project({ ...row, settings })
+    return project({ ...row, settings }, await knownIds([row]))
   } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
 }
 
 export async function hostedModelEnabled(query: Pick<Pool | PoolClient, 'query'>, ownerId: string) {
-  const { rows: [row] } = await query.query<{ enabled: boolean }>(`SELECT COALESCE((to_jsonb(u)->>'hostedModelEnabled')::boolean,true) AS enabled FROM "user" u WHERE id=$1`, [ownerId])
+  const { rows: [row] } = await query.query<{ enabled: boolean }>(`SELECT ${jsonbFlagIsNotFalseSql('to_jsonb(u)', 'hostedModelEnabled')} AS enabled FROM "user" u WHERE id=$1`, [ownerId])
   return row?.enabled ?? true
 }

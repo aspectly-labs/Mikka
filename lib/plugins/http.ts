@@ -3,6 +3,12 @@ import { PluginError } from './contracts'
 import { SecretsKeyMissingError } from '@/lib/secrets/crypto'
 
 const headers = { 'Cache-Control': 'private, no-store' }
+export async function pluginUuidParam<K extends string>(ctx: { params: Promise<Record<K, string>> }, key: K): Promise<string> {
+  const parsed = z.uuid().safeParse((await ctx.params)[key])
+  if (!parsed.success) throw new PluginError('invalidPluginInput', 400)
+  return parsed.data
+}
+
 export async function pluginResponse(work: () => Promise<unknown>, status = 200) {
   try { return Response.json(await work(), { status, headers }) }
   catch (error) {
@@ -30,6 +36,6 @@ export async function pluginBody<T>(request: Request, schema: z.ZodType<T>): Pro
     return parsed.data
   } catch (error) {
     if (error instanceof PluginError) throw error
-    throw new PluginError('invalidPluginInput', 400)
+    throw Object.assign(new PluginError('invalidPluginInput', 400), { cause: error })
   } finally { void reader.cancel().catch(() => {}) }
 }

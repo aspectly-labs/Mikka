@@ -22,8 +22,9 @@ const requestSchema = z.union([
   z.object({ operation: z.literal('call'), name: z.enum(Object.keys(mailboxInputs) as [MailboxToolName, ...MailboxToolName[]]), arguments: z.unknown() }).strict(),
 ])
 const unavailable = () => new Error('Run mailbox unavailable')
+/** `lease` is the run's local lease: Infinity while the device session is open, a deadline while it is down. */
 export function assertMailboxRunAuthority(input: { held: boolean; state?: RunState; stopped: boolean; lease?: number }) {
-  if (!input.held || !input.state || isTerminalRunState(input.state) || input.stopped || input.lease === undefined || !Number.isFinite(input.lease) || input.lease <= Date.now()) throw unavailable()
+  if (!input.held || !input.state || isTerminalRunState(input.state) || input.stopped || input.lease === undefined || Number.isNaN(input.lease) || input.lease <= Date.now()) throw unavailable()
 }
 const uncertain = { isError: true, content: [{ type: 'text' as const, text: 'Mailbox outcome unconfirmed or unavailable. Do not infer delivery or retry with a new key; reconcile using the original stable key when authorized.' }] }
 export interface RunMailbox {
@@ -73,7 +74,7 @@ export async function createRunMailbox(host: {
   const catalogue = assigned?.mailboxCatalogue === undefined ? undefined : mailboxCatalogueSchema.parse(assigned.mailboxCatalogue)
   if (assigned?.mailbox !== true) return undefined
   let endpoint: URL
-  try { endpoint = new URL(assigned.url) } catch { throw unavailable() }
+  try { endpoint = new URL(assigned.url) } catch (error) { throw Object.assign(unavailable(), { cause: error }) }
   if (endpoint.href !== host.endpoint.href || !trustedServerEndpoint(endpoint) ||
       !/^mkw_[A-Za-z0-9_-]{43}$/.test(assigned.token)) throw unavailable()
   let nextId = 0, session: string | null = null, version = '2025-03-26', closed = false, inFlight = 0
@@ -97,7 +98,7 @@ export async function createRunMailbox(host: {
       active()
       if (packet.jsonrpc !== '2.0' || packet.id !== id || packet.error || !packet.result) throw unavailable()
       return packet.result
-    } catch { throw unavailable() } finally { pending.delete(abort) }
+    } catch (error) { throw Object.assign(unavailable(), { cause: error }) } finally { pending.delete(abort) }
   }
   active()
   let allowed: string[]

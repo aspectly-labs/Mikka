@@ -1,4 +1,4 @@
-export const LIVE_KINDS = ['thread_list', 'task_run_list', 'bot_chat_list', 'device_list', 'bot_chat', 'issue_list', 'bot_list', 'group_list', 'workspace_settings', 'computer_state', 'approved_writes', 'approved_write', 'pending_actions', 'factory_task', 'factory_issue', 'issue_document', 'artifact', 'issue_members', 'issue_relations', 'issue_threads', 'thread', 'run', 'coordinator_session', 'model_settings', 'group_chat', 'hosted_billing', 'pull_request_status', 'subagent_events', 'project_map', 'schedule_list'] as const
+export const LIVE_KINDS = ['thread_list', 'task_run_list', 'bot_chat_list', 'device_list', 'bot_chat', 'issue_list', 'bot_list', 'group_list', 'workspace_settings', 'computer_state', 'approved_writes', 'approved_write', 'pending_actions', 'factory_task', 'factory_issue', 'issue_document', 'artifact', 'issue_members', 'issue_relations', 'issue_threads', 'thread', 'run', 'coordinator_session', 'model_settings', 'integration_settings', 'group_chat', 'hosted_billing', 'pull_request_status', 'subagent_events', 'project_map', 'schedule_list'] as const
 export type LiveKind = typeof LIVE_KINDS[number]
 /** `rev` is a post-commit counter of this key (lib/live/revisions.ts), never content. */
 export type LiveInvalidation = { kind: LiveKind; id: string; rev?: number }
@@ -55,8 +55,4 @@ export function liveReadiness(value: unknown): { kinds: LiveKind[]; revisions: L
   if (!(record.version === 1 && size === 3) && !(record.version === 2 && size === 4 && kindNames(record.revisions))) return null
   const known = (names: unknown) => (names as string[]).filter((kind): kind is LiveKind => LIVE_KINDS.includes(kind as LiveKind))
   return { kinds: known(record.kinds), revisions: record.version === 2 ? known(record.revisions).filter(isLiveRevisionKind) : [] }
-}
-
-export function liveCapabilities(value: unknown): LiveKind[] | null {
-  return liveReadiness(value)?.kinds ?? null
 }

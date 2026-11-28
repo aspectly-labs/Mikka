@@ -1,6 +1,7 @@
 # A write the Decisions API cannot judge goes ahead, logged
 
 - Date: 2026-11-01
+- **Status:** Superseded by [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) (app-write Decision fallback retired)
 - Source: Alex, relayed by the coordinator session: when the Decision API cannot be reached, a write no longer asks the person for approval; it is bypassed, or left to the model running the task.
 - Rule: R-77
 - Replaces: "an unavailable, refused or malformed judgment asks" in the 2026-10-31 app-write row of `../decisions.md` (#657), and its "a `readOnlyHint` tool skips the call"

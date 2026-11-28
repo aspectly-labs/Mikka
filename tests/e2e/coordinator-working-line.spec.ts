@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Page, TestInfo } from '@playwright/test'
 import { Pool } from 'pg'
-import { test, expect, register } from './fixtures'
+import { test, expect, register, parseBrowserRpc } from './fixtures'
 
 // The Thinking row (「思考中」) is for work the person is waiting on. After the turn
 // stores its reply, the workflow still finishes up (execution record, phone
@@ -48,13 +48,13 @@ async function availableCoordinator(page: Page) {
   let chatAction: string | null = null
   await page.route('**/*', async route => {
     const request = route.request()
-    const actionId = request.headers()['next-action']
-    if (request.method() !== 'POST' || !actionId || (chatAction && actionId !== chatAction)) return route.fallback()
-    if (!chatAction && (request.postData() ?? '').trim() !== '[]') return route.fallback()
+    const rpc = parseBrowserRpc(request)
+    if (!rpc || (chatAction && rpc.action !== chatAction)) return route.fallback()
+    if (!chatAction && rpc.args.length !== 0) return route.fallback()
     const response = await route.fetch()
     const body = await response.text()
     if (!/"items"\s*:/.test(body) || !/"working"\s*:/.test(body)) return route.fulfill({ response, body })
-    chatAction = actionId
+    chatAction = rpc.action
     const view = await (await page.request.get('/mikka/api/coordinator/messages')).json() as { working: boolean }
     return route.fulfill({ response, body: body.replace(/"working"\s*:\s*(true|false)/, `"working":${view.working}`).replace(/"enabled"\s*:\s*false/, '"enabled":true') })
   })

@@ -1,4 +1,5 @@
 import { deploymentSwitch } from '@/lib/deployment-switches'
+import { runtimeEnv } from './env/runtime.mjs'
 type Env = Record<string, string | undefined>
 
 /**
@@ -7,21 +8,21 @@ type Env = Record<string, string | undefined>
  * (lib/deployment-switches.ts) is the kill switch for a live incident; an admin turns computer use off per
  * workspace in its policy.
  */
-export function cloudComputerTasksEnabled(env: Env = process.env) {
+export function cloudComputerTasksEnabled(env: Env = runtimeEnv()) {
   return deploymentSwitch('cloudComputerTasks', env)
 }
 
 /** The subscription (BYOS) backend: PostHog's mikka-byos (lib/deployment-switches.ts). */
-export function byosEnabled(env: Env = process.env) {
+export function byosEnabled(env: Env = runtimeEnv()) {
   return deploymentSwitch('byos', env)
 }
 
 /** Subscription enrollment custody: PostHog's mikka-byos-enrollment (lib/deployment-switches.ts). */
-export function byosEnrollmentEnabled(env: Env = process.env) {
+export function byosEnrollmentEnabled(env: Env = runtimeEnv()) {
   return deploymentSwitch('byosEnrollment', env)
 }
 
 /** A cloud computer run needs both: cloud computer tasks not killed and the BYOS backend on. */
-export function cloudComputerRunsEnabled(env: Env = process.env) {
+export function cloudComputerRunsEnabled(env: Env = runtimeEnv()) {
   return cloudComputerTasksEnabled(env) && byosEnabled(env)
 }

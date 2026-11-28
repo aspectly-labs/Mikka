@@ -48,7 +48,7 @@ for (const width of [1280, 1440]) {
     const board = page.getByRole('region', { name: '横向滚动任务看板', exact: true })
     const sidebar = page.getByRole('complementary', { name: 'Coordinator', exact: true })
     await expect(sidebar).toBeVisible()
-    // 已完成 is a full column beside the sidebar, never a strip (decisions/2026-11-01-1144-board-done-keeps-its-width.md).
+    // 已完成 is a full column beside the sidebar, never a strip (mikka-hosted-ui/docs/design/decisions/2026-11-01-1144-board-done-keeps-its-width.md).
     await expect(board.getByRole('region', { name: '已完成任务列', exact: true })).toBeVisible()
     const done = board.locator('[data-slot="kanban-column"]').last()
     // Nobody is on the seeded tasks: 负责人 我 leaves them out, 我创建的 shows them (decision 2026-11-02-0302).

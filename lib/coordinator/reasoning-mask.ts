@@ -8,3 +8,10 @@ export function reasoningText(userId: string, text: string, fingerprints: Secret
   try { assertNoSecret(userId, masked, fingerprints) } catch { return undefined }
   return masked
 }
+
+/** A stored tool call's input or output, shown when its row is opened: masked again, and left out if it holds a saved secret. */
+export function storedToolText(userId: string, text: string, fingerprints: SecretFingerprint[]): string | undefined {
+  const masked = credentialMasker(text)
+  try { assertNoSecret(userId, masked, fingerprints) } catch { return undefined }
+  return masked
+}

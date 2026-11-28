@@ -19,19 +19,22 @@ import { ALLOWED_MODEL, codexWithModel, seedAllowedModel } from './support/allow
 import { isolateCoordinatorWakes } from './support/coordinator-wake'
 import { addFactoryVisualEvidence } from './helpers/factory-visual-evidence'
 import { threadPromptView } from '../lib/thread-prompt'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 
 test('provider failure continues the same task through its own Agent\'s authorized preferred models, never the other Agent\'s', { skip: !dbUrl }, async t => {
-  const names = ['WORKSPACE_SECRETS_KEY', 'BETTER_AUTH_SECRET', 'MIKKA_BYOS_ENABLED', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED'] as const
+  const names = ['WORKSPACE_SECRETS_KEY', 'BETTER_AUTH_SECRET', 'MIKKA_BYOS_ENABLED', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'MIKKA_LITELLM_URL', 'MIKKA_LITELLM_MASTER_KEY'] as const
   const saved = new Map(names.map(name => [name, process.env[name]]))
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   // Policy snapshots sign with this secret; CI provides one, local runs get a test-only value.
   process.env.BETTER_AUTH_SECRET ??= randomBytes(32).toString('hex')
   process.env.MIKKA_BYOS_ENABLED = '1'
+  process.env.MIKKA_LITELLM_URL = 'https://models.example.test/v1'
+  process.env.MIKKA_LITELLM_MASTER_KEY = 'synthetic-provider-fallback'
   delete process.env.MIKKA_CLOUD_COMPUTER_TASKS
   delete process.env.MIKKA_FACTORY_ROUTING_ENABLED
-  const next = await import('next/server')
+  const next = await import('@/lib/server-runtime/server')
   let captureAfter: (() => Promise<void>)[] | undefined
-  mock.module('next/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse,
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse,
     after: (work: () => Promise<void>) => { captureAfter?.push(work) },
   } })
   const coordinator = await isolateCoordinatorWakes(t)
@@ -74,7 +77,6 @@ test('provider failure continues the same task through its own Agent\'s authoriz
       await pool.query('DELETE FROM model_api_keys WHERE "ownerId" = ANY($1)', [users])
       await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
       await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
-      await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
       await pool.query('DELETE FROM device_tokens WHERE "userId" = ANY($1)', [users])
       await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
       await pool.query('DELETE FROM device_repos WHERE "userId" = ANY($1)', [users])
@@ -96,13 +98,12 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     const id = await seedUser(pool, label)
     users.push(id)
     const ws = await seedWorkspace(pool, id, [{ userId: id, role: 'admin' }])
-    await pool.query('INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)', [id, ws.id])
     const botId = await seedBot(pool, ws.id, id)
     const remote = `https://github.com/mikka-ci/provider-fallback-${randomUUID()}.git`
     await recordPushGrant(pool, id, normalizeRepository(remote).key)
     const deviceId = randomUUID()
-    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt",harnesses)
-      VALUES ($1,$2,'Laptop','local',true,$3,now(),$4)`, [deviceId, id, DAEMON_PROTOCOL_VERSION, harnesses(['claude_code', 'codex'])])
+    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt",harnesses,"sessionOpenedAt")
+      VALUES ($1,$2,'Laptop','local',true,$3,now(),$4,now())`, [deviceId, id, DAEMON_PROTOCOL_VERSION, harnesses(['claude_code', 'codex'])])
     const agents: Record<Harness, string> = { claude_code: randomUUID(), codex: randomUUID() }
     for (const [harness, agentId] of Object.entries(agents))
       await pool.query('INSERT INTO agents (id,"userId","deviceId",harness,name) VALUES ($1,$2,$3,$4,$5)', [agentId, id, deviceId, harness, `${harness}-${agentId.slice(0, 8)}`])
@@ -162,8 +163,8 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     stopReason: 'provider_failure', report: { ...emptyRunReport('The model provider could not serve the request.'), providerFailure: failure },
   })
   const claim = async (p: Person, runId: string, options: { snapshot?: boolean } = {}) => {
-    const response = await claimRoute.POST(new Request(`http://127.0.0.1/v1/devices/${p.deviceId}/runs/${runId}/claim`, {
-      method: 'POST', headers: { 'x-mikka-client-version': MIN_DAEMON_VERSION, authorization: `Bearer ${p.token}`,
+    const response = await claimRoute.POST(new Request(`https://mikka.test/v1/devices/${p.deviceId}/runs/${runId}/claim`, {
+      method: 'POST', headers: { 'x-mikka-device-session': '1', 'x-mikka-client-version': MIN_DAEMON_VERSION, authorization: `Bearer ${p.token}`,
         [REPO_ORIGIN_HEADER]: '1', [MODEL_CREDENTIAL_HEADER]: '1', [PROJECT_ENVIRONMENT_HEADER]: '1', [RECOVERY_WORKTREE_HEADER]: '1',
         ...(options.snapshot ? { [POLICY_SNAPSHOT_HEADER]: POLICY_SNAPSHOT_VERSION } : {}) },
     }), { params: Promise.resolve({ deviceId: p.deviceId, runId }) })
@@ -194,15 +195,14 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     ])
     const issueId = await task(p), projectId = randomUUID(), epoch = randomUUID(), sha = 'c'.repeat(40)
     const environment = await resources.saveEnvironment(p.id, { workspaceId: p.workspaceId, name: 'Frozen candidate environment',
-      configuration: { runtime: 'local', variables: { REVIEW_MODE: 'frozen' } } })
+      configuration: { runtime: 'local', variables: { REVIEW_MODE: 'frozen' } },
+      repositories: [{ key: normalizeRepository(p.remote).key, clone: 'start', baseBranch: 'environment-base', primary: true }] })
     try {
       await pool.query(`INSERT INTO workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
         VALUES($1,$2,$3,'Candidate checkout','','','planned','none','','','','','[]',1)`, [projectId, p.id, p.workspaceId])
       await (await import('../lib/resource-access/projects')).registerProjectAccess(p.id, projectId, p.workspaceId)
       await seedProjectTasks(pool, projectId, [issueId])
-      await resources.saveProjectResources(p.id, { workspaceId: p.workspaceId, projectId, revision: 1,
-        repositories: [{ repositoryKey: normalizeRepository(p.remote).key, baseBranch: 'environment-base', environmentId: environment.id, isPrimary: true }],
-        environmentIds: [environment.id], defaultEnvironmentId: environment.id })
+      await assignTaskEnvironment(pool, p.id, p.workspaceId, [issueId], environment.id)
       await pool.query(`INSERT INTO coordinator_events(id,"userId","botId","issueId",kind,"dedupeKey",payload)
         VALUES($1,$2,$3,$4,'user_message',$5,'{"text":"Review this exact candidate with the admitted environment"}')`, [epoch, p.id, p.botId, issueId, `candidate-fallback:${epoch}`])
       const repo = await ensureDeviceRepository(p.id, p.deviceId, p.remote)
@@ -252,7 +252,7 @@ test('provider failure continues the same task through its own Agent\'s authoriz
       assert.deepEqual((await row(check.runId)).report.modelFallback, original.report.modelFallback)
       assert.equal((await pool.query('SELECT count(*)::int AS n FROM factory_attempts WHERE "taskId"=$1 AND stage=\'review\'', [routed.task.id])).rows[0].n, 2)
     } finally {
-      await workspacePool.query('DELETE FROM workspace_project_repositories WHERE "projectId"=$1', [projectId])
+      await workspacePool.query('DELETE FROM workspace_task_environments WHERE "environmentId"=$1', [environment.id])
       await workspacePool.query('DELETE FROM workspace_projects WHERE id=$1', [projectId])
       await workspacePool.query('DELETE FROM workspace_environments WHERE id=$1', [environment.id])
     }
@@ -431,7 +431,7 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     assert.equal(assignment.requireWorktreeContinuation, true)
     assert.equal(assignment.resumeSessionId, `session-${runId}`, 'the same Agent resumes its own session')
     assert.equal(assignment.followUp, providerContinuationNote())
-    assert.ok(assignment.modelCredential, 'the continuation carries B\'s key')
+    assert.ok(assignment.modelCredential, 'the continuation carries a gateway token for B')
     assert.equal(assignment.subscriptionBinding, undefined)
   })
 
@@ -489,30 +489,23 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     assert.equal(await recoverProviderFailure(pool, p.id, runId), null)
   })
 
-  await t.test('a model fallback preserves the original workspace permission ceiling through claim', async () => {
+  await t.test('a model fallback inherits no restriction from a legacy workspace policy layer', async () => {
+    // A workspace cli_run_policy an older build stored restricts nothing (ADR 2026-11-27-1615):
+    // neither the original run nor its fallback continuation is read-only or network-capped by it.
     const { p } = await twoModels('provider-policy-ceiling', true)
     await pool.query(`INSERT INTO workspace_computer_policies ("workspaceId",permission,cli_run_policy) VALUES ($1,'allow',$2)
       ON CONFLICT ("workspaceId") DO UPDATE SET cli_run_policy=excluded.cli_run_policy`, [p.workspaceId,
       { approvalMode: 'read_only', permissions: { git_push: 'deny' }, networkAllow: ['api.example.invalid'] }])
     const runId = await running(p)
-    assert.equal((await row(runId)).agentDefinition.readOnly, undefined, 'the constraint originates in workspace policy, not a readOnly run argument')
+    assert.equal((await row(runId)).agentDefinition.readOnly, undefined)
     await end(p, runId, balance)
     const [continuation] = await children(runId)
     assert.ok(continuation)
     assert.equal(continuation.agentDefinition.harness, 'claude_code')
-    assert.equal(continuation.agentDefinition.policyCeiling.readOnly, true)
-    // Even a later relaxation of the workspace cannot remove the inherited cap.
-    // Open network is network=allow without a domain ceiling; bare '*' is not
-    // a valid stored networkAllow domain and would reject the policy itself.
-    await pool.query(`INSERT INTO workspace_computer_policies ("workspaceId",permission,cli_run_policy) VALUES ($1,'allow',$2)
-      ON CONFLICT ("workspaceId") DO UPDATE SET cli_run_policy=excluded.cli_run_policy`, [p.workspaceId,
-      { approvalMode: 'ask', permissions: { git_push: 'allow', network: 'allow' } }])
-    // A non-empty workspace layer requires a signed-policy consumer at claim.
+    assert.notEqual(continuation.agentDefinition.policyCeiling?.readOnly, true, 'a legacy read-only layer is not inherited')
     const assignment = await claim(p, continuation.id, { snapshot: true })
-    assert.equal(assignment.policy.readOnly, true)
-    assert.equal(assignment.policy.permissions.git_push, 'deny')
-    assert.equal(assignment.policy.permissions.computer_use, 'deny')
-    assert.deepEqual(assignment.policy.networkCeiling, ['api.example.invalid'])
+    assert.notEqual(assignment.policy.readOnly, true)
+    assert.equal(assignment.policy.networkCeiling, undefined)
   })
 
   await t.test('when every entry of the thread\'s Agent is bad, the blocked card has each of its models and its specific reason, and none of the other Agent\'s', async () => {
@@ -564,8 +557,8 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     const { p, second } = await twoModels('provider-pinned')
     await pool.query('UPDATE devices SET harnesses=$2 WHERE id=$1', [p.deviceId, harnesses(['claude_code'])])
     const deviceId = randomUUID(), agentId = randomUUID()
-    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt",harnesses)
-      VALUES ($1,$2,'Other laptop','local',true,$3,now(),$4)`, [deviceId, p.id, DAEMON_PROTOCOL_VERSION, harnesses(['codex'])])
+    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt",harnesses,"sessionOpenedAt")
+      VALUES ($1,$2,'Other laptop','local',true,$3,now(),$4,now())`, [deviceId, p.id, DAEMON_PROTOCOL_VERSION, harnesses(['codex'])])
     await pool.query('INSERT INTO agents (id,"userId","deviceId",harness,name) VALUES ($1,$2,$3,\'codex\',\'Other Codex\')', [agentId, p.id, deviceId])
     const runId = await running(p, 'claude_code', { pinned: true })
     await end(p, runId, balance)
@@ -660,8 +653,8 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     const { p: second } = await twoModels('provider-checkpoint-remote')
     await pool.query('UPDATE devices SET harnesses=$2 WHERE id=$1', [second.deviceId, harnesses(['claude_code'])])
     const deviceId = randomUUID(), agentId = randomUUID()
-    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt",harnesses)
-      VALUES ($1,$2,'Other laptop','local',true,$3,now(),$4)`, [deviceId, second.id, DAEMON_PROTOCOL_VERSION, harnesses(['codex'])])
+    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"protocolVersion","lastSeenAt",harnesses,"sessionOpenedAt")
+      VALUES ($1,$2,'Other laptop','local',true,$3,now(),$4,now())`, [deviceId, second.id, DAEMON_PROTOCOL_VERSION, harnesses(['codex'])])
     await pool.query(`INSERT INTO agents (id,"userId","deviceId",harness,name) VALUES ($1,$2,$3,'codex','Checkpoint Codex')`, [agentId, second.id, deviceId])
     const otherRun = await running(second)
     await persistRunCompletion(second.id, otherRun, { stopReason: 'provider_failure', report: {

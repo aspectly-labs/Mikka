@@ -2,17 +2,14 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "ignorePatterns": [
     "node_modules/**",
-    ".next/**",
     "out/**",
     "build/**",
     "packages/**",
     "apps/desktop/**",
-    "apps/mobile/**",
     "apps/frontend/dist/**",
     "apps/frontend/node_modules/**",
     "apps/api/generated/**",
     "components/reui/code-block/**",
-    "next-env.d.ts",
     "user_read_only_context/**",
     "v0_memories/**",
     ".claude/**",
@@ -20,13 +17,16 @@
     ".vercel/**",
     ".hosted-ui/**"
   ],
+  "jsPlugins": [
+    "./scripts/oxlint-plugin-mikka.mjs"
+  ],
   "rules": {
     "no-restricted-imports": [
       "error",
       {
         "paths": [
           {
-            "name": "next/server",
+            "name": "@/lib/server-runtime/server",
             "importNames": [
               "after"
             ],
@@ -34,6 +34,10 @@
           }
         ]
       }
-    ]
+    ],
+    "mikka/no-raw-process-env": "error",
+    "mikka/no-plan-name-branching": "error",
+    "mikka/no-hardcoded-model-ids": "error",
+    "mikka/no-hardcoded-hosts": "error"
   }
 }

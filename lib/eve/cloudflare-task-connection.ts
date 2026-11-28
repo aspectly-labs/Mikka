@@ -1,10 +1,15 @@
 import type { SandboxConnection } from 'eve/sandbox/provider'
+import type { MachineSize } from '../cloud-computer/machine-pricing'
 
 type SandboxProcess = Awaited<ReturnType<SandboxConnection['spawn']>>
 
 export type TaskMachineGrant = Readonly<{
   ownerId:string; workspaceId:string; taskId:string; repositoryKey:string
   runId:string; operationId:string; expiresAt:number
+  /** The instance type the machine starts at: the billed size recorded at admission (#3080). Absent starts the default. */
+  size?: MachineSize
+  metered?: true
+  portableWorkspace?: { size: number; sha256: string; headSha: string }
   requiredCheckpoint?: { instanceId:string; id:string; sha256:string }
 }>
 

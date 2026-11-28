@@ -2,7 +2,7 @@ import 'server-only'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db } from './db'
 import { issueDocuments, issues } from './db/schema'
-import { loadIssueDocument, readIssueThreads } from './linear-sync/document'
+import { loadIssueDocument, readIssueThreads } from './task-comments/issue-document'
 import type { FactoryStageComment } from './task-activity-timeline'
 
 /** Correlate this projection with an already-authorized Task document.

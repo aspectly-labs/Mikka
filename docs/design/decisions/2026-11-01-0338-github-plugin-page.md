@@ -1,6 +1,7 @@
 # GitHub's plugin page: connection, repository access and abilities with their own allow / ask / deny
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-01-1215-push-by-github-app](2026-11-01-1215-push-by-github-app.md)
 - Source: Alex, MVP bug triage relayed by the coordinator: 「插件这一块仍然没有，一些信息、读写工具之类全部都没有」 and 「按照道理来说应该直接跳转到 GitHub 才对啊，怎么还在中间跳到我们的网页端来了呀？」; layout and permission wiring approved by Alex's coordinator the same day
 - Rule: R-40, R-74, R-77
 - Replaces: the GitHub part of `2026-10-31-1952-app-page-details.md` («GitHub, Linear and Telegram keep their own pages»)

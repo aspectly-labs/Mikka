@@ -1,6 +1,7 @@
 # Team 生命周期：归档、移除分组与受限硬删除
 
 - Date: 2026-11-07
+- **Status:** Accepted
 - Source: [#1687 工作包 A](https://github.com/alexj11324/Mikka/issues/1687)，要求「archive/remove grouping 与 hard delete 分离、恢复/审计策略」，以及本 Epic 的实施决定：没有受测的业务对象回收站时，不执行非空 Team 的不可恢复级联删除。
 - Rule: Workspace 是 Task/Project 的租户；Team 是可选分组。共享工作区成员默认可见 Team，包括归档 Team 的历史；Team membership 不扩大 Workspace 权限。
 - Replaces: `deleteTeamData` 删除 Team 下 Task 和独占 Project 的实现。既有删除请求不被转换为归档或解除分组，而是明确拒绝非空 Team。

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
+import { writePolicyVersion } from './write-policy'
 import { writeTransaction, type WriteRequestContext, type WriteTransactionOptions } from './write-transaction'
 import { OperationError } from './write-error'
 export { OperationError } from './write-error'
@@ -14,7 +15,8 @@ const intent = identity.extend({
   // Optional only for legacy proposals. New run-bound callers must supply the
   // actual host run ID, not the separately generated attempt token.
   executionRunId: z.uuid().optional(),
-  policyScope: z.object({ botId: z.uuid().nullable(), workspaceId: z.uuid().nullable(), version: z.string().regex(/^\d+(?::\d+)?$/), approvalDefault: z.enum(['allow', 'ask']).optional() }).strict().optional(),
+  // `approvalDefault` only parses bindings stored before ADR 2026-11-27-1615.
+  policyScope: z.object({ botId: z.uuid().nullable(), workspaceId: z.uuid().nullable(), version: writePolicyVersion, approvalDefault: z.enum(['allow', 'ask']).optional() }).strict().optional(),
   approvalId: text, candidateSha: z.string().regex(/^[a-f0-9]{40,64}$/).optional(),
   proposalDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   payloadDigest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -140,19 +142,23 @@ export function createOperationLedger(pool: Pool, authorize: OperationAuthorize,
     },
     /** Trusted readback only; never invokes an effect. Unknown/absent objects keep their state:
      * a negative query cannot prove an old in-flight request will not later complete.
+     * `lookup` gets the transaction's signal, which aborts when the authorization
+     * lease is lost or expires: a provider read must not outlive it.
      */
-    async reconcile(input: OperationIdentity, lookup: (record: Readonly<OperationRecord>) => Promise<OperationReceipt | null>) {
+    async reconcile(input: OperationIdentity, lookup: (record: Readonly<OperationRecord>, leaseSignal: AbortSignal) => Promise<OperationReceipt | null>) {
       return transaction(input, async tx => {
         const row = await owned(tx, input)
         assertOperationRun(row.binding, row.runId)
         await authorize(tx, row.binding, row.runId, 'reconcile')
         return row
-      }, async (tx, row, lease) => {
+      }, async (tx, row, lease, signal) => {
         if (!['executing', 'uncertain'].includes(row.status)) return row
         // External readback shares the same current-authority lease as effects.
         await lease?.check()
         await authorize(tx, row.binding, row.runId, 'reconcile')
-        const evidence = await lookup(row)
+        signal.throwIfAborted()
+        const evidence = await lookup(row, signal)
+        signal.throwIfAborted()
         await lease?.check()
         await authorize(tx, row.binding, row.runId, 'reconcile')
         // Absence is not proof of failure and must not invalidate a concurrent

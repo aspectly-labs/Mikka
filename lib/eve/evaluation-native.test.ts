@@ -31,13 +31,13 @@ test('Agent Kit evaluations run through compiled public Eve sessions with inert 
   await logs.close();await runtimeLog.close();if(!process.env.MIKKA_TEST_KEEP_EVAL)await rm(fixture,{recursive:true,force:true});else t.diagnostic(fixture)
   for(const [key,value]of Object.entries(saved))if(value===undefined)delete process.env[key];else process.env[key]=value
  })
- for(const folder of ['apps/eve/agent/channels','apps/eve/agent/tools','apps/eve/agent/hooks','apps/eve/agent/connections','apps/eve/agent/skills','lib/eve','lib/abuse','lib/agent-kit','lib/factory','workflows/coordinator','node_modules','bindings'])await mkdir(join(fixture,folder),{recursive:true})
+ for(const folder of ['apps/eve/agent/channels','apps/eve/agent/tools','apps/eve/agent/hooks','apps/eve/agent/connections','apps/eve/agent/skills','lib/env','lib/eve','lib/eve/factory','lib/abuse','lib/agent-kit','lib/factory','workflows/coordinator','node_modules','bindings'])await mkdir(join(fixture,folder),{recursive:true})
  for(const name of await readdir(join(root,'node_modules')))if(name!=='.cache')await symlink(join(root,'node_modules',name),join(fixture,'node_modules',name))
- await writeFile(join(fixture,'package.json'),JSON.stringify({private:true,type:'module',dependencies:{eve:'1.0.0-rc.9'}}))
- await writeFile(join(cwd,'package.json'),JSON.stringify({private:true,type:'module',dependencies:{eve:'1.0.0-rc.9'}}))
+ await writeFile(join(fixture,'package.json'),JSON.stringify({private:true,type:'module',dependencies:{eve:'1.3.0'}}))
+ await writeFile(join(cwd,'package.json'),JSON.stringify({private:true,type:'module',dependencies:{eve:'1.3.0'}}))
  await writeFile(join(fixture,'tsconfig.json'),JSON.stringify({compilerOptions:{module:'ESNext',target:'ES2022',moduleResolution:'Bundler',strict:true,skipLibCheck:true}}))
  await writeFile(join(cwd,'tsconfig.json'),JSON.stringify({extends:'../../tsconfig.json'}))
- const sources=['apps/eve/agent/agent.ts','apps/eve/agent/instructions.ts','apps/eve/agent/channels/evaluation.ts','apps/eve/agent/tools/product.ts','apps/eve/agent/tools/agent.ts','apps/eve/agent/tools/no_reply.ts','apps/eve/agent/tools/ask_question.ts','apps/eve/agent/hooks/product.ts','apps/eve/agent/connections/personal.ts','apps/eve/agent/skills/assigned.ts','lib/eve/auth.ts','lib/eve/scope.ts','lib/eve/runtime.ts','lib/eve/evaluation-channel.ts','lib/eve/evaluation-context.ts','lib/eve/evaluation-runtime.ts','lib/eve/streaming-model.ts','lib/agent-kit/eval-fixtures.ts']
+ const sources=['apps/eve/agent/agent.ts','apps/eve/agent/instructions.ts','apps/eve/agent/channels/evaluation.ts','apps/eve/agent/tools/product.ts','apps/eve/agent/tools/agent.ts','apps/eve/agent/tools/no_reply.ts','apps/eve/agent/tools/ask_question.ts','apps/eve/agent/hooks/product.ts','apps/eve/agent/connections/personal.ts','apps/eve/agent/skills/assigned.ts','lib/public-env.mjs','lib/env/runtime.mjs','lib/env/hosts-constants.mjs','lib/env/hosts.ts','lib/env/public.ts','lib/env/server.ts','lib/env/index.ts','lib/eve/auth.ts','lib/eve/host-authorization.mjs','lib/eve/scope.ts','lib/eve/runtime.ts','lib/eve/evaluation-channel.ts','lib/eve/evaluation-context.ts','lib/eve/evaluation-runtime.ts','lib/eve/streaming-model.ts','lib/model-catalog-metadata.ts','lib/model-effort.ts','lib/model-routing.ts','lib/agent-kit/eval-fixtures.ts','lib/eve/factory/session.ts','lib/eve/factory/contract.ts','lib/factory/contract.ts']
  for(const source of sources)await writeFile(join(fixture,source),await readFile(join(root,source)))
  // Only provider/account boundaries and storage are synthetic. Channel, auth,
  // dynamic capabilities, approvals, hooks and the native Client are unchanged.
@@ -51,6 +51,11 @@ test('Agent Kit evaluations run through compiled public Eve sessions with inert 
  await writeFile(join(fixture,'lib/task-workspace.ts'),`export async function requireTaskWorkspace(owner,workspace){if(owner!=='${scope.ownerId}'||workspace!=='${scope.workspaceId}')throw Error('workspaceAccessDenied')}`)
  await writeFile(join(fixture,'lib/eve/product-rpc.ts'),`export async function productRpc(){throw Error('Real business effects forbidden')}`)
  await writeFile(join(fixture,'lib/eve/product-definitions.ts'),`export async function productCatalogue(){throw Error('Real product catalogue forbidden')}export async function asProductPrincipal(){throw Error('Real product principal forbidden')}`)
+ await writeFile(join(fixture,'lib/model-api-key-chat.ts'),`export function apiKeyNativeSearchBackend(){throw Error('Real API key capability lookup forbidden')}`)
+ await mkdir(join(fixture,'lib/model-gateway'),{recursive:true})
+ await writeFile(join(fixture,'lib/model-gateway/provider-config.ts'),`export function managedSearchRoute(){throw Error('Real managed search route forbidden')}`)
+ await writeFile(join(fixture,'lib/model-catalog-server.ts'),`export function modelCatalog(){throw Error('Real model catalogue forbidden')}`)
+ await writeFile(join(fixture,'lib/subscription-runtime.ts'),`export function subscriptionRuntime(){throw Error('Real subscriptions forbidden')}`)
  await writeFile(join(fixture,'lib/agent-kit/config.ts'),`export function agentKitEnabled(){throw Error('Real Bot policy forbidden')}`)
  await writeFile(join(fixture,'lib/agent-kit/service.ts'),`export function agentKitEnabled(){throw Error('Real Bot policy forbidden')}export function agentKitDefaults(){throw Error('Real Bot defaults forbidden')}export const agentKitStore={active(){throw Error('Real Bot definition forbidden')}}`)
  await writeFile(join(fixture,'workflows/coordinator/agent-kit-steps.ts'),`export async function botRuntime(){throw Error('Real model selection forbidden')}`)
@@ -68,10 +73,14 @@ test('Agent Kit evaluations run through compiled public Eve sessions with inert 
  if(toolResults.length===0)return{toolCalls:[{name:lastUserMessage==='native-blocked'?'agent':'web_search',input:lastUserMessage==='native-blocked'?{message:'Forbidden dispatch'}:{query:'Acme Example 1.0'}}]};
  return{toolCalls:[{name:'eve__reply',input:{text:messages.some(m=>m.text.includes('Candidate guidance'))?'Candidate: 2026-01-15':'Baseline: 2026-01-15',outcome:lastUserMessage==='native-blocked'?'blocked':'answered'}}]}}})}}`
  await writeFile(join(fixture,'lib/abuse/workflow-model.ts'),modelSource)
+ // The turn reference the Bot model records (lib/usage-turn-ref.ts) is real code, not a boundary.
+ await writeFile(join(fixture,'lib/usage-turn-ref.ts'),await readFile(join(root,'lib/usage-turn-ref.ts')))
  await writeFile(join(fixture,'lib/subscription-workflow-model.ts'),`import{HostedWorkflowModel}from'./abuse/workflow-model';export class SubscriptionWorkflowModel extends HostedWorkflowModel{constructor(frozen){if(frozen.type!=='subscription'||frozen.route!=='codex_cpa'||frozen.connectionRevision!==7)throw Error('Frozen subscription mismatch');super(frozen.ownerId,frozen.consumerId,frozen.modelId)}}`)
  // Imports in unused normal branches are resolved at build time, and remain forbidden.
  await mkdir(join(fixture,'lib/coordinator'),{recursive:true})
  await writeFile(join(fixture,'lib/coordinator/instructions.ts'),`export const COORDINATOR_INSTRUCTIONS='Unused private chat instructions'`)
+ await writeFile(join(fixture,'lib/coordinator/context.ts'),`export function instructionsWithWorkspace(){throw Error('Workspace instructions forbidden')}`)
+ await writeFile(join(fixture,'lib/coordinator/workspace-instructions.ts'),`export async function readWorkspaceInstructionsForBot(){throw Error('Workspace instructions forbidden')}`)
  await writeFile(join(fixture,'lib/coordinator/product-instructions.ts'),`export async function composeEveInstructions(){throw Error('Private product instructions forbidden')}`)
  const probe=createServer();probe.listen(0,'127.0.0.1');await once(probe,'listening');const origin=`http://127.0.0.1:${(probe.address()as{port:number}).port}`;await new Promise<void>(resolve=>probe.close(()=>resolve()))
  const env={PATH:process.env.PATH,HOME:process.env.HOME,TMPDIR:process.env.TMPDIR,NODE_ENV:'production',NITRO_PRESET:'node-server',WORKFLOW_LOCAL_BASE_URL:origin,BETTER_AUTH_SECRET:secret,FIXTURE_BINDINGS:join(fixture,'bindings')}

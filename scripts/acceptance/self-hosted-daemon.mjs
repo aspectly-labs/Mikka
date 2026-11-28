@@ -14,7 +14,7 @@ const ORIGIN = 'http://localhost:3000'
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i
 const check = (condition, code) => { if (!condition) throw new Error(`SELF_HOSTED_DAEMON_${code}`) }
 function checkRunner(env) {
-  check(env.GITHUB_ACTIONS === 'true' && env.GITHUB_REPOSITORY === 'alexj11324/Mikka'
+  check(env.GITHUB_ACTIONS === 'true' && env.GITHUB_REPOSITORY === 'aspectly-labs/Mikka'
     && /^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '') && Boolean(env.RUNNER_TEMP) && Boolean(env.GITHUB_WORKSPACE), 'CI_TARGET')
 }
 export function checkSessionTarget(session, env) {
@@ -160,7 +160,7 @@ export async function runDaemonAcceptance(env = process.env) {
       stdio: ['pipe', log.fd, log.fd, 'ipc'],
     })
     child.on('message', message => {
-      if (message && ['ready', 'heartbeat', 'gateway-pong', 'revocation-sync'].includes(message.phase)) {
+      if (message && ['ready', 'gateway-pong', 'revocation-sync'].includes(message.phase)) {
         observed.set(message.phase, message); for (const notify of listeners) notify()
       }
     })
@@ -177,10 +177,17 @@ export async function runDaemonAcceptance(env = process.env) {
     const token = enrollmentToken((await owner('/api/device-tokens')).tokens)
     check(token.revokedAt === null, 'TOKEN_IDENTITY')
     tokenId = token.id
-    check((await event('heartbeat')).deviceId === deviceId && (await event('gateway-pong')).deviceId === deviceId, 'TRANSPORT_IDENTITY')
-    const deviceRead = await rpc('agents.pollDevices'), devices = deviceRead.devices
+    check((await event('gateway-pong')).deviceId === deviceId, 'TRANSPORT_IDENTITY')
+    // Presence follows the gateway session (decision 2026-11-17-2215): the
+    // built-in gateway reports the open socket, with no heartbeat request.
+    let deviceRead
+    for (const deadline = Date.now() + 30_000; ; await new Promise(resolveWait => setTimeout(resolveWait, 500))) {
+      deviceRead = await rpc('agents.pollDevices')
+      if (deviceRead.devices?.[0]?.online === true || Date.now() > deadline) break
+    }
+    const devices = deviceRead.devices
     check(devices?.length === 1 && devices[0].id === deviceId && devices[0].online === true, 'DEVICE_ONLINE')
-    Object.assign(report.checks, { enrollment: true, realProcess: true, heartbeat: true, builtinGatewayPong: true, ownerDeviceOnline: true })
+    Object.assign(report.checks, { enrollment: true, realProcess: true, deviceSession: true, builtinGatewayPong: true, ownerDeviceOnline: true })
     check(deviceRead.live?.ownerId === session.ownerId && UUID.test(deviceRead.live?.workspaceId ?? ''), 'PRESENCE_SCOPE')
     const ticket = await owner(`/api/live/ticket?workspace=${deviceRead.live.workspaceId}`)
     await verifyPresence(ticket, deviceRead.live, session.ownerId)

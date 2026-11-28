@@ -3,6 +3,8 @@ import type { Pool, PoolClient } from 'pg';
 import { freezeWorkerDefinition, retryWorkerDefinition } from '../agent-kit/worker';
 import { configureFactoryCheck, factoryRepairBrief } from './checks';
 import { factoryHandoffPrompt, persistFactoryHandoff } from './handoff';
+import { factoryReviewPreferences } from '../code-review/configuration';
+import type { CodeReviewConfiguration } from '../code-review/settings-contract';
 import type { DispatchInput, DispatchResult } from '../run-dispatch';
 import { FactoryError, type FactoryBinding, type FactoryStage } from './contract';
 import { factoryEventId } from './event-id';
@@ -17,7 +19,7 @@ export type FactoryQueue = (tx: PoolClient, userId: string, input: {
 /** Installed by the owning consumer; no model may select a callback or gate. */
 export interface FactoryDispatchAdapters {
   lockAdmission?: (tx: PoolClient, userId: string, input: FactoryDispatchInput) => Promise<void>;
-  configure: Partial<Record<FactoryStage, (tx: PoolClient, task: FactoryTask, runId: string) => Promise<void | { preservePrompt: true }>>>;
+  configure: Partial<Record<FactoryStage, (tx: PoolClient, task: FactoryTask, runId: string) => Promise<void | { preservePrompt?: true; reviewConfig?: CodeReviewConfiguration }>>>;
   replay?: Partial<Record<FactoryStage, (tx: PoolClient, task: FactoryTask, runId: string) => Promise<void>>>;
   freeze: (tx: PoolClient, task: FactoryTask, runId: string) => Promise<void>;
 }
@@ -101,12 +103,30 @@ export function createFactoryDispatch(pool: Pool, store: ReturnType<typeof creat
       } else {
         await tx.query('UPDATE agent_runs SET prompt=left(prompt,$2) || $3,"promptTaskStart"=CASE WHEN "promptTaskStart" IS NOT NULL AND "promptTaskLength" IS NOT NULL THEN LEAST("promptTaskStart",$2) END,"promptTaskLength"=CASE WHEN "promptTaskStart" IS NOT NULL AND "promptTaskLength" IS NOT NULL THEN LEAST("promptTaskLength",GREATEST(0,$2-"promptTaskStart")) END WHERE id=$1', [queued.runId, 100000 - handoffText.length, handoffText]);
       }
+      if (configured?.reviewConfig) {
+        const { rows: [row] } = await tx.query<{ prompt: string }>('SELECT prompt FROM agent_runs WHERE id=$1', [queued.runId]);
+        const preferences = factoryReviewPreferences(configured.reviewConfig, row.prompt);
+        if (preferences) await tx.query('UPDATE agent_runs SET prompt=prompt || $2 WHERE id=$1', [queued.runId, preferences]);
+      }
       await tx.query('UPDATE factory_attempts SET output=output || $2::jsonb WHERE id=$1', [task.attemptId, JSON.stringify({ handoff: { eventId: handoff.eventId, digest: handoff.digest, requestEpoch: task.sourceEventId } })]);
       const { rows: [review] } = await tx.query('SELECT output->\'workspaceReview\' AS reference FROM factory_attempts WHERE id=$1 AND "taskId"=$2', [task.attemptId, task.id]);
       if (review?.reference != null) await (await import('../coding-workspace/diff/feedback-brief')).appendReviewBatchToRun(tx, task, queued.runId, review.reference);
       await adapters.freeze(tx,task,queued.runId);
       const { rows: [run] } = await tx.query('SELECT * FROM agent_runs WHERE id=$1 FOR UPDATE',[queued.runId]);
       if (!run || run.userId !== userId || run.issueId !== task.issueId || !(await factoryRunBotMatches(tx, task, run)) || run.agentId !== input.agentId || run.deviceRepoId !== input.deviceRepoId || run.status !== 'queued' || run.stopRequestedAt || !run.agentDefinition) fail('factoryRunMismatch');
+      // #3081: the run's actual place (its device row) and frozen harness must
+      // resolve to a route in the explicit execution matrix. An unmatched
+      // combination refuses the dispatch outright — no substitution and no
+      // silent fallback. The resolved route is frozen on the attempt as its
+      // audit receipt in the same transaction as the run binding.
+      const { rows: [routeDevice] } = run.deviceId
+        ? await tx.query<{ kind: string | null }>('SELECT kind FROM devices WHERE id=$1 AND "ownerId"=$2', [run.deviceId, userId])
+        : { rows: [] as { kind: string | null }[] }
+      const { executionRouteForRun, recordExecutionRoute } = await import('./execution-route')
+      const eveProvider = typeof run.agentDefinition?.provider === 'string' && run.agentDefinition?.executor === 'eve_factory'
+        ? run.agentDefinition.provider : null
+      await recordExecutionRoute(tx, { taskId: task.id, attemptId: task.attemptId },
+        executionRouteForRun({ deviceKind: routeDevice?.kind ?? null, harness: eveProvider ? null : (typeof run.agentDefinition?.harness === 'string' ? run.agentDefinition.harness : null), provider: eveProvider }))
       const state = await store.apply(userId,binding,binding.attemptId,{action:'bind_run',runId:run.id},tx);
       const result = {...state,runId:run.id as string,replayed:false,binding:factoryBinding(state.task)};
       await tx.query('INSERT INTO factory_events ("taskId","eventId",request,result) VALUES ($1,$2,$3,$4)',[task.id,eventId,JSON.stringify(input),JSON.stringify(result)]);

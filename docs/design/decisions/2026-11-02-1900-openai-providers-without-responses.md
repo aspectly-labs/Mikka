@@ -1,6 +1,7 @@
 # A custom OpenAI provider without the Responses API is saved for bot chats, not Codex
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: coordinator session, option B for chat-only custom OpenAI providers: save the key as before; its row says 「不支持 Responses API · Codex 用不了」; Codex does not list its models; bot chats keep working; the check costs nothing.
 - Rule: —
 - Replaces: —

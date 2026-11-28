@@ -6,6 +6,7 @@ import type { Pool, PoolClient } from 'pg'
 import { FactoryError } from './contract'
 import { ActionFailureError } from '../action-error'
 import { checkFactoryRepairBudget } from './check-recovery-evidence'
+import { jsonbSafeIntSql } from '../primitives/jsonb-predicates'
 import { factoryEventId } from './event-id'
 import { factoryBinding } from './dispatch'
 import { persistFactoryHandoff } from './handoff'
@@ -181,7 +182,7 @@ export async function sweepFactoryWatchdog(pool: Pool, dependencies?: WatchdogDe
       if (previous?.result?.nextAt && Date.parse(previous.result.nextAt) > now.getTime()
         && !(completed && action === 'recover_stall' && previous.result.action === 'stalled')) { counts.deferred++; await commitFactoryTransaction(tx); return }
       const tries = action === 'stalled' ? 0 : (previous?.result?.tries ?? 0) + 1
-      const { rows: [budget] } = await tx.query(`SELECT COALESCE(sum(COALESCE((result->>'recoveryTries')::int,0)),0)::int AS count
+      const { rows: [budget] } = await tx.query(`SELECT COALESCE(sum(COALESCE(${jsonbSafeIntSql('result', 'recoveryTries')},0)),0)::int AS count
         FROM factory_events WHERE "taskId"=$1 AND request->>'kind'='task_watchdog' AND request->>'requestEpoch'=$2`, [task.id, task.sourceEventId])
       const recoveryTries = (previous?.result?.recoveryTries ?? 0) + (action === 'recover_stall' ? 1 : 0)
       const handoff = await persistFactoryHandoff(tx, task)

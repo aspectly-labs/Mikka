@@ -1,9 +1,11 @@
+import { getPublicBasePath } from './env/public.ts'
+
 // The app is served under a path prefix (app.aspectlylabs.com/mikka), fixed in
 // lib/base-path-config.mjs and inlined as MIKKA_BASE_PATH by
 // apps/frontend/vite.config.mjs. The router adds it to link and redirect
 // targets, but not to fetch(), plain <a href>, window.location or absolute
 // URLs, so those go through withBasePath.
-export const BASE_PATH = process.env.MIKKA_BASE_PATH ?? ''
+export const BASE_PATH = getPublicBasePath()
 
 export function withBasePath(path: string, basePath = BASE_PATH) {
   if (!basePath || !path.startsWith('/') || path.startsWith('//')) return path

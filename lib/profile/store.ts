@@ -4,6 +4,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { proactiveUsage, userFactConsolidations, userFactDecisions, userFactUndo, userFacts, userPreferences, userTimeZones } from '@/lib/db/schema'
+import { resolveSettingValue } from '@/lib/settings/registry'
+import { personalSettingValues } from '@/lib/settings/schema'
 import { personLocale } from '@/lib/suggestions/action-title-server'
 import { localClock, safeTimeZone } from '@/lib/suggestions/briefing'
 import type { UserFactKind } from './kinds'
@@ -22,6 +24,19 @@ import { profileSection, promptFacts, type PromptFact } from './prompt'
 export async function memoryEnabled(userId: string): Promise<boolean> {
   const [row] = await db.select({ enabled: userPreferences.memoryEnabled }).from(userPreferences).where(eq(userPreferences.userId, userId)).limit(1)
   return row?.enabled ?? true
+}
+
+/**
+ * Whether non-conflicting extracted facts are approved automatically (`memoryAutoApprove`
+ * in `personal_setting_values`, default `false`). Self-added facts (`sourceKind: 'told'`)
+ * remain unconditionally approved regardless of this switch.
+ */
+export async function memoryAutoApprove(userId: string, executor: Pick<typeof db, 'select'> = db): Promise<boolean> {
+  const [row] = await executor.select({ booleanValue: personalSettingValues.booleanValue })
+    .from(personalSettingValues)
+    .where(and(eq(personalSettingValues.userId, userId), isNull(personalSettingValues.workspaceId), eq(personalSettingValues.key, 'memoryAutoApprove')))
+    .limit(1)
+  return resolveSettingValue('memoryAutoApprove', row?.booleanValue ?? null, null).value as boolean
 }
 
 /** Profile model calls one person may make per UTC day (proactive.md § 3). */
@@ -88,17 +103,29 @@ export async function recordFacts(userId: string, facts: readonly FactInput[], {
         if (!existing) throw new Error('memory_decision_record_missing')
         return existing.id
       }
+      const selfAdded = !pattern && fact.source?.kind === 'told'
+      const autoApprove = selfAdded ? true : await memoryAutoApprove(userId, tx)
+      const slot = typeof fact.value.slot === 'string' ? fact.value.slot : null
+      const slotConflict = slot !== null && (await tx.select({ id: userFacts.id }).from(userFacts).where(and(
+        eq(userFacts.userId, userId), eq(userFacts.kind, fact.kind), eq(userFacts.state, 'active'),
+        ne(userFacts.subjectKey, key),
+        ...(repository === null ? [isNull(userFacts.repository)] : [eq(userFacts.repository, repository)]),
+        sql`${userFacts.value} ->> 'slot' = ${slot}`,
+      )).limit(1)).length > 0
+      const reviewStatus = selfAdded || (autoApprove && !slotConflict) ? 'approved' : 'pending'
       const [inserted] = await tx.insert(userFacts).values({
         id: randomUUID(), userId, kind: fact.kind, subject, subjectKey: key, value: fact.value, evidence: fact.evidence,
         confidence: fact.confidence, firstSeenAt: fact.seenAt, lastSeenAt: fact.seenAt, expiresAt: fact.expiresAt, repository,
-        reviewStatus: 'pending', sourceKind: pattern ? null : fact.source?.kind ?? null,
+        reviewStatus, sourceKind: pattern ? null : fact.source?.kind ?? null,
         sourceId: pattern ? null : fact.source?.id ?? null, sourceUrl: pattern ? null : fact.source?.url ?? null,
       }).onConflictDoNothing().returning({ id: userFacts.id })
       if (inserted) {
         if (pattern) await tx.update(userFacts).set({ sourceKind: 'decision', sourceId: await persistDecision(inserted.id), sourceUrl: null }).where(eq(userFacts.id, inserted.id))
-        // Facts in the same semantic slot may contradict an earlier approval.
-        if (typeof fact.value.slot === 'string') await tx.update(userFacts).set({ reviewStatus: 'pending', updatedAt: new Date() }).where(and(
-          eq(userFacts.userId, userId), eq(userFacts.kind, fact.kind), eq(userFacts.state, 'active'), sql`${userFacts.value} ->> 'slot' = ${fact.value.slot}`,
+        // Facts in the same semantic slot may contradict an earlier approval unless auto-approve keeps the occupied slot while holding the newcomer pending.
+        if (!autoApprove && slot !== null) await tx.update(userFacts).set({ reviewStatus: 'pending', updatedAt: new Date() }).where(and(
+          eq(userFacts.userId, userId), eq(userFacts.kind, fact.kind), eq(userFacts.state, 'active'),
+          sql`coalesce(${userFacts.sourceKind}, '') <> 'told'`,
+          sql`${userFacts.value} ->> 'slot' = ${slot}`,
         ))
         return 1
       }
@@ -143,19 +170,24 @@ export async function listFacts(userId: string): Promise<ShownFact[]> {
  * The section of the Coordinator's system prompt that states what Mikka knows
  * about the person (lib/profile/prompt.ts), or '' when there is nothing to say.
  *
- * It reads the same rows 记忆 shows, through the same active-state filter, so
- * the two can never disagree about what Mikka believes; what differs is only
- * the reach of each surface: 记忆 shows every repository's facts, and a chat is
- * told the person-level ones plus those of the repositories its workspace
- * actually works in. `used` is those repositories (lib/coordinator/github-context.ts
- * usedRepositoriesForBot). An unreadable profile leaves the section out, never
- * fails the turn.
+ * It reads the same rows 记忆 shows, through the same active-and-approved
+ * filter, so the two can never disagree about what Mikka believes; what differs
+ * is only the reach of each surface: 记忆 shows every repository's facts, and a
+ * chat is told the person-level ones plus those of the repositories its
+ * workspace actually works in. `used` is those repositories
+ * (lib/coordinator/github-context.ts usedRepositoriesForBot). An unreadable
+ * profile leaves the section out, never fails the turn.
+ *
+ * `reviewStatus` is part of that filter. A fact Mikka extracts arrives `pending`
+ * (lib/profile/store.ts recordFacts) and only 记忆's approve action makes it
+ * `approved` (lib/profile/memory.ts reviewMemoryFact); stating a pending one
+ * here would act on what the person has not seen or agreed to.
  */
 export async function profilePromptSection(userId: string, used: readonly string[]): Promise<string> {
   const rows = await db.select({
     kind: userFacts.kind, subject: userFacts.subject, repository: userFacts.repository, confidence: userFacts.confidence,
     lastSeenAt: userFacts.lastSeenAt, userEdited: userFacts.userEdited,
-  }).from(userFacts).where(and(eq(userFacts.userId, userId), eq(userFacts.state, 'active'))).limit(500)
+  }).from(userFacts).where(and(eq(userFacts.userId, userId), eq(userFacts.state, 'active'), eq(userFacts.reviewStatus, 'approved'))).limit(500)
   return profileSection(promptFacts(rows as PromptFact[], used))
 }
 
@@ -171,12 +203,6 @@ export async function deleteFact(userId: string, id: string): Promise<boolean> {
     if (rows.length) await tx.delete(userFactDecisions).where(and(eq(userFactDecisions.userId, userId), eq(userFactDecisions.factId, id)))
     return rows.length > 0
   })
-}
-
-/** How many active facts the person has (listFacts shows at most 500). */
-export async function countFacts(userId: string): Promise<number> {
-  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(userFacts).where(and(eq(userFacts.userId, userId), eq(userFacts.state, 'active')))
-  return row?.count ?? 0
 }
 
 /**

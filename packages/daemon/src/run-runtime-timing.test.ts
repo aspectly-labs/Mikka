@@ -51,8 +51,8 @@ it("counts physical sends across async contexts, separating preparation, executi
   const check = timings.request("POST", `/v1/runs/${runId}/tool-approval?private=query`, { operation: "check", token: "private-token" })
   now = 35; check(200)
   const proxy = timings.request("POST", `${runPath}/subscription`, { action: "request", payload: { body: "private-prompt", path: "/private/path" } })
-  const heartbeat = timings.request("POST", `/v1/devices/${deviceId}/heartbeat`, {})
-  now = 45; heartbeat(200)
+  const report = timings.request("POST", `/v1/devices/${deviceId}/report`, {})
+  now = 45; report(200)
   now = 60; proxy(503)
   await timings.backgroundCredentialRefresh(runId, async () => {
     const refresh = timings.request("POST", `${runPath}/subscription-lease`, undefined)
@@ -81,7 +81,7 @@ it("isolates devices and runs, accounts for unknown run routes, and excludes unr
   const timings = new RunRuntimeTimings()
   const first = timings.begin(runId, deviceId, "claude_code"), second = timings.begin("other-run", "other-device", "codex")
   timings.request("POST", `/v1/devices/other-device/runs/${runId}/subscription`, { action: "request" })(200)
-  timings.request("POST", `/v1/devices/${deviceId}/heartbeat`, {})(200)
+  timings.request("POST", `/v1/devices/${deviceId}/report`, {})(200)
   timings.request("POST", "/v1/traces", { "private": "content" })(200)
   timings.request("POST", "/v1/logs", { "private": "content" })(200)
   timings.request("POST", `/v1/runs/${runId}/unknown-private`, {})(200)
@@ -132,17 +132,17 @@ it("observes the real HttpServerLink fetch edge even when daemon tracing is unco
     calls++
     expect(init?.headers).not.toHaveProperty("traceparent")
     if (calls === 3) throw new Error("private-network-error")
-    return calls === 1 ? new Response("private-provider-body", { headers: { "content-type": "text/event-stream" } }) : Response.json({})
+    return calls === 1 ? Response.json({ route: "claude_code_cli", modelId: "m", accountId: "private-account", revision: 1, expiresAt: "2030-01-01T00:00:00.000Z" }) : Response.json({})
   })
   try {
     observation.executing()
-    await link.nativeRequest(actualDevice, actualRun, { path: "/v1/messages", headers: { authorization: "private-token" }, body: "private-prompt" })
+    await link.nativeContext(actualDevice, actualRun)
     await link.updateRun(actualRun, { state: "running" })
     await expect(link.updateRun(actualRun, { state: "running" })).rejects.toBeInstanceOf(ServerUnreachableError)
     const receipt = observation.finish()!
     expect(calls).toBe(3)
     expect(receipt.requests.map(item => [item.endpoint, item.outcome])).toEqual([
-      ["provider_proxy", "ok"], ["run_telemetry", "ok"], ["run_telemetry", "error"],
+      ["subscription_context", "ok"], ["run_telemetry", "ok"], ["run_telemetry", "error"],
     ])
     expect(JSON.stringify(receipt)).not.toMatch(/private-|83e6a183|3f317b20|mikka.test/)
   } finally { observation.close() }

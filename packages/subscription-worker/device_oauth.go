@@ -177,7 +177,7 @@ func (w *Worker) startDevice(ctx context.Context, epoch int64, session string, d
 		return OAuthStart{}, err
 	}
 	fail := func(e error) (OAuthStart, error) {
-		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed")
+		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed", "device_flow_begin_failed")
 		return OAuthStart{}, e
 	}
 	device, err := d.BeginDevice(ctx)
@@ -237,7 +237,7 @@ func (w *Worker) PollOAuth(ctx context.Context, session, state string) (any, err
 	}
 	op := Operation{record}
 	fail := func(e error) (any, error) {
-		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed")
+		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed", "grant_secret_read_failed")
 		return nil, e
 	}
 	raw, err := w.Secrets.Read(ctx, name)
@@ -295,7 +295,7 @@ func (w *Worker) publishOAuth(ctx context.Context, op Operation, code, state, ve
 	}
 	manager := newOAuthManager(w, op, code, state, verifier, redirect)
 	if err := manager(ctx); err != nil {
-		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed")
+		_ = w.Repo.Fail(context.WithoutCancel(ctx), op, "publication_failed", "oauth_exchange_failed")
 		return Metadata{}, Refusal(safeCode(err))
 	}
 	return w.Status(ctx)

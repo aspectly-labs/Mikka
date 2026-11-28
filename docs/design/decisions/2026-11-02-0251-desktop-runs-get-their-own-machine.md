@@ -1,6 +1,7 @@
 # A run that needs a desktop gets its own machine with a desktop
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, in the E2B templates session: 「我建议也是，就是说单独起一台，就是说那个，带桌面的机器」, choosing this over an Agent on a task machine driving the Bot's own desktop remotely
 - Rule: —
 - Replaces: —

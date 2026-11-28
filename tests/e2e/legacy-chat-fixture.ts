@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
-import { createParser } from '@openuidev/react-lang'
-import { createAgentLibrary } from '../../lib/agent-ui-catalog'
+import { legacyChatContent } from '../../lib/legacy-chat-content'
 import { expect } from './fixtures'
 
 export async function seedLegacyHistory(email: string) {
@@ -13,10 +12,9 @@ export async function seedLegacyHistory(email: string) {
   const id = randomUUID()
   const title = `saved-${id.slice(0, 8)}`
   const completion = 'root = Stack([TextContent("已保存的公开测试历史正文"), BeButton("继续细化", "不得执行历史动作", "outline"), ShadcnAccordion([{title:"第一折叠项",content:"第一项历史详情"},{title:"第二折叠项",content:"第二项历史详情"}]), ShadcnTabs([{title:"第一页签",children:[TextContent("第一页历史正文")]},{title:"第二页签",children:[TextContent("第二页历史正文")]}]), ComputerCard("archived-static-bot", "archived-static-run", "历史电脑任务快照", "approval", "历史 Bot 名称", "历史工作线程")])'
-  const library = createAgentLibrary()
-  const parsed = createParser(library.toJSONSchema(), library.root).parse(completion)
-  expect(parsed.meta.errors).toEqual([])
-  expect(parsed.meta.unresolved).toEqual([])
+  const projected = legacyChatContent(completion)
+  expect(projected.format).toBe('markdown')
+  expect(projected.text).toContain('已保存的公开测试历史正文')
   try {
     const { rows: [user] } = await pool.query<{ id: string }>('SELECT id FROM "user" WHERE email = $1', [email])
     expect(user).toBeTruthy()

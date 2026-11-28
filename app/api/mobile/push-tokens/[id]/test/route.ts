@@ -10,8 +10,8 @@ import { pushSession, withPushSession } from '@/lib/mobile-push-session'
 import { personLocale } from '@/lib/suggestions/action-title-server'
 import english from '@/messages/en.json'
 import chinese from '@/messages/zh-CN.json'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 90
 
 /** Some HTTP adapters supply an empty stream for POST even when no bytes were sent. */
@@ -27,7 +27,7 @@ async function hasBody(request: Request) {
   } finally { reader.releaseLock() }
 }
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await pushSession(request)
   if (!session) return unauthorized()
   if (!writeAllowed(request)) return forbiddenOrigin()
@@ -72,3 +72,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
   })
 }
+
+export const POST = defineRoute<'mobile-or-session', 'none', { id: string }>(
+  {
+    route: '/api/mobile/push-tokens/[id]/test',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request, params }) => handlePOST(request, { params: Promise.resolve(params) }),
+)

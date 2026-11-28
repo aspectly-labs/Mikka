@@ -1,8 +1,5 @@
 import { builtinGateway } from '../../builtin-gateway/runtime';
 import { coordinatorWakeTransport } from '../../coordinator/wake-after-commit';
-import { measured, readMetrics } from '../../../tests/helpers/read-metrics';
-import type { ModelMessage } from 'ai';
-import { completeAttentionQuestions } from '../../coordinator/question-attention';
 import { factoryTestLifecycle } from "../../../tests/helpers/factory-test-authority";
 import { seedFixtureWorkspace } from '../../../tests/helpers/task-workspace';
 import { bindFixtureWorkspaceDatabase } from '../../../tests/helpers/workspace-database';
@@ -20,6 +17,7 @@ import { factoryEventId } from "../event-id";
 import { questionFingerprint } from "./contract";
 import { ActionFailureError } from "../../action-error";
 import { createFactoryStore } from "../store";
+import { createRequestDatabaseScope } from '../../db';
 import { observePoolCommits } from "../../db/commit-effects";
 import { createFactoryDispatch } from "../dispatch";
 import { createFactoryClaim } from "../claim";
@@ -83,6 +81,10 @@ test(
     t.after(() => { coordinatorWakeTransport.wake = previousWake; });
     const fixtureURL = await isolatedPostgresURL(dbURL!);
     const schema = `questions_${randomUUID().replaceAll("-", "")}`;
+    const applicationURL = new URL(fixtureURL);
+    applicationURL.searchParams.set('options', `-c search_path=${schema}`);
+    const application = createRequestDatabaseScope(applicationURL.toString());
+    t.after(() => application.close());
     const admin = new Pool({ connectionString: fixtureURL, max: 1 });
     await admin.query(`CREATE SCHEMA "${schema}"`);
     const pool = new Pool({
@@ -161,7 +163,7 @@ test(
         [sessionId, `fixture-${randomUUID()}`],
       );
       await pool.query(
-        `INSERT INTO devices (id,"ownerId",name,enabled,"lastSeenAt",harnesses) VALUES ($1,'owner','Fixture device',true,now(),'[{"harness":"codex","installed":true}]')`,
+        `INSERT INTO devices (id,"ownerId",name,enabled,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,'owner','Fixture device',true,now(),'[{"harness":"codex","installed":true}]',now())`,
         [deviceId],
       );
       await pool.query(
@@ -173,7 +175,7 @@ test(
         [agentId, deviceId],
       );
       const fixture = async (
-        kind: "context" | "decision" | "permission" | "external" = "context",
+        kind: "context" | "decision" | "external" = "context",
         record = true,
         selectSkill: (runId: string, issueId: string) => Promise<unknown> = (
           runId,
@@ -183,7 +185,7 @@ test(
         // This fixture represents an online daemon. Refresh its heartbeat for
         // each case so earlier database cases cannot age it past the real
         // liveness window before a later continuation is claimed.
-        await pool.query('UPDATE devices SET "lastSeenAt"=now() WHERE id=$1', [deviceId]);
+        await pool.query('UPDATE devices SET "lastSeenAt"=now(),"sessionOpenedAt"=now(),"sessionClosedAt"=NULL WHERE id=$1', [deviceId]);
         const issueId = randomUUID(),
           eventId = randomUUID(),
           questionId = randomUUID();
@@ -289,76 +291,6 @@ test(
         assert.equal(record.mock.callCount(), 1);
       });
 
-      await t.test("Coordinator attention completes a permission handoff once without another read or a fabricated answer", async (t) => {
-        const normal = await fixture('permission');
-        const missing = await fixture('permission');
-        const normalView = (await questions.list(userId, normal.task.id)).find(q => q.id === normal.questionId)!;
-        const missingView = (await questions.list(userId, missing.task.id)).find(q => q.id === missing.questionId)!;
-        const event = (q: typeof normalView) => ({
-          eventId:q.sourceEventId,taskId:q.taskId,issueId:q.issueId,questionId:q.id,runId:q.originRunId,
-        });
-        const messages = (q: typeof normalView, written?: unknown): ModelMessage[] => [
-          {role:'assistant',content:[{type:'tool-call',toolCallId:'read-question',toolName:'list_factory_questions',input:{taskId:q.taskId}}]},
-          {role:'tool',content:[{type:'tool-result',toolCallId:'read-question',toolName:'list_factory_questions',output:{type:'json',value:[q] as never}}]},
-          ...(written ? [
-            {role:'assistant',content:[{type:'tool-call',toolCallId:'escalate-question',toolName:'escalate_factory_question',input:{reference:q.reference,eventId:q.sourceEventId,reason:'A human decision is needed.'}}]},
-            {role:'tool',content:[{type:'tool-result',toolCallId:'escalate-question',toolName:'escalate_factory_question',output:{type:'json',value:written}}]},
-          ] as ModelMessage[] : []),
-          {role:'assistant',content:[{type:'text',text:'Please confirm the requested permission.'}]},
-        ];
-        let submitted: Parameters<Parameters<typeof completeAttentionQuestions>[2]['escalate']>[0] | undefined;
-        const handoff = await measured(() => completeAttentionQuestions([event(missingView)],messages(missingView),{
-          userId,enabled:true,escalate:async input => {
-            assert.equal(submitted,undefined);
-            submitted=input;
-            return questions.escalate(userId,input);
-          },
-        }));
-        assert.equal(handoff.value,1);
-        assert.ok(submitted);
-        assert.deepEqual(submitted.reference,missingView.reference);
-        assert.equal(submitted.eventId,missingView.sourceEventId);
-        const normalWrite = await measured(() => questions.escalate(userId,{
-          ...submitted!,reference:normalView.reference,eventId:normalView.sourceEventId,
-        }));
-        const afterReceipt = await measured(() => completeAttentionQuestions([event(normalView)],messages(normalView,normalWrite.value),{
-          userId,enabled:true,escalate:async () => { throw new Error('The normal escalation must not run twice'); },
-        }));
-        t.diagnostic(JSON.stringify({
-          case:'coordinator_permission_attention',
-          existingEscalation:readMetrics(normalWrite),
-          missingEscalation:readMetrics(handoff),
-          completionAfterActualReceipt:readMetrics(afterReceipt),
-        }));
-        assert.equal(afterReceipt.value,0);
-        assert.equal(afterReceipt.statements,0);
-        assert.equal(afterReceipt.bytes,0);
-        assert.equal(afterReceipt.bytesWritten,0);
-        assert.equal(handoff.statements,normalWrite.statements,'the missing handoff uses only the existing business write');
-        const waiting = await questions.read(userId,missing.questionId);
-        assert.equal(waiting.status,'waiting_user');
-        assert.equal(waiting.answerId,null);
-        assert.equal(waiting.continuationRunId,null);
-        assert.equal(waiting.originSessionId,missing.q.originSessionId);
-        assert.equal(await queued(missing.issueId),0,'escalation is not a human answer or permission to resume');
-        const persisted = (await pool.query('SELECT id,payload FROM coordinator_events WHERE id=$1',[factoryEventId('question-escalated',missing.questionId)])).rows;
-        assert.equal(persisted.length,1);
-        assert.equal(persisted[0].payload.needsUser,true);
-        assert.equal(persisted[0].payload.questionId,missing.questionId);
-        assert.equal((await questions.escalate(userId,submitted)).id,waiting.id,'the actual source-event key replays the same normal escalation');
-        const answer = await questions.answer(human,{
-          reference:waiting.reference,answerId:randomUUID(),text:'The person permits the requested continuation.',
-        });
-        assert.ok(answer.continuationRunId);
-        const child = (await pool.query('SELECT "questionContinuation" FROM agent_runs WHERE id=$1',[answer.continuationRunId])).rows[0];
-        assert.equal(child.questionContinuation.originRunId,missing.runId);
-        assert.equal(child.questionContinuation.originSessionId,missing.q.originSessionId);
-        assert.equal(child.questionContinuation.requireSessionResume,true);
-        const claim = await questions.claimContinuation(userId,deviceId,answer.continuationRunId,new Date(Date.now()+60000).toISOString());
-        assert.equal(claim.resumeSessionId,missing.q.originSessionId);
-        assert.equal(claim.requireSessionResume,true);
-      });
-
       await t.test("cloud question answer keeps the exact task VM, frozen identity and original SID; replay dispatches once", async (t) => {
         type CloudQuestionTarget = { repoPath: string; remoteUrl: string | null; readOnly?: boolean };
         const cloudFixture = async (state = 'running', afterContinuation?: (owner:string,result:{continuationRunId:string})=>Promise<void>, withSkills = false, beforeRecovery?: Parameters<typeof createFactoryQuestions>[7], target: CloudQuestionTarget = { repoPath: '/isolated', remoteUrl: 'fixture/repo' }) => {
@@ -366,7 +298,7 @@ test(
           const f = await fixture('context',true,async () => undefined,workspaceId);
           const botId=randomUUID(),childDevice=randomUUID(),childRepo=randomUUID(),connectionId=randomUUID(),credentialId=randomUUID();
           await pool.query(`INSERT INTO bots(id,"workspaceId","ownerId",name) VALUES($1,$2,$3,'Cloud fixture')`,[botId,workspaceId,userId]);
-          await pool.query(`INSERT INTO devices(id,"ownerId",name,kind,"lastSeenAt",harnesses) VALUES($1,$2,'Task VM','cloud',now(),'[{"harness":"codex","installed":true}]')`,[childDevice,userId]);
+          await pool.query(`INSERT INTO devices(id,"ownerId",name,kind,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES($1,$2,'Task VM','cloud',now(),'[{"harness":"codex","installed":true}]',now())`,[childDevice,userId]);
           await pool.query(`INSERT INTO device_repos(id,"deviceId","userId","repoPath","remoteUrl","baseBranch") VALUES($1,$2,$3,$4,$5,'main')`,[childRepo,childDevice,userId,target.repoPath,target.remoteUrl]);
           await pool.query(`INSERT INTO byos_connections(id,"ownerId","workspaceId",state,epoch,provider,"secretName","providerSubject","secretDigest") VALUES($1,$2,$3,'connected',2,'codex','synthetic-secret-reference-' || $1::uuid::text,'synthetic-subject',repeat('a',64))`,[connectionId,userId,workspaceId]);
           await pool.query(`INSERT INTO byos_bindings(id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId") VALUES($1,$2,$3,$4,$5,2,'codex_cli','fixture-model')`,[credentialId,userId,workspaceId,agentId,connectionId]);
@@ -417,8 +349,8 @@ test(
             // An old source's absent snapshot is deliberate fixture history.
             // New sources freeze the actual Project configuration before any edit.
             let configured: Awaited<ReturnType<typeof seedRunProjectResources>>;
-            const configure=()=>seedRunProjectResources(pool,{ownerId:userId,workspaceId:f.workspaceId,issueId:f.issueId,
-              repositoryKey:target.repoPath,runtime:'cloud',harness:'codex',environment:mutation!=='legacy-branch'});
+            const configure=()=>application.run(()=>seedRunProjectResources(pool,{ownerId:userId,workspaceId:f.workspaceId,issueId:f.issueId,
+              repositoryKey:target.repoPath,runtime:'cloud',harness:'codex',environment:mutation!=='legacy-branch'}));
             if(!legacy){
               configured=await configure();
               const {withProjectExecution}=await import('../../project-resources/store');
@@ -438,8 +370,12 @@ test(
               recovery={requestId:randomUUID(),...q.recoverReference!};
             }
             if(legacy) configured=await configure();
-            if(mutation==='legacy-branch') await configured!.refuse('branch');
-            else if(mutation!=='legacy-environment') await configured!.refuse(mutation);
+            if(mutation==='legacy-branch') {
+              await pool.query(`INSERT INTO workspace_task_legacy_repository_branches ("workspaceId","issueId","repositoryKey","baseBranch")
+                VALUES ($1,$2,$3,'changed-after-start')`,[f.workspaceId,f.issueId,target.repoPath]);
+            } else if(mutation!=='legacy-environment') {
+              await application.run(()=>configured!.refuse(mutation));
+            }
             const before=await resourceState(f);
             const expected=mutation==='repository'||mutation==='branch'||mutation==='legacy-branch'?'projectRepositoryDenied'
               :mutation==='project-archive'?'projectArchived':'projectEnvironmentUnavailable';
@@ -669,11 +605,17 @@ test(
           assert.equal((await pool.query('SELECT "answerId" FROM factory_questions WHERE id=$1',[f.q.id])).rows[0].answerId,null);
           assert.equal(f.fallbackCalls(),0);
         });
+        await t.test('the team switch off withholds the owner\'s own subscription from the continuation (decision 2026-11-27-1740)',async()=>{
+          const f=await cloudFixture('running'),answer={reference:questionReference(f.q),answerId:randomUUID(),text:'Continue with members\' own credentials turned off'};
+          await pool.query('INSERT INTO workspace_personal_policies("workspaceId",subscriptions) VALUES($1,false)',[f.workspaceId]);
+          await assert.rejects(f.service.answer(human,answer),{code:'factoryQuestionContinuationUnavailable'});
+          assert.equal((await pool.query('SELECT count(*)::int AS n FROM agent_runs WHERE "issueId"=$1',[f.issueId])).rows[0].n,1);
+          await pool.query('DELETE FROM workspace_personal_policies WHERE "workspaceId"=$1',[f.workspaceId]);
+        });
         for(const machineState of ['running','paused']) await t.test(machineState+' same VM transfer and replay',async()=>{
           const f=await cloudFixture(machineState),answer={reference:questionReference(f.q),answerId:randomUUID(),text:'Continue the correct current artifact; preserve all constraints'};
-          // Sharing policy limits teammates, never the owner's own subscription.
-          await pool.query('INSERT INTO workspace_personal_policies("workspaceId",subscriptions) VALUES($1,false)',[f.workspaceId]);
-          await pool.query('UPDATE computer_run_bindings SET "approvedForRun"=true WHERE "runId"=$1',[f.runId]);
+          // 团队权限 › 订阅与 API Key on: the owner's own subscription continues (decision 2026-11-27-1740).
+          await pool.query('INSERT INTO workspace_personal_policies("workspaceId",subscriptions) VALUES($1,true) ON CONFLICT ("workspaceId") DO UPDATE SET subscriptions=true',[f.workspaceId]);
           await pool.query(`INSERT INTO run_publications("runId","userId","issueId","remoteUrl","remoteKey",branch,"baseBranch","pushApproved") VALUES($1,$2,$3,'fixture/repo','/isolated','frozen-branch','main',false)`,[f.runId,userId,f.issueId]);
           const result=await f.service.answer(human,answer);
           assert.equal((await questionExecutionContinuation(pool,result.task,result.task.attemptId))?.sourceRunId,f.runId);
@@ -696,7 +638,6 @@ test(
           assert.equal(message.text,answer.text,'host metadata does not change the persisted human answer');
           const {rows:machines}=await pool.query('SELECT * FROM thread_machines WHERE "runId"=ANY($1::uuid[])',[[f.runId,child.id]]);
           const old=machines.find(m=>m.runId===f.runId),current=machines.find(m=>m.runId===child.id);
-          const {rows:[grant]}=await pool.query('SELECT "approvedForRun" FROM computer_run_bindings WHERE "runId"=$1',[child.id]);assert.equal(grant.approvedForRun,false);
           const {rows:[publication]}=await pool.query('SELECT "remoteUrl","remoteKey",branch,"baseBranch","pushApproved" FROM run_publications WHERE "runId"=$1',[child.id]);assert.deepEqual(publication,{remoteUrl:'fixture/repo',remoteKey:'/isolated',branch:'frozen-branch',baseBranch:'main',pushApproved:false});
           assert.equal(old.state,'ended');assert.equal(old.sandboxId,null);assert.equal(old.deviceId,f.childDevice);assert.equal(current.state,machineState);assert.equal(current.sandboxId,f.sandboxId);assert.equal(current.deviceId,f.childDevice);assert.equal(current.repoId,f.childRepo);assert.equal(f.fallbackCalls(),0);
           assert.equal((await pool.query('SELECT count(*)::int AS n FROM agent_runs WHERE "issueId"=$1',[f.issueId])).rows[0].n,2);
@@ -1046,20 +987,21 @@ test(
         },
       );
       await t.test(
-        "answer and heartbeat share scope-before-run lock order",
+        "answer and Skill revalidation share scope-before-run lock order",
         { timeout: 15000 },
         async () => {
           const f = await fixture();
-          const [answer, heartbeat] = await Promise.all([
+          const [answer, revalidated] = await Promise.allSettled([
             questions.answer(orchestrator, facts(f)),
-            assignments.renewHeartbeat(userId, deviceId, [f.runId], true),
+            assignments.revalidate(userId, f.runId, randomUUID(), true),
           ]);
           assert.equal(await queued(f.issueId), 1);
-          assert.deepEqual(heartbeat.revoked, [f.runId]);
+          assert.equal(revalidated.status, "rejected");
+          assert.equal(answer.status, "fulfilled");
           const selection = (
             await pool.query(
               'SELECT * FROM improvement_skill_selections WHERE "runId"=$1',
-              [answer.continuationRunId],
+              [answer.status === "fulfilled" ? answer.value.continuationRunId : null],
             )
           ).rows[0];
           assert.equal(selection.versionId, BASELINE_ARTIFACT.versionId);
@@ -1458,9 +1400,9 @@ test(
         },
       );
       await t.test(
-        "permission/decision require a real human source; fabricated facts and identity fail",
+        "decision and external questions require a real human source; fabricated facts and identity fail",
         async () => {
-          for (const kind of ["permission", "decision", "external"] as const) {
+          for (const kind of ["decision", "external"] as const) {
             const f = await fixture(kind);
             await rejects(
               () => questions.answer(orchestrator, facts(f)),
@@ -1515,7 +1457,7 @@ test(
       await t.test(
         "human-event answers require live attestation, exact text and question binding",
         async () => {
-          const f = await fixture("permission");
+          const f = await fixture("decision");
           const sourceEventId = randomUUID();
           const request = {
             reference: questionReference(f.q),

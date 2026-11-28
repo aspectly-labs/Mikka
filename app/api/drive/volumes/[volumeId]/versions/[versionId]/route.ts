@@ -1,8 +1,14 @@
 import { driveResponse } from '@/lib/drive/server'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-export async function GET(request: Request, { params }: { params: Promise<{ volumeId: string; versionId: string }> }) {
-  return driveResponse(request, 'version', await params)
-}
+export const GET = defineRoute<'session', 'none', { volumeId: string; versionId: string }>(
+  {
+    route: '/api/drive/volumes/[volumeId]/versions/[versionId]',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none', freshSession: true,
+  },
+  async ({ request, params, session }) => driveResponse(request, 'version', params, session),
+)

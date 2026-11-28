@@ -3,8 +3,7 @@ import { z } from 'zod'
 import { auth } from '@/lib/auth'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { auditRetentionInput, configureAuditRetention, readAuditRetention } from '@/lib/audit/retention'
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
+import { defineRoute } from '@/lib/primitives/define-route'
 type Context = { params: Promise<{ workspaceId: string }> }
 const headers = { 'cache-control': 'private, no-store' }
 async function access(request: Request, context: Context) {
@@ -14,7 +13,7 @@ async function access(request: Request, context: Context) {
   if (!z.uuid().safeParse(workspaceId).success) return { response: new Response(null, { status: 404, headers }) }
   return { actorId: session.user.id, workspaceId }
 }
-export async function GET(request: Request, context: Context) {
+async function GETBody(request: Request, context: Context) {
   const identity = await access(request, context)
   if (identity.response) return identity.response
   try { return Response.json(await readAuditRetention(identity.actorId!, identity.workspaceId!), { headers }) }
@@ -23,7 +22,7 @@ export async function GET(request: Request, context: Context) {
     return Response.json({ error: 'auditRetentionUnavailable' }, { status: 503, headers })
   }
 }
-async function PUTBody(request: Request, context: Context) {
+async function PUTHandler(request: Request, context: Context) {
   if (request.headers.get('origin') !== new URL(request.url).origin) return new Response(null, { status: 403, headers })
   const identity = await access(request, context)
   if (identity.response) return identity.response
@@ -36,5 +35,28 @@ async function PUTBody(request: Request, context: Context) {
   }
 }
 
+export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/audit-log/retention',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId: ({ params }) => z.uuid().safeParse(params.workspaceId).success ? params.workspaceId : undefined,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)
+
 // Credentials, permissions, money and deletion: the session is read from the database, not the cookie cache.
+const PUTBody = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/audit-log/retention',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    workspaceId: ({ params }) => z.uuid().safeParse(params.workspaceId).success ? params.workspaceId : undefined,
+    freshSession: true,
+  },
+  ({ request, params }) => PUTHandler(request, { params: Promise.resolve(params) }),
+)
+
 export const PUT = freshSessionRoute(PUTBody)

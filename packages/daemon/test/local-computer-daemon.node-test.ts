@@ -27,8 +27,8 @@ const device=randomUUID(),repoId=randomUUID(),botId=randomUUID(),workspaceId=ran
 const server=new MemoryServer(device),repo=await makeRepo()
 console.info(`Retained local computer daemon repository: ${repo}`)
 server.addRepo(device,{repoId,name:'fixture',path:repo})
-const authority={botId,workspaceId,ownerId:'owner',permission:'allow' as const,policyVersion:1}
-const link=Object.assign(server.link(),{syncComputerReviews:async()=>[],localComputerAuthority:async()=>authority})
+const authority={botId,workspaceId,ownerId:'owner',permission:'allow' as const}
+const link=Object.assign(server.link(),{localComputerAuthority:async()=>authority})
 // This configuration-only fake CLI needs the same scoped admission contract
 // as production, without granting any real tool action or invoking a driver.
 link.prepareRunToolApproval=async(assignment,signal,check)=>{
@@ -46,7 +46,7 @@ link.prepareRunToolApproval=async(assignment,signal,check)=>{
 }
 const runId=server.queueRun(device,{issueId:randomUUID(),repoId,baseBranch:'main',harness:'codex',prompt:'COMPUTER_CONFIG_TEST',localComputer:authority,policy:{...defaultRunPolicy(),permissions:{...defaultRunPolicy().permissions,computer_use:'allow'}}})
 let endpoint = ''
-const daemon=await new Daemon({dataDir:join(root,'daemon'),flavor:'dev',link,credential:'synthetic',agentSandbox:new NoSandbox(),harnesses:[{harness:'codex',installed:true,version:'fixture'}],harnessBinaries:{codex:resolve('test/fakes/fake-codex.mjs')},quotaSource:null,heartbeatMs:50,commandsWaitSeconds:1,log:createLogger({level:'silent'})}).start()
+const daemon=await new Daemon({dataDir:join(root,'daemon'),flavor:'dev',link,credential:'synthetic',agentSandbox:new NoSandbox(),harnesses:[{harness:'codex',installed:true,version:'fixture'}],harnessBinaries:{codex:resolve('test/fakes/fake-codex.mjs')},quotaSource:null,log:createLogger({level:'silent'})}).start()
 try {
  await daemon.syncWithServer()
  let text=''

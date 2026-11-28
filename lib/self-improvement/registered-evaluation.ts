@@ -1,4 +1,5 @@
 import { deploymentSwitch } from '@/lib/deployment-switches'
+import { runtimeEnv } from '@/lib/env/server'
 import { createHash } from 'node:crypto'
 import type { invokeDecision } from '../coordinator/decide'
 import type { RegisteredComparisonRequest, RegisteredSkillComparison } from './comparison-collector'
@@ -21,7 +22,7 @@ export type RegisteredSkillEvaluator=(userId:string,proposal:RegisteredEvaluatio
 /** This switch controls only the paid semantic-comparison invocation. It does
  * not dispatch benchmark runs, change their frozen evidence or grant activation. */
 export function createConfiguredSkillEvaluator(dependencies:Omit<Dependencies,'modelEvaluationEnabled'>,
-  env:Readonly<Record<string,string|undefined>>=process.env):RegisteredSkillEvaluator {
+  env:Readonly<Record<string,string|undefined>>=runtimeEnv()):RegisteredSkillEvaluator {
   return createRegisteredSkillEvaluator({...dependencies,modelEvaluationEnabled:deploymentSwitch('skillModelEvaluation',env)})
 }
 export function createRegisteredSkillEvaluator(dependencies:Dependencies):RegisteredSkillEvaluator {

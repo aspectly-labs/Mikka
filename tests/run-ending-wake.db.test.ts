@@ -11,8 +11,8 @@ if (process.env.REQUIRE_DB === '1') assert.ok(ready, 'matching isolated loopback
 
 test('run endings wake their committed owner once, including a pre-existing cloud completion event', { skip: !ready, timeout: 30_000 }, async t => {
   const tasks: Promise<unknown>[] = []
-  const next = await import('next/server')
-  t.mock.module('next/server', { namedExports: { ...next, after: (work: () => Promise<unknown>) => { tasks.push(work()) } } })
+  const next = await import('@/lib/server-runtime/server')
+  t.mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after: (work: () => Promise<unknown>) => { tasks.push(work()) } } })
   const { pool } = await import('../lib/db')
   const { workspacePool } = await import('../lib/workspace-db')
   const { coordinatorWakeTransport } = await import('../lib/coordinator/wake-after-commit')
@@ -79,5 +79,14 @@ test('run endings wake their committed owner once, including a pre-existing clou
     assert.deepEqual((await pool.query('SELECT id FROM coordinator_events WHERE "runId"=$1 AND kind=$2', [runId, 'run_finished'])).rows, [{ id: eventId }])
     assert.deepEqual(committed, [userId])
     assert.deepEqual(direct, [])
+  })
+  await t.test('an unavailable portable workspace archive retains its separate terminal code', async () => {
+    const { TaskWorkspaceArchiveUnavailable } = await import('../lib/computer/store')
+    const issueId = await seedIssue(pool, userId, workspaceId)
+    const runId = await seedRun(pool, { userId, workspaceId, botId, issueId, agentId, status: 'queued' })
+    await pool.query('INSERT INTO computer_run_bindings("runId","ownerId","workspaceId","botId") VALUES ($1,$2,$3,$4)', [runId, userId, workspaceId, botId])
+    assert.equal(await failUnclaimedCloudStart({ userId, workspaceId }, runId, new TaskWorkspaceArchiveUnavailable()), true)
+    const { rows: [failed] } = await pool.query('SELECT status,error FROM agent_runs WHERE id=$1', [runId])
+    assert.deepEqual(failed, { status: 'failed', error: TaskWorkspaceArchiveUnavailable.code })
   })
 })

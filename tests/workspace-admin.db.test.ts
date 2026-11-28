@@ -57,7 +57,7 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     const admin = await seedUser(pool, 'admin'), member = await seedUser(pool, 'member'), stranger = await seedUser(pool, 'stranger')
     const ws = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }, { userId: member, role: 'member' }])
     const other = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }])
-    assert.deepEqual(await general.readWorkspaceGeneral(member, ws.id), { id: ws.id, name: ws.name, slug: ws.slug, icon: null, canEdit: false, canTransfer: false, personal: false })
+    assert.deepEqual(await general.readWorkspaceGeneral(member, ws.id), { id: ws.id, name: ws.name, slug: ws.slug, icon: null, taskPrefix: null, canEdit: false, canTransfer: false, personal: false })
     assert.equal((await general.readWorkspaceGeneral(admin, ws.id)).canEdit, true)
     await rejects(general.readWorkspaceGeneral(stranger, ws.id), 'workspaceAccessDenied')
     await seedBot(pool, ws.id, admin); await seedBot(pool, ws.id, member); await seedBot(pool, other.id, admin)
@@ -116,7 +116,7 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     assert.equal(await count(pool, 'mikka_workspaces where id=$1', [ws.id]), 1)
   })
 
-  await t.test('deleteWorkspaceData: name check, full cleanup, other workspace untouched, personal data kept', async () => {
+  await t.test('deleteWorkspaceData: name check, Factory decision cleanup, other workspace untouched, personal data kept', async () => {
     const admin = await seedUser(pool, 'admin'), member = await seedUser(pool, 'member')
     const ws = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }, { userId: member, role: 'member' }], 'Doomed')
     const keep = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }, { userId: member, role: 'member' }], 'Keep')
@@ -127,6 +127,20 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
       const team = await seedTeam(pool, workspaceId, admin)
       const issue = await seedTeamIssue(pool, workspaceId, team.id, admin)
       const project = await seedProject(pool, admin, [{ teamId: team.id, workspaceId }])
+      await pool.query('update agent_runs set "issueId"=$2 where id=$1', [run, issue])
+      const factoryTask = randomUUID(), attempt = randomUUID(), decision = randomUUID()
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        await client.query(`insert into factory_tasks (id,"userId","workspaceId","issueId","botId","sourceEventId",route,stage,status,"attemptId",reason)
+          values ($1,$2,$3,$4,$5,$6,'{}','execute','passed',$7,'fixture')`, [factoryTask, member, workspaceId, issue, bot, randomUUID(), attempt])
+        await client.query(`insert into factory_attempts (id,"taskId",stage,ordinal,position,status,"runId",reason)
+          values ($1,$2,'execute',1,1,'passed',$3,'fixture')`, [attempt, factoryTask, run])
+        await client.query('COMMIT')
+      } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+      await pool.query(`insert into project_decisions (id,"workspaceId","projectId","ownerId","issueId","factoryTaskId","runId",kind,title,summary,reason,provenance,"captureMode","decidedBy","recordedBy","occurredAt","idempotencyKey","payloadHash")
+        values ($1::uuid,$2,$3,$4,$5,$6,$7,'confirm','Decision','','Fixture','recorded','human_marked','{}','{}',now(),$1::text,'fixture')`,
+      [decision, workspaceId, project, member, issue, factoryTask, run])
       await pool.query(`insert into conversations (id,"workspaceId",kind,title,"createdBy") values ($1,$2,'group','G',$3)`, [randomUUID(), workspaceId, admin])
       await pool.query(`insert into mikka_workspace_invitations (id,"workspaceId","userId",email,role,"tokenHash","expiresAt") values ($1,$2,$3,$4,'member',$5,now()+interval '1 day')`, [randomUUID(), workspaceId, admin, `${randomUUID()}@example.invalid`, randomUUID()])
       await pool.query(`insert into byos_connections (id,"ownerId","workspaceId",provider) values ($1,$2,$3,'codex')`, [randomUUID(), member, workspaceId])
@@ -138,10 +152,10 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
         [`insert into workspace_e2b_keys ("workspaceId",ciphertext,iv,"keyVersion",last4,"createdBy","updatedBy") values ($1,'c','i',1,'abcd',$2,$2)`, [workspaceId, admin]],
         [`insert into workspace_app_policies ("workspaceId",app,access,"updatedBy") values ($1,'gmail','deny',$2)`, [workspaceId, admin]],
         ['insert into workspace_personal_policies ("workspaceId") values ($1)', [workspaceId]],
-        ['insert into workspace_subscription_shares ("ownerId","workspaceId") values ($1,$2)', [member, workspaceId]],
         ['insert into workspace_credit_shares ("workspaceId","userId") values ($1,$2)', [workspaceId, member]],
         [`insert into model_api_keys (id,"ownerId",provider,protocol,ciphertext,iv,"keyVersion",last4) values ($1,$2,$3,'openai','c','i',1,'abcd')`, [key, member, `provider-${workspaceId}`]],
-        ['insert into model_api_key_shares ("keyId","workspaceId") values ($1,$2)', [key, workspaceId]],
+        // The workspace's own key (decision 2026-11-27-1740); a member's personal key above is never keyed by the workspace.
+        [`insert into model_api_keys (id,"workspaceId","addedBy",provider,protocol,ciphertext,iv,"keyVersion",last4) values ($1,$2,$3,'deepseek','openai','c','i',1,'wxyz')`, [randomUUID(), workspaceId, admin]],
         ['insert into workspace_payment_designations ("workspaceId","userId") values ($1,$2)', [workspaceId, member]],
         ['insert into hosted_allowances ("workspaceId",remaining) values ($1,5)', [workspaceId]],
         ['insert into hosted_verifications ("workspaceId") values ($1)', [workspaceId]],
@@ -153,7 +167,7 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
         [`insert into session_mailboxes (id,"userId","workspaceId",kind,"sessionKey") values ($1,$2,$3,'run',$4)`, [mailbox, member, workspaceId, randomUUID()]],
         [`insert into agent_runs (id,"userId","agentId","mailboxId",status) values ($1,$2,$3,$4,'succeeded')`, [randomUUID(), member, agent, mailbox]],
       ] as const) await pool.query(text, [...values])
-      return { bot, run, team, issue, project, mailbox, agent }
+      return { bot, run, team, issue, project, factoryTask, decision, mailbox, agent }
     }
     // Every main-database table keyed by a workspace, except those that stay on purpose (lib/workspace-rows.ts).
     const { KEPT_WITH_WORKSPACE, WORKSPACE_COLUMNS } = await import('../lib/workspace-rows')
@@ -194,10 +208,10 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     const result = await general.deleteWorkspaceData(admin, ws.id, ' Doomed ')
     assert.deepEqual(result.deleted, { bots: 1, threads: 1, tasks: 1, projects: 1, teams: 1, invitations: 1, members: 2 })
     assert.equal(result.nextWorkspaceId, keep.id)
-    for (const [table, id] of [['mikka_workspaces where id=$1', ws.id], ['mikka_workspace_members where "workspaceId"=$1', ws.id], ['mikka_teams where "workspaceId"=$1', ws.id], ['bots where id=$1', doomed.bot], ['agent_runs where id=$1', doomed.run], ['issues where id=$1', doomed.issue], ['workspace_projects where id=$1', doomed.project], ['conversations where "workspaceId"=$1', ws.id], ['workspace_settings where "workspaceId"=$1', ws.id], ['workspace_billing where "workspaceId"=$1', ws.id], ['mikka_workspace_invitations where "workspaceId"=$1', ws.id]] as const) {
+    for (const [table, id] of [['mikka_workspaces where id=$1', ws.id], ['mikka_workspace_members where "workspaceId"=$1', ws.id], ['mikka_teams where "workspaceId"=$1', ws.id], ['bots where id=$1', doomed.bot], ['agent_runs where id=$1', doomed.run], ['issues where id=$1', doomed.issue], ['workspace_projects where id=$1', doomed.project], ['factory_tasks where id=$1', doomed.factoryTask], ['project_decisions where id=$1', doomed.decision], ['conversations where "workspaceId"=$1', ws.id], ['workspace_settings where "workspaceId"=$1', ws.id], ['workspace_billing where "workspaceId"=$1', ws.id], ['mikka_workspace_invitations where "workspaceId"=$1', ws.id]] as const) {
       assert.equal(await count(pool, table, [id]), 0, table)
     }
-    for (const [table, id] of [['mikka_workspaces where id=$1', keep.id], ['mikka_workspace_members where "workspaceId"=$1', keep.id], ['bots where id=$1', kept.bot], ['agent_runs where id=$1', kept.run], ['issues where id=$1', kept.issue], ['workspace_projects where id=$1', kept.project], ['conversations where "workspaceId"=$1', keep.id], ['mikka_teams where id=$1', kept.team.id], ['workspace_settings where "workspaceId"=$1', keep.id], ['mikka_workspace_invitations where "workspaceId"=$1', keep.id]] as const) {
+    for (const [table, id] of [['mikka_workspaces where id=$1', keep.id], ['mikka_workspace_members where "workspaceId"=$1', keep.id], ['bots where id=$1', kept.bot], ['agent_runs where id=$1', kept.run], ['issues where id=$1', kept.issue], ['workspace_projects where id=$1', kept.project], ['factory_tasks where id=$1', kept.factoryTask], ['project_decisions where id=$1', kept.decision], ['conversations where "workspaceId"=$1', keep.id], ['mikka_teams where id=$1', kept.team.id], ['workspace_settings where "workspaceId"=$1', keep.id], ['mikka_workspace_invitations where "workspaceId"=$1', keep.id]] as const) {
       assert.ok(await count(pool, table, [id]) >= 1, `kept: ${table}`)
     }
     assert.equal(await count(pool, 'mikka_workspace_members where "workspaceId"=$1', [keep.id]), 2)
@@ -206,8 +220,8 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     assert.equal(await count(pool, 'byos_connections where "ownerId"=$1 and "workspaceId"=$2', [member, ws.id]), 1, 'personal model subscriptions stay')
     // No row keyed by the deleted workspace is left; the other workspace keeps every one of its own.
     assert.deepEqual(await rowsKeyedBy(ws.id), [])
-    const seeded = ['bot_model_choices', 'bots', 'conversations', 'execution_rules', 'hosted_allowances', 'hosted_verifications', 'model_api_key_shares', 'personal_access_tokens', 'session_mailboxes',
-      'workspace_app_policies', 'workspace_credit_shares', 'workspace_e2b_keys', 'workspace_payment_designations', 'workspace_personal_policies', 'workspace_secrets', 'workspace_settings', 'workspace_subscription_shares']
+    const seeded = ['bot_model_choices', 'bots', 'conversations', 'execution_rules', 'hosted_allowances', 'hosted_verifications', 'model_api_keys', 'personal_access_tokens', 'session_mailboxes',
+      'workspace_app_policies', 'workspace_credit_shares', 'workspace_e2b_keys', 'workspace_payment_designations', 'workspace_personal_policies', 'workspace_secrets', 'workspace_settings',]
     const left = await rowsKeyedBy(keep.id)
     assert.deepEqual(seeded.filter(table => !left.includes(table)), [], 'the other workspace is untouched')
     assert.equal(await count(pool, 'hosted_card_claims where "workspaceId"=$1', [ws.id]), 1, 'a card claim is never released')

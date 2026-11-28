@@ -7,11 +7,11 @@ import { organizationMemberProjectDefaults } from '@/lib/db/governance-schema'
 import { projectVisibilityDefault } from '@/lib/project-input'
 import { resolveProjectVisibilityDefault } from '@/lib/resource-access/project-creation-default'
 import { withTaskWorkspace } from '@/lib/task-workspace'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const runtime = 'nodejs'
 type Context = { params: Promise<{ workspaceId: string }> }
 
-export const GET = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const GETBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const session = await organizationAccountSession(request)
   const { workspaceId } = await context.params
   return withTaskWorkspace(session.user, workspaceId, (workspace, tx) => resolveProjectVisibilityDefault(tx, workspace, session.user.id))
@@ -19,7 +19,7 @@ export const GET = freshSessionRoute(async (request: Request, context: Context) 
 
 const change = z.strictObject({ organizationId: z.uuid(), expectedVisibility: projectVisibilityDefault.shape.visibility, visibility: projectVisibilityDefault.shape.visibility })
 
-export const PUT = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const PUTBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const session = await organizationAccountSession(request)
   const { workspaceId } = await context.params
   const input = change.parse(await governanceJson(request))
@@ -35,3 +35,25 @@ export const PUT = freshSessionRoute(async (request: Request, context: Context) 
     return { organizationId: current.organizationId, visibility: input.visibility }
   })
 }))
+
+export const GET = defineRoute<'public', 'none', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/project-visibility-default',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)
+
+export const PUT = defineRoute<'public', 'none', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/project-visibility-default',
+    auth: 'public',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => PUTBody(request, { params: Promise.resolve(params) }),
+)

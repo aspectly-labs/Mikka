@@ -6,24 +6,26 @@ import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mock, test } from 'node:test'
 import { emptyRunReport } from '@mikka/protocol/run'
-import { normalizeRepository } from '@mikka/protocol/repository'
 import type { OrderEntry } from '../lib/model-order-plan'
-import { dbUrl, seedBot, seedIssue, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
+import { dbUrl, seedBot, seedIssue, seedProjectTasks, seedRun, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { fakeThreadMachines } from './support/thread-machine-fake'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 
 test('cloud provider recovery keeps the thread\'s Agent, preserves scope and uses fresh task machines without waking its parent', { skip: !dbUrl }, async t => {
-  const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_BYOS_ENABLED', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'MIKKA_FACTORY_LIFECYCLE_ENABLED', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
+  const names = ['MIKKA_EDITION', 'WORKSPACE_SECRETS_KEY', 'MIKKA_BYOS_ENABLED', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_FACTORY_ROUTING_ENABLED', 'MIKKA_FACTORY_LIFECYCLE_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
   const saved = new Map(names.map(name => [name, process.env[name]]))
+  process.env.MIKKA_EDITION = 'community'
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   process.env.MIKKA_BYOS_ENABLED = '1'
   process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1'
   process.env.MIKKA_FACTORY_ROUTING_ENABLED = '0'
   process.env.MIKKA_FACTORY_LIFECYCLE_ENABLED = '0'
+  delete process.env.MIKKA_PUBLIC_POSTHOG_KEY
   delete process.env.NEXT_PUBLIC_POSTHOG_KEY
   let networkAttempts = 0
   t.mock.method(globalThis, 'fetch', async () => { networkAttempts++; throw new Error('Unexpected network request in cloud provider fixture') })
-  const next = await import('next/server')
-  mock.module('next/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  const next = await import('@/lib/server-runtime/server')
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   const lifecycleStarts: { actor: { userId: string; workspaceId: string }; previousRunId: string | null; runId: string; providerContinuation: boolean }[] = []
   mock.module('workflow/api', { namedExports: { start: async (_workflow: unknown, args: [{ userId: string; workspaceId: string }, string | null, string, boolean]) => {
     lifecycleStarts.push({ actor: args[0], previousRunId: args[1], runId: args[2], providerContinuation: args[3] })
@@ -95,7 +97,7 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
       await pool.query('DELETE FROM issues WHERE "userId"=ANY($1)', [users])
       await pool.query('DELETE FROM bots WHERE "ownerId"=ANY($1)', [users])
       await pool.query('DELETE FROM user_e2b_keys WHERE "userId"=ANY($1)', [users])
-      await workspacePool.query('DELETE FROM workspace_project_repositories WHERE "workspaceId"=ANY($1)', [workspaces])
+      await workspacePool.query('DELETE FROM workspace_task_environments WHERE "workspaceId"=ANY($1)', [workspaces])
       await workspacePool.query('DELETE FROM workspace_projects WHERE "workspaceId"=ANY($1)', [workspaces])
       await workspacePool.query('DELETE FROM workspace_environments WHERE "workspaceId"=ANY($1)', [workspaces])
       await pool.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=ANY($1)', [workspaces])
@@ -150,9 +152,7 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
         VALUES($1,$2,$3,'Cloud fallback resource','','','planned','none','','','','','[]',1)`, [projectId, userId, workspace.id])
       await (await import('../lib/resource-access/projects')).registerProjectAccess(userId, projectId, workspace.id)
       await seedProjectTasks(pool, projectId, [issueId])
-      await resources.saveProjectResources(userId, { workspaceId: workspace.id, projectId, revision: 1,
-        repositories: [{ repositoryKey: normalizeRepository(remote).key, environmentId: environment.id, isPrimary: true }],
-        environmentIds: [environment.id], defaultEnvironmentId: environment.id })
+      await assignTaskEnvironment(pool, userId, workspace.id, [issueId], environment.id)
     }
     const selected = await chooseCloudRunModel(pool, scope, parent.agentId, 'claude_code', undefined, 'task')
     assert.ok(!('error' in selected), JSON.stringify(selected))
@@ -169,8 +169,8 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
     assert.equal(admitted.agentDefinition.allowLocalRecovery, undefined)
     // A usable local alternative makes staying in cloud a meaningful fence.
     const localDeviceId = randomUUID()
-    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,harnesses,"lastSeenAt")
-      VALUES ($1,$2,'Available local fixture','local',true,$3,now())`, [localDeviceId, userId, JSON.stringify([workers[otherAgent ? 1 : 0]])])
+    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,harnesses,"lastSeenAt","sessionOpenedAt")
+      VALUES ($1,$2,'Available local fixture','local',true,$3,now(),now())`, [localDeviceId, userId, JSON.stringify([workers[otherAgent ? 1 : 0]])])
     await pool.query(`INSERT INTO agents (id,"userId","deviceId",harness,name) VALUES ($1,$2,$3,$4,'Local fixture')`, [randomUUID(), userId, localDeviceId, secondHarness])
     const local = await resolveModelDispatch(pool, scope, { harness: secondHarness, model: secondModel }, 'local')
     assert.ok(local.kind === 'device' && local.deviceId === localDeviceId && local.model === entries[1].model)
@@ -183,6 +183,133 @@ test('cloud provider recovery keeps the thread\'s Agent, preserves scope and use
   const complete = (actor: { userId: string }, runId: string) => persistRunCompletion(actor.userId, runId, {
     stopReason: 'provider_failure', report: { ...emptyRunReport('Synthetic terminal provider payment failure.'),
       providerFailure: { kind: 'balance', retryable: false, status: 402, code: 'payment_required' } },
+  })
+
+  await t.test('portable workspace authority skips read-only runs and transfers a stopped Cloudflare address', async () => {
+    const { previousTaskComputeSource, cloudflareTaskMachineSource } = await import('../lib/cloud-computer/task-compute-provider')
+    const { recordSponsoredTaskAllocation } = await import('../lib/cloud-computer/sponsored-lifecycle')
+    const f = await fixture('portable-compute-source')
+    const { rows: [repository] } = await pool.query('SELECT id,"repoPath" FROM device_repos WHERE id=$1', [f.admitted.deviceRepoId])
+    const sameTask = { ...f.actor, issueId: f.issueId, agentId: f.admitted.agentId, botId: f.botId }
+    const prior = await seedRun(pool, { ...sameTask, status: 'succeeded' })
+    const next = await seedRun(pool, { ...sameTask, status: 'queued' })
+    const instanceId = 'c'.repeat(64), priorOperationId = randomUUID(), operationId = randomUUID(), leaseId = randomUUID()
+    await pool.query('UPDATE agent_runs SET "createdAt"=now()-interval \'1 hour\' WHERE id=$1', [prior])
+    await pool.query(`INSERT INTO thread_machines ("runId","ownerId","workspaceId","botId","issueId","repoId","operationId",
+      "snapshotId","sandboxId",state,"workerLeaseId",lifecycle)
+      VALUES ($1,$3,$4,$5,$6,$7,$8,$12,$11,'paused',NULL,'{"portableWorkspaceCapture":"ready"}'),
+        ($2,$3,$4,$5,$6,$7,$9,$12,NULL,'starting',$10,'{}')`,
+    [prior, next, f.actor.userId, f.actor.workspaceId, f.botId, f.issueId, repository.id, priorOperationId, operationId, leaseId, instanceId, cloudflareTaskMachineSource])
+    assert.equal((await previousTaskComputeSource(pool, { ownerId: f.actor.userId, workspaceId: f.actor.workspaceId,
+      issueId: f.issueId, runId: next, repositoryKey: repository.repoPath }))?.runId, prior)
+    await assert.rejects(recordSponsoredTaskAllocation(pool, f.actor, next, { operationId, leaseId: randomUUID() }, instanceId), { status: 409 })
+    const machine = async (runId: string) => (await pool.query('SELECT "sandboxId","operationId",lifecycle FROM thread_machines WHERE "runId"=$1', [runId])).rows[0]
+    await pool.query("UPDATE agent_runs SET status='waiting_input' WHERE id=$1", [prior])
+    await assert.rejects(recordSponsoredTaskAllocation(pool, f.actor, next, { operationId, leaseId }, instanceId), { status: 409 })
+    assert.equal((await machine(prior)).sandboxId, instanceId)
+    await pool.query("UPDATE agent_runs SET status='succeeded' WHERE id=$1", [prior])
+    await recordSponsoredTaskAllocation(pool, f.actor, next, { operationId, leaseId }, instanceId)
+    assert.equal((await machine(next)).sandboxId, instanceId)
+    assert.deepEqual(await machine(prior), { sandboxId: null, operationId: priorOperationId, lifecycle: { portableWorkspaceCapture: 'ready' } })
+  })
+
+  await t.test('forks and side threads admit their own machine and preserve idempotent placement after a flag change', async t => {
+    const f = await fixture('provider-thread-children')
+    await threadMachineAction(pool, f.actor, f.runId, 'end')
+    const { moveThread, spawnThread, ThreadSpawnConflictError } = await import('../lib/thread-lifecycle')
+    const { tokenWorkspace } = await import('../lib/tokens/principal')
+    const user = { id: f.actor.userId, [tokenWorkspace]: f.actor.workspaceId }
+    const messageId = randomUUID()
+    await pool.query(`INSERT INTO run_messages (id,"runId","userId",text) VALUES ($1,$2,$3,'Keep this branch point')`,
+      [messageId, f.runId, f.actor.userId])
+    const opts = { relation: 'fork' as const, mode: 'full' as const, fromMessageId: messageId, idempotencyKey: randomUUID() }
+    const fork = await spawnThread(user, f.runId, opts)
+    assert.ok(fork)
+    assert.equal(fork.parentRunId, f.runId)
+    assert.equal(fork.agentDefinition.taskCompute.provider, 'e2b')
+    const { rows: [machine] } = await pool.query('SELECT state,"sandboxId" FROM thread_machines WHERE "runId"=$1', [fork.id])
+    assert.equal(machine?.state, 'running')
+    assert.ok(machine?.sandboxId)
+    const { rows: [copied] } = await pool.query('SELECT text FROM run_messages WHERE "runId"=$1', [fork.id])
+    assert.equal(copied?.text, 'Keep this branch point')
+    assert.ok(launchPlacements.has(fork.id), 'a device-backed fork must start its bound cloud machine')
+
+    const flags = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_CLOUDFLARE_TASKS_DISABLED'] as const
+    const previous = flags.map(key => process.env[key])
+    t.after(() => flags.forEach((key, index) => {
+      const value = previous[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    Object.assign(process.env, { NODE_ENV: 'test', MIKKA_FLAG_OVERRIDES: JSON.stringify({ 'mikka-task-provider': 'cloudflare' }), MIKKA_CLOUDFLARE_TASKS_DISABLED: '1' })
+    const replay = await spawnThread(user, f.runId, opts)
+    assert.equal(replay?.id, fork.id)
+    assert.equal(replay?.agentDefinition.taskCompute.provider, 'e2b')
+    await assert.rejects(spawnThread(user, f.runId, { ...opts, mode: 'summary' }), ThreadSpawnConflictError)
+    await assert.rejects(spawnThread(user, f.runId, { relation: 'side', fromMessageId: messageId }),
+      { status: 503, message: 'Cloudflare coding task unavailable. Retry the run.' })
+    assert.equal((await pool.query('SELECT 1 FROM agent_runs WHERE "parentRunId"=$1 AND "threadRelation"=$2', [f.runId, 'side'])).rowCount, 0)
+    process.env.MIKKA_FLAG_OVERRIDES = JSON.stringify({ 'mikka-task-provider': 'e2b' })
+    await threadMachineAction(pool, f.actor, fork.id, 'end')
+    const side = await spawnThread(user, f.runId, { relation: 'side', fromMessageId: messageId })
+    assert.equal(side?.sourceMessageId, messageId)
+    assert.equal(side?.agentDefinition.taskCompute.provider, 'e2b')
+    assert.ok(launchPlacements.has(side!.id))
+    const source = await row(f.runId)
+    assert.deepEqual(source.agentDefinition.taskCompute, f.admitted.agentDefinition.taskCompute)
+
+    assert.equal(await moveThread(user, f.runId, { deviceId: f.localDeviceId }), true)
+    const localFork = await spawnThread(user, f.runId, { relation: 'fork', mode: 'summary' })
+    assert.equal(localFork?.deviceId, f.localDeviceId)
+    assert.equal(localFork?.agentDefinition.executionIdentity.billingAccount.runtime.kind, 'local_device')
+    assert.equal(localFork?.agentDefinition.taskCompute, undefined)
+    assert.deepEqual((await row(f.runId)).agentDefinition.taskCompute, f.admitted.agentDefinition.taskCompute)
+  })
+
+  await t.test('new cloud task SKUs honor the effective plan on both providers', async t => {
+    const f = await fixture('provider-plan-geometry')
+    const { rows: [target] } = await pool.query<{ agentId: string; deviceId: string }>(`SELECT a.id AS "agentId",a."deviceId"
+      FROM bot_cloud_runtimes r JOIN agents a ON a.id=r."agentId" WHERE r."botId"=$1 AND r.harness='claude_code'`, [f.botId])
+    const repository = await ensureDeviceRepository(f.actor.userId, target.deviceId, f.remote!)
+    const variables = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_TASK_MACHINE_PLAN_LIMITS', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN',
+      'E2B_BYO_COMPUTER_TEMPLATE', 'MIKKA_CLOUD_TEMPLATE_MODELS'] as const
+    const saved = variables.map(key => process.env[key])
+    t.after(() => variables.forEach((key, index) => {
+      const value = saved[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    Object.assign(process.env, { NODE_ENV: 'test', MIKKA_TASK_MACHINE_BRIDGE_TOKEN: 'synthetic-plan-fixture',
+      MIKKA_TASK_MACHINE_PLAN_LIMITS: JSON.stringify({ free: { vcpu: 1, ramGib: 4 }, enterprise: { vcpu: 2, ramGib: 8 } }) })
+    const queueFor = async (provider: 'e2b' | 'cloudflare') => {
+      process.env.MIKKA_FLAG_OVERRIDES = JSON.stringify({ 'mikka-task-provider': provider })
+      const { runId } = await queueCloudRun(pool, f.actor, { botId: f.botId, issueId: f.issueId,
+        agentId: target.agentId, deviceRepoId: repository.id, title: 'Plan admission', body: '', readOnly: true,
+        model: 'fixture-claude-a', apiKeyId: f.first.id })
+      return (await row(runId)).agentDefinition.taskCompute
+    }
+    delete process.env.MIKKA_CLOUD_TEMPLATE_MODELS
+    await assert.rejects(queueFor('e2b'), { status: 503, message: 'E2B coding task unavailable. Retry the run.' })
+    process.env.E2B_BYO_COMPUTER_TEMPLATE = 'desktop'
+    process.env.MIKKA_CLOUD_TEMPLATE_MODELS = JSON.stringify({
+      version: 1, workerSha: process.env.MIKKA_CLOUD_WORKER_SHA, templates: Object.fromEntries(
+        ['desktop', 'claude', 'codex'].map(kind => [kind, { templateId: kind, models: [] }])),
+      machineVariants: [
+        ...['desktop', 'claude', 'codex'].map(kind => ({ kind, templateId: kind, size: 'medium', cpuCount: 2, memoryMB: 8192 })),
+        { kind: 'claude', templateId: 'claude-small', size: 'small', cpuCount: 1, memoryMB: 4096 },
+      ],
+    })
+    process.env.MIKKA_TASK_MACHINE_PLAN_LIMITS = JSON.stringify({ free: null, enterprise: { vcpu: 2, ramGib: 8 } })
+    await assert.rejects(queueFor('e2b'), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+    await assert.rejects(queueFor('cloudflare'), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
+    process.env.MIKKA_TASK_MACHINE_PLAN_LIMITS = JSON.stringify({ free: { vcpu: 1, ramGib: 4 }, enterprise: { vcpu: 2, ramGib: 8 } })
+    assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'small', requireVerifiedHardware: true })
+    assert.deepEqual(await queueFor('cloudflare'), { provider: 'cloudflare', size: 'standard-1' })
+    await workspacePool.query(`INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,'enterprise','license')`, [f.actor.workspaceId])
+    assert.deepEqual(await queueFor('e2b'), { provider: 'e2b', size: 'medium', requireVerifiedHardware: true })
+    assert.deepEqual(await queueFor('cloudflare'), { provider: 'cloudflare', size: 'standard-3' })
+    process.env.MIKKA_TASK_MACHINE_PLAN_LIMITS = JSON.stringify({ enterprise: { vcpu: 0.5, ramGib: 4 } })
+    await assert.rejects(queueFor('e2b'), { status: 409, message: 'Task machine size is unavailable on this workspace plan.' })
   })
 
   for (const change of ['environment', 'repository'] as const) await t.test(`${change} withdrawal preserves terminal completion and stops provider recovery before runtime preparation, including replay`, async () => {

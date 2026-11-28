@@ -33,10 +33,10 @@ test('human Factory admission holds Workspace before APP and reuses Profile memb
   const environment = { E2E_DATABASE_URL: process.env.E2E_DATABASE_URL, MIKKA_DATABASE_URL: process.env.MIKKA_DATABASE_URL,
     DATABASE_URL: process.env.DATABASE_URL, BETTER_AUTH_URL: process.env.BETTER_AUTH_URL, BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     MIKKA_EDITION: process.env.MIKKA_EDITION, MIKKA_BYOS_ENABLED: process.env.MIKKA_BYOS_ENABLED,
-    NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY, WORKSPACE_SECRETS_KEY: process.env.WORKSPACE_SECRETS_KEY }
+    MIKKA_PUBLIC_POSTHOG_KEY: process.env.MIKKA_PUBLIC_POSTHOG_KEY, NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY, WORKSPACE_SECRETS_KEY: process.env.WORKSPACE_SECRETS_KEY }
   const origin = 'http://localhost:3100'
   Object.assign(process.env, { E2E_DATABASE_URL: url, MIKKA_DATABASE_URL: url, DATABASE_URL: url, MIKKA_EDITION: 'cloud',
-    MIKKA_BYOS_ENABLED: '1', NEXT_PUBLIC_POSTHOG_KEY: '', BETTER_AUTH_URL: origin,
+    MIKKA_BYOS_ENABLED: '1', MIKKA_PUBLIC_POSTHOG_KEY: '', NEXT_PUBLIC_POSTHOG_KEY: '', BETTER_AUTH_URL: origin,
     BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
   globals.mikkaPool = app; globals.workspacePool = workspace
   let github: ReturnType<typeof githubAppStub> | undefined
@@ -59,15 +59,15 @@ test('human Factory admission holds Workspace before APP and reuses Profile memb
     await controls.query(await readFile(new URL(name, directory), 'utf8'))
   }
   const context = await import('../apps/api/src/context')
-  const framework = await import('next/headers')
-  mock.module('next/headers', { namedExports: { ...framework,
+  const framework = await import('@/lib/server-runtime/headers')
+  mock.module('@/lib/server-runtime/headers', { namedExports: { ...framework,
     headers: async () => context.requireRequestScope().headers,
     cookies: async () => context.requireRequestScope().cookies,
   } })
-  const next = await import('next/server')
-  mock.module('next/server', { namedExports: { ...next, after: (work: () => unknown) => context.requireRequestScope().after.add(work) } })
-  const locale = await import('next-intl/server')
-  mock.module('next-intl/server', { namedExports: { ...locale, getLocale: async () => 'en',
+  const next = await import('@/lib/server-runtime/server')
+  mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after: (work: () => unknown) => context.requireRequestScope().after.add(work) } })
+  const locale = await import('@/lib/intl/i18n-server')
+  mock.module('@/lib/intl/i18n-server', { namedExports: { ...locale, getLocale: async () => 'en',
     getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
   // Only the external GitHub wire and background consumer are fixtures.
   // Native authentication, SQL, queue admission, Profile and COMMIT are real.
@@ -515,7 +515,7 @@ test('human Factory admission holds Workspace before APP and reuses Profile memb
   await controls.query('INSERT INTO repository_settings("userId","remoteKey",push) VALUES($1,$2,$3)', [owner, normalizeRepository(repository).key, JSON.stringify({ approved: true, remote: 'origin', approvedByUserId: owner, approvedAt: new Date().toISOString() })])
   const deviceId = randomUUID(), agentId = randomUUID(), repoId = randomUUID(), connectionId = randomUUID()
   const model = 'gpt-6-luna'
-  await controls.query('INSERT INTO devices(id,"ownerId",name,kind,"deviceType",enabled,"lastSeenAt",harnesses) VALUES($1,$2,\'Factory local fixture\',\'local\',\'server\',true,now(),$3)', [deviceId, owner, JSON.stringify([{ harness: 'codex', installed: true, subscriptionBroker: true, models: [model] }])])
+  await controls.query('INSERT INTO devices(id,"ownerId",name,kind,"deviceType",enabled,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES($1,$2,\'Factory local fixture\',\'local\',\'server\',true,now(),$3,now())', [deviceId, owner, JSON.stringify([{ harness: 'codex', installed: true, subscriptionBroker: true, models: [model] }])])
   await controls.query('INSERT INTO agents(id,"userId",harness,name,"deviceId") VALUES($1,$2,\'codex\',\'Factory local fixture\',$3)', [agentId, owner, deviceId])
   await controls.query('INSERT INTO device_repos(id,"deviceId","userId","repoPath","remoteUrl","baseBranch") VALUES($1,$2,$3,$4,$5,\'main\')', [repoId, deviceId, owner, normalizeRepository(repository).key, 'https://github.com/' + repository + '.git'])
   await controls.query('INSERT INTO byos_connections(id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject","modelCatalog",quota) VALUES($1,$2,$3,\'codex\',\'connected\',1,$4,$5,\'synthetic-subject\',$6,$7)', [

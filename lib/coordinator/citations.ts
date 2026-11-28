@@ -50,6 +50,8 @@ export interface RunSource {
   pullRequests?: import('@/lib/issue-metadata').IssuePullRequest[]
   /** 运行信息, for the viewer's own runs: where it ran, on what, who pays (lib/run-info.ts). */
   info?: import('@/lib/run-info-view').RunInfo
+  /** What its sub-agent card shows beyond the run itself (lib/subagent-card.ts), for the viewer's own runs only. */
+  subagent?: import('@/lib/subagent-card').SubagentFacts
 }
 
 export type CitationSource = IssueSource | RunSource

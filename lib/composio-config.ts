@@ -1,3 +1,5 @@
+import { readEnv } from '@/lib/env/server'
+
 export function composioCallbackVerifierURL(baseURL: string | undefined, basePath = '') {
   if (!baseURL) return undefined
   try {
@@ -9,5 +11,5 @@ export function composioCallbackVerifierURL(baseURL: string | undefined, basePat
 
 export function isComposioCallbackVerifierConfigured(baseURL: string | undefined, basePath = '') {
   const expected = composioCallbackVerifierURL(baseURL, basePath)
-  return Boolean(expected && process.env.COMPOSIO_CALLBACK_VERIFIER_URL === expected)
+  return Boolean(expected && readEnv('COMPOSIO_CALLBACK_VERIFIER_URL') === expected)
 }

@@ -3,9 +3,14 @@
 import assert from 'node:assert/strict'
 import { before, mock, test } from 'node:test'
 import type { SQL } from 'drizzle-orm'
+import type { PoolClient } from 'pg'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { teams } from '../lib/db/team-schema'
 import { tokenWorkspace } from '../lib/tokens/principal'
+import { captureFixtureLiveEffects } from './support/live-runtime'
+import { observeCommitEffects } from '../lib/db/commit-effects'
+
+const scheduledLive = captureFixtureLiveEffects()
 
 class WorkspaceError extends Error { constructor(readonly code: string) { super(code) } }
 const calls: Array<[string, ...unknown[]]> = []
@@ -31,9 +36,36 @@ let teamActions: typeof import('../app/actions/teams')
 let botActions: typeof import('../app/actions/bots')
 const inserted: Record<string, unknown>[] = []
 let defaults = { defaultModel: 'codex' as string | null, defaultRepository: 'acme/app' as string | null }
+const client = { async query(command: string) {
+  assert.ok(['BEGIN', 'COMMIT', 'ROLLBACK'].includes(command))
+  return { command, rows: [] }
+} } as unknown as PoolClient
+observeCommitEffects(client)
+const database = {
+  async execute(statement: SQL) {
+    const { sql } = dialect.sqlToQuery(statement)
+    assert.match(sql, /FROM workspace_setting_values/)
+    return { rows: [] }
+  },
+  session: { client },
+  insert: () => ({ values: async (row: Record<string, unknown>) => { inserted.push(row) } }),
+  async transaction<T>(work: (tx: { session: { client: PoolClient } }) => Promise<T>): Promise<T> {
+    const before = inserted.length
+    await client.query('BEGIN')
+    try {
+      const result = await work(database)
+      await client.query('COMMIT')
+      return result
+    } catch (error) {
+      await client.query('ROLLBACK')
+      inserted.length = before
+      throw error
+    }
+  },
+}
 
 before(async () => {
-  mock.module('next/headers', { namedExports: {
+  mock.module('@/lib/server-runtime/headers', { namedExports: {
     cookies: async () => ({ set: (name: string, value: string) => cookieJar.set(name, value), delete: (name: string) => cookieJar.delete(name), get: (name: string) => cookieJar.has(name) ? { value: cookieJar.get(name) } : undefined }),
     headers: async () => new Headers(),
   } })
@@ -43,6 +75,16 @@ before(async () => {
   mock.module('@/lib/audit/record', { namedExports: { auditRequestContext: () => ({ ip: null, geoCity: null, geoCountry: null, geoRegion: null }) } })
   mock.module('@/lib/issue-access', { namedExports: { requireUser: async () => ({ id: actor.userId, email: actor.email, name: actor.name, [tokenWorkspace]: tokenWorkspaceId }) } })
   mock.module('@/lib/workspace-db', { namedExports: { workspaceDb: {
+    transaction: async (work: (tx: unknown) => Promise<unknown>) => work({
+      select: (fields: Record<string, unknown>) => {
+        const chain = { from: () => chain, leftJoin: () => chain, where: () => chain, for: async () => 'ownerId' in fields
+          ? [{ id: actor.workspaceId, kind: 'team', ownerId: actor.userId }]
+          : [{ id: actor.userId, organizationId: null }] }
+        return chain
+      },
+    }),
+    // The workspace's Environments a new Bot binds (lib/bot-environment.ts): the default first, then the one listing acme/app.
+    execute: async () => ({ rows: [{ id: 'env-default', name: 'Default', repositoryKeys: ['v2/github.com/acme/other'] }, { id: 'env-app', name: 'App', repositoryKeys: ['v2/github.com/acme/app'] }] }),
     select: (fields: Record<string, unknown>) => {
       assert.deepEqual(Object.keys(fields), ['workspaceId'])
       assert.equal(fields.workspaceId, teams.workspaceId)
@@ -60,7 +102,10 @@ before(async () => {
         } }
       } }
     },
-  } } })
+  },
+  // task-identity-store reaches this name transitively; settings tests never hit the raw pool.
+  workspacePool: { query: () => { throw new Error('Unexpected raw workspace read') } },
+  } })
   mock.module('@/lib/workspace-admin/general', { namedExports: {
     updateWorkspaceGeneral: respond('updateWorkspaceGeneral', { id: actor.workspaceId, name: 'New', slug: 'new', icon: null }),
     readWorkspaceGeneral: async (...args: unknown[]) => { calls.push(['readWorkspaceGeneral', ...args]); return { id: args[1], name: 'Old', slug: 'old', icon: null, canEdit: true, canTransfer: true, personal: false } },
@@ -80,7 +125,37 @@ before(async () => {
     teamLifecycleImpact: () => assert.fail('unexpected lifecycle impact read'),
   } })
   mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async () => ({ user: { id: actor.userId, email: actor.email, name: actor.name }, session: { id: 'workspace-fixture-session' } }) } } } })
-  mock.module('@/lib/db', { namedExports: { pool: { query: () => { throw Error('unexpected query') } }, db: { insert: () => ({ values: async (row: Record<string, unknown>) => { inserted.push(row) } }) } } })
+  // Keep the Bot's fake writes on the same observed transaction as its live registration.
+  mock.module('@/lib/db', { namedExports: { pool: { query: async (sql: string, params: unknown[]) => {
+    assert.match(sql, /FROM model_order_settings WHERE "ownerId"=\$1 AND "workspaceId"=\$2/)
+    assert.deepEqual(params, [actor.userId, actor.workspaceId])
+    return { rows: [] }
+  } },
+    db: { ...database,
+      // Keep the shared fixture's BEGIN/COMMIT/rollback semantics while also
+      // serving the P3 reads: execute() for workspace_setting_values and the
+      // resource_access_policies visibility check on the transaction client.
+      async transaction<T>(work: (tx: object) => Promise<T>): Promise<T> {
+        const before = inserted.length
+        const txClient = { query: async (command: string) => {
+          if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(command)) return client.query(command)
+          assert.match(command, /^SELECT p.visibility FROM resource_access_policies/)
+          return { rows: [{ visibility: 'private' }] }
+        } } as unknown as PoolClient
+        const tx = { ...database, session: { client: txClient } }
+        observeCommitEffects(txClient)
+        await txClient.query('BEGIN')
+        try {
+          const result = await work(tx)
+          await txClient.query('COMMIT')
+          return result
+        } catch (error) {
+          await txClient.query('ROLLBACK')
+          inserted.length = before
+          throw error
+        }
+      } },
+    withDatabaseTransaction: (_tx: object, work: () => unknown) => work() } })
   mock.module('@/lib/run-policy-stop', { namedExports: { stopRunsForPolicyChange: respond('stopRunsForPolicyChange', 0) } })
   mock.module('@/lib/workspace-admin/bots', { namedExports: {
     workspaceBotDefaults: async (workspaceId: string) => { calls.push(['workspaceBotDefaults', workspaceId]); return defaults },
@@ -96,7 +171,7 @@ before(async () => {
   teamActions = await import('../app/actions/teams')
 })
 
-function reset() { calls.length = 0; workspaceContextCalls.length = 0; cookieJar.clear(); failure = null; teamExists = true; tokenWorkspaceId = undefined }
+function reset() { calls.length = 0; workspaceContextCalls.length = 0; cookieJar.clear(); failure = null; teamExists = true; tokenWorkspaceId = undefined; scheduledLive.length = 0 }
 const relevant = () => calls.filter(([name]) => name !== 'currentWorkspaceActor')
 
 test('updateWorkspace delegates the real slug change and audit context to one backend transaction', async () => {
@@ -193,38 +268,50 @@ test('createBot uses the workspace defaults only for omitted fields', async () =
   reset(); inserted.length = 0
   await botActions.createBot({ name: 'Scout', color: 'encre', shape: 'cercle' })
   assert.equal(inserted[0].model, 'codex')
-  assert.equal(inserted[0].repository, 'acme/app')
+  // The retired repository is never written: the Bot binds the Environment that lists the default repository.
+  assert.equal(inserted[0].repository, undefined)
+  assert.equal(inserted[0].environmentId, 'env-app')
   assert.equal(inserted[0].workspaceId, actor.workspaceId)
   await botActions.createBot({ name: 'Scout 2', color: 'encre', shape: 'cercle', model: 'mikka', repository: null })
   assert.equal(inserted[1].model, 'mikka')
-  assert.equal(inserted[1].repository, null)
+  assert.equal(inserted[1].environmentId, 'env-default', 'no repository: the workspace default Environment')
   assert.equal(calls.filter(call => call[0] === 'workspaceBotDefaults').length, 1, 'explicit values skip the defaults read')
   defaults = { defaultModel: null, defaultRepository: null }
   await botActions.createBot({ name: 'Scout 3', color: 'encre', shape: 'cercle' })
   assert.equal(inserted[2].model, null)
+  await import('../lib/live/notify')
+  assert.ok(scheduledLive.length > 0, 'committed Bot creations register live work')
   await assert.rejects(botActions.createBot({ name: 'Bad', color: 'encre', shape: 'cercle', model: 'gpt-x' }), /validationGeneric/)
 })
 
 test('createBot refuses a repository the workspace has not installed', async () => {
   reset(); inserted.length = 0
   await botActions.createBot({ name: 'Scout', color: 'encre', shape: 'cercle', repository: 'acme/app' })
-  assert.equal(inserted[0].repository, 'acme/app')
+  assert.equal(inserted[0].environmentId, 'env-app', 'an older client\'s repository binds the Environment that lists it')
   await assert.rejects(botActions.createBot({ name: 'Elsewhere', color: 'encre', shape: 'cercle', repository: 'other/secret' }), /botDefaultRepositoryUnavailable/)
   assert.equal(inserted.length, 1)
   assert.deepEqual(calls.filter(call => call[0] === 'repositoryAvailable').map(call => call[2]), ['acme/app', 'other/secret'])
+  await import('../lib/live/notify')
+  assert.equal(scheduledLive.length, 1, 'only the accepted Bot creation registers live work')
 })
 
 test('the Bot list for a shown workspace is read from that workspace, not the session active one', async () => {
   reset()
   const shown = '33333333-3333-4333-8333-333333333333'
   assert.deepEqual(await botActions.listBotsForWorkspace(shown), [{ id: 'bot-in-shown-workspace', name: 'Bot', color: 'encre', shape: 'cercle', coordinator: true }])
-  assert.deepEqual(workspaceContextCalls, [shown])
-  assert.deepEqual(relevant(), [['listOwnerBots', actor.userId, shown]])
+  assert.deepEqual(await botActions.listBots(shown), [{ id: 'bot-in-shown-workspace', name: 'Bot', color: 'encre', shape: 'cercle', coordinator: true }])
+  assert.deepEqual(await botActions.listWorkspaceBots(shown), { bots: [{ id: 'b', name: 'Bot', status: 'running', runningThreads: 2 }] })
+  assert.deepEqual(workspaceContextCalls, [shown, shown])
+  assert.deepEqual(relevant(), [['listOwnerBots', actor.userId, shown], ['listOwnerBots', actor.userId, shown], ['workspaceBots', shown]])
 })
 
 test('bot defaults and workspace bot list actions', async () => {
   reset()
-  assert.deepEqual((await botActions.getWorkspaceBotDefaults()).error, undefined)
+  // 新建 Bot shows the person's own run location and effort; with no settings row yet, the dispatcher's defaults.
+  assert.deepEqual(await botActions.getWorkspaceBotDefaults(), {
+    defaultModel: 'codex', defaultRepository: null, models: ['mikka', 'codex', 'claude'], repositories: ['acme/app'],
+    personal: { location: 'cloud', effort: 'medium' },
+  })
   assert.deepEqual(await botActions.updateWorkspaceBotDefaults({ defaultModel: 'claude' }), { defaultModel: 'claude', defaultRepository: null })
   assert.deepEqual(await botActions.listWorkspaceBots(), { bots: [{ id: 'b', name: 'Bot', status: 'running', runningThreads: 2 }] })
   assert.deepEqual(relevant(), [['botDefaultOptions', actor.workspaceId], ['saveBotDefaults', actor.userId, actor.workspaceId, { defaultModel: 'claude' }], ['workspaceBots', actor.workspaceId]])

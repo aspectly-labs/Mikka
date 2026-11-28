@@ -1,6 +1,7 @@
 # Personal and team workspaces are kept apart
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-02-1500](2026-11-02-1500-personal-first-team-needs-two.md)
 - Source: Alex, relayed by the coordinator session: 「个人工作区归个人工作区，团队工作区归团队工作区，两者互不相干。个人工作区不显示工作区设置……个人工作区不再处理工作相关事件，只处理个人的事件。团队工作区单独分开，专门处理团队相关的工作事项。」 and 「个人还是需要计费的吧。订阅页还是需要的，给个人用的订阅你还加上啊，就是 API 之类的，只不过不分享给团队而已」
 - Rule: R-26
 - Superseded in part by: [2026-11-02-1500](2026-11-02-1500-personal-first-team-needs-two.md) (subscription and credit sharing is configured beside the personal resource; a team with only one remaining member uses that member's credits under the recorded fallback).

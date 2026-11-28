@@ -1,15 +1,12 @@
 import 'server-only'
 import { eq } from 'drizzle-orm'
-import { appCallSetting, callAppTool, listAppTools, type AppTool, type AppToolCall, type AppToolDeps, type AppToolExecution } from '@/lib/app-tools'
-import { serverWriteJudge } from '@/lib/operations/write-judgment'
+import { callAppTool, listAppTools, type AppTool, type AppToolCall, type AppToolDeps, type AppToolExecution } from '@/lib/app-tools'
 import { resolveComposioAccount } from '@/lib/composio-actions'
 import { chosenComposioDefault } from '@/lib/composio-account-store'
 import { getComposio } from '@/lib/composio'
 import { db, pool } from '@/lib/db'
 import { activeExecutionIdentity } from '@/lib/execution-identity'
-import { readWriteSettingLayers } from '@/lib/operations/write-setting-layers'
 import { pendingActions } from '@/lib/db/schema'
-import { proposeAppToolCall } from '@/lib/pending-action-store'
 import { isToolkitSlug, OWN_INTEGRATIONS } from '@/lib/composio-accounts'
 import { composioToolkitLister, isNoAuthToolkit } from '@/lib/plugins/catalog'
 import { MAX_RUN_APP_TOOLS, runAppCall, runAppTool, type RunAppScope } from '@/lib/run-app-mcp'
@@ -27,24 +24,12 @@ export async function executeAppToolCall(client: Client, userId: string, call: A
 
 export function appToolDeps(userId: string, botId: string | null, client: Client, signal?:AbortSignal): AppToolDeps {
   return {
-    appAllowed: async toolkit => (await import('@/lib/app-policy/store')).botMayUseApp(botId, toolkit),
+    appAllowed: async toolkit => (await import('@/lib/app-policy/store')).botMayUseApp(botId, toolkit, userId),
     noAuth: toolkit => isNoAuthToolkit(composioToolkitLister(client), toolkit).catch(() => false),
     resolveAccount: (toolkit, selected) => resolveComposioAccount(userId, toolkit, client, kit => chosenComposioDefault(userId, kit), selected),
     listTools: (toolkit, query) => client.tools.getRawComposioTools(query ? { toolkits: [toolkit], search: query, limit: 15 } : { toolkits: [toolkit], limit: 15 }) as Promise<AppTool[]>,
     getTool: slug => client.tools.getRawComposioToolBySlug(slug) as Promise<AppTool>,
     execute: (call, accountId) => executeAppToolCall(client, userId, call, accountId, signal),
-    setting: async (tool, toolkit) => {
-      // A layer that cannot be read names nothing: the call goes to the
-      // Decisions judge exactly as an unset key does, and the failure is logged
-      // by name (decision 2026-11-01-1330). Deliberately not a refusal — this
-      // contradicts the P1 note that would fail closed here; the ruling wins.
-      // The lookup covers the tool's slug, its app key and its legacy write action (send_slack_message).
-      try { return appCallSetting(await readWriteSettingLayers(db, userId, botId), tool, toolkit) } catch (failure) {
-        console.error('Workspace app setting unreadable: judged without it', { toolkit, tool, cause: failure instanceof Error ? failure.name : 'unknown' })
-        return null
-      }
-    },
-    judge: serverWriteJudge(userId, botId),
     recordStart: async (call, accountId) => {
       const id = crypto.randomUUID()
       await db.insert(pendingActions).values({ id, userId, botId, action: 'app_tool_call', input: call, connectedAccountId: accountId, status: 'running' })
@@ -53,7 +38,6 @@ export function appToolDeps(userId: string, botId: string | null, client: Client
     recordEnd: async (id, outcome) => {
       await db.update(pendingActions).set({ status: outcome.status, error: outcome.error ?? null, result: outcome.result ?? null }).where(eq(pendingActions.id, id))
     },
-    propose: (call, accountId) => proposeAppToolCall(userId, call, accountId, botId),
   }
 }
 
@@ -69,7 +53,7 @@ export async function runAppToolkits(userId: string, botId: string | null): Prom
   const { connectedComposioApps } = await import('@/lib/suggestions/sources')
   const { botMayUseApp } = await import('@/lib/app-policy/store')
   const kits = (await connectedComposioApps(userId)).filter(kit => isToolkitSlug(kit) && !OWN_INTEGRATIONS.has(kit))
-  const allowed = await Promise.all(kits.map(kit => botMayUseApp(botId, kit)))
+  const allowed = await Promise.all(kits.map(kit => botMayUseApp(botId, kit, userId)))
   return kits.filter((_, index) => allowed[index]).sort()
 }
 
@@ -80,7 +64,7 @@ export function runAppEntry(scope: RunAppScope) {
   const deps = appToolDeps(scope.userId, scope.botId, client)
   const execute = deps.execute
   deps.execute = async (call, accountId) => {
-    // Tool discovery / the write decision may wait on external services. Recheck at use, after those waits.
+    // Tool discovery may wait on external services. Recheck at use, after those waits.
     await activeExecutionIdentity(pool, scope.runId, scope.userId)
     if (!await deps.appAllowed(call.toolkit)) throw new Error('integrationActionDenied')
     if (accountId) {
@@ -104,7 +88,7 @@ export function runAppEntry(scope: RunAppScope) {
       const input = runAppCall(definition, scope.toolkit, args)
       if (!input) return { error: 'invalidIntegrationInput' }
       // Resolve the current tool once. The existing owner/account selection,
-      // policy, pinned version and per-use run checks remain in callAppTool.
+      // app admission, pinned version and per-use run checks remain in callAppTool.
       return callAppTool({ ...deps, getTool: async slug => slug === definition.slug ? definition : deps.getTool(slug) }, input)
     },
   }

@@ -6,7 +6,7 @@ async function main() {
     const target = new URL(value ?? '')
     if (target.hostname !== '127.0.0.1' || !target.pathname.endsWith('_e2e') || target.search || target.hash) throw new Error('Audit replay fixture requires isolated loopback databases')
   }
-  try { process.stdout.write(JSON.stringify(await deliverWorkspaceAudits())) }
+  try { process.stdout.write(JSON.stringify(await deliverWorkspaceAudits()) + '\n') }
   finally { await Promise.all([pool.end(), workspacePool.end()]) }
 }
 void main().catch(() => { process.stderr.write('Audit replay fixture failed'); process.exitCode = 1 })

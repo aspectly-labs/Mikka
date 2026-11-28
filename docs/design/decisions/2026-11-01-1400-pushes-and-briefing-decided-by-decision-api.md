@@ -1,6 +1,7 @@
 # Phone pushes, desktop notifications and briefing highlights are Decisions API answers
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「这个东西很便宜，全部交给 Decision API 来处理，确认卡片之类的全部交给。」
 - Rule: R-20, R-21
 - Replaces: the event-kind table in `lib/push-reasons.ts`, the "waiting or failed always notifies" rule of the desktop app (2026-10-31), the level/required/age order of briefing highlights, and the preset `result` tier on OAuth agent messages

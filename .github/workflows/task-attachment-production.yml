@@ -1,7 +1,8 @@
 name: Task attachment production acceptance
 
 on:
-  pull_request:
+  push:
+    branches: [main]
     paths:
       - '.github/workflows/task-attachment-production.yml'
       - 'scripts/acceptance/task-attachment-*.mjs'
@@ -13,7 +14,7 @@ permissions:
 
 jobs:
   guards:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -27,7 +28,7 @@ jobs:
 
   roundtrip:
     if: >-
-      github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' &&
+      (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10

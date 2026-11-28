@@ -155,6 +155,44 @@ accepted delivery share the original queue transaction.
 
 ## Approve and merge
 
+`GET /summary` reads the associated PR's current metadata from GitHub. Its
+additive `nativeMergeTarget` is null or a native intent that does not require
+an archived diff:
+
+```ts
+type NativeMergeTarget = {
+  pullRef: {
+    runId: string; repoId: string; repositoryId: string
+    number: number; baseSha: string; producerRunId: string
+  }
+  binding: {
+    taskId: string; issueId: string; attemptId: string
+    revision: number; candidateId: string
+  }
+  expectedHeadSha: string
+}
+```
+
+Only the owner session receives this target, after the actual host publication
+and current Factory candidate match GitHub's HEAD. The PR must be open,
+non-draft and known mergeable. The reference freezes the observed target base
+and repository identity; it is a locator, never a grant. Before a new claim
+the server resolves the authorized Run/Task and publication again. Before the
+PUT it rechecks the Factory binding, session, membership, native credential,
+complete checks, and GitHub's current HEAD and base under the existing lease.
+
+Native writers submit this target to the same `POST /merge`; responses echo
+`pullRef`. Exactly one of `pullRef` and `reviewRef` is accepted. Completed
+native receipts remain bound to the original candidate after replacement or
+GitHub credential revocation; an altered request with the same key conflicts.
+
+This is the expansion stage of the client migration. Legacy `mergeTarget`,
+`reviewRef` and `permissions.canMerge` keep their snapshot-bound meaning and
+old request fingerprints remain unchanged. A native writer uses the presence
+of `nativeMergeTarget` for eligibility, with the refusal response authoritative.
+Hosted readers/writers switch in a separate change before archive retirement;
+no old field, route or stored evidence is removed here.
+
 Summary `mergeTarget` is null or:
 
 ```ts

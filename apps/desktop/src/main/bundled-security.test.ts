@@ -5,11 +5,11 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setImmediate as nextTurn } from 'node:timers/promises'
-import { allowedApiPath, normalizedRendererPath, RENDERER_CSP, RENDERER_URL, rendererAssetPath, safeAppNext } from './bundled-policy'
+import { forwardableApiPath, normalizedRendererPath, RENDERER_CSP, RENDERER_URL, rendererAssetPath, safeAppNext } from './bundled-policy'
 import { isTrustedFrame, navigationDecision, originOf, trustedIpcSender } from './security'
-import { bundledProtocol } from './bundled-protocol'
+import { bundledProtocol, PROXIED_CSP, PROXIED_HTML_CSP } from './bundled-protocol'
 import { SessionVault, type EncryptedStorage, type StoredSession } from './session-vault'
-import { BundledAuth } from './bundled-auth'
+import { BundledAuth, sameUrlPath } from './bundled-auth'
 import { notifyBundledSessionChange, type BundledSessionChange } from './bundled-session-change'
 import { BundledLive } from './bundled-live'
 import { startBundledLoopback } from './bundled-loopback'
@@ -47,64 +47,86 @@ test('custom origin is explicit; opaque, lookalike, embedded and resource frames
   assert.equal(isTrustedFrame('mikka://app/', RENDERER_URL), false)
 })
 
-test('path policy rejects traversal, encoded delimiters, absolute targets and unknown API routes', () => {
+test('path policy rejects traversal, encoded delimiters and absolute targets', () => {
   for (const path of ['/mikka/../secret', '/mikka/%2e%2e/secret', '/mikka/%252e%252e/secret', '/mikka/%2fapi/auth/token', '/mikka/a\\b', '//evil.test/api', '/mikka/a%00b']) assert.equal(normalizedRendererPath(path), null, path)
+  // Decoded controls and whitespace: URL construction strips TAB/CR/LF, so `.%0A.` would become `..`.
+  for (const encoded of ['%09', '%0A', '%0a', '%0D', '%00', '%20', '%7F', '%0D%0A']) {
+    for (const path of [`/mikka/api/.${encoded}./x`, `/mikka/api/${encoded}../x`, `/mikka/api/..${encoded}/x`, `/mikka/api/x${encoded}`, `/mikka/api/.${encoded}./%41pi/x`, `/mikka/api/%E2%80%A4.${encoded}./x`]) assert.equal(normalizedRendererPath(path), null, path)
+  }
+  assert.equal(normalizedRendererPath('/mikka/api/%41b'), '/api/Ab')
   assert.equal(rendererAssetPath('/safe/root', '/mikka/assets/file.js'), '/safe/root/assets/file.js')
   assert.equal(normalizedRendererPath('/mikka'), '/')
-  assert.equal(allowedApiPath('/api/desktop/rpc', 'POST'), true)
-  for (const path of ['/api/auth/get-session', '/api/auth/token', '/api/auth/one-time-token/verify', '/api/live/ticket', '/api/devices/enrollment', '/api/desktop/exchange', '/api/cron/schedules', '/api/arbitrary']) assert.equal(allowedApiPath(path, 'GET'), false, path)
-  assert.equal(allowedApiPath('/api/desktop/rpc', 'GET'), false)
-  assert.equal(allowedApiPath('/api/settings/preferences', 'GET'), true)
-  assert.equal(allowedApiPath('/api/settings/preferences', 'POST'), false)
-  assert.equal(allowedApiPath('/api/settings/issue-prefix', 'GET'), true)
-  for (const method of ['HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath('/api/settings/issue-prefix', method), false)
-  }
-  assert.equal(allowedApiPath('/api/settings/issue-prefix/extra', 'GET'), false)
-  assert.equal(allowedApiPath('/api/artifacts/shared/public-share-token', 'GET'), true)
-  assert.equal(allowedApiPath('/api/artifacts/shared/public-share-token', 'POST'), false)
-  assert.equal(allowedApiPath('/api/artifacts/shared/public-share-token/metadata', 'GET'), false)
-  assert.equal(allowedApiPath(`/api/bots/${identity.user.id}/computer/viewer`, 'POST'), false)
-  assert.equal(allowedApiPath(`/api/bots/${identity.user.id}/computer/takeover`, 'POST'), false)
   assert.equal(safeAppNext('//evil.test'), '/')
   assert.equal(safeAppNext('/\\evil.test'), '/')
 })
 
-test('private Drive forwarding has exact identifiers, paths and HTTP methods', () => {
-  const volume = 'vol_01ARZ3NDEKTSV4RRFFQ69G5FAV', version = 'vver_01ARZ3NDEKTSV4RRFFQ69G5FAW'
-  const routes: [string, string[]][] = [
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive-skills', ['GET']],
-    ['/api/drive/scopes', ['GET']],
-    ['/api/drive/shares', ['GET']],
-    ['/api/drive/shares/4bd6cdd3-9660-48ed-9db1-15f98f5bb844', ['GET']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive-shares/4bd6cdd3-9660-48ed-9db1-15f98f5bb844', ['PATCH', 'DELETE']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/restore', ['POST']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/versions', ['GET']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/versions/vver_01J00000000000000000000000', ['GET']],
-    [`/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/versions/vver_01J00000000000000000000000/files/${'a'.repeat(64)}`, ['GET']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/file-versions', ['GET']],
-    ['/api/drive/volumes', ['GET', 'POST']],
-    [`/api/drive/volumes/${volume}`, ['GET']],
-    [`/api/drive/volumes/${volume}/files`, ['GET']],
-    [`/api/drive/volumes/${volume}/versions`, ['GET']],
-    [`/api/drive/volumes/${volume}/versions/${version}`, ['GET']],
-    [`/api/drive/volumes/${volume}/shares`, ['GET', 'POST']],
-    ['/api/organizations/7107d7b1-b9e5-45ec-9ffc-ee62c45da3c1/drive/vol_01J00000000000000000000000/shares', ['GET', 'POST']],
-    [`/api/drive/volumes/${volume}/shares/4bd6cdd3-9660-48ed-9db1-15f98f5bb844`, ['GET', 'PATCH', 'DELETE']],
-    [`/api/drive/volumes/${volume}/blobs`, ['POST']],
-    [`/api/drive/volumes/${volume}/entries`, ['PATCH']],
-    [`/api/drive/volumes/${volume}/restore`, ['POST']],
-    [`/api/drive/volumes/${volume}/archive`, ['POST']],
-    [`/api/drive/volumes/${volume}/unarchive`, ['POST']],
-  ]
-  for (const [path, methods] of routes) {
-    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) {
-      assert.equal(allowedApiPath(path, method), methods.includes(method), `${method} ${path}`)
-    }
+test('the proxy forwards any API path to the account server only, and nothing else', async t => {
+  const root = await fixture(t)
+  const forwarded: string[] = []
+  const serve = bundledProtocol(root, { request: async (path, init) => { forwarded.push(`${init?.method ?? 'GET'} ${path}`); return Response.json({ ok: true }) } })
+  const trusted = (path: string, init: RequestInit = {}) => serve(Object.assign(new Request(`mikka://app${path}`, init), { initiatorOrigin: 'mikka://app' }))
+  // No per-route list: the server authorizes the person, workspace and permission.
+  for (const path of ['/mikka/api/settings/issue-states', '/mikka/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels', '/mikka/api/integrations/mcp/x/check']) {
+    assert.equal((await trusted(path, { method: path.endsWith('check') ? 'POST' : 'GET' })).status, 200, path)
   }
-  for (const path of ['/api/drive/admin', '/api/drive/scopes/extra', '/api/drive/shares/extra', '/api/drive/volumes/not-a-volume', `/api/drive/volumes/${volume}/files/extra`,
-    `/api/drive/volumes/${volume}/versions/not-a-version`, `/api/drive/volumes/${volume}/shares/non-uuid`, `/api/drive/volumes/${volume}/delete`]) {
-    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
+  assert.deepEqual(forwarded, ['GET /api/settings/issue-states', 'GET /api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels', 'POST /api/integrations/mcp/x/check'])
+  forwarded.length = 0
+  // Traversal, encoded separators, absolute and protocol-relative targets, and non-API paths never reach the server.
+  for (const path of [
+    '/mikka/api/../../etc/passwd', '/mikka/api/%2e%2e/admin', '/mikka/api%2fsecret', '/mikka/api/a%2fb', '/mikka/api/a%5cb', '/mikka/api/%252e%252e',
+    '/mikka/api//evil.test/x', '/mikka/api/x/', '//evil.test/mikka/api/x', '/mikka/api/a\\b',
+  ]) {
+    const response = await trusted(path)
+    assert.ok([400, 404].includes(response.status), `${path} -> ${response.status}`)
+  }
+  // Encoded controls that would decode to `.\n.` and be stripped into `..` by URL construction.
+  for (const path of ['/mikka/api/.%0A./.%0A./steal-me', '/mikka/api/.%09./x', '/mikka/api/x/.%0D./y', '/mikka/api/.%00./x', '/mikka/api/.%0A%41./x', '/mikka/api/%2E%0A./x', '/mikka/api/.%0A./%0A/evil.test/x']) {
+    const response = await trusted(path)
+    assert.equal(response.status, 400, `${path} -> ${response.status}`)
+  }
+  for (const href of ['https://evil.test/mikka/api/x', 'mikka://evil/mikka/api/x']) assert.equal((await serve(new Request(href))).status, 403, href)
+  // A path outside /mikka/api is a local asset, never a request: it is not forwarded.
+  assert.equal((await trusted('/mikka/apiary')).status, 404)
+  assert.equal((await trusted('/mikka/api/x', { method: 'OPTIONS' })).status, 405)
+  assert.equal(forwarded.length, 0)
+  assert.equal(forwardableApiPath('/api/x'), true)
+  for (const path of ['/api/', '/api//x', '/apix', '/assets/x', `/api/${'a'.repeat(5000)}`]) assert.equal(forwardableApiPath(path), false, path)
+})
+
+test('a response that echoes a session credential never reaches the renderer', async t => {
+  const root = await fixture(t)
+  const token = 'tok_' + 'x'.repeat(40)
+  const reports: string[] = []
+  const chunks = ['{"session":{"id":"s","token":"tok_', 'x'.repeat(40), '"}}']
+  const serve = bundledProtocol(root, {
+    credentials: () => [token],
+    request: async path => path === '/api/auth/get-session'
+      ? new Response(new ReadableStream({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close() } }), { headers: { 'content-type': 'application/json' } })
+      : path === '/api/header'
+        ? new Response('{}', { headers: { 'content-type': 'application/json', 'content-disposition': `attachment; filename=${token}` } })
+        : new Response('{"ok":true,"tok_":"a prefix alone is fine"}', { headers: { 'content-type': 'application/json' } }),
+  }, failure => reports.push(`${failure.route} ${failure.code}`))
+  const trusted = (path: string) => serve(Object.assign(new Request(`mikka://app/mikka${path}`), { initiatorOrigin: 'mikka://app' }))
+  // Split across chunks, the token is still caught: the body is cut off before its last part leaves main.
+  await assert.rejects((await trusted('/api/auth/get-session')).text())
+  assert.equal((await trusted('/api/header')).status, 502)
+  assert.equal(await (await trusted('/api/inbox')).text(), '{"ok":true,"tok_":"a prefix alone is fine"}')
+  assert.deepEqual(reports, ['/api/auth/[...all] desktop_credential_withheld', 'unmatched desktop_credential_withheld'])
+})
+
+test('every proxied response is an opaque sandbox; only artifact HTML may run inline script', async t => {
+  const root = await fixture(t)
+  const types: Record<string, string | null> = { svg: 'image/svg+xml', xml: 'application/xml', xhtml: 'application/xhtml+xml', json: 'application/json', untyped: null, html: 'Text/HTML; charset=utf-8', pdf: 'application/pdf' }
+  const serve = bundledProtocol(root, { request: async path => {
+    const type = types[path.split('/').at(-1)!]
+    return new Response('<svg xmlns="http://www.w3.org/2000/svg"><script>parent.mikka</script></svg>', { headers: type ? { 'content-type': type, 'content-security-policy': "default-src *" } : { 'content-security-policy': "default-src *" } })
+  } })
+  for (const kind of Object.keys(types)) {
+    const response = await serve(Object.assign(new Request(`${RENDERER_URL}/api/files/${kind}`), { initiatorOrigin: 'mikka://app' }))
+    const csp = response.headers.get('content-security-policy')!
+    assert.equal(csp, kind === 'html' ? PROXIED_HTML_CSP : PROXIED_CSP, kind)
+    assert.match(csp, /^sandbox(;| allow-scripts;)/, kind)
+    if (kind !== 'html') assert.doesNotMatch(csp, /allow-scripts|script-src/, kind)
   }
 })
 
@@ -114,153 +136,6 @@ test('renderer CSP has no remote code, eval, inline scripts, external fetch, wor
   assert.match(RENDERER_CSP, /connect-src 'self';/)
   assert.match(RENDERER_CSP, /object-src 'none'/)
   assert.match(RENDERER_CSP, /worker-src 'none'/)
-})
-
-test('Factory flow accepts only a strict UUID and its two declared methods', () => {
-  const path = `/api/factory/tasks/${identity.user.id}/flow`
-  for (const method of ['GET', 'POST']) assert.equal(allowedApiPath(path, method), true)
-  for (const method of ['HEAD', 'PATCH', 'DELETE', 'PUT', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
-  for (const id of ['task_1', identity.user.id.replaceAll('-', ''), identity.user.id.replace('-461b-', '-z61b-'), identity.user.id.replace('-bca2-', '-1ca2-')]) {
-    for (const method of ['GET', 'POST']) assert.equal(allowedApiPath(`/api/factory/tasks/${id}/flow`, method), false)
-  }
-  assert.equal(allowedApiPath(`${path}/extra`, 'GET'), false)
-})
-
-test('Factory activity and its media are read-only under a strict task UUID', () => {
-  const task = identity.user.id
-  for (const path of [`/api/factory/tasks/${task}/activity`, `/api/factory/tasks/${task}/media/${task}`]) {
-    assert.equal(allowedApiPath(path, 'GET'), true, path)
-    for (const method of ['HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
-    assert.equal(allowedApiPath(`${path}/extra`, 'GET'), false)
-  }
-  assert.equal(allowedApiPath('/api/factory/tasks/task_1/activity', 'GET'), false)
-  assert.equal(allowedApiPath(`/api/factory/tasks/${task}/media/`, 'GET'), false)
-})
-
-test('service identity management forwards only its declared human-session methods and UUID paths', () => {
-  const workspace = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const identity = 'ebb7878e-6918-4b68-9300-d956761b5011'
-  const directory = `/api/workspaces/${workspace}/service-identities`
-  const item = `${directory}/${identity}`
-  const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-  const governance = `/api/workspaces/${workspace}/governance`
-  for (const method of methods) assert.equal(allowedApiPath(governance, method), method === 'GET', method)
-  const routes = [[directory, 'POST'], [item, 'PATCH'], [item + '/projects', 'PUT'], [item + '/credential', 'POST']]
-  for (const [path, mutation] of routes) {
-    for (const method of methods) assert.equal(allowedApiPath(path, method), method === 'GET' || method === mutation, `${method} ${path}`)
-  }
-  for (const path of [governance.replace(workspace, 'unknown'), governance + '/usage', directory.replace(workspace, 'unknown'), directory + '/bad-id', item + '/unknown',
-    item + '/credential/rotate', item + '/projects/', '/api/service-identity/projects']) {
-    for (const method of methods) assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
-  }
-})
-
-test('organization lifecycle, workspace binding and service keys use their declared session routes', () => {
-  const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const key = 'ebb7878e-6918-4b68-9300-d956761b5011'
-  const overview = `/api/organizations/${org}`
-  const collection = overview + '/api-keys'
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath('/api/organizations', method), ['GET', 'POST'].includes(method))
-    assert.equal(allowedApiPath('/api/organizations/deleted', method), method === 'GET')
-    assert.equal(allowedApiPath('/api/organizations/deleted/extra', method), false)
-    assert.equal(allowedApiPath(overview, method), ['GET', 'PUT', 'PATCH', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(overview + '/workspaces', method), ['POST', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(collection, method), method === 'GET')
-    assert.equal(allowedApiPath(collection + '/' + key, method), method === 'PATCH')
-    for (const path of [overview.replace(org, 'unknown'), overview + '/workspaces/extra', overview.replace(org, 'unknown') + '/workspaces', collection.replace(org, 'unknown'), collection + '/unknown', collection + '/' + key + '/revoke']) {
-      assert.equal(allowedApiPath(path, method), false)
-    }
-  }
-})
-
-test('organization audit permits only listing and named export requests for a single organization', () => {
-  const organization = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const path = `/api/organizations/${organization}/audit-log`
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(path, method), method === 'GET' || method === 'POST')
-    assert.equal(allowedApiPath(path.replace(organization, 'unknown'), method), false)
-    assert.equal(allowedApiPath(path + '/events', method), false)
-  }
-})
-
-test('resource policy and approval requests use only their own declared methods', () => {
-  const root = '/api/organizations/' + identity.user.id
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(root + '/policy', method), ['GET', 'PATCH'].includes(method))
-    assert.equal(allowedApiPath(root + '/approvals', method), ['POST', 'PATCH'].includes(method))
-    assert.equal(allowedApiPath(root + '/approvals/all', method), false)
-    assert.equal(allowedApiPath('/api/organizations/unknown/policy', method), false)
-  }
-})
-
-test('Organization Files forwards only a signed directory read', () => {
-  const path = '/api/organizations/' + identity.user.id + '/drive-shares'
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(path, method), method === 'GET')
-    assert.equal(allowedApiPath(path + '/all', method), false)
-    assert.equal(allowedApiPath('/api/organizations/unknown/drive-shares', method), false)
-  }
-})
-
-test('Organization Drive catalogs allow GET for the exact Organization path', () => {
-  for (const resource of ['drive', 'drive-scopes']) {
-    const path = '/api/organizations/' + identity.user.id + '/' + resource
-    for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
-      assert.equal(allowedApiPath(path, method), method === 'GET')
-      assert.equal(allowedApiPath(path + '/all', method), false)
-    }
-  }
-})
-
-test('Organization domain discovery and admission forward only the declared routes and methods', () => {
-  const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const domain = 'ebb7878e-6918-4b68-9300-d956761b5011'
-  const base = `/api/organizations/${org}`
-  const collection = `${base}/allowed-domains`
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath('/api/me/joinable-organizations', method), method === 'GET')
-    assert.equal(allowedApiPath('/api/me/invitations', method), method === 'GET')
-    assert.equal(allowedApiPath(collection, method), method === 'GET' || method === 'POST')
-    assert.equal(allowedApiPath(`${collection}/${domain}`, method), method === 'DELETE')
-    assert.equal(allowedApiPath(`${base}/join-by-domain`, method), method === 'POST')
-    for (const path of [collection.replace(org, 'unknown'), `${collection}/unknown`, `${collection}/${domain}/unknown`, `${base}/join-by-domain/extra`]) {
-      assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
-    }
-  }
-})
-
-test('billing metadata and commands have exact scoped routes and methods', () => {
-  for (const scope of ['workspaces', 'organizations']) {
-    const path = `/api/${scope}/${identity.user.id}/billing`
-    for (const method of ['GET', 'POST']) assert.equal(allowedApiPath(path, method), true)
-    for (const method of ['HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath(path, method), false)
-    assert.equal(allowedApiPath(`${path}/credentials`, 'GET'), false)
-    assert.equal(allowedApiPath(`/api/${scope}/forged/billing`, 'POST'), false)
-  }
-})
-
-test('organization membership exposes the directory and declared membership writes', () => {
-  const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const members = `/api/organizations/${org}/members`
-  for (const method of ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(members, method), ['GET', 'POST', 'PATCH', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(members.replace(org, 'unknown'), method), false)
-    assert.equal(allowedApiPath(members + '/roles', method), false)
-  }
-})
-
-test('installed Organization invitations expose only listing, issuing, revoking and accepting', () => {
-  const org = 'ab81a708-013c-4e44-9ab2-a500bd59f381'
-  const collection = `/api/organizations/${org}/invitations`
-  const accept = '/api/organization-invitations/accept'
-  for (const method of ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS']) {
-    assert.equal(allowedApiPath(collection, method), ['GET', 'POST', 'DELETE'].includes(method))
-    assert.equal(allowedApiPath(accept, method), method === 'POST')
-    for (const path of [collection.replace(org, 'unknown'), `${collection}/accept`, `${collection}/${org}`, `${accept}/extra`]) {
-      assert.equal(allowedApiPath(path, method), false, `${method} ${path}`)
-    }
-  }
 })
 
 test('local entry/assets load without backend; missing assets and symlink escape fail closed', async t => {
@@ -300,9 +175,9 @@ test('proxy strips credentials, cookies, redirects and remote policy; preserves 
   assert.equal(response.headers.get('authorization'), null)
   assert.equal(response.headers.get('x-mikka-session-token'), null)
   assert.equal(response.headers.get('x-eve-stream-version'), '27')
-  assert.equal(response.headers.get('content-security-policy'), RENDERER_CSP)
+  assert.equal(response.headers.get('content-security-policy'), PROXIED_CSP)
   assert.match(await response.text(), /data: first/)
-  for (const request of [new Request(`${RENDERER_URL}/api/auth/token`), new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'https://evil.test' } }), new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'null' } }), new Request(`${RENDERER_URL}/api/workspace`, { headers: { 'sec-fetch-site': 'cross-site' } })]) assert.equal((await serve(request)).status, 403)
+  for (const request of [new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'https://evil.test' } }), new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', headers: { origin: 'null' } }), new Request(`${RENDERER_URL}/api/workspace`, { headers: { 'sec-fetch-site': 'cross-site' } })]) assert.equal((await serve(request)).status, 403)
   // Electron removes Origin:null before dispatch, but retains this trusted
   // browser-provided field even for GETs that have no Origin or fetch metadata.
   for (const initiatorOrigin of ['null', 'https://evil.test', 'mikka://app.evil']) {
@@ -345,10 +220,13 @@ test('main bearer never appears in public session and only validated workspace s
   const workspace = '29cd2c26-64cc-4e04-9339-a29610234ffe'
   let calls = 0; let changes = 0
   const auth = new BundledAuth({ serverUrl: 'https://server.test/mikka', version: '0.1.2', vault, openExternal: async () => {}, changed: () => { changes++ }, returned: () => {}, fetch: async (url, init) => {
+    // The 401 is re-checked against the session endpoint, which agrees the session is gone.
+    if (url === 'https://server.test/mikka/api/auth/get-session?disableCookieCache=true') return new Response(null, { status: 401 })
     assert.equal(url, 'https://server.test/mikka/api/desktop/rpc')
     const headers = new Headers(init?.headers)
     assert.equal(headers.get('authorization'), `Bearer ${secret}`)
     assert.equal(headers.get('cookie'), calls === 0 ? null : `mikka-workspace=${workspace}`)
+    assert.equal(headers.get('x-mikka-api-version'), '1')
     assert.equal(init?.redirect, 'error')
     calls++
     return calls === 3 ? new Response(null, { status: 401 }) : new Response('{}', { headers: { 'set-cookie': `session_token=never-retain; Path=/, mikka-workspace=${workspace}; Path=/` } })
@@ -363,6 +241,132 @@ test('main bearer never appears in public session and only validated workspace s
   assert.equal(auth.session(), null)
   assert.equal(await vault.load(), null)
   assert.equal(changes, 1)
+})
+
+test('a 401 from one route keeps the session when the session endpoint still knows it', async t => {
+  const vault = new SessionVault(await fixture(t), 'https://server.test/mikka', encryption())
+  await vault.save(stored)
+  const calls: string[] = []
+  let switcher = 0, sessionReply: () => Response = () => Response.json({ user: identity.user, session: identity.session })
+  let changes = 0
+  const auth = new BundledAuth({ serverUrl: 'https://server.test/mikka', version: '0.1.2', vault, openExternal: async () => {}, changed: () => { changes++ }, returned: () => {}, fetch: async url => {
+    const path = new URL(url).pathname.replace('/mikka', '') + new URL(url).search
+    calls.push(path)
+    if (path === '/api/auth/get-session?disableCookieCache=true') return sessionReply()
+    if (path === '/api/workspace/switcher') return ++switcher === 1 ? new Response(null, { status: 401 }) : Response.json({ workspaces: [] })
+    // The server's own mark is never believed: only main sets it.
+    if (path === '/api/desktop/rpc') return Response.json({ version: 1, ok: false, error: { code: 'desktop_session_expired' } }, { status: 401, headers: { 'x-mikka-session-active': '1' } })
+    return new Response(null, { status: 404 })
+  } })
+  await auth.restore()
+  // A transient refusal: the session is still valid, so nobody is signed out and the read is asked again.
+  const read = await auth.request('/api/workspace/switcher')
+  assert.equal(read.status, 200)
+  assert.deepEqual(auth.session(), identity)
+  assert.equal(changes, 0)
+  assert.deepEqual(calls, ['/api/workspace/switcher', '/api/auth/get-session?disableCookieCache=true', '/api/workspace/switcher'])
+  // A write's 401 goes back to its caller without being repeated, with its
+  // status and body, marked as a refusal the renderer must not read as expiry.
+  calls.length = 0
+  const refused = await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })
+  assert.equal(refused.status, 401)
+  assert.equal(refused.headers.get('x-mikka-session-active'), '1')
+  assert.deepEqual(await refused.json(), { version: 1, ok: false, error: { code: 'desktop_session_expired' } })
+  assert.deepEqual(calls, ['/api/desktop/rpc', '/api/auth/get-session?disableCookieCache=true'])
+  assert.deepEqual(auth.session(), identity)
+  // No verdict (unreachable, a 5xx, a 403, a body that is not JSON) neither
+  // signs out nor vouches for the session: the 401 goes back unmarked.
+  for (const reply of [
+    () => { throw new TypeError('fetch failed') },
+    () => new Response(null, { status: 503 }),
+    () => new Response(null, { status: 403 }),
+    () => new Response('not json', { status: 200 }),
+  ]) {
+    sessionReply = reply
+    assert.equal((await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })).headers.has('x-mikka-session-active'), false)
+    assert.deepEqual(auth.session(), identity)
+  }
+  assert.equal(changes, 0)
+  // Concurrent 401s ask once; the session endpoint saying "no session" signs
+  // out, and those 401s carry no mark, so the renderer sees the expiry.
+  sessionReply = () => Response.json(null)
+  calls.length = 0
+  const expired = await Promise.all([auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' }), auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })])
+  for (const response of expired) assert.equal(response.headers.has('x-mikka-session-active'), false)
+  assert.equal(calls.filter(path => path.startsWith('/api/auth/get-session')).length, 1)
+  assert.equal(auth.session(), null)
+  assert.equal(await vault.load(), null)
+  assert.equal(changes, 1)
+})
+
+test('the protocol hands main\'s refused-operation mark to the renderer with the 401', async () => {
+  const serve = bundledProtocol('/unused', { request: async () => Response.json({ version: 1, ok: false, error: { code: 'unauthorized' } }, { status: 401, headers: { 'x-mikka-session-active': '1' } }) })
+  const response = await serve(new Request(`${RENDERER_URL}/api/desktop/rpc`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } }))
+  assert.equal(response.status, 401)
+  assert.equal(response.headers.get('x-mikka-session-active'), '1')
+})
+
+test('a 403 from the session endpoint is a refusal, not a sign-out', async t => {
+  const vault = new SessionVault(await fixture(t), 'https://server.test/mikka', encryption())
+  await vault.save(stored)
+  let changes = 0
+  let session = () => new Response(null, { status: 403 })
+  const auth = new BundledAuth({ serverUrl: 'https://server.test/mikka', version: '0.1.2', vault, openExternal: async () => {}, changed: () => { changes++ }, returned: () => {}, fetch: async url => {
+    if (new URL(url).pathname === '/mikka/api/auth/get-session') return session()
+    return new Response(null, { status: 401 })
+  } })
+  await auth.restore()
+  await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })
+  assert.deepEqual(auth.session(), identity)
+  assert.equal(changes, 0)
+  // Only a 401, a null session or another user signs out.
+  session = () => Response.json({ user: { ...identity.user, id: '22222222-2222-4222-8222-222222222222' }, session: { id: 'other' } })
+  await auth.request('/api/desktop/rpc', { method: 'POST', body: '{}' })
+  assert.equal(auth.session(), null)
+  assert.equal(changes, 1)
+})
+
+test('main sends only the checked path under the account server, including a base path', async t => {
+  for (const server of ['https://corp.example.test/mikka', 'https://api.example.test/']) {
+    await t.test(server, async t => {
+      const vault = new SessionVault(await fixture(t), server, encryption())
+      await vault.save({ ...stored, workspace: 'ws1' })
+      const sent: string[] = []
+      const auth = new BundledAuth({ serverUrl: server, version: '0.1.2', vault, openExternal: async () => {}, changed: () => {}, returned: () => {}, fetch: async (url, init = {}) => {
+        sent.push(`${init.method ?? 'GET'} ${url}`)
+        return Response.json({ ok: true })
+      } })
+      await auth.restore()
+      const base = server.replace(/\/$/, '')
+      const serve = bundledProtocol(await fixture(t), auth)
+      const trusted = (path: string) => serve(Object.assign(new Request(`mikka://app${path}`), { initiatorOrigin: 'mikka://app' }))
+      // The reviewer's escape: `.%0A.` decodes to `.\n.`, which URL construction turns into `..`.
+      for (const path of [
+        '/mikka/api/.%0A./.%0A./steal-me', '/mikka/api/.%0A./.%0A./other-app/admin', '/mikka/api/.%09./.%09./other-app/x?y=1',
+        '/mikka/api/x/.%0D./.%0D./y', '/mikka/api/.%00./x', '/mikka/api/.%0D%0A./x', '/mikka/api/%2E%0A./x', '/mikka/api/x%0D%0AHost:%20evil.test',
+      ]) {
+        const response = await trusted(path)
+        assert.ok([400, 403].includes(response.status), `${path} -> ${response.status}`)
+      }
+      assert.deepEqual(sent, [])
+      // Main's own primitive refuses the same paths, and dot segments, before any request.
+      for (const path of ['/api/.\n./.\n./steal-me', '/api/.\t./x', '/api/x/../../y', '/api/./x', '/api/x\r', '/api/x?a=\n']) await assert.rejects(auth.request(path), /Invalid backend path/, JSON.stringify(path))
+      assert.deepEqual(sent, [])
+      // Ordinary paths, encoded characters and non-ASCII still reach exactly the account server.
+      for (const path of ['/mikka/api/workspace', '/mikka/api/agents/%E4%B8%AD%E6%96%87', '/mikka/api/x?q=a%20b']) assert.equal((await trusted(path)).status, 200, path)
+      assert.deepEqual(sent, [`GET ${base}/api/workspace`, `GET ${base}/api/agents/%E4%B8%AD%E6%96%87`, `GET ${base}/api/x?q=a%20b`])
+    })
+  }
+})
+
+test('URL path comparison allows only the percent-encoding URL serialization adds', () => {
+  assert.equal(sameUrlPath(new URL('https://x/mikka/api/a"b{c}').pathname, '/mikka/api/a"b{c}'), true)
+  assert.equal(sameUrlPath(new URL('https://x/api/中😀').pathname, '/api/中😀'), true)
+  assert.equal(sameUrlPath(new URL('https://x/api/a^b').pathname, '/api/a^b'), true)
+  assert.equal(sameUrlPath('/api/a%5Eb', '/api/a^b'), true)
+  assert.equal(sameUrlPath(new URL('https://x/mikka/api/.\n./.\n./x').pathname, '/mikka/api/.\n./.\n./x'), false)
+  assert.equal(sameUrlPath('/x', '/mikka/api/../../x'), false)
+  assert.equal(sameUrlPath('/api/x', '/api/\ud800'), false)
 })
 
 test('loopback validates nonce/code exactly, ignores wrong attempts and accepts once on localhost', async t => {
@@ -613,21 +617,6 @@ test('main binary viewer hides credentials, scopes ownership/workspace, and boun
 })
 
 
-test('eve permits native session operations and streams, with no operator or arbitrary agent routes', () => {
-  assert.equal(allowedApiPath('/api/agents/eve/v1/session', 'POST'), true)
-  assert.equal(allowedApiPath('/api/agents/eve/v1/session', 'GET'), false)
-  assert.equal(allowedApiPath('/api/agents/eve/v1/session/wrun_bot', 'POST'), true)
-  for (const operation of ['cancel', 'clear', 'compact', 'end', 'reset']) {
-    assert.equal(allowedApiPath(`/api/agents/eve/v1/session/wrun_bot/${operation}`, 'POST'), true)
-    assert.equal(allowedApiPath(`/api/agents/eve/v1/session/wrun_bot/${operation}`, 'GET'), false)
-  }
-  for (const operation of ['stream', 'descendants/stream']) {
-    assert.equal(allowedApiPath(`/api/agents/eve/v1/session/wrun_bot/${operation}`, 'GET'), true)
-    assert.equal(allowedApiPath(`/api/agents/eve/v1/session/wrun_bot/${operation}`, 'POST'), false)
-  }
-  for (const path of ['/api/agents/eve/v1/info', '/api/agents/eve/v1/cron/token', '/api/agents/eve/v1/dev/runtime-artifacts', '/api/agents/arbitrary', '/api/agents/eve/v1/session/wrun_bot/unknown']) assert.equal(allowedApiPath(path, 'POST'), false)
-})
-
 test('desktop forwards eve protocol headers and fences NDJSON bytes at account/workspace changes', async t => {
   const root = await fixture(t)
   let scope = 'owner-a:workspace-a', cancelled = false
@@ -658,8 +647,3 @@ test('desktop forwards eve protocol headers and fences NDJSON bytes at account/w
   assert.equal(cancelled, true)
 })
 
-test('run environment settings forwarding permits only the exact read route', () => {
-  assert.equal(allowedApiPath('/api/settings/environments', 'GET'), true)
-  assert.equal(allowedApiPath('/api/settings/environments/extra', 'GET'), false)
-  for (const method of ['HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) assert.equal(allowedApiPath('/api/settings/environments', method), false)
-})

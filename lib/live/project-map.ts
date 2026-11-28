@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { liveGatewayConfig, type LiveScope } from './scope'
 import type { LiveInvalidation } from './events'
@@ -76,7 +77,7 @@ async function publish(database: Database, workspace: Database, reference: Refer
   }
 }
 async function changed(executor: object, reference: Reference) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive } = await import('./notify')
   afterDatabaseCommit(executor, 'project-map:' + JSON.stringify(reference), () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

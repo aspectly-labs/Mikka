@@ -137,11 +137,11 @@ async function machine(hint = true, options: { delayedClaim?: boolean; cloud?: b
   const link = server.link(), original = { ...link }, calls: string[] = [], claimOptions: unknown[] = []
   const registerEntered = deferred(), registration = deferred()
   const reposEntered = deferred(), repositories = deferred()
-  const claimEntered = deferred(), claimResponse = deferred(), queued = deferred<string[]>()
+  const claimEntered = deferred(), claimResponse = deferred()
   const commandsEntered = deferred()
-  let commands = 0, revoked = false
+  let revoked = false
   link.registerDevice = async (...args) => { calls.push('register'); registerEntered.resolve(); await registration.promise; return original.registerDevice(...args) }
-  link.heartbeat = async (...args) => { calls.push('heartbeat'); return original.heartbeat(...args) }
+  link.report = async (...args) => { calls.push('report'); return original.report(...args) }
   link.listRepos = async (...args) => { calls.push('repos'); reposEntered.resolve(); await repositories.promise; return original.listRepos(...args) }
   link.pendingRuns = async (...args) => { calls.push('pending'); return original.pendingRuns(...args) }
   link.claimRun = async (...args) => {
@@ -157,26 +157,23 @@ async function machine(hint = true, options: { delayedClaim?: boolean; cloud?: b
   }
   if (!options.delayedClaim) claimResponse.resolve()
   link.verifyRunPolicy = vi.fn(async () => { calls.push('policy'); if (revoked) throw new Error('Current run was stopped') })
+  // One read per push, never a long-poll: it reports the runs queued so far.
+  let queuedRuns: string[] = []
   link.fetchCommands = async (_deviceId, _wait, options) => {
     calls.push('commands'); commandsEntered.resolve()
-    const aborted = deferred<string[]>(), abort = () => aborted.resolve([])
-    options?.signal?.addEventListener('abort', abort, { once: true })
-    if (options?.signal?.aborted) abort()
-    try {
-      const runIds = await (commands++ === 0 ? Promise.race([queued.promise, aborted.promise]) : aborted.promise)
-      if (!options?.signal?.aborted && runIds.length) options?.onQueuedRuns?.(runIds)
-      return []
-    } finally { options?.signal?.removeEventListener('abort', abort) }
+    if (queuedRuns.length) options?.onQueuedRuns?.(queuedRuns)
+    return []
   }
   const daemon = await new Daemon({ dataDir, flavor: 'dev', agentSandbox: null, link, credential: 'fixture-credential',
     ...(options.cloud ? { hostedSubscriptions: true, e2bContainerRuntime: true, harnessBinaries: { claude_code: resolve(import.meta.dirname, 'fakes/fake-claude-subscription.mjs') } } : {}),
     initialRunId: hint ? runId : undefined, harnesses: [{ harness: 'mock', installed: true, version: 'fixture' }],
-    modelProbe: false, mockSpeed: Infinity, heartbeatMs: 60_000, quotaSource: null }).start()
+    modelProbe: false, mockSpeed: Infinity, quotaSource: null }).start()
   const started = vi.spyOn(daemon.supervisor, 'start')
   const warnings = vi.spyOn(daemon.log, 'warn')
   cleanups.push(async () => { registration.resolve(); repositories.resolve(); claimResponse.resolve(); await daemon.stop() })
-  return { daemon, deviceId, runId, link, calls, recipe, started, registration, registerEntered, repositories, reposEntered,
-    claimEntered, claimResponse, queued, commandsEntered, warnings, claimOptions, revoke: () => { revoked = true; server.requestStop(runId) } }
+  const queueNext = () => server.queueRun(deviceId, { issueId: 'issue-2', repoId: 'repo-1', baseBranch: 'main', harness: 'mock', prompt: 'next queued run', fixture: 'stall' })
+  return { daemon, deviceId, runId, link, calls, recipe, started, registration, registerEntered, repositories, reposEntered, queueNext,
+    claimEntered, claimResponse, queue: (runIds: string[]) => { queuedRuns = runIds }, commandsEntered, warnings, claimOptions, revoke: () => { revoked = true; server.requestStop(runId) } }
 }
 
 it.each([false, true])('uses the same first-pass RPCs and preserves complete setup/copyFiles (hint=%s)', async hint => {
@@ -207,17 +204,18 @@ it.each([false, true])('uses the same first-pass RPCs and preserves complete set
   expect(options.prompt).toContain('complete prompt')
   expect(readFileSync(join(options.cwd, '.env.local'), 'utf8')).toBe('CACHE_INPUT=1\n')
   expect(readFileSync(join(options.cwd, 'setup-ran'), 'utf8')).toBe('complete')
-  expect(Object.fromEntries(['register', 'heartbeat', 'repos', 'pending', 'claim', 'commands', 'policy'].map(name =>
-    [name, f.calls.filter(call => call === name).length]))).toEqual({ register: 1, heartbeat: 1, repos: 1, pending: 1, claim: 1, commands: 1, policy: 1 })
+  expect(Object.fromEntries(['register', 'report', 'repos', 'pending', 'claim', 'commands', 'policy'].map(name =>
+    [name, f.calls.filter(call => call === name).length]))).toEqual({ register: 1, report: 1, repos: 1, pending: 1, claim: 1, commands: 1, policy: 1 })
 })
 
 it('deduplicates the locator and a concurrent queued command while repository settings are pending', async () => {
   const f = await machine()
   f.registration.resolve()
   await Promise.all([f.claimEntered.promise, f.commandsEntered.promise, f.reposEntered.promise])
-  f.queued.resolve([f.runId])
-  // Drain the command response without releasing repository setup.
-  await waitFor(() => f.calls.filter(call => call === 'commands').length === 2)
+  f.queue([f.runId])
+  // A push's read while repository settings are pending names the same run.
+  await Reflect.get(f.daemon, 'pullSignaledWork').call(f.daemon, f.deviceId, new AbortController().signal)
+  expect(f.calls.filter(call => call === 'commands')).toHaveLength(2)
   expect(f.calls.filter(call => call === 'claim')).toHaveLength(1)
   expect(f.started).not.toHaveBeenCalled()
   f.repositories.resolve()
@@ -276,7 +274,7 @@ it('still performs fresh policy authorization after the repository join and refu
 
 it('does not start when the registered device session is rejected before repository sync', async () => {
   const f = await machine()
-  f.link.heartbeat = async () => { f.calls.push('heartbeat'); throw new SessionRejectedError() }
+  f.link.report = async () => { f.calls.push('report'); throw new SessionRejectedError() }
   f.registration.resolve()
   await f.claimEntered.promise
   await waitFor(() => !JSON.parse(readFileSync(f.daemon.paths.device, 'utf8')).credential)
@@ -289,8 +287,8 @@ it('uninstall rejects the repository wait and drains a late claim before closing
   const uninstall = vi.spyOn(service, 'uninstallService').mockResolvedValue()
   const prepare = vi.spyOn(RepositoryCache.prototype, 'prepare'), adapter = vi.spyOn(MockAdapter.prototype, 'start')
   const f = await machine(true, { delayedClaim: true })
-  const heartbeat = f.link.heartbeat
-  f.link.heartbeat = async (...args) => ({ ...await heartbeat(...args), deviceCommands: [{ id: randomUUID(), kind: 'uninstall' }] })
+  const report = f.link.report
+  f.link.report = async (...args) => ({ ...await report(...args), deviceCommands: [{ id: randomUUID(), kind: 'uninstall' }] })
   f.registration.resolve()
   await f.claimEntered.promise
   await waitFor(() => f.daemon.status().draining)
@@ -302,7 +300,7 @@ it('uninstall rejects the repository wait and drains a late claim before closing
   expect(adapter).not.toHaveBeenCalled()
 })
 
-it('uses claim repository settings once after the heartbeat barrier, preserving real setup and copyFiles', async () => {
+it('uses claim repository settings once after the report barrier, preserving real setup and copyFiles', async () => {
   const acquire = vi.mocked(workspaceControl.acquireCloudWorkspaceControl)
   const actualBootstrap = WorktreeManager.prototype.bootstrap
   vi.spyOn(WorktreeManager.prototype, 'bootstrap').mockImplementation(async function (this: WorktreeManager, worktree, repo, recipe) {
@@ -311,8 +309,8 @@ it('uses claim repository settings once after the heartbeat barrier, preserving 
   })
   const adapter = vi.spyOn(MockAdapter.prototype, 'start')
   const f = await machine(true, { cloud: true, seed: 'valid' })
-  const heartbeat = f.link.heartbeat, barrier = deferred()
-  f.link.heartbeat = async (...args) => { await barrier.promise; return heartbeat(...args) }
+  const report = f.link.report, barrier = deferred()
+  f.link.report = async (...args) => { await barrier.promise; return report(...args) }
   f.repositories.resolve()
   f.registration.resolve()
   await f.claimEntered.promise
@@ -361,14 +359,61 @@ it('settles the repository handoff when the initial claim is refused', async () 
   await f.daemon.stop()
 })
 
-it.each(['heartbeat-refused', 'credential-rotated', 'uninstall'] as const)('keeps the original initial barrier with claim settings (%s)', async refusal => {
+it('starts the next offered run after an older queued claim is refused', async () => {
+  const f = await machine(false)
+  const next = f.queueNext()
+  const offered = f.link.pendingRuns
+  const claim = f.link.claimRun
+  f.link.pendingRuns = async (...args) => (await offered(...args)).slice(0, 1)
+  f.link.claimRun = async (...args) => {
+    if (args[1] === f.runId) throw new Error('Fixture claim refused without leaving the queue')
+    return claim(...args)
+  }
+  f.queue([f.runId])
+  f.repositories.resolve(); f.registration.resolve()
+  await waitFor(() => f.started.mock.calls.length === 1)
+  expect(f.started.mock.calls[0][0].runId).toBe(next)
+  expect(f.calls.filter(name => name === 'commands')).toHaveLength(1)
+})
+
+it('reserves the only offer while a queued claim has not reached the server', async () => {
+  const f = await machine(false)
+  const next = f.queueNext()
+  const offered = f.link.pendingRuns
+  const claim = f.link.claimRun
+  const pending = deferred()
+  const release = deferred()
+  cleanups.push(async () => { release.resolve() })
+  const attempts: string[] = []
+  f.link.pendingRuns = async (...args) => (await offered(...args)).slice(0, 1)
+  f.link.claimRun = async (...args) => {
+    attempts.push(args[1])
+    if (args[1] === f.runId) {
+      pending.resolve()
+      await release.promise
+      throw new Error('Fixture claim refused before leasing')
+    }
+    return claim(...args)
+  }
+  f.queue([f.runId])
+  f.repositories.resolve(); f.registration.resolve()
+  await pending.promise
+  await f.daemon.syncWithServer()
+  expect(attempts).toEqual([f.runId])
+  f.queue([])
+  release.resolve()
+  await waitFor(() => f.started.mock.calls.length === 1)
+  expect(f.started.mock.calls[0][0].runId).toBe(next)
+})
+
+it.each(['report-refused', 'credential-rotated', 'uninstall'] as const)('keeps the original initial barrier with claim settings (%s)', async refusal => {
   vi.spyOn(service, 'uninstallService').mockResolvedValue()
   const adapter = vi.spyOn(MockAdapter.prototype, 'start')
   const f = await machine(true, { cloud: true, seed: 'valid', delayedClaim: true })
-  const heartbeat = f.link.heartbeat
-  f.link.heartbeat = async (...args) => {
-    if (refusal === 'heartbeat-refused') throw new SessionRejectedError()
-    const result = await heartbeat(...args)
+  const report = f.link.report
+  f.link.report = async (...args) => {
+    if (refusal === 'report-refused') throw new SessionRejectedError()
+    const result = await report(...args)
     if (refusal === 'uninstall') return { ...result, deviceCommands: [{ id: randomUUID(), kind: 'uninstall' as const }] }
     await handlers['device.setCredential']({ credential: 'orv_' + 'b'.repeat(43) })
     return result

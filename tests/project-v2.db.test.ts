@@ -51,13 +51,13 @@ test('Project v2: split database migration, canonical relationships and live ten
   globals.mikkaPool = application; globals.workspacePool = workspace
   let workspaceModule: Pool | undefined
   let selectedWorkspace: string | undefined
-  const framework = await import('next/headers')
-  const headersMock = mock.module('next/headers', { namedExports: { ...framework,
+  const framework = await import('@/lib/server-runtime/headers')
+  const headersMock = mock.module('@/lib/server-runtime/headers', { namedExports: { ...framework,
     cookies: async () => ({ get: (name: string) => name === 'mikka-workspace' && selectedWorkspace ? { value: selectedWorkspace } : undefined }),
     headers: async () => new Headers(),
   } })
-  const localization = await import('next-intl/server')
-  const localeMock = mock.module('next-intl/server', { namedExports: { ...localization, getLocale: async () => 'en', getTranslations: async () => (key: string) => key } })
+  const localization = await import('@/lib/intl/i18n-server')
+  const localeMock = mock.module('@/lib/intl/i18n-server', { namedExports: { ...localization, getLocale: async () => 'en', getTranslations: async () => (key: string) => key } })
   try {
     const directory = new URL('../drizzle/', import.meta.url)
     const names = orderMigrations((await readdir(directory)).filter(name => name.endsWith('.sql')))
@@ -203,7 +203,8 @@ test('Project v2: split database migration, canonical relationships and live ten
     await t.test('Task label suggestions stay in the Task workspace for a reader who belongs to both', async () => {
       const { getIssuePropertyOptions } = await import('../app/actions/issue-metadata')
       const { readIssueMetadata, withIssueMetadata } = await import('../lib/issue-metadata')
-      for (const [id, name] of [[initialTasks[0], 'Alpha only'], [foreignTask, 'Beta only']]) {
+      for (const [workspaceId, id, name] of [[alpha, initialTasks[0], 'Alpha only'], [beta, foreignTask, 'Beta only']]) {
+        await application.query("INSERT INTO workspace_issue_labels (workspace_id,name,color) VALUES ($1,$2,'blue')", [workspaceId, name])
         const document = { type: 'doc' }
         const metadata = readIssueMetadata(document)
         metadata.labels = [{ name, color: 'blue' }]
@@ -345,7 +346,7 @@ test('Project v2: split database migration, canonical relationships and live ten
       const renamed = await actAs(member, () => actions.updateProjectProperties({ id: createdId, revision: row.revision, changes: { name: 'Renamed through ID' }, workspaceId: alpha }))
       assert.ok('project' in renamed, JSON.stringify(renamed))
       const views = await projectViewsForTasks([{ id: initialTasks[1], workspaceId: alpha }, { id: initialTasks[0], workspaceId: alpha }, { id: foreignTask, workspaceId: beta }])
-      assert.deepEqual(views.get(initialTasks[1]), { projectId: createdId, project: 'Renamed through ID' })
+      assert.deepEqual(views.get(initialTasks[1]), { projectId: createdId, project: 'Renamed through ID', environmentId: null })
       assert.equal(views.has(initialTasks[0]), false)
       assert.equal(views.has(foreignTask), false)
       assert.equal((await projectViewsForTasks([{ id: initialTasks[1], workspaceId: beta }])).size, 0)

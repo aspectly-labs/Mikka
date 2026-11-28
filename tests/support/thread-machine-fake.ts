@@ -12,7 +12,7 @@ import type { Pool, PoolClient } from 'pg'
 type Harness = Record<string, unknown>
 
 export async function fakeThreadMachines(pool: Pool, harnesses: Harness[]) {
-  const catalogue = templateModelsFixture()
+  const catalogue = templateModelsFixture(undefined, { hostedSizes: true })
   const saved = { url: process.env.MIKKA_CLOUD_WORKER_URL, sha: process.env.MIKKA_CLOUD_WORKER_SHA, claude: process.env.E2B_CLAUDE_TEMPLATE, codex: process.env.E2B_CODEX_TEMPLATE }
   process.env.MIKKA_CLOUD_WORKER_URL = 'https://worker.invalid/mikka'
   process.env.MIKKA_CLOUD_WORKER_SHA = catalogue.sha
@@ -59,7 +59,7 @@ export async function fakeThreadMachines(pool: Pool, harnesses: Harness[]) {
           const { deviceId, credential } = handoff
           const used = await pool.query('UPDATE device_tokens SET "lastUsedAt"=clock_timestamp() WHERE "boundDeviceId"=$1 AND "tokenHash"=$2 AND "revokedAt" IS NULL RETURNING id', [deviceId, createHash('sha256').update(credential).digest('hex')])
           if (used.rowCount !== 1) throw new Error('Fixture worker credential unavailable')
-          await pool.query('UPDATE devices SET "lastSeenAt"=clock_timestamp(),enabled=true,harnesses=$2 WHERE id=$1', [deviceId, JSON.stringify(harnesses)])
+          await pool.query('UPDATE devices SET "lastSeenAt"=clock_timestamp(),"sessionOpenedAt"=clock_timestamp(),"sessionClosedAt"=NULL,enabled=true,harnesses=$2 WHERE id=$1', [deviceId, JSON.stringify(harnesses)])
         }
         return { stdout: registering ? REGISTRATION_COMPLETE + '\n' : '', stderr: '', exitCode: 0 }
       } },

@@ -1,7 +1,12 @@
 import { driveResponse } from '@/lib/drive/server'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const dynamic = 'force-dynamic'
-
-export async function GET(request: Request, context: { params: Promise<{ shareId: string }> }) {
-  return driveResponse(request, 'shareView', await context.params)
-}
+export const GET = defineRoute<'session', 'none', { shareId: string }>(
+  {
+    route: '/api/drive/shares/[shareId]',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none', freshSession: true,
+  },
+  async ({ request, params, session }) => driveResponse(request, 'shareView', params, session),
+)

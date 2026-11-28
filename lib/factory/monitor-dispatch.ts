@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { deviceIsOnline } from "../device-presence";
-import {applyApprovalMode,defaultRunPolicy} from "@mikka/protocol/agent-policy";
+import {readOnlyRunPolicy,defaultRunPolicy} from "@mikka/protocol/agent-policy";
 import { FactoryError } from "./contract";
 import type { FactoryTask } from "./store";
 import { digest } from "./evidence";
@@ -63,7 +63,7 @@ async function monitorRun(
     rows: [row],
   } = await tx.query(
     `SELECT r.*,c.sha,c.repository,c.environment,c.scope,repo."verifyCommand",repo."remoteUrl",repo."repoPath",
-      d.enabled,d."lastSeenAt",d.harnesses,a.harness,fa.output,fa."runId" AS "boundRunId"
+      d.enabled,d."lastSeenAt",d."sessionOpenedAt",d."sessionClosedAt",d.harnesses,a.harness,fa.output,fa."runId" AS "boundRunId"
      FROM agent_runs r JOIN factory_tasks t ON t.id=$1 AND t."userId"=$2
      JOIN factory_attempts fa ON fa.id=t."attemptId" AND fa."taskId"=t.id
      JOIN factory_candidates c ON c.id=t."candidateId" AND c."taskId"=t.id
@@ -83,7 +83,7 @@ async function monitorRun(
     fail("factoryMonitorRunUnavailable");
   if (
     !row.enabled ||
-    !await deviceIsOnline({ id: row.deviceId, lastSeenAt: row.lastSeenAt }) ||
+    !deviceIsOnline(row) ||
     !row.harnesses?.some(
       (h: { harness: string; installed: boolean }) =>
         h.harness === row.harness && h.installed,
@@ -181,6 +181,6 @@ export async function factoryMonitorDispatchAssignment(
   return {
     baseBranch: receipt.candidate.sha,
     verifyCommand: row.output.monitorDispatch.command as string,
-    policy: applyApprovalMode(intersectRunPolicy({...defaultRunPolicy(),networkAllow:[]},row.agentDefinition?.policyCeiling),"read_only"),
+    policy: readOnlyRunPolicy(intersectRunPolicy({...defaultRunPolicy(),networkAllow:[]},row.agentDefinition?.policyCeiling)),
   };
 }

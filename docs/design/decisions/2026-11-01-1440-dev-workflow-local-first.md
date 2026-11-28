@@ -1,18 +1,20 @@
 # Development is local first; CI is the final gate
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-20-1640](2026-11-20-1640-sdlc-delivery.md)
 - Source: Alex, relayed by the coordinator session: write the development
   speed-up rules into the docs as standing rules and change every old rule
   that conflicts with them.
 - Rule: — (process, not product)
+- Superseded in part by: [2026-11-20-1640](2026-11-20-1640-sdlc-delivery.md) (delivery and retry procedure; preserve normal merge commits and approved in-flight epic batches).
 - Superseded in part by: [2026-11-01-1520-no-browser-tests-in-ci](2026-11-01-1520-no-browser-tests-in-ci.md) (no manual Actions browser run either; GitHub-runner-only suites mean the database CI job)
 - Superseded in part by: [2026-11-01-1545-trunk-based](2026-11-01-1545-trunk-based.md) (rule 5: trunk-based merging replaces integration batches)
 - Superseded in part by: [2026-11-03-2359](2026-11-03-2359-issue-owner-merges-and-accepts-in-production.md) (the issue's owner merges its own PR; the coordinator does not)
 - Superseded in part by: [2026-11-11-1151](2026-11-11-1151-automatic-migration-ids.md) (rule 6: migration IDs are generated automatically; rule IDs retain coordinator allocation)
 - Replaces, in part:
   - [2026-11-01-0230-browser-tests-manual-only](2026-11-01-0230-browser-tests-manual-only.md): browser acceptance runs locally first; the manual Actions run is only for suites that need a GitHub-hosted runner.
-  - [2026-11-01-0330-ui-figma-and-skill-review-before-code](2026-11-01-0330-ui-figma-and-skill-review-before-code.md) step 4–5: screenshots come from a local production build, and "merge" means the next integration batch.
-  - [2026-11-01-0015-main-is-the-design](2026-11-01-0015-main-is-the-design.md) rule 4: "merged" means merged to `main` through the integration PR.
+  - [2026-11-01-0330-ui-figma-and-skill-review-before-code](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md) step 4–5: screenshots come from a local production build, and "merge" means the next integration batch.
+  - [2026-11-01-0015-main-is-the-design](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-0015-main-is-the-design.md) rule 4: "merged" means merged to `main` through the integration PR.
   - [2026-11-01-1201-e2b-template-public-auto-release](2026-11-01-1201-e2b-template-public-auto-release.md): branches are tested on a `-dev` template built from the branch, without waiting for the release from `main`.
   - `CONTRIBUTING.md` per-PR merging, and Preview deployments as the place to develop and accept (`docs/cloud-preview.md`).
 

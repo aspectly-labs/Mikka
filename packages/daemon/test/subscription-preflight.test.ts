@@ -134,28 +134,28 @@ describe("subscription startup preflight", () => {
 describe("daemon subscription capability", () => {
   async function daemonFor(binary: string) {
     const link = new MemoryServer().link()
-    const lease = vi.fn(async () => { throw new Error("preflight must not acquire a subscription lease") })
+    const context = vi.fn(async () => { throw new Error("preflight must not acquire a subscription context") })
     const approval = vi.fn(async () => { throw new Error("preflight must not start a run") })
-    link.nativeLease = lease
+    link.nativeContext = context
     link.prepareRunToolApproval = approval
-    const daemon = new Daemon({ dataDir: tempDir(), flavor: "dev", link, credential: "fixture", heartbeatMs: 60_000,
+    const daemon = new Daemon({ dataDir: tempDir(), flavor: "dev", link, credential: "fixture",
       harnesses: [{ harness: "codex", installed: true, version: "unchecked", subscriptionBroker: true, subscriptionPreflight: "env_not_clean" }],
       agentSandbox: new NoSandbox(), harnessBinaries: { codex: binary }, modelProbe: false, log: createLogger({ level: "silent" }) })
     daemons.push(daemon)
     await daemon.start()
-    return { daemon, lease, approval }
+    return { daemon, context, approval }
   }
 
   it("startup removes an unchecked broker claim when the CLI is missing", async () => {
-    const { daemon, lease, approval } = await daemonFor(join(tempDir(), "missing"))
+    const { daemon, context, approval } = await daemonFor(join(tempDir(), "missing"))
     expect(daemon.status().harnesses[0]).toMatchObject({ installed: true, subscriptionPreflight: "cli_missing", coordinator:false })
     expect(daemon.status().harnesses[0].subscriptionBroker).toBeUndefined()
-    expect(lease).not.toHaveBeenCalled()
+    expect(context).not.toHaveBeenCalled()
     expect(approval).not.toHaveBeenCalled()
   })
 
   it("redetect withdraws a formerly healthy broker and clears the failure after recovery", async () => {
-    const cli = fakeCli("codex"), { daemon, lease, approval } = await daemonFor(cli.binary)
+    const cli = fakeCli("codex"), { daemon, context, approval } = await daemonFor(cli.binary)
     const redetect = () => Reflect.get(daemon, "redetectHarnesses").call(daemon) as Promise<void>
     const codex = () => daemon.status().harnesses.find(info => info.harness === "codex")!
     expect(codex()).toMatchObject({ subscriptionBroker: true, version: HARNESS_PINS.harnesses.codex.version })
@@ -168,16 +168,16 @@ describe("daemon subscription capability", () => {
     await redetect()
     expect(codex().subscriptionBroker).toBe(true)
     expect(codex().subscriptionPreflight).toBeUndefined()
-    expect(lease).not.toHaveBeenCalled()
+    expect(context).not.toHaveBeenCalled()
     expect(approval).not.toHaveBeenCalled()
     expect(cli.calls()).toHaveLength(3)
   })
 
-  it("a completed background install rechecks the broker without waiting for another heartbeat", async () => {
+  it("a completed background install rechecks the broker without waiting for anything else", async () => {
     const link = new MemoryServer().link()
-    link.nativeLease = vi.fn(async () => { throw new Error("no subscription login in preflight") })
+    link.nativeContext = vi.fn(async () => { throw new Error("no subscription login in preflight") })
     link.prepareRunToolApproval = vi.fn(async () => { throw new Error("no run in preflight") })
-    const daemon = new Daemon({ dataDir: tempDir(), flavor: "dev", link, credential: "fixture", heartbeatMs: 60_000,
+    const daemon = new Daemon({ dataDir: tempDir(), flavor: "dev", link, credential: "fixture",
       agentSandbox: new NoSandbox(), modelProbe: false, log: createLogger({ level: "silent" }) })
     daemons.push(daemon)
     await daemon.start()
@@ -197,7 +197,7 @@ describe("daemon subscription capability", () => {
       expect(report?.subscriptionPreflight).toBeUndefined()
     }
     expect([...codex.calls(), ...claude.calls()].map(call => call.args)).toEqual([["--version"], ["--version"]])
-    expect(link.nativeLease).not.toHaveBeenCalled()
+    expect(link.nativeContext).not.toHaveBeenCalled()
     expect(link.prepareRunToolApproval).not.toHaveBeenCalled()
   })
 })

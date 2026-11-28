@@ -34,6 +34,12 @@ test('real PG: question receipts preserve one execution without opening a repair
   const target = new URL(url!); target.pathname = '/' + database
   const pool = new Pool({ connectionString: target.toString(), max: 8 })
   let closeWorkspaceDatabase: (() => Promise<void>) | undefined
+  const originalE2BKey = process.env.E2B_API_KEY
+  process.env.E2B_API_KEY = 'synthetic-question-e2b-key'
+  t.after(() => {
+    if (originalE2BKey === undefined) delete process.env.E2B_API_KEY
+    else process.env.E2B_API_KEY = originalE2BKey
+  })
   const previousByos = process.env.MIKKA_BYOS_ENABLED, previousRoutes = process.env.MIKKA_BYOS_VALIDATED_MODEL_ROUTES
   process.env.MIKKA_BYOS_ENABLED = '1'; process.env.MIKKA_BYOS_VALIDATED_MODEL_ROUTES = 'claude_cpa,codex_cpa'
   try {
@@ -756,7 +762,7 @@ test('real PG: question receipts preserve one execution without opening a repair
       // The continuation message uses this same receipt-bound reader and the
       // citation sources frozen by real check dispatch, not the old empty prompt.
       const checkDevice = randomUUID(), checkAgent = randomUUID(), checkRepo = randomUUID()
-      await pool.query(`INSERT INTO devices(id,"ownerId",name,kind,"lastSeenAt",harnesses) VALUES($1,'owner','Independent check','cloud',now(),$2)`,
+      await pool.query(`INSERT INTO devices(id,"ownerId",name,kind,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES($1,'owner','Independent check','cloud',now(),$2,now())`,
         [checkDevice, JSON.stringify([{ harness, installed: true }])])
       await pool.query(`INSERT INTO agents(id,"userId","deviceId",harness,name) VALUES($1,'owner',$2,$3,$4)`, [checkAgent, checkDevice, harness, `Independent checker ${checkAgent}`])
       await pool.query(`INSERT INTO device_repos(id,"deviceId","userId","repoPath") VALUES($1,$2,'owner','/tmp/fixture')`, [checkRepo, checkDevice])

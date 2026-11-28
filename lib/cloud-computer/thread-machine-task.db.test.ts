@@ -102,6 +102,44 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
     };
     const machine = async (runId: string) => (await pool.query('SELECT state,"sandboxId","deviceId","issueId" FROM thread_machines WHERE "runId"=$1', [runId])).rows[0];
 
+    for (const outcome of ['ready', 'missing', 'uncertain'] as const) {
+      await t.test(`fresh task retries its pinned environment snapshot allocation: ${outcome}`, async () => {
+        const issueId = await task(), runId = await run(issueId)
+        const { seedRunProjectResources } = await import('../../tests/helpers/run-project-resources')
+        const { withProjectExecution } = await import('../project-resources/store')
+        const placement = { workspaceId, issueId, repositoryKey: 'v2/github.com/acme/app', runtime: 'cloud' as const, harness: 'codex' as const, baseBranch: 'main' }
+        await seedRunProjectResources(pool, { ...placement, ownerId: owner })
+        const projectExecution = await withProjectExecution({ ...placement, userId: owner }, async current => current)
+        await pool.query('UPDATE agent_runs SET "agentDefinition"=$2,"baseBranch"=$3 WHERE id=$1', [runId, { projectExecution }, 'main'])
+        const snapshotId = randomUUID(), operation = randomUUID()
+        await pool.query(`INSERT INTO thread_machines ("runId","workspaceId","ownerId","botId","issueId","snapshotId",
+          "operationId","environmentSnapshotId",state) VALUES ($1,$2,$3,$4,$5,'codex',$6,$7,'starting')`,
+          [runId, workspaceId, owner, botId, issueId, operation, snapshotId])
+        const { threadLifecycleProvider } = await import('./thread-lifecycle-provider')
+        const restore = mock.method(threadLifecycleProvider, 'createFromSnapshot', async () => {
+          if (outcome !== 'ready') throw Object.assign(new Error('provider unavailable'), { status: outcome === 'missing' ? 404 : 503 })
+          return { sandboxId: 'restored-' + runId }
+        })
+        try {
+          const { sources, provider } = fake()
+          // The incomplete fixture VM stops at bootstrap, after allocation is recorded.
+          await assert.rejects(ensureThreadMachine(pool, actor, runId, { ...provider, selectEnvironmentSnapshot: async input => {
+            assert.equal(input.environmentId, projectExecution.environment!.id)
+            return { id: snapshotId, providerId: 'snapshot-fixture' }
+          } }))
+          assert.equal(restore.mock.callCount(), 1)
+          assert.deepEqual(restore.mock.calls[0].arguments, ['snapshot-fixture', operation,
+            { application: 'mikka-thread', workspaceId, runId, operationId: operation }, owner, 'codex'])
+          const row = (await pool.query('SELECT * FROM thread_machines WHERE "runId"=$1', [runId])).rows[0]
+          assert.deepEqual(sources, outcome === 'missing' ? ['codex'] : [])
+          assert.equal(row.environmentSnapshotId, outcome === 'missing' ? null : snapshotId)
+          if (outcome === 'ready') assert.equal(row.sandboxId, 'restored-' + runId)
+          if (outcome === 'uncertain') assert.equal(row.operationId, operation)
+          if (outcome === 'missing') assert.notEqual(row.operationId, operation)
+        } finally { restore.mock.restore() }
+      })
+    }
+
     const questionMachine = async (state = 'paused') => {
       const issueId = await task(), prior = await parked(issueId, { status: 'stopped' });
       const next = await run(issueId), q = randomUUID(), taskId = randomUUID(), attemptId = randomUUID();
@@ -235,7 +273,7 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
               if(command.includes('mv /home/user/.mikka/bootstrap.next /home/user/.mikka/bootstrap.json')){
                 assert.ok(bootstrap);assert.equal(bootstrap.deviceId,f.prior.device);
                 await pool.query(`UPDATE device_tokens SET "lastUsedAt"=clock_timestamp() WHERE "boundDeviceId"=$1 AND "tokenHash"=$2 AND "revokedAt" IS NULL`,[bootstrap.deviceId,createHash('sha256').update(bootstrap.credential).digest('hex')]);
-                await pool.query(`UPDATE devices SET "lastSeenAt"=clock_timestamp() WHERE id=$1`,[bootstrap.deviceId]);
+                await pool.query(`UPDATE devices SET "lastSeenAt"=clock_timestamp(),"sessionOpenedAt"=clock_timestamp(),"sessionClosedAt"=NULL WHERE id=$1`,[bootstrap.deviceId]);
               }
               return {stdout:command.includes(REGISTRATION_COMPLETE)?REGISTRATION_COMPLETE+'\n':'',stderr:'',exitCode:0};
             }}} as never;
@@ -412,7 +450,7 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
             } else if (command.includes('mv /home/user/.mikka/bootstrap.next /home/user/.mikka/bootstrap.json')) {
               assert.ok(bootstrap); assert.equal(bootstrap.deviceId, f.prior.device);
               await pool.query(`UPDATE device_tokens SET "lastUsedAt"=clock_timestamp() WHERE "boundDeviceId"=$1 AND "tokenHash"=$2 AND "revokedAt" IS NULL`, [bootstrap.deviceId, createHash('sha256').update(bootstrap.credential).digest('hex')]);
-              await pool.query(`UPDATE devices SET "lastSeenAt"=clock_timestamp() WHERE id=$1`, [bootstrap.deviceId]);
+              await pool.query(`UPDATE devices SET "lastSeenAt"=clock_timestamp(),"sessionOpenedAt"=clock_timestamp(),"sessionClosedAt"=NULL WHERE id=$1`, [bootstrap.deviceId]);
               steps.push('registered');
               stdout = REGISTRATION_COMPLETE + '\n';
             } else if (command.includes('mikka-runtime-process-verified')) {
@@ -461,7 +499,7 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
       const definition = retryWorkerDefinition(originDefinition, 'Fixture\nOwner answer')!;
       await pool.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [f.prior.runId, originDefinition]);
       await pool.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [f.next, definition]);
-      await pool.query(`UPDATE devices SET harnesses='[{"harness":"codex","installed":true}]',"lastSeenAt"=clock_timestamp() WHERE id=$1`, [f.prior.device]);
+      await pool.query(`UPDATE devices SET harnesses='[{"harness":"codex","installed":true}]',"lastSeenAt"=clock_timestamp(),"sessionOpenedAt"=clock_timestamp(),"sessionClosedAt"=NULL WHERE id=$1`, [f.prior.device]);
       return { ...f, eventId, definition, candidateId, originAttemptId, answerId, taskBot };
     };
 
@@ -1244,7 +1282,7 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
               assert.ok(command.indexOf('mv /home/user/.mikka/initial-run.next /home/user/.mikka/initial-run.json') < command.indexOf('mv /home/user/.mikka/bootstrap.next /home/user/.mikka/bootstrap.json'));
               const used = await pool.query(`UPDATE device_tokens SET "lastUsedAt"=clock_timestamp() WHERE "boundDeviceId"=$1 AND "tokenHash"=$2 AND "revokedAt" IS NULL RETURNING id`, [bootstrap.deviceId, createHash('sha256').update(bootstrap.credential).digest('hex')]);
               assert.equal(used.rowCount, 1);
-              await pool.query(`UPDATE devices SET "lastSeenAt"=clock_timestamp() WHERE id=$1`, [bootstrap.deviceId]);
+              await pool.query(`UPDATE devices SET "lastSeenAt"=clock_timestamp(),"sessionOpenedAt"=clock_timestamp(),"sessionClosedAt"=NULL WHERE id=$1`, [bootstrap.deviceId]);
               authenticated++;
               // Make the historical late floor observably later than this real authentication.
               await pool.query('SELECT pg_sleep(0.02)');
@@ -1287,7 +1325,7 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
           const used = await pool.query('UPDATE device_tokens SET "lastUsedAt"=clock_timestamp() WHERE "boundDeviceId"=$1 AND "tokenHash"=$2 AND "revokedAt" IS NULL RETURNING id',
             [bootstrap.deviceId, createHash('sha256').update(bootstrap.credential).digest('hex')]);
           assert.equal(used.rowCount, 1, 'the credential transaction is committed before provider publication');
-          await pool.query('UPDATE devices SET "lastSeenAt"=clock_timestamp() WHERE id=$1', [bootstrap.deviceId]);
+          await pool.query('UPDATE devices SET "lastSeenAt"=clock_timestamp(),"sessionOpenedAt"=clock_timestamp(),"sessionClosedAt"=NULL WHERE id=$1', [bootstrap.deviceId]);
           if (mode === 'revoked_before_finish') await pool.query('UPDATE device_tokens SET "revokedAt"=clock_timestamp() WHERE "boundDeviceId"=$1', [bootstrap.deviceId]);
           return { stdout: REGISTRATION_COMPLETE + '\n', stderr: '', exitCode: 0 };
         };
@@ -1433,10 +1471,23 @@ test("a task's sandbox serves only that task's runs, parks between them and ends
       }
     });
 
-    await t.test('additive releases preserve the task VM and official harness provenance after catalogue rotation', async () => {
+    await t.test('additive releases preserve the task VM after its configured tier leaves the catalogue', async t => {
       const issueId = await task(), before = await parked(issueId, { template: 'retired-derived-codex' });
       await pool.query('UPDATE thread_machines SET "templateKind"=$2 WHERE "runId"=$1', [before.runId, 'codex']);
       const next = await run(issueId), fixture = fake();
+      const placement = { workspaceId, issueId, repositoryKey: 'v2/github.com/acme/app', runtime: 'cloud' as const, harness: 'codex' as const, baseBranch: 'main' };
+      const { seedRunProjectResources } = await import('../../tests/helpers/run-project-resources');
+      const { saveEnvironment, withProjectExecution } = await import('../project-resources/store');
+      const { environment } = await seedRunProjectResources(pool, { ...placement, ownerId: owner });
+      await saveEnvironment(owner, {
+        workspaceId, id: environment!.id, revision: environment!.revision, name: 'Tier fixture',
+        configuration: { runtime: 'cloud', harness: 'codex', e2bMachineSize: 'small' },
+      });
+      const projectExecution = await withProjectExecution({ ...placement, userId: owner }, async current => current);
+      await pool.query('UPDATE agent_runs SET "agentDefinition"=$2,"baseBranch"=$3 WHERE id=$1', [next, { projectExecution }, 'main']);
+      const edition = process.env.MIKKA_EDITION;
+      process.env.MIKKA_EDITION = 'cloud';
+      t.after(() => { if (edition === undefined) delete process.env.MIKKA_EDITION; else process.env.MIKKA_EDITION = edition; });
       fixture.provider.connect = async id => { fixture.calls.push(`connect:${id}`); throw new Error('fixture retained derived runtime'); };
       await assert.rejects(ensureThreadMachine(pool, actor, next, fixture.provider), RetainedTaskMachineUnavailable);
       assert.deepEqual(fixture.calls, [`connect:${before.sandboxId}`]);

@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { z } from 'zod'
 import { enqueueGroupTurn, GROUP_TURN_STOPPED, stopGroupTurns } from './coordinator/group-turns'
-import { groupParticipants, type GroupParticipant } from './group-participants'
+import { groupBotFaces, groupParticipants, groupParticipantsMany, type GroupParticipant } from './group-participants'
 import { groupListChanged, groupListReadChanged } from './live/lists'
 import { groupChatChanged } from './live/groups'
 
@@ -77,7 +77,7 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
       result = { id, title: input.title, model: input.model ?? null, deviceId: input.deviceId ?? null, ...(queueAgents ? { leadAgentId: input.leadAgentId ?? null, leadBotId: input.leadBotId ?? null } : {}) }; status = 201
     } else if (req.resource === 'conversations' && req.method === 'GET') {
       if (req.workspaceId && (!z.uuid().safeParse(req.workspaceId).success || !await directory(req.workspaceId, userId, []))) return fail(404)
-      const { rows } = await q(`SELECT c.*, last.message AS "lastMessage", coalesce(pref."markedUnread",false) as "markedUnread", coalesce(pref.pinned,false) AS pinned, coalesce(pref.hidden,false) AS hidden, pref."pinOrder",
+      const { rows } = await q(`SELECT c.*, last.message AS "lastMessage", COALESCE(r."lastReadPosition",0)::text AS "lastReadPosition", coalesce(pref."markedUnread",false) as "markedUnread", coalesce(pref.pinned,false) AS pinned, coalesce(pref.hidden,false) AS hidden, pref."pinOrder",
         (SELECT count(*)::text FROM conversation_messages m WHERE m."conversationId"=c.id
           AND m.position > COALESCE(r."lastReadPosition",0) AND NOT (m."authorType"='user' AND m."authorId"=$1)) AS "unreadCount"
         FROM conversations c JOIN conversation_members cm ON cm."conversationId"=c.id AND cm."memberType"='user' AND cm."memberId"=$1 AND cm."leftAt" IS NULL
@@ -88,6 +88,9 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
           AND ($2::uuid IS NULL OR c."workspaceId"=$2) ORDER BY c."createdAt" DESC,c.id DESC`, [userId, req.workspaceId ?? null])
       const accessible = []
       for (const row of rows) if (await directory(row.workspaceId, userId, [])) accessible.push(row)
+      // Each group's Bot faces, so the chat list draws the group's avatar as its page does (R-36).
+      const faces = await groupBotFaces(client, accessible)
+      for (const row of accessible) row.bots = faces.get(row.id) ?? []
       result = { conversations: accessible, viewerId: userId, workspaceId: req.workspaceId ?? null }
     } else {
       // A link is a bounded view granted by its source group, never membership
@@ -196,23 +199,45 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
         // Read existing links only; this is not the private-exchange producer.
         // Links share their source message's page/cursor. They add no message
         // position or unread event, and never expose the private DM transcript.
-        const links = messages.length ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
-          FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
-          WHERE l."sourceConversationId"=$1 AND l."anchorPosition"=ANY($2::bigint[])
-            AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
-          ORDER BY l."anchorPosition" DESC,l.id`, [group.id, messages.map(m => m.position), group.createdBy, group.workspaceId]) : { rows: [] }
+        // A delta read (after=) emits every link anchored up to the tip: a new
+        // exchange may anchor to a message the reader already has, and the
+        // caller dedupes by linkId, so re-emitting older links stays cheap.
+        const links = after != null && tip != null
+          ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
+            FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
+            WHERE l."sourceConversationId"=$1 AND l."anchorPosition"<=$2::bigint
+              AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
+            ORDER BY l."anchorPosition" DESC,l.id`, [group.id, tip.position, group.createdBy, group.workspaceId])
+          : messages.length ? await q(`SELECT l.id AS "linkId",l."linkedConversationId",l."anchorPosition"::text,l."messageCount"::text AS count
+            FROM conversation_links l JOIN conversations dm ON dm.id=l."linkedConversationId"
+            WHERE l."sourceConversationId"=$1 AND l."anchorPosition"=ANY($2::bigint[])
+              AND dm.kind='agent_dm' AND dm."workspaceId"=$4 AND dm."createdBy"=$3
+            ORDER BY l."anchorPosition" DESC,l.id`, [group.id, messages.map(m => m.position), group.createdBy, group.workspaceId]) : { rows: [] }
         const exchanges: { type: 'agent_exchange'; linkId: string; anchorPosition: string; count: string; participants: GroupParticipant[] }[] = []
+        const participantsByLink = await groupParticipantsMany(client, links.rows.map(link => link.linkedConversationId), group.createdBy, group.workspaceId)
         for (const link of links.rows) {
-          const participants = await groupParticipants(client, link.linkedConversationId, group.createdBy, group.workspaceId)
+          const participants = participantsByLink.get(link.linkedConversationId) ?? []
           if (participants.length === 2) exchanges.push({ type: 'agent_exchange', linkId: link.linkId, anchorPosition: link.anchorPosition, count: link.count, participants })
         }
         const timeline = messages.flatMap(m => [
           { type: 'message', ...m },
           ...exchanges.filter(link => link.anchorPosition === m.position),
         ])
+        // Exchanges anchored to messages outside this delta still ride the
+        // response — otherwise a new link on an already-loaded message is fetched
+        // but discarded. The reader dedupes by linkId and keys markers by anchor.
+        if (after != null) {
+          const anchored = new Set(messages.map(m => m.position))
+          timeline.push(...exchanges.filter(link => !anchored.has(link.anchorPosition)))
+        }
         const active = queueAgents ? await q(`SELECT "agentId","botId",status,"updatedAt" FROM group_turns WHERE "conversationId"=$1 AND status IN ('queued','running') ORDER BY "createdAt" LIMIT 1`, [req.id]) : { rows: [] }
+        // Who is writing a reply now, each once, in the order they started (a chat's "X is typing").
+        const answering = queueAgents ? (await q(`SELECT "memberType",id FROM (SELECT DISTINCT ON (coalesce("botId","agentId"))
+            CASE WHEN "botId" IS NOT NULL THEN 'bot' ELSE 'agent' END AS "memberType", coalesce("botId","agentId")::text AS id, "createdAt"
+            FROM group_turns WHERE "conversationId"=$1 AND status='running' AND coalesce("botId","agentId") IS NOT NULL
+            ORDER BY coalesce("botId","agentId"), "createdAt") turns ORDER BY "createdAt", id`, [req.id])).rows : []
         const failed = queueAgents ? await q(`SELECT error FROM group_turns WHERE "conversationId"=$1 ORDER BY "createdAt" DESC,"messageId" DESC LIMIT 1`, [req.id]) : { rows: [] }
-        result = { messages, timeline, nextBefore: more ? messages.at(-1)?.position : null, agentStatus: active.rows[0] ?? null,
+        result = { messages, timeline, nextBefore: more ? messages.at(-1)?.position : null, agentStatus: active.rows[0] ?? null, answering,
           ...(readRevision !== undefined ? { readRevision } : {}),
           ...(idle ? { unchanged: true } : {}),
           ...(appended ? { appended: true } : {}),
@@ -258,11 +283,13 @@ export async function handleGroup(pool: Pool, directory: Directory, req: GroupRe
         result = rows[0]; status = 201
       } else if (req.resource === 'members' && req.method === 'GET') {
         const participants = await groupParticipants(client, group.id, group.createdBy, group.workspaceId)
-        const users = (await q(`SELECT cm."memberId" AS id,u.name,u.image AS "avatarUrl",cm.role FROM conversation_members cm JOIN "user" u ON u.id=cm."memberId"
+        // A person with no name is named by what stands before @ in their address (never the address itself).
+        const users = (await q(`SELECT cm."memberId" AS id,COALESCE(NULLIF(btrim(u.name),''),split_part(u.email,'@',1)) AS name,u.image AS "avatarUrl",cm.role FROM conversation_members cm JOIN "user" u ON u.id=cm."memberId"
           WHERE cm."conversationId"=$1 AND cm."memberType"='user' AND cm."leftAt" IS NULL ORDER BY cm."joinedAt",cm."memberId"`, [group.id])).rows
         const visibleUsers = []
         for (const user of users) if (await directory(group.workspaceId, user.id, [])) visibleUsers.push({ ...user, memberType: 'user' })
-        result = { members: [...visibleUsers, ...participants.map(p => ({ ...p, memberType: p.memberType ?? 'agent' }))] }
+        const leadOf = { agent: group.leadAgentId, bot: group.leadBotId }
+        result = { members: [...visibleUsers, ...participants.map(p => ({ ...p, memberType: p.memberType ?? 'agent', ...(p.id === leadOf[p.memberType ?? 'agent'] ? { lead: true } : {}) }))] }
       } else if (req.resource === 'members' && ['POST', 'DELETE'].includes(req.method)) {
         if (req.method === 'POST' && group.role !== 'owner') return fail(403)
         const input = parse(member, req.body)

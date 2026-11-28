@@ -1,3 +1,11 @@
 import { subagentRoute } from '@/lib/cloud-computer/route'
-export const runtime = 'nodejs'
-export async function GET(request: Request, { params }: {params: Promise<{botId: string; id: string}>}) { const {botId,id}=await params; return subagentRoute(request,botId,id) }
+import { defineRoute } from '@/lib/primitives/define-route'
+
+export const GET = defineRoute<'session', 'pat-scoped', { botId: string; id: string }>(
+  {
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  ({ request, params }) => subagentRoute(request, params.botId, params.id),
+)

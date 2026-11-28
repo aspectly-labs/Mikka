@@ -1,4 +1,4 @@
-import type { TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
+import type { TaskReviewPullRef, TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
 
 // The code review contract (#1722 backend, #1732 UI; decision 2026-11-08 「审阅」).
 // One set of types for the web, the hosted layer and iOS: every field ties to an
@@ -40,11 +40,15 @@ export type ReviewSummary = {
   /** The task (issue) id. */
   taskId: string
   /** Null before a PR exists (R6). */
-  pr: { number: number; state: ReviewPullRequestState; url: string; observedAt?: string } | null
+  pr: { number: number; state: ReviewPullRequestState; url: string; observedAt?: string;
+    headSha?: string; mergeable?: boolean | null; draft?: boolean } | null
   reviewRef?: TaskReviewRef | null
   countsKnown?: boolean
   reclaimed?: boolean
   mergeTarget?: { reviewRef: TaskReviewRef; binding: { taskId: string; issueId: string; attemptId: string; candidateId: string; revision: number }; expectedHeadSha: string } | null
+  /** Additive native writer capability; legacy mergeTarget/permissions remain
+   * snapshot-bound until their consumers migrate. Null means no native intent. */
+  nativeMergeTarget?: { pullRef: TaskReviewPullRef; binding: { taskId: string; issueId: string; attemptId: string; candidateId: string; revision: number }; expectedHeadSha: string } | null
   files: number | null
   additions: number | null
   deletions: number | null
@@ -169,3 +173,23 @@ export type SendToAgentResult = { kind: 'sent'; messageId: string; attempt: numb
 
 /** 批准合并: with failing checks the server asks first (R7 「还有 1 项检查失败，确定合并？」); then R8 已合并. */
 export type MergeResult = { kind: 'needs_confirm'; failing: number } | { kind: 'merged' } | ReviewDenial
+
+/**
+ * The review page's terminal (R5, #1723/#1733), one shell on the task's machine. GET …/review/terminal streams it as
+ * server-sent events: `output` with `{ text }`, then `ended` with `{ exitCode }` when the shell exits or the machine
+ * goes. Planned; confirm against the backend before it lands.
+ */
+export type ReviewTerminalEvent = { type: 'output'; text: string } | { type: 'ended'; exitCode: number | null }
+
+/**
+ * Why the terminal did not open: the server has no terminal (404), the viewer may not use it (403, R11), or the machine
+ * was reclaimed (409).
+ */
+export type ReviewTerminalRefusal = 'no_endpoint' | 'denied' | 'reclaimed'
+
+/**
+ * The task's dev preview (R10a, R10b; #1724, #1733): GET …/review/preview. With a dev server running on the task's
+ * machine, its address for the browser column; without one, R10a 「没有运行中的开发服务器」. Planned; a server without
+ * the endpoint (404) reads as no dev server. Starting one (启动预览) needs POST …/review/preview/start, not planned yet.
+ */
+export type ReviewPreview = { running: true; url: string } | { running: false }

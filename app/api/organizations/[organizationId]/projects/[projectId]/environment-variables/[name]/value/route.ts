@@ -3,11 +3,11 @@ import { freshSessionRoute } from '@/lib/fresh-session'
 import { GovernanceError } from '@/lib/governance/errors'
 import { governanceResponse, governanceSession } from '@/lib/governance/http'
 import { readOrganizationProjectEnvironmentVariable } from '@/lib/project-resources/store'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const runtime = 'nodejs'
 type Context = { params: Promise<{ organizationId: string; projectId: string; name: string }> }
 
-export const GET = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const GETBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const params = await context.params
   const session = await governanceSession(request)
   try {
@@ -17,3 +17,14 @@ export const GET = freshSessionRoute(async (request: Request, context: Context) 
     throw error
   }
 }))
+
+export const GET = defineRoute<'public', 'none', { organizationId: string; projectId: string; name: string }>(
+  {
+    route: '/api/organizations/[organizationId]/projects/[projectId]/environment-variables/[name]/value',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)

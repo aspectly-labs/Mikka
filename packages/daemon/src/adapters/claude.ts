@@ -1,3 +1,5 @@
+import { isSubscriptionGatewayCredential } from '@mikka/protocol/device'
+import { prepareMikkaMcpBridge } from '../agents/mikka-mcp-bridge'
 import type { AnonymousClaudeCandidate, FreshCandidate } from '../anonymous-claude-spare'
 import { captureRunFailure, failureFrom, type RunFailure, type RunFailureContext } from "@mikka/protocol/run-failure"
 import { DAEMON_VERSION } from "../paths"
@@ -56,6 +58,7 @@ import {
   RunContext,
   prepareRunContextFiles,
   runMcpBackendContext,
+  runMcpProfile,
   type RunContextOptions,
   runPaths,
   type McpServerSpec,
@@ -66,26 +69,34 @@ import { nativeMcpProcess, type RunApps } from "../agents/run-apps"
 import { taskMcpSecretValues } from '@mikka/protocol'
 import type { AgentSandbox } from "../agents/sandbox"
 import { carryHistory, ownDir, wipeRunCredentials } from "../agents/harness-home"
-import { claudeCredentialEnv, credentialDomain } from "../agents/run-credential"
+import { claudeCredentialEnv, credentialDomain, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
 import { buildChildEnv } from "../env"
 import { taskExecutionEnv } from '../task-env'
 import { mailboxInputs } from '@mikka/protocol/mailbox'
 import { classifyProviderFailure, ProviderFailureError, providerFailureMessage, type ProviderFailure } from "@mikka/protocol/provider-failure"
 import { mailboxToolResult, type RunMailbox } from '../run-mailbox'
-import { NATIVE_AUTH_PLACEHOLDER } from '../subscription-native-broker'
-import type { RunChunk } from "../chunks"
+import { toolOutputTail, type RunChunk } from "../chunks"
 import { CLI_EXITED_EARLY, redactDiagnostic, resultDiagnostics, subscriptionFailureCategory } from "./claude-failure"
 import {
   claudePermissionRules,
   runPolicy,
   type RunPolicy,
 } from "../permissions"
-import type {
-  AgentAdapter,
-  AgentSession,
-  ExitEvent,
-  SessionOptions,
-  StartOptions,
+import {
+  isBlockedClaudeCommand,
+  normalizeClaudeCommands,
+  normalizeCommandName,
+  parseLeadingSlashCommand,
+  resolveSkillMentionsForHarness,
+  type AvailableCommand,
+} from "@mikka/protocol/slash-commands"
+import {
+  normalizeSendOptions,
+  type AgentAdapter,
+  type AgentSession,
+  type ExitEvent,
+  type SessionOptions,
+  type StartOptions,
 } from "./types"
 
 export interface ClaudeAdapterOptions {
@@ -151,6 +162,11 @@ export function claudeAppServers(apps?: RunApps) {
   }
 }
 
+/** Native SDK deny-list: disabled MCP tools are unavailable without an approval loop. */
+export function claudeAppDeniedTools(apps?: RunApps): string[] {
+  return (apps?.servers ?? []).flatMap(server => (server.disabledTools ?? []).map(name => `mcp__${server.name}__${name}`))
+}
+
 export function claudeMailboxServer(mailbox: RunMailbox) {
   const server = createSdkMcpServer({ name: 'mikka_mailbox', version: '1' })
   for (const [name, schema] of Object.entries(mailboxInputs).filter(([name]) => mailbox.tools.some(tool => tool.name === name))) server.instance.registerTool(name, {
@@ -182,7 +198,7 @@ export function claudeSettings(
 }
 
 /** Claude Code SDK messages as UI message chunks. */
-export function claudeChunks(message: SDKMessage): RunChunk[] {
+export function claudeChunks(message: SDKMessage, turnModel?: string): RunChunk[] {
   const chunks: RunChunk[] = []
   if (message.type === "assistant") {
     message.message.content.forEach((block, index) => {
@@ -211,9 +227,10 @@ export function claudeChunks(message: SDKMessage): RunChunk[] {
   } else if (message.type === "user") {
     const content = message.message.content
     if (!Array.isArray(content)) return chunks
+    const planTask = createdTask(message, content)
     for (const block of content) {
       if (block.type !== "tool_result") continue
-      const output = toolResultText(block.content)
+      const { text: output, truncated } = toolResultText(block.content)
       chunks.push(
         block.is_error
           ? {
@@ -225,15 +242,75 @@ export function claudeChunks(message: SDKMessage): RunChunk[] {
               type: "tool-output-available",
               toolCallId: block.tool_use_id,
               output,
+              ...(truncated ? { outputTruncated: true as const } : {}),
+              ...(planTask ? { planTask } : {}),
             },
       )
     }
+  } else if (message.type === "system") {
+    if (message.subtype === "local_command_output") {
+      const text = typeof message.content === "string" ? message.content : ""
+      if (text.trim()) {
+        chunks.push({
+          type: "data-system-event",
+          data: { kind: "local_command_output", text },
+        })
+      }
+    } else if (message.subtype === "status") {
+      const statusMsg = message as {
+        status?: "compacting" | "requesting" | null
+        compact_result?: "success" | "failed"
+        compact_error?: string
+      }
+      if (statusMsg.status === "compacting" || statusMsg.status === "requesting") {
+        chunks.push({
+          type: "data-system-event",
+          data: { kind: "status", status: statusMsg.status },
+        })
+      } else if (statusMsg.compact_result) {
+        chunks.push({
+          type: "data-system-event",
+          data: {
+            kind: "status",
+            status: "idle",
+            compactResult: statusMsg.compact_result,
+            ...(typeof statusMsg.compact_error === "string" && statusMsg.compact_error
+              ? { compactError: statusMsg.compact_error }
+              : {}),
+          },
+        })
+      }
+    } else if (message.subtype === "compact_boundary") {
+      const meta = (message as {
+        compact_metadata?: {
+          trigger?: "manual" | "auto"
+          pre_tokens?: number
+          post_tokens?: number
+          duration_ms?: number
+        }
+      }).compact_metadata
+      chunks.push({
+        type: "data-system-event",
+        data: {
+          kind: "compact_boundary",
+          harness: "claude_code",
+          ...(meta?.trigger ? { trigger: meta.trigger } : {}),
+          ...(typeof meta?.pre_tokens === "number" && Number.isFinite(meta.pre_tokens) ? { preTokens: Math.max(0, Math.round(meta.pre_tokens)) } : {}),
+          ...(typeof meta?.post_tokens === "number" && Number.isFinite(meta.post_tokens) ? { postTokens: Math.max(0, Math.round(meta.post_tokens)) } : {}),
+          ...(typeof meta?.duration_ms === "number" && Number.isFinite(meta.duration_ms) ? { durationMs: Math.max(0, Math.round(meta.duration_ms)) } : {}),
+        },
+      })
+    }
   } else if (message.type === "result") {
+    const usedModels = Object.keys(message.modelUsage ?? {})
     chunks.push({
       type: "data-usage",
       data: {
         inputTokens: message.usage.input_tokens ?? 0,
         outputTokens: message.usage.output_tokens ?? 0,
+        model: turnModel ?? (usedModels.length === 1 ? usedModels[0] : undefined),
+        cacheReadTokens: message.usage.cache_read_input_tokens ?? null,
+        cacheWriteTokens: message.usage.cache_creation_input_tokens ?? null,
         costUsd: message.total_cost_usd ?? null,
         source: "claude agent sdk result",
       },
@@ -304,11 +381,23 @@ function claudeProviderException(error: unknown): ProviderFailure | undefined {
   return classifyProviderFailure(error)
 }
 
-function toolResultText(content: unknown): string {
-  if (typeof content === "string") return content.slice(-4000)
+/**
+ * The id TaskCreate gave its task (`tool_use_result.task.id`, the structured result the CLI keeps beside the text the
+ * model reads): only the id is kept, and only when the message answers one call, so it is that call's.
+ */
+function createdTask(message: { tool_use_result?: unknown }, content: readonly { type: string }[]): { id: string } | undefined {
+  if (content.filter(block => block.type === "tool_result").length !== 1) return undefined
+  const result = message.tool_use_result
+  const task = result && typeof result === "object" ? (result as { task?: unknown }).task : undefined
+  const id = task && typeof task === "object" ? (task as { id?: unknown }).id : undefined
+  return typeof id === "string" && id.length > 0 && id.length <= 64 ? { id } : undefined
+}
+
+function toolResultText(content: unknown): { text: string; truncated: boolean } {
+  if (typeof content === "string") return toolOutputTail(content)
   if (Array.isArray(content)) {
     // ToolSearch answers with tool_reference parts only: show the tools it loaded.
-    return content
+    return toolOutputTail(content
       .map((part: { type?: unknown; text?: unknown; tool_name?: unknown }) =>
         typeof part?.text === "string"
           ? part.text
@@ -316,10 +405,9 @@ function toolResultText(content: unknown): string {
             ? part.tool_name
             : "",
       )
-      .join("\n")
-      .slice(-4000)
+      .join("\n"))
   }
-  return ""
+  return { text: "", truncated: false }
 }
 
 /** Normalize only failed SDK results, before their diagnostics become display strings. */
@@ -374,12 +462,13 @@ class PromptQueue implements AsyncIterable<SDKUserMessage> {
 
   constructor(private readonly sessionId: string) {}
 
-  push(text: string) {
+  push(text: string, opts?: { clientComposed?: true }) {
     if (this.closed) throw new Error("The Claude session already ended")
     const uuid = randomUUID()
     this.items.push({
       type: "user",
       uuid,
+      ...(opts?.clientComposed ? { client_composed: true } : {}),
       message: { role: "user", content: [{ type: "text", text }] },
       parent_tool_use_id: null,
       session_id: this.sessionId,
@@ -468,9 +557,9 @@ function spawnBinary(binary?: string, oauthToken?: string) {
 
 function claudePrewarmOptionsKey(options: SessionOptions) {
   const { cwd, env, credential, github, apps, mcp, mcpHttpObservationUrl, machineEnvironment,
-    kind, factoryCheck, verifyCommand, networkAllow, policy, policyHash, skills, skillReceipt, profileSkills, repositorySkills, model, effort, runId, requireSessionResume } = options
+    kind, factoryCheck, verifyCommand, networkAllow, policy, policyHash, skills, skillReceipt, profileSkills, repositorySkills, model, effort, serviceTier, runId, requireSessionResume } = options
   return JSON.stringify({ cwd, env, credential, github, apps, mcp, mcpHttpObservationUrl, machineEnvironment,
-    kind, factoryCheck, verifyCommand, networkAllow, policy, policyHash, skills, skillReceipt, profileSkills, repositorySkills, model, effort, runId, requireSessionResume,
+    kind, factoryCheck, verifyCommand, networkAllow, policy, policyHash, skills, skillReceipt, profileSkills, repositorySkills, model, effort, serviceTier, runId, requireSessionResume,
     mailbox: options.mailbox?.tools })
 }
 
@@ -495,7 +584,8 @@ export class ClaudeAdapter implements AgentAdapter {
   /** Trusted hosted fresh-task path. The same open/account/input logic runs
    * after checkout; no separate adapter or alternate CLI is introduced. */
   startPrepared(options: StartOptions, binding: ClaudePrewarmBinding, control: ClaudePreparation, stop: () => Promise<void>): Promise<AgentSession> {
-    if (!options.machineEnvironment || !this.options.spawnHosted || !this.options.subscriptionAuth ||
+    if (!options.machineEnvironment || !this.options.spawnHosted ||
+      (!this.options.subscriptionAuth && !isSubscriptionGatewayCredential(options.credential, 'anthropic')) ||
       options.continueSession || options.requireSessionResume) throw Error('Claude preparation requires a fresh hosted subscription')
     return this.open(binding.sessionId, 'new', options.prompt, options, { binding, control, stop })
   }
@@ -623,12 +713,36 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!preparation) ctx!.clearHandoff()
 
     const queue = new EventQueue()
+    let terminalSlashCommands: string[] = []
+    let initSlashCommands: string[] = []
+    let initSkills: string[] = []
+    let availableCommands: AvailableCommand[] = normalizeClaudeCommands({})
+    const emitAvailableCommands = (commands: AvailableCommand[]) => {
+      availableCommands = commands
+      queue.chunk({
+        type: "data-available-commands",
+        id: "available-commands",
+        data: {
+          harness: "claude_code",
+          commands,
+          ...(terminalSlashCommands.length ? { terminalSlashCommands } : {}),
+        },
+      })
+    }
+    const knownSkillNames = () => {
+      const names = new Set<string>(initSkills)
+      for (const s of options.skills ?? []) names.add(s.name)
+      for (const s of options.profileSkills ?? []) names.add(s.name)
+      for (const s of options.repositorySkills ?? []) names.add(s)
+      return [...names]
+    }
     let prompts: Pick<PromptQueue, "push" | "close"> = new PromptQueue(sessionId)
     let closePrepared: (() => Promise<void>) | undefined
     let firstPromptId: string | undefined
     let written = 0
     let results = 0
     let runtimeModel: string | null = null
+    let turnModel: string | undefined
     let ending = false
     let failureDetails: RunFailure | undefined
     let lastError: string | undefined
@@ -696,6 +810,7 @@ export class ClaudeAdapter implements AgentAdapter {
             stderrArrived()
           })
     }
+    let preparedMikka = preparation && !externalAuth ? prepareMikkaMcpBridge(runMcpProfile(contextOptions(true))) : undefined
     const sdkOptions = (context: Pick<RunContext, "worktree" | "tmpDir" | "tempEnv" | "mcpServer">, append: string): Options => ({
         ...refreshOptions,
         includePartialMessages: daemonTracer.enabled,
@@ -716,15 +831,17 @@ export class ClaudeAdapter implements AgentAdapter {
         settingSources: options.machineEnvironment ? ["user", "project", "local"] : [],
         settings: {
           ...claudeSettings(options.policy),
-          ...(externalAuth ? { forceLoginMethod: "claudeai" as const } : {})
+          ...(externalAuth ? { forceLoginMethod: "claudeai" as const } : {}),
+          ...(options.serviceTier === "fast" ? { fastMode: true } : {}),
         },
         mcpServers: {
           ...(options.mailbox ? { mikka_mailbox: claudeMailboxServer(options.mailbox) } : {}),
-          [MCP_SERVER_NAME]: { type: "stdio", ...context.mcpServer() },
+          [MCP_SERVER_NAME]: preparedMikka?.server ?? { type: "stdio", ...context.mcpServer() },
           ...(computerMcp ? { [COMPUTER_MCP_SERVER_NAME]: { type: "stdio" as const, ...computerMcp } } : {}),
           ...claudeAppServers(options.apps),
         },
         strictMcpConfig: !options.machineEnvironment,
+        disallowedTools: claudeAppDeniedTools(options.apps),
         systemPrompt: {
           type: "preset" as const,
           preset: "claude_code" as const,
@@ -788,7 +905,16 @@ export class ClaudeAdapter implements AgentAdapter {
           runMcpBackendContext(contextOptions(), ctx, sdkOptions(ctx, '').env ?? {}))
         try {
           const claimed = await prepared.consume({ binding, appendSystemPrompt: ctx.instructions(),
-            verify: async (_query, signal) => { signal.throwIfAborted(); if (!await approval.checkLive()) throw Error('Run tool approval unavailable') },
+            verify: async (_query, signal) => {
+              const assertLive = () => {
+                signal.throwIfAborted()
+                if (approval.revoked) throw Error('Run tool approval unavailable')
+              }
+              assertLive()
+              if (!await approval.checkLive()) throw Error('Run tool approval unavailable')
+              if (preparedMikka) await preparedMikka.bind(
+                runMcpBackendContext(contextOptions(), ctx, sdkOptions(ctx, '').env ?? {}), { signal, assertLive })
+            },
           })
           anonymousClaimed = anonymousAdopted
           session = claimed.query
@@ -801,9 +927,11 @@ export class ClaudeAdapter implements AgentAdapter {
           if (!(error instanceof ClaudeProjectSettingsNotClaimable)) throw error
           control.signal.throwIfAborted()
           if (!await approval.checkLive()) throw Error('Run tool approval unavailable', { cause: error })
+          await preparedMikka?.close()
+          preparedMikka = undefined
           session = query({ prompt: prompts as PromptQueue, options: sdkOptions(ctx, ctx.instructions()) })
         }
-      } catch (error) { await prepared.cancel(); throw error }
+      } catch (error) { await Promise.all([prepared.cancel(), preparedMikka?.close()]); throw error }
     } else session = query({ prompt: prompts as PromptQueue, options: sdkOptions(ctx!, ctx!.instructions()) })
 
 
@@ -820,7 +948,7 @@ export class ClaudeAdapter implements AgentAdapter {
       session.close()
       await gone
       const processExited = await nativeExit
-      await closePrepared?.()
+      await Promise.all([closePrepared?.(), preparedMikka?.close()])
       wipeRunCredentials(runDir)
       if (event) {
         const { failureDetails: supplied, ...terminal } = event
@@ -887,8 +1015,58 @@ export class ClaudeAdapter implements AgentAdapter {
             runRuntimeTimings.agentAccepted(options.runId, 'claude_user_ack')
           if (message.type === "system" && message.subtype === "init" && typeof message.model === "string")
             runtimeModel = message.model || null
-          if (message.type === "assistant" && message.parent_tool_use_id == null && typeof message.message.model === "string")
+          if (message.type === "system" && message.subtype === "init" && !ending) {
+            const initMsg = message as {
+              slash_commands?: unknown
+              terminal_slash_commands?: unknown
+              skills?: unknown
+            }
+            initSlashCommands = Array.isArray(initMsg.slash_commands)
+              ? initMsg.slash_commands.filter((v): v is string => typeof v === "string")
+              : []
+            terminalSlashCommands = Array.isArray(initMsg.terminal_slash_commands)
+              ? initMsg.terminal_slash_commands.filter((v): v is string => typeof v === "string")
+              : []
+            initSkills = Array.isArray(initMsg.skills)
+              ? initMsg.skills.filter((v): v is string => typeof v === "string")
+              : []
+            emitAvailableCommands(normalizeClaudeCommands({
+              initSlashCommands,
+              terminalSlashCommands,
+              initSkills,
+            }))
+            if (typeof session.supportedCommands === "function") {
+              void Promise.race([
+                session.supportedCommands(),
+                new Promise<undefined>(resolve => setTimeout(() => resolve(undefined), 3_000).unref()),
+              ])
+                .then(supported => {
+                  if (!ending && Array.isArray(supported) && supported.length > 0) {
+                    emitAvailableCommands(normalizeClaudeCommands({
+                      initSlashCommands,
+                      supportedCommands: supported,
+                      terminalSlashCommands,
+                      initSkills,
+                    }))
+                  }
+                })
+                .catch(() => undefined)
+            }
+          }
+          if (message.type === "system" && message.subtype === "commands_changed" && !ending) {
+            const changed = message as { commands?: unknown }
+            if (Array.isArray(changed.commands)) {
+              emitAvailableCommands(normalizeClaudeCommands({
+                supportedCommands: changed.commands as Parameters<typeof normalizeClaudeCommands>[0]["supportedCommands"],
+                terminalSlashCommands,
+                initSkills,
+              }))
+            }
+          }
+          if (message.type === "assistant" && message.parent_tool_use_id == null && typeof message.message.model === "string") {
             runtimeModel = message.message.model || null
+            if (!message.error && runtimeModel) turnModel = runtimeModel
+          }
           if (runtimeModel && ((message.type === "system" && message.subtype === "init") ||
             (message.type === "assistant" && message.parent_tool_use_id == null)))
             options.onRuntimeModel?.(sessionId, runtimeModel)
@@ -906,8 +1084,9 @@ export class ClaudeAdapter implements AgentAdapter {
           // CLI API errors can contain provider diagnostics or credentials;
           // they are not assistant output, on either API keys or subscriptions.
           if (!(message.type === "assistant" && message.error))
-            for (const chunk of claudeChunks(message)) queue.chunk(chunk)
+            for (const chunk of claudeChunks(message, turnModel)) queue.chunk(chunk)
           if (message.type !== "result") continue
+          turnModel = undefined
           results++
           failureDetails = message.is_error ? capture(message) : undefined
           providerFailure = claudeProviderFailure(message, assistantError)
@@ -1021,16 +1200,70 @@ export class ClaudeAdapter implements AgentAdapter {
         offRevoke?.()
       }
     }
-    firstPromptId = prompts.push(firstMessage)
-    written++
+    const emitBlockedCommand = (command: string, originalText: string, reason: "dangerous_passthrough" | "terminal_only" | "host_owned") => {
+      queue.chunk({
+        type: "data-system-event",
+        data: {
+          kind: "command_blocked",
+          command,
+          originalText,
+          validCommands: availableCommands.map(c => c.name),
+          reason,
+        },
+      })
+    }
+    const assertSendAuth = async () => {
+      if (ending) throw new Error("The Claude session already ended")
+      if (externalAuth?.verify) {
+        try { await externalAuth.verify() } catch (error) { await end({ outcome: 'failed', error: SUBSCRIPTION_ERROR }); throw new Error(SUBSCRIPTION_ERROR, { cause: error }) }
+      }
+      if (externalAuth && !externalAuth.brokered && !externalAuth.automaticRefresh && Date.now() >= expiresAt) {
+        await end({ outcome: "failed", error: SUBSCRIPTION_ERROR })
+        throw new Error(SUBSCRIPTION_ERROR)
+      }
+    }
+
+    const followUpControl = mode === "continue" ? options.continueSession?.followUpControl : undefined
+    if (followUpControl?.kind === "compact") {
+      const raw = followUpControl.instructions?.trim() ? `/compact ${followUpControl.instructions.trim()}` : "/compact"
+      firstPromptId = prompts.push(raw)
+      written++
+    } else if (followUpControl?.kind === "slash") {
+      const blocked = isBlockedClaudeCommand(followUpControl.name, terminalSlashCommands)
+      if (blocked.blocked) {
+        emitBlockedCommand(blocked.canonical, firstMessage, blocked.reason)
+        checkingContinuation = false
+        await end({ outcome: "succeeded" })
+        return {
+          sessionId,
+          get runtimeModel() { return runtimeModel },
+          events: () => queue.drain(),
+          async send() { throw new Error("The Claude session already ended") },
+          async compact() { throw new Error("The Claude session already ended") },
+          async cancel() { await end({ outcome: "cancelled" }) },
+          async detach() { await end(null) },
+        }
+      }
+      const raw = `/${normalizeCommandName(followUpControl.name)}${followUpControl.args?.trim() ? ` ${followUpControl.args.trim()}` : ""}`
+      firstPromptId = prompts.push(raw)
+      written++
+    } else if (followUpControl?.kind === "client_composed") {
+      firstPromptId = prompts.push(firstMessage, { clientComposed: true })
+      written++
+    } else {
+      const resolvedFirst = resolveSkillMentionsForHarness("claude_code", firstMessage, knownSkillNames()).text
+      const startsWithSlash = parseLeadingSlashCommand(resolvedFirst) !== null
+      firstPromptId = prompts.push(resolvedFirst, startsWithSlash ? { clientComposed: true } : undefined)
+      written++
+    }
     if (mode === "continue" && !(await untilSpoken(spoken))) {
       if (providerFailure) {
         await end(null)
         throw Object.assign(new ProviderFailureError(providerFailure), { failureDetails })
       }
-      if (options.requireSessionResume || externalAuth) {
+      if (options.requireSessionResume || externalAuth || followUpControl?.kind === "compact") {
         await end(null)
-        throw new Error(externalAuth ? SUBSCRIPTION_ERROR : 'Original Claude question session is unavailable; refusing a fresh session')
+        throw new Error(externalAuth ? SUBSCRIPTION_ERROR : followUpControl?.kind === "compact" ? 'Original Claude session is unavailable for compaction' : 'Original Claude question session is unavailable; refusing a fresh session')
       }
       log.info(
         { stderr: redactDiagnostic(stderrTail(), secrets) },
@@ -1048,18 +1281,52 @@ export class ClaudeAdapter implements AgentAdapter {
       sessionId,
       get runtimeModel() { return runtimeModel },
       events: () => queue.drain(),
-      async send(text) {
-        if (ending) throw new Error("The Claude session already ended")
-        if (externalAuth?.verify) {
-          try { await externalAuth.verify() } catch (error) { await end({ outcome: 'failed', error: SUBSCRIPTION_ERROR }); throw new Error(SUBSCRIPTION_ERROR, { cause: error }) }
+      async send(text, modeOrOptions) {
+        await assertSendAuth()
+        const sendOpts = normalizeSendOptions(modeOrOptions)
+        if (sendOpts.clientComposed) {
+          sensitiveText.push(text)
+          written++
+          prompts.push(text, { clientComposed: true })
+          return
         }
-        if (externalAuth && !externalAuth.brokered && !externalAuth.automaticRefresh && Date.now() >= expiresAt) {
-          await end({ outcome: "failed", error: SUBSCRIPTION_ERROR })
-          throw new Error(SUBSCRIPTION_ERROR)
+        if (sendOpts.slashCommand) {
+          const blocked = isBlockedClaudeCommand(sendOpts.slashCommand.name, terminalSlashCommands)
+          if (blocked.blocked) {
+            emitBlockedCommand(blocked.canonical, text, blocked.reason)
+            return
+          }
+          const raw = `/${normalizeCommandName(sendOpts.slashCommand.name)}${sendOpts.slashCommand.args?.trim() ? ` ${sendOpts.slashCommand.args.trim()}` : ""}`
+          sensitiveText.push(raw)
+          written++
+          prompts.push(raw)
+          return
         }
-        sensitiveText.push(text)
+        const parsedLeading = parseLeadingSlashCommand(text)
+        if (parsedLeading) {
+          const blocked = isBlockedClaudeCommand(parsedLeading.name, terminalSlashCommands)
+          if (blocked.blocked) {
+            emitBlockedCommand(blocked.canonical, text, blocked.reason)
+            return
+          }
+          // Ordinary messages that happen to start with `/` never pass through as CLI commands.
+          sensitiveText.push(text)
+          written++
+          prompts.push(text, { clientComposed: true })
+          return
+        }
+        const resolved = resolveSkillMentionsForHarness("claude_code", text, knownSkillNames()).text
+        sensitiveText.push(resolved)
         written++
-        prompts.push(text)
+        prompts.push(resolved)
+      },
+      async compact(instructions) {
+        await assertSendAuth()
+        const raw = instructions?.trim() ? `/compact ${instructions.trim()}` : "/compact"
+        sensitiveText.push(raw)
+        written++
+        // Real /compact on Claude Code: raw user turn with no JSON wrapper and no client_composed (#3333 Bug 2).
+        prompts.push(raw)
       },
       async cancel() {
         await end({ outcome: "cancelled" })

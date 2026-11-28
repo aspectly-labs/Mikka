@@ -1,15 +1,18 @@
-import { betterAuth } from 'better-auth'
+import { betterAuth, type BetterAuthPlugin } from 'better-auth'
 import { createAuthMiddleware } from 'better-auth/api'
-import { bearer, deviceAuthorization, multiSession } from 'better-auth/plugins'
-import { nextCookies } from 'better-auth/next-js'
+import { bearer, deviceAuthorization, multiSession, emailOTP } from 'better-auth/plugins'
 import { oauthProvider } from '@better-auth/oauth-provider'
 import { expo } from '@better-auth/expo'
+import { getAuthenticatorName, passkey } from '@better-auth/passkey'
 import { oAuthProxy, oneTimeToken } from 'better-auth/plugins'
 import { pool } from '@/lib/db'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
 import { appOrigin, MCP_SCOPE, mcpResourceURL } from '@/lib/mcp/resource'
 import { authOAuthProxyOptions, authEffectiveTrustedOrigins, authSignInMethods, authAppleOptions, requireAppleSignInNonce } from '@/lib/auth-config'
+import { disabledEmailOtpPaths, mikkaTwoFactor, publicOtpError } from './auth-email-otp'
 import { createAuthEmail, type AuthMailContext } from '@/lib/auth-email'
+import { mikkaCookies } from '@/lib/auth-cookies'
+import { mobileRefresh } from '@/lib/auth-mobile-refresh'
 import { afterJob } from '@/lib/background'
 import { githubVerifiedProfile } from '@/lib/auth-github-profile'
 import { githubSignInClient } from '@/lib/github/app-config'
@@ -23,24 +26,91 @@ import { readFreshSessionsInScope, SESSION_OPTIONS } from '@/lib/fresh-session'
 import { desktopSessionCacheAfter, withDesktopSessionCache } from '@/lib/desktop-rpc/session-cache'
 import { completeEnterpriseSignIn, enterpriseIdentityModels, enterpriseSessionFields, enterpriseSso, ssoSessionData, withEnterpriseAuthRequest } from '@/lib/enterprise/sso-plugin'
 
+import { assertTwoFactorManagement, completeTwoFactorVerification, twoFactorSessionFields } from '@/lib/enterprise/two-factor'
+import { assertTwoFactorCanBeDisabled } from '@/lib/governance/organization-security'
+import { DEFAULT_LOCAL_DEV_ORIGIN, getNodeEnv, isDevelopmentEnv, readEnv, runtimeEnv } from '@/lib/env'
+
 /** The iOS app's URL scheme: OAuth returns here, and its requests carry it as their origin. */
 export { MOBILE_APP_ORIGIN } from '@/lib/auth-config'
 
-export const { github: githubEnabled, google: googleEnabled } = authSignInMethods(process.env)
+export const { github: githubEnabled, google: googleEnabled } = authSignInMethods(runtimeEnv())
 export const authBaseURL = appOrigin
-const appleOptions = authAppleOptions(process.env)
-const proxyOptions = authOAuthProxyOptions(process.env)
+const appleOptions = authAppleOptions(runtimeEnv())
+const proxyOptions = authOAuthProxyOptions(runtimeEnv())
+const trustedOrigins = authEffectiveTrustedOrigins(runtimeEnv())
+const passkeyOrigins = trustedOrigins.filter(origin => /^https?:\/\//.test(origin))
 export const oauthCallbackBaseURL = proxyOptions?.productionURL ?? authBaseURL
 const email = createAuthEmail({
-  origin: authBaseURL ?? 'http://localhost:3000',
-  apiKey: () => process.env.RESEND_API_KEY,
+  origin: authBaseURL ?? DEFAULT_LOCAL_DEV_ORIGIN,
+  apiKey: () => readEnv('RESEND_API_KEY'),
   context: async (): Promise<AuthMailContext> => auth.$context,
+  verificationCode: async (address): Promise<string> => auth.api.createVerificationOTP({ body: { email: address, type: 'email-verification' } }),
   background: task => afterJob('after:auth-email', task),
 })
 
 export type DeviceSessionSummary = {
   session: { token: string }
   user: { id: string; email: string }
+}
+
+/** After native 2FA withholding, before bearer/header and cookie publication. */
+const authCompletion: BetterAuthPlugin = {
+  id: 'mikka-auth-completion',
+  hooks: {
+    // Better Auth applies before-hook header replacements after the whole chain.
+    // Resolve through its fresh session API so both cookie and bearer identities
+    // finish native normalization before this management authorization check.
+    before: [{ matcher: ctx => [
+      '/two-factor/disable', '/two-factor/get-totp-uri', '/two-factor/generate-backup-codes',
+      '/passkey/generate-register-options', '/passkey/verify-registration', '/passkey/delete-passkey', '/passkey/update-passkey',
+    ].includes(ctx.path ?? ''),
+      handler: createAuthMiddleware(async ctx => {
+        const session = await auth.api.getSession({ headers: ctx.headers ?? ctx.request?.headers ?? new Headers(), query: { disableCookieCache: true } })
+        if (session) {
+          await assertTwoFactorManagement(session.user.id, session.session.id)
+          if (ctx.path === '/two-factor/disable') await assertTwoFactorCanBeDisabled(session.user.id)
+        }
+      }),
+    }],
+    after: [{ matcher: () => true, handler: createAuthMiddleware(async ctx => {
+      await completeTwoFactorVerification(ctx)
+      await completeEnterpriseSignIn(ctx)
+      await auditAuthentication(ctx)
+      const deviceToken = await exchangeDaemonSession({
+        path: ctx.path, clientId: ctx.body?.client_id,
+        returned: ctx.context.returned, newSession: ctx.context.newSession,
+      }, {
+        issueToken: userId => issueDeviceToken(userId),
+        revokeSession: token => ctx.context.internalAdapter.deleteSession(token),
+      })
+      if (deviceToken) {
+        ctx.context.newSession = null
+        ctx.setHeader('cache-control', 'no-store')
+        ctx.setHeader('pragma', 'no-cache')
+        return ctx.json(deviceToken)
+      }
+      if (ctx.path === '/verify-email' || ctx.path?.startsWith('/reset-password')) {
+        ctx.setHeader('referrer-policy', 'no-referrer')
+        ctx.setHeader('cache-control', 'no-store')
+      }
+      await email.otpRedemptionResult(ctx.path, ctx.context.returned, ctx.request)
+      const otpError = publicOtpError(ctx.path, ctx.context.returned)
+      if (otpError) return otpError
+      const requestResult = await email.publicRequestResult(ctx.path, ctx.context.returned, ctx.request)
+      if (requestResult) return Response.json(requestResult, { status: 202, headers: { 'cache-control': 'no-store' } })
+      // Publish the private SDK cache only after sign-in auditing succeeds;
+      // a withheld/revoked sign-in must never receive a usable cached proof.
+      desktopSessionCacheAfter(ctx)
+      // Preserve sessions issued before multi-session was enabled when adding the first extra account.
+      if (ctx.path !== '/get-session' || !ctx.request || ctx.headers?.get('cookie')?.includes('_multi-')) return
+      const active = ctx.context.session
+      if (!active || active.session.expiresAt <= new Date()) return
+      const cookie = ctx.context.authCookies.sessionToken
+      await ctx.setSignedCookie(`${cookie.name}_multi-${active.session.token.toLowerCase()}`, active.session.token, ctx.context.secret, {
+        ...cookie.attributes,
+        maxAge: Math.max(0, Math.floor((active.session.expiresAt.getTime() - Date.now()) / 1000)),
+      })
+    }) }] },
 }
 
 export const auth = betterAuth({
@@ -50,7 +120,7 @@ export const auth = betterAuth({
   account: { encryptOAuthTokens: true, accountLinking: { trustedProviders: [] } },
   databaseHooks: {
     session: {
-      create: { before: async session => ({ data: { ...session, ...ssoSessionData(session.userId) } }) },
+      create: { before: async session => ({ data: { ...session, ...ssoSessionData(session.userId), twoFactorVerifiedAt: null, twoFactorMethod: null } }) },
       // Native hooks run after the deletion transaction commits. The durable
       // trigger already stopped fan-out; transport retries must not hold auth.
       delete: { after: async session => {
@@ -66,11 +136,27 @@ export const auth = betterAuth({
       before: async user => ({ data: { ...user, image: user.image || newUserAvatar(user.name || user.email) } }),
       // Every person's first workspace is their personal one (decision 2026-11-02-1500). Loading any
       // workspace page creates it too, so a failure here only delays it.
-      after: async user => {
+      after: async (user, ctx) => {
         try {
           const { ensurePersonalWorkspace } = await import('@/lib/personal-workspace')
           await ensurePersonalWorkspace({ id: user.id, email: user.email, name: user.name }, 'zh-CN')
         } catch (error) { console.error('Personal workspace at sign-up failed', error instanceof Error ? error.name : 'UnknownError') }
+        // One completed registration, attributed to the validated first touch
+        // from the shared marketing/app cookie. Sign-ins and failed attempts
+        // never reach this hook.
+        try {
+          const { serverPostHog } = await import('@/lib/posthog-server')
+          const posthog = serverPostHog()
+          if (posthog) {
+            const { parseFirstTouch, firstTouchProperties } = await import('@/lib/first-touch')
+            const { isSmokeAccountEmail } = await import('@/lib/smoke-account')
+            posthog.capture({ distinctId: user.id, event: 'registration_completed', properties: {
+              app: 'mikka', environment: getNodeEnv(),
+              ...firstTouchProperties(parseFirstTouch(ctx?.headers?.get('cookie'))),
+              ...(isSmokeAccountEmail(user.email) ? { test_account: true } : {}),
+            } })
+          }
+        } catch { /* analytics never blocks sign-up */ }
       },
     } },
     account: {
@@ -88,8 +174,8 @@ export const auth = betterAuth({
       requireEmailVerification: true,
     } },
     ...(googleEnabled ? { google: {
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: readEnv('GOOGLE_CLIENT_ID')!,
+      clientSecret: readEnv('GOOGLE_CLIENT_SECRET')!,
       scope: ['openid', 'email', 'profile'],
       includeGrantedScopes: false,
       requireEmailVerification: true,
@@ -100,8 +186,8 @@ export const auth = betterAuth({
   basePath: withBasePath('/api/auth'),
   emailAndPassword: email.emailAndPassword,
   emailVerification: email.emailVerification,
-  rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(process.env) }, storage: 'database' },
-  trustedOrigins: authEffectiveTrustedOrigins(process.env),
+  rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(runtimeEnv()) }, storage: 'database' },
+  trustedOrigins,
   // Makes the app an OAuth 2.1 server so agents (Claude Code, Codex…) can sign
   // in to the MCP server at /api/mcp as the person. Clients register
   // themselves (RFC 7591) and use PKCE; access tokens are opaque and hashed in
@@ -109,6 +195,20 @@ export const auth = betterAuth({
   plugins: [
     enterpriseIdentityModels,
     enterpriseSso(),
+    emailOTP(email.emailOtp),
+    mikkaTwoFactor(),
+    passkey({
+      rpName: 'Mikka',
+      rpID: authBaseURL ? new URL(authBaseURL).hostname : undefined,
+      ...(passkeyOrigins.length ? { origin: passkeyOrigins } : {}),
+      registration: {
+        afterVerification: ({ verification }) => {
+          const provider = getAuthenticatorName(verification.registrationInfo?.aaguid)
+          return provider ? { name: provider } : undefined
+        },
+      },
+    }),
+    authCompletion,
     bearer(),
     ...(proxyOptions ? [oAuthProxy(proxyOptions)] : []),
     // The iOS app signs in through the system browser and keeps its session cookie in the keychain.
@@ -130,7 +230,10 @@ export const auth = betterAuth({
       disableJwtPlugin: true,
       prefix: { opaqueAccessToken: 'mka_', refreshToken: 'mkr_' },
     }),
-    nextCookies(),
+    // The iOS app's refresh credentials (/mobile-refresh/*): a short access session, rotated by a single-use refresh token.
+    mobileRefresh({ database: pool }),
+    // Authentication may still revoke/replace cookies; publish the final journal last.
+    mikkaCookies(),
   ],
   hooks: {
     before: createAuthMiddleware(async ctx => {
@@ -138,53 +241,18 @@ export const auth = betterAuth({
       await beforeSignup(pool,ctx)
       return email.before(ctx)
     }),
-    after: createAuthMiddleware(async ctx => {
-      await completeEnterpriseSignIn(ctx)
-      await auditAuthentication(ctx)
-      const deviceToken = await exchangeDaemonSession({
-        path: ctx.path, clientId: ctx.body?.client_id,
-        returned: ctx.context.returned, newSession: ctx.context.newSession,
-      }, {
-        issueToken: userId => issueDeviceToken(userId),
-        revokeSession: token => ctx.context.internalAdapter.deleteSession(token),
-      })
-      if (deviceToken) {
-        ctx.context.newSession = null
-        ctx.setHeader('cache-control', 'no-store')
-        ctx.setHeader('pragma', 'no-cache')
-        return ctx.json(deviceToken)
-      }
-      if (ctx.path === '/verify-email' || ctx.path?.startsWith('/reset-password')) {
-        ctx.setHeader('referrer-policy', 'no-referrer')
-        ctx.setHeader('cache-control', 'no-store')
-      }
-      const requestResult = await email.publicRequestResult(ctx.path, ctx.context.returned, ctx.request)
-      if (requestResult) return Response.json(requestResult, { status: 202, headers: { 'cache-control': 'no-store' } })
-      // Publish the private SDK cache only after sign-in auditing succeeds;
-      // a withheld/revoked sign-in must never receive a usable cached proof.
-      desktopSessionCacheAfter(ctx)
-      // Preserve sessions issued before multi-session was enabled when adding the first extra account.
-      if (ctx.path !== '/get-session' || !ctx.request || ctx.headers?.get('cookie')?.includes('_multi-')) return
-      const active = ctx.context.session
-      if (!active || active.session.expiresAt <= new Date()) return
-      const cookie = ctx.context.authCookies.sessionToken
-      await ctx.setSignedCookie(`${cookie.name}_multi-${active.session.token.toLowerCase()}`, active.session.token, ctx.context.secret, {
-        ...cookie.attributes,
-        maxAge: Math.max(0, Math.floor((active.session.expiresAt.getTime() - Date.now()) / 1000)),
-      })
-    }),
   },
   // Polls read the session from a signed cookie for up to 5 minutes instead of two queries each time (Alex
   // 2026-11-02). Money, permissions, credentials and deletion read it fresh (lib/fresh-session.ts).
-  session: { ...SESSION_OPTIONS, storeSessionInDatabase: true, additionalFields: enterpriseSessionFields },
+  session: { ...SESSION_OPTIONS, storeSessionInDatabase: true, additionalFields: { ...enterpriseSessionFields, ...twoFactorSessionFields } },
   // Organization identity management uses the fresh-session, organization-admin route.
-  disabledPaths: ['/sso/register', '/sso/update-provider', '/sso/delete-provider', '/sso/providers', '/sso/get-provider', '/sso/request-domain-verification', '/sso/verify-domain'],
+  disabledPaths: [...disabledEmailOtpPaths, '/sso/register', '/sso/update-provider', '/sso/delete-provider', '/sso/providers', '/sso/get-provider', '/sso/request-domain-verification', '/sso/verify-domain'],
   advanced: {
     // Migrations own the schema (scripts/migrate.mjs on every deploy). Better Auth's own check reads
     // every column of every table from the catalog on each cold start, about 225 KB a time.
     database: { validateSchema: false },
     // Partition preview sessions by top-level site when third-party cookies are blocked.
-    ...(process.env.NODE_ENV === 'development' && authBaseURL?.startsWith('https://') ? {
+    ...(isDevelopmentEnv() && authBaseURL?.startsWith('https://') ? {
       defaultCookieAttributes: { sameSite: 'none' as const, secure: true, partitioned: true },
     } : {}),
   },

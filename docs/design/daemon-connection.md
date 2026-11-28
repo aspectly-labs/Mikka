@@ -2,7 +2,7 @@
 
 - **Status:** implemented connection and packaging contracts. The Figma frames listed here retain their recorded review status.
 - **GitHub:** #357, MVP item 4.
-- **Figma:** existing accepted style guide `98:2`; [device dialog and code confirmation review](https://www.figma.com/design/zPe5LKycb2XuT1ivCLRw07?node-id=347-4758), frames `347:4761`, `347:4798`, `347:4835`, `347:4873`, `347:4890`, `347:4907`, `347:4916`, `349:4879`, `349:4894`, `349:4909`, `349:4916` are pending Alex's acceptance.
+- **Figma:** existing accepted style guide `98:2`; [device dialog and code confirmation review](https://www.figma.com/design/zPe5LKycb2XuT1ivCLRw07?node-id=347-4758), frames `347:4761`, `347:4798`, `347:4835`, `347:4873`, `347:4890`, `347:4907`, `347:4916`, `349:4879`, `349:4894`, `349:4909`, `349:4916` are registered in `docs/decisions/pending.yaml` as `daemon-connection-review-frames`.
 - **Owner thread:** `codex/mvp-device-auth`.
 
 ## What the user does
@@ -10,6 +10,13 @@
 Install the published daemon, sign in through the existing Mikka login, then run
 it on their computer. In the browser, compare the code with the terminal and
 approve or deny that connection.
+
+Once signed in, the daemon opens its device gateway socket. The computer is
+online, and can take work, only while it holds that socket (the device
+session, [decision 2026-11-17-2215](decisions/2026-11-17-2215-device-session-no-heartbeat.md));
+there is no heartbeat and no polling fallback. A daemon too old to hold a
+session gets `426 daemonUpgradeRequired` on every device route: the person
+updates it and signs in again.
 
 ## Where it lives
 
@@ -64,8 +71,10 @@ The configured public package is `@aspectlylabs/mikka`.
 supports manual dispatch, using npm trusted publishing and provenance. It
 requires checks for the exact source commit and verifies the sealed package
 again after its installed-package test. Release results belong to that run's
-evidence. `MIKKA_DAEMON_PACKAGE_NAME` selects the release package name and
-`NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME` supplies the matching web name. Existing
+evidence. `MIKKA_DAEMON_PACKAGE_NAME` selects the release package name, and
+the web build reads the same variable for the matching web name (the old
+`NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME` is still accepted, see
+[the rename](../operations/public-env-rename.md)). Existing
 auth/database configuration remains in Infisical. See the
 [daemon guide](../../packages/daemon/README.md) for installation and release details.
 

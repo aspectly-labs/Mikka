@@ -26,23 +26,31 @@ import { runPaths } from '../src/agents/run-context'
 import { cleanupTempDirs, makeRepo, tempDir, waitFor } from './helpers'
 
 afterEach(() => { vi.unstubAllEnvs(); cleanupTempDirs() })
+const gatewayCredential = (harness: 'codex' | 'claude_code') => ({
+  kind: 'provider' as const, protocol: harness === 'codex' ? 'openai' as const : 'anthropic' as const,
+  key: 'mkg_' + 'g'.repeat(43),
+  baseUrl: 'https://mikka.test/api/model-gateway/' + (harness === 'codex' ? 'openai/v1' : 'anthropic'),
+})
+const subscriptionContext = (harness: 'codex' | 'claude_code') => ({
+  route: harness === 'codex' ? 'codex_cli' as const : 'claude_code_cli' as const,
+  modelId: 'fixture-model', revision: 2, accountId: 'fixture-account',
+  expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+})
 async function fixture(harness: 'codex' | 'claude_code', effort?: RunAssignment['effort']) {
   const root = tempDir('question-native-'), stateDir = join(root, 'adapters'), cwd = await makeRepo(), home = tempDir()
   const config = join(home, harness === 'codex' ? '.codex' : '.claude')
   mkdirSync(stateDir)
   const journal = new RunJournal(join(root, 'runs.json')), deviceId = randomUUID(), runId = randomUUID()
-  const context = { route: harness === 'codex' ? 'codex_cli' as const : 'claude_code_cli' as const,
-    modelId: 'fixture-model', revision: 2, accountId: 'fixture-account', accessToken: 'fixture-access', expiresAt: new Date(Date.now() + 3_600_000).toISOString() }
-  const link = Object.assign(new MemoryServer(deviceId).link(), { nativeLease: async () => context,
-    nativeRequest: async () => { throw new Error('No fixture may call a provider') } })
+  const context = subscriptionContext(harness)
+  const link = new MemoryServer(deviceId).link()
   const binary = resolve(import.meta.dirname, 'fakes', harness === 'codex' ? 'fake-codex-subscription.mjs' : 'fake-claude-subscription.mjs')
   chmodSync(binary, 0o700)
   const runner = await createHostedBotRunner({ stateDir, link, binaries: { [harness]: binary }, journal })
   const assignment = { runId, deviceId, issueId: randomUUID(), repoId: randomUUID(), baseBranch: 'main', harness,
-    prompt: 'ORIGINAL_QUESTION', model: 'fixture-model', subscriptionLease: context, ...(effort ? { effort } : {}), subscriptionBinding: { bindingId: randomUUID(), ownerId: 'owner',
+    prompt: 'ORIGINAL_QUESTION', model: 'fixture-model', subscriptionContext: context, modelCredential: gatewayCredential(harness), ...(effort ? { effort } : {}), subscriptionBinding: { bindingId: randomUUID(), ownerId: 'owner',
       workspaceId: randomUUID(), consumerId: randomUUID(), route: context.route } } as RunAssignment
   const options = (id: string) => ({ runId: id, toolApproval: new ToolApprovalGate(id, { isLive: () => true }), cwd,
-    model: assignment.model, ...(effort ? { effort } : {}), prompt: 'ORIGINAL_QUESTION', env: { ...buildChildEnv({ host: { PATH: process.env.PATH, HOME: home } }), FIXTURE_MACHINE_AUTH: '1' }, log: createLogger({ level: 'silent' }) })
+    model: assignment.model, ...(effort ? { effort } : {}), prompt: 'ORIGINAL_QUESTION', env: { ...buildChildEnv({ host: { PATH: process.env.PATH, HOME: home } }), FIXTURE_MACHINE_AUTH: '1', CODEX_HOME: join(home, '.codex') }, log: createLogger({ level: 'silent' }) })
   const original = await runner.start(assignment, options(runId))
   for await (const _event of original.events()) { /* actual adapter process */ }
   journal.put({ assignment, state: 'stopped', sessionId: original.sessionId, worktree: cwd, lastSeq: 0, error: null,
@@ -123,20 +131,19 @@ for (const harness of ['codex', 'claude_code'] as const) {
 
 for (const harness of ['codex', 'claude_code'] as const) {
   it(`${harness}: daemon supervisor delivers a required question answer to the original subscription session`, async () => {
-    vi.stubEnv('HOME', tempDir()); vi.stubEnv('FIXTURE_MACHINE_AUTH', '1')
+    vi.stubEnv('HOME', tempDir()); vi.stubEnv('CODEX_HOME', join(process.env.HOME!, '.codex')); vi.stubEnv('FIXTURE_MACHINE_AUTH', '1')
     const dataDir = tempDir('question-supervisor-'), repo = await makeRepo(), deviceId = randomUUID(), repoId = randomUUID()
     const server = new MemoryServer(deviceId)
     server.addRepo(deviceId, { repoId, name: 'Question fixture', path: repo })
     const link = Object.assign(server.link(), {
       prepareRunToolApproval: async (assignment: RunAssignment) => new ToolApprovalGate(assignment.runId, { isLive: () => true }),
-      nativeLease: async () => ({ route: harness === 'codex' ? 'codex_cli' as const : 'claude_code_cli' as const,
-        modelId: 'fixture-model', revision: 2, accountId: 'fixture-account', accessToken: 'fixture-access', expiresAt: new Date(Date.now() + 3_600_000).toISOString() }),
-      nativeRequest: async () => { throw new Error('No fixture provider calls') },
+
     })
     const binary = resolve(import.meta.dirname, 'fakes', harness === 'codex' ? 'fake-codex-subscription.mjs' : 'fake-claude-subscription.mjs')
     const daemon = await new Daemon({ dataDir, flavor: 'dev', link, credential: 'synthetic', hostedSubscriptions: true,
-      harnessBinaries: { [harness]: binary }, quotaSource: null, heartbeatMs: 50, log: createLogger({ level: 'silent' }) }).start()
+      harnessBinaries: { [harness]: binary }, quotaSource: null, log: createLogger({ level: 'silent' }) }).start()
     const input = { issueId: randomUUID(), repoId, baseBranch: 'main', harness, prompt: 'ORIGINAL_QUESTION', model: 'fixture-model', effort: 'high' as const,
+      modelCredential: gatewayCredential(harness), subscriptionContext: subscriptionContext(harness),
       preserveQuestionWorktree: true, subscriptionBinding: { bindingId: randomUUID(), ownerId: 'owner', workspaceId: randomUUID(),
         consumerId: randomUUID(), route: harness === 'codex' ? 'codex_cli' as const : 'claude_code_cli' as const } }
     const finish = async (runId: string) => {
@@ -166,7 +173,7 @@ for (const harness of ['codex', 'claude_code'] as const) {
 }
 
 it('codex: a real legacy submitted journal accepts an explicitly retained fixture worktree without rewriting history', async () => {
-  vi.stubEnv('HOME', tempDir()); vi.stubEnv('FIXTURE_MACHINE_AUTH', '1')
+  vi.stubEnv('HOME', tempDir()); vi.stubEnv('CODEX_HOME', join(process.env.HOME!, '.codex')); vi.stubEnv('FIXTURE_MACHINE_AUTH', '1')
   const root = tempDir('question-journal-')
   const roots = { botWorkspaces: join(root, 'bot-workspaces'), worker: join(root, 'worker') }
   const repoPath = join(roots.botWorkspaces, randomUUID()), stateDir = join(roots.worker, 'adapters')
@@ -189,11 +196,7 @@ ${marker}`))
   chmodSync(binary, 0o700)
   const deviceId = randomUUID(), repoId = randomUUID(), issueId = randomUUID()
   const server = new MemoryServer(deviceId), log = createLogger({ level: 'silent' })
-  const link = Object.assign(server.link(), {
-    nativeLease: async () => ({ route: 'codex_cli' as const, modelId: 'fixture-model', revision: 2,
-      accountId: 'fixture-account', accessToken: 'fixture-access', expiresAt: new Date(Date.now() + 3_600_000).toISOString() }),
-    nativeRequest: async () => { throw new Error('No fixture may call a provider') },
-  })
+  const link = server.link()
   const journalPath = join(roots.worker, 'runs.json'), journal = new RunJournal(journalPath)
   const outbox = new Outbox(join(roots.worker, 'outbox'), link, log)
   const runner = await createHostedBotRunner({ stateDir, link, journal, binaries: { codex: binary } })
@@ -209,6 +212,7 @@ ${marker}`))
   })
   const firstInput = runAssignmentSchema.parse({ runId: randomUUID(), deviceId, issueId, repoId,
     baseBranch: 'main', kind: 'implement', harness: 'codex', model: 'fixture-model', prompt: 'ORIGINAL_QUESTION',
+    modelCredential: gatewayCredential('codex'), subscriptionContext: subscriptionContext('codex'),
     preserveQuestionWorktree: true, subscriptionBinding: { bindingId: randomUUID(), ownerId: 'fixture-owner',
       workspaceId: randomUUID(), consumerId: randomUUID(), route: 'codex_cli' } })
   const finish = async (assignment: RunAssignment) => {

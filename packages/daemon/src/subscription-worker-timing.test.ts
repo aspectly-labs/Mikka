@@ -197,9 +197,17 @@ it('service-tier parser keeps absent old-worker fields unavailable and rejects m
 })
 
 it('service-tier receipts retain each response event separately without inferring a completed tier', () => {
-  for (const observed of ['missing', 'priority', 'default', 'auto', 'flex', 'unrecognized'] as const) {
+  for (const observed of ['missing', 'priority', 'ultrafast', 'default', 'auto', 'flex', 'unrecognized'] as const) {
     const call = new SubscriptionCallTiming(() => 0), worker = call.startWorker('executeStream')!
     worker.terminalServiceTier({ version: 1, inputRequested: 'omitted', requested: 'omitted', created: observed, completed: 'missing', incomplete: 'flex' }, true)
     expect(call.serviceTierSnapshot()[0].serviceTier).toEqual({ version: 1, inputRequested: 'omitted', requested: 'omitted', created: observed, completed: 'missing', incomplete: 'flex' })
   }
+  const ultraCall = new SubscriptionCallTiming(() => 0), ultraWorker = ultraCall.startWorker('executeStream')!
+  ultraWorker.terminalServiceTier({ version: 1, inputRequested: 'ultrafast', requested: 'ultrafast', created: 'ultrafast', completed: 'ultrafast', incomplete: 'missing' }, true)
+  expect(ultraCall.serviceTierSnapshot()[0]).toEqual({
+    ordinal: 1,
+    outcome: 'pending',
+    state: 'reported',
+    serviceTier: { version: 1, inputRequested: 'ultrafast', requested: 'ultrafast', created: 'ultrafast', completed: 'ultrafast', incomplete: 'missing' },
+  })
 })

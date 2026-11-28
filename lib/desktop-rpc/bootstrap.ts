@@ -1,5 +1,5 @@
 import 'server-only'
-import { cookies, headers } from 'next/headers'
+import { cookies, headers } from '@/lib/server-runtime/headers'
 import { workspaceSelection } from '@/lib/workspace-selection'
 import { withFreshSession } from '@/lib/fresh-session'
 import { auth, googleEnabled, githubSignInEnabled } from '@/lib/auth'
@@ -15,10 +15,12 @@ import { safeDesktopSession } from './session'
 import { desktopFeatures } from './features'
 import { getEdition } from '@/lib/edition'
 import type { DesktopBootstrap, DesktopConfig } from './wire'
+import { publicEnv } from '@/lib/public-env.mjs'
+import { runtimeEnv } from '@/lib/env/server'
 
 export async function desktopConfig(userId?: string): Promise<DesktopConfig> {
   const [emailEnabled, features, githubEnabled] = await Promise.all([emailSignInEnabled(), desktopFeatures(userId), githubSignInEnabled()])
-  return { edition: getEdition(), googleEnabled, githubEnabled, emailEnabled, features, daemonPackageName: process.env.NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME ?? '@aspectlylabs/mikka' }
+  return { edition: getEdition(), googleEnabled, githubEnabled, emailEnabled, features, daemonPackageName: publicEnv('MIKKA_DAEMON_PACKAGE_NAME', runtimeEnv(), '@aspectlylabs/mikka') }
 }
 
 export async function desktopSession() {

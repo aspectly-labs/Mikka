@@ -21,10 +21,10 @@ test('monitor mappings use actual owner/scope authorization, GitHub readback and
   for(const id of [owner,peer])await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())',[id,`${id}@example.invalid`])
   const environment={GITHUB_APP_ID:process.env.GITHUB_APP_ID,LINEAR_TOKEN_ENCRYPTION_KEY:process.env.LINEAR_TOKEN_ENCRYPTION_KEY,
     BETTER_AUTH_URL:process.env.BETTER_AUTH_URL,BETTER_AUTH_SECRET:process.env.BETTER_AUTH_SECRET,
-    MIKKA_EDITION:process.env.MIKKA_EDITION,NEXT_PUBLIC_POSTHOG_KEY:process.env.NEXT_PUBLIC_POSTHOG_KEY}
+    MIKKA_EDITION:process.env.MIKKA_EDITION,MIKKA_PUBLIC_POSTHOG_KEY:process.env.MIKKA_PUBLIC_POSTHOG_KEY,NEXT_PUBLIC_POSTHOG_KEY:process.env.NEXT_PUBLIC_POSTHOG_KEY}
   const origin='http://localhost:3100'
   Object.assign(process.env,{GITHUB_APP_ID:'4840908',LINEAR_TOKEN_ENCRYPTION_KEY:randomBytes(32).toString('hex'),
-    BETTER_AUTH_URL:origin,BETTER_AUTH_SECRET:randomBytes(32).toString('hex'),MIKKA_EDITION:'cloud',NEXT_PUBLIC_POSTHOG_KEY:''})
+    BETTER_AUTH_URL:origin,BETTER_AUTH_SECRET:randomBytes(32).toString('hex'),MIKKA_EDITION:'cloud',MIKKA_PUBLIC_POSTHOG_KEY:'',NEXT_PUBLIC_POSTHOG_KEY:''})
   const incidentWorkspaces=new Map<string,string>()
   let issueReads=0,repositoryAllowed=true,afterIssueRead:(()=>Promise<void>)|undefined
   const receiver=createServer(async(request,response)=>{
@@ -61,11 +61,11 @@ test('monitor mappings use actual owner/scope authorization, GitHub readback and
     await pool.end();await(await import('../lib/db')).pool.end();await(await import('../lib/workspace-db')).workspacePool.end()
   })
   const context=await import('../apps/api/src/context')
-  const framework=await import('next/headers')
-  mock.module('next/headers',{namedExports:{...framework,
+  const framework=await import('@/lib/server-runtime/headers')
+  mock.module('@/lib/server-runtime/headers',{namedExports:{...framework,
     headers:async()=>context.requireRequestScope().headers,cookies:async()=>context.requireRequestScope().cookies}})
-  const next=await import('next/server')
-  mock.module('next/server',{namedExports:{...next,after:(work:()=>unknown)=>context.requireRequestScope().after.add(work)}})
+  const next=await import('@/lib/server-runtime/server')
+  mock.module('@/lib/server-runtime/server',{namedExports:{...next,after:(work:()=>unknown)=>context.requireRequestScope().after.add(work)}})
   const {auth}=await import('../lib/auth')
   const nativeTokens=new Map<string,string>()
   for(const id of [owner,peer]){
@@ -193,17 +193,8 @@ test('monitor mappings use actual owner/scope authorization, GitHub readback and
     const workspaceId=await seedFixtureWorkspace(pool,owner,'team')
     const {rows:[team]}=await pool.query('INSERT INTO linear_team_syncs(id,"ownerId","linearTeamId","linearTeamKey","linearTeamName","workspaceId") VALUES($1,$2,$3,\'MAP\',\'Monitor fixture\',$4) RETURNING *',[teamSyncId,owner,linearTeamId,workspaceId])
     await pool.query('INSERT INTO linear_connections("userId","linearUserId","organizationId","organizationName","accessToken","refreshToken","expiresAt") VALUES($1,\'fixture\',\'fixture\',\'Fixture\',$2,$3,now()+interval \'1 day\')',[owner,seal(randomUUID()),seal(randomUUID())])
-    const {createAppIssueFromLinear}=await import('../lib/linear-sync/issue-sync')
-    const {withDatabaseClient}=await import('../lib/db')
-    let localIssueId:string
-    const tx=await pool.connect()
-    try{
-      const imported=await withDatabaseClient(tx,()=>createAppIssueFromLinear(team,{id:remoteId,identifier:'MAP-195',title:'Monitored bug',description:'',dueDate:null,priority:0,url:'https://linear.app/fixture/issue/MAP-195',updatedAt:new Date().toISOString(),state:null,team:{id:linearTeamId,key:'MAP',name:'Fixture'},assignee:null,labels:[]}))
-      assert.ok(imported)
-      localIssueId=imported.id
-      assert.notEqual(localIssueId,remoteId,'provider IDs remain distinct from local issue IDs')
-      assert.equal(imported.workspaceId,workspaceId)
-    }finally{tx.release()}
+    const { historicalLinearTask } = await import('./helpers/historical-linear-task')
+    const { id: localIssueId } = await historicalLinearTask(pool, owner, workspaceId, team.id, remoteId, 'MAP-195', 'Monitored bug')
     const f=await seed(false,{id:localIssueId!,workspaceKey:`linear-team:${teamSyncId}`,workspaceId})
     const response=await call(f.incidentId,'POST',{url:urlFor(9)})
     assert.equal(response.status,200)

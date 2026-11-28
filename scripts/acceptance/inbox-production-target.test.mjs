@@ -5,16 +5,16 @@ import { CORE_MODE, CORE_WORKFLOW, CORE_ISSUES, coreProductionGuard } from './se
 import { runInboxProduction } from './inbox-production.mjs'
 
 const SOURCE = 'a'.repeat(40), HEAD = 'b'.repeat(40), PREVIOUS = 'c'.repeat(40)
-const API = 'https://api.github.com/repos/alexj11324/Mikka'
+const API = 'https://api.github.com/repos/aspectly-labs/Mikka'
 const NOW = Date.parse('2026-11-09T22:00:00Z')
-const repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } }
+const repository = { full_name: 'aspectly-labs/Mikka', owner: { login: 'aspectly-labs' } }
 const marker = (patch = {}) => '<!-- mikka-inbox-1820 ' + JSON.stringify({ state: 'active', issue: 1820, pr: 1822,
   branch: INBOX_BRANCH, headSha: HEAD, sourceSha: SOURCE, startsAt: '2026-11-09T21:59:00Z',
   expiresAt: '2026-11-09T22:30:00Z', ...patch }) + ' -->'
 
 function metadata(options = {}) {
   const calls = [], env = { MIKKA_ACCEPTANCE_TARGET_MODE: CORE_MODE, GITHUB_REPOSITORY: repository.full_name,
-    GITHUB_REPOSITORY_OWNER: 'alexj11324', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_REPOSITORY_OWNER: 'aspectly-labs', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
     GITHUB_SHA: SOURCE, GITHUB_RUN_ID: '17', GITHUB_RUN_ATTEMPT: String(options.attempt ?? 1), GH_TOKEN: 'synthetic-metadata-token',
     GITHUB_WORKFLOW_REF: repository.full_name + '/' + CORE_WORKFLOW + '@refs/heads/main' }
   for (const key of ['SMOKE_OWNER_EMAIL', 'SMOKE_OWNER_PASSWORD', 'INFISICAL_CLIENT_SECRET'])

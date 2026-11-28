@@ -17,8 +17,8 @@ if (url) assert.ok(disposableDatabase(process.env, url), 'loopback *_e2e only')
 
 test('real Factory notifications retain their database across COMMIT and delayed Next after callbacks', { skip: !url, timeout: 180_000 }, async t => {
   const queued: (() => Promise<void>)[] = []
-  const nextServer = await import('next/server')
-  const scheduler = mock.module('next/server', { namedExports: { ...nextServer,
+  const nextServer = await import('@/lib/server-runtime/server')
+  const scheduler = mock.module('@/lib/server-runtime/server', { namedExports: { ...nextServer,
     after: (work: () => Promise<void>) => { queued.push(work) },
   } })
   // Keep the unrelated model consumer offline; submission, PostgreSQL commit
@@ -30,7 +30,7 @@ test('real Factory notifications retain their database across COMMIT and delayed
   const receiver = createServer(async (request, response) => {
     let body = ''
     for await (const part of request) body += part
-    sent.push({ path: request.url!, events: JSON.parse(body) })
+    sent.push({ path: request.url!, events: body ? JSON.parse(body) : null })
     response.writeHead(204); response.end()
   })
   receiver.listen(0, '127.0.0.1'); await once(receiver, 'listening')

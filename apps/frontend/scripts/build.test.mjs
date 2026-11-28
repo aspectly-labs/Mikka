@@ -1,11 +1,36 @@
+// These suites build the real application through Rolldown, a multi-threaded
+// bundler: how it splits and orders modules depends on the threads it gets. The
+// frontend test script therefore runs files one at a time (--test-concurrency=1):
+// running them in parallel lets CPU contention change a chunk split between two
+// builds of the same source, which reads as an unstable application identity.
+
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { buildFrontend } from './build.mjs'
+import { needsOfficialUi } from './application-test-build.mjs'
+import { frontendConfig } from '../vite.config.mjs'
+import { rendererActionContract } from '../../../lib/renderer-actions.mjs'
+import { publishedReadActions } from '../../../scripts/acceptance/read-action-transport.mjs'
 
-test('real frontend builds retain incremental files without fingerprinting them and clean builds remove them', { timeout: 120_000 }, async () => {
+/** Every asset under `assets/`, keyed by its path relative to the outdir and hashed by content. */
+async function emittedAssets(directory) {
+  const hashes = {}
+  const walk = async current => {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const path = join(current, entry.name)
+      if (entry.isDirectory()) await walk(path)
+      else hashes[relative(directory, path).split(sep).join('/')] = createHash('sha256').update(await readFile(path)).digest('hex')
+    }
+  }
+  await walk(join(directory, 'assets'))
+  return hashes
+}
+
+test('real frontend builds retain incremental files without fingerprinting them and clean builds remove them', { timeout: 120_000, skip: needsOfficialUi }, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mikka-build-output-'))
   const previous = process.env.MIKKA_DEPLOYMENT_ID
   try {
@@ -14,12 +39,34 @@ test('real frontend builds retain incremental files without fingerprinting them 
     const content = 'import "./previous-deployment.js";\n'
     await mkdir(join(directory, 'assets'))
     await writeFile(stale, content)
-    const incremental = await buildFrontend({ target: 'web', outdir: directory, clean: false, publicTestFixture: true })
+    const incremental = await buildFrontend({ target: 'web', outdir: directory, clean: false })
     assert.equal(await readFile(stale, 'utf8'), content, 'incremental development keeps an already loaded chunk available')
-    const clean = await buildFrontend({ target: 'web', outdir: directory, publicTestFixture: true })
+    const incrementalAssets = await emittedAssets(directory)
+    const clean = await buildFrontend({ target: 'web', outdir: directory })
     await assert.rejects(readFile(stale), { code: 'ENOENT' })
-    assert.equal(clean.publicTestFixture, true)
-    assert.equal(incremental.rendererBuild, clean.rendererBuild, 'unreferenced old files cannot change the current application identity')
+    assert.equal(clean.headless, undefined)
+    const reads = publishedReadActions(clean)
+    const contract = rendererActionContract(clean)
+    for (const action of Object.values(reads)) {
+      assert.ok(contract.usedActions.includes(action), `contract exposes ${action}`)
+    }
+    // The revision is injected into every module that reads it, so two builds of
+    // one process must inject the same one. If the identities below ever drift
+    // again, this separates "the injected revision moved" from "the bundler split
+    // the same modules differently" — two causes a bare fingerprint cannot tell apart.
+    const firstConfig = await frontendConfig({ target: 'web', outdir: directory, clean: false })
+    const secondConfig = await frontendConfig({ target: 'web', outdir: directory })
+    assert.equal(firstConfig.define['process.env.MIKKA_PUBLIC_BUILD'], secondConfig.define['process.env.MIKKA_PUBLIC_BUILD'],
+      'two builds of one process inject one application revision')
+    // A failure here has to say *which* kind of drift happened: an asset only one
+    // run emitted, or the same name carrying different bytes. Those are different
+    // bugs, and the bare fingerprint comparison hides which one occurred.
+    const cleanAssets = await emittedAssets(directory)
+    const drifted = [...new Set([...Object.keys(incrementalAssets), ...Object.keys(cleanAssets)])]
+      .filter(name => name !== 'assets/obsolete.js' && incrementalAssets[name] !== cleanAssets[name])
+      .map(name => `${name} ${incrementalAssets[name] ?? '(absent)'} -> ${cleanAssets[name] ?? '(absent)'}`)
+    assert.equal(incremental.rendererBuild, clean.rendererBuild,
+      `unreferenced old files cannot change the current application identity; drift: ${drifted.length ? drifted.join('; ') : 'none'}`)
     assert.deepEqual(incremental.usedActions, clean.usedActions)
     assert.deepEqual(clean.serverModules, [])
     for (const path of ['favicon.ico', 'apple-icon.png', 'brand/mikka-app-icon-48.png', 'brand/mikka-app-icon-96.png', 'brand/mikka-app-icon-192.png']) {
@@ -33,19 +80,25 @@ test('real frontend builds retain incremental files without fingerprinting them 
   }
 })
 
-test('the public server ships its real handoff pages without the workspace or private providers', { timeout: 120_000 }, async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'mikka-server-pages-'))
+test('without the official UI the public build ships only the headless page', { timeout: 120_000 }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mikka-headless-'))
+  const saved = { dir: process.env.MIKKA_UI_OVERLAY_DIR, sha: process.env.MIKKA_UI_OVERLAY_SHA }
   try {
+    delete process.env.MIKKA_UI_OVERLAY_DIR
+    delete process.env.MIKKA_UI_OVERLAY_SHA
     const result = await buildFrontend({ target: 'web', outdir: directory })
     const manifest = JSON.parse(await readFile(join(directory, 'renderer-manifest.json'), 'utf8'))
     assert.deepEqual(manifest, result)
-    assert.equal(manifest.serverPages, true)
-    for (const required of ['components/auth-form.tsx', 'components/device-authorization.tsx',
-      'components/oauth-consent.tsx', 'components/plugins/github-settings.tsx', 'apps/desktop/src/renderer/deep-link-routes.tsx']) {
-      assert.ok(manifest.inputs.includes(required), required)
+    assert.equal(manifest.headless, true)
+    assert.deepEqual(manifest.inputs, ['apps/frontend/src/headless.ts', 'apps/frontend/src/index.ts'])
+    assert.deepEqual(manifest.usedActions, [])
+    const html = await readFile(join(directory, 'index.html'), 'utf8')
+    assert.match(html, /<div id="root"><\/div>/)
+  } finally {
+    for (const [key, value] of [['MIKKA_UI_OVERLAY_DIR', saved.dir], ['MIKKA_UI_OVERLAY_SHA', saved.sha]]) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
     }
-    const forbidden = /(?:^|\/)(?:\.hosted-ui\/|apps\/desktop\/src\/renderer\/workspace(?:-loader)?\.tsx?$|components\/(?:workspace\/issue-workspace|slots\/(?:app-frame|tasks|task-detail|inbox|board))\.tsx?$)/
-    assert.deepEqual(manifest.inputs.filter(path => forbidden.test(path)), [])
-    assert.ok(manifest.inputs.includes('apps/frontend/src/web/server-workspace-loader.ts'))
-  } finally { await rm(directory, { recursive: true, force: true }) }
+    await rm(directory, { recursive: true, force: true })
+  }
 })

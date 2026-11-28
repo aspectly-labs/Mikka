@@ -1,4 +1,6 @@
 import { connectForCommitEffects } from '../db/commit-effects'
+import { withDatabaseClient } from '../db'
+import { secretMaskerFor } from '../secrets/runtime'
 import { factoryEventId } from "./event-id";
 import { readIssueMetadata } from "../issue-metadata";
 import type { JSONContent } from "@tiptap/core";
@@ -19,12 +21,14 @@ import { intersectRunPolicy } from '../run-assignment-policy';
 import { factoryRunBotMatches } from './run-scope'
 import { randomUUID } from "node:crypto";
 import { factoryChanged } from '../live/factory';
+import { issueListChanged } from '../live/lists';
 import { factoryCheckIndependent } from "./check-independence";
 import { maskFactoryNote } from "./note-mask";
 import { factoryTaskDetail, type FactoryTaskDetail } from "./task-detail";
 import { readFactoryFlowStates } from './public-flow';
 import { publicFactoryTaskSummary, type FactoryPublicTaskSummary } from './public-task';
 import { factoryScopeAllows, type FactoryIssueScope } from "./scope";
+import { runtimeEnv } from '@/lib/env/server';
 import { captureIdOf, hasFactoryVisualEvidence, factoryHandoffEvidenceError, factoryEvidenceBlockReason, FACTORY_VISUAL_EVIDENCE_REQUIRED, FACTORY_PUBLIC_EVIDENCE_REQUIRED } from "./evidence";
 import { escapeLiteral, type Pool, type PoolClient, type QueryResult } from "pg";
 import { z } from "zod";
@@ -78,7 +82,7 @@ async function providerRepositoryRetryMatches(tx: PoolClient, prior: ProviderRun
       before.workspaceId === prior.agentDefinition?.executionIdentity?.workspaceId && after.workspaceId === retry.agentDefinition?.executionIdentity?.workspaceId
   if (prior.agentDefinition?.readOnly !== true || retry.agentDefinition?.readOnly !== true || !before.remoteUrl || !after.remoteUrl) return false
   try {
-    const options = { allowFile: daemonTestMode(process.env) }
+    const options = { allowFile: daemonTestMode(runtimeEnv()) }
     return repositoryBindingMatches(before.repoPath, before.remoteUrl, options) && repositoryBindingMatches(after.repoPath, after.remoteUrl, options) &&
       normalizeRepository(before.remoteUrl, options).key === normalizeRepository(after.remoteUrl, options).key
   } catch { return false }
@@ -290,7 +294,7 @@ export function createFactoryStore(
         : 'SELECT * FROM factory_tasks WHERE id=$1 AND "userId"=$2',
       [taskId, userId],
     );
-    const issue = task ? await lockedIssue(tx, task.issueId, lock) : undefined;
+    const issue = task ? await lockedIssue(tx, task.issueId) : undefined;
     if (
       !task ||
       (task.botId !== botId && (lock || readScope === "bot")) ||
@@ -301,8 +305,14 @@ export function createFactoryStore(
       fail("factoryNotFound");
     return task;
   }
-  async function lockedIssue(tx: PoolClient, issueId: string, lock = true) {
-    const { rows: [issue] } = await tx.query<FactoryIssueScope>(lock ? 'SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1 FOR SHARE' : 'SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1', [issueId]);
+  async function lockedIssue(tx: PoolClient, issueId: string) {
+    // No row lock: a task apply may UPDATE this issue (e.g. cancel marks it
+    // canceled), and any share-mode lock held here (FOR SHARE or FOR KEY
+    // SHARE) conflicts with that write's implicit NO KEY UPDATE — two sibling
+    // tasks on one issue would each hold the share lock and then block on the
+    // other's, deadlocking. The unlocked snapshot feeds scope checks only;
+    // apply re-reads and the UPDATE's own row lock serializes the siblings.
+    const { rows: [issue] } = await tx.query<FactoryIssueScope>('SELECT "userId",scope,"scopeVersion","workspaceId","ownershipState" FROM issues WHERE id=$1', [issueId]);
     return issue;
   }
   async function snapshot(
@@ -469,16 +479,27 @@ export function createFactoryStore(
       )).rows : [];
       const authorized = listed.filter(row => sources.some(source => source.id === row.sourceEventId && source.botId === (row.botId ?? null)));
       const states = await readFactoryFlowStates(tx, publicFlow ? authorized.filter(row => factoryFlowVersion(row) === 2) : []);
+      // One issue is one tenant, so the masker is resolved once for the whole
+      // list. It runs on the connection this transaction already holds: the
+      // masker reads through the global pool, and a second checkout while this
+      // transaction waits would starve a small pool. Both the v2 summary and
+      // the legacy `reason` use it, so neither path leaks a saved secret.
+      // The issue's own tenant, not the first task's: the list is scoped to it
+      // by `inScope` below, and reading it from the row we already locked needs
+      // no assumption about which task happens to be first.
+      const mask = publicFlow
+        ? await withDatabaseClient(tx, () => secretMaskerFor({ workspaceId: issue.workspaceId, ownerId: userId }))
+        : undefined;
       const tasks: (FactoryTaskSummary | FactoryPublicTaskSummary)[] = [];
       for (const row of authorized) {
         const state = states.get(row.id);
         if (state) {
-          tasks.push(publicFactoryTaskSummary(row, state, row));
+          tasks.push(publicFactoryTaskSummary(row, state, row, mask));
           continue;
         }
         const { id, issueId, stage, status, revision, attemptId, candidateId, reason, isSkillCandidate, candidateRunId, candidateSha, publication } = row;
         const completionRecovery = (await completedRunForRecovery(tx, row)) || (await retainedDeliverableForRecovery(tx, row)) ? { binding: { taskId: id, revision } } : undefined;
-        tasks.push({id,issueId,stage,status,revision,attemptId,candidateId,reason:maskFactoryNote(reason),isSkillCandidate,candidateRunId,candidateSha:candidateSha ?? null,publication:publicationSummary(publication),...(completionRecovery ? { completionRecovery } : {})});
+        tasks.push({id,issueId,stage,status,revision,attemptId,candidateId,reason:maskFactoryNote(reason, mask),isSkillCandidate,candidateRunId,candidateSha:candidateSha ?? null,publication:publicationSummary(publication),...(completionRecovery ? { completionRecovery } : {})});
       }
       return { contractVersion: 1 as const, issueId, tasks };
     });
@@ -1038,6 +1059,24 @@ export function createFactoryStore(
           );
           await tx.query(`UPDATE run_tokens SET "revokedAt"=coalesce("revokedAt",now())
             WHERE "userId"=$2 AND "runId" IN (SELECT a."runId" FROM factory_attempts a JOIN agent_runs r ON r.id=a."runId" AND r."userId"=$2 AND r."issueId"=$3 WHERE a."taskId"=$1)`,[task.id,userId,task.issueId]);
+          // An open question is the task's 等待你 marker: a cancelled task cannot stay waiting.
+          await tx.query(`UPDATE factory_questions SET status='cancelled',reason=$2,revision=revision+1,"updatedAt"=now()
+            WHERE "taskId"=$1 AND status IN ('open','waiting_user')`,[task.id,change.reason]);
+          // The person canceling the Factory work cancels its task in the same transaction (#1863); a
+          // status they already closed stays. Internal cancels (e.g. a replacement thread) leave it,
+          // and the issue carries its own tenant: a member stopping shared work still closes it.
+          if (change.action === "cancel" && !change.internal) {
+            await tx.query(
+              `WITH saved AS (
+                 UPDATE issues i SET status='canceled',revision=i.revision+1,"updatedAt"=now()
+                 WHERE i.id=$1 AND i.status NOT IN ('done','canceled','duplicate')
+                 RETURNING i.id,i."userId",i.revision,i.title,i.content,i.status,i.priority)
+               INSERT INTO issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id)
+               SELECT gen_random_uuid(),id,"userId",revision,title,content,status,priority,'user',$2 FROM saved`,
+              [task.issueId, userId],
+            );
+            await issueListChanged(tx, task.issueId);
+          }
         } else if (change.action === "resolve") {
           if (task.stage !== "clarify" || task.status !== "waiting")
             fail("factoryTransition");

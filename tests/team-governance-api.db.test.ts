@@ -42,7 +42,6 @@ test('Team governance HTTP handlers enforce actual entitlements and workspace bo
   const request = (workspaceId: string, method = 'GET', body?: unknown, query = '') => new Request(`https://mikka.test/api/workspaces/${workspaceId}/governance${query}`, { method, ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}) })
   const context = (workspaceId: string) => ({ params: Promise.resolve({ workspaceId }) })
   const get = (id = first.id) => governance.GET(request(id), context(id))
-  const post = (body: unknown, id = first.id) => governance.POST(request(id, 'POST', body), context(id))
   const report = (query = '', id = first.id) => usage.GET(request(id, 'GET', undefined, `/usage${query}`), context(id))
   const grant = (workspaceId: string, plan: 'free' | 'pro', expectedPlan: 'free' | 'pro') => provisionWorkspacePlan(pool, { workspaceId, plan, expectedPlan, source: 'cloud', seatLimit: plan === 'pro' ? 20 : null, expiresAt: null, reason: plan === 'pro' ? 'evaluation' : 'downgrade', operator: 'operator-fixture' }, { mode: 'cloud', apply: true })
 
@@ -54,40 +53,20 @@ test('Team governance HTTP handlers enforce actual entitlements and workspace bo
     assert.equal(summary.edition, 'team_free')
     assert.equal(summary.activeHumans, 2)
     assert.equal(summary.activeHumanLimit, null)
-    assert.equal((await post({ action: 'grant', plan: 'pro' })).status, 400)
-    assert.equal((await post({ action: 'save', template: { name: 'Read only', rules: { approvalMode: 'read_only' } } })).status, 409)
+    // The route only reads: approval templates are gone (ADR 2026-11-27-1615).
+    assert.equal('POST' in governance, false)
     assert.equal((await report()).status, 409)
     assert.equal((await pool.query('select count(*)::int as n from mikka_workspace_entitlements where "workspaceId"=$1', [first.id])).rows[0].n, 0)
   })
 
-  await t.test('Pro templates mutate the real policy while preserving unrelated permissions', async () => {
+  await t.test('Pro keeps its paid summary, and stored templates configure nothing', async () => {
     await grant(first.id, 'pro', 'free')
     await grant(second.id, 'pro', 'free')
     principal = { id: owner }
+    await pool.query('insert into mikka_governance_approval_templates (id,"workspaceId",name,rules,"createdBy") values ($1,$2,\'Read only\',$3,$4)', [randomUUID(), first.id, { approvalMode: 'read_only' }, owner])
     const summary = await (await get()).json()
     assert.equal(summary.hostedMaxInFlight, 32)
-    assert.equal(summary.approvalTemplates, true)
-    const saved = await post({ action: 'save', template: { name: 'Read only', rules: { approvalMode: 'read_only' } } })
-    assert.equal(saved.status, 200)
-    const { id } = await saved.json()
-    assert.equal((await post({ action: 'apply', templateId: id }, second.id)).status, 404)
-    assert.equal((await post({ action: 'save', template: { name: 'Forged', rules: { permissions: { computer_use: 'allow' } } } })).status, 400)
-    await pool.query('insert into workspace_computer_policies ("workspaceId",permission) values($1,\'deny\') on conflict ("workspaceId") do update set permission=\'deny\'', [first.id])
-    const before = (await pool.query('select external_write_permissions,external_write_policy_version from workspace_computer_policies where "workspaceId"=$1', [first.id])).rows[0]
-    assert.equal((await post({ action: 'apply', templateId: id })).status, 200)
-    const applied = (await pool.query('select permission,cli_run_policy,external_write_permissions,external_write_policy_version from workspace_computer_policies where "workspaceId"=$1', [first.id])).rows[0]
-    assert.equal(applied.permission, 'deny')
-    assert.deepEqual(applied.cli_run_policy, { approvalMode: 'read_only' })
-    assert.deepEqual({ external_write_permissions: applied.external_write_permissions, external_write_policy_version: applied.external_write_policy_version }, before)
-    assert.equal((await pool.query('select count(*)::int as n from workspace_audit_events where "workspaceId"=$1 and action=\'agent.policy_changed\' and "targetId"=$2', [first.id, id])).rows[0].n, 1)
-    principal = { id: member }
-    assert.equal((await post({ action: 'delete', templateId: id })).status, 403)
-    principal = { id: owner }
-    await grant(first.id, 'free', 'pro')
-    assert.equal((await post({ action: 'apply', templateId: id })).status, 409)
-    assert.equal((await pool.query('select count(*)::int as n from mikka_governance_approval_templates where id=$1', [id])).rows[0].n, 1, 'downgrade retains saved configuration')
-    await grant(first.id, 'pro', 'free')
-    assert.equal((await post({ action: 'delete', templateId: id })).status, 200)
+    assert.deepEqual(summary.templates, [])
   })
 
   await t.test('usage and CSV contain only this workspace actual hosted costs, never BYOS charges', async () => {
@@ -113,14 +92,14 @@ test('Team governance HTTP handlers enforce actual entitlements and workspace bo
     //     so they are null, NOT "0": absent means uncollected. cacheCollectedRequests
     //     reports 0, which is how a reader tells this apart from a real zero.
     assert.deepEqual(data.hosted, [{
-      day: '2026-11-07', model: '=literal-model', memberId: null, repository: null, requests: 1, unknownRequests: 0,
+      day: '2026-11-07', model: '=literal-model', memberId: null, repository: null, environmentId: null, environmentName: null, requests: 1, unknownRequests: 0,
       inputTokens: '50', outputTokens: '70', cacheReadTokens: null, cacheWriteTokens: null, cacheCollectedRequests: 0,
       costMicroUsd: '123', freeMicroUsd: '23', purchasedMicroUsd: '100',
     }])
     assert.deepEqual(data.runs, [{ status: 'succeeded', count: 1 }])
     // A new client learns the available dimensions from the response itself, so a
     // dimension added here is discoverable without reading this source.
-    assert.deepEqual(data.availableGroupBy, ['day', 'model', 'member', 'repository'])
+    assert.deepEqual(data.availableGroupBy, ['day', 'model', 'member', 'repository', 'environment'])
     assert.equal(data.groupBy, null, 'an omitted groupBy keeps the unsubdivided shape')
     assert.equal((await report('?from=2026-11-07&to=2026-11-07&groupBy=bogus')).status, 400, 'an unknown dimension is refused, never guessed')
     const csvResponse = await report('?from=2026-11-07&to=2026-11-07&format=csv')
@@ -191,16 +170,13 @@ test('Team governance HTTP handlers enforce actual entitlements and workspace bo
     await pool.query('delete from hosted_usage where "workspaceId"=$1 and "createdAt">=\'2026-11-08\'', [first.id])
   })
 
-  await t.test('usage and template HTTP requests do not invert a real task writer with one connection per pool', async () => {
+  await t.test('usage HTTP requests do not invert a real task writer with one connection per pool', async () => {
     const { withTaskWorkspace } = await import('../lib/task-workspace')
     const { writeTransaction } = await import('../lib/operations/write-transaction')
     principal = { id: owner }
     const task = await seedIssue(pool, owner, first.id)
-    const saved = await post({ action: 'save', template: { name: 'Pool ordering', rules: { approvalMode: 'read_only' } } })
-    assert.equal(saved.status, 200)
-    const { id: templateId } = await saved.json()
     try {
-      for (const action of ['usage', 'apply'] as const) {
+      for (const action of ['usage'] as const) {
         let entered!: () => void, resume!: () => void
         const ownsWorkspace = new Promise<void>(resolve => { entered = resolve })
         const continueWriter = new Promise<void>(resolve => { resume = resolve })
@@ -217,7 +193,7 @@ test('Team governance HTTP handlers enforce actual entitlements and workspace bo
         let timer: ReturnType<typeof setTimeout> | undefined
         try {
           await ownsWorkspace
-          pending = action === 'usage' ? report() : post({ action: 'apply', templateId })
+          pending = report()
           void pending.catch(() => {})
           for (let attempt = 0; attempt < 500 && workspacePool.waitingCount === 0; attempt++) {
             await new Promise(resolve => setTimeout(resolve, 10))
@@ -238,7 +214,6 @@ test('Team governance HTTP handlers enforce actual entitlements and workspace bo
       }
     } finally {
       await pool.query('delete from issues where id=$1', [task])
-      assert.equal((await post({ action: 'delete', templateId })).status, 200)
     }
   })
 

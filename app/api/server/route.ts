@@ -1,5 +1,7 @@
 import { serverInfoResponse } from '@/lib/server-info'
-import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const dynamic = 'force-dynamic'
-export const GET = withRequestLog('/api/server', (request: Request) => serverInfoResponse(request))
+export const GET = defineRoute(
+  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/server' },
+  ({ request }) => serverInfoResponse(request),
+)

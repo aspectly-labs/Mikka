@@ -231,6 +231,19 @@ export const gitCheckpointList = z.strictObject({
 })
 export type GitCheckpointList = z.infer<typeof gitCheckpointList>
 
+/** One turn of the thread's run chain as a diff boundary (#2929): the attempt's
+ * own checkpoint review holds the range it wrote (null while no persisted head
+ * exists yet — the frontend then scopes the pane to `working`). */
+export const gitTurn = z.strictObject({
+  runId: z.uuid(), attempt: z.number().int().positive(), status: z.string().max(32),
+  baseSha: sha.nullable(), headSha: sha.nullable(), finishedAt: z.iso.datetime().nullable(),
+})
+export type GitTurn = z.infer<typeof gitTurn>
+export const gitTurnList = z.strictObject({
+  ok: z.literal(true), identity: runRepositoryIdentity, turns: z.array(gitTurn).max(256),
+})
+export type GitTurnList = z.infer<typeof gitTurnList>
+
 export const gitRestoreAction = z.strictObject({
   path, previousPath: path.nullable(), action: z.enum(['added', 'modified', 'deleted', 'renamed']),
   beforeSha256: digest.nullable(), afterSha256: digest.nullable(), conflicts: z.boolean(),

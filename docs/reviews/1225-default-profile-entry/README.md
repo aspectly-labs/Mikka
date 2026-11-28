@@ -42,7 +42,7 @@
 
 沿用 `NewTaskDialog`、`TaskProfilePicker`、`TaskProfileNotice`，以及既有 `Dialog`、`Field`、`Textarea`、`Button`、Base UI `Select`、`InlineLoadError`、`HarnessLabel`、`MachineLabel` / `DeviceIcon`。没有新增视觉组件。Default 名称、继承提示和不可用原因均复用已有国际化文案。
 
-布局依据为 `docs/design/components.md` 中的 Factory Agent Profiles / New task，以及 `docs/design/factory-agent-profiles.md` 的入口、状态与组件约定；按 `docs/design/README.md` 沿用现有主线 UI 的设备、Bot、Profile 选择布局。本修复没有新的已接受 Figma frame，不将截图表述为新的 Figma 对照结果。
+布局依据为 `mikka-hosted-ui/docs/design/components.md` 中的 Factory Agent Profiles / New task，以及 `docs/design/factory-agent-profiles.md` 的入口、状态与组件约定；按 `docs/design/README.md` 沿用现有主线 UI 的设备、Bot、Profile 选择布局。本修复没有新的已接受 Figma frame，不将截图表述为新的 Figma 对照结果。
 
 复核范围包括 R-22 正常 New task 入口、R-90 组件复用、原有中性色和圆角、浅/深主题、窄屏换行、可见错误原因及提交控制。加载和读取错误的 fail-closed 分支做了源码审查；这 12 张图没有人为制造接口错误，不将其声称为已截图覆盖。
 

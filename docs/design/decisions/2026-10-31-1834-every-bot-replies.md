@@ -1,6 +1,7 @@
 # Every bot replies, not only the Coordinator
 
 - Date: 2026-10-31
+- **Status:** Superseded in part by [2026-10-31-2300-orchestration-spec](2026-10-31-2300-orchestration-spec.md)
 - Source: Alex, relayed by the coordinator: 「现在只有 Coordinator 能够回复，另外一个 BOT 是没有办法进行回复的」; on subscriptions: 「我开 10 个，不是要绑 10 次吗？」; then a 重试 action on the failed-reply notice
 - Rule: R-40
 - Superseded in part by: [2026-10-31-2300-orchestration-spec](2026-10-31-2300-orchestration-spec.md) (the order gains other members' shares; see [orchestration](../orchestration.md) § 2)

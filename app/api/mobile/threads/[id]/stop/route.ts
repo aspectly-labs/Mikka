@@ -1,11 +1,11 @@
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
 import { requestRunStop } from '@/lib/agent-runs'
 import { ActionFailureError } from '@/lib/action-error'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
 import { runOutsideToken } from '@/lib/tokens/scope'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
-export const dynamic = 'force-dynamic'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -14,11 +14,7 @@ type Params = { params: Promise<{ id: string }> }
  * stop does (lib/agent-runs.ts requestRunStop: this run and every later
  * attempt of its chain). 409 `runChainEnded` when nothing is left to stop.
  */
-async function handlePOST(request: Request, { params }: Params) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
+async function handlePOST(request: Request, user: ApiSession['user'], { params }: Params) {
   const id = z.uuid().safeParse((await params).id)
   if (!id.success || await runOutsideToken(user, id.data)) return json({ error: 'runNotFound' }, 404)
   try {
@@ -30,4 +26,12 @@ async function handlePOST(request: Request, { params }: Params) {
   }
 }
 
-export const POST = withRequestLog('/api/mobile/threads/[id]/stop', handlePOST)
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }>(
+  {
+    route: '/api/mobile/threads/[id]/stop',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async ({ request, user, params }) => handlePOST(request, user, { params: Promise.resolve(params) }),
+)

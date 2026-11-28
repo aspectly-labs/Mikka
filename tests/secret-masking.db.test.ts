@@ -8,7 +8,8 @@ import { dbUrl, seedBot, seedUser, seedWorkspace } from './support/workspace-adm
 import { createTestDatabase, dropTestDatabase } from './support/drop-test-database'
 
 test('#438 masking write-then-read-back', { skip: !dbUrl }, async t => {
-  const saved = { key: process.env.WORKSPACE_SECRETS_KEY, flag: process.env.MIKKA_BYO_E2B_KEY }
+  const saved = { key: process.env.WORKSPACE_SECRETS_KEY, flag: process.env.MIKKA_BYO_E2B_KEY, edition: process.env.MIKKA_EDITION }
+  process.env.MIKKA_EDITION = 'community'
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   process.env.MIKKA_BYO_E2B_KEY = '1'
   const { Pool } = await import('pg')
@@ -16,7 +17,7 @@ test('#438 masking write-then-read-back', { skip: !dbUrl }, async t => {
   const { pool: appPool } = await import('../lib/db')
   const { workspacePool } = await import('../lib/workspace-db')
   t.after(async () => {
-    for (const [name, value] of [['WORKSPACE_SECRETS_KEY', saved.key], ['MIKKA_BYO_E2B_KEY', saved.flag]] as const) if (value === undefined) delete process.env[name]; else process.env[name] = value
+    for (const [name, value] of [['WORKSPACE_SECRETS_KEY', saved.key], ['MIKKA_BYO_E2B_KEY', saved.flag], ['MIKKA_EDITION', saved.edition]] as const) if (value === undefined) delete process.env[name]; else process.env[name] = value
     await Promise.all([pool.end(), appPool.end(), workspacePool.end()])
   })
   const store = await import('../lib/secrets/store')
@@ -51,7 +52,71 @@ test('#438 masking write-then-read-back', { skip: !dbUrl }, async t => {
   const agent = (await pool.query(`insert into agents (id,"userId",harness,name) values (gen_random_uuid(),$1,'codex','a') returning id`, [admin])).rows[0].id as string
   // Output writes belong to a claimed live run, including its active lease.
   const newRun = async () => (await pool.query(`insert into agent_runs (id,"agentId","userId","deviceId","workspaceId","deviceTokenId",status,"leaseExpiresAt") values (gen_random_uuid(),$1,$2,$3,$4,$5,'running',now()+interval '10 minutes') returning id`, [agent, admin, device, ws.id, claimTokenId])).rows[0].id as string
-  const call = (method: string, path: string, body: unknown) => new Request(`http://localhost${path}`, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  const call = (method: string, path: string, body: unknown) => new Request(`http://localhost${path}`, { method, headers: { authorization: `Bearer ${token}`, 'x-mikka-device-session': '1', 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  await t.test('claimed subscription turns persist once, with no Mikka charge', async () => {
+    const { POST } = await import('../app/v1/runs/[runId]/events/route')
+    const send = async (runId: string, fromSeq: number, chunks: Record<string, unknown>[]) => {
+      const response = await POST(call('POST', `/v1/runs/${runId}/events`, { fromSeq, chunks }), { params: Promise.resolve({ runId }) })
+      assert.equal(response.status, 200)
+    }
+    const [runId, otherRunId] = await Promise.all([newRun(), newRun()])
+    const [connection, binding, messageId, nextMessageId] = Array.from({ length: 4 }, () => randomUUID())
+    await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject")
+      VALUES ($1,$2,$3,'codex','connected',1,$4,$5,'fixture')`, [connection, admin, ws.id, `fixture-${connection}`, 'a'.repeat(64)])
+    await pool.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId")
+      VALUES ($1,$2,$3,$4,$5,1,'codex_cli','gpt-5')`, [binding, admin, ws.id, agent, connection])
+    await pool.query(`INSERT INTO byos_native_runs ("runId","bindingId") VALUES ($1,$2)`, [runId, binding])
+    const usage = (inputTokens: number, outputTokens: number, model?: string) => ({ type: 'data-usage',
+      data: { inputTokens: 999, outputTokens: 999, turnUsage: { inputTokens, outputTokens },
+        costUsd: 12, billingSource: 'credits', runId: otherRunId, messageId: 'forged-attribution', model } })
+    await send(runId, 1, [{ type: 'start', messageId }])
+    const tail = [usage(23, 7, 'gpt-6-luna'), { type: 'start', messageId: nextMessageId }, usage(9, 2)]
+    await send(runId, 2, tail)
+    await send(runId, 2, tail)
+    await send(otherRunId, 2, tail)
+    await send(runId, 5, [{ type: 'data-usage', data: { inputTokens: 999, outputTokens: 999 } }])
+    const { rows } = await pool.query(`SELECT "usageRunId","usageThreadId","usageMessageId",model,"billingSource",
+      "costMicroUsd","freeMicroUsd"::int AS free,"purchasedMicroUsd"::int AS purchased,"holdMicroUsd"::int AS held,
+      "inputTokens"::int AS input,"outputTokens"::int AS output FROM hosted_usage WHERE "usageRunId"=ANY($1::uuid[]) ORDER BY id`, [[runId, otherRunId]])
+    const row = { usageRunId: runId, usageThreadId: runId, billingSource: 'subscription',
+      costMicroUsd: null, free: 0, purchased: 0, held: 0 }
+    assert.deepEqual(rows, [{ ...row, usageMessageId: messageId, model: 'gpt-6-luna', input: 23, output: 7 },
+      { ...row, usageMessageId: nextMessageId, model: 'unknown', input: 9, output: 2 }])
+
+    // A gateway run owns its receipt even if the daemon's outbox arrives after
+    // the run-bound token expires. Existing direct-run receipts stay readable.
+    await pool.query(`INSERT INTO byos_native_runs ("runId","bindingId") VALUES ($1,$2)`, [otherRunId, binding])
+    await pool.query(`INSERT INTO model_gateway_tokens ("tokenHash","runId","ownerId","workspaceId",harness,model,"sourceKind","expiresAt","deviceId")
+      VALUES ($1,$2,$3,$4,'codex','gpt-5','subscription',now()-interval '1 minute',$5)`,
+      [randomBytes(32).toString('hex'), otherRunId, admin, ws.id, device])
+    const { db } = await import('../lib/db')
+    const { recordExternalModelUsage } = await import('../lib/model-gateway/ledger')
+    const gatewayReceipt = randomUUID()
+    await recordExternalModelUsage(db, { id: gatewayReceipt, workspaceId: ws.id, ownerId: admin, runId: otherRunId,
+      threadId: otherRunId, model: 'gpt-5', messageId, source: 'subscription', cost: null,
+      usage: { inputTokens: 23, outputTokens: 7, cacheReadTokens: null, cacheWriteTokens: null } })
+    await send(otherRunId, 5, [usage(23, 7, 'gpt-5')])
+    assert.deepEqual((await pool.query('SELECT id FROM hosted_usage WHERE "usageRunId"=$1', [otherRunId])).rows, [{ id: gatewayReceipt }])
+  })
+  await t.test('Claude subscription input includes both prompt-cache buckets', async () => {
+    const { POST } = await import('../app/v1/runs/[runId]/events/route')
+    const runId = await newRun()
+    const [connection, binding, messageId] = Array.from({ length: 3 }, () => randomUUID())
+    await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject")
+      VALUES ($1,$2,$3,'claude','connected',1,$4,$5,'fixture')`, [connection, admin, ws.id, `fixture-${connection}`, 'a'.repeat(64)])
+    await pool.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId")
+      VALUES ($1,$2,$3,$4,$5,1,'claude_code_cli','claude-fixture')`, [binding, admin, ws.id, agent, connection])
+    await pool.query('INSERT INTO byos_native_runs ("runId","bindingId") VALUES ($1,$2)', [runId, binding])
+    const result = await POST(call('POST', `/v1/runs/${runId}/events`, { fromSeq: 1, chunks: [
+      { type: 'start', messageId },
+      { type: 'data-usage', data: { inputTokens: 10, outputTokens: 3, cacheReadTokens: 80, cacheWriteTokens: 20 } },
+      { type: 'data-usage', data: { inputTokens: 7, outputTokens: 1 } },
+    ] }), { params: Promise.resolve({ runId }) })
+    assert.equal(result.status, 200)
+    const { rows } = await pool.query(`SELECT "inputTokens"::int AS input,"outputTokens"::int AS output,
+      "cacheReadTokens"::int AS read,"cacheWriteTokens"::int AS write FROM hosted_usage WHERE "usageRunId"=$1 ORDER BY id`, [runId])
+    assert.deepEqual(rows, [{ input: 110, output: 3, read: 80, write: 20 }, { input: 7, output: 1, read: null, write: null }])
+  })
   /** The row is committed before Next's `after()` (the wake-up) runs; outside a request it throws. */
   const afterOnly = (error: unknown) => { if (!String((error as Error)?.message).includes('outside a request scope')) throw error }
   const noPlain = (label: string, text: string) => {
@@ -103,7 +168,7 @@ test('#438 masking write-then-read-back', { skip: !dbUrl }, async t => {
     }
     const { rows } = await pool.query('select chunk, "createdAt" as at from run_chunks where "runId"=$1 order by seq', [runId])
     assert.equal(rows.length, 2)
-    const [item] = threadItems(rows, [])
+    const [item] = await threadItems(rows, [])
     assert.ok(item.kind === 'steps')
     assert.equal(item.steps[0].ms, 1250)
     assert.equal(item.steps[0].failed, false)

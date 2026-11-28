@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
-import { taskReviewRef, WorkspaceReviewError } from '@mikka/protocol/coding-workspace-review'
+import { taskReviewPullRef, taskReviewRef, WorkspaceReviewError } from '@mikka/protocol/coding-workspace-review'
 import { bindingSchema, FactoryError } from '../../factory/contract'
 import { factoryEventId } from '../../factory/event-id'
 import { factoryAuthorize } from '../../factory/authorize'
@@ -17,13 +17,17 @@ import { lockReviewBoard, reviewMasks } from '../diff/batch-store'
 import { diffDigest } from '../diff/patch'
 import { associatedGitHubPull, readGitHubPull } from '../diff/github'
 import { nativeReviewUserGrant } from '../diff/github-write'
-import { assertCurrentTaskReview, selectedTaskReview } from './context'
+import { assertCurrentTaskReview, selectedTaskPullReview, selectedTaskReview } from './context'
 import { readNativeReviewChecks, type ObservedReviewChecks } from './github-checks'
 import { TaskReviewDenied, type TaskReviewHttpInput, type TaskReviewHttpResult } from './http'
 
-export const taskReviewMergeRequest = z.strictObject({ reviewRef: taskReviewRef, binding: bindingSchema,
+const mergeFields = { binding: bindingSchema,
   expectedHeadSha: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/), idempotencyKey: z.string().min(1).max(200),
-  confirmFailedChecks: z.boolean(), confirmedChecksFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional() })
+  confirmFailedChecks: z.boolean(), confirmedChecksFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional() }
+// Keep the legacy parse order: its serialized value is the durable request
+// fingerprint. Exactly one reference is accepted; a mixed request is invalid.
+export const taskReviewMergeRequest = z.union([z.strictObject({ reviewRef: taskReviewRef, ...mergeFields }),
+  z.strictObject({ pullRef: taskReviewPullRef, ...mergeFields })])
   .refine(value => value.confirmFailedChecks === Boolean(value.confirmedChecksFingerprint))
 const outdated = () => new WorkspaceReviewError('workspace_snapshot_outdated')
 type MergeReceipt = { id: string; taskId: string; candidateId: string; userId: string; eventId: string; sha: string; headSha: string | null;
@@ -43,14 +47,29 @@ export function taskMergeReceipt(row: MergeReceipt, expected: { taskId: string; 
 export async function mergeTaskReview(input: TaskReviewHttpInput): Promise<TaskReviewHttpResult> {
   const { workspaceId: _workspaceId, ...raw } = input.input, value = taskReviewMergeRequest.parse(raw)
   const { deps, actor, taskId, request } = input
-  const context = await selectedTaskReview(deps, actor, taskId, value.reviewRef, request.signal), snapshot = context.snapshot
+  const selected = 'reviewRef' in value
+    ? { kind: 'snapshot' as const, context: await selectedTaskReview(deps, actor, taskId, value.reviewRef, request.signal) }
+    : { kind: 'native' as const, pullRef: value.pullRef, context: await selectedTaskPullReview(deps, actor, taskId, value.pullRef, request.signal) }
+  const context = selected.context
   if (actor.credential.kind !== 'session' || actor.userId !== context.ownerId || actor.userId !== context.scope.identity.ownerId)
     throw new TaskReviewDenied('not_owner_merge')
-  if (value.binding.issueId !== taskId || !snapshot.factory || !snapshot.pullRequest || !snapshot.sourceAccess
-    || snapshot.revision.source !== 'pull_request' || snapshot.factory.taskId !== value.binding.taskId
-    || snapshot.factory.candidateId !== value.binding.candidateId || snapshot.revision.headSha !== value.expectedHeadSha
-    || snapshot.factory.sha !== value.expectedHeadSha) throw outdated()
-  const { runId, repoId } = context.scope.identity, candidateId = snapshot.factory.candidateId
+  if (value.binding.issueId !== taskId || value.binding.candidateId === null) throw outdated()
+  const candidateId = value.binding.candidateId
+  if (selected.kind === 'snapshot') {
+    const snapshot = selected.context.snapshot
+    if (!snapshot.factory || !snapshot.pullRequest || !snapshot.sourceAccess || snapshot.revision.source !== 'pull_request'
+      || snapshot.factory.taskId !== value.binding.taskId || snapshot.factory.candidateId !== value.binding.candidateId
+      || snapshot.revision.headSha !== value.expectedHeadSha || snapshot.factory.sha !== value.expectedHeadSha) throw outdated()
+  }
+  const source = selected.kind === 'native' ? {
+    factory: { taskId: value.binding.taskId, candidateId, producerRunId: selected.pullRef.producerRunId, sha: value.expectedHeadSha },
+    repositoryId: selected.pullRef.repositoryId, number: selected.pullRef.number, baseSha: selected.pullRef.baseSha,
+  } : {
+    factory: selected.context.snapshot.factory!, repositoryId: selected.context.snapshot.sourceAccess!.repositoryId,
+    number: selected.context.snapshot.pullRequest!.number, baseSha: selected.context.snapshot.pullRequest!.baseSha,
+  }
+  const reference = 'pullRef' in value ? { pullRef: value.pullRef } : { reviewRef: value.reviewRef }
+  const { runId, repoId } = context.scope.identity
   const eventId = factoryEventId('workspace-task-merge', JSON.stringify([taskId, actor.userId, value.idempotencyKey]))
   const fingerprint = diffDigest(JSON.stringify(value))
   const expected = { taskId: value.binding.taskId, candidateId, headSha: value.expectedHeadSha }
@@ -76,9 +95,21 @@ export async function mergeTaskReview(input: TaskReviewHttpInput): Promise<TaskR
     const body = taskMergeReceipt(row, expected)
     const permission = ['githubMergeAuthorizationRequired', 'githubMergeForbidden'].includes(row.code ?? '')
     return { status: body.state === 'merged' ? 200 : body.state === 'pending' ? 202 : permission ? 403 : 409,
-      body: { ...body, reviewRef: value.reviewRef, ...(permission ? { error: 'github_permission', reason: 'github_permission' } : {}) } }
+      body: { ...body, ...reference, ...(permission ? { error: 'github_permission', reason: 'github_permission' } : {}) } }
   } })
   if (prior && prior.status !== 'merging') return renderReceipt(prior)
+
+  const assertAssociation = async (tx: Pick<PoolClient, 'query'>, scope: ReviewScope) => {
+    const association = await associatedGitHubPull(tx, scope)
+    if (association.number !== source.number || !isDeepStrictEqual(association.factory, source.factory)) throw outdated()
+  }
+  // Native fields are caller-controlled locators. Verify the actual host
+  // publication before any upstream read; historical receipt replay above
+  // remains valid after candidate replacement or GitHub credential revocation.
+  if (selected.kind === 'native' && !prior) {
+    await assertCurrentTaskReview(deps.database, actor, context)
+    await assertAssociation(deps.database, context.scope)
+  }
 
   const budget: RequestBudget = { deadline: Date.now() + 55_000, signal: request.signal }
   let credential: Awaited<ReturnType<typeof githubTokenForUser>>
@@ -91,25 +122,26 @@ export async function mergeTaskReview(input: TaskReviewHttpInput): Promise<TaskR
     }
     throw error
   }
-  const grant = await nativeReviewUserGrant(actor.userId, context.scope.identity.repositoryKey, snapshot.sourceAccess.repositoryId, budget, credential)
+  const grant = await nativeReviewUserGrant(actor.userId, context.scope.identity.repositoryKey, source.repositoryId, budget, credential)
+  const pullUrl = selected.kind === 'snapshot' ? selected.context.snapshot.pullRequest!.url : `https://github.com/${grant.fullName}/pull/${source.number}`
   let gate: { status: number; body: Record<string, unknown> } | undefined
   const confirm = (observation: ObservedReviewChecks) => {
     if (observation.headSha !== value.expectedHeadSha) throw outdated()
     const changed = value.confirmFailedChecks && value.confirmedChecksFingerprint !== observation.fingerprint
     if (observation.counts.pending > 0) gate = { status: 409, body: { error: 'workspace_review_unavailable', state: 'checks_pending',
-      reviewRef: value.reviewRef, expectedHeadSha: value.expectedHeadSha, checks: observation.counts, checksFingerprint: observation.fingerprint } }
+      ...reference, expectedHeadSha: value.expectedHeadSha, checks: observation.counts, checksFingerprint: observation.fingerprint } }
     else if (observation.counts.failed > 0 && (!value.confirmFailedChecks || changed)) gate = { status: 409, body: {
-      error: 'needs_confirm', state: 'needs_confirm', failing: observation.counts.failed, reviewRef: value.reviewRef,
+      error: 'needs_confirm', state: 'needs_confirm', failing: observation.counts.failed, ...reference,
       binding: value.binding, expectedHeadSha: value.expectedHeadSha, checksFingerprint: observation.fingerprint,
     } }
-    else if (changed) gate = { status: 409, body: { error: 'workspace_snapshot_outdated', state: 'checks_changed', reviewRef: value.reviewRef } }
-    if (gate) throw new FactoryMergeRefused('githubMergeBlocked', snapshot.pullRequest!.url)
+    else if (changed) gate = { status: 409, body: { error: 'workspace_snapshot_outdated', state: 'checks_changed', ...reference } }
+    if (gate) throw new FactoryMergeRefused('githubMergeBlocked', pullUrl)
   }
   const observe = async () => {
-    const current = await readGitHubPull(grant, snapshot.pullRequest!.number)
-    if (current.head.sha !== value.expectedHeadSha || current.base.sha !== snapshot.pullRequest!.baseSha) throw outdated()
+    const current = await readGitHubPull(grant, source.number)
+    if (current.head.sha !== value.expectedHeadSha || current.base.sha !== source.baseSha) throw outdated()
     const observation = await readNativeReviewChecks(grant, value.expectedHeadSha, await reviewMasks(actor, context.scope))
-    const after = await readGitHubPull(grant, snapshot.pullRequest!.number)
+    const after = await readGitHubPull(grant, source.number)
     if (after.head.sha !== current.head.sha || after.base.sha !== current.base.sha || after.state !== current.state || after.merged !== current.merged) throw outdated()
     return observation
   }
@@ -118,8 +150,9 @@ export async function mergeTaskReview(input: TaskReviewHttpInput): Promise<TaskR
     try { observed = await observe(); confirm(observed) }
     catch (error) {
       if (!gate) throw error
-      return { context, render: async (tx) => {
+      return { context, render: async (tx, scope) => {
         await assertCurrentTaskReview(tx, actor, context)
+        if (selected.kind === 'native') await assertAssociation(tx, scope)
         return gate!
       } }
     }
@@ -136,11 +169,10 @@ export async function mergeTaskReview(input: TaskReviewHttpInput): Promise<TaskR
       JOIN run_publications p ON p."runId"=c."runId" AND p."userId"=t."userId" AND p."issueId"=t."issueId"
       WHERE t.id=$1 AND t."userId"=$2 AND t."issueId"=$3 AND c.id=$4 AND c.sha=$5 AND c."runId"=$6 AND p."remoteKey"=$7
         AND p.status='published' FOR SHARE OF c,p`, [value.binding.taskId, actor.userId, taskId, candidateId, value.expectedHeadSha,
-      snapshot.factory!.producerRunId, scope.identity.repositoryKey])
+      source.factory.producerRunId, scope.identity.repositoryKey])
     if (!target || target.revision !== value.binding.revision || target.attemptId !== value.binding.attemptId
       || target.candidateId !== candidateId || target.stage !== 'approval' || !['pending', 'waiting'].includes(target.status)) throw outdated()
-    const association = await associatedGitHubPull(tx, scope)
-    if (association.number !== snapshot.pullRequest!.number || !isDeepStrictEqual(association.factory, snapshot.factory)) throw outdated()
+    await assertAssociation(tx, scope)
     if (!grant.verifyCredential) throw new TaskReviewDenied('github_permission')
     await grant.verifyCredential(tx)
   }
@@ -160,8 +192,8 @@ export async function mergeTaskReview(input: TaskReviewHttpInput): Promise<TaskR
     }, { signal: request.signal, beforeRunLock: lock }),
     beforeInsert: async (tx, _task, pull) => {
       await assertTarget(tx, context.scope)
-      if (pull.sha !== value.expectedHeadSha || pull.number !== snapshot.pullRequest!.number || pull.repo.toLowerCase() !== grant.fullName.toLowerCase()
-        || pull.url.toLowerCase() !== snapshot.pullRequest!.url.toLowerCase() || !observed) throw outdated()
+      if (pull.sha !== value.expectedHeadSha || pull.number !== source.number || pull.repo.toLowerCase() !== grant.fullName.toLowerCase()
+        || pull.url.toLowerCase() !== pullUrl.toLowerCase() || !observed) throw outdated()
       confirm(observed)
     },
     existing: async (_tx, row) => {

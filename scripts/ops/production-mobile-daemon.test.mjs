@@ -249,12 +249,12 @@ function fixture(options = {}) {
       return response({ url: 'wss://mikka-gateway.aspectlylabs.com/v1/devices/' + NEW_DEVICE + '/socket', protocol: ticketProtocol(),
         runControl: 'push', computerReviews: 'push', coordinatorResults: 'push' })
     }
-    if (path === '/mikka/v1/devices/' + NEW_DEVICE + '/heartbeat') {
+    if (path === '/mikka/v1/devices/' + NEW_DEVICE + '/report') {
       assert.equal(newDevice.enabled, false)
-      assert.deepEqual(body.runs, [])
       assert.deepEqual(body.harnesses, [])
+      // The fake server stands in for the device session as well (the gateway socket).
       newDevice.seen = clock; newDevice.online = true
-      return response({ leases: {}, revoked: [], deviceCommands: [], daemonVersions: { min: '0.0.456' } })
+      return response({ deviceCommands: [], daemonVersions: { min: '0.0.456' } })
     }
     assert.fail('Unexpected path: ' + path)
   }
@@ -548,13 +548,14 @@ test('a malformed login reply with a real session cookie still uses normal sign-
 })
 
 function deployedFixture(business, originalEnv, { changed = () => false } = {}) {
-  const env = { ...originalEnv, MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target',
-    GITHUB_REPOSITORY_OWNER: 'alexj11324', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
-    GITHUB_WORKFLOW_REF: 'alexj11324/Mikka/.github/workflows/issue1415-deployed-production.yml@refs/heads/main',
+  // The deployed-target dispatch runs in the canonical repository (deployed-target.mjs).
+  const env = { ...originalEnv, MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target', GITHUB_REPOSITORY: 'aspectly-labs/Mikka',
+    GITHUB_REPOSITORY_OWNER: 'aspectly-labs', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    GITHUB_WORKFLOW_REF: 'aspectly-labs/Mikka/.github/workflows/issue1415-deployed-production.yml@refs/heads/main',
     GITHUB_RUN_ID: '99', GITHUB_RUN_ATTEMPT: '1' }
-  const repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } }
+  const repository = { full_name: 'aspectly-labs/Mikka', owner: { login: 'aspectly-labs' } }
   const event = { repository, inputs: { application_sha: env.APPLICATION_SHA } }
-  const api = 'https://api.github.com/repos/alexj11324/Mikka'
+  const api = 'https://api.github.com/repos/aspectly-labs/Mikka'
   const metadata = []
   const now = business.now ?? Date.now
   const fetchImpl = async (input, init = {}) => {
@@ -687,11 +688,11 @@ test('mobile requires the switched cookie readback and the actual home to identi
 })
 
 function coreFixture(business, { changed = () => false, recover = false } = {}) {
-  const env = { ...ENV, MIKKA_ACCEPTANCE_TARGET_MODE: CORE_MODE, GITHUB_REPOSITORY_OWNER: 'alexj11324',
+  const env = { ...ENV, MIKKA_ACCEPTANCE_TARGET_MODE: CORE_MODE, GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REPOSITORY_OWNER: 'aspectly-labs',
     GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main', GITHUB_RUN_ATTEMPT: '1',
-    GITHUB_WORKFLOW_REF: 'alexj11324/Mikka/' + CORE_WORKFLOW + '@refs/heads/main' }
-  const repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } }
-  const api = 'https://api.github.com/repos/alexj11324/Mikka'
+    GITHUB_WORKFLOW_REF: 'aspectly-labs/Mikka/' + CORE_WORKFLOW + '@refs/heads/main' }
+  const repository = { full_name: 'aspectly-labs/Mikka', owner: { login: 'aspectly-labs' } }
+  const api = 'https://api.github.com/repos/aspectly-labs/Mikka'
   const event = { repository }
   const fetchImpl = async (input, init) => {
     const url = new URL(input), headers = new Headers(init.headers)

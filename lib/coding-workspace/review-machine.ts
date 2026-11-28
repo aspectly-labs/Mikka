@@ -1,14 +1,19 @@
 import 'server-only'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { Sandbox } from 'e2b'
+import { armDueTimerSoon } from '@/lib/due-timer'
+import { isCloudEdition } from '@/lib/edition'
+import { E2B_RENEW_LEAD_MS, E2B_REVIEW_TIMEOUT_MARGIN_MS } from '../cloud-computer/e2b-compute-billing'
 import type { Pool } from 'pg'
 import { TerminalError } from '@mikka/protocol/coding-terminal'
-import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { cloudflareReview, reviewReply } from './cloudflare-review'
 import type { ReviewSessionLease } from './review-sessions'
 import type { TaskReviewAuthority } from './review-authority'
+import { readEnv } from '@/lib/env/server'
 
 type Lease = ReviewSessionLease
-type Dependencies = { database: Pick<Pool, 'connect' | 'query'>; resume: (scope: TaskReviewAuthority & { sandboxId: string }, milliseconds: number, signal?: AbortSignal) => Promise<void> }
+type Dependencies = { database: Pick<Pool, 'connect' | 'query'>; resume: (scope: TaskReviewAuthority & { sandboxId: string }, milliseconds: number, signal?: AbortSignal) => Promise<void | number> }
 const TERMINAL = new Set(['succeeded', 'failed'])
 
 /** A review lease resumes the same parked VM's memory, never an Agent claim,
@@ -27,11 +32,19 @@ export async function resumeReviewMachine(scope: TaskReviewAuthority, lease: Lea
   signal?.throwIfAborted()
   const database = dependencies?.database ?? (await import('@/lib/db')).pool
   const resume = dependencies?.resume ?? (async (target, milliseconds, abort) => {
-    const apiKey = await e2bApiKey(target.ownerId, 'Task review is not configured')
-    await withE2BErrors(target.ownerId, false, () => Sandbox.connect(target.sandboxId, {
-      apiKey, timeoutMs: milliseconds, requestTimeoutMs: 20_000, signal: abort, retries: 0,
-      proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy,
-    }))
+    const { withE2BProviderTime, E2B_TIMEOUT_REQUEST_BUDGET_MS } = await import('../cloud-computer/e2b-compute-billing')
+    const account = await e2bResourceAccount(target.ownerId, 'sandbox', target.sandboxId)
+    const options = { apiKey: account.apiKey, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, signal: abort, retries: 0,
+      proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') }
+    const requested = milliseconds + (isCloudEdition() ? E2B_REVIEW_TIMEOUT_MARGIN_MS : 0)
+    return withE2BProviderTime(target.ownerId, target.sandboxId, requested, {
+      providerScope: account.scope,
+      inspect: () => withE2BErrors(target.ownerId, false, () => Sandbox.getInfo(target.sandboxId, options)),
+    }, async timeoutMs => {
+      const deadline = Date.now() + timeoutMs
+      await withE2BErrors(target.ownerId, false, () => Sandbox.connect(target.sandboxId, { ...options, timeoutMs }))
+      return deadline
+    })
   })
   const values = [scope.runId, scope.ownerId, scope.workspaceId, scope.deviceId, scope.sandboxId,
     scope.machineEpoch, scope.machineOperationId, lease.id, scope.bindingId]
@@ -69,16 +82,19 @@ export async function resumeReviewMachine(scope: TaskReviewAuthority, lease: Lea
     signal?.throwIfAborted()
     const remaining = Math.min(300_000, Date.parse(lease.expiresAt) - Date.now())
     if (remaining <= 0) throw new TerminalError('terminal_unavailable', { detail: 'lease' })
-    if (sponsored) await attach()
-    else await resume({ ...scope, sandboxId: scope.sandboxId }, remaining, signal)
+    const deadline = sponsored ? await attach() : await resume({ ...scope, sandboxId: scope.sandboxId }, remaining, signal)
+    const reviewDue = typeof deadline === 'number' && deadline < Date.parse(lease.expiresAt)
+      ? Math.max(Date.now(), deadline - E2B_RENEW_LEAD_MS + 3_000) : null
     signal?.throwIfAborted()
     const applied = await database.query(`UPDATE thread_machines m SET state='running',"runningSince"=clock_timestamp(),
-      "lastActiveAt"=clock_timestamp(),"lifecycleAt"=(SELECT "expiresAt" FROM coding_review_sessions WHERE id=$8),
+      "lastActiveAt"=clock_timestamp(),"lifecycleAt"=LEAST(
+        (SELECT "expiresAt" FROM coding_review_sessions WHERE id=$8),to_timestamp($10::double precision/1000)),
       lifecycle=(m.lifecycle-'pausedAt')||jsonb_build_object('phase','review_resumed','reviewSessionId',$8::text)
       FROM agent_runs r,issues i,devices d WHERE ${eligible} AND m.state='paused'
         AND m.lifecycle->>'phase'='review_resume_requested' AND m.lifecycle->>'reviewSessionId'=$8::text
-      RETURNING m."runId"`, values)
+      RETURNING m."runId"`, [...values, reviewDue])
     if (!applied.rowCount) throw new TerminalError('terminal_binding_changed')
+    if (reviewDue !== null) armDueTimerSoon('run-recovery')
   } catch (cause) {
     // An SDK error is not proof the VM remained paused. Make the existing
     // lifecycle reconcile provider truth promptly after the caller closes its

@@ -1,7 +1,7 @@
 import { slackRunOriginRef, telegramRunOriginRef, type ResolvedRunOrigin } from '../run-origin'
 
 /** Evidence comes from the owned source event, never model/tool arguments. */
-export function eveRunOrigin(surface:'web'|'slack',payload:Record<string,unknown>|undefined,scheduledRead:boolean):ResolvedRunOrigin {
+export function eveRunOrigin(surface:'web'|'slack'|'factory',payload:Record<string,unknown>|undefined,scheduledRead:boolean):ResolvedRunOrigin {
   if(scheduledRead)return {origin:'schedule',originRef:null}
   if(surface==='slack') {
     const slack=payload?.slack

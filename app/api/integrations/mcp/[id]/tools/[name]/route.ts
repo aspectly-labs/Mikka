@@ -1,0 +1,26 @@
+import { freshSessionRoute } from '@/lib/fresh-session'
+import { pluginActor } from '@/lib/plugins/actor'
+import { pluginBody, pluginResponse, pluginUuidParam } from '@/lib/plugins/http'
+import { mcpToolName, mcpToolSetting } from '@/lib/plugins/connection-contracts'
+import { mcpConnections } from '@/lib/plugins/runtime'
+import { PluginError } from '@/lib/plugins/contracts'
+import { defineRoute } from '@/lib/primitives/define-route'
+
+type Context = { params: Promise<{ id: string; name: string }> }
+const unguardedPATCH = freshSessionRoute((request: Request, ctx: Context) => pluginResponse(async () => {
+  const userId = await pluginActor(request, { humanOnly: true })
+  const name = mcpToolName.safeParse((await ctx.params).name)
+  if (!name.success) throw new PluginError('invalidPluginInput', 400)
+  const { enabled, ...options } = await pluginBody(request, mcpToolSetting)
+  return mcpConnections.setTool(userId, await pluginUuidParam(ctx, 'id'), name.data, enabled, options)
+}))
+export const PATCH = defineRoute<'session','none',{ id: string; name: string }>(
+  {
+    route: '/api/integrations/mcp/[id]/tools/[name]',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => unguardedPATCH(request, { params: Promise.resolve(params) }),
+)

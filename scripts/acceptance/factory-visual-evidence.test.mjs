@@ -77,16 +77,18 @@ test('an expired or released in-flight window refuses the next real mutation whi
 })
 
 test('Web finishing before its exact E2B release defers without signing in or requesting workload credentials', async () => {
-  const paths = [], env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REF: 'refs/heads/main',
+  const paths = [], env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REF: 'refs/heads/main',
     GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_SHA: source, GITHUB_RUN_ID: '420', GITHUB_RUN_ATTEMPT: '1',
     GITHUB_TOKEN: 'fixture-token', APPLICATION_SHA: source, RUNNER_TEMP: '/tmp', FACTORY_VISUAL_MODEL_CASE: 'all' }
   const fetchImpl = async url => {
-    const path = new URL(url).pathname.replace('/repos/alexj11324/Mikka', '') + new URL(url).search
+    const parsed = new URL(url)
+    const path = parsed.pathname === '/repositories/1427517699/git/ref/heads/main'
+      ? '/git/ref/heads/main' : parsed.pathname.replace('/repos/aspectly-labs/Mikka', '') + parsed.search
     paths.push(path)
     let value
     if (path === '/pulls/1789') value = { number: 1789, merged: true, merge_commit_sha: source,
-      base: { ref: 'main', repo: { full_name: 'alexj11324/Mikka' } },
-      head: { ref: 'feat/factory-visual-evidence', sha: head, repo: { full_name: 'alexj11324/Mikka' } } }
+      base: { ref: 'main', repo: { full_name: 'aspectly-labs/Mikka' } },
+      head: { ref: 'feat/factory-visual-evidence', sha: head, repo: { full_name: 'aspectly-labs/Mikka' } } }
     else if (path === '/git/ref/heads/main') value = { object: { type: 'commit', sha: source } }
     else if (path === '/issues/1752') value = { comments: 1 }
     else if (path.startsWith('/issues/1752/comments')) value = [comment()]

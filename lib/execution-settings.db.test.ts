@@ -1,10 +1,65 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { createServer, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { ExecutionSettings } from "./execution-settings";
+import { createRequestScope, runRequestScope } from "../apps/api/src/context";
+import type { SubscriptionCatalogueModel } from "./subscription-service-tier";
+import { context, propagation, SpanStatusCode, trace } from "@opentelemetry/api";
+import { AlwaysOnSampler, InMemorySpanExporter, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { sanitizeSpan } from "./tracing/sanitize";
+
+/** A real, controllable free /models read. No provider identity or inference. */
+async function catalogueProvider() {
+  const closed = new AbortController();
+  const responses: ServerResponse[] = [];
+  const responsesClosed: Promise<void>[] = [];
+  const received = Promise.withResolvers<void>();
+  const calls: { owner: string; connection: string; signal?: AbortSignal; done: Promise<void> }[] = [];
+  const server = createServer((_request, response) => {
+    responses.push(response);
+    const ended = Promise.withResolvers<void>();
+    responsesClosed.push(ended.promise);
+    response.once("close", ended.resolve);
+    received.resolve();
+  });
+  await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const discover = async (owner: string, connection: string, signal?: AbortSignal): Promise<SubscriptionCatalogueModel[]> => {
+    const done = Promise.withResolvers<void>();
+    calls.push({ owner, connection, signal, done: done.promise });
+    try {
+      const response = await fetch(`http://127.0.0.1:${address.port}/models`, { signal: signal ? AbortSignal.any([signal, closed.signal]) : closed.signal });
+      if (!response.ok) throw new Error(await response.text());
+      return await response.json() as SubscriptionCatalogueModel[];
+    } finally { done.resolve(); }
+  };
+  return {
+    calls, received: received.promise, responsesClosed, discover,
+    reply(models: SubscriptionCatalogueModel[]) {
+      for (const response of responses) response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(models));
+    },
+    refuse(message: string) { for (const response of responses) response.writeHead(503).end(message); },
+    async close() {
+      closed.abort();
+      server.closeAllConnections();
+      await Promise.all(calls.map(call => call.done));
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    },
+  };
+}
+
+async function beforeDeadline<T>(pending: Promise<T>, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([pending, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(message)), 1500); })]);
+  } finally { clearTimeout(timer); }
+}
 // Subscription chats answer only on validated routes (lib/subscription-routes.ts); these tests run with both on.
 process.env.MIKKA_BYOS_VALIDATED_MODEL_ROUTES = 'claude_cpa,codex_cpa'
 const databaseURL = process.env.E2E_DATABASE_URL;
@@ -13,7 +68,7 @@ if (process.env.REQUIRE_DB === "1" && !databaseURL)
 test(
   "execution settings: migration replay, CRUD, ordering, owner and workspace boundaries",
   { skip: !databaseURL },
-  async () => {
+  async t => {
     assert.ok(
       ["127.0.0.1", "localhost"].includes(new URL(databaseURL!).hostname),
     );
@@ -25,6 +80,9 @@ test(
       connectionString: databaseURL,
       options: `-c search_path=${schema}`,
     });
+    const spans = new InMemorySpanExporter();
+    const telemetry = new NodeTracerProvider({ sampler: new AlwaysOnSampler(), spanProcessors: [new SimpleSpanProcessor(spans)] });
+    telemetry.register();
     try {
       // Install the real scoped PG handle before the first model/resource read.
       mock.module(new URL("./workspace-db.ts", import.meta.url).href, {
@@ -36,9 +94,9 @@ test(
         namedExports: { hostedPointsRefusal: async () => null, pointsFallback: async () => null, hostedPointsHere: async () => ({ points: 98 }) },
       });
       await pool.query(`CREATE TABLE "user" (id text PRIMARY KEY); INSERT INTO "user" VALUES ('alice'),('bob');
-      CREATE TABLE devices (id uuid PRIMARY KEY,"ownerId" text,kind text,"removedAt" timestamptz,"lastSeenAt" timestamptz,enabled boolean,"autoSchedule" boolean,"deviceType" text,name text,harnesses jsonb,"createdAt" timestamptz DEFAULT now());
+      CREATE TABLE devices (id uuid PRIMARY KEY,"ownerId" text,kind text,"removedAt" timestamptz,"lastSeenAt" timestamptz,"sessionOpenedAt" timestamptz,"sessionClosedAt" timestamptz,enabled boolean,"autoSchedule" boolean,"deviceType" text,name text,harnesses jsonb,"createdAt" timestamptz DEFAULT now());
       CREATE TABLE bots (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid,"archivedAt" timestamptz);
-      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,kind text NOT NULL DEFAULT 'team' CHECK (kind IN ('personal','team')));
+      CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,kind text NOT NULL DEFAULT 'team' CHECK (kind IN ('personal','team')), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,name text,status text);
       CREATE TABLE byos_connections (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,epoch bigint,state text,provider text,"accountLabel" text,quota jsonb,"removedAt" timestamptz,paused boolean NOT NULL DEFAULT false,"modelSettings" jsonb);
       CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text,"consumerId" text,"connectionId" uuid,"connectionRevision" bigint,"modelId" text,route text,"createdAt" timestamptz DEFAULT now());
@@ -84,6 +142,10 @@ test(
       await pool.query(
         await readFile(new URL("../drizzle/20261115204738_model_gateway_tokens.sql", import.meta.url), "utf8"),
       );
+      // The Bot's reasoning effort beside its model choice (freezeBotModel reads it).
+      await pool.query(await readFile(new URL("../drizzle/20261120044916_bot_settings.sql", import.meta.url), "utf8"));
+      // A key is a person's or a workspace's (the schema part of 20261127173719_model_api_keys_personal_or_workspace).
+      await pool.query('ALTER TABLE model_api_keys ALTER COLUMN "ownerId" DROP NOT NULL, ADD COLUMN IF NOT EXISTS "workspaceId" uuid, ADD COLUMN IF NOT EXISTS "addedBy" text');
       const catalogueMigration = await readFile(new URL('../drizzle/20261030233002_byos_model_catalog.sql',import.meta.url),'utf8');
       await pool.query(catalogueMigration); await pool.query(catalogueMigration);
       const personalPolicyMigration = await readFile(new URL("../drizzle/20261101020201_workspace_personal_policies.sql",import.meta.url),"utf8");
@@ -95,15 +157,13 @@ test(
         other = { ...alice, workspaceId: randomUUID() };
       await pool.query('INSERT INTO mikka_workspaces(id) VALUES ($1),($2)', [alice.workspaceId, other.workspaceId]);
       await pool.query(`INSERT INTO mikka_workspace_members VALUES ($1,'alice','Alice','active'),($1,'bob','Bob','active'),($2,'alice','Alice','active')`, [alice.workspaceId, other.workspaceId]);
-      // As the migration does for existing connections: each person's subscriptions stay shared where they were connected.
-      for (const scope of [alice, bob]) await pool.query('INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)', [scope.ownerId, scope.workspaceId]);
       const own = randomUUID(),
         foreign = randomUUID(),
         bot = randomUUID(),
         binding = randomUUID(),
         connection = randomUUID();
       await pool.query(
-        `INSERT INTO devices (id,"ownerId",kind,enabled,"autoSchedule","lastSeenAt",harnesses) VALUES ($1,'alice','local',true,true,now(),'[{"harness":"codex","installed":true,"models":["explicit-model"],"defaultModelSlot":"default","modelSlots":[{"slot":"default","model":"explicit-model","name":"Explicit model"}]}]'),($2,'bob','local',true,true,now(),'[]')`,
+        `INSERT INTO devices (id,"ownerId",kind,enabled,"autoSchedule","lastSeenAt","sessionOpenedAt",harnesses) VALUES ($1,'alice','local',true,true,now(),now(),'[{"harness":"codex","installed":true,"models":["explicit-model"],"defaultModelSlot":"default","modelSlots":[{"slot":"default","model":"explicit-model","name":"Explicit model"}]}]'),($2,'bob','local',true,true,now(),now(),'[]')`,
         [own, foreign],
       );
       await pool.query("INSERT INTO bots VALUES ($1,$2,$3)", [
@@ -218,14 +278,169 @@ test(
       });
       assert.deepEqual(refreshed.map(row=>row.modelId).sort(), ['provider-model','second-provider-model']);
       assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1',[connection])).rows[0].modelCatalog, {
-        revision:'1',models:['provider-model','second-provider-model'],priorityVersion:1,
+        revision:'1',models:['provider-model','second-provider-model'],webSearchVersion:1,priorityVersion:1,
         prioritySupport:{'provider-model':false,'second-provider-model':true},
       });
       assert.equal((await settings.connectedSubscriptions('alice',true)).includes(connection),false);
       // A valid legacy catalogue remains sufficient for ordinary dispatch.
       // Only the chat menu explicitly requests the optional Fast capability.
-      await pool.query(`UPDATE byos_connections SET "modelCatalog"="modelCatalog"-'priorityVersion'-'prioritySupport' WHERE id=$1`,[connection]);
+      await pool.query(`UPDATE byos_connections SET "modelCatalog"="modelCatalog"-'priorityVersion'-'prioritySupport'-'webSearchVersion' WHERE id=$1`,[connection]);
       const legacyCatalogue = {revision:'1',models:['provider-model','second-provider-model']};
+      await t.test("a valid catalogue is readable before optional metadata discovery completes", async () => {
+        const provider = await catalogueProvider();
+        const request = createRequestScope(new Request("http://127.0.0.1/mikka/api/rpc"));
+        const pending = runRequestScope(request, () => trace.getTracer("fixture").startActiveSpan("catalogue.read", async span => {
+          try { return await settings.ensureCatalogues(alice, 8000, provider.discover, { codexPriority: true, deferOptional: true }); }
+          finally { span.end(); }
+        }));
+        try {
+          await beforeDeadline(pending, "an optional provider refresh blocked the valid catalogue read");
+          assert.equal(provider.calls.length, 0, "the owned after queue starts the refresh after response disposal");
+          await telemetry.forceFlush();
+          const read = spans.getFinishedSpans().find(span => span.name === "catalogue.read")!;
+          assert.equal(read.attributes["mikka.catalogue.cache"], "optional_metadata");
+          assert.equal(read.attributes["mikka.catalogue.deferred"], 1);
+          assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog, legacyCatalogue);
+          const after = request.after.finish();
+          await beforeDeadline(provider.received, "optional refresh never reached the provider");
+          provider.reply([{ id: "provider-model" }, { id: "second-provider-model" }]);
+          await beforeDeadline(after, "optional refresh did not settle its owned lifetime");
+          const catalogue = (await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog;
+          assert.equal(catalogue.priorityVersion, 1);
+          assert.deepEqual(catalogue.prioritySupport, {}, "an unreported capability stays unknown");
+        } finally {
+          await provider.close();
+          await pending;
+          await request.after.finish();
+          await pool.query('UPDATE byos_connections SET "modelCatalog"=$2::jsonb WHERE id=$1', [connection, JSON.stringify(legacyCatalogue)]);
+        }
+      });
+      await t.test("a catalogue deadline aborts the actual discovery and prevents a late durable write", async () => {
+        const provider = await catalogueProvider();
+        const pending = settings.ensureCatalogues(alice, 100, provider.discover, { codexPriority: true });
+        try {
+          await beforeDeadline(provider.received, "the provider was never called");
+          await pending;
+          assert.equal(provider.calls.length, 1);
+          assert.equal(provider.calls[0].signal?.aborted, true, "a Promise.race timeout must cancel the actual provider request");
+          await beforeDeadline(provider.calls[0].done, "discovery remained alive after its deadline");
+          await beforeDeadline(provider.responsesClosed[0], "the provider connection stayed open after cancellation");
+          provider.reply([{ id: "late-provider-model", prioritySupported: true }]);
+          assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog, legacyCatalogue);
+        } finally { await provider.close(); await pending; }
+      });
+      await t.test("direct manual refresh keeps the worker deadline instead of adding a menu deadline", async () => {
+        const provider = await catalogueProvider();
+        const pending = settings.refreshBotModels(alice, connection, provider.discover);
+        try {
+          await beforeDeadline(provider.received, "manual refresh never reached the provider");
+          assert.equal(provider.calls[0].signal, undefined, "only an explicit caller budget may add the menu deadline");
+          provider.reply([{ id: "provider-model" }, { id: "second-provider-model" }]);
+          assert.deepEqual((await pending).map(row => row.modelId).sort(), legacyCatalogue.models);
+          assert.equal((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog.priorityVersion, 1);
+        } finally {
+          await provider.close(); await Promise.allSettled([pending]);
+          await pool.query('UPDATE byos_connections SET "modelCatalog"=$2::jsonb WHERE id=$1', [connection, JSON.stringify(legacyCatalogue)]);
+        }
+      });
+      await t.test("concurrent catalogue reads share one discovery and reread their authorized view", async () => {
+        const provider = await catalogueProvider();
+        const reads = Array.from({ length: 3 }, () => new ExecutionSettings(pool).ensureCatalogues(alice, 8000, provider.discover, { codexPriority: true }));
+        try {
+          await beforeDeadline(provider.received, "the provider was never called");
+          // All three physical candidates reads must reach the database before the assertion.
+          await pool.query('SELECT 1');
+          await new Promise(resolve => setTimeout(resolve, 50));
+          assert.equal(provider.calls.length, 1, "concurrent reads must not launch duplicate provider requests");
+          provider.reply([{ id: "provider-model" }, { id: "second-provider-model" }]);
+          await beforeDeadline(Promise.all(reads), "coalesced readers did not finish");
+          assert.deepEqual((await settings.botModels(alice)).map(row => row.modelId).sort(), legacyCatalogue.models);
+          assert.deepEqual(await settings.botModels(bob), [], "the shared refresh never makes Alice's models available to Bob");
+        } finally {
+          await provider.close();
+          await Promise.all(reads);
+          await pool.query('UPDATE byos_connections SET "modelCatalog"=$2::jsonb WHERE id=$1', [connection, JSON.stringify(legacyCatalogue)]);
+        }
+      });
+      await t.test("a discovery that ignores cancellation cannot commit its late answer", async () => {
+        const provider = await catalogueProvider();
+        let signal: AbortSignal | undefined;
+        const pending = settings.ensureCatalogues(alice, 100, (owner, id, observed) => {
+          signal = observed;
+          return provider.discover(owner, id); // Deliberately ignore the supplied cancellation signal.
+        }, { codexPriority: true });
+        try {
+          await beforeDeadline(provider.received, "the provider was never called");
+          assert.equal(await pending, false);
+          assert.equal(signal?.aborted, true);
+          provider.reply([{ id: "late-provider-model", prioritySupported: true }]);
+          await beforeDeadline(provider.calls[0].done, "the fixture did not deliver its late answer");
+          await new Promise(resolve => setImmediate(resolve));
+          assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog, legacyCatalogue);
+          assert.equal((await pool.query('SELECT 1 FROM byos_bindings WHERE "connectionId"=$1 AND "modelId"=$2', [connection, "late-provider-model"])).rowCount, 0);
+        } finally { await provider.close(); await pending; }
+      });
+      await t.test("a new credential revision or revocation fences a refresh already in flight", async () => {
+        for (const change of ["epoch", "state"] as const) {
+          const provider = await catalogueProvider();
+          const pending = settings.ensureCatalogues(alice, 8000, provider.discover, { codexPriority: true });
+          try {
+            await beforeDeadline(provider.received, "the provider was never called");
+            await pool.query(change === "epoch" ? 'UPDATE byos_connections SET epoch=epoch+1 WHERE id=$1' : "UPDATE byos_connections SET state='disconnected' WHERE id=$1", [connection]);
+            provider.reply([{ id: "revoked-provider-model", prioritySupported: true }]);
+            assert.equal(await beforeDeadline(pending, "revoked refresh did not settle"), false);
+            assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog, legacyCatalogue);
+            assert.equal((await pool.query('SELECT 1 FROM byos_bindings WHERE "connectionId"=$1 AND "modelId"=$2', [connection, "revoked-provider-model"])).rowCount, 0);
+          } finally {
+            await provider.close(); await pending;
+            await pool.query("UPDATE byos_connections SET epoch=1,state='connected' WHERE id=$1", [connection]);
+          }
+        }
+      });
+      await t.test("separate database and workspace authority never joins another refresh", async () => {
+        const separate = `catalogue_${randomUUID().replaceAll("-", "")}`;
+        await admin.query(`CREATE SCHEMA ${separate}`);
+        const otherPool = new Pool({ connectionString: databaseURL, options: `-c search_path=${separate}` });
+        try {
+          await otherPool.query(`CREATE TABLE byos_connections (LIKE ${schema}.byos_connections INCLUDING ALL)`);
+          await otherPool.query(`INSERT INTO byos_connections SELECT * FROM ${schema}.byos_connections WHERE id=$1`, [connection]);
+          for (const [reader, target] of [[new ExecutionSettings(otherPool), alice], [settings, other]] as const) {
+            const provider = await catalogueProvider();
+            const bothStarted = Promise.withResolvers<void>();
+            const discover = (owner: string, id: string, signal?: AbortSignal) => {
+              const pending = provider.discover(owner, id, signal);
+              if (provider.calls.length === 2) bothStarted.resolve();
+              return pending;
+            };
+            const reads = [settings.ensureCatalogues(alice, 8000, discover, { codexPriority: true }), reader.ensureCatalogues(target, 8000, discover, { codexPriority: true })];
+            try {
+              await beforeDeadline(bothStarted.promise, "distinct authority shared an in-flight refresh");
+              assert.equal(provider.calls.length, 2);
+              assert.notEqual(provider.calls[0].signal, provider.calls[1].signal);
+            } finally { await provider.close(); await Promise.all(reads); }
+          }
+        } finally { await otherPool.end(); await admin.query(`DROP SCHEMA ${separate} CASCADE`); }
+      });
+      await t.test("provider failure tracing exports only safe reason and closed catalogue attributes", async () => {
+        const provider = await catalogueProvider();
+        const warnings: string[] = [];
+        const warning = mock.method(console, "warn", (line: unknown) => { warnings.push(String(line)); });
+        const pending = settings.ensureCatalogues(alice, 8000, provider.discover, { codexPriority: true });
+        try {
+          await beforeDeadline(provider.received, "the provider was never called");
+          provider.refuse("https://private-catalogue.test/models?key=private-key Authorization: private-token");
+          assert.equal(await pending, false);
+          await telemetry.forceFlush();
+          const span = spans.getFinishedSpans().filter(span => span.name === "subscription.models").at(-1)!;
+          assert.equal(span.status.code, SpanStatusCode.ERROR);
+          assert.equal(span.attributes["error.type"], "Error");
+          assert.equal(span.attributes["mikka.catalogue.provider"], "codex");
+          assert.equal(span.attributes["mikka.catalogue.refresh_count"], 1);
+          const sanitized = sanitizeSpan(span);
+          assert.doesNotMatch(JSON.stringify({ attributes: sanitized.attributes, events: sanitized.events, warnings }), /private-|Authorization|\/models|alice/);
+          assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog, legacyCatalogue);
+        } finally { warning.mock.restore(); await provider.close(); await pending; }
+      });
       assert.equal((await settings.connectedSubscriptions('alice',true)).includes(connection),false);
       assert.equal((await settings.connectedSubscriptions('alice',true,{codexPriority:true})).includes(connection),true);
       let catalogueReads=0;
@@ -278,7 +493,7 @@ test(
         mock.module(new URL(path, import.meta.url).href, {
           namedExports: exports,
         });
-      mock.module("next/headers", {
+      mock.module("@/lib/server-runtime/headers", {
         namedExports: { headers: async () => new Headers() },
       });
       stub("./auth.ts", {
@@ -327,7 +542,6 @@ test(
       await pool.query('INSERT INTO mikka_workspaces(id) VALUES ($1)', [teamB.workspaceId]);
       await pool.query(`INSERT INTO mikka_workspace_members VALUES ($1,'alice','Alice','active'),($1,'bob','Bob','active')`, [teamB.workspaceId]);
       await pool.query('INSERT INTO bots (id,"ownerId","workspaceId") VALUES ($1,$2,$3),($4,$5,$3)',[teamBot,alice.ownerId,teamB.workspaceId,bobBot,'bob']);
-      assert.equal((await pool.query('SELECT 1 FROM workspace_subscription_shares WHERE "ownerId"=$1 AND "workspaceId"=$2',[alice.ownerId,teamB.workspaceId])).rowCount,0,'nothing shared into team B');
       const inTeam = await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:teamBot},dependencies);
       assert.equal(inTeam.modelSelection?.workspaceId,teamB.workspaceId,'her own bot uses her subscription without sharing; the run and its binding belong to team B');
       assert.equal(inTeam.modelSelection?.consumerId,teamBot);
@@ -341,14 +555,22 @@ test(
       // Unshared, it is hers alone.
       assert.equal((await settings.botModels({ownerId:'bob',workspaceId:teamB.workspaceId})).length,0,'another member of team B never sees or uses it');
       await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:bobBot},dependencies),{code:'executionModelUnknown'},'another member\'s bot asks for a model');
-      await assert.rejects(settings.bindingForBot({ownerId:'bob',workspaceId:teamB.workspaceId},null,catalogue.bindingId),{code:'executionModelUnknown'});
+      await assert.rejects(settings.bindingForBot({ownerId:'bob',workspaceId:teamB.workspaceId},null,catalogue.bindingId),{code:'account_unavailable'},'another member\'s binding is a borrow refusal, not an unknown model');
       await assert.rejects(settings.setBotModel({ownerId:'bob',workspaceId:teamB.workspaceId},bobBot,catalogue.bindingId),{code:'executionModelUnknown'});
-      // Team B's admin switch never limits her own use.
+      // A choice borrowed before owner-only stays stored under the member: the run refuses it.
+      await pool.query('INSERT INTO bot_model_choices ("ownerId","workspaceId","botKey","bindingId") VALUES ($1,$2,$3,$4)',['bob',teamB.workspaceId,bobBot,catalogue.bindingId]);
+      await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:bobBot},dependencies),{code:'account_unavailable'},'a member\'s stored borrow refuses as unavailable, not an unknown model');
+      await pool.query('DELETE FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2',['bob',teamB.workspaceId]);
+      // Team B's admin switch 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): her own subscription does not serve there.
       await pool.query('INSERT INTO workspace_personal_policies ("workspaceId",subscriptions) VALUES ($1,false)',[teamB.workspaceId]);
-      assert.ok((await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:teamBot},dependencies)).modelSelection,'admin switch off: her own bot still uses her subscription');
-      assert.ok((await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:null},dependencies)).modelSelection,'admin switch off: her Coordinator too');
-      assert.ok((await settings.botModels(teamB)).length > 0,'admin switch off: her menu still offers it');
+      assert.equal((await settings.botModels(teamB)).length,0,'admin switch off: her menu in team B offers no own subscription');
+      for (const botId of [teamBot,null]) {
+        const frozen = await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId},dependencies).catch((error: unknown) => error);
+        assert.notEqual((frozen as { modelSelection?: { type?: string } }).modelSelection?.type,'subscription','admin switch off: neither her bot nor her Coordinator runs on her subscription there');
+      }
       await pool.query('UPDATE workspace_personal_policies SET subscriptions=true WHERE "workspaceId"=$1',[teamB.workspaceId]);
+      assert.ok((await settings.botModels(teamB)).length > 0,'admin switch on: her menu offers it again');
+      assert.ok((await freezeBotModel({ownerId:alice.ownerId,workspaceId:teamB.workspaceId,botId:teamBot},dependencies)).modelSelection,'admin switch on: her own bot uses her subscription');
       // A subscription serves its owner only (decision 2026-11-17): bob's bot never runs on hers.
       await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:bobBot},dependencies),{code:'executionModelUnknown'},'bob\'s bot asks for his own model');
       await assert.rejects(freezeBotModel({ownerId:'bob',workspaceId:teamB.workspaceId,botId:null},dependencies),{code:'executionModelUnknown'},'bob\'s Coordinator never uses another member\'s subscription');
@@ -364,6 +586,8 @@ test(
       assert.equal((await settings.botModels(alice)).length, 0);
       await assert.rejects(settings.setBotModel(alice, bot, binding));
     } finally {
+      await telemetry.shutdown();
+      trace.disable(); context.disable(); propagation.disable();
       await pool.end();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();

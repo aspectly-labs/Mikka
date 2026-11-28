@@ -5,7 +5,7 @@ import { handleTaskProcessSocket } from '../../task-sandbox/process-socket.mjs'
 const HOST = 'task-machine.internal'
 const MAX_FILE_BYTES = 4 * 1024 * 1024
 const MAX_METADATA_BYTES = 16 * 1024
-const writes = new Set(['/v1/open', '/v1/park', '/v1/status', '/v1/read-file', '/v1/write-file', '/v1/remove-path', '/v1/review'])
+const writes = new Set(['/v1/open', '/v1/park', '/v1/status', '/v1/compute-meter', '/v1/read-file', '/v1/write-file', '/v1/remove-path', '/v1/review', '/v1/portable-archive', '/v1/stage-portable-archive'])
 
 const refused = (code, status) => Response.json({ error: code }, { status, headers: { 'cache-control': 'no-store' } })
 
@@ -33,8 +33,10 @@ function machineFailure(error) {
     case 'Task machine run already settled':
     case 'Task machine already has a writer':
     case 'Task machine interrupted':
+    case 'Task workspace is being archived':
+    case 'Portable task workspace is not staged':
     case 'Task machine is not running': return refused('machine_unavailable', 409)
-    case 'Product task machine capacity exhausted': return refused('capacity', 429)
+    case 'Workspace task machine capacity exhausted': return refused('capacity', 429)
     default: return refused('machine_unavailable', 503)
   }
 }
@@ -53,6 +55,16 @@ export async function taskMachine(request, env, { params }) {
     if (request.method !== 'GET' || request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return refused('invalid_request', 400)
     // The RPC handshake needs only an Upgrade. Never carry the container capability or cookies into the session.
     return handleTaskProcessSocket(new Request(url, { headers: { upgrade: 'websocket' } }), env.TASK_MACHINE)
+  }
+  if (url.pathname === '/v1/stage-portable-archive') {
+    const grantHeader = request.headers.get('x-mikka-task-grant')
+    if (request.method !== 'POST' || request.headers.get('content-type') !== 'application/octet-stream' ||
+        !request.body || !grantHeader || grantHeader.length > MAX_METADATA_BYTES) return refused('invalid_request', 400)
+    let grant
+    try { grant = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(grantHeader), character => character.charCodeAt(0)))) }
+    catch { return refused('invalid_grant', 400) }
+    try { return Response.json(await env.TASK_MACHINE.stagePortableArchive(grant, request.body)) }
+    catch (error) { return machineFailure(error) }
   }
   if (request.method !== 'POST' || request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json') return refused('invalid_request', 400)
   const write = url.pathname === '/v1/write-file'
@@ -77,8 +89,15 @@ export async function taskMachine(request, env, { params }) {
         const result = await machine.review(body.grant, body.operation)
         return result instanceof Response ? result : Response.json(result,{headers:{'cache-control':'no-store'}})
       }
+      case '/v1/portable-archive': {
+        if (!['capture', 'read', 'delete'].includes(body.operation) || typeof body.id !== 'string' || body.id.length !== 36)
+          return refused('invalid_options', 400)
+        const value = await machine.portableArchive(body.grant, body.operation, body.id)
+        return value instanceof Response ? value : Response.json(value, { headers: { 'cache-control': 'no-store' } })
+      }
       case '/v1/open': return Response.json(await machine.open(body.grant))
       case '/v1/park': return Response.json(await machine.park(body.grant))
+      case '/v1/compute-meter': return Response.json(await env.TASK_MACHINE.meter(body.grant, body.index, body.rollover))
       case '/v1/status': return Response.json(await machine.status(body.grant))
       case '/v1/read-file': {
         const file = await machine.readFile(body.grant, body.path)

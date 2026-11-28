@@ -4,9 +4,8 @@ import { mock, test } from 'node:test'
 import { Pool } from 'pg'
 import { dbUrl, seedUser, seedWorkspace } from '../tests/support/workspace-admin-db'
 
-// Real hashed cloud credential, machine/run ownership and withDeviceRoute fence.
-// The external subscription provider is synthetic: no live login or paid request.
-test('a bound cloud device can renew its own subscription lease through the actual route', { skip: !dbUrl, timeout: 60_000 }, async t => {
+// Real hashed cloud credential and device-route authentication for the retired endpoint.
+test('the retired subscription lease route refuses even an authorized device with an active run', { skip: !dbUrl, timeout: 60_000 }, async t => {
   const pool = new Pool({ connectionString: dbUrl, max: 4 })
   const owner = await seedUser(pool, 'cloud-lease-owner')
   const workspace = await seedWorkspace(pool, owner, [{ userId: owner, role: 'admin' }])
@@ -30,7 +29,7 @@ test('a bound cloud device can renew its own subscription lease through the actu
     } as unknown as ReturnType<typeof subscriptionRuntime>),
   } })
   const route = await import('../app/v1/devices/[deviceId]/runs/[runId]/subscription-lease/route')
-  const request = (deviceId = device, id = runId) => new Request(`http://127.0.0.1/mikka/v1/devices/${deviceId}/runs/${id}/subscription-lease`, { method: 'POST', headers: { authorization: `Bearer ${credential}` } })
+  const request = (deviceId = device, id = runId) => new Request(`http://127.0.0.1/mikka/v1/devices/${deviceId}/runs/${id}/subscription-lease`, { method: 'POST', headers: { authorization: `Bearer ${credential}`, 'x-mikka-device-session': '1' } })
   t.after(async () => {
     mock.restoreAll()
     await pool.query('DELETE FROM thread_machines WHERE "ownerId"=$1', [owner])
@@ -41,29 +40,20 @@ test('a bound cloud device can renew its own subscription lease through the actu
     const [{ pool: appPool }, { workspacePool }] = await Promise.all([import('./db'), import('./workspace-db')])
     await Promise.all([pool.end(), appPool.end(), workspacePool.end()])
   })
-  await t.test('the same credential remains valid for its established heartbeat route', async () => {
-    const caller = await authenticateDevice(new Request(`http://127.0.0.1/v1/devices/${device}/heartbeat`, { method: 'POST', headers: { authorization: `Bearer ${credential}` } }))
+  await t.test('the same credential remains valid for its established report route', async () => {
+    const caller = await authenticateDevice(new Request(`http://127.0.0.1/v1/devices/${device}/report`, { method: 'POST', headers: { authorization: `Bearer ${credential}` } }))
     assert.equal(caller?.tokenId, tokenId)
   })
-  await t.test('own run renewal passes route authentication and reaches issuance once', async () => {
+  await t.test('a valid session gets an upgrade error and never receives provider credentials', async () => {
     const response = await route.POST(request(), { params: Promise.resolve({ deviceId: device, runId }) })
-    assert.deepEqual({ status: response.status, issued }, { status: 200, issued: 1 })
+    assert.equal(response.status, 410)
+    assert.deepEqual(await response.json(), { error: 'subscription_gateway_required' })
     assert.equal(response.headers.get('cache-control'), 'private, no-store')
-  })
-  await t.test('another device and another run remain refused before issuance', async () => {
-    const before = issued
-    for (const [deviceId, id] of [[otherDevice, otherRun], [device, otherRun], [device, randomUUID()]]) {
-      const response = await route.POST(request(deviceId, id), { params: Promise.resolve({ deviceId, runId: id }) })
-      assert.equal(response.status, 401)
+    for (const [deviceId, id] of [[otherDevice, otherRun], [device, randomUUID()]]) {
+      const foreign = await route.POST(request(deviceId, id), { params: Promise.resolve({ deviceId, runId: id }) })
+      assert.equal(foreign.status, 401)
     }
-    assert.equal(issued, before)
-  })
-  await t.test('an ended machine cannot obtain a new lease', async () => {
-    await pool.query("UPDATE thread_machines SET state='ended' WHERE \"runId\"=$1", [runId])
-    const before = issued
-    const response = await route.POST(request(), { params: Promise.resolve({ deviceId: device, runId }) })
-    assert.deepEqual({ status: response.status, issued }, { status: 401, issued: before })
-    await pool.query("UPDATE thread_machines SET state='running' WHERE \"runId\"=$1", [runId])
+    assert.equal(issued, 0)
   })
   await t.test('revoked cloud credentials remain refused', async () => {
     await pool.query('UPDATE device_tokens SET "revokedAt"=now() WHERE id=$1', [tokenId])

@@ -4,10 +4,17 @@ import { createHash } from 'node:crypto'
 import dataset from '../../tests/fixtures/group-decision-cases.json'
 import { createGroupJudgment } from './group-judgment'
 import { GroupJudgmentPendingError } from './group-correction'
-import { DECISION_MODEL, decisionRequestInput, type DecisionQuestion } from './decision'
+import { DECISION_MODEL, LEGACY_DECISION_MODEL, type DecisionInput, type DecisionQuestion } from './decision'
 import type { DecisionExecution, invokeDecision } from './decide'
 import { overrideDeploymentSwitch } from '../deployment-switches'
 import { GROUP_BASELINE_VERSION, GROUP_POLICY_VERSION, GROUP_LIVE_POLICY_VERSION, GROUP_PREVIOUS_POLICY_VERSION, GROUP_V2_POLICY_VERSION, GROUP_V3_POLICY_VERSION } from './group-decision-policy'
+
+// Frozen pre-LiteLLM text envelope for archived v0-v3 receipt comparisons only.
+function historicalRequestDigest(input: DecisionInput, questions: DecisionQuestion[]) {
+  if (typeof input !== 'string') assert.equal(input.images?.length ?? 0, 0)
+  return createHash('sha256').update(JSON.stringify({ model: LEGACY_DECISION_MODEL,
+    input: typeof input === 'string' ? input : [{role:'user',content:[{type:'input_text',text:input.text}]}],questions })).digest('hex')
+}
 
 const ids=['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000003']
 const members=ids.map((id,index)=>({id,name:`Member ${index}`,description:'Public role',memberType:'bot' as const,executionAvailable:true}))
@@ -77,7 +84,7 @@ test('current mentioned intent offers only intervention choices before the provi
   assert.deepEqual(offered,[
     'reply_useful_answer','reply_independent_contributions',
     'delegate_execution_requested','delegate_task_followup',
-    'clarify_missing_information','clarify_missing_permission','uncertain',
+    'clarify_missing_information','uncertain',
   ])
   assert.equal(route.action,'reply');assert.deepEqual(route.responders,[ids[1]]);assert.equal(t.calls(),1)
 })
@@ -94,7 +101,7 @@ test('current unmentioned intent keeps ignore and observe available',async()=>{
       'ignore_ordinary_conversation','ignore_outside_capabilities','observe_context','observe_already_answered',
       'reply_useful_answer','reply_independent_contributions',
       'delegate_execution_requested','delegate_task_followup',
-      'clarify_missing_information','clarify_missing_permission','uncertain',
+      'clarify_missing_information','uncertain',
     ])
     assert.equal(route.action,value.startsWith('ignore_')?'ignore':'observe')
     assert.deepEqual(route.responders,[]);assert.equal(t.calls(),1)
@@ -218,9 +225,9 @@ test('v0 baseline and historical v1 request bytes match the six recorded synthet
       ordinal++
       const name=questions[0].name
       const value=name==='intent'?sample.intent!:'uncertain'
-      const requestDigest=createHash('sha256').update(JSON.stringify({model:DECISION_MODEL,input:decisionRequestInput(input),questions})).digest('hex')
+      const requestDigest=historicalRequestDigest(input,questions)
       if(name==='responder_0')assert.equal(requestDigest,sample.digest,`historical prompt changed: ${sample.caseId}`)
-      const execution:DecisionExecution={executionId:`historical-${ordinal}`,modelId:DECISION_MODEL,providerGenerationId:`historical-generation-${ordinal}`,startedAt:'2026-11-04T00:00:00Z',completedAt:'2026-11-04T00:00:01Z',requestDigest,imageDigests:[],vision:'no-image-input'}
+      const execution:DecisionExecution={executionId:`historical-${ordinal}`,modelId:LEGACY_DECISION_MODEL,providerGenerationId:`historical-generation-${ordinal}`,startedAt:'2026-11-04T00:00:00Z',completedAt:'2026-11-04T00:00:01Z',requestDigest,imageDigests:[],vision:'no-image-input'}
       return {answers:new Map([[name,{type:'choice',name,choice:value}]]),execution}
     }
     const item=dataset.cases.find(item=>item.id===sample.caseId)!
@@ -315,9 +322,9 @@ test('historical v0/v1/v2 offline request compatibility matches 63 archived synt
       assert.ok(index<sample.answers.length,'no extra historical request')
       assert.equal(questions.length,1)
       const name=questions[0].name
-      const requestDigest=createHash('sha256').update(JSON.stringify({model:DECISION_MODEL,input:decisionRequestInput(input),questions})).digest('hex')
+      const requestDigest=historicalRequestDigest(input,questions)
       actualDigests.push(requestDigest)
-      const execution:DecisionExecution={executionId:`recorded-${ordinal}`,modelId:DECISION_MODEL,providerGenerationId:`recorded-generation-${ordinal}`,startedAt:'2026-11-04T00:00:00Z',completedAt:'2026-11-04T00:00:01Z',requestDigest,imageDigests:[],vision:'no-image-input'}
+      const execution:DecisionExecution={executionId:`recorded-${ordinal}`,modelId:LEGACY_DECISION_MODEL,providerGenerationId:`recorded-generation-${ordinal}`,startedAt:'2026-11-04T00:00:00Z',completedAt:'2026-11-04T00:00:01Z',requestDigest,imageDigests:[],vision:'no-image-input'}
       return {answers:new Map([[name,{type:'choice',name,choice:sample.answers[index]}]]),execution}
     }
     const item=dataset.cases.find(item=>item.id===sample.caseId)!
@@ -355,9 +362,9 @@ test('historical v3 request bytes retain the pre-v4 contract for all fixed repla
       assert.ok(index<sample.answers.length,'no extra historical request')
       assert.equal(questions.length,1)
       const name=questions[0].name
-      const requestDigest=createHash('sha256').update(JSON.stringify({model:DECISION_MODEL,input:decisionRequestInput(input),questions})).digest('hex')
+      const requestDigest=historicalRequestDigest(input,questions)
       actualDigests.push(requestDigest)
-      const execution:DecisionExecution={executionId:'offline-'+ordinal,modelId:DECISION_MODEL,providerGenerationId:'offline-generation-'+ordinal,startedAt:'2026-11-08T04:49:00Z',completedAt:'2026-11-08T04:49:01Z',requestDigest,imageDigests:[],vision:'no-image-input'}
+      const execution:DecisionExecution={executionId:'offline-'+ordinal,modelId:LEGACY_DECISION_MODEL,providerGenerationId:'offline-generation-'+ordinal,startedAt:'2026-11-08T04:49:00Z',completedAt:'2026-11-08T04:49:01Z',requestDigest,imageDigests:[],vision:'no-image-input'}
       return {answers:new Map([[name,{type:'choice',name,choice:sample.answers[index]}]]),execution}
     }
     const item=dataset.cases.find(item=>item.id===sample.caseId)!

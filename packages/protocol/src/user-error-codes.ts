@@ -55,7 +55,8 @@ export const USER_ERROR_CODES = {
   run_timeout: [],
   run_network_error: [],
   run_provider_error: [],
-  run_failed: [],
+  run_mcp_unavailable: [],
+  run_failed: ['claim_requeue_limit', 'claim_receipt_bound'],
   run_credentials_unavailable: ['device_unavailable', 'native_credentials', 'credential_missing', 'credential_expired', 'quota_exhausted', 'github_credentials'],
   task_secret_unavailable: ['invalid_capability', 'expired_capability', 'binding_mismatch', 'invalid_request', 'destination_denied', 'upstream_unavailable', 'response_blocked', 'limit_exceeded', 'configuration'],
 
@@ -155,6 +156,14 @@ export const USER_ERROR_CODES = {
     "adapter_start_failed",
     "cleanup_failed",
   ],
+  /** Agent/Bot interop: reads, sends and Drive across threads and Bots (decision 2026-11-19-2200). */
+  interop_not_found: [],
+  interop_invalid_request: [],
+  interop_scope_required: [],
+  interop_send_unavailable: ["run_not_active", "thread_replaced", "thread_cannot_continue", "delivery_unavailable", "delivery_uncertain", "bot_unavailable", "continuation_requires_grant"],
+  interop_diff_unavailable: ["no_checkpoint", "masked"],
+  interop_drive_conflict: [],
+  interop_drive_unavailable: ["file_too_large"],
   cloud_machine_unfunded: [],
 } as const satisfies Record<string, readonly string[]>
 

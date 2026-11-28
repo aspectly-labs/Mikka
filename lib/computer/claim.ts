@@ -5,11 +5,54 @@ import { assertLockedRunProfileClaim, assertRunProfileClaim, refreshCloudRunProf
 import { executionIdentityForRun, ExecutionIdentityError } from '../execution-identity'
 import type { Pool, PoolClient } from 'pg'
 import { computerPermission, type ComputerPermission } from './permission'
+import { jsonbFlagIsNotFalseSql } from '../primitives/jsonb-predicates'
 import { runMayUseCredentialSql } from '@/lib/personal-policy'
 import { runListChanged } from '@/lib/live/lists'
 import { armDueTimerAfterCommit } from '@/lib/due-timer'
 import { advanceTaskAfterRunStart } from '@/lib/task-status-run-start'
 import { taskActivityChanged } from '@/lib/factory/activity-live'
+import { freeDeviceSlots } from '@/lib/device-capacity'
+
+/** A run whose claim keeps changing under it is ended after this many requeues, so a refused
+ * claim cannot cycle requeue → device wake → claim forever. */
+export const CLAIM_REQUEUE_LIMIT = 3
+
+/**
+ * Returns this claim's own still-preparing lease to the queue, for a claim whose final fence found
+ * that something it read during preparation changed (secrets, repository, environment) while the
+ * run can still go ahead. The claim lookup only takes `queued` runs and a connected device keeps
+ * extending a lease, so a refused claim must not stay `preparing`. Undoes only what a local claim
+ * wrote for this lease: its status and lease and its subscription pin; the run's tokens are
+ * revoked by the caller. A stop, a retry or another claim (another lease) is untouched
+ * ('unavailable'). It changes nothing and answers 'limit' after CLAIM_REQUEUE_LIMIT requeues, and
+ * 'receipted' for a run whose skill receipt (append-only, bound to this lease) already exists.
+ */
+export async function requeueLocalClaim(pool: Pool, claim: { runId: string; userId: string; deviceId: string; leaseExpiresAt: string }): Promise<'requeued' | 'limit' | 'receipted' | 'unavailable'> {
+  const client = await connectForCommitEffects(pool)
+  try {
+    await client.query('BEGIN')
+    const { rows: [run] } = await client.query<{ claimRequeues: number }>(`SELECT "claimRequeues" FROM agent_runs
+      WHERE id=$1 AND "userId"=$2 AND "deviceId"=$3 AND status='preparing' AND "leaseExpiresAt"=$4 AND "stopRequestedAt" IS NULL FOR UPDATE`,
+      [claim.runId, claim.userId, claim.deviceId, new Date(claim.leaseExpiresAt)])
+    if (!run || run.claimRequeues >= CLAIM_REQUEUE_LIMIT) { await client.query('ROLLBACK'); return run ? 'limit' : 'unavailable' }
+    // A skill receipt is append-only provenance bound to this claim's lease (one per run): a later
+    // claim could never record its own, so a run that has one cannot be requeued.
+    if ((await client.query('SELECT 1 FROM improvement_skill_receipts WHERE "runId"=$1', [claim.runId])).rowCount) { await client.query('ROLLBACK'); return 'receipted' }
+    await client.query(`UPDATE agent_runs SET status='queued',"startedAt"=NULL,"leaseExpiresAt"=NULL,"deviceTokenId"=NULL,
+      "claimRequeues"="claimRequeues"+1,"updatedAt"=now() WHERE id=$1`, [claim.runId])
+    // A later claim pins the subscription again; the pin is keyed by the run, so a kept row would
+    // refuse every later claim with a duplicate key.
+    await client.query('DELETE FROM byos_native_runs WHERE "runId"=$1', [claim.runId])
+    await runListChanged(client, claim.runId)
+    await runChanged(client, claim.runId)
+    await client.query('COMMIT')
+    return 'requeued'
+  } catch (error) { await client.query('ROLLBACK'); throw error } finally { client.release() }
+}
+
+async function lockDeviceCapacity(tx: PoolClient, deviceId: string) {
+  await tx.query("SELECT pg_advisory_xact_lock(hashtextextended('device-capacity:' || $1::uuid::text,0))", [deviceId])
+}
 
 /** The existing local daemon cannot operate a Bot's cloud desktop. Keep its
  * claim serialized with Bot binding and fail closed until a cloud worker with
@@ -23,15 +66,19 @@ export async function claimLocalRun(pool: Pool, runId: string, deviceId: string,
   const client = await connectForCommitEffects(pool)
   try {
     await client.query('BEGIN')
+    await lockDeviceCapacity(client, deviceId)
+    await client.query('SELECT id FROM devices WHERE id=$1 FOR SHARE', [deviceId])
     await executionIdentityForRun(client, runId)
     if (beforeClaim && (await beforeClaim(client)) === false) { await client.query('ROLLBACK'); return 'unavailable' }
     const run = (await client.query('SELECT id FROM agent_runs WHERE id=$1 AND "deviceId"=$2 AND status=$3 AND "stopRequestedAt" IS NULL AND "workspaceId"=$4 AND "userId"=$5 FOR UPDATE', [runId, deviceId, 'queued', stored.workspaceId, stored.userId])).rows[0]
     if (!run) { await client.query('COMMIT'); return 'unavailable' }
+    // The device's saved concurrency limit is enforced here, where the claim commits.
+    if (await freeDeviceSlots(client, deviceId) < 1) { await client.query('COMMIT'); return 'unavailable' }
     await assertRunProfileClaim(client, runId)
     if(await prepareLocalClaimBinding(client,runId,subscriptionBindingId)==='cloud-required'){await client.query('COMMIT');return 'cloud-required'}
     await client.query('UPDATE agent_runs SET status=$2,"startedAt"=now(),"leaseExpiresAt"=$3,"updatedAt"=now() WHERE id=$1', [runId, 'preparing', leaseExpiresAt])
     advanceTaskAfterRunStart(client, runId)
-    // The lease is due to be reclaimed at its expiry if no heartbeat renews it (#1212).
+    // The lease lasts as long as the device session; run recovery reclaims it once it ends (#1212).
     armDueTimerAfterCommit(client, 'run-recovery')
     await runListChanged(client, runId)
     await runChanged(client, runId)
@@ -49,9 +96,9 @@ export async function claimLocalRun(pool: Pool, runId: string, deviceId: string,
 
 /** The scoped cloud device may claim only a run bound to its owner's Bot
  * and to that run's own thread machine. Binding and claim use the same run row lock.
- * A run frozen on an API key has no subscription binding (null): its key
- * was checked and recorded for it by `apiKeyForRun` before the claim. */
-export async function claimCloudRun(pool: Pool, actor: { userId: string; workspaceId: string }, runId: string, deviceId: string, leaseExpiresAt: Date, subscriptionBindingId: string | null, beforeClaim?: (tx: PoolClient) => Promise<boolean | void>, afterClaim?: (tx: PoolClient) => Promise<void>, desktop = true): Promise<{ botId: string; ownerId: string; display: string; policyVersion: number; permission: ComputerPermission } | null> {
+ * A run without a subscription needs its validated API key or the exact
+ * hosted credits gateway credential prepared for this claim. */
+export async function claimCloudRun(pool: Pool, actor: { userId: string; workspaceId: string }, runId: string, deviceId: string, leaseExpiresAt: Date, subscriptionBindingId: string | null, beforeClaim?: (tx: PoolClient) => Promise<boolean | void>, afterClaim?: (tx: PoolClient) => Promise<void>, desktop = true, creditsTokenHash?: string): Promise<{ botId: string; ownerId: string; display: string; policyVersion: number; permission: ComputerPermission } | null> {
   const { rows: [stored] } = await pool.query<{ workspaceId: string | null }>(
     'SELECT "workspaceId" FROM agent_runs WHERE id=$1 AND "userId"=$2 AND "deviceId"=$3',
     [runId, actor.userId, deviceId])
@@ -69,16 +116,19 @@ export async function claimCloudRun(pool: Pool, actor: { userId: string; workspa
     // repository tasks under any policy, and its claim never carries a computer grant.
     if (desktop && computerPermission(policy?.permission) !== 'allow') { await client.query('COMMIT'); return null }
     const permission: ComputerPermission = desktop ? 'allow' : 'deny'
+    await lockDeviceCapacity(client, deviceId)
     await executionIdentityForRun(client, runId)
     if (beforeClaim && (await beforeClaim(client)) === false) { await client.query('ROLLBACK'); return null }
     const run = (await client.query<typeof import('@/lib/db/schema').agentRuns.$inferSelect>('SELECT * FROM agent_runs WHERE id=$1 AND "deviceId"=$2 AND "userId"=$3 AND status=$4 AND "stopRequestedAt" IS NULL AND "workspaceId"=$5 FOR UPDATE', [runId, deviceId, actor.userId, 'queued', stored.workspaceId])).rows[0]
     if (!run) { await client.query('COMMIT'); return null }
+    if (await freeDeviceSlots(client, deviceId) < 1) { await client.query('COMMIT'); return null }
     await assertLockedRunProfileClaim(client, run)
     // Every cloud thread runs on its own thread machine; the Bot's computer serves only the Bot.
     const binding = (await client.query(`SELECT b."botId",1 AS display FROM computer_run_bindings b
       JOIN thread_machines m ON m."runId"=b."runId" AND m."workspaceId"=b."workspaceId" AND m."ownerId"=b."ownerId" AND m."deviceId"=$2
       JOIN devices dev ON dev.id=m."deviceId" AND dev."ownerId"=b."ownerId" AND dev.kind='cloud' AND dev.enabled=true
-      WHERE b."runId"=$1 AND b."workspaceId"=$3 AND b."ownerId"=$4 AND m.state IN ('starting','running')`, [runId, deviceId, actor.workspaceId, actor.userId])).rows[0]
+        AND (NOT $5::boolean OR ${jsonbFlagIsNotFalseSql('to_jsonb(dev)', 'computerUseEnabled')})
+      WHERE b."runId"=$1 AND b."workspaceId"=$3 AND b."ownerId"=$4 AND m.state IN ('starting','running')`, [runId, deviceId, actor.workspaceId, actor.userId, desktop])).rows[0]
     if (!binding) { await client.query('COMMIT'); return null }
     // The run uses its own thread machine's desktop, never the Bot's: a person holding the Bot's desktop does not hold it.
     if (subscriptionBindingId) {
@@ -86,10 +136,19 @@ export async function claimCloudRun(pool: Pool, actor: { userId: string; workspa
         AND ${runMayUseCredentialSql('b."ownerId"', '$2', '$3')}`, [subscriptionBindingId, actor.userId, actor.workspaceId, run.agentId])
       if (!subscription.rowCount) { await client.query('COMMIT'); return null }
       await client.query('INSERT INTO byos_native_runs ("runId","bindingId") VALUES ($1,$2)', [runId, subscriptionBindingId])
-    } else if (!(await client.query('SELECT 1 FROM model_api_key_runs WHERE "runId"=$1', [runId])).rowCount) { await client.query('COMMIT'); return null }
+    } else {
+      const definition = run.agentDefinition
+      const credential = definition?.credits && !definition.apiKey
+        ? creditsTokenHash && (await client.query(`SELECT 1 FROM model_gateway_tokens
+            WHERE "tokenHash"=$1 AND "runId"=$2 AND "ownerId"=$3 AND "workspaceId"=$4
+              AND "sourceKind"='credits' AND model=$5 AND harness=$6 AND "expiresAt">now()`,
+          [creditsTokenHash, runId, actor.userId, actor.workspaceId, definition.credits.model, definition.harness])).rowCount
+        : (await client.query('SELECT 1 FROM model_api_key_runs WHERE "runId"=$1', [runId])).rowCount
+      if (!credential) { await client.query('COMMIT'); return null }
+    }
     await client.query('UPDATE agent_runs SET status=$2,"startedAt"=now(),"leaseExpiresAt"=$3,"updatedAt"=now() WHERE id=$1', [runId, 'preparing', leaseExpiresAt])
     advanceTaskAfterRunStart(client, runId)
-    // The lease is due to be reclaimed at its expiry if no heartbeat renews it (#1212).
+    // The lease lasts as long as the device session; run recovery reclaims it once it ends (#1212).
     armDueTimerAfterCommit(client, 'run-recovery')
     await runListChanged(client, runId)
     await runChanged(client, runId)

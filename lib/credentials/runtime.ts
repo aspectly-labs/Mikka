@@ -11,7 +11,8 @@ import { credentialKms } from './kms'
 import { isCloudEdition } from '@/lib/edition'
 import { CredentialStore, type BrowserTarget } from './store'
 import { credentialVaultEnabled } from './feature'
-import { credentialRuntimeEnvironment } from './runtime-identity'
+import { cloudflareCredentialToken, credentialRuntimeEnvironment } from './runtime-identity'
+import { readEnv } from '@/lib/env/server'
 
 export const credentialStore = new CredentialStore(pool, credentialKms('app'))
 export async function credentialActor(request: Request) {
@@ -32,7 +33,7 @@ export async function login(caller: BrowserCaller, site: string, submittedUserna
   const target: BrowserTarget = await resolveCredentialBrowser(caller)
   if (!caller.subagentId || !target.observedInputs?.length || target.origin !== origin) throw new CredentialError()
   const { proposeCredentialOperation } = await import('@/lib/cloud-computer/credential-reviews')
-  return proposeCredentialOperation(credentialStore.pool, caller, target, 'login', { submittedUsername, forcePassword: options?.forcePassword })
+  return proposeCredentialOperation(credentialStore.pool, caller, target, { submittedUsername, forcePassword: options?.forcePassword })
 }
 
 export async function resolveCredentialBrowser(caller: BrowserCaller) {
@@ -68,15 +69,16 @@ export async function executeCredentialLease(lease: string, origin: string, scop
     return result
   }
   const cloudflare = credentialRuntimeEnvironment()
-  const broker = new URL(cloudflare ? 'https://broker.internal' : process.env.CREDENTIAL_BROKER_URL ?? '')
+  const broker = new URL(cloudflare ? 'https://broker.internal' : readEnv('CREDENTIAL_BROKER_URL') ?? '')
   if (!cloudflare && (broker.protocol !== 'https:' || !broker.hostname.endsWith('.vercel.app') || broker.pathname !== '/' || broker.username || broker.password || broker.search || broker.hash)) throw new CredentialError()
   let dispatched = false, responseReceived = false
   try {
-    const identity = cloudflare ? null : await getVercelOidcToken()
+    const identity = cloudflare ? await cloudflareCredentialToken() : await getVercelOidcToken()
+    const previewBypass = !cloudflare ? readEnv('CREDENTIAL_BROKER_PREVIEW_BYPASS') : undefined
     dispatched = true
     const response = await fetch(new URL('/api/fill', broker), { method: 'POST', headers: {
       'Content-Type': 'application/json', ...(identity ? { Authorization: `Bearer ${identity}` } : {}),
-      ...(!cloudflare && process.env.CREDENTIAL_BROKER_PREVIEW_BYPASS ? { 'x-vercel-protection-bypass': process.env.CREDENTIAL_BROKER_PREVIEW_BYPASS } : {}),
+      ...(previewBypass ? { 'x-vercel-protection-bypass': previewBypass } : {}),
     }, body: JSON.stringify({ lease }), redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(40_000) })
     responseReceived = true
     if (!response.ok) {
@@ -95,7 +97,7 @@ export async function executeCredentialLease(lease: string, origin: string, scop
     return { status: result.status as 'submitted' | 'session_applied' | 'guarded', origin }
   } catch (error) {
     if (error instanceof CredentialError && error.code === 'credential_outcome_unknown') throw error
-    if (dispatched && !responseReceived) throw new CredentialError('credential_outcome_unknown', 409)
-    throw new CredentialError()
+    if (dispatched && !responseReceived) throw Object.assign(new CredentialError('credential_outcome_unknown', 409), { cause: error })
+    throw Object.assign(new CredentialError(), { cause: error })
   }
 }

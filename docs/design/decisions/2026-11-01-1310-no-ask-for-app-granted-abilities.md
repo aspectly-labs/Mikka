@@ -1,6 +1,7 @@
 # What the GitHub App grants is never asked: no 询问 for push or pull requests
 
 - Date: 2026-11-01
+- **Status:** Superseded by [2026-11-02-1600-agents-use-own-github-credential](2026-11-02-1600-agents-use-own-github-credential.md)
 - Source: Alex, relayed by the coordinator session. He questioned why the
   permission settings offer 询问 at all. The rule: an ability the App already
   granted is not asked of the person again; any remaining judgment belongs to

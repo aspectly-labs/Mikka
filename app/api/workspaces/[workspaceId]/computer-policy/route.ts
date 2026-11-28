@@ -1,23 +1,28 @@
 import { freshSessionRoute } from '@/lib/fresh-session'
 import { cloudComputerTasksEnabled } from '@/lib/cloud-computer-flag'
-import { auth, apiWorkspaceAllowed } from '@/lib/api-auth'
+import { auth, apiWorkspaceAllowed, type ApiSession } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
 import { workspaceDb } from '@/lib/workspace-db'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
+import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { ComputerStore } from '@/lib/computer/store'
 import { createComputerPolicyHandler } from '@/lib/computer/policy-route'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const runtime = 'nodejs'
 export const maxDuration = 120
-const handle = createComputerPolicyHandler({
+const store = new ComputerStore(pool)
+const handle = (session: ApiSession, reverifyOnWrite = false) => createComputerPolicyHandler({
   enabled: () => cloudComputerTasksEnabled(),
-  store: new ComputerStore(pool),
+  store,
   withMember: async (request, workspaceId, admin, operation) => {
-    const session = await auth.api.getSession({ headers: request.headers })
-    if (!session?.user || !apiWorkspaceAllowed(session, workspaceId)) return null
+    // Revalidate credentials after body streaming completes so a stalled write cannot outlive revocation.
+    const current = reverifyOnWrite && admin
+      ? await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
+      : session
+    if (!current?.user || current.user.id !== session.user.id || !apiWorkspaceAllowed(current, workspaceId)) return null
     try {
       return await workspaceDb.transaction(async tx => {
-        const { membership } = await requireWorkspace(tx, workspaceId, session.user.id, admin)
+        const { membership } = await requireWorkspace(tx, workspaceId, current.user.id, admin, current.user[enterprisePrincipal])
         // Keep the workspace role authoritative through the application database commit.
         return operation(membership.role === 'admin')
       })
@@ -27,9 +32,27 @@ const handle = createComputerPolicyHandler({
     }
   },
 })
-type Context = { params: Promise<{ workspaceId: string }> }
-export const GET = async (request: Request, { params }: Context) => handle(request, (await params).workspaceId)
-const POSTBody = GET
+
+export const GET = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(
+  {
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+    workspaceId: ({ params }) => params.workspaceId,
+  },
+  async ({ request, session, params }) => handle(session)(request, params.workspaceId),
+)
+
+const POSTBody = defineRoute<'session', 'pat-scoped', { workspaceId: string }>(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    workspaceId: ({ params }) => params.workspaceId,
+    freshSession: true,
+  },
+  async ({ request, session, params }) => handle(session, true)(request, params.workspaceId),
+)
 
 // Credentials, permissions, money and deletion: the session is read from the database, not the cookie cache.
 export const POST = freshSessionRoute(POSTBody)

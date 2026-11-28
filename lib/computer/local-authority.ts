@@ -2,6 +2,7 @@ import 'server-only'
 import type { Pool } from 'pg'
 import type { RunAssignment } from '@mikka/protocol/device'
 import { computerPermission } from './permission'
+import { jsonbFlagIsNotFalseSql } from '../primitives/jsonb-predicates'
 
 /** Read current authority from persisted ownership, never a task or model field.
  * A local run without a Bot has no proven workspace and receives no CUA grant. */
@@ -10,6 +11,7 @@ export async function localComputerAuthority(pool: Pool, ownerId: string, device
       p.permission,coalesce(p.version,0) AS "policyVersion"
     FROM agent_runs r JOIN bots b ON b.id=r."botId" AND b."ownerId"=r."userId"
     JOIN devices d ON d.id=r."deviceId" AND d."ownerId"=r."userId" AND d.kind='local' AND d.enabled=true
+      AND ${jsonbFlagIsNotFalseSql('to_jsonb(d)', 'computerUseEnabled')}
     LEFT JOIN workspace_computer_policies p ON p."workspaceId"=b."workspaceId"
     WHERE r.id=$1 AND r."userId"=$2 AND r."deviceId"=$3
       AND r.status=ANY($4::text[]) AND r."stopRequestedAt" IS NULL AND r."leaseExpiresAt">now()

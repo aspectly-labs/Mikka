@@ -19,6 +19,12 @@ import { threadPromptView } from '../lib/thread-prompt'
 const mac = [{ harness: 'codex', installed: true, subscriptionBroker: true, modelSlots: [{ slot: 'gpt-5', model: 'gpt-5', name: 'gpt-5' }] }]
 
 test('run machine fallback: 本地 a computer that takes part, 云端 own E2B, else an actionable error', { skip: !dbUrl }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+  })
   process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1'
   process.env.MIKKA_BYOS_ENABLED = '1'
   const restoreModels = templateModelsFixture()
@@ -44,7 +50,6 @@ test('run machine fallback: 本地 a computer that takes part, 云端 own E2B, e
     await pool.query('DELETE FROM model_order_settings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM thread_machines WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM cloud_machines WHERE "ownerId" = ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM coordinator_events WHERE "userId" = ANY($1)', [users])
@@ -81,7 +86,7 @@ test('run machine fallback: 本地 a computer that takes part, 云端 own E2B, e
   /** An online computer whose Codex reported gpt-5; `takesPart: false` is 参与调度 off. */
   const onlineMac = async (userId: string, takesPart = true, deviceType = 'laptop') => {
     const deviceId = randomUUID()
-    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,"deviceType",enabled,"lastSeenAt",harnesses) VALUES ($1,$2,'MacBook','local',$4,$5,now(),$3)`, [deviceId, userId, JSON.stringify(mac), deviceType, takesPart])
+    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,"deviceType",enabled,"lastSeenAt",harnesses,"sessionOpenedAt") VALUES ($1,$2,'MacBook','local',$4,$5,now(),$3,now())`, [deviceId, userId, JSON.stringify(mac), deviceType, takesPart])
     await pool.query(`INSERT INTO agents (id,"userId","deviceId",harness,name) VALUES ($1,$2,$3,'codex',$4)`, [randomUUID(), userId, deviceId, `codex-${deviceId.slice(0, 8)}`])
     return deviceId
   }
@@ -134,7 +139,7 @@ test('run machine fallback: 本地 a computer that takes part, 云端 own E2B, e
     const now = new Date()
     const { DAEMON_PROTOCOL_VERSION } = await import('@mikka/protocol/daemon')
     await pool.query('UPDATE devices SET "protocolVersion"=$2 WHERE id=ANY($1::uuid[])', [[deviceA, deviceB], DAEMON_PROTOCOL_VERSION])
-    await pool.query('UPDATE devices SET "lastSeenAt"=$2 WHERE id=$1', [deviceA, new Date(now.getTime() - 120_000)])
+    await pool.query('UPDATE devices SET "lastSeenAt"=$2,"sessionClosedAt"=clock_timestamp() WHERE id=$1', [deviceA, new Date(now.getTime() - 120_000)])
     await pool.query(`UPDATE agent_runs SET status='running',"sessionId"='placement-A',"startedAt"=$2,"leaseExpiresAt"=$3 WHERE id=$1`,
       [original.id, new Date(now.getTime() - 180_000), new Date(now.getTime() - 1_000)])
     await pool.query(`INSERT INTO run_checkpoints("runId","baseCommit",patch,files,"updatedAt","userId","takenAt")
@@ -266,7 +271,7 @@ test('run machine fallback: 本地 a computer that takes part, 云端 own E2B, e
   const cloudReady = async (c: { id: string; workspaceId: string }) => {
     const botId = await seedBot(pool, c.workspaceId, c.id)
     const cloudDevice = randomUUID(), cloudAgent = randomUUID(), repoId = randomUUID(), connection = randomUUID()
-    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt") VALUES ($1,$2,'Cloud computer','cloud',true,now())`, [cloudDevice, c.id])
+    await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,"lastSeenAt","sessionOpenedAt") VALUES ($1,$2,'Cloud computer','cloud',true,now(),now())`, [cloudDevice, c.id])
     await pool.query(`INSERT INTO cloud_machines ("workspaceId","ownerId","operationId","sandboxId","deviceId",state,"runtimeReady") VALUES ($1,$2,$3,$4,$5,'running',true)`, [c.workspaceId, c.id, randomUUID(), `sbx-${randomUUID()}`, cloudDevice])
     await pool.query(`INSERT INTO bot_desktops ("botId","workspaceId","ownerId",display) VALUES ($1,$2,$3,1)`, [botId, c.workspaceId, c.id])
     await pool.query(`INSERT INTO agents (id,"userId","deviceId",harness,name) VALUES ($1,$2,$3,'codex',$4)`, [cloudAgent, c.id, cloudDevice, `cloud-${cloudAgent.slice(0, 8)}`])
@@ -274,8 +279,6 @@ test('run machine fallback: 本地 a computer that takes part, 云端 own E2B, e
     await pool.query(`INSERT INTO bot_cloud_runtimes ("botId","workspaceId","ownerId",harness,"agentId","repoId") VALUES ($1,$2,$3,'codex',$4,$5)`, [botId, c.workspaceId, c.id, cloudAgent, repoId])
     await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject",quota,"modelCatalog") VALUES ($1,$2,$3,'codex','connected',1,$5,$4,'synthetic-subject',$6,$7)`, [connection, c.id, c.workspaceId, 'a'.repeat(64), `synthetic-${connection}`, JSON.stringify({ vendor: 'codex', source: 'official', status: 'ok', plan: 'Pro', observedAt: new Date().toISOString(), windows: [{ kind: 'five_hour', used: .2, resetsAt: null }] }), JSON.stringify({ revision: '1', models: ['gpt-5'] })])
     await pool.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId") VALUES ($1,$2,$3,$4,$5,1,'codex_cli','gpt-5')`, [randomUUID(), c.id, c.workspaceId, cloudAgent, connection])
-    // A team workspace uses a member's subscription once they share it there (decision 2026-10-31-2225).
-    await pool.query(`INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)`, [c.id, c.workspaceId])
     await pool.query(`INSERT INTO workspace_e2b_keys ("workspaceId",ciphertext,iv,"keyVersion",last4,"createdBy","updatedBy") VALUES ($1,'x','x',1,'abcd',$2,$2)`, [c.workspaceId, c.id])
     return { botId, cloudDevice }
   }
@@ -378,7 +381,7 @@ test('run machine fallback: 本地 a computer that takes part, 云端 own E2B, e
     const c = await person('offline')
     const { botId, cloudDevice } = await cloudReady(c)
     const server = await onlineMac(c.id, true, 'server')
-    await pool.query(`UPDATE devices SET "lastSeenAt"=now()-interval '10 minutes' WHERE id=$1`, [server])
+    await pool.query(`UPDATE devices SET "lastSeenAt"=now()-interval '10 minutes',"sessionClosedAt"=clock_timestamp() WHERE id=$1`, [server])
     const agentId = (await pool.query('SELECT id FROM agents WHERE "deviceId"=$1', [server])).rows[0].id
     const repoId = (await pool.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath","remoteUrl") VALUES ($1,$2,$3,$4,$5) RETURNING id`, [randomUUID(), server, c.id, normalizeRepository('octo/repo').key, normalizeRepository('octo/repo').remoteUrl])).rows[0].id
     const lost = randomUUID()

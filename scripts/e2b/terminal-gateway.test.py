@@ -93,12 +93,17 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
         (self.control / 'machine.json').write_text(json.dumps({'version': 1, 'runId': self.grant['runId'],
             'deviceId': self.grant['deviceId'], 'worktreePath': str(self.worktree), 'phase': 'idle', 'nativeExited': True}))
 
+    @property
+    def session(self):
+        return self.gateway.sessions.get(self.grant['sessionId'])
+
     async def asyncTearDown(self):
-        if self.gateway.session:
-            closing = self.gateway.session.stop('fixture_cleanup')
+        for session in list(self.gateway.sessions.values()):
+            closing = session.stop('fixture_cleanup')
             if closing:
                 await asyncio.wait_for(closing, 5)
-            self.gateway.session.retention_timer.cancel()
+            if session.retention_timer:
+                session.retention_timer.cancel()
         self.server.close()
         await self.server.wait_closed()
         asyncio.get_running_loop().remove_signal_handler(signal.SIGCHLD)
@@ -140,6 +145,20 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
         await self.until(reader, '\r\n__READY__\r\n')
         return reader, writer
 
+    async def test_gateway_upgrade_drains_live_sessions(self):
+        # prepareTerminal kills an outdated gateway with SIGTERM; the drain must
+        # end every live session and reap its shell before the process exits.
+        reader, writer = await self.ready()
+        session = self.session
+        self.assertIsNotNone(session)
+        await gateway.drain_sessions(self.gateway)
+        self.assertTrue(session.ended)
+        self.assertFalse(session.pid and os.path.exists(f'/proc/{session.pid}'), 'the PTY leader was reaped, not orphaned')
+        with self.assertRaises(asyncio.IncompleteReadError):
+            await asyncio.wait_for(reader.readuntil(b'\n\n'), 3)
+        writer.close()
+        await writer.wait_closed()
+
     async def test_real_pwd_git_test_resize_ctrl_c_exit_and_reconnect(self):
         reader, writer = await self.ready()
         if self.cloudflare:
@@ -159,12 +178,12 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
         await self.call('input', {'data': '\x03'})
         await self.call('input', {'data': "printf '__INTERRUPTED__\\n'\n"})
         await self.until(reader, '__INTERRUPTED__\r\n')
-        original = self.gateway.session.id
+        original = self.session.id
         writer.close()
         await writer.wait_closed()
         status, reader, writer = await self.call('stream')
         self.assertEqual(status, 200)
-        self.assertEqual(self.gateway.session.id, original)
+        self.assertEqual(self.session.id, original)
         await self.until(reader, '__INTERRUPTED__\r\n')
         await self.call('input', {'data': 'exit 7\n'})
         ended = None
@@ -179,7 +198,7 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_owner_binding_oversize_replay_and_no_input_create(self):
         self.assertEqual((await self.call('input', {'data': 'echo forbidden\n'}))[0], 409)
-        self.assertIsNone(self.gateway.session)
+        self.assertIsNone(self.session)
         reader, writer = await self.ready()
         for field in ('runId', 'deviceId', 'repoId', 'workspaceId', 'ownerId', 'credentialId', 'bindingId'):
             foreign = self.grant | {field: str(uuid.uuid4())}
@@ -203,7 +222,7 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
         receipt = json.loads((self.control / 'machine.json').read_text())
         (self.control / 'machine.json').write_text(json.dumps(receipt | {'phase': 'active', 'nativeExited': False}))
         self.assertEqual((await self.call('stream'))[0], 423)
-        self.assertIsNone(self.gateway.session)
+        self.assertIsNone(self.session)
         self.idle_receipt()
         self.assertEqual((self.control.stat().st_mode & 0o022), 0)
         replacement = self.control / 'replacement'
@@ -225,16 +244,16 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(gateway, 'IDLE_SECONDS', 0.3):
             reader, writer = await self.ready()
             await asyncio.wait_for(reader.read(), 5)
-            await self.gateway.session.closing
+            await self.session.closing
         self.assertEqual(self.gateway.children(), {})
-        self.assertIsNone(self.gateway.session.lock)
+        self.assertIsNone(self.session.lock)
         writer.close()
         await writer.wait_closed()
 
     async def test_disconnect_grace_closes_real_pty_and_releases_execution_fence(self):
         with patch.object(gateway, 'DETACH_SECONDS', 0.3):
             reader, writer = await self.ready()
-            session = self.gateway.session
+            session = self.session
             self.gateway.children_changed.clear()
             writer.close()
             await writer.wait_closed()
@@ -245,7 +264,7 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_paused_wall_clock_expiry_blocks_input_and_queued_output_before_timers(self):
         reader, writer = await self.ready()
-        session = self.gateway.session
+        session = self.session
         with patch.object(gateway.time, 'time', return_value=time.time() + 600):
             session.viewer.push(gateway.event('output', {'text': '__QUEUED_AFTER_EXPIRY__'}))
             with self.assertRaises(gateway.Refusal):
@@ -265,7 +284,7 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call('revoke', {'leaseIds': [str(uuid.uuid4())]}))[0], 204)
         self.assertEqual((await self.call('input', {'data': "printf '__STILL_OPEN__\\n'\n"}))[0], 204)
         await self.until(reader, '__STILL_OPEN__\r\n')
-        session = self.gateway.session
+        session = self.session
         session.viewer.push(gateway.event('output', {'text': '__PRIVATE_PENDING__'}))
         await session.stop('terminal_revoked')
         self.assertNotIn(b'__PRIVATE_PENDING__', await asyncio.wait_for(reader.read(), 5))
@@ -279,8 +298,8 @@ class PtyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.call('input', {'data': command}))[0], 204)
         output = await self.until(reader, '__SCROLLBACK_DONE__\r\n')
         self.assertGreater(len(output), gateway.SCROLLBACK)
-        self.assertLessEqual(self.gateway.session.history_bytes, gateway.SCROLLBACK)
-        self.assertGreater(self.gateway.session.history[0][0], 1)
+        self.assertLessEqual(self.session.history_bytes, gateway.SCROLLBACK)
+        self.assertGreater(self.session.history[0][0], 1)
         writer.close()
         await writer.wait_closed()
         status, reader, writer = await self.call('stream')
