@@ -96,16 +96,20 @@ export async function productContext(scope: Scope, binding: ExecutionBinding) {
 }
 
 export async function productTools(scope: Scope, execution: AgentExecution | null, sourceEventId: string | undefined, scheduledRead: import('../schedules/contract').ScheduledRead | null, taskEventId: string | undefined,entryOrigin:import('../run-origin').ResolvedRunOrigin,
-  webSearchModel?: HostedApiKeySnapshot): Promise<ToolSet> {
+  webSearchModel?: HostedApiKeySnapshot | null): Promise<ToolSet> {
   const steps = await import('../../workflows/coordinator/steps')
   const { coordinatorTools, readCoordinatorSwitches } = await import('../../workflows/coordinator/tools')
   const mailboxEnabled = !scheduledRead && snapshotMailboxTools(execution?.snapshot).length > 0 && await steps.mailboxToolsEnabled()
+  const legacyByok = webSearchModel === undefined && execution?.snapshot.runtime?.modelSelection?.type === 'api_key'
+  const selection = scheduledRead ? null : webSearchModel
+  const webSearchRuntime = !scheduledRead && legacyByok ? null : {
+    harness: 'ai_sdk', model: selection?.modelId ?? null, ...(selection && { modelSelection: selection }),
+  }
   const tools = coordinatorTools(scope.ownerId, scope.botId, scheduledRead ? { scheduledRead: { botId: scope.botId, occurrence: scheduledRead } } : undefined, {
     execution, sourceEventId, ...(taskEventId ? { taskEventId } : {}),...entryOrigin,
     // The private Eve request binds the model actually used on this turn.
     // Older requests and scheduled actions cannot authorize fallback billing.
-    webSearchRuntime: scheduledRead || !webSearchModel ? { harness: 'ai_sdk', model: null }
-      : { harness: 'ai_sdk', model: webSearchModel.modelId, modelSelection: webSearchModel },
+    webSearchRuntime,
     switches: readCoordinatorSwitches(), coordinator: await steps.isCoordinatorChat(scope.ownerId, scope.botId),
     computerEnabled: !scheduledRead && await steps.computerToolsEnabled(), writeEnabled: !scheduledRead && await steps.personalWriteToolsEnabled(),
     mailboxEnabled, mailboxTools: mailboxEnabled ? await steps.mailboxCatalogue(scope.ownerId, scope.botId, execution?.id) : [],

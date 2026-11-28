@@ -16,7 +16,7 @@ const approvalResponder = z.object({
 }).strict()
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ ...toolCall, operation: z.literal('approval') }).strict(),
-  z.object({ ...toolCall, operation: z.literal('execute'), approvalResponder: approvalResponder.optional(), webSearchModel: hostedApiKeySnapshotSchema.optional() }).strict(),
+  z.object({ ...toolCall, operation: z.literal('execute'), approvalResponder: approvalResponder.optional(), webSearchModel: hostedApiKeySnapshotSchema.nullable().optional() }).strict(),
   z.object({ ...common, operation: z.literal('finish'), outcome: z.enum(['completed', 'failed', 'cancelled']), messages: z.array(z.unknown()).optional() }).strict(),
 ])
 type Input = z.infer<typeof requestSchema>
@@ -54,10 +54,11 @@ export async function handleEveProductRequest(request: Request, services: EvePro
     if (!scope) return Response.json({ error: 'authRequired' }, { status: 401 })
     const parsed = requestSchema.safeParse(await boundedBody(request))
     if (!parsed.success) return Response.json({ error: 'validationGeneric' }, { status: 400 })
-    if (parsed.data.operation === 'execute' && parsed.data.webSearchModel) {
-      const frozen = selectionScope(parsed.data.webSearchModel)
-      if (parsed.data.name !== 'web_search' || scope.surface === 'factory' || frozen.ownerId !== scope.ownerId
-          || frozen.botId !== scope.botId || frozen.workspaceId !== scope.workspaceId)
+    if (parsed.data.operation === 'execute' && parsed.data.webSearchModel !== undefined) {
+      const frozen = parsed.data.webSearchModel && selectionScope(parsed.data.webSearchModel)
+      // Eve passes its concrete Bot ID to freezeBotModel, including the Coordinator chat.
+      if (parsed.data.name !== 'web_search' || scope.surface === 'factory'
+          || (frozen && (frozen.ownerId !== scope.ownerId || frozen.botId !== scope.botId || frozen.workspaceId !== scope.workspaceId)))
         return Response.json({ error: 'notFound' }, { status: 404 })
     }
     await services.assertSession(scope, parsed.data.sessionId)

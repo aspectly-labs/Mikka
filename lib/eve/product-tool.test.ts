@@ -53,8 +53,11 @@ test('Web Search sends the server-selected model on the original execution and c
   const context = { callId: 'stable-call', abortSignal: new AbortController().signal }
   await tool.execute!(misleadingInput as never, context as never)
   await tool.execute!(misleadingInput as never, context as never)
-  assert.deepEqual(requests, [0, 1].map(() => ({ ...binding, operation: 'execute', name: 'web_search', input: misleadingInput,
-    callId: context.callId, webSearchModel: frozen })))
+  const managed = createProductTool(scope, { ...binding, runtime: { harness: 'ai_sdk', model: 'fixture/managed' } },
+    { ...definition, name: 'web_search' }, rpc)
+  await managed.execute!(misleadingInput as never, context as never)
+  assert.deepEqual(requests, [frozen, frozen, null].map(webSearchModel => ({ ...binding, operation: 'execute', name: 'web_search', input: misleadingInput,
+    callId: context.callId, webSearchModel })))
 })
 
 test('self-hosted product RPC uses the configured server and reserves the private capability for Cloudflare', async t => {

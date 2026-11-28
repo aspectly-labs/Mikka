@@ -61,6 +61,8 @@ test('a Web Search model snapshot is bound to the internal Eve Bot and requested
   } }
   assert.equal((await handleEveProductRequest(request(search), services)).status, 200)
   assert.deepEqual(calls, [search])
+  assert.equal((await handleEveProductRequest(request({ ...search, webSearchModel: null }), services)).status, 200)
+  assert.deepEqual(calls, [search, { ...search, webSearchModel: null }])
   for (const denied of [
     { ...search, webSearchModel: { ...snapshot, workspaceId: snapshot.keyId } },
     { ...search, webSearchModel: { ...snapshot, coordinator: true } },
@@ -69,7 +71,7 @@ test('a Web Search model snapshot is bound to the internal Eve Bot and requested
   assert.equal((await handleEveProductRequest(request(search), { ...services,
     authorize: async () => ({ ...scope, surface: 'factory' }),
   })).status, 404)
-  assert.equal(calls.length, 1)
+  assert.equal(calls.length, 2)
 })
 
 test('review and execution use separate strict host operations; an older responder field is accepted and ignored', async () => {

@@ -14,8 +14,9 @@ type ApprovalReview = {status:'not-applicable'|'denied'}
  * policy before provider dispatch and replays the recorded plan at most once. */
 export function createProductTool(scope:EveScope,{ runtime, ...binding }:Binding & { runtime?: HostedRuntimeSnapshot },definition:ProductCatalogueEntry,rpc:typeof productRpc=productRpc) {
   const selection = runtime?.modelSelection
-  const webSearchModel = runtime?.harness === 'ai_sdk' && selection?.type === 'api_key' && selection.modelId === runtime.model && !runtime.nativeWebSearchBackend
-    ? selection : undefined
+  const webSearchModel = runtime?.harness === 'ai_sdk'
+    ? selection?.type !== 'api_key' ? null : selection.modelId === runtime.model ? selection : undefined
+    : undefined
   async function actionBinding(signal?: AbortSignal): Promise<Binding> {
     signal?.throwIfAborted()
     if (binding.executionId) return binding
@@ -42,7 +43,7 @@ export function createProductTool(scope:EveScope,{ runtime, ...binding }:Binding
     approval,
     async execute(input:unknown,ctx) {
       return (await rpc<{output:unknown}>(scope,{...await actionBinding(ctx.abortSignal),operation:'execute',name:definition.name,input,callId:ctx.callId,
-        ...(definition.name === 'web_search' && webSearchModel && { webSearchModel }),
+        ...(definition.name === 'web_search' && webSearchModel !== undefined && { webSearchModel }),
       },ctx.abortSignal)).output
     },
   })

@@ -7,7 +7,7 @@ import { resolveInternalProductOrigin } from '../env/hosts'
 import { readEnv } from '../env/server'
 
 export interface ProductCatalogueEntry { name:string; description:string; inputSchema:Awaited<ReturnType<typeof asSchema>['jsonSchema']>; needsApprovalReview?:boolean }
-export type ProductOperation = {operation:'approval'|'execute'|'finish';sessionId:string;turnId:string;executionId?:string;name?:string;input?:unknown;callId?:string;outcome?:TurnOutcome;messages?:unknown[];webSearchModel?:HostedApiKeySnapshot}
+export type ProductOperation = {operation:'approval'|'execute'|'finish';sessionId:string;turnId:string;executionId?:string;name?:string;input?:unknown;callId?:string;outcome?:TurnOutcome;messages?:unknown[];webSearchModel?:HostedApiKeySnapshot|null}
 
 /** Business actions execute on the app host, whose Workflow World owns task jobs. */
 export async function productRpc<T>(scope:EveScope,operation:ProductOperation,signal?:AbortSignal):Promise<T> {
