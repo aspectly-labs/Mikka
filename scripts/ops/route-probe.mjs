@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { subscriptionChatPath } from '../../cloudflare/litellm/subscription-chat.mjs'
 
 const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 const placeholder = '__mikka_route_probe__'
@@ -10,7 +11,8 @@ const placeholder = '__mikka_route_probe__'
  * An undeclared OPTIONS is answered by the API dispatcher with 204 + Allow.
  * Routes declaring OPTIONS use another undeclared method and require 405 +
  * Allow. Do not replace this with GET: several GET handlers start real work. */
-export function routeProbePlan(manifest) {
+export function routeProbePlan(manifest, surface = 'api') {
+  assert.ok(surface === 'api' || surface === 'cloudflare', 'route_probe_surface_invalid')
   assert.ok(manifest?.version === 1 && manifest.basePath === '/mikka'
     && Array.isArray(manifest.routes) && manifest.routes.length > 0, 'route_probe_manifest_invalid')
   const paths = new Set()
@@ -27,6 +29,12 @@ export function routeProbePlan(manifest) {
       assert.ok(!/[[\]]/.test(segment) && !['.', '..'].includes(segment), 'route_probe_path_invalid')
       return segment
     })
+    // The Cloudflare fetch entrypoint hides the internal CPA binding entirely.
+    // Check the public denial while the direct API probe checks method dispatch.
+    if (surface === 'cloudflare' && route.path === subscriptionChatPath) {
+      assert.deepEqual(route.methods, ['POST'], 'route_probe_private_method_invalid')
+      return { route: route.path, path: route.path, method: 'OPTIONS', expectedStatus: 404, allowed: [] }
+    }
     const allowed = new Set(route.methods)
     if (allowed.has('GET')) allowed.add('HEAD')
     allowed.add('OPTIONS')
@@ -54,10 +62,11 @@ function targetOrigin(baseUrl) {
 /** Anonymous, bounded requests. Reports contain only declared route paths,
  * methods, status codes and closed failure codes; response bodies and request
  * origins never enter logs. A successful result proves route registration and
- * method dispatch, while production-smoke covers authenticated feature reads. */
-export async function runRouteProbe({ baseUrl, manifest, fetchImpl = fetch }) {
+ * method dispatch or denial for binding-only routes, while production-smoke
+ * covers authenticated feature reads. */
+export async function runRouteProbe({ baseUrl, manifest, fetchImpl = fetch, surface }) {
   const origin = targetOrigin(baseUrl)
-  const plan = routeProbePlan(manifest)
+  const plan = routeProbePlan(manifest, surface ?? (origin.startsWith('https://') ? 'cloudflare' : 'api'))
   const results = Array.from({ length: plan.length })
   let cursor = 0
   async function worker() {
@@ -99,7 +108,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   let report
   try {
     const manifest = JSON.parse(await readFile(resolve(process.env.ROUTE_PROBE_MANIFEST ?? 'apps/api/generated/routes.json'), 'utf8'))
-    report = await runRouteProbe({ baseUrl: process.env.ROUTE_PROBE_BASE_URL, manifest })
+    report = await runRouteProbe({ baseUrl: process.env.ROUTE_PROBE_BASE_URL, manifest, surface: process.env.ROUTE_PROBE_SURFACE })
   } catch (error) {
     const code = error instanceof Error && /^route_probe_[a-z_]+$/.test(error.message) ? error.message : 'route_probe_failed'
     report = { status: 'fail', total: 0, passed: 0, failed: 0, results: [], error: code }

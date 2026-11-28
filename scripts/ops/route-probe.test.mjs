@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFile } from 'node:fs/promises'
 import { routeProbePlan, runRouteProbe } from './route-probe.mjs'
+import { subscriptionChatPath } from '../../cloudflare/litellm/subscription-chat.mjs'
 
 const manifest = routes => ({ version: 1, basePath: '/mikka', routes })
 const route = (path = '/mikka/api/items/[id]', methods = ['GET', 'POST']) => ({ path, methods })
@@ -47,6 +48,26 @@ test('404, 5xx, redirects and a generic OPTIONS response without the real Allow 
     assert.equal(report.failed, 1)
     assert.equal(report.results[0].status, status)
   }
+})
+
+test('a staged Cloudflare edge must hide CPA chat while direct API dispatch remains registered', async () => {
+  const input = manifest([route(subscriptionChatPath, ['POST']), route()])
+  const baseUrl = 'https://stage.example.test'
+  const probe = async (origin, privateResponseFactory, surface) => runRouteProbe({ baseUrl: origin, manifest: input, surface,
+    fetchImpl: async (url, init) => {
+      assert.equal(init.method, 'OPTIONS')
+      return url.endsWith(subscriptionChatPath) ? privateResponseFactory()
+        : healthy(routeProbePlan(input)[1])
+    },
+  })
+  const hidden = () => new Response(null, { status: 404 })
+  const registered = () => new Response(null, { status: 204, headers: { allow: 'OPTIONS, POST' } })
+  assert.equal((await probe(baseUrl, hidden)).status, 'pass')
+  assert.equal((await probe(baseUrl, registered)).failed, 1)
+  assert.equal((await probe(baseUrl, () => new Response(null, { status: 404, headers: { allow: 'POST' } }))).failed, 1)
+  assert.equal((await probe('http://127.0.0.1', registered)).status, 'pass')
+  assert.equal((await probe(baseUrl, registered, 'api')).status, 'pass')
+  assert.throws(() => routeProbePlan(manifest([route(subscriptionChatPath, ['POST', 'OPTIONS'])]), 'cloudflare'), /route_probe_private_method_invalid/)
 })
 
 test('a changed route method list fails the dispatch contract even when its path exists', async () => {

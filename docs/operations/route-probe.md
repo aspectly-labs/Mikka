@@ -14,6 +14,10 @@ loopback. `ROUTE_PROBE_MANIFEST` can select a different inventory file. A releas
 must use the inventory from its **API artifact's source commit**, which can be
 older than the overall release commit when that service is reused.
 
+HTTPS targets use Cloudflare ingress expectations by default. Set
+`ROUTE_PROBE_SURFACE=api` to inspect direct API dispatch behind HTTPS. Loopback
+HTTP targets use direct API expectations.
+
 For a route without an explicit OPTIONS handler, the API dispatcher returns
 204 and its `Allow` header before loading any handler. A route with an OPTIONS
 handler is probed with another undeclared method and must return 405 with the
@@ -21,7 +25,9 @@ same complete `Allow` contract. Dynamic path segments use inert placeholders.
 A route implementing every supported method fails configuration rather than
 silently executing a handler. Redirects are not followed. A 404, any 5xx, a
 missing method, or a generic OPTIONS response without the expected `Allow`
-header fails the gate.
+header fails the normal dispatch check. Cloudflare's public ingress must
+return 404 without `Allow` for the binding-only CPA subscription chat path.
+The direct API still verifies its registered POST method through OPTIONS.
 
 The report at `production-smoke-report/route-probe.json` records route patterns,
 methods, status codes and closed failure codes. It does not retain target
