@@ -16,6 +16,7 @@ import type { TaskReviewHttpInput, TaskReviewHttpResult } from './http'
 import { projectTaskReviewSummary, reviewReference, taskReviewDiff, taskReviewFile, type TaskSummaryFacts } from './projection'
 import { latestTaskReviewChecks } from './checks'
 import { retainTaskPullState } from './pull-state'
+import type { GitHubPullSummary } from '../diff/github-state'
 
 export type { TaskReviewSummary, TaskSummaryChecks, TaskSummaryFacts } from './projection'
 
@@ -35,7 +36,8 @@ function decode<T>(schema: z.ZodType<T>, value: string): T {
 }
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
 const running = (scope: ReviewScope) => !scope.stopped && UNFINISHED_RUN_STATUSES.some(status => status === scope.status)
-export async function taskReviewSummary(tx: Pick<PoolClient, 'query'>, actor: ReviewActor, scope: ReviewScope, snapshot: DiffSnapshot | null) {
+export async function taskReviewSummary(tx: Pick<PoolClient, 'query'>, actor: ReviewActor, scope: ReviewScope, snapshot: DiffSnapshot | null,
+  currentPull?: GitHubPullSummary) {
   const { rows: [facts] } = await tx.query<TaskSummaryFacts>(`SELECT p.branch,ps.observation AS "pullObservation",
     coalesce(m.state='ended' AND m."sandboxId" IS NULL,false) AS reclaimed,
     EXISTS(SELECT 1 FROM factory_tasks t JOIN factory_candidates c ON c.id=t."candidateId" AND c."taskId"=t.id
@@ -52,9 +54,9 @@ export async function taskReviewSummary(tx: Pick<PoolClient, 'query'>, actor: Re
     WHERE r.id=$1 AND r."userId"=$2 AND r."issueId"=$3`,
   [scope.identity.runId, scope.identity.ownerId, scope.taskId, scope.identity.repositoryKey, snapshot?.factory?.taskId ?? null,
     snapshot?.factory?.candidateId ?? null, snapshot?.factory?.sha ?? null, snapshot?.factory?.producerRunId ?? null, actor.workspaceId, snapshot?.id ?? null, actor.userId])
-  const checks = snapshot && snapshot.availability !== 'unavailable'
+  const checks = !currentPull && snapshot && snapshot.availability !== 'unavailable'
     ? await latestTaskReviewChecks(tx, actor, scope, snapshot, await reviewMasks(actor, scope)) : null
-  return projectTaskReviewSummary(actor, scope, snapshot, facts, checks)
+  return projectTaskReviewSummary(actor, scope, snapshot, facts, checks, currentPull)
 }
 
 /** Sent comments come from an accepted agent batch, not the mutable local
@@ -126,6 +128,26 @@ export async function readTaskReviewSummary(input: TaskReviewHttpInput): Promise
   z.strictObject({ workspaceId: z.uuid().optional() }).parse(input.input)
   const context = await currentTaskReview(input.deps, input.actor, input.taskId, input.request.signal)
   if (!context) return empty
+  if (input.deps.external?.pullSummary) {
+    let associated: Awaited<ReturnType<typeof associatedGitHubPull>> | undefined
+    try { associated = await associatedGitHubPull(input.deps.database, context.scope) }
+    catch (error) { if (!(error instanceof WorkspaceReviewError) || error.code !== 'workspace_snapshot_unavailable') throw error }
+    if (associated) {
+      const currentPull = await input.deps.external.pullSummary(context.scope, associated.number)
+      return { context, render: async (tx, scope) => {
+        await assertCurrentTaskReview(tx, input.actor, context)
+        const currentAssociation = await associatedGitHubPull(tx, scope)
+        if (!isDeepStrictEqual(currentAssociation, associated)) throw new WorkspaceReviewError('workspace_snapshot_outdated')
+        const selected = await summarySnapshot(tx, scope, currentAssociation)
+        if (selected?.sourceAccess && selected.sourceAccess.repositoryId !== currentPull.repositoryId)
+          throw new WorkspaceReviewError('workspace_review_github_forbidden')
+        // Retained evidence only supplies an old client's comment/merge reference.
+        // Display metadata always comes from GitHub; a moved HEAD never receives
+        // that old reference or permission to merge the earlier candidate.
+        return { body: await taskReviewSummary(tx, input.actor, scope, selected, currentPull) }
+      } }
+    }
+  }
   const selected = await summarySnapshot(input.deps.database, context.scope)
   if (selected?.sourceAccess || selected?.pullRequest) {
     if (!input.deps.external) throw new WorkspaceReviewError('workspace_review_github_unavailable')
@@ -143,15 +165,17 @@ export async function readTaskReviewSummary(input: TaskReviewHttpInput): Promise
 
 /** Commit filters never replace the Task's whole-review summary. A failed
  * latest checkpoint cannot silently fall back to an older successful one. */
-export async function summarySnapshot(tx: Pick<PoolClient, 'query'>, scope: ReviewScope): Promise<DiffSnapshot | null> {
+export async function summarySnapshot(tx: Pick<PoolClient, 'query'>, scope: ReviewScope,
+  associatedPull?: Awaited<ReturnType<typeof associatedGitHubPull>>): Promise<DiffSnapshot | null> {
   try {
-    const associated = await associatedGitHubPull(tx, scope)
+    const associated = associatedPull ?? await associatedGitHubPull(tx, scope)
     const { rows: [pull] } = await tx.query<{ id: string }>(`SELECT id FROM coding_workspace_snapshots
       WHERE "runId"=$1 AND "repoId"=$2 AND "workspaceId"=$3 AND source='pull_request'
         AND snapshot->'pullRequest'->>'number'=$4 AND coalesce(snapshot->'factory','null'::jsonb)=$5::jsonb
       ORDER BY "createdAt" DESC,id DESC LIMIT 1`, [scope.identity.runId, scope.identity.repoId, scope.identity.workspaceId,
       String(associated.number), JSON.stringify(associated.factory ?? null)])
     if (pull) return readDiffSnapshot(tx, scope, pull.id)
+    if (associatedPull) return null
   } catch (error) { if (!(error instanceof WorkspaceReviewError) || error.code !== 'workspace_snapshot_unavailable') throw error }
   if (running(scope)) return latestDiffSnapshot(tx, scope, 'working')
   const { rows: [checkpoint] } = await tx.query<{ snapshotId: string | null; reason: string | null }>(`SELECT "snapshotId",reason FROM coding_workspace_checkpoint_reviews
