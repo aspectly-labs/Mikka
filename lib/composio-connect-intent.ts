@@ -80,13 +80,14 @@ export async function linkComposioConnectIntent(query: Query, tokenHash: string,
   await query.query('UPDATE composio_connect_intents SET "linkId"=$2,"providerUrl"=$3 WHERE "tokenHash"=$1', [tokenHash, linkId, providerUrl])
 }
 
-/** A request that lost the claim to its own duplicate waits a beat for the winner to record the provider's redirect. */
-export async function linkedComposioConnectIntent(query: Query, tokenHash: string): Promise<ComposioIntent | null> {
+/** A request that lost the claim to its own duplicate waits a beat for the winner to record the provider's redirect.
+ * Only an intent claimed moments ago can still have a twin in flight; after that the token is spent and answers failed. */
+export async function linkedComposioConnectIntent(query: Query, tokenHash: string, now = new Date()): Promise<ComposioIntent | null> {
   for (let attempt = 0; attempt < 4; attempt++) {
     if (attempt) await new Promise(resolve => setTimeout(resolve, 300))
     const { rows: [row] } = await query.query<ComposioIntent>(
-      'SELECT "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState","providerUrl" FROM composio_connect_intents WHERE "tokenHash"=$1 AND "linkId" IS NOT NULL AND "providerUrl" IS NOT NULL',
-      [tokenHash],
+      'SELECT "tokenHash","userId","toolkit","replaceAccountId","returnTo","returnState","providerUrl" FROM composio_connect_intents WHERE "tokenHash"=$1 AND "linkId" IS NOT NULL AND "providerUrl" IS NOT NULL AND "usedAt" > $2',
+      [tokenHash, new Date(now.getTime() - 60_000)],
     )
     if (row) return row
   }
