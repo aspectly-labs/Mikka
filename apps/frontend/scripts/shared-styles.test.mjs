@@ -68,7 +68,7 @@ test('the pass is deterministic for the same source', { skip: needsOfficialUi },
   assert.equal(await compileThroughSharedStyles(source), await compileThroughSharedStyles(source))
 })
 
-test('official builds scan the checkout\'s gitignored core/web/slots/lib utilities, not components/, and a build without one scans nothing of it', async t => {
+test('official builds scan the checkout\'s gitignored layered and legacy directories, not components/, and a build without one scans nothing of it', async t => {
   // Build utility strings dynamically so Tailwind scanning this test file does not match them.
   const pxClass = (prefix, size) => `${prefix}-[${size}px]`
   const fixture = await uiFixture({
@@ -78,6 +78,10 @@ test('official builds scan the checkout\'s gitignored core/web/slots/lib utiliti
     'slots/workspace-entry.tsx': `<div className="${pxClass('w', 31339)}" />`,
     'web/views/screen.tsx': `<div className="${pxClass('text', 31337)}" />`,
     'lib/helper.tsx': `<div className="${pxClass('h', 31341)}" />`,
+    'ui/button.tsx': `<div className="${pxClass('gap', 31347)}" />`,
+    'shared/avatar.tsx': `<div className="${pxClass('pl', 31349)}" />`,
+    'features/desktop/index.tsx': `<div className="${pxClass('pr', 31351)}" />`,
+    'routes/app.tsx': `<div className="${pxClass('pt', 31353)}" />`,
     'components/paid.tsx': `<div className="${pxClass('p', 31343)}" />`,
   })
   t.after(fixture.cleanup)
@@ -90,10 +94,14 @@ test('official builds scan the checkout\'s gitignored core/web/slots/lib utiliti
   assert.ok(compiled.includes('31337px'), 'compiles web/ classes')
   assert.ok(compiled.includes('31339px'), 'compiles slots/ classes')
   assert.ok(compiled.includes('31341px'), 'compiles lib/ classes')
+  assert.ok(compiled.includes('31347px'), 'compiles ui/ classes')
+  assert.ok(compiled.includes('31349px'), 'compiles shared/ classes')
+  assert.ok(compiled.includes('31351px'), 'compiles features/ classes')
+  assert.ok(compiled.includes('31353px'), 'compiles routes/ classes')
   assert.ok(!compiled.includes('31343px'), 'skips components/ so overlay.css retains component layer order')
 
   const headless = await compileThroughSharedStyles(source, { from: globals, overlay: { dir: null, application: null } })
-  assert.ok(!['31337px', '31339px', '31341px', '31345px'].some(size => headless.includes(size)), 'no checkout, no checkout sources')
+  assert.ok(!['31337px', '31339px', '31341px', '31345px', '31347px', '31349px', '31351px', '31353px'].some(size => headless.includes(size)), 'no checkout, no checkout sources')
 
   const { stdout } = await runNode(process.execPath, [
     '--input-type=module',
