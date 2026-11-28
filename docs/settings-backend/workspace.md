@@ -59,6 +59,8 @@ deleteWorkspace(id: string, confirmName: string): Promise<ActionResult<{
 - 切换工作区：发起删除的管理员，cookie 会改成他下一个启用中的工作区（`nextWorkspaceId`）；没有其他工作区时 cookie 会被清除，下次访问时 `loadWorkspaceContext` 会自动建一个默认工作区。其他成员的 cookie 还指向已删除的 id，但 `loadWorkspaceContext` 只会在启用中的成员资格里选，所以他们下一次请求会自动落到自己的第一个工作区。
 - 错误码：`workspaceAccessDenied`、`workspaceDeleteNameMismatch`、`workspaceHasActiveSubscription`、`validationGeneric`。
 
+已提交到 `workspace_audit_outbox` 的审计不会随工作区删除而丢失。账号和工作区的现有删除 guard 不变。保留任务持有原有独占锁；投递持共享锁到源回执确认。有 pending receipt 时，不移除该工作区的保留策略和删除记录；投递完成后继续执行原90天、较长期限及法律保留规则。迁移顺序和并发边界见[删除保护下的持久审计投递](../design/audit-delivery-deletion.md)。
+
 ## 成员
 
 ### `removeWorkspaceMember(memberId, options?)` — `app/actions/workspace-settings.ts`

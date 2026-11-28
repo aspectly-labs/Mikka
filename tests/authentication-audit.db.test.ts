@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from 'node:crypto'
 import test from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { Pool } from 'pg'
 import { dbUrl, seedWorkspace } from './support/workspace-admin-db'
 import { TestAccountPool } from '../scripts/test-accounts/pool.mjs'
@@ -194,5 +195,44 @@ test('authentication writes tenant-bound durable intent and withholds every new 
       assert.equal(await sessions(), beforeSessions)
       assert.equal((await events()).length, beforeFailure)
     } finally { await database.query(`ALTER TABLE workspace_audit_outbox DROP CONSTRAINT ${name}`) }
+  })
+  await t.test('final workspace deletion waits for in-flight login audit and prevents new tenant intent afterward', async () => {
+    const [{ deleteWorkspaceData }, { workspaceDb }] = await Promise.all([import('../lib/account/delete'), import('../lib/workspace-db')])
+    const guarded = workspaces.slice(0, 2), name = `auth_audit_gate_${randomUUID().replaceAll('-', '')}`
+    const holder = await database.connect(), holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0].pid
+    const blockedBy = async (pid: number) => {
+      const deadline = Date.now() + 5000
+      while (Date.now() < deadline) {
+        const row = (await database.query<{ pid: number }>('SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND datname=current_database()', [pid])).rows[0]
+        if (row) return row.pid
+        await delay(10)
+      }
+      throw new Error('Expected membership deletion lock wait did not occur')
+    }
+    await holder.query('BEGIN')
+    await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [name])
+    await database.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."workspaceId" IN ('${guarded[0]}'::uuid,'${guarded[1]}'::uuid) THEN PERFORM pg_advisory_xact_lock(hashtextextended('${name}',0)); END IF; RETURN NEW; END $$`)
+    await database.query(`CREATE TRIGGER ${name} BEFORE INSERT ON workspace_audit_outbox FOR EACH ROW EXECUTE FUNCTION ${name}()`)
+    let login: Promise<Response> | undefined, deletion: Promise<void> | undefined
+    try {
+      const before = (await events()).length
+      login = post({ email, password: 'wrong-fixture-password' })
+      const loginPid = await blockedBy(holderPid)
+      deletion = workspaceDb.transaction(tx => deleteWorkspaceData(tx, userId, createHash('sha256').update(email.toLowerCase()).digest('hex'), { solo: guarded, shared: [], keptIssueIds: [], keptProjectIds: [] }))
+      await Promise.race([blockedBy(loginPid), deletion.then(() => { throw new Error('Workspace deletion did not wait for audit intent') })])
+      await holder.query('ROLLBACK')
+      assert.equal((await login).status, 401)
+      await deletion
+      assert.equal((await events()).length, before + 2, 'the already-started login commits its evidence before membership deletion')
+      assert.equal((await database.query('SELECT count(*)::int n FROM mikka_workspace_members WHERE "userId"=$1', [userId])).rows[0].n, 0)
+      assert.equal((await post({ email, password: 'wrong-fixture-password' })).status, 401)
+      assert.equal((await events()).length, before + 2, 'a deleted membership cannot produce a later workspace audit receipt')
+      assert.deepEqual(await deliverOwn(), { delivered: 2, failed: 0 })
+    } finally {
+      await holder.query('ROLLBACK'); holder.release()
+      await Promise.allSettled([login, deletion])
+      await database.query(`DROP TRIGGER ${name} ON workspace_audit_outbox`)
+      await database.query(`DROP FUNCTION ${name}()`)
+    }
   })
 })
