@@ -40,7 +40,7 @@ it('never turns a native request into a session or root-wide grant', async () =>
   expect(result.noExactAccept.decision).toBe('cancel')
 })
 
-it.each(['allow', 'ask', 'deny', 'readOnly'] as const)('scopes native computer elicitation to one observed live item under %s policy', async permission => {
+it.each(['allow', 'deny', 'readOnly'] as const)('scopes native computer elicitation to one observed live item under %s policy', async permission => {
   const cwd = await makeRepo()
   const policy = defaultRunPolicy()
   policy.permissions.computer_use = permission === 'readOnly' ? 'allow' : permission

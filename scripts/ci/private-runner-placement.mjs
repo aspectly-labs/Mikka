@@ -1,24 +1,34 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 
-// Exact workflow bytes reviewed at private 5050eece. Removals are safe; edits,
-// including new Cloudflare profiles, need public policy review before building.
+// Exact workflow bytes reviewed at private d7d4666 (mikka-cloud#509). The five manual
+// docs/overlay/lifecycle workflow updates were reviewed at private f7fd2873: one
+// read-only docs fallback and four comment/input-description changes. Removals are
+// safe; all later edits, including runner changes, need public policy review.
 const approvedWorkflows = Object.freeze({
   '.github/workflows/capture-retention.yml': 'ebab36f3a8acac6b818adfd60e85db6d5ec8e26ba14f1fa7ac0671d5445fe702',
-  '.github/workflows/cloudflare-billing-evidence.yml': '3fa6d917bb35db6175c3df93a32c95bed05bde1bc334e7df28c960a7c45edb33',
-  '.github/workflows/container-identity-metadata.yml': '93564de784df5660a743b75f075e77bc93b5b62aea614c048689603ccd122b1f',
-  '.github/workflows/eve-lifecycle-tests.yml': 'c99bb72df783dae6d05245fc38c531cba0ca838c5648855e31f6dde9836b10dc',
+  '.github/workflows/cloudflare-billing-evidence.yml': 'f9182c2cfaa012a27435f1221d4e5ecb521ddc60e429261a82519e45f4f025ca',
+  '.github/workflows/container-identity-metadata.yml': '57864183f1bb7b63c82d1ef45f8a581d6d1dd6910512ad4edcbb2cc856037e7a',
+  '.github/workflows/docs-gates.yml': 'bb12d5d5471335f34138bbb5a79a3986ce0e8609bc80297df5858eb44ac3a26f',
+  '.github/workflows/eve-lifecycle-tests.yml': '767a5a757ebda2f872d89d904e0dbbcdb621ff6e56136591bfcea3e44f1c577f',
   '.github/workflows/eve-world-resources.yml': '912351b1cf33e4c1ccee722dddb1b818a6078072235389c8df412c4d9f7384bb',
   '.github/workflows/github-webhook-prepare.yml': '13a8fdc3d450e80d1e91932af28b81faac7263ced5935b243a62cb5f420d2d32',
   '.github/workflows/marketing-cloudflare-release.yml': '8e734ae3a6f8cb2687c5d1b3bd6d5d076e882f4057cffd3322962f283306848b',
-  '.github/workflows/observe-cloudflare-runtime.yml': 'a0e19145e330d7349362733eaa43add5cbe99aa3528002d186a2d60a0c7add46',
+  '.github/workflows/migration-drift.yml': '7d9f25946cf3105e794402ec46bc2e4120ca73fd20960d433ff6dcabb6da99e7',
+  '.github/workflows/observe-cloudflare-runtime.yml': 'a1d0b3631dc5176756b2fdb29f129f2d07715e0d37a2d19b34714b4bc79dea62',
+  '.github/workflows/ops-scheduler-deploy.yml': '159dd9df51310320b538149ac0665b72fd16f71df7d5f0eede3f713770ccc6bb',
+  '.github/workflows/overlay-source-sync.yml': '22a833b602cf214c20e9cd52a94581d53767b88ccd6dab6b690d59ff0d538dc2',
+  '.github/workflows/overlay-sync-tests.yml': '0293a28ddf9905ea8a2af4869871b146068c54c3c4f47e2232296f017d02e42d',
   '.github/workflows/private-source-download.yml': '795c9055b705095776983f91a22a62725b714a7a942e9bfeb676e849624618d0',
-  '.github/workflows/product-task-canary.yml': '6ae7a104132db529fd1d91b515a2a6c2cadc7e41b425ede8881890d4272f174f',
-  '.github/workflows/production-daemon-qualification.yml': '24da69abec9bf4c7d5ecfffebbf499d60eb64689cb11dde306aa259943f2cc2f',
+  '.github/workflows/product-task-canary.yml': '47d4a4e79d0c29dceeeb07ae1aa34359b83b85b645b39433f18fc8166ee0e8e3',
+  '.github/workflows/production-daemon-qualification.yml': 'e54873ad25403ae51203eaac9f160ae5d3cd9740e4321b70d2d790dea00b7304',
+  '.github/workflows/public-migration-markers.yml': 'ee615e8b4997dee2982868d530b933cb3ac155f35c7fcab37196b683aa9c2ea1',
   '.github/workflows/runtime-native-alert.yml': '227f374ee4756d4d6767e6c8345b42afaf198a7067cc7ed36274899319f98ede',
   '.github/workflows/runtime-observer-runner-canary.yml': 'be71c2c734859587e894e0da7f960cdac80bd7690853c0d5ad6cd00307d0b53f',
-  '.github/workflows/vercel-project-billing.yml': '013709338c50323a56d3a703fd979769b1272b655e8d528568219f96059bd489',
-  '.github/workflows/vercel-workflow-inventory.yml': 'a8766a7900b04eda41c6c72a9f7b2197cf80e46b24d76f85bccaae808d28dc94',
+  '.github/workflows/vercel-project-billing.yml': '8a88971d6d6993ecd46d58f91f73374b3bade2692f468864866d6f3c472f64aa',
+  '.github/workflows/vercel-workflow-inventory.yml': '361bbecfd13498e131f9c05bb05ba390a6f106bf16e3218b14654f07e91b73cf',
+  '.github/workflows/verify-overlay-pin.yml': 'da9a97c2d26a74ab3a842be55fe290944561f34bfcf095695024dd0e363404dd',
+  '.github/workflows/zero-residency-guard.yml': '0d20d10bfeaa64650301042db30bf5dc49f78933eeac2b492f05c0512ac48d03',
 })
 const fail = () => { throw new Error('CLOUD_PUBLIC_CI_PRIVATE_RUNNER_PLACEMENT') }
 

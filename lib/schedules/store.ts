@@ -6,6 +6,7 @@ import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { issues } from '../db/schema'
 import { issueVisibilityPredicate } from '../issue-visibility-policy'
+import { jsonbSafeIntSql, jsonbSafeUuidSql } from '../primitives/jsonb-predicates'
 import { commandSchema, definitionSchema, ScheduleError, SCHEDULE_PAGE_MAX, type Actor, type Command, type Definition, type DispatchTask, type EventTrigger, type ScheduledRead } from './contract'
 import { describeGitHubEvent, triggerMatches, type GitHubAutomationEvent } from './github-events'
 import { describeLinearEvent, linearTriggerMatches, type LinearAutomationEvent } from './linear-events'
@@ -55,7 +56,7 @@ export type AutomationSeams = {
   /** Whether the workspace can still use a repository an event trigger names. */
   repository?: (workspaceId: string, repository: string) => Promise<boolean>
   /** Whether the workspace still has this Environment, not archived. */
-  environment?: (workspaceId: string, environmentId: string) => Promise<boolean>
+  environment?: (workspaceId: string, environmentId: string, ownerId: string) => Promise<boolean>
   /** Whether the person may still send to this thread (its root run) in the workspace. */
   thread?: (ownerId: string, workspaceId: string, threadId: string) => Promise<boolean>
   /** The person's Coordinator chat in a workspace, which a page-made automation reports to; null without one. */
@@ -68,7 +69,7 @@ export type AutomationSeams = {
 export type Schedule = { id: string; owner_id: string; run_as_user_id?: string | null; workspace_id: string | null; bot_id: string | null; visibility: 'owner' | 'workspace'; source_event_id: string; definition: Definition; request_definition: Definition; status: string; deleted?: boolean; status_before_delete?: 'active' | 'paused' | 'completed' | null; version: number; next_at: Date | null; disabled_reason?: string | null }
 export type Occurrence = { id: string; schedule_id: string; operation_id: string; event_id: string | null; definition: Definition; version: number; due_at: Date; status: string; attempts: number; lease_token: string | null; lease_until: Date; error: string | null; execution_decision: 'execute' | 'skip'; trigger: OccurrenceTrigger | null; report_next_at: Date; report_attempts: number; started_at: Date | null; created_at: Date }
 // The newest admitted batch supersedes older windows, even after someone closes it early.
-const WEBHOOK_BATCH = `trigger ? 'webhook' AND (definition#>>'{webhook,batchMinutes}')::int > 0 AND NOT (status='skipped' AND attempts=0)`
+const WEBHOOK_BATCH = `trigger ? 'webhook' AND (${jsonbSafeIntSql(`definition->'webhook'`, 'batchMinutes')}) > 0 AND NOT (status='skipped' AND attempts=0)`
 // Canceled historical batches may have already erased their payloads. Their byte count is unknown.
 const WEBHOOK_BODY_BYTES = `(SELECT CASE WHEN count(item->>'body')=count(*)
   THEN COALESCE(sum(octet_length(item->>'body')),0)::int END
@@ -84,11 +85,11 @@ const WEBHOOK_BATCH_COLUMNS = `id, schedule_id AS "automationId", created_at, du
   jsonb_array_length(trigger#>'{webhook,requests}') AS "requestCount",
   jsonb_array_length(trigger#>'{webhook,requests}') AS "eventCount",
   trigger#>>'{webhook,requests,0,at}' AS "firstEventAt", trigger#>>'{webhook,requests,-1,at}' AS "lastEventAt",
-  COALESCE((trigger#>>'{webhook,byteCount}')::int, ${WEBHOOK_BODY_BYTES}) AS "byteCount",
+  COALESCE(${jsonbSafeIntSql(`trigger->'webhook'`, 'byteCount')}, ${WEBHOOK_BODY_BYTES}) AS "byteCount",
   CASE WHEN attempts>0 OR trigger#>>'{webhook,closedBy}'='flush_batch' THEN id END AS "runId",
   CASE WHEN status='failed' THEN error END AS failure,
   '[]'::jsonb AS "group", NULL::int AS "quietPeriodSeconds",
-  ${WEBHOOK_BATCH_REQUESTS} AS "maxEvents", (definition#>>'{webhook,batchMinutes}')::int * 60 AS "maxWaitSeconds",
+  ${WEBHOOK_BATCH_REQUESTS} AS "maxEvents", (${jsonbSafeIntSql(`definition->'webhook'`, 'batchMinutes')}) * 60 AS "maxWaitSeconds",
   CASE WHEN trigger#>>'{webhook,closedBy}'='flush_batch' THEN (trigger#>>'{webhook,closedAt}')::timestamptz
     ELSE due_at END AS "dispatchAfter",
   COALESCE((trigger#>>'{webhook,closedAt}')::timestamptz, CASE WHEN trigger#>>'{webhook,closedBy}'='cancel_batch' THEN finished_at END) AS "closedAt",
@@ -101,7 +102,7 @@ function publicBatch(record: WebhookBatch): WebhookBatch {
 }
 // A pending retry may already have dispatched. Collection windows have a separate batch lifecycle.
 const cancellableRun = `status='pending' AND attempts=0 AND lease_token IS NULL AND event_id IS NULL
-  AND NOT (COALESCE(trigger ? 'webhook', false) AND COALESCE((definition#>>'{webhook,batchMinutes}')::int,0)>0)`
+  AND NOT (COALESCE(trigger ? 'webhook', false) AND COALESCE(${jsonbSafeIntSql(`definition->'webhook'`, 'batchMinutes')},0)>0)`
 export const SCHEDULE_LEASE_MS = 5 * 60_000
 const MAX_ATTEMPTS = 3
 // The frozen request key is internal; keep the existing tool-response fields.
@@ -182,7 +183,7 @@ export class ScheduleStore {
     if(def.task.kind==='dispatch_task'){
       if(!workspaceId||!this.automation.check)throw new ScheduleError('scheduleDispatchUnavailable',503)
       await this.automation.check(tx,owner,workspaceId,def.task)
-      if(def.environmentId&&(!this.automation.environment||!await this.automation.environment(workspaceId,def.environmentId)))throw new ScheduleError('scheduleEnvironmentUnavailable',403)
+      if(def.environmentId&&(!this.automation.environment||!await this.automation.environment(workspaceId,def.environmentId,owner)))throw new ScheduleError('scheduleEnvironmentUnavailable',403)
       if(def.singleThreadId&&(!this.automation.thread||!await this.automation.thread(owner,workspaceId,def.singleThreadId)))throw new ScheduleError('scheduleThreadUnavailable',403)
       for(const repository of new Set((def.events??[]).flatMap(trigger=>trigger.source==='github'?trigger.repositories:[]))){
         if(!this.automation.repository||!await this.automation.repository(workspaceId,repository))throw new ScheduleError('scheduleRepositoryUnavailable',403)
@@ -362,7 +363,7 @@ export class ScheduleStore {
         const privileged=row.owner_id===actor.ownerId||access.role!=='member'
         // Each task the automation made counts once, whether a run made it or added to it ('single'), on the day it spent.
         const cost=privileged?(await tx.query<{day:string;cost:string}>(`SELECT to_char((u."createdAt" AT TIME ZONE $2)::date,'YYYY-MM-DD') AS day,COALESCE(sum(u."costMicroUsd"),0)::text cost
-          FROM (SELECT DISTINCT (result->>'id')::uuid task FROM schedule_occurrences WHERE schedule_id=$1 AND definition#>>'{task,kind}'='dispatch_task' AND result ? 'id') t
+          FROM (SELECT DISTINCT ${jsonbSafeUuidSql('result', 'id')} task FROM schedule_occurrences WHERE schedule_id=$1 AND definition#>>'{task,kind}'='dispatch_task' AND result ? 'id') t
           JOIN agent_runs r ON r."issueId"=t.task JOIN hosted_usage u ON u."usageRunId"=r.id
           WHERE COALESCE(u."billingSource",'credits')='credits'
           AND u."createdAt">=(date_trunc('day',now() AT TIME ZONE $2)-($3::int-1)*interval '1 day') AT TIME ZONE $2 GROUP BY 1`,[row.id,zone,days])).rows:[]
@@ -674,7 +675,14 @@ export class ScheduleStore {
       const dailyLimited=!misfireSkipped&&!concurrencyLimited&&await this.dailyFull(tx,current,o.id)
       const skipReason=misfireSkipped?'misfireSkipped':concurrencyLimited?'concurrencyLimit':dailyLimited?'dailyRunLimit':null
       const runner=skipReason?row.owner_id:await this.runner(access,current,o.definition)
-      const issue=skipReason?null:await this.permission(tx,runner,row.bot_id,row.workspace_id,o.definition)
+      let issue = null
+      if (!skipReason) {
+        const permission = () => this.permission(tx, runner, row.bot_id, row.workspace_id, o.definition)
+        if (row.workspace_id) {
+          const { withWorkspaceFactorJob } = await import('@/lib/enterprise/workspace-factor-job')
+          issue = await withWorkspaceFactorJob(runner, row.workspace_id, permission)
+        } else issue = await permission()
+      }
       const task=o.definition.task
       // The task is created and handed over after this commit, outside the schedule's locks; the lease fences it.
       if(!skipReason&&task.kind==='dispatch_task')return {dispatch:o,runner}
@@ -727,12 +735,17 @@ export class ScheduleStore {
     const triggers=(o.trigger&&'triggers' in o.trigger?o.trigger.triggers:[]).map(index=>o.definition.events?.[index]).filter((trigger):trigger is EventTrigger=>Boolean(trigger))
     if(!triggers.length||triggers.some(trigger=>!trigger.runWhen))return true
     if(!this.automation.runWhen||!row.workspace_id)throw new ScheduleError('scheduleRunWhenUnavailable',503)
-    for(const trigger of triggers){
-      const holds=await this.automation.runWhen({ownerId:row.run_as_user_id??row.owner_id,workspaceId:row.workspace_id,condition:trigger.runWhen!,event})
-      if(holds===null)throw new ScheduleError('scheduleRunWhenUnavailable',503)
-      if(holds)return true
-    }
-    return false
+    // runWhen judgments for one occurrence share admission/billing reads (decisionBatchCache).
+    const {decisionBatchCache}=await import('@/lib/abuse/context')
+    const workspaceId=row.workspace_id,runOwnerId=row.run_as_user_id??row.owner_id
+    return decisionBatchCache.run(new Map(),async()=>{
+      for(const trigger of triggers){
+        const holds=await this.automation.runWhen!({ownerId:runOwnerId,workspaceId,condition:trigger.runWhen!,event})
+        if(holds===null)throw new ScheduleError('scheduleRunWhenUnavailable',503)
+        if(holds)return true
+      }
+      return false
+    })
   }
   /** An event that did not need a run: recorded in the history, not posted to the chat. */
   private async skipQuietly(row:Schedule,o:Occurrence,reason:string){

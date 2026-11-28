@@ -1,24 +1,34 @@
 import { withRequestLog } from '@/lib/request-log'
 import { getTranslations } from '@/lib/intl/i18n-server'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { z } from 'zod'
 import { getApiSession } from '@/lib/api-auth'
 import { actAs } from '@/lib/acting-user'
 import { listTeamMembers } from '@/app/actions/teams'
 import { WorkspaceError } from '@/lib/workspace-access'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 async function handleGET(request: Request, { params }: { params: Promise<{ teamId: string }> }) {
   const i18nText = await getTranslations();
   const headers = { 'Cache-Control': 'private, no-store' }
   const session = await getApiSession({ headers: request.headers })
-  if (!session?.user) return NextResponse.json({ error: i18nText("Errors.authRequired") }, { status: 401, headers })
+  if (!session?.user) return RouteResponse.json({ error: i18nText("Errors.authRequired") }, { status: 401, headers })
   const { teamId } = await params
-  if (!z.uuid().safeParse(teamId).success) return NextResponse.json({ error: i18nText("FeatureCopy.c_424dce2c") }, { status: 400, headers })
+  if (!z.uuid().safeParse(teamId).success) return RouteResponse.json({ error: i18nText("FeatureCopy.c_424dce2c") }, { status: 400, headers })
   try {
-    return NextResponse.json(await actAs(session.user.id, () => listTeamMembers(teamId, session.tokenWorkspaceId, new URL(request.url).searchParams.get('include') === 'task-count')), { headers })
+    return RouteResponse.json(await actAs(session.user.id, () => listTeamMembers(teamId, session.tokenWorkspaceId, new URL(request.url).searchParams.get('include') === 'task-count')), { headers })
   } catch (error) {
-    return NextResponse.json({ error: error instanceof WorkspaceError ? (i18nText.has(`Errors.${error.code}` as never) ? i18nText(`Errors.${error.code}` as never) : error.message) : i18nText("FeatureCopy.c_411f8090") }, { status: error instanceof WorkspaceError ? 403 : 500, headers })
+    return RouteResponse.json({ error: error instanceof WorkspaceError ? (i18nText.has(`Errors.${error.code}` as never) ? i18nText(`Errors.${error.code}` as never) : error.message) : i18nText("FeatureCopy.c_411f8090") }, { status: error instanceof WorkspaceError ? 403 : 500, headers })
   }
 }
 
-export const GET = withRequestLog('/api/teams/[teamId]/members', handleGET)
+const GETBody = withRequestLog('/api/teams/[teamId]/members', handleGET)
+
+export const GET = defineRoute<'public', 'none', { teamId: string }>(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)

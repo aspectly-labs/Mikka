@@ -160,9 +160,9 @@ test('no rule left that asks for what is already known', () => {
   ]) assert.doesNotMatch(text, stale)
 })
 
-test('how to draw a card is said once, in the prompt; tools and events only point at it', async () => {
+test('how to present choice cards is said once, in the prompt; tools and events only point at it', async () => {
   const tools = registry.createCoordinatorRegistry(OWNER, COORDINATOR_BOT, undefined, { coordinator: true, computerEnabled: true })
-  assert.match(instructions, /A card in a tool result or event .* is drawn as one BeQuestions choice question exactly as given/)
+  assert.match(instructions, /When a tool result or event carries structured choices \(result\.card, or a card an \[Event\] gives you\), ask the person concisely in plain Markdown/)
   for (const [name, entry] of Object.entries(tools)) assert.doesNotMatch(String(entry.description ?? ''), /each option keeps its value and action/, `${name} repeats the card recipe`)
   const { eventPrompt } = await import('./context')
   const offline = eventPrompt({ kind: 'run_finished', issueId: null, runId: 'run-1', payload: { status: 'failed', stopReason: 'machine', noMachine: { title: 't', options: [] } } })
@@ -216,10 +216,11 @@ test(`「${MIKKA_SITE}」 when the candidates do not settle it: one choice quest
   results.findRepository = { match: 'several', candidates: acmeCandidates.map(item => ({ ...item, description: null, homepage: null })), card: { title: '多个仓库匹配 Mikka site', options: acmeCandidates.map(item => ({ value: item.fullName, label: item.fullName })) } }
   const { reply } = await play(MIKKA_SITE, [
     { tool: 'find_repository', input: { name: 'Mikka site' } },
-    { text: '<BeQuestions>Mikka site 是哪个仓库？</BeQuestions>' },
+    { text: 'Mikka site 是哪个仓库？\n- acme/mikka\n- acme/mikka-site' },
   ])
   assert.deepEqual(calls.map(call => call.step), ['findRepository'])
-  assert.match(reply, /BeQuestions/)
+  assert.match(reply, /Mikka site/)
+  assert.doesNotMatch(reply, /BeQuestions/)
 })
 
 test('「It\'s in the mikka-web repo」 on a thread working in alexj11324/Mikka: the repository is passed, so the work moves to a new thread there', async () => {

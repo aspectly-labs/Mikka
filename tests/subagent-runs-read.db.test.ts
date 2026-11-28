@@ -52,11 +52,17 @@ test('sub-agent child runs', { skip: !dbUrl }, async t => {
 
   await t.test('a child shows the state of its own thread\'s newest run', async () => {
     const next = await run(claude, 'waiting_input')
-    await pool.query(`UPDATE agent_runs SET status='succeeded' WHERE id=$1`, [researcher])
+    await pool.query(`UPDATE agent_runs SET status='succeeded',"finishedAt"=now() WHERE id=$1`, [researcher])
     await pool.query(`UPDATE agent_runs SET "continuesRunId"=$2,"createdAt"=now()+interval '5 seconds' WHERE id=$1`, [next, researcher])
     const [first] = (await readSubagentRuns(pool, { ownerId: owner, workspaceId: workspace.id, runId: parent }))!
     assert.equal(first.id, researcher)
     assert.equal(first.latestRunId, next)
+    assert.equal(first.finishedAt, null, 'a waiting continuation is not yet finished')
+    const settledAt = new Date('2026-11-24T10:05:00.000Z')
+    await pool.query(`UPDATE agent_runs SET status='succeeded',"finishedAt"=$2 WHERE id=$1`, [next, settledAt])
+    const [settled] = (await readSubagentRuns(pool, { ownerId: owner, workspaceId: workspace.id, runId: parent }))!
+    assert.equal(settled.finishedAt, settledAt.toISOString(), 'finishedAt reflects the latest run in the child chain')
+    await pool.query(`UPDATE agent_runs SET status='waiting_input',"finishedAt"=NULL WHERE id=$1`, [next])
     assert.equal(subagentCardOf(first).status, 'needs-you')
     assert.equal(first.subagent.brief, '找出购物车为空时 结账崩溃的位置', 'the brief belongs to the dispatch, not the continuation')
     const targets = await runLiveTargets(pool, pool, next, 'run')

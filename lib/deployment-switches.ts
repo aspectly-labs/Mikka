@@ -3,7 +3,7 @@
  * every feature switch goes through a PostHog feature flag).
  *
  * A deployment switch is one PostHog flag evaluated against one fixed distinct
- * id, as the Linear sync flag is (lib/linear-sync/flags.ts). A person switch
+ * id. A person switch
  * (PERSON_SWITCHES, personSwitch) is evaluated for the person's user id, so it
  * can be on for some people first. Either reads, in order:
  *
@@ -30,8 +30,10 @@
 
 type Env = Record<string, string | undefined>
 import { deploymentStage } from './deployment-stage.mjs'
+import { publicEnv } from './public-env.mjs'
 import { posthogConfig } from './posthog-config'
 import { isCloudEdition } from './edition'
+import { runtimeEnv } from './env/runtime.mjs'
 
 export interface Switch {
   /** The PostHog flag. */
@@ -119,7 +121,7 @@ export const PRODUCTION_SWITCH_DEFAULTS: Readonly<Record<DeploymentSwitch, boole
  * property `deployment` so one PostHog project can hold a flag on for
  * production only.
  */
-export function deploymentName(env: Env = process.env): string {
+export function deploymentName(env: Env = runtimeEnv()): string {
   return deploymentStage(env) ?? 'local'
 }
 
@@ -139,11 +141,11 @@ function answered(entry: Switch, answers: Answers): boolean | undefined {
 }
 
 /** Whether the switch's feature is on now. Never throws, never waits. */
-export function deploymentSwitch(name: DeploymentSwitch, env: Env = process.env, now = Date.now()): boolean {
+export function deploymentSwitch(name: DeploymentSwitch, env: Env = runtimeEnv(), now = Date.now()): boolean {
   const entry: Switch = DEPLOYMENT_SWITCHES[name]
-  if (env === process.env) scheduleRefresh(now)
+  if (env === runtimeEnv()) scheduleRefresh(now)
   return testOverrides()?.get(name) ?? answered(entry, state.answers) ?? entry.legacy?.(env)
-    ?? (!isCloudEdition(env) && !env.NEXT_PUBLIC_POSTHOG_KEY ? PRODUCTION_SWITCH_DEFAULTS[name] : entry.fallback)
+    ?? (!isCloudEdition(env) && !publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', env) ? PRODUCTION_SWITCH_DEFAULTS[name] : entry.fallback)
 }
 
 /** Kept on globalThis so every copy of this module a test loads sees the same overrides. */
@@ -157,7 +159,7 @@ function testOverrides(): Map<string, boolean> | undefined {
  * and any variable. Throws in a deployment or a production build, and only
  * test files may import it (deployment-switches.test.ts checks both).
  */
-export function overrideDeploymentSwitch(name: DeploymentSwitch, value: boolean | undefined, env: Env = process.env): void {
+export function overrideDeploymentSwitch(name: DeploymentSwitch, value: boolean | undefined, env: Env = runtimeEnv()): void {
   if (deploymentStage(env) || env.NODE_ENV === 'production') throw new Error('overrideDeploymentSwitch is for tests only')
   const holder = globalThis as { [OVERRIDES]?: Map<string, boolean> }
   const map = holder[OVERRIDES] ??= new Map()
@@ -167,7 +169,7 @@ export function overrideDeploymentSwitch(name: DeploymentSwitch, value: boolean 
 
 function scheduleRefresh(now: number) {
   if (state.pending || now - state.at < SWITCH_REFRESH_MS) return
-  const token = process.env.NEXT_PUBLIC_POSTHOG_KEY
+  const token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY')
   if (!token || typeof fetch !== 'function') return
   state.at = now
   state.pending = refreshDeploymentSwitches(token).catch(() => undefined).finally(() => { state.pending = null })
@@ -203,7 +205,7 @@ async function evaluate(token: string, distinctId: string, flags: readonly strin
  * an outage never flips a switch. Exported for tests and for callers that want
  * the answers before their first read.
  */
-export async function refreshDeploymentSwitches(token: string | undefined = process.env.NEXT_PUBLIC_POSTHOG_KEY, fetcher: typeof fetch = fetch, timeoutMs = SWITCH_TIMEOUT_MS): Promise<void> {
+export async function refreshDeploymentSwitches(token: string | undefined = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY'), fetcher: typeof fetch = fetch, timeoutMs = SWITCH_TIMEOUT_MS): Promise<void> {
   if (!token) return
   const answers = await evaluate(token, DEPLOYMENT_DISTINCT_ID, Object.values(DEPLOYMENT_SWITCHES).map(entry => entry.flag), fetcher, timeoutMs, { deployment: deploymentName() })
   if (answers) state.answers = answers
@@ -230,7 +232,7 @@ export async function personSwitch(name: PersonSwitch, userId: string, options: 
 export interface SwitchLookup { env?: Env; token?: string; fetcher?: typeof fetch; now?: number; timeoutMs?: number }
 
 /** The lookup behind personSwitch, for any switch entry; exported for tests. */
-export async function switchForPerson(entry: Switch, userId: string, { env = process.env, token = process.env.NEXT_PUBLIC_POSTHOG_KEY, fetcher = fetch, now = Date.now(), timeoutMs = SWITCH_TIMEOUT_MS }: SwitchLookup = {}): Promise<boolean> {
+export async function switchForPerson(entry: Switch, userId: string, { env = runtimeEnv(), token = publicEnv('MIKKA_PUBLIC_POSTHOG_KEY'), fetcher = fetch, now = Date.now(), timeoutMs = SWITCH_TIMEOUT_MS }: SwitchLookup = {}): Promise<boolean> {
   const key = `${entry.flag}|${userId}`
   let cached = personAnswers.get(key)
   if (!cached || now - cached.at >= SWITCH_REFRESH_MS) {

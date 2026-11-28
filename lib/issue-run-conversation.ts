@@ -65,14 +65,6 @@ export function runStopTimeoutRemaining(requestedAt: number, now = Date.now()) {
   return Math.max(0, Math.min(RUN_STOP_TIMEOUT_MS, requestedAt + RUN_STOP_TIMEOUT_MS - now))
 }
 
-export function runStatusKey(status: string) {
-  switch (status) {
-    case 'queued': case 'preparing': case 'running': case 'waiting_input': case 'finishing':
-    case 'succeeded': case 'stopped': case 'failed': case 'cancelled': case 'paused': return status
-    default: return null
-  }
-}
-
 /** One line about what a finished run did: the report's summary, else the first line of its error. */
 export function runSummaryText(run: { report: unknown; error: string | null }): string | null {
   return runSummaryView(run).summary
@@ -132,11 +124,11 @@ export type ThreadStep = {
 const STEP_KINDS: Record<Exclude<ThreadStepKind, 'other'>, readonly string[]> = {
   read: ['read', 'notebookread', 'read_file', 'view', 'cat'],
   search: ['grep', 'glob', 'ls', 'search', 'find', 'file_search', 'codebase_search', 'list_dir'],
-  shell: ['bash', 'shell', 'execute', 'exec_command', 'local_shell'],
+  shell: ['bash', 'shell', 'execute', 'exec_command', 'execute_command', 'local_shell', 'run_command', 'terminal'],
   edit: ['edit', 'multiedit', 'write', 'notebookedit', 'apply_patch', 'delete', 'move', 'write_file', 'edit_file', 'str_replace'],
   web: ['webfetch', 'websearch', 'web_search', 'fetch'],
-  delegate: ['task', 'agent'],
-  todo: ['todowrite', 'update_plan', 'taskcreate', 'taskupdate'],
+  delegate: ['task', 'agent', 'dispatch_run', 'dispatch_bot_computer', 'dispatch_factory_run', 'dispatch_factory_task'],
+  todo: ['todowrite', 'update_plan', 'taskcreate', 'taskupdate', 'create_issue', 'update_issue'],
 }
 const STEP_KIND_OF = new Map(Object.entries(STEP_KINDS).flatMap(([kind, names]) => names.map(name => [name, kind as ThreadStepKind])))
 
@@ -151,7 +143,7 @@ export function threadStepStatus(step: Pick<ThreadStep, 'status'>, runActive: bo
 }
 
 /** Claude Code's `Bash`, Codex's `bash`/`shell` and Cursor's `execute` run a command; every other step is a tool (as iOS
- * apps/mobile/features/tasks/model/thread-steps.ts counts them, #1770). */
+ * mikka-hosted-ui/mobile-next counts them, #1770). */
 export const isCommandStep = (step: Pick<ThreadStep, 'name'>) => threadStepKind(step.name) === 'shell'
 
 /** Codex records its combined output and exit code in a single result. */
@@ -265,10 +257,24 @@ export type ThreadItem =
   | { kind: 'error'; id: string; text: string; at: number }
   | { kind: 'stages'; id: string; stages: ThreadStage[]; at: number }
   | { kind: 'computer'; id: string; botId: string; runId: string; task: string; at: number }
+  | { kind: 'system_event'; id: string; event: import('@mikka/protocol/slash-commands').SystemEventData; at: number }
   | { kind: 'person'; id: string; text: string; author: string; image?: string | null; mine: boolean; at: number }
 
+/** Extract the newest `data-available-commands` payload from a thread's streamed chunks (#3333). */
+export function latestAvailableCommandsFromChunks(
+  chunks: readonly { chunk: Record<string, unknown> }[],
+): import('@mikka/protocol/slash-commands').AvailableCommandsChunkData | null {
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    const chunk = chunks[i]?.chunk
+    if (chunk?.type === 'data-available-commands' && chunk.data && typeof chunk.data === 'object') {
+      return chunk.data as import('@mikka/protocol/slash-commands').AvailableCommandsChunkData
+    }
+  }
+  return null
+}
+
 /** A person's message in a thread (`run_messages`): keyed by the id the client minted when it sent it, else its own. */
-export type ThreadPersonMessage = { id: string; submissionId?: string | null; text: string; author: string; image?: string | null; mine: boolean; at: Date | string }
+export type ThreadPersonMessage = { id: string; submissionId?: string | null; text: string; author: string; image?: string | null; mine: boolean; at: Date | string; systemEvent?: import('@mikka/protocol/slash-commands').SystemEventData }
 
 /** The people's messages as the conversation layer orders them: the id their unsent bubble had, so nothing remounts. */
 export function threadPeople(messages: readonly ThreadPersonMessage[]): PersonMessage[] {
@@ -296,8 +302,15 @@ function toolStep(part: ToolLike, where: ConversationPartMeta | undefined): Thre
   const name = part.toolName || (part.type.startsWith('tool-') ? part.type.slice(5) : '') || 'tool'
   const kind = threadStepKind(name)
   const step: ThreadStep = { id: part.toolCallId, name, detail: stepDetail(part.input), failed: false, kind, status: 'running', ...stepTarget(kind, part.input) }
-  if (isCommandStep(step) && part.input && typeof part.input === 'object' && 'command' in part.input && typeof part.input.command === 'string' && part.input.command.trim()) {
-    step.command = stepText(part.input.command)
+  const rawCommand = part.input && typeof part.input === 'object'
+    ? ('command' in part.input && typeof part.input.command === 'string' && part.input.command.trim()
+        ? part.input.command
+        : 'cmd' in part.input && typeof part.input.cmd === 'string' && part.input.cmd.trim()
+          ? part.input.cmd
+          : undefined)
+    : undefined
+  if (isCommandStep(step) && rawCommand) {
+    step.command = stepText(rawCommand)
   }
   // A command's input is its command, already kept above.
   const input = !step.command && part.input && typeof part.input === 'object' ? stepTextCut(part.input) : undefined
@@ -326,6 +339,11 @@ export function conversationItems(conversation: readonly ConversationMessage[], 
   const items: ThreadItem[] = []
   for (const message of conversation) {
     if (message.role === 'user') {
+      const src = message.metadata?.source as ThreadPersonMessage | undefined
+      if (src?.systemEvent) {
+        items.push({ kind: 'system_event', id: `sysevt:${message.id}`, event: src.systemEvent, at: message.metadata?.at ?? 0 })
+        continue
+      }
       const author = message.metadata?.author
       const text = message.parts.flatMap(part => part.type === 'text' ? [part.text] : []).join('')
       items.push({ kind: 'person', id: message.id, text, author: author?.name ?? '', image: author?.image, mine: author?.mine ?? true, at: message.metadata?.at ?? 0 })
@@ -356,6 +374,12 @@ export function conversationItems(conversation: readonly ConversationMessage[], 
       } else if (part.type === 'data-error') {
         steps = null; stages = null
         items.push({ kind: 'error', id: `error:${part.id ?? id}`, text: part.data.text, at })
+      } else if (part.type === 'data-system-event') {
+        steps = null; stages = null
+        const data = part.data as Record<string, unknown> | undefined
+        if (data && typeof data.kind === 'string') {
+          items.push({ kind: 'system_event', id: `sysevt:${part.id ?? id}`, event: data as import('@mikka/protocol/slash-commands').SystemEventData, at })
+        }
       } else if (part.type === 'data-computer' && expectedRunId) {
         const data = part.data as Record<string, unknown>
         if (data?.runId === expectedRunId && typeof data.botId === 'string' && typeof data.task === 'string' && data.task.length <= 200 && !items.some(item => item.kind === 'computer' && item.runId === expectedRunId))

@@ -1,6 +1,7 @@
 # The iOS app updates before it opens
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「手机 App 启动时强制更新：用户关掉再打开，如果有新版本，必须先更新才能进入」. The coordinator added offline/timeout entry, the minimum native build and leaving a running app alone; the details follow common practice.
 - Rule: —
 - Replaces: —

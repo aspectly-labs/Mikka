@@ -2,14 +2,16 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 
-const PUBLIC_WEB_FILES = new Set(['components/plugins/connected-apps.tsx'])
-export const isMovedWebFile = file => /^(?:components|hooks)\//.test(file) && !PUBLIC_WEB_FILES.has(file)
+// Every web screen is the official UI's (mikka-hosted-ui): its own web/ or core/ (decision 2026-11-22-2205).
+export const isMovedWebFile = file => /^(?:components|hooks)\//.test(file)
 export const resolveEntityFile = (file, root = '.') => {
   const direct = path.join(root, file)
   if (existsSync(direct)) return direct
   if (isMovedWebFile(file)) {
-    const hosted = path.join(root, '.hosted-ui/web', file)
-    if (existsSync(hosted)) return hosted
+    for (const checkout of ['.hosted-ui/web', '.hosted-ui/core']) {
+      const hosted = path.join(root, checkout, file)
+      if (existsSync(hosted)) return hosted
+    }
   }
   return null
 }
@@ -17,11 +19,10 @@ export const resolveEntityFile = (file, root = '.') => {
 // Public business operations, their authorized sources, and the detail components
 // permitted to present them. "adapters" reuse an operation or represent it natively.
 export const entityContracts = [
-  { entity: 'Task', routes: [['apps/mobile/app/task/[id]/index.tsx', 'TaskScreen', '@/features/tasks/screens/task-screen']], detail: ['components/workspace/task-detail.tsx', 'TaskDetail'],
+  { entity: 'Task', detail: ['components/workspace/task-detail.tsx', 'TaskDetail'],
     sources: [['app/actions/issues.ts', 'pollIssue', 'saveIssue'], ['lib/task-presentation-read.ts', 'readTaskPresentations']],
-    adapters: [['components/coordinator/conversation-panels.tsx', 'EmbeddedTaskDetail'], ['apps/mobile/features/tasks/screens/task-screen.tsx', 'TaskScreen']] },
-  { entity: 'Thread', routes: [['apps/mobile/app/thread/[id].tsx', 'ThreadScreen']], detail: ['components/workspace/issue-thread-panel.tsx', 'IssueThreadPanel'],
-    adapters: [['apps/mobile/app/thread/[id].tsx', 'ThreadScreen']],
+    adapters: [['components/coordinator/conversation-panels.tsx', 'EmbeddedTaskDetail']] },
+  { entity: 'Thread', detail: ['components/workspace/issue-thread-panel.tsx', 'IssueThreadPanel'],
     sources: [['app/actions/agents.ts', 'getIssueThread', 'sendIssueThreadReply', 'stopRun']] },
   { entity: 'Review diff', detail: ['components/workspace/thread-changes.tsx', 'ThreadChangesView'],
     sources: [['app/actions/agents.ts', 'getThreadChanges'], ['lib/thread-changes.ts', 'parseUnifiedDiff']] },
@@ -30,11 +31,9 @@ export const entityContracts = [
     sources: [['components/workspace/use-project-update.ts', 'useProjectUpdate'], ['app/actions/projects.ts', 'listProjectEvents', 'updateProjectProperties']] },
   { entity: 'Connected app', detail: ['components/plugins/connected-apps.tsx', 'ConnectedAppDetail'],
     sources: [['components/plugins/connected-apps.tsx', 'useAppDetail']] },
-  { entity: 'Artifact', routes: [['apps/mobile/app/artifact/[id].tsx', 'ArtifactScreen']], detail: ['components/artifacts/artifact-viewer.tsx', 'ArtifactViewer'],
+  { entity: 'Artifact', detail: ['components/artifacts/artifact-viewer.tsx', 'ArtifactViewer'],
     sources: [['app/actions/artifacts.ts', 'getArtifact', 'getArtifactText', 'shareArtifact', 'stopSharingArtifact']] },
-  { entity: 'Bot conversation', routes: [['apps/mobile/app/bots/[id]/index.tsx', 'BotChat']],
-    sources: [['apps/mobile/features/chat/screens/chat-screen.tsx', 'ChatScreen']] },
-  { entity: 'Group conversation', routes: [['apps/mobile/app/groups/[id].tsx', 'GroupChat']],
+  { entity: 'Group conversation',
     sources: [['lib/group-messages.ts', 'groupMessagesUrl', 'postGroupMessage']] },
   { entity: 'Bot name', detail: ['components/nav/bot-overview.tsx', 'BotOverviewBody'],
     sources: [['components/nav/use-save-bot.ts', 'useSaveBot'], ['app/actions/bots.ts', 'updateBot']] },

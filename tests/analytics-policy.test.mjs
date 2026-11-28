@@ -8,7 +8,10 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { applicationPlugin } from '../apps/frontend/scripts/application-plugin.mjs'
-import { analyticsPath, sanitizeAnalyticsEvent } from '../lib/analytics-policy.ts'
+import { uiFixture } from '../apps/frontend/scripts/application-test-build.mjs'
+import { needsOfficialUi, readUi, uiExists } from '../scripts/official-ui-tree.mjs'
+import { analyticsPath, redactReplayRequest, sanitizeAnalyticsEvent } from '../lib/analytics-policy.ts'
+import { safeLanding } from '../lib/first-touch.ts'
 import { computerAcceptancePreview, computerProductionEnabled, featureAvailability, gatedFeatureEnabled, gatedFeatures, killSwitches, proactiveFeatures, upcomingFeatures } from '../lib/feature-flags.ts'
 import { analyticsEnvironment, analyticsKey, analyticsPaths, inspectAnalyticsBuild, localAnalyticsRequest, requiredRuntimeResources, syntheticPostHogRequest, verifyRuntimeResources } from '../scripts/check-analytics-ssr.mjs'
 import { analyticsBrowserProfile } from '../scripts/analytics-browser-sandbox.mjs'
@@ -28,6 +31,75 @@ test('pageviews strip query strings, hashes, document identifiers and unapproved
   })
   assert.equal(analyticsPath('/settings/teams'), '/settings/teams')
   assert.equal(analyticsPath('/invite/private-invitation-token'), '/invite/:token')
+})
+
+test('a share link or invitation never leaves in a route: pageviews, errors, RUM, replay and landing pages', () => {
+  // The tokens these pages carry open what they name (lib/artifacts/store.ts mks_,
+  // lib/thread-lifecycle.ts mkt_, lib/captures/store.ts mkc_, 64-hex invitations).
+  const artifact = 'mks_AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf' // no digit: the old opaque-id rule let it through
+  const thread = 'mkt_Q1wErTyUiOpAsDfGhJkLzXcVbNmQwEr'
+  const invitation = 'ab'.repeat(32)
+  const pages = [
+    [`/a/${artifact}`, '/a/:token'],
+    [`/en/a/${artifact}`, '/en/a/:token'],
+    [`/mikka/zh-CN/a/${artifact}/frame`, '/mikka/zh-CN/a/:token/frame'],
+    [`/threads/shared/${thread}`, '/threads/shared/:token'],
+    [`/mikka/en/threads/shared/${thread}`, '/mikka/en/threads/shared/:token'],
+    [`/organization-invite/${invitation}`, '/organization-invite/:token'],
+    [`/en/invite/${invitation}`, '/en/invite/:token'],
+    [`/mikka/invite/${invitation}`, '/mikka/invite/:token'],
+    [`/share/${thread}`, '/share/:token'],
+    ['/w/acme-corp', '/w/:slug'],
+    ['/en/tasks/SPOT-4', '/en/tasks/:token'],
+    ['/en/oauth/tok_abc1234567890xyz', '/en/oauth/:token'],
+    ['/en/issue/84c182d1-661c-461b-bca2-10410cb646d4/987654', '/en/issue/:id/:id'],
+    ['/settings/members', '/settings/members'],
+    [`/captures/${'0f'.repeat(16)}`, '/captures/:token'],
+    ['/en/reset-password', '/en/reset-password'],
+    ['/mikka', '/mikka'],
+    ['/', '/'],
+  ]
+  for (const [path, expected] of pages) {
+    assert.equal(analyticsPath(path), expected, path)
+    for (const origin of ['https://app.aspectlylabs.com', 'mikka://app']) {
+      const pageview = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${path}?token=${artifact}#${thread}` } })
+      assert.equal(pageview.properties.$pathname, expected)
+      assert.equal(pageview.properties.$current_url, `${origin}${expected}`)
+      const exception = sanitizeAnalyticsEvent({ event: '$exception', properties: { $current_url: `${origin}${path}`, $exception_list: [{ type: 'TypeError', value: 'x' }] } })
+      assert.equal(exception.properties.$pathname, expected)
+    }
+    const rum = sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route: path, lcp_ms: 900, flush_reason: 'pagehide' } })
+    assert.equal(rum.properties.route, expected)
+    // Replay's navigation metadata (rrweb's page href) and request names use the same route.
+    assert.equal(redactReplayRequest({ name: `https://app.aspectlylabs.com${path}?code=private` }).name, `https://app.aspectlylabs.com${expected}`)
+    assert.ok(![artifact, thread, invitation].some(token => safeLanding(path).includes(token)), path)
+  }
+})
+
+test('sanitizing twice is sanitizing once: the desktop renderer\'s path, sanitized again by main, keeps its placeholders', () => {
+  const uuid = '84c182d1-661c-461b-bca2-10410cb646d4'
+  const paths = [
+    `/mikka/issue/${uuid}`, '/en/invite/PRIVATE_INVITE_CODE/users/alice@example.com/987654', '/a/mks_AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEf/frame',
+    `/mikka/en/threads/shared/mkt_${'Q1'.repeat(16)}`, '/w/acme-corp/settings', '/en/tasks/SPOT-4', '/settings/members', '/', '/mikka',
+    `/en/${Array.from({ length: 40 }, (_, index) => `section-${'x'.repeat(index % 7)}/${uuid}`).join('/')}`,
+  ]
+  for (const path of paths) {
+    const once = analyticsPath(path)
+    assert.equal(analyticsPath(once), once, path)
+    // What apps/desktop/src/renderer/analytics.ts sends, then main's own pass (apps/desktop/src/main/telemetry.ts).
+    for (const origin of ['mikka://app', 'https://app.aspectlylabs.com']) {
+      const direct = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${path}?q=private` } })
+      const renderer = sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `${origin}${analyticsPath(path)}` } })
+      assert.deepEqual(renderer.properties, direct.properties, path)
+      assert.deepEqual(sanitizeAnalyticsEvent(direct).properties, direct.properties, path)
+    }
+    const rum = sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route: path, lcp_ms: 900, flush_reason: 'pagehide' } })
+    assert.equal(sanitizeAnalyticsEvent(rum).properties.route, rum.properties.route, path)
+    assert.ok(rum.properties.route.length <= 160)
+  }
+  assert.equal(analyticsPath('/mikka/issue/:id'), '/mikka/issue/:id')
+  assert.equal(analyticsPath('/en/invite/:token/users/:redacted/:id'), '/en/invite/:token/users/:redacted/:id')
+  assert.equal(analyticsPath('/w/:slug'), '/w/:slug')
 })
 
 test('automatic top-level person mutations are stripped without losing ingestion metadata', () => {
@@ -116,6 +188,50 @@ test('an exception message never carries a token or a path back to the user', ()
   assert.equal(message(undefined), 'Error')
 })
 
+test('an exception\'s message, frame file and function name carry a share or invitation path only as placeholders', () => {
+  const artifact = 'mks_Ab3dEf9hIjKlMnOpQrStUvWxYz012345'
+  const event = sanitizeAnalyticsEvent({ event: '$exception', properties: { $exception_list: [{
+    type: 'Error', value: `failed /a/${artifact} and https://app.aspectlylabs.com/mikka/en/threads/shared/mkt_${'Q1'.repeat(16)}?x=1 then GET /api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/ops`,
+    stacktrace: { frames: [
+      { in_app: true, filename: `https://app.aspectlylabs.com/mikka/a/${artifact}`, function: `load(/invite/${'ab'.repeat(32)})`, lineno: 1, colno: 2 },
+      { in_app: true, filename: 'https://app.aspectlylabs.com/mikka/assets/index-B3x9qZ1a.js', function: 'render', lineno: 10, colno: 20 },
+      { in_app: true, filename: `mikka://app/mikka/A/${artifact}`, function: 'f', lineno: 3, colno: 4 },
+    ] },
+  }] } })
+  const [entry] = event.properties.$exception_list
+  assert.equal(entry.value, 'failed /a/:token and https://app.aspectlylabs.com/mikka/en/threads/shared/:token then GET /api/workspaces/:id/ops')
+  assert.deepEqual(entry.stacktrace.frames.map(frame => [frame.filename, frame.function]), [
+    ['https://app.aspectlylabs.com/mikka/a/:token', 'load(/invite/:token)'],
+    ['https://app.aspectlylabs.com/mikka/assets/index-B3x9qZ1a.js', 'render'],
+    ['mikka://app/mikka/:token/:token', 'f'],
+  ])
+  assert.equal(JSON.stringify(event).includes(artifact), false)
+})
+
+test('a share page\'s word matches in any case, replay keeps the desktop origin, and a landing page is never a dynamic path', () => {
+  assert.equal(analyticsPath('/A/abcdefghij'), '/:token/:token')
+  assert.equal(analyticsPath('/Threads/Shared/abcdefghij'), '/:token/:token/:token')
+  assert.equal(analyticsPath('/en/INVITE/abcdefghij'), '/en/:token/:token')
+  assert.equal(redactReplayRequest({ name: 'mikka://app/mikka/a/mks_x?q=1' }).name, 'mikka://app/mikka/a/:token')
+  for (const path of ['/pricing', '/docs/getting-started']) assert.equal(safeLanding(path), path)
+  for (const path of ['/blog/post-2026', '/tasks/abc123', '/users/alice@example.com']) assert.equal(safeLanding(path), '/', path)
+})
+
+test('a megabyte route, URL or message is sanitized in bounded time', () => {
+  const huge = `/a/${'x'.repeat(1 << 20)}`
+  const deep = '/s'.repeat(1 << 19)
+  const started = performance.now()
+  for (const route of [huge, deep, `${'/settings'.repeat(100_000)}`]) {
+    const rum = sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route, lcp_ms: 1, flush_reason: 'pagehide' } })
+    assert.ok(rum.properties.route.length <= 160)
+    sanitizeAnalyticsEvent({ event: '$pageview', properties: { $current_url: `https://app.aspectlylabs.com${route}` } })
+    sanitizeAnalyticsEvent({ event: '$exception', properties: { $exception_list: [{ type: 'Error', value: route, stacktrace: { frames: [{ in_app: true, filename: `https://x.test${route}`, function: route }] } }] } })
+    redactReplayRequest({ name: `https://app.aspectlylabs.com${route}` })
+  }
+  const elapsed = performance.now() - started
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`)
+})
+
 test('masked replay keeps only its transport payload and cannot mutate a person', () => {
   const payload = [{ type: 2, data: { node: { textContent: '***' } } }]
   const event = sanitizeAnalyticsEvent({ event: '$snapshot', properties: { $snapshot_data: payload, $snapshot_bytes: 10, $session_id: 'session', distinct_id: 'person', prompt: 'private', $current_url: 'https://example.com/?token=private' } })
@@ -163,9 +279,9 @@ test('all upcoming features fail closed, even if the remote switch is accidental
 })
 
 test('gated features are on only when the remote flag is exactly true', () => {
-  assert.equal(gatedFeatures.cloudComputer, 'mikka-cloud-computer')
-  assert.equal(gatedFeatures.computerBilling, 'mikka-computer-billing')
-  assert.equal(gatedFeatures.memory, 'mikka-memory')
+  assert.equal(gatedFeatures.cloudComputer.key, 'mikka-cloud-computer')
+  assert.equal(gatedFeatures.computerBilling.key, 'mikka-computer-billing')
+  assert.equal(gatedFeatures.memory.key, 'mikka-memory')
   assert.deepEqual(proactiveFeatures, { profile: 'mikka-proactive-profile', research: 'mikka-proactive-research' })
   for (const remote of [undefined, false, 'control', 'true']) assert.equal(gatedFeatureEnabled(remote), false)
   assert.equal(gatedFeatureEnabled(true), true)
@@ -179,7 +295,7 @@ test('gated features are on only when the remote flag is exactly true', () => {
 
 test('the 电脑 tab has its own kill switch, apart from the cloud computer rollout flag', () => {
   assert.equal(killSwitches.computerTab, 'mikka-computer-tab-off')
-  assert.notEqual(killSwitches.computerTab, gatedFeatures.cloudComputer)
+  assert.notEqual(killSwitches.computerTab, gatedFeatures.cloudComputer.key)
   const desktopHook = readFileSync(new URL('../apps/desktop/src/renderer/feature-availability.ts', import.meta.url), 'utf8')
   assert.match(desktopHook, /export function useComputerTab\(\)[\s\S]*?killSwitches\.computerTab[\s\S]*?!== true/)
   const webHookPath = new URL('../.hosted-ui/web/hooks/use-feature-availability.ts', import.meta.url)
@@ -191,40 +307,49 @@ test('the 电脑 tab has its own kill switch, apart from the cloud computer roll
 
 test('the active Vite web entry initializes PostHog and the shared application mounts its pageview tracker', async () => {
   const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
-  assert.match(source('apps/frontend/src/index.tsx'), /import 'mikka:frontend-runtime'[\s\S]*await import\('\.\.\/\.\.\/desktop\/src\/renderer\/index'\)/)
-  const plugin = await applicationPlugin('web')
-  const runtimeId = await plugin.resolveId('mikka:frontend-runtime')
-  const entry = fileURLToPath(new URL('../apps/frontend/src/web/runtime.ts', import.meta.url))
-  for (const development of [false, true]) {
-    plugin.configResolved({ command: development ? 'serve' : 'build' })
-    const code = await plugin.load(runtimeId)
-    assert.ok(code.split('\n').includes(`import ${JSON.stringify(entry)};`))
-    assert.equal(code.includes('globalThis[Symbol.for("openui.devtools.autoMount")] = true;'), development)
+  assert.match(source('apps/frontend/src/index.ts'), /import 'mikka:frontend-runtime'[\s\S]*await import\('mikka:application'\)/)
+  // The runtime module is the same for any checkout; a stand-in one is enough to load it.
+  const fixture = await uiFixture()
+  try {
+    const plugin = await applicationPlugin('web', { overlay: fixture.overlay() })
+    const runtimeId = await plugin.resolveId('mikka:frontend-runtime')
+    const entry = fileURLToPath(new URL('../apps/frontend/src/web/runtime.ts', import.meta.url))
+    for (const development of [false, true]) {
+      plugin.configResolved({ command: development ? 'serve' : 'build' })
+      const code = await plugin.load(runtimeId)
+      assert.ok(code.split('\n').includes(`import ${JSON.stringify(entry)};`))
+      assert.equal(code.includes('openui.devtools'), false)
+    }
+  } finally {
+    await fixture.cleanup()
   }
   assert.match(source('apps/frontend/src/web/runtime.ts'), /import '@\/instrumentation-client'/)
   // PostHog starts after first paint: the runtime only schedules it, and posthog-js is never a static client import.
   assert.match(source('instrumentation-client.ts'), /if \(posthogConfig\.token\) loadPostHogAfterIdle\(window\)/)
   assert.match(source('lib/analytics/posthog.ts'), /import\('posthog-js'\), import\('\.\/posthog-init'\)/)
-  // The UI moved to the private layer (decision 2026-11-22-2205): check its copy when it is checked out.
-  for (const file of ['instrumentation-client.ts', 'components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'hooks/use-approval-live.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
-    const path = [file, `.hosted-ui/web/${file}`].find(candidate => existsSync(new URL(`../${candidate}`, import.meta.url)))
-    if (path) assert.doesNotMatch(source(path), /from 'posthog-js'/, file)
-  }
   assert.match(source('lib/analytics/posthog-init.ts'), /posthog\.init\(posthogConfig\.token/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_pageview: false/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_unhandled_errors: true/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_unhandled_rejections: true/)
   assert.match(source('lib/analytics/posthog-init.ts'), /capture_console_errors: false/)
-  assert.match(source('apps/desktop/src/renderer/app.tsx'), /<PlatformExtras \/>/)
-  assert.match(source('apps/frontend/src/web/platform.tsx'), /posthogConfig\.token && <PostHogAnalytics \/>/)
+})
+
+test('the official interface never imports posthog-js statically and mounts the pageview tracker', { skip: needsOfficialUi }, () => {
+  // The interface lives in the official UI checkout (core/ and web/, decision 2026-11-24-1000-all-ui-in-hosted).
+  for (const file of ['components/posthog-analytics.tsx', 'hooks/use-feature-availability.ts', 'components/teams/team-form.tsx', 'hooks/settings/use-team-directory.ts']) {
+    const path = [file, `.hosted-ui/web/${file}`].find(uiExists)
+    if (path) assert.doesNotMatch(readUi(path), /from 'posthog-js'/, file)
+  }
+  assert.match(readUi('renderer/app.tsx'), /<PlatformExtras \/>/)
+  assert.match(readUi('renderer/web/platform.tsx'), /posthogConfig\.token && <PostHogAnalytics \/>/)
 })
 
 test('analytics acceptance preserves the three real anonymous routes and isolated database restriction', () => {
   assert.deepEqual(analyticsPaths, ['/mikka', '/mikka/sign-in', '/mikka/en/sign-in'])
   const database = 'postgresql://e2e:disposable@127.0.0.1:5432/mikka_e2e'
-  const env = { CI: 'true', NEXT_PUBLIC_POSTHOG_KEY: analyticsKey, E2E_DATABASE_URL: database, DATABASE_URL: database, MIKKA_DATABASE_URL: database }
+  const env = { CI: 'true', MIKKA_PUBLIC_POSTHOG_KEY: analyticsKey, E2E_DATABASE_URL: database, DATABASE_URL: database, MIKKA_DATABASE_URL: database }
   assert.equal(analyticsEnvironment(env), database)
-  for (const change of [{ CI: 'false' }, { NEXT_PUBLIC_POSTHOG_KEY: 'another-project' }, { DATABASE_URL: database + '?options=other' },
+  for (const change of [{ CI: 'false' }, { MIKKA_PUBLIC_POSTHOG_KEY: 'another-project' }, { DATABASE_URL: database + '?options=other' },
     { E2E_DATABASE_URL: database.replace('127.0.0.1', 'remote.example') }, { E2E_DATABASE_URL: database.replace('/mikka_e2e', '/mikka') }]) {
     assert.throws(() => analyticsEnvironment({ ...env, ...change }))
   }
@@ -279,6 +404,24 @@ test('analytics build proof checks actual packaged bytes, public Vite entry and 
   await assert.rejects(verifyRuntimeResources(root, { ...built, resources: [...built.resources, built.resources[0]] }))
   await write(`.output/${requiredRuntimeResources[0]}`, 'changed packaged resource')
   await assert.rejects(verifyRuntimeResources(root, built))
+})
+
+test('headless public builds still prove runtime resources and asset byte identity without private UI analytics', async t => {
+  const { root, write } = await analyticsBuildFixture(t)
+  const headlessScript = 'document.documentElement.dataset.mikkaHeadless = "true";\n'
+  await write('apps/frontend/dist/web/assets/index-real.js', headlessScript)
+  await write('.output/public/mikka/assets/index-real.js', headlessScript)
+  // Without an explicit matching headless manifest, missing analytics config must still fail.
+  await assert.rejects(inspectAnalyticsBuild(root), /Synthetic analytics configuration/)
+  const manifest = JSON.stringify({ version: 1, target: 'web', headless: true, usedActions: [] })
+  await write('apps/frontend/dist/web/renderer-manifest.json', manifest)
+  await write('.output/public/mikka/renderer-manifest.json', manifest)
+  const result = await inspectAnalyticsBuild(root)
+  assert.equal(result.headless, true)
+  assert.equal(result.assets.size, 1)
+  assert.equal(result.configuredAssets.size, 0)
+  await write('.output/public/mikka/renderer-manifest.json', '{"headless":false}')
+  await assert.rejects(inspectAnalyticsBuild(root), /served renderer manifest/)
 })
 
 test('artifact verification rejects escaping and symlinked files instead of accepting their filenames', async t => {
@@ -504,4 +647,260 @@ test('acquisition fields keep bounded UTM labels and referring domains, never ra
   assert.equal(p.first_touch_landing, '/mikka')
   assert.equal(p.utm_content, undefined)
   assert.equal(p.$referrer, undefined)
+})
+
+test('frontend ErrorBoundary and runtime error RUM events keep only sanitized bounded fields and strip PII', () => {
+  const renderEvent = sanitizeAnalyticsEvent({
+    event: 'frontend_render_error',
+    properties: {
+      token: 'public-project-token',
+      distinct_id: 'opaque-user-id',
+      $session_id: 'session-1',
+      error_name: 'TypeError',
+      boundary: 'app-frame-page',
+      route: 'https://app.aspectlylabs.com/en/tasks/550e8400-e29b-41d4-a716-446655440000?token=PRIVATE_QUERY_CANARY&email=alice@example.com#PRIVATE_HASH',
+      build_sha: '5be23b0',
+      viewport_bucket: 'desktop',
+      recoverable: true,
+      message: 'PRIVATE_ERROR_MESSAGE_CANARY',
+      stack: 'Error at /Users/alex/private.ts:12',
+      email: 'alice@example.com',
+      lcp_ms: 1200,
+    },
+    $set: { email: 'alice@example.com' },
+  })
+  assert.equal(JSON.stringify(renderEvent).includes('PRIVATE_'), false)
+  assert.equal(JSON.stringify(renderEvent).includes('alice@example.com'), false)
+  assert.deepEqual(renderEvent, {
+    event: 'frontend_render_error',
+    properties: {
+      token: 'public-project-token',
+      distinct_id: 'opaque-user-id',
+      $session_id: 'session-1',
+      route: '/en/tasks/:id',
+      build_sha: '5be23b0',
+      viewport_bucket: 'desktop',
+      error_name: 'TypeError',
+      boundary: 'app-frame-page',
+      recoverable: true,
+    },
+  })
+
+  const hostileRuntime = sanitizeAnalyticsEvent({
+    event: 'frontend_runtime_error',
+    properties: {
+      error_name: 'Bearer sk_live_PRIVATE_CANARY failed for alice@example.com',
+      error_source: 'unhandled_rejection',
+      route: '/en/invite/PRIVATE_INVITE_CODE/users/alice@example.com/987654?secret=PRIVATE_QUERY',
+      build_sha: 'invalid sha with spaces',
+      viewport_bucket: 'invalid_bucket',
+      reason: 'PRIVATE_REASON_CANARY',
+    },
+  })
+  assert.equal(JSON.stringify(hostileRuntime).includes('PRIVATE_'), false)
+  assert.equal(JSON.stringify(hostileRuntime).includes('alice@example.com'), false)
+  assert.deepEqual(hostileRuntime, {
+    event: 'frontend_runtime_error',
+    properties: {
+      route: '/en/invite/:token/users/:redacted/:id',
+      error_name: 'Error',
+      error_source: 'unhandled_rejection',
+    },
+  })
+})
+
+test('frontend_web_vitals keeps bounded CWV timings, drops empty/invalid payloads, and keeps RUM fields off $pageview', () => {
+  const vitals = sanitizeAnalyticsEvent({
+    event: 'frontend_web_vitals',
+    properties: {
+      token: 'public-project-token',
+      distinct_id: 'opaque-user-id',
+      route: '/en/pulls/123456?code=PRIVATE_OAUTH_CODE#frag',
+      build_sha: '5be23b0',
+      viewport_bucket: 'mobile',
+      flush_reason: 'visibility_hidden',
+      lcp_ms: 1245.7,
+      cls: 0.12345,
+      inp_ms: 88.2,
+      fcp_ms: 410.4,
+      ttfb_ms: 180.6,
+      userAgent: 'PRIVATE_UA_CANARY',
+      query: 'PRIVATE_QUERY_CANARY',
+    },
+    $set_once: { email: 'alice@example.com' },
+  })
+  assert.equal(JSON.stringify(vitals).includes('PRIVATE_'), false)
+  assert.deepEqual(vitals, {
+    event: 'frontend_web_vitals',
+    properties: {
+      token: 'public-project-token',
+      distinct_id: 'opaque-user-id',
+      route: '/en/pulls/:id',
+      build_sha: '5be23b0',
+      viewport_bucket: 'mobile',
+      flush_reason: 'visibility_hidden',
+      lcp_ms: 1246,
+      cls: 0.1235,
+      inp_ms: 88,
+      fcp_ms: 410,
+      ttfb_ms: 181,
+    },
+  })
+
+  // Empty or out-of-range vitals payloads are dropped cleanly.
+  assert.equal(sanitizeAnalyticsEvent({ event: 'frontend_web_vitals', properties: { route: '/en/tasks', flush_reason: 'pagehide' } }), null)
+  assert.equal(
+    sanitizeAnalyticsEvent({
+      event: 'frontend_web_vitals',
+      properties: { lcp_ms: -5, cls: 999, inp_ms: Number.POSITIVE_INFINITY, fcp_ms: '123', ttfb_ms: 9_999_999 },
+    }),
+    null,
+  )
+
+  // RUM-specific fields never leak onto unrelated events like $pageview.
+  const pageview = sanitizeAnalyticsEvent({
+    event: '$pageview',
+    properties: {
+      distinct_id: 'opaque-user-id',
+      error_name: 'TypeError',
+      boundary: 'app-frame-page',
+      route: '/en/tasks',
+      lcp_ms: 1000,
+    },
+  })
+  assert.deepEqual(pageview.properties, { distinct_id: 'opaque-user-id' })
+})
+
+test('a control click keeps only its build-time owner; anything else in it, or a malformed owner, is dropped', () => {
+  const owner = 'web/components/settings/members.tsx#MembersPage:Button[Invite]'
+  const event = sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: {
+    owner, token: 'public-project-token', distinct_id: 'opaque-user-id', $el_text: 'private@example.com',
+    $elements: [{ text: 'private' }], email: 'private@example.com', $current_url: 'https://example.com/settings?email=x',
+  } })
+  assert.deepEqual(event.properties, {
+    token: 'public-project-token', distinct_id: 'opaque-user-id', owner,
+    $current_url: 'https://example.com/settings', $pathname: '/settings',
+  })
+  for (const bad of [undefined, 42, 'private@example.com', 'not-a-file#X:button', `web/a.tsx#A:button[${'x'.repeat(200)}]`]) {
+    assert.equal(sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: { owner: bad } }), null, String(bad))
+  }
+})
+
+test('a control owner names a file under a UI source root and a plugin-written label, never data', () => {
+  const kept = owner => sanitizeAnalyticsEvent({ event: 'ui_control_click', properties: { owner } })?.properties.owner
+  // Owners the UI checkout's plugin writes (scripts/track-owner/vite-plugin.mjs).
+  for (const owner of [
+    'web/components/settings/members.tsx#MembersPage:Button[Invite]',
+    'web/components/demo/panel.tsx#Fancy:button[Save draft]',
+    'slots/a.tsx#A:button.1',
+    'slots/thread.tsx#ThreadSlot:Tabs.Trigger[Changes].2',
+    'core/components/sidebar.tsx#Sidebar:a[Open sidebar]',
+    'components/mikka/create-window.tsx#CreateWindow:button[新建任务]',
+    'components/mikka/right-column-strip/strip.tsx#Strip:button[onClick=props.onCloseRightColumnTabAndFocus]',
+    'lib/settings-frame.tsx#SettingsFrame:Link[settings.nav.general]',
+    'shared/x.jsx#module:input.3',
+    'preview/templates.tsx#Templates:summary[Version 2026]',
+    `web/a.tsx#A:button[${'x'.repeat(48)}]`,
+    `web/a.tsx#A:button[onClick=${'h'.repeat(64)}]`,
+    'web/a.tsx#A:button.999',
+    // Hashed message keys are names (the UI checkout's FeatureCopy.c_<8 hex>).
+    'slots/settings-members.tsx#TeamsTab:Button[FeatureCopy.c_30108106]',
+    'slots/settings-members.tsx#TeamMembersPage:Button[FeatureCopy.c_352987c4]',
+    'web/components/slots/settings-sidebar.tsx#SettingsSidebar:SidebarMenuButton[FeatureCopy.c_cb11190c]',
+    'web/components/x.tsx#X:button[Settings.nav.createTeam]',
+    'web/components/x.tsx#X:a[versionPullRequest].2',
+    // Brackets, `#` and `:` of the owner itself are not data, nor are a mention's `@` or a component named Data.
+    'web/a.tsx#A:button[@].1',
+    'web/a.tsx#A:button[@here]',
+    'web/a.tsx#Data:button',
+    'web/a.tsx#Tel:a[Run]',
+  ]) assert.equal(kept(owner), owner, owner)
+  for (const owner of [
+    'web/a.tsx#A:button[x@y.com]',
+    'web/a.tsx#A:button[Mail alex@example.com]',
+    '../../etc/passwd.tsx#A:b',
+    'web/../../etc/passwd.tsx#A:b',
+    'web/./a.tsx#A:b',
+    'etc/passwd.tsx#A:b',
+    'node_modules/pkg/a.tsx#A:button',
+    '/web/a.tsx#A:button',
+    'web.tsx#A:button',
+    `web/a.tsx#A:button[${'x'.repeat(49)}]`,
+    'web/a.tsx#A:button[https://example.com]',
+    'web/a.tsx#A:button[www.example.com]',
+    'web/a.tsx#A:button[example.com/reset?token=abc]',
+    'web/a.tsx#A:button[mailto:alex]',
+    'web/a.tsx#A:button[Order 123456]',
+    'web/a.tsx#A:button[Call +1 (555) 123-4567]',
+    'web/a.tsx#A:button[onClick=x@y.com]',
+    // Data anywhere in the owner, not only in its label.
+    'web/alex@example.com/a.tsx#A:button',
+    'web/www.example.com/a.tsx#A:button',
+    'web/4111111111111111.tsx#A:button',
+    'web/evil.example.com/a.tsx#A:button',
+    'web/a.tsx#A:button[onClick=www.example.com]',
+    'web/a.tsx#A:button[onClick=x4111111111111111]',
+    `web/a.tsx#A:button[onClick=${'h'.repeat(65)}]`,
+    'web/a.tsx#A:button.4111111111111111',
+    'web/a.tsx#A:button.1234',
+    'web/a.tsx#A4111111111111111:button',
+    'web/a.tsx#A:Menu.x4111111111111111',
+    // Control and invisible characters, other scripts' forms of data.
+    'web/a.tsx#A:button[Save\rDraft]',
+    'web/a.tsx#A:button[Save\u0000]',
+    'web/a.tsx#A:button[Save\u202eDraft]',
+    'web/a.tsx#A:button[alex＠example.com]',
+    'web/a.tsx#A:button[４１１１ ４１１１ ４１１１ ４１１１]',
+    'web/a.tsx#A:button[٤١١١٤١١١٤١١١٤١١١]',
+    'web/a.tsx#A:button[4111/1111/1111/1111]',
+    'web/a.tsx#A:button[evil.example.com]',
+    'web/a.tsx#A:button[10.0.0.1]',
+    'web/a.tsx#A:button[data:text/html,x]',
+    'web/a.tsx#A:button[FeatureCopy.c_30108106 4111111]',
+    'web/a.tsx#A:button[FeatureCopy.c_301081061]',
+    // Only FeatureCopy's hashed keys are names.
+    'web/a.tsx#A:button[x4111111111111111.c_00000000]',
+    'web/a.tsx#A:button[x10.0.0.1.c_00000000]',
+    'web/a.tsx#A:button[evil.example.com.c_deadbeef]',
+    // URLs, domains, hosts, ids and tokens.
+    'web/a.tsx#A:button[bit.ly/abc123]',
+    'web/a.tsx#A:button[get.sh/install]',
+    'web/a.tsx#A:button[MAILTO:alex]',
+    'web/a.tsx#A:button[Tel:+1 555]',
+    'web/a.tsx#A:button[JavaScript:void]',
+    ...['acme.ly', 'notion.so', 'alex.me', 'site.fr', 'foo.info', 'discord.gg', 'alex%40acme.ly'].map(label => `web/a.tsx#A:button[${label}]`),
+    'web/a.tsx#A:button[api.acme:8080]',
+    'web/a.tsx#A:button[Open 123e4567-e89b-12d3-a456-426614174000]',
+    'web/a.tsx#A:button[sk_live_51Habcdefghijklmnop]',
+    'web/a.tsx#A:button[deadbeefdeadbeefdeadbeef1]',
+    'web/a.tsx#A:button[Call 1 2 3 4 5 6 7]',
+    'web/a.tsx#A:button[Pay 1$2$3$4$5$6$7]',
+    'web/a.tsx#A:button[onClick=sk_live_51Habcdefghijklmnop]',
+  ]) assert.equal(kept(owner), undefined, owner)
+})
+
+test('desktop reports keep only a route template, method, status and code, with the build tags', () => {
+  const base = { token: 'public-project-token', distinct_id: 'user-id', platform: 'desktop', app_version: '2026.10000.1940', public_sha: 'a'.repeat(40), overlay_sha: 'b'.repeat(40) }
+  const denied = sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: {
+    ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'untrusted_origin',
+    path: '/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels/label_1', body: '{"name":"private"}', message: 'private',
+  } })
+  assert.deepEqual(denied.properties, { ...base, route: '/api/workspaces/[workspaceId]/task-labels/[labelId]', method: 'PATCH', status: 403, error_code: 'untrusted_origin' })
+  // A concrete path, an unknown method or a missing status is not a report.
+  for (const properties of [
+    { route: '/api/workspaces/84c182d1-661c-461b-bca2-10410cb646d4/task-labels', method: 'GET', status: 403 },
+    { route: '/api/inbox?email=private@example.com', method: 'GET', status: 500 },
+    { route: '/api/inbox', method: 'BREW', status: 500 },
+    { route: '/api/inbox', method: 'GET' },
+  ]) assert.equal(sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: { ...base, ...properties } }), null)
+  const odd = sanitizeAnalyticsEvent({ event: 'desktop_api_error', properties: { ...base, route: 'unmatched', method: 'GET', status: 502, error_code: 'Upstream said: secret' } })
+  assert.equal(odd.properties.error_code, undefined)
+  const main = sanitizeAnalyticsEvent({ event: 'desktop_main_error', properties: { ...base, error_name: 'TypeError', error_source: 'uncaught_exception', message: 'token=private', stack: '/Users/private/app.js' } })
+  assert.deepEqual(main.properties, { ...base, error_name: 'TypeError', error_source: 'uncaught_exception' })
+  assert.equal(sanitizeAnalyticsEvent({ event: 'desktop_main_error', properties: { ...base, error_name: 'TypeError' } }), null)
+  const gone = sanitizeAnalyticsEvent({ event: 'desktop_process_gone', properties: { ...base, reason: 'crashed', process_type: 'renderer', exitCode: 11 } })
+  assert.deepEqual(gone.properties, { ...base, reason: 'crashed', process_type: 'renderer' })
+  // Tags that are not a closed word, a version or a SHA never ride along.
+  const tagged = sanitizeAnalyticsEvent({ event: '$pageview', properties: { token: 't', distinct_id: 'd', platform: 'linux user@host', app_version: 'v1 private', public_sha: 'not-a-sha' } })
+  assert.deepEqual(tagged.properties, { token: 't', distinct_id: 'd' })
 })

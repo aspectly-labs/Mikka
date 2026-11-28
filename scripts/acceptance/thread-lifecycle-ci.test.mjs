@@ -13,11 +13,11 @@ const SHA = 'a'.repeat(40), OTHER = 'b'.repeat(40)
 const workflow = { id: 405833668, name: RELEASE_NAME, path: RELEASE_WORKFLOW, state: 'active' }
 const run = { id: 123, run_attempt: 2, workflow_id: workflow.id, name: RELEASE_NAME, path: RELEASE_WORKFLOW,
   head_sha: SHA, head_branch: 'main', event: 'push', status: 'completed', conclusion: 'success',
-  repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 183887963 } },
-  head_repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 183887963 } } }
+  repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 359279274 } },
+  head_repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 359279274 } } }
 const event = () => ({ workflow_run: structuredClone(run) })
 const env = () => ({ GITHUB_EVENT_NAME: 'workflow_run', GITHUB_REPOSITORY: REPOSITORY,
-  GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963', GITHUB_REF: 'refs/heads/main',
+  GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '359279274', GITHUB_REF: 'refs/heads/main',
   EXPECTED_SOURCE_SHA: SHA, EXPECTED_UPSTREAM_RUN_ID: String(run.id), EXPECTED_UPSTREAM_RUN_ATTEMPT: String(run.run_attempt),
   GITHUB_TOKEN: 'private-credential-sentinel' })
 const expected = () => expectedRelease(env(), event())

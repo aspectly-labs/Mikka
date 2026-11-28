@@ -1,6 +1,7 @@
 # iOS: refresh credentials keep the app signed in
 
 - Date: 2026-11-24
+- **Status:** Accepted
 - Source: Alex, 2026-11-24, tired of the iOS app signing people out: 「你按照 best practice 继续往下做就行了…该合并合并…都不需要再问我了」, relayed by the coordinator with its agreed plan (a rotating mobile refresh token beside the session cookie). Builds on #3209 (keep renewed sessions, confirm a 401 before signing out).
 - Rule: —
 - Code: `lib/auth-mobile-refresh.ts`, `drizzle/20261124035101_mobile_refresh_tokens.sql`, `apps/mobile/lib/access-keeper.ts`, `apps/mobile/lib/refresh.ts`.

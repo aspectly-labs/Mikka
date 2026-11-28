@@ -110,3 +110,21 @@ test('Desktop RPC schemas register WS-G actions and reject forged authority argu
   assert.equal(desktopActionSchemas['ops-metrics.getWorkspaceOpsMetrics'].safeParse([workspaceId]).success, true)
   assert.equal(desktopActionSchemas['ops-metrics.getWorkspaceOpsMetrics'].safeParse([workspaceId, { role: 'admin' }]).success, false)
 })
+
+test('device repository setup schema accepts valid local worktree recipes and rejects traversal or forbidden paths', () => {
+  assert.deepEqual(
+    patchDeviceRepositoryInput.parse({
+      repoKey: 'v2/github.com/acme/app',
+      setup: { command: 'pnpm install --frozen-lockfile', copyFiles: ['.env.local', '.npmrc'] },
+    }).setup,
+    { command: 'pnpm install --frozen-lockfile', copyFiles: ['.env.local', '.npmrc'], approved: true },
+  )
+  assert.equal(patchDeviceRepositoryInput.parse({ id: workspaceId, setup: null }).setup, null)
+  for (const badCopy of ['../.env', '/etc/passwd', '.git/config', '.codex/auth.json', '.claude/.credentials.json']) {
+    assert.equal(
+      upsertDeviceRepositoryInput.safeParse({ repository: 'acme/app', setup: { copyFiles: [badCopy] } }).success,
+      false,
+      `must reject ${badCopy}`,
+    )
+  }
+})

@@ -47,7 +47,6 @@ import type { Logger } from "../log"
 import { daemonPaths } from "../paths"
 import {
   policyInstructions,
-  runDomains,
   runPolicy,
   type RunPolicy,
 } from "../permissions"
@@ -343,19 +342,30 @@ type ProfileSkillManifestEntry = {
   reason?: string
 }
 
+export function runMcpProfile(options: RunContextOptions) {
+  const repositorySelection = !options.factoryCheck && ['implement', 'fix'].includes(options.kind ?? '')
+  const readOnlyInspection = !options.factoryCheck && ['implement', 'fix', 'plan'].includes(options.kind ?? '') && runPolicy(options.policy).readOnly === true
+  return {
+    captures: true, repositorySelection,
+    artifactInspection: Boolean(options.factoryCheck?.reportOnly || readOnlyInspection),
+    factoryVerify: Boolean(options.factoryCheck && (!options.factoryCheck.reportOnly || options.factoryCheck.inferCommand)),
+    profileSkills: Boolean(options.profileSkills?.length || options.repositorySkills?.length),
+    decisionCatalogue: options.mcp?.decisionCatalogue ? JSON.stringify(options.mcp.decisionCatalogue) : undefined,
+  }
+}
+
 function runMcpServer(options: RunContextOptions, files: Pick<RunContext, 'worktree' | 'handoffFile' | 'capturesDir' | 'tmpDir' | 'runDir'>): McpServerSpec {
     const command = options.nodeBinary ?? process.execPath
-    const repositoryExecution = !options.factoryCheck && ['implement', 'fix'].includes(options.kind ?? '')
-    const readOnlyInspection = !options.factoryCheck && ['implement', 'fix', 'plan'].includes(options.kind ?? '') && runPolicy(options.policy).readOnly === true
+    const profile = runMcpProfile(options)
     return {
       command,
       args: [
         MCP_SERVER_SCRIPT, "--handoff", files.handoffFile,
         "--captures", files.capturesDir, "--capture-root", files.worktree, "--capture-root", files.tmpDir,
-        ...(options.profileSkills?.length || options.repositorySkills?.length ? ['--profile-skills', join(files.runDir, PROFILE_SKILLS_DIR)] : []),
-        ...(options.factoryCheck && (!options.factoryCheck.reportOnly || options.factoryCheck.inferCommand) ? ['--factory-verify', JSON.stringify({ cwd: files.worktree, command: options.verifyCommand ?? null, infer: options.factoryCheck.inferCommand })] : []),
-        ...(options.factoryCheck?.reportOnly || readOnlyInspection ? ['--factory-artifacts', files.worktree] : []),
-        ...(repositoryExecution ? ['--repository-selection', files.worktree] : []),
+        ...(profile.profileSkills ? ['--profile-skills', join(files.runDir, PROFILE_SKILLS_DIR)] : []),
+        ...(profile.factoryVerify && options.factoryCheck ? ['--factory-verify', JSON.stringify({ cwd: files.worktree, command: options.verifyCommand ?? null, infer: options.factoryCheck.inferCommand })] : []),
+        ...(profile.artifactInspection ? ['--factory-artifacts', files.worktree] : []),
+        ...(profile.repositorySelection ? ['--repository-selection', files.worktree] : []),
       ],
       // Inside Electron, `process.execPath` is the app; run it as plain Node.
       env: { ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}), ...decisionMcpEnvironment(options.mcp),
@@ -364,15 +374,15 @@ function runMcpServer(options: RunContextOptions, files: Pick<RunContext, 'workt
 }
 
 /** Identical backend inputs for the stdio and late-bound SDK transports. */
-export function runMcpBackendContext(options: RunContextOptions, files: Pick<RunContext, 'worktree' | 'handoffFile' | 'capturesDir' | 'tmpDir'>,
+export function runMcpBackendContext(options: RunContextOptions, files: Pick<RunContext, 'worktree' | 'handoffFile' | 'capturesDir' | 'tmpDir' | 'runDir'>,
   env: Record<string, string | undefined>) {
-  const repositoryExecution = !options.factoryCheck && ['implement', 'fix'].includes(options.kind ?? '')
-  const readOnlyInspection = !options.factoryCheck && ['implement', 'fix', 'plan'].includes(options.kind ?? '') && runPolicy(options.policy).readOnly === true
+  const profile = runMcpProfile(options)
   return {
     handoffFile: files.handoffFile, capturesDir: files.capturesDir, captureRoots: [files.worktree, files.tmpDir],
-    ...(repositoryExecution ? { repositoryRoot: files.worktree } : {}),
-    ...(options.factoryCheck?.reportOnly || readOnlyInspection ? { artifactRoot: files.worktree } : {}),
-    ...(options.factoryCheck && (!options.factoryCheck.reportOnly || options.factoryCheck.inferCommand) ? {
+    ...(profile.repositorySelection ? { repositoryRoot: files.worktree } : {}),
+    ...(profile.artifactInspection ? { artifactRoot: files.worktree } : {}),
+    ...(profile.profileSkills ? { profileSkillsDir: join(files.runDir, PROFILE_SKILLS_DIR) } : {}),
+    ...(profile.factoryVerify && options.factoryCheck ? {
       factoryVerify: { cwd: files.worktree, command: options.verifyCommand ?? null, infer: options.factoryCheck.inferCommand },
     } : {}),
     ...(options.mcp ? { decisionUrl: options.mcp.url, decisionToken: options.mcp.token, decisionTraceparent: options.mcp.traceparent,
@@ -525,10 +535,8 @@ export class RunContext {
         ...(this.options.harnessDomains ?? []),
         ...(runAppsHost(this.options.apps) ? [runAppsHost(this.options.apps)!] : []),
         ...(this.options.mcp ? [new URL(this.options.mcp.url).host] : []),
-        ...runDomains(
-          runPolicy(this.options.policy),
-          [...(this.options.networkAllow ?? []), ...(this.options.github ? ['github.com', 'api.github.com', new URL(this.options.github.endpoint).host] : [])],
-        ),
+        // Network access is open for every run (ADR 2026-11-27-1615).
+        "*",
       ],
     }
   }
@@ -740,7 +748,7 @@ export function runInstructions(worktree: string, policy?: RunPolicy, github?: R
     ] : github ? [] : ["- Do not commit, push or switch branches. Mikka verifies, commits and pushes your work after you hand it in."]),
     "- Run every command in the foreground. Nothing keeps running after your turn: when your turn ends, the run ends.",
     "- When the task is done and checked, call the `submit` tool of the `mikka` MCP server with a short summary. That is the only way to finish successfully.",
-    "- First use the issue and existing facts. For missing task context call `request_help`: the Orchestrator checks known facts before involving the person. Call `ask_human` only for a genuinely unresolved product decision or missing permission. Call `report_blocked` for an external condition. These preserve a durable question and stop this run; an answer continues its original worktree/session. Never invent authorization or start another task while waiting.",
+    "- First use the issue and existing facts. For missing task context call `request_help`: the Orchestrator checks known facts before involving the person. Never ask anyone for permission or approval: within the rules above you have full access, so act. Call `ask_human` only for a genuinely unresolved product decision or missing information. Call `report_blocked` for a real external blocker (a service down, a quota, a sign-in only the person can supply). These preserve a durable question and stop this run; an answer continues its original worktree/session. Never invent authorization or start another task while waiting.",
     "- Ending your turn without calling one of these tools counts as unfinished work.",
   ].join("\n")
 }

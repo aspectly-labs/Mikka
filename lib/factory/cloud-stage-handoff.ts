@@ -10,6 +10,7 @@ import type { Pool } from 'pg'
 import { withDatabaseClient } from '../db'
 import type { agentRuns } from '../db/schema'
 import { factoryAutomaticRuntime } from './automatic-dispatch'
+import { admittedTaskCompute, allocatedTaskProvider } from '../cloud-computer/task-compute-provider'
 import { assertRunProjectResources, isProjectExecutionRefusal, withRunProjectResources } from '../project-resources/run-lease'
 
 type Actor = { userId: string; workspaceId: string }
@@ -47,6 +48,7 @@ export async function handoffFactoryCloudStage(pool: Pool, actor: Actor, previou
   if (handoff.status !== 'queued') return true
   try {
     return await withRunProjectResources(pool, handoff.run, async () => {
+      let archiveSource: { epoch: number; sandboxId: string } | undefined
       try {
         if (previousRunId) {
           const client = await pool.connect()
@@ -58,10 +60,30 @@ export async function handoffFactoryCloudStage(pool: Pool, actor: Actor, previou
                 AND r."issueId"=$4 AND r.status='queued' AND r."stopRequestedAt" IS NULL FOR UPDATE OF r`,
             [runId, actor.userId, actor.workspaceId, handoff.run.issueId])
             if (!current) { await client.query('ROLLBACK'); return false }
-            // The next Run's current placement remains locked through parent
-            // retention/park. Release it before ensure acquires its own lock.
             await assertRunProjectResources(client, current)
-            await withDatabaseClient(client, () => factoryAutomaticRuntime.park(pool, actor, previousRunId, runId, client))
+            const destination = admittedTaskCompute(current.agentDefinition)?.sku
+            if (destination && !current.retryOf && !current.questionContinuation) {
+              const { rows: [source] } = await client.query<{ epoch: number; sandboxId: string; snapshotId: string; size: string | null; hardwareVerified: boolean }>(`
+                SELECT m.epoch,m."sandboxId",m."snapshotId",
+                  COALESCE(m.lifecycle->>'sponsoredSize', l.size, r."agentDefinition"#>>'{taskCompute,size}') AS size,
+                  (l."operationId" IS NOT NULL OR COALESCE(r."agentDefinition"#>'{taskCompute,requireVerifiedHardware}'='true'::jsonb,false)) AS "hardwareVerified"
+                FROM thread_machines m
+                JOIN agent_runs r ON r.id=m."runId" AND r."userId"=m."ownerId"
+                JOIN device_repos source_repo ON source_repo.id=m."repoId" AND source_repo."userId"=m."ownerId"
+                JOIN device_repos target_repo ON target_repo.id=$5 AND target_repo."userId"=m."ownerId"
+                LEFT JOIN e2b_compute_leases l ON l."sandboxId"=m."sandboxId" AND l."ownerId"=m."ownerId"
+                WHERE m."runId"=$1 AND m."ownerId"=$2 AND m."workspaceId"=$3 AND m."issueId"=$4
+                  AND m.state<>'ended' AND m."sandboxId" IS NOT NULL
+                  AND source_repo."repoPath"=target_repo."repoPath" AND target_repo."remoteUrl" IS NOT NULL
+              `, [previousRunId, actor.userId, actor.workspaceId, current.issueId, current.deviceRepoId])
+              const requiresHardware = destination.provider === 'e2b' && current.agentDefinition?.taskCompute?.requireVerifiedHardware === true
+              if (source && (allocatedTaskProvider(source) !== destination.provider ||
+                (source.size !== null && source.size !== destination.size) || (requiresHardware && !source.hardwareVerified)))
+                archiveSource = { epoch: source.epoch, sandboxId: source.sandboxId }
+            }
+            // Same-runtime retention keeps the original destination lock.
+            // Archive capture commits its own source intent before provider I/O.
+            if (!archiveSource) await withDatabaseClient(client, () => factoryAutomaticRuntime.park(pool, actor, previousRunId, runId, client))
             await client.query('COMMIT')
           } catch (error) { await client.query('ROLLBACK'); throw error }
           finally { client.release() }
@@ -70,6 +92,11 @@ export async function handoffFactoryCloudStage(pool: Pool, actor: Actor, previou
         if (isProjectExecutionRefusal(error)) throw error
         await failFactoryCloudStage(pool, actor, runId, 'Previous stage artifacts could not be retained')
         return false
+      }
+      if (previousRunId && archiveSource) {
+        const { parkThreadMachine } = await import('../cloud-computer/thread-machines')
+        const parked = await parkThreadMachine(pool, actor, previousRunId, undefined, undefined, undefined, archiveSource)
+        if (parked?.reviewHeldUntil) return { retryAt: parked.reviewHeldUntil }
       }
       const started = await factoryAutomaticRuntime.start(actor, runId)
       if (started?.state === 'unavailable' && started.reason === 'project_resources') return false

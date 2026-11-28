@@ -34,7 +34,7 @@ test('native step imports compile workspace protocol and keep API adapters and p
     await mkdir(join(buildDir, 'workflow'), { recursive: true })
     const filename = join(buildDir, 'workflow/steps.mjs')
     const source = version => `
-      import { NextResponse } from '@/lib/server-runtime/server';
+      import { RouteResponse } from '@/lib/server-runtime/server';
       import { headers } from '@/lib/server-runtime/headers';
       import { cache, createElement } from 'react';
       import { createRequestScope, runRequestScope } from '@/apps/api/src/context';
@@ -47,7 +47,7 @@ test('native step imports compile workspace protocol and keep API adapters and p
       export async function check() {
         let calls = 0; const memo = cache(() => ++calls);
         return runRequestScope(createRequestScope(new Request('http://localhost/fixture', { headers: { 'x-fixture': 'adapter' } })), async () => {
-          const response = NextResponse.json({ version: ${version}, value: (await headers()).get('x-fixture'), memo: [memo(), memo()], basePath: process.env.MIKKA_BASE_PATH });
+          const response = RouteResponse.json({ version: ${version}, value: (await headers()).get('x-fixture'), memo: [memo(), memo()], basePath: process.env.MIKKA_BASE_PATH });
           return response.json();
         });
       }
@@ -79,11 +79,11 @@ test('the actual Workflow LocalBuilder output loads natively and answers GET/HEA
   try {
     await writeFile(join(temporary, 'package.json'), JSON.stringify({ name: 'mikka-workflow-dev-alias-fixture', type: 'module' }))
     await writeFile(join(temporary, 'fixture.ts'), `
-      import { NextResponse } from '@/lib/server-runtime/server';
+      import { RouteResponse } from '@/lib/server-runtime/server';
       import { ACCOUNT_ROUTES } from '@mikka/protocol';
       export async function aliasStep() {
         'use step';
-        return NextResponse.json({route:ACCOUNT_ROUTES.list}).status;
+        return RouteResponse.json({route:ACCOUNT_ROUTES.list}).status;
       }
       export async function aliasWorkflow() {
         'use workflow';
@@ -101,7 +101,7 @@ test('the actual Workflow LocalBuilder output loads natively and answers GET/HEA
     const built = await readFile(join(buildDir, 'workflow/steps.mjs'), 'utf8')
     assert.ok(built.includes('aliasStep'), 'the fixture step reached the bundle')
     assert.ok(!built.includes('@/lib/server-runtime/'), 'the alias is no longer left for Node to resolve')
-    assert.match(built, /NextResponse/, 'the step keeps the server response type it imports')
+    assert.match(built, /RouteResponse/, 'the step keeps the server response type it imports')
     const compile = developmentWorkflowAliases({ buildDir })
     await compile()
     const probe = join(temporary, 'health.mjs')
@@ -110,10 +110,10 @@ test('the actual Workflow LocalBuilder output loads natively and answers GET/HEA
       const steps = await import(${JSON.stringify(pathToFileURL(join(buildDir, 'workflow/steps.mjs')).href)});
       // The SDK registers steps in a global map instead of exporting them. Call
       // the step itself: only that proves the aliased server runtime — and the
-      // NextResponse it builds — is loadable inside the Workflow world.
+      // RouteResponse it builds — is loadable inside the Workflow world.
       const registered = globalThis[Symbol.for('@workflow/core//registeredSteps')];
       const aliasStep = registered.get('step//./fixture//aliasStep');
-      assert.equal(await aliasStep(), 200, 'the aliased NextResponse answers the step');
+      assert.equal(await aliasStep(), 200, 'the aliased RouteResponse answers the step');
       const {POST} = await import(${JSON.stringify(pathToFileURL(join(buildDir, 'workflow/workflows.mjs')).href)});
       for (const method of ['GET','HEAD']) {
         const response = await POST(new Request('http://localhost/.well-known/workflow/v1/flow?__health', {method}));

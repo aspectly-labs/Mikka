@@ -4,6 +4,10 @@ import { readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import test, { mock } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
+import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api'
+import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
+import { InMemoryLogRecordExporter } from '@opentelemetry/sdk-logs'
 import { Pool } from 'pg'
 import { SQL, is, sql } from 'drizzle-orm'
 import { PgDialect, PgTable, getTableConfig } from 'drizzle-orm/pg-core'
@@ -11,6 +15,8 @@ import * as workspaceSchema from '../lib/db/workspace-schema'
 import * as teamSchema from '../lib/db/team-schema'
 import * as projectSchema from '../lib/db/project-schema'
 import { createTestDatabase, dropTestDatabase, endPoolsAndWait } from './support/drop-test-database'
+import { createTracerProvider, SafeExporter } from '../lib/tracing/node'
+import { createLogProvider } from '../lib/tracing/logs'
 
 const mainURL = process.env.E2E_DATABASE_URL
 function isolated(value: string) {
@@ -23,14 +29,28 @@ if (mainURL) isolated(mainURL)
 if (!mainURL && process.env.REQUIRE_DB === '1') throw new Error('Required audit delivery database cannot skip')
 const exec = promisify(execFile)
 
+async function blockedClient(database: Pool, blocker: number) {
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    const row = (await database.query<{ pid: number }>('SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND datname=current_database()', [blocker])).rows[0]
+    if (row) return row.pid
+    await delay(10)
+  }
+  throw new Error('Expected PostgreSQL lock wait did not occur')
+}
+
 // Mirrors the existing E2E setup's real Drizzle table definitions; no customer data or external services.
 async function prepareWorkspace(database: Pool) {
-  for (const name of ['0006_workspace_tables.sql', '0014_workspace_teams.sql', '20261029213938_workspace_admin_identity.sql', '20261101020200_personal_workspace_kind.sql', '20261120201500_workspace_task_prefix.sql']) await database.query(await readFile(new URL(`../drizzle/${name}`, import.meta.url), 'utf8'))
+  for (const name of [
+    '0006_workspace_tables.sql', '0014_workspace_teams.sql', '20261029213938_workspace_admin_identity.sql',
+    '20261101020200_personal_workspace_kind.sql', '20261120201500_workspace_task_prefix.sql',
+    '20261126000109_workspace_two_factor_requirement.sql',
+  ]) await database.query(await readFile(new URL(`../drizzle/${name}`, import.meta.url), 'utf8'))
   const dialect = new PgDialect(), ident = (name: string) => dialect.sqlToQuery(sql`${sql.identifier(name)}`).sql
   function defaultValue(value: unknown) {
     if (value instanceof SQL) return dialect.sqlToQuery(value).sql
     if (typeof value === 'boolean' || typeof value === 'number') return String(value)
-    return `'${String(value).replaceAll("'", "''")}'`
+    return `'${(typeof value === 'object' ? JSON.stringify(value) : String(value)).replaceAll("'", "''")}'`
   }
   for (const table of [...Object.values(workspaceSchema), ...Object.values(teamSchema), ...Object.values(projectSchema)]) {
     if (!is(table, PgTable) || table === workspaceSchema.workspaceAuditOutbox) continue
@@ -40,6 +60,7 @@ async function prepareWorkspace(database: Pool) {
     await database.query(`CREATE TABLE IF NOT EXISTS ${ident(config.name)} (${[...columns, ...keys].join(',')})`)
   }
   if (!(await database.query("SELECT to_regclass('workspace_audit_outbox') relation")).rows[0].relation) await database.query(await readFile(new URL('../drizzle/20261031060512_workspace_audit_outbox.sql', import.meta.url), 'utf8'))
+  if (!(await database.query("SELECT to_regclass('workspace_audit_exports') relation")).rows[0].relation) await database.query(await readFile(new URL('../drizzle/20261031050730_audit_export_snapshots.sql', import.meta.url), 'utf8'))
   // Member writes use the actual Team grant/seat guard in this separate WS DB.
   if (!(await database.query("SELECT to_regclass('mikka_workspace_entitlements') relation")).rows[0].relation) await database.query(await readFile(new URL('../drizzle/20261109035010_team_entitlements.sql', import.meta.url), 'utf8'))
   // Canonical access reads the real Organization link table even for unattached Workspaces.
@@ -58,6 +79,10 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
   assert.notEqual(new URL(workspaceURL).pathname, new URL(mainURL!).pathname)
   process.env.DATABASE_URL = workspaceURL
   const workspace = new Pool({ connectionString: workspaceURL, max: 4 }), targets = { main, workspace }
+  const spans = new InMemorySpanExporter(), records = new InMemoryLogRecordExporter()
+  const logs = createLogProvider({ endpoint: 'https://unused.test/i/v1/traces', token: 'unused', environment: 'dev', exporter: records })
+  const provider = createTracerProvider({ exporter: new SafeExporter(spans), sampleRate: 1, environment: 'dev', logger: logs.getLogger('audit-test'), serverless: false })
+  provider.register()
   const actor = { id: `audit-owner-${randomUUID()}`, name: 'Audit Owner', email: 'owner@example.invalid' }
   let user = actor
   const translate = Object.assign((key: string) => key, { has: () => true })
@@ -69,6 +94,8 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
     import('../lib/audit/delivery'), import('../app/actions/workspace'), import('../lib/workspace-admin/general'), import('../lib/workspace-admin/members'), import('../lib/workspace-db'), import('../lib/db'),
   ])
   t.after(async () => {
+    await provider.shutdown(); await logs.shutdown()
+    trace.disable(); context.disable(); propagation.disable()
     process.env.DATABASE_URL = previousWorkspace
     await endPoolsAndWait(workspace, workspacePool, pool)
     if (allocated) await dropTestDatabase(main, databaseName)
@@ -83,7 +110,15 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
   const pending = (id: string) => workspace.query('SELECT * FROM workspace_audit_outbox WHERE "workspaceId"=$1 AND "deliveredAt" IS NULL ORDER BY "createdAt",id', [id]).then(result => result.rows)
   const restart = async () => {
     const child = await exec(process.execPath, ['--import', './tests/support/server-only.mjs', '--import', 'tsx', 'tests/fixtures/audit-delivery-process.mts'], { cwd: process.cwd(), env: { ...process.env, MIKKA_DATABASE_URL: mainURL!, DATABASE_URL: workspaceURL }, timeout: 30_000 })
-    return JSON.parse(child.stdout) as { delivered: number; failed: number }
+    // Database diagnostics can share this stdout. Only the fixture's own line is its result.
+    const results = child.stdout.split('\n').flatMap(line => {
+      try {
+        const value: unknown = JSON.parse(line)
+        return value && typeof value === 'object' && 'delivered' in value && 'failed' in value ? [value as { delivered: number; failed: number }] : []
+      } catch { return [] }
+    })
+    assert.equal(results.length, 1, child.stdout)
+    return results[0]
   }
   await t.test('main failure cannot lose a committed role change; a real new process delivers its original ID once', async () => {
     const ws = await seed(), constraint = `audit_delivery_fail_${randomUUID().replaceAll('-', '')}`
@@ -95,7 +130,31 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
       assert.equal((await workspace.query('SELECT role FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2', [ws.id, ws.peer])).rows[0].role, 'admin')
       const receipts = await pending(ws.id); assert.equal(receipts.length, 1); receiptId = receipts[0].id
       assert.deepEqual(receipts[0].payload.metadata, { oldRole: 'member', newRole: 'admin' })
-      assert.equal((await deliverWorkspaceAudits(targets)).failed, 1)
+      const result = await provider.getTracer('audit-test').startActiveSpan('cron:reconcile', async span => {
+        try { return await deliverWorkspaceAudits(targets) } finally { span.end() }
+      })
+      assert.deepEqual(result, { delivered: 0, failed: 1 })
+      await provider.forceFlush(); await logs.forceFlush()
+      // The committed role change also schedules an `after:live-notify` background job with its
+      // own root span, which can finish before or after this one. Judge the delivery job's span.
+      const jobs = spans.getFinishedSpans().filter(span => span.name === 'cron:reconcile')
+      assert.equal(jobs.length, 1); const [failure] = jobs
+      const [record] = records.getFinishedLogRecords().filter(log => log.spanContext?.spanId === failure.spanContext().spanId)
+      assert.ok(record, 'the failed job emits its correlated stage log')
+      assert.equal(failure.status.code, SpanStatusCode.ERROR, 'a retained receipt failure must remain visible on its job')
+      for (const attributes of [failure.attributes, record.attributes]) {
+        assert.equal(attributes['error.type'], 'DrizzleQueryError')
+        assert.equal(attributes['mikka.audit.delivery_failed'], true)
+        assert.equal(attributes['mikka.audit.error_code'], '23514', 'the real PostgreSQL CHECK violation survives the Drizzle cause')
+        assert.equal(attributes['mikka.audit.constraint'], constraint)
+      }
+      assert.equal(record.body, 'mikka.stage.failed')
+      assert.equal(record.spanContext?.traceId, failure.spanContext().traceId)
+      assert.equal(record.spanContext?.spanId, failure.spanContext().spanId)
+      const exported = JSON.stringify({ span: failure.attributes, events: failure.events, log: record.attributes })
+      for (const privateValue of [ws.id, actor.id, ws.peer, receiptId, 'owner@example.invalid', 'oldRole', 'member.role_changed', 'insert into']) {
+        assert.equal(exported.includes(privateValue), false, 'audit payload, SQL and tenant identity must not enter failure diagnostics')
+      }
       assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE id=$1', [receiptId])).rows[0].n, 0)
       assert.equal((await pending(ws.id)).length, 1)
     } finally { await main.query(`ALTER TABLE workspace_audit_events DROP CONSTRAINT ${constraint}`) }
@@ -217,4 +276,87 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
     assert.equal((await restart()).failed, 0)
     assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE "workspaceId"=$1', [ws.id])).rows[0].n, 4, 'subject removal cannot cascade away undelivered audit intent')
   })
+  await t.test('a committed main deletion cannot expire policy while the workspace transaction rolled back and can create more audit', async () => {
+    const { applyAuditRetention } = await import('../lib/audit/retention')
+    const ws = await seed(), day = 86_400_000, deletedAt = new Date(Date.now() - 100 * day)
+    await main.query('INSERT INTO workspace_audit_retention("workspaceId","retentionDays","legalHold","configuredBy") VALUES($1,200,false,\'fixture-admin\')', [ws.id])
+    await main.query('INSERT INTO workspace_deletions(id,"deletedAt") VALUES($1,$2)', [ws.id, deletedAt])
+    // The actual deletion order commits APP first. A failed WS transaction can
+    // leave its workspace and membership present after that independent commit.
+    const client = await workspace.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1', [ws.id])
+      await client.query('DELETE FROM mikka_workspaces WHERE id=$1', [ws.id])
+      await client.query('ROLLBACK')
+    } finally { client.release() }
+    assert.equal((await pending(ws.id)).length, 0)
+    const at = (days: number) => new Date(deletedAt.getTime() + days * day)
+    assert.deepEqual(await applyAuditRetention(ws.id, at(100), targets), { deleted: 0, skipped: 'workspace_present' })
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_retention WHERE "workspaceId"=$1', [ws.id])).rows[0].n, 1)
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_deletions WHERE id=$1', [ws.id])).rows[0].n, 1)
+    const id = await workspaceDb.transaction(tx => enqueueWorkspaceAudit(tx, { workspaceId: ws.id, actor: { type: 'system' }, action: 'auth.sign_in_failed', metadata: { method: 'password', reason: 'invalid' } }))
+    await workspace.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1', [ws.id])
+    await workspace.query('DELETE FROM mikka_workspaces WHERE id=$1', [ws.id])
+    assert.deepEqual(await applyAuditRetention(ws.id, at(100), targets), { deleted: 0, skipped: 'pending_delivery' })
+    assert.equal((await restart()).failed, 0)
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE id=$1', [id])).rows[0].n, 1)
+    assert.deepEqual(await applyAuditRetention(ws.id, at(301), targets), { deleted: 1, skipped: null })
+  })
+  await t.test('pending cross-store audit intent retains the deleted workspace policy until delivery and normal expiry', async () => {
+    const { applyAuditRetention } = await import('../lib/audit/retention')
+    const ws = await seed(), day = 86_400_000, deletedAt = new Date(Date.now() - 100 * day)
+    const id = await workspaceDb.transaction(tx => enqueueWorkspaceAudit(tx, { workspaceId: ws.id, actor: { type: 'system' }, action: 'auth.sign_in_failed', target: { type: 'user', id: actor.id }, metadata: { method: 'password', reason: 'invalid' } }))
+    await workspace.query('UPDATE workspace_audit_outbox SET "createdAt"=$2 WHERE id=$1', [id, new Date(deletedAt.getTime() - 10 * day)])
+    await main.query('INSERT INTO workspace_audit_retention("workspaceId","retentionDays","legalHold","configuredBy") VALUES($1,200,false,\'fixture-admin\')', [ws.id])
+    await main.query('INSERT INTO workspace_deletions(id,"deletedAt") VALUES($1,$2)', [ws.id, deletedAt])
+    // The workspace itself is gone; its committed outbox has no cascading FK.
+    await workspace.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1', [ws.id])
+    await workspace.query('DELETE FROM mikka_workspaces WHERE id=$1', [ws.id])
+    const at = (days: number) => new Date(deletedAt.getTime() + days * day)
+    assert.deepEqual(await applyAuditRetention(ws.id, at(100), targets), { deleted: 0, skipped: 'pending_delivery' })
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_retention WHERE "workspaceId"=$1', [ws.id])).rows[0].n, 1)
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_deletions WHERE id=$1', [ws.id])).rows[0].n, 1)
+    assert.equal((await restart()).failed, 0)
+    assert.equal((await pending(ws.id)).length, 0)
+    assert.deepEqual(await applyAuditRetention(ws.id, at(100), targets), { deleted: 0, skipped: null }, 'the longer explicit retention still applies after delayed delivery')
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE id=$1', [id])).rows[0].n, 1)
+    assert.deepEqual(await applyAuditRetention(ws.id, at(201), targets), { deleted: 1, skipped: null })
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_deletions WHERE id=$1', [ws.id])).rows[0].n, 0)
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_retention WHERE "workspaceId"=$1', [ws.id])).rows[0].n, 0)
+  })
+  await t.test('retention waits through the real main commit and workspace acknowledgment boundary', async () => {
+    const { applyAuditRetention } = await import('../lib/audit/retention')
+    const ws = await seed(), deletedAt = new Date(Date.now() - 100 * 86_400_000)
+    const id = await workspaceDb.transaction(tx => enqueueWorkspaceAudit(tx, { workspaceId: ws.id, actor: { type: 'system' }, action: 'auth.sign_in_failed', metadata: { method: 'password', reason: 'invalid' } }))
+    await main.query('INSERT INTO workspace_deletions(id,"deletedAt") VALUES($1,$2)', [ws.id, deletedAt])
+    await workspace.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1', [ws.id])
+    await workspace.query('DELETE FROM mikka_workspaces WHERE id=$1', [ws.id])
+    const name = `audit_ack_gate_${randomUUID().replaceAll('-', '')}`, holder = await workspace.connect()
+    const holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0].pid
+    await holder.query('BEGIN')
+    await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [name])
+    await workspace.query(`CREATE FUNCTION ${name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${id}'::uuid AND NEW."deliveredAt" IS NOT NULL THEN PERFORM pg_advisory_xact_lock(hashtextextended('${name}',0)); END IF; RETURN NEW; END $$`)
+    await workspace.query(`CREATE TRIGGER ${name} BEFORE UPDATE ON workspace_audit_outbox FOR EACH ROW EXECUTE FUNCTION ${name}()`)
+    let delivery: ReturnType<typeof deliverWorkspaceAudits> | undefined, retention: ReturnType<typeof applyAuditRetention> | undefined
+    try {
+      delivery = deliverWorkspaceAudits(targets, 1)
+      const deliveryPid = await blockedClient(workspace, holderPid)
+      assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE id=$1', [id])).rows[0].n, 1, 'the target commit is visible before source acknowledgment')
+      retention = applyAuditRetention(ws.id, new Date(), targets)
+      await blockedClient(workspace, deliveryPid)
+      assert.equal((await pending(ws.id)).length, 1)
+      await holder.query('ROLLBACK')
+      assert.deepEqual(await delivery, { delivered: 1, failed: 0 })
+      assert.deepEqual(await retention, { deleted: 1, skipped: null })
+      assert.equal((await pending(ws.id)).length, 0)
+      assert.equal((await main.query('SELECT count(*)::int n FROM workspace_deletions WHERE id=$1', [ws.id])).rows[0].n, 0)
+    } finally {
+      await holder.query('ROLLBACK'); holder.release()
+      await Promise.allSettled([delivery, retention])
+      await workspace.query(`DROP TRIGGER ${name} ON workspace_audit_outbox`)
+      await workspace.query(`DROP FUNCTION ${name}()`)
+    }
+  })
+
 })

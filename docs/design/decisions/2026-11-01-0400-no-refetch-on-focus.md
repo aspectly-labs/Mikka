@@ -1,6 +1,7 @@
 # Focus is stale-while-revalidate, never a re-query
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, on the GitHub plugin page flashing on every screenshot or window switch: 「每次进这个窗口，他都要重新查一次这个情况。这是绝对禁止的行为，严查」; refined the same day to follow what Linear, Slack, GitHub and Figma do
 - Rule: —
 - Replaces: —

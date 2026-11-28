@@ -7,10 +7,10 @@ import { assertDatabaseIdentity, EnvironmentError, loadEnvironment } from '../te
 import { TestAccountError } from '../test-accounts/pool.mjs'
 import { withTestAccounts } from '../test-accounts/session.mjs'
 import { publishedReadActions, readRpcActions, rpcReadAllowed, rpcReadRequest, rpcReadResult } from './read-action-transport.mjs'
+import { releaseHeaders, releaseVersionGuard } from './rpc-actions.mjs'
 
 export const READ_ACTIONS = Object.freeze(['syncCoordinatorChat', 'syncIssueList', 'syncThreadList', 'pollIssue', 'pollIssueActivityPage', 'loadEarlierIssueActivity'])
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
-const referenceId = value => typeof value === 'string' && /^[a-f0-9]{40,64}$/.test(value)
 export class ReadCacheAcceptanceError extends Error {
   constructor(code, options) { super(code, options); this.name = 'ReadCacheAcceptanceError'; this.code = code }
 }
@@ -67,20 +67,6 @@ export function publicFailure(error) {
   return result
 }
 
-function chunkPath(value, environment) {
-  try {
-    if (typeof value !== 'string' || value.includes('\\')) return null
-    const raw = value.startsWith('static/chunks/') ? `${environment.basePath}/_next/${value}` : value
-    const url = new URL(raw, environment.origin)
-    if (url.origin !== environment.origin || url.username || url.password || url.hash) return null
-    const prefix = `${environment.basePath}/_next/static/chunks/`
-    if (!url.pathname.startsWith(prefix) || !url.pathname.endsWith('.js')) return null
-    const parts = url.pathname.slice(prefix.length).split('/').map(decodeURIComponent)
-    if (parts.some(part => !part || part === '.' || part === '..' || /[/\\]/.test(part))) return null
-    return url.pathname + url.search
-  } catch { return null }
-}
-
 /** Only the public production skew pin is accepted, never arbitrary query data. */
 function webDeploymentPin(url) {
   if (!url.search) return ''
@@ -98,7 +84,7 @@ function viteAssetPath(value, environment) {
 }
 
 /** The business driver can only GET published read surfaces/assets, or POST a
- * named read action discovered from this same attested application's chunks. */
+ * named read action published by this same attested application's web build. */
 export function requestAllowed(path, init, environment, refs = {}) {
   try {
     if (typeof path !== 'string' || path.includes('\\')) return false
@@ -108,127 +94,52 @@ export function requestAllowed(path, init, environment, refs = {}) {
     if (['authorization', 'cookie', 'host'].some(name => headers.has(name))) return false
     const base = environment.basePath, page = base
     if (method === 'POST' && url.pathname === `${base}/api/rpc`) return !url.search && rpcReadAllowed(init, environment, refs)
-    if (method === 'POST') return url.pathname === page && !url.search
-      && READ_ACTIONS.some(name => referenceId(refs[name]) && headers.get('next-action') === refs[name])
-      && headers.get('content-type') === 'application/json' && headers.get('accept') === 'text/x-component'
     if (method !== 'GET' || init?.body !== undefined || headers.has('next-action') || headers.has('x-mikka-rpc')) return false
     if ([`${base}/api/version`, `${base}/api/auth/get-session`, `${base}/api/workspace/switcher`, `${base}/api/settings/issue-prefix`].includes(url.pathname)) return !url.search
     if (url.pathname === page) return [...url.searchParams].every(([key, value]) => ['issue', 'workspace'].includes(key) && uuid(value))
     if (url.pathname === `${page}/settings`) return [...url.searchParams].every(([key, value]) => key === 'section' && value === 'preferences' || key === 'workspace' && uuid(value))
     return [`${base}/renderer-manifest.json`, `${base}/renderer-actions.json`].includes(url.pathname) && webDeploymentPin(url) !== null
-      || chunkPath(url.href, environment) !== null || viteAssetPath(url.href, environment) !== null
+      || viteAssetPath(url.href, environment) !== null
   } catch { return false }
 }
 
-const identifier = String.raw`[$A-Z_a-z][$\w]*`
-const member = identifier + String.raw`(?:\s*(?:\.\s*` + identifier + String.raw`|\[\s*(?:"` + identifier + String.raw`"|'` + identifier + String.raw`')\s*\]))*`
-const referenceCall = new RegExp(String.raw`(?:\bcreateServerReference|\[\s*(?:"createServerReference"|'createServerReference')\s*\])\s*\)?\s*\(\s*(["'])([a-f0-9]{40,64})\1\s*,\s*`
-  + member + String.raw`\s*,\s*(?:void\s+0|undefined)\s*,\s*` + member + String.raw`\s*,\s*(["'])([A-Za-z]+)\3\s*\)`, 'g')
-
-/** Read Next dev/production public chunks, without evaluating JavaScript or
- * inspecting private server manifests. A finite scan is not a polling loop. */
-export async function discoverReadActions(request, environment, issueId) {
-  const queue = [], queued = new Set(), seen = new Set(), refs = {}
+/** Read the public documents and the release's published action list, without
+ * evaluating JavaScript or inspecting private server manifests. deploymentId
+ * names that release ('' when the document is unpinned). */
+export async function discoverReadActions(request, environment, issueId, { allowHeadless = false } = {}) {
   const vitePins = new Set()
-  const diagnostics = { pagesRead: 0, chunksRead: 0, found: [] }
-  const add = raw => {
-    const path = chunkPath(raw, environment)
-    if (path && !queued.has(path) && queued.size < 3000) { queued.add(path); queue.push(path) }
-  }
-  const scan = source => {
-    check(Buffer.byteLength(source) <= 8_000_000, 'public_asset_too_large')
-    for (const match of source.matchAll(referenceCall)) if (READ_ACTIONS.includes(match[4])) refs[match[4]] = match[2]
-    for (const match of source.matchAll(/(?:src|href)\s*=\s*(["'])([^"']+\.js(?:\?[^"']*)?)\1/g)) {
-      const path = match[2].replaceAll('&amp;', '&')
-      const entry = viteAssetPath(path, environment)
-      if (entry) vitePins.add(webDeploymentPin(new URL(entry, environment.origin)))
-      add(path)
-    }
-    for (const match of source.matchAll(/(["'])((?:static\/chunks\/|\/mikka\/_next\/static\/chunks\/)[^"'\\\r\n]+\.js(?:\?[^"'\\\r\n]*)?)\1/g)) add(match[2])
-  }
+  const diagnostics = { pagesRead: 0, found: [] }
   // Match normal account initialization and API reads. Switching to another
   // locale can rename a generated personal workspace during a page read.
   for (const page of [environment.basePath, ...(issueId ? [`${environment.basePath}?issue=${issueId}`] : []), `${environment.basePath}/settings?section=preferences`]) {
     const response = await request(page)
-    check(response.ok, 'read_page_unavailable'); scan(await response.text()); diagnostics.pagesRead++
-  }
-  if (vitePins.size) {
-    check(vitePins.size === 1, 'read_action_reference_missing')
-    const [pin] = vitePins
-    const response = await readRendererActions(request, environment.basePath, pin)
-    check(response.ok && response.headers.get('content-type')?.includes('application/json'), 'public_action_manifest_unavailable')
+    check(response.ok, 'read_page_unavailable')
     const source = await response.text()
     check(Buffer.byteLength(source) <= 8_000_000, 'public_asset_too_large')
-    let published
-    try { published = publishedReadActions(JSON.parse(source)) }
-    catch (error) { throw new ReadCacheAcceptanceError('read_action_reference_missing', { cause: error }) }
-    return { refs: published, diagnostics: { ...diagnostics, transport: 'rpc', manifestsRead: 1, found: [...READ_ACTIONS] } }
+    for (const match of source.matchAll(/(?:src|href)\s*=\s*(["'])([^"']+\.js(?:\?[^"']*)?)\1/g)) {
+      const entry = viteAssetPath(match[2].replaceAll('&amp;', '&'), environment)
+      if (entry) vitePins.add(webDeploymentPin(new URL(entry, environment.origin)))
+    }
+    diagnostics.pagesRead++
   }
-  while (queue.length && seen.size < 200 && READ_ACTIONS.some(name => !refs[name])) {
-    const batch = queue.splice(0, Math.min(12, 200 - seen.size))
-    for (const path of batch) seen.add(path)
-    // Each rejected request remains a failure: missing assets cannot become a pass.
-    const results = await Promise.allSettled(batch.map(async path => {
-      const response = await request(path)
-      check(response.ok, 'public_asset_unavailable'); scan(await response.text()); diagnostics.chunksRead++
-    }))
-    for (const result of results) if (result.status === 'rejected') throw result.reason
-  }
-  diagnostics.found = READ_ACTIONS.filter(name => referenceId(refs[name]))
-  check(diagnostics.found.length === READ_ACTIONS.length, 'read_action_reference_missing')
-  return { refs, diagnostics }
+  check(vitePins.size === 1, 'read_action_reference_missing')
+  const [pin] = vitePins
+  const response = await readRendererActions(request, environment.basePath, pin)
+  check(response.ok && response.headers.get('content-type')?.includes('application/json'), 'public_action_manifest_unavailable')
+  const source = await response.text()
+  check(Buffer.byteLength(source) <= 8_000_000, 'public_asset_too_large')
+  let published
+  try { published = publishedReadActions(JSON.parse(source), { allowHeadless }) }
+  catch (error) { throw new ReadCacheAcceptanceError('read_action_reference_missing', { cause: error }) }
+  return { refs: published, deploymentId: pin, diagnostics: { ...diagnostics, transport: 'rpc', manifestsRead: 1, found: [...READ_ACTIONS] } }
 }
 
-/** Decode only plain read results in Flight. Length-delimited UTF-8 text rows
- * matter here: task/chat bodies exceed React's inline-string threshold. */
-export function actionResult(text) {
-  const bytes = Buffer.from(text), rows = new Map(), errors = new Set()
-  check(bytes.length <= 8_000_000, 'action_response_too_large')
-  for (let at = 0; at < bytes.length;) {
-    if (bytes[at] === 10) { at++; continue }
-    const colon = bytes.indexOf(58, at), newline = bytes.indexOf(10, at)
-    if (colon < 0 || newline >= 0 && colon > newline) { if (newline < 0) break; at = newline + 1; continue }
-    const id = bytes.subarray(at, colon).toString()
-    if (!/^[0-9a-f]+$/.test(id)) { if (newline < 0) break; at = newline + 1; continue }
-    at = colon + 1
-    if (bytes[at] === 84) {
-      const comma = bytes.indexOf(44, at), length = comma < 0 ? '' : bytes.subarray(at + 1, comma).toString()
-      check(/^[0-9a-f]+$/.test(length), 'action_text_invalid')
-      const end = comma + 1 + parseInt(length, 16)
-      check(end <= bytes.length, 'action_text_invalid')
-      rows.set(id, bytes.subarray(comma + 1, end).toString()); at = end; continue
-    }
-    const end = bytes.indexOf(10, at), line = bytes.subarray(at, end < 0 ? bytes.length : end).toString()
-    if (line.startsWith('E')) errors.add(id)
-    else { try { rows.set(id, JSON.parse(line)) } catch { /* Flight import/debug rows are not application data. */ } }
-    at = end < 0 ? bytes.length : end + 1
-  }
-  const resolve = (value, depth = 0, visiting = new Set()) => {
-    check(depth <= 40, 'action_reference_invalid')
-    if (typeof value === 'string') {
-      const reference = /^\$@?([0-9a-f]+)$/.exec(value)
-      if (reference) {
-        const id = reference[1]
-        check(!errors.has(id), 'action_server_error')
-        check(rows.has(id) && !visiting.has(id), 'action_reference_invalid')
-        return resolve(rows.get(id), depth + 1, new Set([...visiting, id]))
-      }
-      if (value === '$undefined') return undefined
-      if (value.startsWith('$$')) return value.slice(1)
-      if (value.startsWith('$D')) return value.slice(2)
-    }
-    if (Array.isArray(value)) return value.map(item => resolve(item, depth + 1, visiting))
-    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolve(item, depth + 1, visiting)]))
-    return value
-  }
-  check(rows.get('0') && Object.hasOwn(rows.get('0'), 'a'), 'action_result_missing')
-  return resolve(rows.get('0').a)
-}
-
-export function createReadClient(account, environment, actor, reads, refs = {}) {
+/** release.deploymentId, once discovery sets it, pins every later API read to the release that published the reads. */
+export function createReadClient(account, environment, actor, reads, refs = {}, release = {}) {
   const request = async (path, init = {}) => {
     check(requestAllowed(path, init, environment, refs), 'business_request_forbidden')
-    return account.request(path, { ...init, cache: 'no-store' })
+    const pinned = releaseHeaders(path, release.deploymentId, environment.basePath)
+    return account.request(path, { ...init, ...(Object.keys(pinned).length ? { headers: { ...init.headers, ...pinned } } : {}), cache: 'no-store' })
   }
   const read = async (surface, scenario, operation, path, init, decode) => {
     const traceId = randomBytes(16).toString('hex'), spanId = randomBytes(8).toString('hex')
@@ -244,17 +155,12 @@ export function createReadClient(account, environment, actor, reads, refs = {}) 
   return {
     request,
     action(name, args, surface, scenario) {
-      check(READ_ACTIONS.includes(name) && (referenceId(refs[name]) || refs[name] === readRpcActions[name]), 'read_action_forbidden')
-      if (refs[name] === readRpcActions[name]) {
-        const { path, init } = rpcReadRequest(name, args, environment, refs)
-        return read(surface, scenario, name, path, init, text => {
-          try { return rpcReadResult(JSON.parse(text)) }
-          catch (error) { throw new ReadCacheAcceptanceError('read_action_response_invalid', { cause: error }) }
-        })
-      }
-      return read(surface, scenario, name, environment.basePath, {
-        method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/x-component', 'next-action': refs[name] }, body: JSON.stringify(args),
-      }, actionResult)
+      check(READ_ACTIONS.includes(name) && refs[name] === readRpcActions[name], 'read_action_forbidden')
+      const { path, init } = rpcReadRequest(name, args, environment, refs)
+      return read(surface, scenario, name, path, init, text => {
+        try { return rpcReadResult(JSON.parse(text)) }
+        catch (error) { throw new ReadCacheAcceptanceError('read_action_response_invalid', { cause: error }) }
+      })
     },
     json(path, surface, scenario) { return read(surface, scenario, path.replace(environment.basePath, ''), path, undefined, JSON.parse) },
   }
@@ -396,9 +302,10 @@ export async function runReadCacheAcceptance() {
       evidence.stage = 'accounts'
       const result = await withTestAccounts({ environment, database, runId, workerId: 'read-cache', requestId: randomUUID() }, async scope => {
         try {
-          const refs = {}, owner = createReadClient(scope.owner, environment, 'owner', reads, refs)
-          const peer = createReadClient(scope.peer, environment, 'peer', reads, refs)
-          const pin = async scenario => check((await owner.json(`${environment.basePath}/api/version`, 'environment', scenario)).build === environment.deploymentSha, 'application_build_changed')
+          const refs = {}, release = {}, owner = createReadClient(scope.owner, environment, 'owner', reads, refs, release)
+          const peer = createReadClient(scope.peer, environment, 'peer', reads, refs, release)
+          const sameRelease = releaseVersionGuard(environment.deploymentSha)
+          const pin = async scenario => check(sameRelease(await owner.json(`${environment.basePath}/api/version`, 'environment', scenario)), 'application_build_changed')
           evidence.stage = 'version-before'
           await pin('before')
           evidence.stage = 'workspace'
@@ -411,8 +318,9 @@ export async function runReadCacheAcceptance() {
             evidence.fixtureCleanup = 'pending'
             await fixture.setup()
             evidence.stage = 'action-discovery'
-            discovery = await discoverReadActions(owner.request, environment, fixture.issueIds[0])
+            discovery = await discoverReadActions(owner.request, environment, fixture.issueIds[0], { allowHeadless: true })
             Object.assign(refs, discovery.refs)
+            release.deploymentId = discovery.deploymentId
             evidence.stage = 'read-cases'
             await exerciseReadCases({ owner, peer, fixture, environment })
             evidence.stage = 'version-after'

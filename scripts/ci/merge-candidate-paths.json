@@ -1,6 +1,5 @@
 {
   "app-icon": [
-    "apps/mobile/assets/icon.icon/**",
     "apps/desktop/build/icon.icon/**",
     ".github/workflows/app-icon.yml"
   ],
@@ -76,7 +75,6 @@
     "app/actions/issues.ts",
     "app/actions/task-runs.ts",
     "app/api/settings/**",
-    "components/swr-defaults.tsx",
     "package.json",
     "pnpm-lock.yaml"
   ],

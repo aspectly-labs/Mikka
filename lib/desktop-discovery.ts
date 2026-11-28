@@ -4,12 +4,13 @@ import { BASE_PATH } from './base-path'
 import { getEdition } from './edition'
 import { DESKTOP_RPC_PREVIOUS_VERSION, DESKTOP_RPC_VERSION, UPDATE_REQUIRED } from './desktop-rpc/wire'
 import { WEB_CONNECTION_PROTOCOL, webConnectionEnabled } from './web-connection/policy'
+import { runtimeEnv } from './env/runtime.mjs'
 
 type Environment = Record<string, string | undefined>
 
 /** Public configuration only. Discovering an installation never loads auth,
  * creates a session or returns provider credentials. The route supplies the persisted cloud connection bit. */
-export function desktopDiscovery(env: Environment = process.env) {
+export function desktopDiscovery(env: Environment = runtimeEnv()) {
   const name = env.MIKKA_SERVER_NAME?.trim().slice(0, 120) || 'Mikka'
   return {
     name,
@@ -25,7 +26,7 @@ export function desktopDiscovery(env: Environment = process.env) {
   }
 }
 
-export function desktopDiscoveryResponse(request: Request, env: Environment = process.env, signIn?: ReturnType<typeof authSignInMethods>, cloudConnected = false) {
+export function desktopDiscoveryResponse(request: Request, env: Environment = runtimeEnv(), signIn?: ReturnType<typeof authSignInMethods>, cloudConnected = false) {
   const discovery = desktopDiscovery(env)
   if (signIn) discovery.signIn = signIn
   discovery.cloud.connected = cloudConnected

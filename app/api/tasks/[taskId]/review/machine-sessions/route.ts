@@ -1,12 +1,13 @@
 import { ReviewAuthorityError, withTaskReviewAuthority } from '@/lib/coding-workspace/review-authority'
 import { listReviewSessions } from '@/lib/coding-workspace/review-sessions'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 30
 
 const headers = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers })
 
-export async function GET(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+async function unguardedGET(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
   try {
     return await withTaskReviewAuthority(request, taskId, async (authority, client) => {
@@ -19,3 +20,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ task
     throw error
   }
 }
+export const GET = defineRoute<'public','none',{ taskId: string }>(
+  {
+    route: '/api/tasks/[taskId]/review/machine-sessions',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
+)

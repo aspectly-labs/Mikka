@@ -1,6 +1,7 @@
 import { afterDatabaseCommit } from './db/commit-effects'
-import { configuredDeploymentId } from './deployment-id.mjs'
+import { configuredDeploymentId, releaseBuiltAfter } from './deployment-id.mjs'
 import { wakeTokens, wakeTransport, workflowWakesEnabled } from './workflow-wake'
+import { readEnv } from '@/lib/env/server'
 
 /**
  * Jobs whose work carries a persisted due time (#1212 D). Instead of a minute
@@ -68,7 +69,7 @@ export const dueTimerTransport: {
 } = {}
 
 const ENDED = new Set(['completed', 'failed', 'cancelled'])
-const productionDeployment = () => process.env.MIKKA_DEPLOYMENT_STAGE === 'production' || process.env.MIKKA_DEPLOYMENT_ENVIRONMENT === 'production'
+const productionDeployment = () => readEnv('MIKKA_DEPLOYMENT_STAGE') === 'production' || readEnv('MIKKA_DEPLOYMENT_ENVIRONMENT') === 'production'
 
 async function timerHolder(token: string): Promise<DueTimerHolder | null> {
   if (dueTimerTransport.holder) return dueTimerTransport.holder(token)
@@ -136,7 +137,11 @@ export async function replaceStaleDueTimer(kind: DueKind): Promise<boolean> {
   }
   // An older instance can still receive a request after a rollout. Only the
   // latest deployment in this Workflow environment may replace another run.
-  if (await latestTimerDeployment() !== deploymentId) return false
+  // A World that cannot name its latest deployment (the Cloudflare World has
+  // no resolveLatestDeploymentId) falls back to release order: only a release
+  // built after the holder's may replace it, never an older one (#1410).
+  const latest = await latestTimerDeployment()
+  if (latest ? latest !== deploymentId : releaseBuiltAfter(deploymentId, holder.deploymentId) !== true) return false
   if (dueTimerTransport.cancel) await dueTimerTransport.cancel(holder.runId)
   else await (await import('workflow/api')).getRun(holder.runId).cancel({ cancelReason: `due timer replaced by deployment ${deploymentId}` })
   await startDueTimer(kind)

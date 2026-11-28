@@ -1,5 +1,7 @@
 # 自动化：Slack 触发器
 
+- **Status:** Accepted
+
 2026-11-15：Alex 要求把自动化补齐到 Capy 的程度（「补齐」）。这是第 5 步的 Slack 部分：Slack 里的事件可以启动自动化。延续 [2026-11-15-1930](2026-11-15-1930-automation-linear-triggers.md)。
 
 ## 决定

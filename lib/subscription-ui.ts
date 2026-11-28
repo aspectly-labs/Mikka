@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CLAUDE_DESKTOP_CALLBACK_URL } from './env/hosts-constants.mjs'
 
 const startSchema = z.object({
   connectionId: z.uuid(), flow: z.enum(['device', 'callback_handoff']), state: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -33,7 +34,7 @@ export class InvalidAuthorization extends Error {
 /** Where Claude may send the browser back: localhost, which only the desktop
  * app catches, or Claude Code's own code page (MANUAL_REDIRECT_URL in
  * @anthropic-ai/claude-code 2.1.327), which shows a code to paste on the web and phones. */
-export const CLAUDE_RETURNS = ['http://localhost:54545/callback', 'https://platform.claude.com/oauth/code/callback'] as const
+export const CLAUDE_RETURNS = [CLAUDE_DESKTOP_CALLBACK_URL, 'https://platform.claude.com/oauth/code/callback'] as const
 /** The Claude return the page shows a code for, rather than a localhost address. */
 export function claudeShowsCode(authorizationUrl: string) {
   try { return new URL(authorizationUrl).searchParams.get('redirect_uri') === CLAUDE_RETURNS[1] } catch { return false }

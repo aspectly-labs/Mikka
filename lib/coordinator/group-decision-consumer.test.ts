@@ -182,3 +182,88 @@ test('Bot group generation reuses frozen binding references and streaming, witho
   await assert.rejects(groupRuntime.prepareBot!(bot, { ownerId: scope.ownerId, workspaceId }, client))
   assert.equal(streams, callsBeforeRefusal, 'refusal or an invalid frozen reference never reaches a fallback model')
 })
+
+test('group bot model freezes and resolves Daybreak access programs for subscription and BYOK routes', async (t) => {
+  const scope = { ownerId: 'owner-daybreak', workspaceId: '10000000-0000-4000-8000-000000000099', botId: members[0].id }
+  const subscriptionSelection = {
+    type: 'subscription' as const,
+    bindingId: '20000000-0000-4000-8000-000000000010',
+    ownerId: scope.ownerId,
+    consumerId: scope.botId,
+    workspaceId: scope.workspaceId,
+    connectionId: '20000000-0000-4000-8000-000000000011',
+    connectionRevision: 1,
+    modelId: 'gpt-6-luna',
+    route: 'codex_cpa' as const,
+  }
+  const byokSelection = {
+    type: 'api_key' as const,
+    keyId: '20000000-0000-4000-8000-000000000012',
+    ownerId: scope.ownerId,
+    consumerId: scope.botId,
+    workspaceId: scope.workspaceId,
+    modelId: 'gpt-6-cyber',
+  }
+  const actualSnapshot = await import('../subscription-model-snapshot')
+  const runtimeCalls: unknown[] = []
+  const resolvedRuntimes: unknown[] = []
+  let activeSelection: typeof subscriptionSelection | typeof byokSelection = subscriptionSelection
+  const handles = [
+    mock.module(new URL('../bot-model-selection.ts', import.meta.url).href, {
+      namedExports: {
+        freezeBotModel: async () => ({
+          harness: 'ai_sdk',
+          model: activeSelection.modelId,
+          modelSelection: activeSelection,
+          cyberAccessProgram: 'daybreak_red',
+          secret: 'must-be-stripped',
+        }),
+      },
+    }),
+    mock.module(new URL('../subscription-runtime.ts', import.meta.url).href, {
+      namedExports: {
+        subscriptionRuntime: (...args: unknown[]) => {
+          runtimeCalls.push(args)
+          return {}
+        },
+        authorizeSubscriptionWorkspace: async () => {},
+      },
+    }),
+    mock.module(new URL('../subscription-model-snapshot.ts', import.meta.url).href, {
+      namedExports: {
+        ...actualSnapshot,
+        resolveFrozenHostedModel: async (_scope: unknown, runtime: unknown, deps: { service: () => unknown }) => {
+          resolvedRuntimes.push(runtime)
+          deps.service()
+          return new MockLanguageModelV3({})
+        },
+      },
+    }),
+  ]
+  t.after(() => { for (const handle of handles.reverse()) handle.restore() })
+  const { freezeGroupBotModel, resolveGroupBotModel } = await import('./group-bot-model')
+  const client = { query: () => { throw Error('No unbound database query in model fixture') } } as unknown as import('pg').PoolClient
+
+  const frozenSub = await freezeGroupBotModel(scope, client)
+  assert.deepEqual(frozenSub, {
+    harness: 'ai_sdk',
+    model: 'gpt-6-luna',
+    modelSelection: subscriptionSelection,
+    cyberAccessProgram: 'daybreak_red',
+  })
+  await resolveGroupBotModel(scope, frozenSub, new AbortController().signal)
+  assert.deepEqual(runtimeCalls[0], [false, false, { modelRequestPolicy: { codexCyberAccessProgram: 'daybreak_red' } }])
+  assert.deepEqual(resolvedRuntimes[0], frozenSub)
+
+  activeSelection = byokSelection
+  const frozenByok = await freezeGroupBotModel(scope, client)
+  assert.deepEqual(frozenByok, {
+    harness: 'ai_sdk',
+    model: 'gpt-6-cyber',
+    modelSelection: byokSelection,
+    cyberAccessProgram: 'daybreak_red',
+  })
+  await resolveGroupBotModel(scope, frozenByok, new AbortController().signal)
+  assert.deepEqual(runtimeCalls[1], [false, false, undefined], 'BYOK routes pass cyberAccessProgram via runtime snapshot, not Codex subscription policy')
+  assert.deepEqual(resolvedRuntimes[1], frozenByok)
+})

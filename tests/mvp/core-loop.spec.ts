@@ -200,7 +200,7 @@ test('Chat creates a task, the selected real daemon runs it, and the pushed PR r
   const loop = await setup(page, testInfo, testAccounts.scope)
   try {
     const reply = '请保留 README 的现有内容。'
-    const composer = loop.thread.getByRole('textbox', { name: '告诉 mock 下一步做什么…', exact: true })
+    const composer = loop.thread.getByRole('textbox', { name: '提出后续变更要求', exact: true })
     await composer.fill(reply)
     await composer.press('Enter')
     await expect(loop.thread.getByRole('list', { name: '线程对话' })).toContainText(`Noted: ${reply}`)
@@ -257,7 +257,7 @@ test('Chat creates a task, the selected real daemon runs it, and the pushed PR r
 test('Stopping a thread reaches the real daemon and keeps the draft editable while stopping', { tag: '@journey' }, async ({ page, testAccounts }, testInfo) => {
   const loop = await setup(page, testInfo, testAccounts.scope)
   try {
-    const composer = loop.thread.getByRole('textbox', { name: '告诉 mock 下一步做什么…', exact: true })
+    const composer = loop.thread.getByRole('textbox', { name: '提出后续变更要求', exact: true })
     // Hold only delivery of the real stop response while sampling optimistic UI.
     // requestRunStop and the daemon execute normally; no response is fabricated.
     // Without this boundary a fast daemon can finish before the draft assertion.
@@ -266,10 +266,14 @@ test('Stopping a thread reaches the real daemon and keeps the draft editable whi
     let releaseResponse!: () => void
     const released = new Promise<void>(resolve => { releaseResponse = resolve })
     let held = false
-    const path = new URL(page.url()).pathname
-    const matcher = (url: URL) => url.pathname === path
+    const matcher = (url: URL) => url.pathname.endsWith('/api/rpc')
     const holdStop = async (route: Route) => {
-      if (!held && route.request().method() === 'POST' && route.request().headers()['next-action']) {
+      const request = route.request()
+      let isStop = false
+      if (!held && request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') {
+        try { isStop = (JSON.parse(request.postData() ?? '') as { action?: string }).action === 'agents.stopRun' } catch { isStop = false }
+      }
+      if (isStop) {
         held = true
         const actual = await route.fetch()
         await released

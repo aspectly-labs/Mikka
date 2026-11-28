@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import ts from 'typescript'
+import { readUi, uiExists, unverifiable } from './official-ui-tree.mjs'
 
 const actionControls = /^(?:button|Button|SidebarMenu(?:Sub)?Button|SidebarMenu(?:Sub)?Action|InputGroupButton|DropdownMenuItem|ContextMenuItem|MenubarItem|CommandItem|NavigationMenuLink)$/
 const behaviorControls = /^(?:MorphPopoverTrigger|(?:Dialog|AlertDialog|Sheet|Drawer)(?:Trigger|Close|Cancel)|(?:DropdownMenu|ContextMenu|Menubar|Popover|HoverCard|Collapsible|Accordion|Select|Combobox|NavigationMenu)(?:Trigger|SubTrigger)|(?:Tabs|ToggleGroup|RadioGroup)(?:Trigger|Item)|Toggle|SidebarTrigger|SidebarRail|KanbanItemHandle)$/
@@ -13,9 +14,8 @@ export const busyMessage = '按钮的点击会 await 异步结果，必须传 `b
 // 菜单项、链接这些控件不收 `busy`，让它们传一个不存在的属性只会变成类型错误。
 export const busyElsewhereMessage = '这个控件的点击会 await 异步结果，但它没有 `busy` 可传；改用 `Button` 并传 `busy`，让等待中的状态看得见。'
 
-// 今天已有的债务，按文件计数，只减不增：多了失败，少了也失败，逼着随修随降。
-// 拿掉一处就把它改小（0 处就删掉这一行），别让 baseline 变成冻结的名单。
-export const asyncPressBaseline = JSON.parse(readFileSync(new URL('./interaction-busy-baseline.json', import.meta.url), 'utf8'))
+// 异步按压 `busy` 债务已清零，永久锁在 0；不要再往 interaction-busy-baseline.json 里加条目。
+export const asyncPressBaseline = Object.freeze(JSON.parse(readFileSync(new URL('./interaction-busy-baseline.json', import.meta.url), 'utf8')))
 
 export function auditInteractions(file, text, baseline = asyncPressBaseline) {
   return audit(file, text, false, baseline)
@@ -288,8 +288,9 @@ export function staleBaselineEntries(baseline = asyncPressBaseline) {
   for (const [file, allowed] of Object.entries(baseline)) {
     if (!Number.isInteger(allowed) || allowed < 1) { stale.push(`${file}: baseline 的计数是大于 0 的整数；把这一行删掉`); continue }
     if (/^components\/(?:ui|reui)\//.test(file)) { stale.push(`${file}: 已经不在这条策略的检查范围内；删掉这一行`); continue }
-    if (!existsSync(file)) { stale.push(`${file}: 文件不在了；删掉这一行`); continue }
-    const found = auditInteractions(file, readFileSync(file, 'utf8'), {}).length
+    if (unverifiable(file)) continue
+    if (!uiExists(file)) { stale.push(`${file}: 文件不在了；删掉这一行`); continue }
+    const found = auditInteractions(file, readUi(file), {}).length
     if (found === 0) stale.push(`${file}: 一处都不剩了；删掉这一行`)
     else if (found < allowed) stale.push(`${file}: 现在 ${found} 处，baseline 记着 ${allowed} 处；把它改成 ${found}`)
     else if (found > allowed) stale.push(`${file}: 现在 ${found} 处，baseline 只记了 ${allowed} 处；先修掉多出来的再改数字`)

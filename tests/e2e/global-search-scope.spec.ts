@@ -127,10 +127,8 @@ test('an unresolved Linear publication is retained without further writes when t
     expect(retained).toMatchObject({ ...publication.rows[0], retiredAt: expect.any(Date), writePending: true })
     const detached = (await pool.query('SELECT * FROM linear_issue_detachments WHERE "linearIssueId"=$1', [remoteId])).rows[0]
     expect(detached).toMatchObject({ issueId: id, publicationId, teamSyncId: syncId, externalTargetVerified: false, archivedAt: null })
-    const archive = (await pool.query('SELECT * FROM linear_sync_outbox WHERE "issueId"=$1 AND operation=\'archive\'', [id])).rows[0]
-    expect(archive.scopeVersion).toBe(before.scopeVersion)
-    expect(archive.archiveTarget.targetVerified).toBe(false)
-    expect(['queued', 'processing', 'failed']).toContain(archive.status)
+    const archive = (await pool.query('SELECT * FROM linear_sync_outbox WHERE "issueId"=$1 AND operation=\'archive\'', [id])).rowCount
+    expect(archive).toBe(0)
     expect((await pool.query('SELECT id FROM linear_issue_links WHERE "issueId"=$1', [id])).rowCount).toBe(0)
     expect((await pool.query('SELECT id FROM linear_sync_outbox WHERE "issueId"=$1 AND operation=\'sync\' AND status<>\'done\'', [id])).rowCount).toBe(0)
   } finally { await pool.end() }

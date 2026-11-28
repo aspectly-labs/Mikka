@@ -1,18 +1,19 @@
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { noteLogUser } from '@/lib/request-log'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { NextRequest, NextResponse } from '@/lib/server-runtime/server'
+import { RouteRequest, RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/auth'
 import { isAcceptanceEnabled } from '@/lib/acceptance'
 import { withBasePath } from '@/lib/base-path'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 function redirectWithinPreview(path: '/' | '/?acceptance=1' | '/acceptance') {
-  // NextRequest.url can contain the internal 0.0.0.0 origin behind the preview proxy.
-  return new NextResponse(null, { status: 307, headers: { Location: withBasePath(path), 'Cache-Control': 'no-store' } })
+  // RouteRequest.url can contain the internal 0.0.0.0 origin behind the preview proxy.
+  return new RouteResponse(null, { status: 307, headers: { Location: withBasePath(path), 'Cache-Control': 'no-store' } })
 }
 
-async function handleGET(request: NextRequest) {
-  if (!isAcceptanceEnabled()) return new NextResponse(null, { status: 404 })
+async function handleGET(request: RouteRequest) {
+  if (!isAcceptanceEnabled()) return new RouteResponse(null, { status: 404 })
 
   try {
     const session = await auth.api.getSession({ headers: request.headers })
@@ -40,4 +41,12 @@ async function handleGET(request: NextRequest) {
   }
 }
 
-export const GET = withRequestLog('/api/acceptance', handleGET)
+export const GET = defineRoute<'public', 'none'>(
+  {
+    route: '/api/acceptance',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handleGET(request as RouteRequest),
+)

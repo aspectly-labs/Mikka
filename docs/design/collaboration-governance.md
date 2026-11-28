@@ -62,7 +62,7 @@ Each row is an implementation boundary, not a completion claim:
 | --- | --- | --- |
 | 1. ACL and migration | Task Workspace authority, Enterprise principal, Project v2 identity, existing audit/live delivery | Split PG databases; owner/member/admin/external/removed/service matrix; private parent; revision race; historical data preserved |
 | 2. Content surfaces | Thread chain, Bot chat, Artifact/Capture/Factory/Coding Workspace | Real read/send/download/search/Live/API/MCP/PAT paths; Actor attribution; no private ID/title/count leakage; revoked cache/media |
-| 3. Connections | Personal credential vault, model ordering, native harness, frozen execution identity | Cross-member subscription denied everywhere; Org key shared/revoked; explicit paid fallback; native Claude Code and Codex |
+| 3. Connections | Personal credential vault, model ordering, native harness, frozen execution identity | Cross-member subscription denied everywhere; workspace API key used by every member and removed by its admins, another member's personal key denied (2026-11-27-1740); explicit paid fallback; native Claude Code and Codex |
 | 4. Billing | Stripe webhook, entitlement grants, credit ledger, usage readers | Repeated/out-of-order events, cancellation/refund/retry; capped recharge; no BYO double charge; no implicit balance transfer |
 | 5. Lifecycle | #1712 Secret capabilities, devices, member/SCIM outbox | Synthetic Secret precedence; protected egress; revoked in-flight work; preserved private and Org resources; transfer audit |
 | 6. Clients and release | Official hosted Web/Desktop and Expo iOS UI | Real local production screenshots/recording; matching APIs; READY/served SHA; external-service receipts; cleanup |

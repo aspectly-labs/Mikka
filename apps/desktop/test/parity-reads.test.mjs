@@ -80,14 +80,14 @@ test('foreign messages, changed positions and unproven message owners fail befor
   }
 })
 
-function observedResponse({ action = 'agents.listDevices', path, flight = false, browser = false, status = 200, headers = {}, finished = async () => null, json = async () => ({ version: 1, ok: true, result: [] }) } = {}) {
+function observedResponse({ action = 'agents.listDevices', path, browser = false, status = 200, headers = {}, finished = async () => null, json = async () => ({ version: 1, ok: true, result: [] }) } = {}) {
   const calls = { body: 0, json: 0 }
   const requirement = path ? { path } : { action }
-  const request = { method: () => path ? 'GET' : 'POST', headers: () => flight ? { 'next-action': 'actual-action-id' } : browser ? { 'x-mikka-rpc': '1' } : {}, postDataJSON: () => ({ version: 1, action, args: [] }) }
+  const request = { method: () => path ? 'GET' : 'POST', headers: () => browser ? { 'x-mikka-rpc': '1' } : {}, postDataJSON: () => ({ version: 1, action, args: [] }) }
   const response = {
-    request: () => request, url: () => `http://localhost:3004/mikka${path ?? (flight ? '/en' : browser ? '/api/rpc' : '/api/desktop/rpc')}`,
+    request: () => request, url: () => `http://localhost:3004/mikka${path ?? (browser ? '/api/rpc' : '/api/desktop/rpc')}`,
     ok: () => status >= 200 && status < 300, status: () => status,
-    headers: () => ({ 'content-type': flight ? 'text/x-component' : 'application/json', ...headers }),
+    headers: () => ({ 'content-type': 'application/json', ...headers }),
     finished: () => { calls.body++; return finished() },
     json: () => { calls.json++; return json() },
   }
@@ -95,14 +95,8 @@ function observedResponse({ action = 'agents.listDevices', path, flight = false,
     waitForResponse: async predicate => { assert.equal(predicate(response), true); return response },
     evaluate: async () => undefined,
   }
-  return { calls, finish: observeReads(page, [requirement], new Map([['actual-action-id', action]]), '/mikka') }
+  return { calls, finish: observeReads(page, [requirement], new Map([[action, action]]), '/mikka') }
 }
-
-test('a completed Next action does not wait for its ongoing page Flight stream', { timeout: 1000 }, async () => {
-  const { finish, calls } = observedResponse({ flight: true, finished: () => new Promise(() => {}) })
-  assert.deepEqual(await finish(), { linearUnavailable: false })
-  assert.deepEqual(calls, { body: 0, json: 0 })
-})
 
 test('ordinary RPC waits for both the body and parsed JSON', { timeout: 1000 }, async () => {
   for (const browser of [false, true]) {
@@ -139,9 +133,9 @@ test('HTTP success does not hide API/RPC error data or a non-JSON redirect page'
   ]) await assert.rejects(observedResponse(options).finish(), assert.AssertionError)
 })
 
-test('an action auth redirect or wrong response type is not successful completion', async () => {
-  for (const headers of [{ 'x-action-redirect': '/en/sign-in;push' }, { 'content-type': 'text/html' }]) {
-    await assert.rejects(observedResponse({ flight: true, headers }).finish(), assert.AssertionError)
+test('a non-JSON RPC response is not successful completion', async () => {
+  for (const headers of [{ 'content-type': 'text/x-component' }, { 'content-type': 'text/html' }]) {
+    await assert.rejects(observedResponse({ browser: true, headers }).finish(), assert.AssertionError)
   }
 })
 

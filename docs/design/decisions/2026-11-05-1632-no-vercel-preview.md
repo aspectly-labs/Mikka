@@ -1,6 +1,7 @@
 # No Vercel Preview for pull requests or branches
 
 - Date: 2026-11-05
+- **Status:** Accepted
 - Source: Alex, 2026-11-05, after an agent searched Vercel for a pull
   request's Preview: 「我以为构建都是交给 GitHub 在做」「文档里面还有这种…使用 Vercel
   进行 Preview 构建的问题的话，应该删掉吧」

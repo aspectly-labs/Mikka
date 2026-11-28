@@ -15,18 +15,21 @@ import { dbUrl, seedBot, seedIssue, seedUser, seedWorkspace } from './support/wo
 import { recordPushGrant } from './support/github-app-stub'
 import { sealSecret, userE2bKeyAad } from '../lib/secrets/crypto'
 import { seedRunProjectResources } from './helpers/run-project-resources'
+import { templateModelsFixture } from './support/template-models'
 import { threadPromptView } from '../lib/thread-prompt'
 
 test('quota exhausted mid-run: continue on the person\'s key, else pause with the reset; resume and retry actions', { skip: !dbUrl }, async t => {
-  const saved = { key: process.env.WORKSPACE_SECRETS_KEY, byos: process.env.MIKKA_BYOS_ENABLED, liteLLMUrl: process.env.MIKKA_LITELLM_URL, liteLLMKey: process.env.MIKKA_LITELLM_MASTER_KEY }
+  const saved = { key: process.env.WORKSPACE_SECRETS_KEY, byos: process.env.MIKKA_BYOS_ENABLED, liteLLMUrl: process.env.MIKKA_LITELLM_URL, liteLLMKey: process.env.MIKKA_LITELLM_MASTER_KEY, e2b: process.env.E2B_API_KEY }
+  const templates = templateModelsFixture(['subscription-model'], { hostedSizes: true })
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   process.env.MIKKA_BYOS_ENABLED = '1'
   process.env.MIKKA_LITELLM_URL = 'https://models.example.test/v1'
   process.env.MIKKA_LITELLM_MASTER_KEY = 'synthetic-quota-fallback'
+  process.env.E2B_API_KEY = 'synthetic-quota-e2b-key'
   delete process.env.MIKKA_CLOUD_COMPUTER_TASKS
   delete process.env.MIKKA_FACTORY_ROUTING_ENABLED
   const next = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   const { Client, Pool } = await import('pg')
   const query = Client.prototype.query
   let resourceReads = 0
@@ -55,8 +58,11 @@ test('quota exhausted mid-run: continue on the person\'s key, else pause with th
   const { hashDeviceToken } = await import('../lib/device-link')
   const claimRoute = await import('../app/v1/devices/[deviceId]/runs/[runId]/claim/route')
   const users: string[] = []
+  const cloudWorkspaces: string[] = []
   t.after(async () => {
-    for (const [name, value] of [['WORKSPACE_SECRETS_KEY', saved.key], ['MIKKA_BYOS_ENABLED', saved.byos], ['MIKKA_LITELLM_URL', saved.liteLLMUrl], ['MIKKA_LITELLM_MASTER_KEY', saved.liteLLMKey]] as const) if (value === undefined) delete process.env[name]; else process.env[name] = value
+    templates.restore()
+    for (const [name, value] of [['WORKSPACE_SECRETS_KEY', saved.key], ['MIKKA_BYOS_ENABLED', saved.byos], ['MIKKA_LITELLM_URL', saved.liteLLMUrl], ['MIKKA_LITELLM_MASTER_KEY', saved.liteLLMKey], ['E2B_API_KEY', saved.e2b]] as const) if (value === undefined) delete process.env[name]; else process.env[name] = value
+    await pool.query('DELETE FROM mikka_workspace_entitlements WHERE "workspaceId" = ANY($1::uuid[])', [cloudWorkspaces])
     await pool.query('DELETE FROM coordinator_events WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM thread_machines WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM computer_run_bindings WHERE "ownerId" = ANY($1)', [users])
@@ -183,9 +189,10 @@ test('quota exhausted mid-run: continue on the person\'s key, else pause with th
     await pool.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [runId, JSON.stringify(legacy.agentDefinition)])
     const resources = await seedRunProjectResources(pool, { ownerId: p.id, workspaceId: p.workspaceId, issueId: legacy.issueId,
       repositoryKey: normalizeRepository(p.remote).key, runtime: 'local', harness: 'claude_code', environment })
+    // A configured branch now lives on the task's environment, so a changed branch also brings an environment.
     if (!environment) await resources.refuse('branch')
     const before = await row(runId), history = await events(runId)
-    await failsWith(quota.retryQuotaPausedRun(p.id, runId), environment ? 'projectEnvironmentUnavailable' : 'projectRepositoryDenied')
+    await failsWith(quota.retryQuotaPausedRun(p.id, runId), 'projectEnvironmentUnavailable')
     assert.deepEqual(await row(runId), before); assert.deepEqual(await events(runId), history)
     assert.deepEqual(await continuations(runId), [])
   })
@@ -595,6 +602,8 @@ test('quota exhausted mid-run: continue on the person\'s key, else pause with th
 
   const pausedCloud = async (p: Person) => {
     await subscribe(p)
+    cloudWorkspaces.push(p.workspaceId)
+    await pool.query('INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,\'pro\',\'cloud\') ON CONFLICT DO NOTHING', [p.workspaceId])
     // Cloud admission requires the requester's own runtime account even when
     // the test never starts a VM or calls the provider.
     const sealed = sealSecret('synthetic-quota-e2b-fixture', userE2bKeyAad(p.id))

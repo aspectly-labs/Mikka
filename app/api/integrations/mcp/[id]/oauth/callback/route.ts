@@ -4,10 +4,11 @@ import { pluginActor } from '@/lib/plugins/actor'
 import { pluginResponse, pluginUuidParam } from '@/lib/plugins/http'
 import { mcpConnections } from '@/lib/plugins/runtime'
 import { PluginError } from '@/lib/plugins/contracts'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 type Context = { params: Promise<{ id: string }> }
 
-export const GET = freshSessionRoute((request: Request, ctx: Context) => pluginResponse(async () => {
+const unguardedGET = freshSessionRoute((request: Request, ctx: Context) => pluginResponse(async () => {
   const userId = await pluginActor(request, { humanOnly: true })
   const query = new URL(request.url).searchParams
   const input = z.object({ code: z.string().min(1).max(4096), state: z.string().min(1).max(256), issuer: z.string().max(2048).optional() }).safeParse({
@@ -18,3 +19,13 @@ export const GET = freshSessionRoute((request: Request, ctx: Context) => pluginR
   await mcpConnections.oauth.callback(userId, id, input.data)
   return mcpConnections.check(userId, id)
 }))
+export const GET = defineRoute<'session','none',{ id: string }>(
+  {
+    route: '/api/integrations/mcp/[id]/oauth/callback',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
+)

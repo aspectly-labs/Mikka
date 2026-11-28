@@ -3,7 +3,7 @@
 // `issues.status` equal to the category of `issues.state_id`.
 import { z } from 'zod'
 import { ISSUE_STATUS_CODES, type IssueStatus } from './issue-meta'
-import { MARK_TONE_NAMES, type MarkShape, type MarkSpec, type MarkTone } from './state-mark'
+import { MARK_TONE_NAMES, type MarkShape, type MarkTone } from './state-mark'
 
 export type IssueStateType = 'open' | 'closed'
 
@@ -31,10 +31,6 @@ const CLOSED: ReadonlySet<IssueStatus> = new Set(['done', 'canceled', 'duplicate
 
 export function issueStateType(category: IssueStatus): IssueStateType {
   return CLOSED.has(category) ? 'closed' : 'open'
-}
-
-export function issueStateMark(state: Pick<IssueStateView, 'icon' | 'color'>): MarkSpec {
-  return { shape: state.icon, tone: state.color }
 }
 
 /** The name a state shows: the person's name, else the category's name from `categoryLabel`. */
@@ -76,7 +72,7 @@ export const createIssueStateInput = z.strictObject({ workspaceId: z.uuid(), nam
 export const updateIssueStateInput = z.strictObject({ workspaceId: z.uuid(), id: z.uuid(), name: stateName.nullable().optional(), icon: looks.icon.optional(), color: looks.color.optional() })
 export const reorderIssueStatesInput = z.strictObject({ workspaceId: z.uuid(), ids: z.array(z.uuid()).min(1).max(200) })
 export const setDefaultIssueStateInput = z.strictObject({ workspaceId: z.uuid(), id: z.uuid() })
-/** Capy's MoveAndDelete: the state's tasks move to `moveTo`, then the state goes. */
+/** Deleting a state, as Capy does: its tasks move to `moveTo`, then the state goes. */
 export const deleteIssueStateInput = z.strictObject({ workspaceId: z.uuid(), id: z.uuid(), moveTo: z.uuid() })
 
 export type CreateIssueStateInput = z.infer<typeof createIssueStateInput>

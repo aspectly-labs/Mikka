@@ -2,12 +2,13 @@ import { afterDatabaseCommit } from '../db/commit-effects'
 import { factoryCommitted } from '../live/factory'
 import { scheduleLive } from '../live/notify'
 import { liveGatewayConfig } from '../live/scope'
+import { runtimeEnv } from '@/lib/env/server'
 
 /** VM intervals and ready media change independently of the Factory stage.
  * Resolve their owning tasks only after COMMIT, on the writer's retained DB
  * scope; the existing Factory sender rechecks the canonical workspace. */
 export function taskActivityChanged(executor: object, runId: string) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   afterDatabaseCommit(executor, `factory_activity:${runId}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')
     await withoutDatabaseClient(async () => {

@@ -1,6 +1,7 @@
 # A task has one thread at a time
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, after task ZHIX-2 collected 17 threads, each a new dispatch
   by the Coordinator (Failed and Stopped mixed):
   「一个 task 理论上只能由一个 session 或者 thread 来接手，怎么能同时派发给这么多？你要添加信息，应该直接添加给那个 session，而不是重新开一个 session。你要重新派发，也是重新派发给那一个 session，不允许你重新开。除非我明确说了我要换，那可以重新开。我没有明确说，就不允许你重新开。」

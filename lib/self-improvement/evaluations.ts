@@ -6,6 +6,7 @@ import { runExecution } from '@mikka/protocol/run'
 import type { SkillArtifactRef } from '@mikka/protocol/skill'
 import type { QueueFactoryRun } from '../factory/dispatch'
 import { assignedSkillForRun } from './assignments'
+import { jsonbSafeUuidSql } from '../primitives/jsonb-predicates'
 import { compareRegisteredEvaluation, currentModelEvaluation, type ComparisonState, type EvaluationComparisonSnapshot } from './evaluation-comparison'
 import type { RegisteredSkillEvaluator } from './registered-evaluation'
 import { BASELINE_ARTIFACT } from './builtin-skill'
@@ -115,7 +116,7 @@ export function createSkillEvaluations(pool: Pool, dependencies: EvaluationDepen
     return row
   }
   async function lockEvaluationTask(tx:PoolClient,userId:string,evaluationId:string) {
-    await tx.query(`SELECT t.id FROM improvement_skill_evaluations e JOIN factory_tasks t ON t.id=(e.scope->>'factoryTaskId')::uuid
+    await tx.query(`SELECT t.id FROM improvement_skill_evaluations e JOIN factory_tasks t ON t.id=${jsonbSafeUuidSql('e.scope', 'factoryTaskId')}
       WHERE e.id=$1 AND e."userId"=$2 AND t."userId"=$2 FOR SHARE OF t`,[evaluationId,userId])
   }
   // Claim/lease/mount callbacks hold execution locks already; never take Factory task locks here.

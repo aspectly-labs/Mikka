@@ -93,8 +93,8 @@
   "app/actions/project-resources.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Signed-in members read and administrators update Project repository references with current user access. Signed-in members can read setup history for an accessible Project. Restoring a recipe also requires project steering and active workspace administration.",
-    "test": "tests/project-dependency-repositories.db.test.ts",
+    "behavior": "Signed-in members read setup history of environments they can see; restoring a recipe requires managing that environment. Members share their personal environments; owners or administrators take shared ones back. The retired Project binding writers answer projectBindingsRetired.",
+    "test": "tests/project-resources.db.test.ts",
     "suite": "test:project-resources-db"
   },
   "app/actions/task-runs.ts": {
@@ -705,8 +705,8 @@
   "app/api/workspaces/[workspaceId]/projects/[projectId]/repos/route.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "An authorized Workspace administrator adds normalized repository keys to an accessible Project using the installation PostgreSQL database.",
-    "test": "tests/project-resources.db.test.ts",
+    "behavior": "Retired: an authorized Workspace caller receives 410 projectBindingsRetired; repositories belong to an environment.",
+    "test": "tests/environment-scope.db.test.ts",
     "suite": "test:project-resources-db"
   },
   "app/api/workspaces/[workspaceId]/service-identities/[identityId]/credential/route.ts": {
@@ -759,7 +759,8 @@
     "mode": "built-in",
     "environment": [
       "MIKKA_UI_OVERLAY_DIR",
-      "MIKKA_LOCAL_TEST_ACCOUNTS"
+      "MIKKA_LOCAL_TEST_ACCOUNTS",
+      "MIKKA_PUBLIC_BUILD"
     ],
     "behavior": "The development server uses Nitro’s native drain during worker replacement so admitted requests can finish with their original worker, and before it listens it prepares a loopback database, the official UI overlay’s dependencies and one local development account.",
     "test": "apps/api/runtime/dev-tracing.test.mjs"
@@ -768,7 +769,7 @@
     "mode": "built-in",
     "environment": [
       "MIKKA_BUILD_BYOS_WORKER",
-      "NEXT_PUBLIC_MIKKA_BUILD",
+      "MIKKA_PUBLIC_BUILD",
       "VERCEL_DEPLOYMENT_ID",
       "MIKKA_TEST_DEPLOYMENT_SHA",
       "VERCEL_ENV",
@@ -1324,102 +1325,74 @@
     "test": "lib/auth-cookies.test.ts",
     "suite": "test:lib-units"
   },
-  "lib/client-runtime/dynamic.tsx": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Load a component on first render behind the caller's loading boundary. There is no server render to skip, so the deployment needs no configuration.",
-    "test": "lib/runtime-entrypoints.test.tsx",
-    "suite": "test:lib-units"
-  },
-  "lib/client-runtime/link.tsx": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Render an application route as an anchor that navigates in place, adding the deployment base path exactly once. Modified clicks, downloads and external URLs stay with the browser.",
-    "test": "lib/runtime-entrypoints.test.tsx",
-    "suite": "test:lib-units"
-  },
-  "lib/client-runtime/localized-navigation.tsx": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Navigate with the active locale applied to the href, and keep an explicit locale choice in the NEXT_LOCALE cookie under the deployment base path.",
-    "test": "lib/runtime-entrypoints.test.tsx",
-    "suite": "test:lib-units"
-  },
   "lib/client-runtime/location.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Read and write the browser's location as router state, stripping the deployment base path and separating locale segments. An installation that serves auth as a server document keeps those links on the server entry.",
-    "test": "lib/runtime-entrypoints.test.tsx",
+    "test": "lib/server-runtime/runtime-entrypoints.test.ts",
     "suite": "test:lib-units"
   },
   "lib/client-runtime/navigation.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Expose the browser router hooks. Route assets are already in the bundle, so a prefetch resolves without any server read.",
-    "test": "lib/runtime-entrypoints.test.tsx",
-    "suite": "test:lib-units"
-  },
-  "lib/client-runtime/script.tsx": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Load a third-party script once per key and re-announce readiness on each mount. No installation configuration and no server runtime are involved.",
-    "test": "components/auth/turnstile.test.tsx",
-    "suite": "test:signup-turnstile"
+    "test": "lib/client-runtime/location.test.ts",
+    "suite": "test:integrations"
   },
   "lib/intl/i18n-client.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Expose the client translation hooks directly over use-intl instead of a framework package. Messages are bundled, so no installation value is read.",
-    "test": "lib/runtime-entrypoints.test.tsx",
-    "suite": "test:lib-units"
+    "test": "lib/date-only.test.ts",
+    "suite": "test:issues"
   },
   "lib/intl/i18n-server.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Translate on the server from the locale of the request in scope, falling back to the default locale when the request carries none.",
-    "test": "lib/runtime-entrypoints.test.tsx",
+    "test": "lib/server-runtime/runtime-entrypoints.test.ts",
     "suite": "test:lib-units"
   },
   "lib/server-only.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Mark a module as server-only so the browser build rejects it. This replaces the framework marker package; the build enforces the boundary, not the deployment.",
-    "test": "lib/runtime-entrypoints.test.tsx",
+    "test": "lib/server-runtime/runtime-entrypoints.test.ts",
     "suite": "test:lib-units"
   },
   "lib/server-runtime/headers.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Read the current request's headers and cookie jar from the request scope. Headers stay read-only and cookie writes are journalled until the response boundary commits them.",
-    "test": "lib/runtime-entrypoints.test.tsx",
+    "test": "lib/server-runtime/runtime-entrypoints.test.ts",
     "suite": "test:lib-units"
   },
   "lib/server-runtime/localized-navigation.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Build locale-prefixed redirect targets for server code, agreeing with the browser helper on every application path.",
-    "test": "lib/runtime-entrypoints.test.tsx",
+    "test": "lib/server-runtime/runtime-entrypoints.test.ts",
     "suite": "test:lib-units"
   },
   "lib/server-runtime/navigation.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Raise a redirect or not-found answer from nested handler code as a marker the request dispatcher turns into the matching HTTP response.",
-    "test": "lib/runtime-entrypoints.test.tsx",
+    "test": "lib/server-runtime/runtime-entrypoints.test.ts",
     "suite": "test:lib-units"
   },
   "lib/server-runtime/react.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Serve the server graph's React entry, replacing only cache with the request-scoped memo so one request's reads are never shared with another.",
-    "test": "lib/runtime-entrypoints.test.tsx",
+    "test": "lib/server-runtime/runtime-entrypoints.test.ts",
     "suite": "test:lib-units"
   },
   "lib/server-runtime/server.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Provide the server request and response types, including the deployment base path on the request URL and the after-work queue bound to the request scope.",
-    "test": "lib/runtime-entrypoints.test.tsx",
+    "test": "lib/server-runtime/runtime-entrypoints.test.ts",
     "suite": "test:lib-units"
   },
   "lib/auth-error.ts": {
@@ -1699,7 +1672,7 @@
   "lib/project-resources/contracts.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Dependency repository reads and replacements validate Project scope, revision and stable GitHub IDs. Project setup history and restore validate the current workspace, project, environment and acknowledged binding snapshot.",
+    "behavior": "Dependency repository reads and replacements validate Project scope, revision and stable GitHub IDs. Project setup history and restore validate the current workspace, project, environment and acknowledged binding snapshot. Environment inputs validate scope, repository rows (start or on demand, base branch, one 主仓库), share targets and task 环境 changes against the task revision.",
     "test": "tests/project-dependency-repositories.db.test.ts",
     "suite": "test:project-resources-db"
   },
@@ -1720,8 +1693,8 @@
   "lib/project-resources/store.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Project resource transactions use the installation PostgreSQL database and workspace locks. The installation PostgreSQL database stores versioned recipes. A restore checks the shared binding snapshot, clears approval and preserves current settings. Project-specific bindings require content access for reads and steering plus an active Workspace admin for writes.",
-    "test": "tests/environment-settings.db.test.ts",
+    "behavior": "Environment transactions use the installation PostgreSQL database and workspace locks. A personal environment is visible to, edited by and admits runs of its owner only; any active member creates one, its owner shares it with the workspace, and its owner or an administrator takes it back. Shared environments are created by administrators and edited by administrators or their owner. Run admission takes the request's environment, else the task's 环境; the workspace repository policy admits repositories outside the environment, recorded as cloned on demand. Setup history and restore are environment-scoped and check the current reach snapshot. Retired Project bindings stay readable for one release.",
+    "test": "tests/environment-scope.db.test.ts",
     "suite": "test:project-resources-db"
   },
   "lib/thread-artifacts.ts": {
@@ -1987,8 +1960,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Groups visible conversation publications by canonical GitHub pull request and filters locally by published state.",
-    "test": "apps/mobile/tests/conversation-directory-read.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/dispatch-delegate.ts": {
     "mode": "built-in",
@@ -2098,8 +2071,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "The conversation composer uses the existing model selector only for a single responding Bot present in the current owner’s authorized Bot list. It requires no external service.",
-    "test": "components/workspace/group-chat-view.test.tsx",
-    "suite": "test:groups"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/eve/product-rpc.ts": {
     "mode": "operator-configured",
@@ -2118,8 +2091,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "The existing Eve workflow store supplies committed text when a person stops a reply. Chat keeps interrupted text in its display history and records Stop if that store cannot be read.",
-    "test": "lib/eve/projection.test.ts",
-    "suite": "test:eve"
+    "test": "lib/eve/settlement.db.test.ts",
+    "suite": "test:eve-db"
   },
   "lib/eve/runtime.ts": {
     "mode": "built-in",
@@ -2353,29 +2326,15 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Journal immutable browser commands before preflight, retain failed or interrupted sends, and retry the same command without a hosted service.",
-    "test": "scripts/thread-composer.test.tsx",
-    "suite": "test:groups"
-  },
-  "lib/hooks/chat-delivery.ts": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Store local send progress in the current account and workspace journal and reconcile the immutable command on acknowledgement.",
-    "test": "scripts/thread-composer.test.tsx",
-    "suite": "test:groups"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/hooks/use-task-continuation.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Paged task lists fetch the next authorized cursor on demand and discard previous pages when the current view changes.",
-    "test": "hooks/use-task-cards.test.tsx",
-    "suite": "test:thread-changes"
-  },
-  "lib/hooks/view-state.tsx": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Keep per-window browsing state in sessionStorage and retire revoked conversation drafts when the authorized group changes; no hosted service is needed.",
-    "test": "lib/hooks/view-state.test.tsx",
-    "suite": "test:view-state"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/inbox/client.ts": {
     "mode": "built-in",
@@ -2404,15 +2363,15 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Deleted Task metadata supplies the same 30-day recovery deadline to the owner-facing detail and the server restore command. No external service or configuration is required.",
-    "test": "scripts/task-detail-live.test.tsx",
-    "suite": "test:issue-readonly-dom"
+    "test": "scripts/issue-metadata.test.mjs",
+    "suite": "test:issues"
   },
   "lib/issue-relations.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Uses stored task relations to display the current blocking and dependency state without an external service.",
-    "test": "components/workspace/issue-relations.test.tsx",
-    "suite": "test:view-state"
+    "test": "scripts/issue-relations.test.mjs",
+    "suite": "test:issues"
   },
   "lib/issue-run-conversation.ts": {
     "mode": "built-in",
@@ -2439,18 +2398,11 @@
     "test": "lib/linear-sync/label-options.test.ts",
     "suite": "test:linear-sync"
   },
-  "lib/linear-sync/markdown.ts": {
+  "lib/task-comments/markdown.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Converts Mikka task content to and from Linear Markdown locally and escapes plain text for comments.",
-    "test": "lib/linear-sync/markdown.test.ts",
-    "suite": "test:linear-sync"
-  },
-  "lib/linear-sync/run-comment.ts": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Formats localized run comments, derives repeatable comment IDs, and builds task links from the installation origin and base path supplied by the caller.",
-    "test": "lib/linear-sync/run-comment.test.ts",
+    "test": "lib/task-comments/markdown.test.ts",
     "suite": "test:linear-sync"
   },
   "lib/live/lists.ts": {
@@ -2511,12 +2463,12 @@
     "test": "tests/mobile-service-members.db.test.ts",
     "suite": "test:web-auth-db"
   },
-  "lib/openui-lang.ts": {
+  "lib/legacy-chat-content.ts": {
     "mode": "built-in",
     "environment": [],
-    "behavior": "Parse generated reply documents locally and count their root assignments so a streamed answer retains its identity when the same turn is read from storage.",
-    "test": "lib/openui-lang.test.ts",
-    "suite": "test:mobile"
+    "behavior": "Project historical stored OpenUI replies into read-only Markdown or plain text locally without any external OpenUI runtime dependency.",
+    "test": "lib/legacy-chat-content.test.ts",
+    "suite": "test:agent"
   },
   "lib/platform/public-origin.ts": {
     "mode": "built-in",
@@ -2531,13 +2483,6 @@
     "behavior": "Save personal preferences to installation PostgreSQL. Changing the archive interval invalidates the authorized owner’s active conversation lists after commit using the existing live transport.",
     "test": "lib/live/chat-preferences.db.test.ts",
     "suite": "test:live-db"
-  },
-  "lib/pull-request-appearance.ts": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Groups already-authorized pull request states for conversation and sidebar badges using built-in icons.",
-    "test": "scripts/pull-requests-badge.test.tsx",
-    "suite": "test:issues"
   },
   "lib/renderer-actions.mjs": {
     "mode": "built-in",
@@ -2730,22 +2675,22 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "A confirmed Task status change revalidates the current viewer’s mounted Task presentation reads in its workspace.",
-    "test": "scripts/task-detail-live.test.tsx",
-    "suite": "test:issue-readonly-dom"
+    "test": "lib/coordinator/chat-read-client.test.ts",
+    "suite": "test:read-cache"
   },
   "lib/swr/read-observer.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Observe committed, discarded and superseded fetches inside their scoped SWR snapshot.",
-    "test": "scripts/use-live-lists.live.test.tsx",
-    "suite": "test:live-lists"
+    "test": "lib/live/channel.test.ts",
+    "suite": "test:device-gateway"
   },
   "lib/task-activity-timeline.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Web and native clients use the same chronological task history, discussion and run facts.",
-    "test": "apps/mobile/tests/task-groups.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/task-activity-timeline.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/task-activity-versions.ts": {
     "mode": "built-in",
@@ -2772,8 +2717,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "The client groups the authorized task presentations and keeps waiting tasks associated with their actual Bot.",
-    "test": "hooks/use-bot-tasks.test.ts",
-    "suite": "test:lib-units"
+    "test": "lib/task-collection.test.ts",
+    "suite": "test:issues"
   },
   "lib/task-create-command.ts": {
     "mode": "built-in",
@@ -2786,8 +2731,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "The shared task form preserves its create or dispatch intent and accepts the matching server receipt.",
-    "test": "apps/mobile/tests/eve-client.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/task-create-only.ts": {
     "mode": "built-in",
@@ -2814,15 +2759,15 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Classifies existing task content locally for display on supported clients.",
-    "test": "apps/mobile/tests/task-description.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/task-discussion.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "A typed discussion carries the author, creation time, resolution state and messages into the shared activity view.",
-    "test": "apps/mobile/tests/task-groups.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/task-activity-wake.test.ts",
+    "suite": "test:coordinator-events"
   },
   "lib/task-dispatch-lock.ts": {
     "mode": "built-in",
@@ -2863,8 +2808,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Native and Web readers request at most 200 distinct tasks per page and reject a workspace mismatch.",
-    "test": "apps/mobile/tests/server-api.test.mts",
-    "suite": "test:mobile"
+    "test": "lib/shared-client-contracts.test.ts",
+    "suite": "test:lib-units"
   },
   "lib/task-presentation-read.ts": {
     "mode": "built-in",
@@ -3498,13 +3443,6 @@
     "test": "lib/onboarding.db.test.ts",
     "suite": "test:onboarding-db"
   },
-  "lib/platform/use-agent-logins.ts": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Desktop only: reads this computer's Claude Code / Codex sign-in kind and plan through the desktop bridge; no server input.",
-    "test": "lib/platform/use-agent-logins.test.ts",
-    "suite": "test:platform"
-  },
   "lib/run-credential-source.ts": {
     "mode": "built-in",
     "environment": [],
@@ -3742,15 +3680,15 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Bounds how many links one batched preview request carries. A constant shared by the web and desktop clients; no installation dependency.",
-    "test": "components/workspace/group-chat-revalidation.test.tsx",
-    "suite": "test:groups"
+    "test": "lib/link-preview.test.ts",
+    "suite": "test:coordinator-events"
   },
   "app/actions/link-preview.ts": {
     "mode": "built-in",
     "environment": [],
     "behavior": "Fetch a public web page's Open Graph title, summary and image for a signed-in person's chat citation. Private and loopback addresses are refused, so the installation never becomes an open proxy.",
-    "test": "components/workspace/group-chat-revalidation.test.tsx",
-    "suite": "test:groups"
+    "test": "lib/link-preview.test.ts",
+    "suite": "test:coordinator-events"
   },
   "lib/issue-access.ts": {
     "mode": "built-in",
@@ -3791,13 +3729,6 @@
     ],
     "behavior": "Prepares what pnpm dev needs before anything listens: a loopback PostgreSQL database created and migrated, the official UI overlay’s own dependencies installed when missing, and one development account whose password is generated on the machine and kept in a gitignored file. Refuses to create a database anywhere but this machine.",
     "test": "apps/api/scripts/dev-preflight.test.mjs"
-  },
-  "lib/hooks/use-sidebar-view.ts": {
-    "mode": "built-in",
-    "environment": [],
-    "behavior": "Stores the rail’s collapsed-or-open choice per workspace in the person’s own browser. No server read, no installation dependency.",
-    "test": "lib/hooks/use-sidebar-view.test.tsx",
-    "suite": "test:lib-units"
   },
   "lib/pull-request-diff.ts": {
     "mode": "built-in",
@@ -4328,8 +4259,8 @@
     "mode": "built-in",
     "environment": [],
     "behavior": "Pure Agent Profile mark glyphs, colours and thread-status-to-ProfileMarkState mapping; no network or credentials.",
-    "test": "components/labels/profile-mark.test.tsx",
-    "suite": "test:lib-units"
+    "test": "lib/factory/agent-profile.test.ts",
+    "suite": "test:factory"
   },
   "lib/api-key-models-view.ts": {
     "mode": "built-in",
@@ -4364,7 +4295,7 @@
     ],
     "behavior": "Community credential storage wraps per-secret encryption keys with the installation master key; hosted AWS KMS role access uses the runtime-specific platform identity (Cloudflare workload identity or Vercel OIDC).",
     "test": "lib/credentials/local-kms.test.ts",
-    "suite": "test:self-hosted-byok"
+    "suite": "test:service-config"
   },
   "lib/due-timer-owner.ts": {
     "mode": "built-in",
@@ -4413,5 +4344,348 @@
     "behavior": "Owner-only Bot chat actions, including Edit and Regenerate of the latest turn, against the installation database and eve channel.",
     "test": "tests/bot-chat-revisions.db.test.ts",
     "suite": "test:activity-actor-db"
+  },
+  "app/api/mobile/tasks/[id]/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "An authenticated native client reads one task, optionally with its status, priority and assignee choices, and changes them through the web's own task actions and revision fence in the local application database.",
+    "test": "tests/mobile-tasks.db.test.ts",
+    "suite": "test:workspace-admin-db"
+  },
+  "app/api/mobile/tasks/[id]/comments/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "An authenticated native client adds a task discussion comment through the web editor's document exchange, attributed to its own account, in the local application database.",
+    "test": "tests/mobile-tasks.db.test.ts",
+    "suite": "test:workspace-admin-db"
+  },
+  "lib/mobile-task-edit.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Applies native task status, priority, assignee and comment changes by acting as the signed-in person through the existing web actions and their task access checks; no external service.",
+    "test": "tests/mobile-tasks.db.test.ts",
+    "suite": "test:workspace-admin-db"
+  },
+  "lib/mobile-task-edit-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates native task edit and comment requests and maps their result codes; pure, with no configuration.",
+    "test": "lib/mobile-task-edit-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-tasks.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Locates a bound task the native caller may read and pins its stored workspace for the task detail and edits, using the local application and workspace databases.",
+    "test": "tests/mobile-tasks.db.test.ts",
+    "suite": "test:workspace-admin-db"
+  },
+  "lib/public-env.mjs": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Read a public build or runtime setting under its MIKKA_PUBLIC_* name first and its legacy NEXT_PUBLIC_* name second, so an installation configured with either name keeps the same behavior. It requires no external service.",
+    "test": "lib/public-env.test.mjs"
+  },
+  "apps/api/nitro.config.ts": {
+    "mode": "built-in",
+    "environment": [
+      "MIKKA_BUILD_REVISION",
+      "MIKKA_PUBLIC_BUILD",
+      "MIKKA_UI_OVERLAY_SHA",
+      "MIKKA_BASE_PATH",
+      "MIKKA_TEST_BUILD_SHA",
+      "MIKKA_TEST_DEPLOYMENT_SHA",
+      "MIKKA_PUBLIC_COMPUTER_DEPLOYMENT"
+    ],
+    "behavior": "The server build inlines its revision, application build and deployment stage as constants; an unset application build uses the source revision. It requires no external service.",
+    "test": "apps/api/build-contract.test.mjs"
+  },
+  "lib/app-build.ts": {
+    "mode": "built-in",
+    "environment": [
+      "MIKKA_PUBLIC_BUILD"
+    ],
+    "behavior": "A page compares the application build inlined at build time with the server's and offers a reload after a deploy; without a build constant it never asks. It requires no external service.",
+    "test": "lib/app-build.test.ts",
+    "suite": "test:platform"
+  },
+  "lib/computer/client.ts": {
+    "mode": "built-in",
+    "environment": [
+      "MIKKA_PUBLIC_COMPUTER_MOCK"
+    ],
+    "behavior": "The computer client calls the installation's authenticated computer routes; MIKKA_PUBLIC_COMPUTER_MOCK=1 plays the in-page demo instead. It requires no external service.",
+    "test": "lib/computer/client-deadline.test.ts",
+    "suite": "test:unattended"
+  },
+  "lib/platform/client-config.ts": {
+    "mode": "built-in",
+    "environment": [
+      "MIKKA_DAEMON_PACKAGE_NAME"
+    ],
+    "behavior": "Clients build their daemon install commands with the configured package name, or the official package name when it is unset. It requires no external service.",
+    "test": "apps/desktop/scripts/renderer.test.mjs"
+  },
+  "lib/posthog-config.ts": {
+    "mode": "operator-configured",
+    "environment": [
+      "MIKKA_PUBLIC_POSTHOG_KEY",
+      "POSTHOG_HOST"
+    ],
+    "behavior": "PostHog analytics and flags use the operator's project token and ingestion host; without a token no client is created and nothing is sent.",
+    "test": "lib/posthog-server.test.ts",
+    "suite": "test:service-config"
+  },
+  "app/api/mobile/search/messages/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients search visible Bot chat, group conversation, and thread messages in one workspace against the local application and workspace databases.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-message-search-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates native message search parameters, binds opaque pagination cursors to caller/workspace/query context, and slices plain-text snippets; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-message-search.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Executes workspace-authorized full-text message search across visible Bot chats, group conversations, and thread messages with keyset pagination against the local databases.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/attachments/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients batch-read ready chat attachment metadata and download paths/grants for visible Bot chats, group chats, and threads against the local database and configured artifact storage.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-attachments-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates mobile attachment batch-by-id and scope listing query parameters; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-attachments.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Reads ready chat attachments after enforcing chat scope ownership/membership and workspace token bounds against the local database and optional artifact storage.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/reactions.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Reads and updates per-message emoji reactions on accessible Bot chat and group conversation messages in the local application database.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-thread-pagination.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Parses optional limit/before pagination parameters and slices oldest-first thread items with opaque historyBefore cursors; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/tokens/scope.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Enforces personal access token workspace boundaries across runs, messages, pending actions, suggestions, bots, and groups against the local databases.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/suggestions/handoff.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Claims an owned suggestion and queues it as a Coordinator personal submission in the local application database.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-proactive-cards.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Reads the signed-in person's daily briefing summary, token-scoped pending actions, and visible suggestions against the local application database.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/proactive-cards/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients read Coordinator proactive cards (briefing, pending actions, suggestions) with an optional side-effect-free readonly mode against the local database.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/suggestions/[id]/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients hand off, start, or dismiss owned proactive suggestions under the mobile origin policy and token workspace bounds.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-profile-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates mobile display-name patches and reads bounded multipart or binary avatar uploads up to 200 KB; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-profile.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Reads and updates the signed-in person's display name and uploaded avatar through Better Auth and the local avatar store, refusing workspace-scoped PATs.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/profile/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients read their profile and update their display name with a fresh human session under the mobile origin policy.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/profile/avatar/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients upload PNG, JPEG, or WebP profile avatars up to 200 KB with a fresh human session under the mobile origin policy.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-billing-contract.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates mobile billing scope query selectors and mutation payloads; pure, with no external service.",
+    "test": "lib/mobile-api-gaps-contract.test.ts",
+    "suite": "test:mobile"
+  },
+  "lib/mobile-billing.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Resolves the caller's workspace or organization billing scope and delegates reads and mutations to the existing billing management service.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "app/api/mobile/billing/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Authenticated native clients read workspace or organization billing status and invoke billing actions with a fresh session under the mobile origin policy.",
+    "test": "tests/mobile-api-gaps.test.ts",
+    "suite": "test:mobile"
+  },
+  "drizzle/20261127170716_workspace_mcp_servers.sql": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Adds workspace-owned MCP servers, their shared or per-member OAuth accounts and tool switches in the existing application database. Additive and replayable; no new service or credential.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/workspace-servers.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Any active workspace member manages workspace MCP servers; a run uses the workspace account (shared) or its starter's own account (member) through the existing MCP transport, OAuth flow and workspace-secret encryption.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/contracts.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates workspace MCP server input and the server key that resolves a key clash in favour of the thread starter's own server. No network or credential requirement.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/connection-contracts.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Validates a workspace MCP tool switch with the state the caller last saw. No network or credential requirement.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/mcp-oauth.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Runs the existing MCP SDK OAuth flow against a person's own or a workspace server's account rows, using the existing DNS-pinned public transport and workspace-secret encryption.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/plugins/runtime.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Exposes the workspace MCP server store on the existing application pool. No new environment input.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/tools/[name]/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/check/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/connection/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "app/api/workspaces/[workspaceId]/mcp-servers/[serverId]/oauth/callback/route.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A fresh human session of an active workspace member lists, adds, edits, checks, connects or removes the workspace's MCP servers through the existing MCP connection and credential policy.",
+    "test": "lib/plugins/workspace-servers.db.test.ts",
+    "suite": "test:plugins-db"
+  },
+  "lib/project-resources/task-environment.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "A task's 环境 is stored in the installation PostgreSQL database. Steering the task and being able to use the environment are required to change it; each change is a task revision and an audit event, and reads hide the names of other people's personal environments.",
+    "test": "tests/environment-settings.db.test.ts",
+    "suite": "test:project-resources-db"
+  },
+  "app/actions/environments.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Signed-in members list the environments they can see with their scope and permissions, set a task's 环境 and read the 环境 of tasks they can see, all through the installation PostgreSQL database.",
+    "test": "tests/environment-single-workflow.db.test.ts",
+    "suite": "test:project-resources-db"
+  },
+  "lib/db/workspace-schema.ts": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Describes workspace tables in the installation PostgreSQL database, including environment scope, repository rows and each task's 环境.",
+    "test": "tests/environment-scope-migration.db.test.ts",
+    "suite": "test:project-resources-db"
+  },
+  "drizzle/20261125223723_environment_scope_and_task_environments.sql": {
+    "mode": "built-in",
+    "environment": [],
+    "behavior": "Adds environment scope, owner and repository rows and the task 环境 table to the installation database, and copies each task's unambiguous Project environment and each Project repository's branch and 主仓库 onto them.",
+    "test": "tests/environment-scope-migration.db.test.ts",
+    "suite": "test:project-resources-db"
   }
 }

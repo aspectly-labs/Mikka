@@ -38,7 +38,7 @@ export function auditBasePath(file, source) {
           const name = element.name.text,
             imported = element.propertyName?.text ?? name
           if (/^(?:next\/(?:link|navigation|router)|(?:@\/)?i18n\/navigation|@\/lib\/client-runtime\/(?:link|navigation|localized-navigation))$/.test(module)) {
-            if (imported === 'Link' || (imported === 'default' && /(?:^|\/)(?:link|next-link)$/.test(module))) links.add(name)
+            if (imported === 'Link' || (imported === 'default' && /(?:^|\/)link$/.test(module))) links.add(name)
             if (imported === 'redirect' || imported === 'permanentRedirect') redirects.add(name)
             if (imported === 'useRouter') routerHooks.add(name)
           }

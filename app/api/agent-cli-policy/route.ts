@@ -1,29 +1,36 @@
 import { z } from 'zod'
-import { auth } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
-import { readCliAgentPolicy, readCliRunPolicy } from '@/lib/agent-tool-approval/policy-store'
-import { setCliAgentPolicy, setCliPolicy } from '@/lib/agent-tool-approval/policy-settings'
-import { humanSessionHeaders } from '@/lib/desktop-rpc/handler'
+import { readCliRunPolicy } from '@/lib/agent-tool-approval/policy-store'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-const schema = z.discriminatedUnion('operation', [
-  z.object({ operation:z.literal('read'), runId:z.uuid() }).strict(),
-  z.object({ operation:z.literal('readAgent'), agentId:z.uuid(), botId:z.uuid().nullable() }).strict(),
-  z.object({ operation:z.literal('setAgent'), agentId:z.uuid(), botId:z.uuid().nullable(), target:z.enum(['workspace']), expectedRevision:z.string().regex(/^[a-f0-9]{64}$/), policy:z.unknown() }).strict(),
-  z.object({ operation:z.literal('set'), runId:z.uuid(), target:z.enum(['workspace','team','project']), expectedRevision:z.string().regex(/^[a-f0-9]{64}$/), policy:z.unknown() }).strict(),
-])
-export async function POST(request: Request) {
-  const sessionHeaders = humanSessionHeaders(request)
-  if (!sessionHeaders || request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error:'unauthorized' }, { status:401 })
-  const session = await auth.api.getSession({ headers:sessionHeaders, query:{ disableCookieCache:true } })
-  if (!session?.user) return Response.json({ error:'unauthorized' }, { status:401 })
-  const result = schema.safeParse(await request.json().catch(() => null))
-  if (!result.success) return Response.json({ error:'invalidRequest' }, { status:400 })
-  const body = result.data
-  try {
-    const value = body.operation === 'read' ? await readCliRunPolicy(pool,body.runId,session.user.id)
-      : body.operation === 'set' ? await setCliPolicy(pool,session.user.id,body.runId,body.target,body.expectedRevision,body.policy)
-      : body.operation === 'readAgent' ? await readCliAgentPolicy(pool,session.user.id,body.agentId,body.botId)
-      : await setCliAgentPolicy(pool,session.user.id,body.agentId,body.botId,body.target,body.expectedRevision,body.policy)
-    return Response.json(value, { headers:{ 'cache-control':'no-store' } })
-  } catch { return Response.json({ error:'agentPolicyUnavailable' }, { status:409 }) }
-}
+// Reads a run's effective policy. There is nothing to configure: agents run
+// with full access (ADR 2026-11-27-1615), so the former workspace, team,
+// project and Agent policy writes (`set`, `setAgent`, `readAgent`) are gone.
+const schema = z.object({ operation:z.literal('read'), runId:z.uuid() }).strict()
+
+const unauthorized = () => Response.json({ error: 'unauthorized' }, { status: 401 })
+
+export const POST = defineRoute<'human-session-only', 'none'>(
+  {
+    auth: 'human-session-only',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    write: true,
+    onOriginFailure: unauthorized,
+    onAuthFailure: unauthorized,
+  },
+  async ({ request, user }) => {
+    // Reject omitted Origin as well while preserving the established 401 unauthorized contract.
+    if (request.headers.get('origin') !== new URL(request.url).origin) {
+      return unauthorized()
+    }
+    const result = schema.safeParse(await request.json().catch(() => null))
+    if (!result.success) return Response.json({ error:'invalidRequest' }, { status:400 })
+    const body = result.data
+    try {
+      const value = await readCliRunPolicy(pool,body.runId,user.id)
+      return Response.json(value, { headers:{ 'cache-control':'no-store' } })
+    } catch { return Response.json({ error:'agentPolicyUnavailable' }, { status:409 }) }
+  },
+)

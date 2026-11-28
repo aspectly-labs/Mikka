@@ -11,15 +11,16 @@ function connectFrame(value, end = false) {
 }
 
 /** e2b@2.61 control API + envd HTTP/Connect JSON protocol, not a Sandbox mock. */
-export function createE2BFake({ now = () => Date.now(), templates = ['base', 'desktop', 'claude', 'codex'], limit = 8, commands = {}, processes } = {}) {
-  const requests = [], sandboxes = new Map(), idempotency = new Map()
+export function createE2BFake({ now = () => Date.now(), templates = ['base', 'desktop', 'claude', 'codex'], limit = 8, commands = {}, processes, domain = 'localhost', geometry = { cpuCount: 1, memoryMB: 512 }, initialFiles = {} } = {}) {
+  const requests = [], sandboxes = new Map(), snapshots = new Map(), idempotency = new Map()
   let sequence = 0, pid = 100
   const state = { limit, templates: new Set(templates), commands, createError: null,
+    filesystemSnapshotsEnabled: true,
     metrics: /** @type {null | ((input: { sandbox: { id: string }, url: URL }) => unknown[])} */ (null) }
   const view = sandbox => ({ sandboxID: sandbox.id, templateID: sandbox.template, clientID: 'local-client',
-    domain: 'localhost', envdVersion: '0.5.6', envdAccessToken: sandbox.access,
+    domain, envdVersion: '0.5.6', envdAccessToken: sandbox.access,
     startedAt: new Date(sandbox.created).toISOString(), endAt: new Date(sandbox.expires).toISOString(),
-    metadata: sandbox.metadata, state: sandbox.state, cpuCount: 1, memoryMB: 512 })
+    metadata: sandbox.metadata, state: sandbox.state, ...geometry })
   const current = id => {
     const sandbox = sandboxes.get(id)
     if (!sandbox || sandbox.state === 'killed') return null
@@ -36,7 +37,7 @@ export function createE2BFake({ now = () => Date.now(), templates = ['base', 'de
       if (request.headers['x-api-key'] !== LOCAL_E2B_KEY) return json(response, { code: 401, message: 'Invalid API key' }, 401)
       if (path === '/v2/sandboxes' && method === 'POST') {
         if (state.createError) return json(response, { code: state.createError, message: 'Scripted create failure' }, state.createError)
-        if (!state.templates.has(body.templateID)) return json(response, { code: 404, message: 'Template not found' }, 404)
+        if (!state.templates.has(body.templateID) && !snapshots.has(body.templateID)) return json(response, { code: 404, message: 'Template not found' }, 404)
         if (body.timeout !== undefined && (!Number.isInteger(body.timeout) || body.timeout <= 0)) return json(response, { code: 400, message: 'Invalid timeout' }, 400)
         const key = request.headers['idempotency-key']
         if (key && idempotency.has(key)) {
@@ -47,13 +48,23 @@ export function createE2BFake({ now = () => Date.now(), templates = ['base', 'de
           return json(response, { code: 429, message: 'Concurrent sandbox limit reached' }, 429)
         const id = `local-sandbox-${++sequence}`
         const sandbox = { id, template: body.templateID, metadata: body.metadata ?? {}, state: 'running',
-          created: now(), expires: now() + (body.timeout ?? 300) * 1000, access: `local-envd-${sequence}`, files: new Map() }
+          created: now(), expires: now() + (body.timeout ?? 300) * 1000, access: `local-envd-${sequence}`, files: new Map(snapshots.get(body.templateID)?.files ?? Object.entries(initialFiles).map(([key, value]) => [key, Buffer.from(value)])) }
         sandboxes.set(id, sandbox)
         await processes?.create(sandbox)
         if (key) idempotency.set(key, id)
         return json(response, view(sandbox), 201)
       }
       if (path === '/v2/sandboxes' && method === 'GET') return json(response, [...sandboxes.values()].filter(sandbox => current(sandbox.id)).map(view))
+      const snapshot = /^\/sandboxes\/([^/]+)\/snapshots$/.exec(path)
+      if (snapshot && method === 'POST') {
+        const sandbox = current(snapshot[1])
+        if (!sandbox) return missing(response)
+        if (body.memory !== false) return json(response, { code: 400, message: 'Filesystem-only fixture' }, 400)
+        if (!state.filesystemSnapshotsEnabled) return json(response, { code: 409, message: 'snapshot_filesystem_only_unsupported_node' }, 409)
+        const snapshotID = 'local-image-' + (snapshots.size + 1)
+        snapshots.set(snapshotID, { files: new Map(sandbox.files) })
+        return json(response, { snapshotID, names: [body.name] }, 201)
+      }
       const match = /^\/(?:v2\/)?sandboxes\/([^/]+)(?:\/(connect|timeout|pause|metrics))?$/.exec(path)
       if (!match) return json(response, { code: 404, message: 'Unknown E2B API route' }, 404)
       const sandbox = current(decodeURIComponent(match[1]))
@@ -87,6 +98,14 @@ export function createE2BFake({ now = () => Date.now(), templates = ['base', 'de
       const file = processes ? await processes.read(sandbox, url.searchParams.get('path')).catch(error => { if (error.code === 'ENOENT') return undefined; throw error }) : sandbox.files.get(url.searchParams.get('path'))
       if (!file) return json(response, { message: 'File not found' }, 404)
       response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': file.length }); response.end(file); return true
+    }
+    if (path === '/filesystem.Filesystem/Stat' && request.method === 'POST') {
+      const body = await bodyJson(request), target = body.path
+      if (typeof target !== 'string') return json(response, { code: 'invalid_argument', message: 'Invalid path' }, 400)
+      requests.push(requestRecord(request, url, body))
+      const file = sandbox.files.get(target)
+      if (!file) return json(response, { code: 'not_found', message: 'File not found' }, 404)
+      return json(response, { entry: { name: basename(target), type: 'FILE_TYPE_FILE', path: target, size: String(file.length) } })
     }
     if (path === '/files' && request.method === 'POST') {
       const form = await incomingRequest(request, url).formData(), entries = []

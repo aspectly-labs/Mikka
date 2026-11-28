@@ -1,29 +1,49 @@
 import "../../tests/support/server-only.mjs";
 import assert from "node:assert/strict";
-import { beforeEach, mock, test } from "node:test";
-import { GitHubAccessError } from "./user-access-error";
+import { after, before, beforeEach, mock, test } from "node:test";
+import { startGitHubAccessHttp } from "../../tests/fakes/github-access-http.mjs";
 
-mock.module(new URL("./user-access.ts", import.meta.url).href, {
+mock.module(new URL("../auth.ts", import.meta.url).href, {
+  namedExports: { auth: { api: {}, $context: Promise.resolve({ internalAdapter: { findAccounts: async () => [] } }) } },
+});
+mock.module(new URL("./app-config.ts", import.meta.url).href, {
+  namedExports: { readGitHubAppConfig: async () => ({ id: "4840908", source: "database" }) },
+});
+mock.module(new URL("./connection.ts", import.meta.url).href, {
   namedExports: {
-    githubRepositoryReadCredential: async (userId: string, key: string) => {
+    githubConnectionToken: async (userId: string) => {
       assert.equal(userId, "owner");
-      assert.equal(key, "v2/github.com/owner/repo");
-      return { token: "test-private-token", repository: { id: "91", fullName: "Owner/Repo" } };
+      return { token: "test-private-token", githubAccountId: "42", expiresAt: null };
     },
-    GitHubAccessError,
   },
 });
 const sha = "a".repeat(40);
 let body: () => unknown;
 let variables: Record<string, unknown> = {};
 let lastQuery = "";
-mock.method(globalThis, "fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
-  const sent = JSON.parse(String(init?.body));
-  assert.ok(sent.query.startsWith("query PullDetail("));
-  assert.ok(!sent.query.includes("mutation"));
-  lastQuery = sent.query;
-  variables = sent.variables;
-  return Response.json(body());
+let githubHttp: Awaited<ReturnType<typeof startGitHubAccessHttp>>;
+let readPullDetail: typeof import("./pull-detail")["readPullDetail"];
+const realFetch = globalThis.fetch;
+before(async () => {
+  githubHttp = await startGitHubAccessHttp({
+    getUser: () => ({ id: 42, login: "owner" }),
+    getRepositories: () => [{ id: 91, full_name: "Owner/Repo", private: true }],
+    onRequest: (url, request, bodyText) => {
+      if (url.pathname !== "/graphql" || request.method !== "POST") return undefined;
+      const sent = JSON.parse(bodyText);
+      assert.ok(sent.query.startsWith("query PullDetail("));
+      assert.ok(!sent.query.includes("mutation"));
+      lastQuery = sent.query;
+      variables = sent.variables;
+      return Response.json(body());
+    },
+  });
+  globalThis.fetch = githubHttp.routeFetch(realFetch) as typeof fetch;
+  ({ readPullDetail } = await import("./pull-detail"));
+});
+after(async () => {
+  globalThis.fetch = realFetch;
+  await githubHttp.close();
 });
 const pull = () => ({
   number: 7, title: "A PR", bodyText: "Body", state: "OPEN", isDraft: false,
@@ -41,7 +61,6 @@ const pull = () => ({
   reviews: { nodes: [{ author: { login: "alex" }, state: "APPROVED", submittedAt: "2026-11-18T00:00:00Z" }] },
 });
 const response = (pr: unknown, databaseId = 91) => ({ data: { repository: { databaseId, nameWithOwner: "Owner/Repo", pullRequest: pr } } });
-const { readPullDetail } = await import("./pull-detail");
 const read = () => readPullDetail("owner", "owner/repo", 7, { deadline: Date.now() + 25_000 });
 beforeEach(() => { body = () => response(pull()); });
 

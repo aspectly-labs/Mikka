@@ -9,6 +9,7 @@ import test from 'node:test'
 import { sourceContext } from './cloudflare-ci.mjs'
 import { privateMikkaRepository } from './cloudflare-source.mjs'
 import { buildEnvironment, digestFromRepoDigests, releaseDockerfile, releaseId, releaseSelection, validatePrepared, publicReceipt, verifyOverlayMain } from './cloudflare-native-oci.mjs'
+import { LEGACY_PUBLIC_ENV } from '../lib/public-env.mjs'
 
 const publicSha = 'a'.repeat(40)
 const privateSha = 'b'.repeat(40)
@@ -23,8 +24,8 @@ const receipt = { version: 1, context, provider: context.provider, publicSha, pr
   stages: ['public-install', 'private-install', 'script-tests'].map(name => ({ name, exit: 0 })) }
 const selected = releaseSelection(env, receipt)
 const digest = 'sha256:' + 'c'.repeat(64)
-const settings = { NEXT_PUBLIC_POSTHOG_KEY: 'public-analytics', NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_public',
-  NEXT_PUBLIC_TURNSTILE_SITE_KEY: 'public-turnstile', NEXT_PUBLIC_COMPUTER_ENABLED: '1' }
+const settings = { MIKKA_PUBLIC_POSTHOG_KEY: 'public-analytics', MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_public',
+  MIKKA_PUBLIC_TURNSTILE_SITE_KEY: 'public-turnstile', MIKKA_PUBLIC_COMPUTER_ENABLED: '1' }
 const snapshot = { publicSha, privateSha, publication: 'registry-only', ...settings }
 const snapshotHash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')
 const workerBundles = {
@@ -96,6 +97,21 @@ test('production compilation receives public settings and no read key', () => {
   assert.equal(built.MIKKA_DEPLOYMENT_ID, selected.id)
   assert.equal(built.HOSTED_UI_READ_KEY, undefined)
   assert.throws(() => buildEnvironment({}, publicSha, privateSha, selected.id), /CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED/)
+  for (const name of Object.keys(settings)) assert.equal(built[name], settings[name])
+})
+
+test('the build settings secret may still use the legacy NEXT_PUBLIC_* keys until phase 2', () => {
+  const legacy = Object.fromEntries(Object.entries(settings).map(([name, value]) => [LEGACY_PUBLIC_ENV[name], value]))
+  const mixed = { ...settings, MIKKA_PUBLIC_POSTHOG_KEY: undefined, [LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_POSTHOG_KEY]: settings.MIKKA_PUBLIC_POSTHOG_KEY }
+  for (const value of [legacy, mixed]) {
+    const built = buildEnvironment({ ...env, API_PUBLIC_BUILD_SETTINGS: JSON.stringify(value) }, publicSha, privateSha, selected.id)
+    for (const name of Object.keys(settings)) assert.equal(built[name], settings[name])
+    for (const name of Object.values(legacy)) assert.equal(built[name], undefined)
+  }
+  // One setting under both names is ambiguous, not a fallback.
+  const both = { ...settings, [LEGACY_PUBLIC_ENV.MIKKA_PUBLIC_POSTHOG_KEY]: 'other' }
+  delete both.MIKKA_PUBLIC_TURNSTILE_SITE_KEY
+  assert.throws(() => buildEnvironment({ API_PUBLIC_BUILD_SETTINGS: JSON.stringify(both) }, publicSha, privateSha, selected.id), /CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED/)
 })
 
 test('prepared image evidence and registry digest remain bound to this build', () => {
@@ -163,9 +179,9 @@ test('build settings are captured in the artifact and authenticated through a va
   const logged = publicReceipt(artifact)
   assert.equal(logged.publicBuildSettings, undefined)
   assert.equal(logged.publicBuildSettingsSha256, snapshotHash)
-  assert.ok(!JSON.stringify(logged).includes(settings.NEXT_PUBLIC_POSTHOG_KEY))
+  assert.ok(!JSON.stringify(logged).includes(settings.MIKKA_PUBLIC_POSTHOG_KEY))
   assert.equal(artifact.publicBuildSettings, snapshot)
-  for (const value of ['not-json', '{}', JSON.stringify({ ...settings, EXTRA: 'unexpected' }), JSON.stringify({ ...settings, NEXT_PUBLIC_COMPUTER_ENABLED: 1 })]) {
+  for (const value of ['not-json', '{}', JSON.stringify({ ...settings, EXTRA: 'unexpected' }), JSON.stringify({ ...settings, MIKKA_PUBLIC_COMPUTER_ENABLED: 1 })]) {
     assert.throws(() => buildEnvironment({ API_PUBLIC_BUILD_SETTINGS: value }, publicSha, privateSha, selected.id), /CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED/)
   }
 })

@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { readIssueMetadata } from '../issue-metadata'
 import { LIVE_ID, type LiveInvalidation } from './events'
@@ -43,7 +44,7 @@ export async function issueRelationTargets(database: Database, workspaceDatabase
 }
 
 async function changed(executor: object, key: string, resolve: (database: Database, workspaceDatabase: Database) => Promise<Target[]>) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterDatabaseCommit(executor, `issue-detail:${key}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

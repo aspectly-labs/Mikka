@@ -1,4 +1,3 @@
-/* eslint-disable unicorn/no-thenable -- The transport fixture implements Drizzle's awaitable query contract. */
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, mock, test } from 'node:test'
 import { PgDialect } from 'drizzle-orm/pg-core'
@@ -88,6 +87,7 @@ const database = {
       where(value: SQL) { condition = value; return q },
       orderBy() { return q },
       limit() { return read() },
+      // oxlint-disable-next-line unicorn/no-thenable -- The transport fixture implements Drizzle's awaitable query contract.
       then(resolve: (value: unknown[]) => unknown, reject: (error: unknown) => unknown) { return read().then(resolve, reject) },
     }
     return q
@@ -117,14 +117,14 @@ stub('../auth.ts', { auth: new Proxy({}, { get: unexpectedAuth }), authBaseURL: 
 stub('../device-link.ts', { DEVICE_ONLINE_WINDOW_MS: 60000, WORKSPACE_ID: 'synthetic-unused', issueDeviceToken: unexpectedAuth })
 stub('../composio.ts', { runComposioAction: forbidden })
 stub('../github/user-access.ts', { readAuthorizedIssue: forbidden })
-stub('../pending-action-store.ts', { proposeAction: forbidden, writeAccountAction: forbidden, proposeRepositoryPush: forbidden })
+stub('../pending-action-store.ts', { writeAccountAction: forbidden })
 stub('../telegram/client.ts', { postTelegramText: forbidden })
 stub('../../workflows/coordinator/tool-scope.ts', { assertNativeToolScope: forbidden })
 stub('./environment-instructions.ts', {
   instructionsWithEnvironment: (_instructions: string) => _instructions,
   readScopedPromptInstructionsForBot: async () => ({ environmentId: null, environmentInstructions: '', botInstructions: '' }),
 })
-mock.module('@/lib/server-runtime/server', { namedExports: { NextResponse: Response, after: () => {} } })
+mock.module('@/lib/server-runtime/server', { namedExports: { RouteResponse: Response, after: () => {} } })
 
 let composer: typeof import('./product-instructions'), store: typeof import('./store'), personal: typeof import('./personal-instructions')
 before(async () => {

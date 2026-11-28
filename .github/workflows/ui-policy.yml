@@ -2,7 +2,12 @@ name: CI
 
 # Pull requests to main run selected source and unit checks. Merge queue candidates
 # also run database shards and applicable acceptance on the combined commit.
-# Main retains each distinct postmerge run. Keep the protected check names.
+# Main retains each distinct postmerge run. The daily schedule has no diff, so
+# the selector selects every lane; jobs bound to another event (merge-group
+# candidate and governance checks, PR screenshots, push-only cloud secret access)
+# still skip, and the schedule adds the offline browser journeys. `CI OK` is the single
+# aggregate; keep the older protected check names until branch protection
+# requires `CI OK` instead (.github/workflows/README.md).
 on:
   push:
     branches: [main]
@@ -11,10 +16,11 @@ on:
   merge_group:
   workflow_dispatch:
   schedule:
-    - cron: '23 3 * * 1'
+    - cron: '23 3 * * *'
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   # Main commits need unique groups: a new pending run must not evict an older
@@ -160,6 +166,8 @@ jobs:
       MIKKA_DATABASE_URL: postgres://mikka:mikka@127.0.0.1:5432/mikka
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/pnpm-install
         with:
           ffmpeg-github-token: ${{ github.token }}
@@ -168,11 +176,29 @@ jobs:
       - name: Shadow selection against full baseline scenarios
         run: node scripts/ci/shadow.mjs
       - run: pnpm check:cloud-boundary
+      - run: pnpm check:sql-safety
+      - run: pnpm check:route-guard
+        if: always()
+      - run: pnpm test:anti-hardcoding
+        if: always()
+      - run: pnpm check:config-contracts
+        if: always()
+      - run: pnpm lint:semantic
+        if: always()
+      - run: pnpm test:semantic-lint
+        if: always()
       - name: Verify all production release credentials use existing Infisical OIDC
-        run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs
+        run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs scripts/release/ios-app-store-signing.test.mjs scripts/release/mobile-next-update.test.mjs
         if: always()
       - name: Verify production auth and lease acceptance drivers without credentials
         run: node --test scripts/acceptance/auth-audit-production.test.mjs scripts/acceptance/cloud-lease-audit.test.mjs scripts/acceptance/cloud-lease-recovery.test.mjs scripts/acceptance/shared-account-queue.test.mjs scripts/ops/production-smoke.test.mjs
+        if: always()
+      - run: pnpm docs:check
+        if: always()
+      - name: Check waiting issues
+        run: node scripts/check-waiting-issues.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         if: always()
       - run: pnpm lint:code
         if: always()
@@ -189,7 +215,6 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         if: always()
       - run: pnpm --filter @mikka/protocol typecheck
-      - run: pnpm --filter @mikka/mobile typecheck
 
       - name: Audit business UI composition
         run: pnpm --silent lint:ui --json > ui-audit.json
@@ -323,11 +348,35 @@ jobs:
     if: github.event_name == 'merge_group'
     uses: ./.github/workflows/ci-merge-candidate.yml
 
+  desktop-checks:
+    # Path-routed like Orca: on a pull request the trusted selector reports
+    # `desktop` only for apps/desktop, the workspace packages it links,
+    # desktop.yml, .npmrc, the paths desktop.yml runs, the Nx closure of
+    # @mikka/desktop and lockfile or manifest changes that reach it
+    # (scripts/ci/select.mjs, desktop-inputs.mjs); merge groups and the daily run
+    # keep the broad rule (global inputs too). Main pushes rely on the merge-queue run.
+    needs: changes
+    if: needs.changes.result == 'success' && needs.changes.outputs.desktop == 'true' && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
+    uses: ./.github/workflows/desktop.yml
+    with:
+      selected: true
+
+  nightly-journey:
+    # The daily full run also runs the offline browser journeys (#2890 keeps
+    # them off pull requests). Scheduled runs only, on the canonical repository.
+    # Not yet a need of CI OK: the journeys have never passed (the old name guard
+    # skipped every run). Add it to ci-ok's needs once a scheduled run is green.
+    if: github.event_name == 'schedule' && github.repository_id == '1427517699' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/nightly-journey.yml
+    permissions:
+      contents: read
+      actions: read
+
   ui-policy:
     # The required check name. It reports success when only documentation
     # changed; otherwise it mirrors the full suite's result.
     name: UI policy (strict)
-    needs: [changes, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, candidate-checks, frontend-screenshots]
+    needs: [changes, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, candidate-checks, frontend-screenshots, desktop-checks]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -351,6 +400,8 @@ jobs:
           EXPECT_GOVERNANCE: ${{ (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref != 'main')) && needs.changes.outputs.db == 'true' }}
           EXPECT_CANDIDATE: ${{ github.event_name == 'merge_group' }}
           EXPECT_SCREENSHOTS: ${{ github.event_name == 'pull_request' }}
+          EXPECT_DESKTOP: ${{ github.event_name != 'push' && needs.changes.outputs.desktop == 'true' }}
+          DESKTOP: ${{ needs.desktop-checks.result }}
           CANDIDATE: ${{ needs.candidate-checks.result }}
           GOVERNANCE: ${{ needs.workspace-governance-checks.result }}
           SCREENSHOTS: ${{ needs.frontend-screenshots.result }}
@@ -361,7 +412,7 @@ jobs:
           DAEMON: ${{ needs.daemon-checks.result }}
         run: |
           test "$CHANGES_RESULT" = success
-          for name in CORE INTEGRATION SOURCE DAEMON ANALYTICS GOVERNANCE CANDIDATE SCREENSHOTS; do
+          for name in CORE INTEGRATION SOURCE DAEMON ANALYTICS GOVERNANCE CANDIDATE SCREENSHOTS DESKTOP; do
             expected="EXPECT_$name"
             case "${!expected}" in
               true) test "${!name}" = success ;;
@@ -373,6 +424,16 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: always()
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+        with:
+          node-version: 24
+      - name: Verify rule-as-code architecture map and snapshot guards
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+        run: node scripts/rule-as-code-audit.mjs && node --test scripts/rule-as-code-audit.test.mjs
+      - name: Verify Engineering Handbook, ADR status headers and no competitor source citations
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+        run: node --test scripts/engineering-handbook.test.mjs scripts/no-competitor-source.test.mjs
       - name: Record actual completed job timings
         if: always()
         run: node scripts/ci/summary.mjs
@@ -554,3 +615,56 @@ jobs:
         run: node scripts/ci/summary.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+  ci-ok:
+    # The single aggregate check, as Orca and most merge-queue repositories do:
+    # it waits for every CI job (not yet nightly-journey) and fails if any failed or was cancelled. A
+    # skipped job passes only where its own `if:` (the trusted selection and
+    # the event) left it out: each CI_OK_EXPECT_* below is that job's `if:`
+    # (scripts/ci/ci-ok.test.mjs compares them).
+    name: CI OK
+    needs: [changes, cloud-secret-access, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, frontend-screenshots, candidate-checks, desktop-checks, ui-policy, browser-tests-full, browser-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Draft PR is not a validated merge candidate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          echo 'Draft: mark Ready for review to run the PR checks.' >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Require every selected CI job; accept only selected skips
+        env:
+          CI_OK_NEEDS: ${{ toJSON(needs) }}
+          CI_OK_EXPECT_CHANGES: 'true'
+          CI_OK_EXPECT_CLOUD_SECRET_ACCESS: ${{ needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && github.event_name == 'push' && (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref != 'refs/heads/wabi/issue-116-migration-prerequisite' }}
+          CI_OK_EXPECT_UI_POLICY_FULL: ${{ needs.changes.result == 'success' && needs.changes.outputs.core == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_UI_POLICY_INTEGRATIONS: ${{ needs.changes.result == 'success' && needs.changes.outputs.integration == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_SOURCE_CHECKS: ${{ needs.changes.result == 'success' && needs.changes.outputs.source == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_DAEMON_CHECKS: ${{ needs.changes.result == 'success' && needs.changes.outputs.daemon == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_ANALYTICS_CHECKS: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) && needs.changes.outputs.analytics == 'true' }}
+          CI_OK_EXPECT_WORKSPACE_GOVERNANCE_CHECKS: ${{ (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref != 'main' && github.event.pull_request.draft != true)) && needs.changes.result == 'success' && needs.changes.outputs.db == 'true' }}
+          CI_OK_EXPECT_FRONTEND_SCREENSHOTS: ${{ github.event_name == 'pull_request' && needs.changes.result == 'success' }}
+          CI_OK_EXPECT_CANDIDATE_CHECKS: ${{ github.event_name == 'merge_group' }}
+          CI_OK_EXPECT_DESKTOP_CHECKS: ${{ needs.changes.result == 'success' && needs.changes.outputs.desktop == 'true' && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_UI_POLICY: 'true'
+          CI_OK_EXPECT_BROWSER_TESTS_FULL: ${{ needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) }}
+          CI_OK_EXPECT_BROWSER_TESTS: 'true'
+        # Main's verdict script, as the selector loads main's bootstrap, so a pull request
+        # cannot edit the script that judges it. It still controls this workflow, the
+        # needs and the expectations above (ci-ok.test.mjs ties each to its job's if:).
+        # Only the PR that introduces the script runs its own copy.
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          policy="$RUNNER_TEMP/ci-ok.mjs"
+          if git show origin/main:scripts/ci/ci-ok.mjs > "$policy" 2>/dev/null; then
+            echo "Verdict from main's scripts/ci/ci-ok.mjs"
+          else
+            echo 'scripts/ci/ci-ok.mjs is not on main yet: using this commit'"'"'s copy'
+            cp scripts/ci/ci-ok.mjs "$policy"
+          fi
+          node "$policy"

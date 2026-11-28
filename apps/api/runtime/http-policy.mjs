@@ -1,6 +1,8 @@
 import Negotiator from 'negotiator'
 import { match } from '@formatjs/intl-localematcher'
 import { parseRequestCookies } from '../src/request-cookies.mjs'
+import { localeCookies, localeCookiesCurrent, storedLocale } from '../../../i18n/locale-cookie.mjs'
+import { envValue } from '../../../lib/env/runtime.mjs'
 
 export const baseSecurityHeaders = {
   'x-content-type-options': 'nosniff',
@@ -14,7 +16,7 @@ function decodedPath(pathname) { try { return decodeURIComponent(pathname) } cat
 export function isMachinePath(pathname) {
   const path = decodedPath(pathname)
   // Invalid encoding and encoded machine names must never receive a SPA 200.
-  return path === null || /^\/(?:mikka\/)?(?:api|v1|trpc|_next|_vercel|__nextjs|\.well-known|w)(?:\/|$)/.test(path)
+  return path === null || /^\/(?:mikka\/)?(?:api|v1|trpc|\.well-known|w)(?:\/|$)/.test(path)
 }
 export function prefersServerHtml(request) {
   return new Negotiator({ headers: { accept: request.headers.get('accept') ?? '*/*' } })
@@ -43,8 +45,8 @@ export function applySecurityHeaders(request, response) {
   return secured
 }
 
-/** Next's default trailingSlash:false redirect runs before every route. Work
- * on the literal URL path: an encoded slash must never become a separator. */
+/** Strip a trailing slash before every route. Work on the literal URL path:
+ * an encoded slash must never become a separator. */
 export function trailingSlashRedirect(request) {
   const url = new URL(request.url)
   if (url.pathname.length <= 1 || !url.pathname.endsWith('/')) return undefined
@@ -52,7 +54,7 @@ export function trailingSlashRedirect(request) {
   return new Response(null, { status: 308, headers: { location: url.href } })
 }
 
-export function pageRedirect(request, { production = process.env.NODE_ENV === 'production', legacyHost = process.env.MIKKA_LEGACY_APP_HOST, origin = process.env.BETTER_AUTH_URL, edition = process.env.MIKKA_EDITION } = {}) {
+export function pageRedirect(request, { production = envValue('NODE_ENV') === 'production', legacyHost = envValue('MIKKA_LEGACY_APP_HOST'), origin = envValue('BETTER_AUTH_URL'), edition = envValue('MIKKA_EDITION') } = {}) {
   const canonical = trailingSlashRedirect(request)
   if (canonical) return canonical
   const url = new URL(request.url), path = url.pathname
@@ -90,11 +92,15 @@ export function pageRedirect(request, { production = process.env.NODE_ENV === 'p
   }
 }
 
-/** @returns {{locale:'en'|'zh-CN', redirect?:Response, cookie?:string}} */
+/** A document response keeps the locale cookies in step with the page it
+ * serves, and sends Set-Cookie only when one of them is missing or holds
+ * another value. Which names are written is the migration phase's choice
+ * (i18n/locale-cookie.mjs).
+ * @returns {{locale:'en'|'zh-CN', redirect?:Response, cookies?:string[]}} */
 export function localizePage(request) {
   const url = new URL(request.url), explicit = /^\/mikka\/(en|zh-CN)(?=\/|$)/.exec(url.pathname)?.[1]
-  const cookie = parseRequestCookies(request.headers.get('cookie')).get('NEXT_LOCALE')
-  let locale = explicit ?? (cookie === 'en' || cookie === 'zh-CN' ? cookie : undefined)
+  const cookies = parseRequestCookies(request.headers.get('cookie'))
+  let locale = explicit ?? storedLocale(name => cookies.get(name))
   if (!locale) {
     try { locale = match(new Negotiator({ headers: { 'accept-language': request.headers.get('accept-language') ?? '' } }).languages().filter(value => value !== '*'), ['zh-CN', 'en'], 'zh-CN') }
     catch { locale = 'zh-CN' }
@@ -103,8 +109,8 @@ export function localizePage(request) {
   let destination
   if (explicit === 'zh-CN') destination = url.pathname.replace(/^\/mikka\/zh-CN/, '/mikka')
   else if (!explicit && locale === 'en') destination = url.pathname.replace(/^\/mikka/, '/mikka/en')
-  const document = request.headers.get('sec-fetch-dest')
-  const result = { locale, ...(document === 'document' && cookie !== locale ? { cookie: `NEXT_LOCALE=${locale}; Max-Age=31536000; Path=/mikka; SameSite=Lax` } : {}) }
+  const update = request.headers.get('sec-fetch-dest') === 'document' && !localeCookiesCurrent(name => cookies.get(name), locale)
+  const result = { locale, ...(update ? { cookies: localeCookies(locale) } : {}) }
   if (destination) { url.pathname = destination; return { ...result, redirect: new Response(null, { status: 307, headers: { location: url.href } }) } }
   return result
 }
@@ -116,11 +122,12 @@ export async function pageResponse(request, render, options = {}) {
   if (!isPagePath(path)) return applySecurityHeaders(request, new Response(null, { status: 404 }))
   if (!['GET', 'HEAD'].includes(request.method)) return applySecurityHeaders(request, new Response(null, { status: 405, headers: { allow: 'GET, HEAD' } }))
   const localized = localizePage(request)
-  const headers = { 'cache-control': 'no-store', vary: 'Accept-Language, Cookie', ...(localized.cookie ? { 'set-cookie': localized.cookie } : {}) }
-  if (localized.redirect) {
-    for (const [key, value] of Object.entries(headers)) localized.redirect.headers.set(key, value)
-    return applySecurityHeaders(request, localized.redirect)
+  const documentHeaders = headers => {
+    headers.set('cache-control', 'no-store'); headers.set('vary', 'Accept-Language, Cookie')
+    for (const cookie of localized.cookies ?? []) headers.append('set-cookie', cookie)
+    return headers
   }
+  if (localized.redirect) { documentHeaders(localized.redirect.headers); return applySecurityHeaders(request, localized.redirect) }
   const html = request.method === 'HEAD' ? null : (await render()).replace(/<html\b[^>]*\blang="[^"]*"/, `<html lang="${localized.locale}"`)
-  return applySecurityHeaders(request, new Response(html, { headers: { ...headers, 'content-type': 'text/html; charset=utf-8' } }))
+  return applySecurityHeaders(request, new Response(html, { headers: documentHeaders(new Headers({ 'content-type': 'text/html; charset=utf-8' })) }))
 }

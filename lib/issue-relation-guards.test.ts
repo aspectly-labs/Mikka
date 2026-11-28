@@ -33,18 +33,60 @@ const row = (rowId: string, meta: Partial<IssueMetadata> = {}, extra: Partial<Ro
   content: withIssueMetadata({ type: 'doc', content: [] }, metadataSchema.parse(meta)), ...extra,
 })
 
-// Extract `column = value` pairs from a drizzle where() (eq/and only), so the stub
-// filters like Postgres would: by owner, by member, by id.
-type Chunk = { queryChunks?: Chunk[]; name?: string; table?: unknown; value?: unknown }
+// Extract `column = value` and `column in (...)` pairs from a drizzle where()
+// so the stub filters like Postgres would: by owner, by member, by id.
+type Chunk = { queryChunks?: (Chunk | Chunk[])[]; name?: string; table?: unknown; value?: unknown }
 function conditions(node: Chunk | undefined, out: [string, unknown][] = []): [string, unknown][] {
   const chunks = node?.queryChunks ?? []
-  chunks.forEach((chunk, i) => {
+  chunks.forEach((raw, i) => {
+    if (Array.isArray(raw)) return
+    const chunk = raw
     if (chunk?.queryChunks) conditions(chunk, out)
-    else if (chunk?.table && chunk.name && String((chunks[i + 1] as { value?: unknown[] })?.value?.[0]).trim() === '=') out.push([chunk.name, chunks[i + 2]?.value])
+    else if (chunk?.table && chunk.name) {
+      const next = chunks[i + 1]
+      const op = !Array.isArray(next) ? String((next as { value?: unknown[] })?.value?.[0] ?? '').trim() : ''
+      const rhs = chunks[i + 2]
+      if (op === '=' && !Array.isArray(rhs)) out.push([chunk.name, rhs?.value])
+      else if (op === 'in' && Array.isArray(rhs)) out.push([chunk.name, new Set(rhs.map(item => item.value))])
+    }
   })
   return out
 }
-const matches = (record: Record<string, unknown>, conds: [string, unknown][]) => conds.every(([key, value]) => record[key] === value)
+const matches = (record: Record<string, unknown>, conds: [string, unknown][]) =>
+  conds.every(([key, value]) => value instanceof Set ? value.has(record[key]) : record[key] === value)
+
+function flattenChunks(node: Chunk, out: Chunk[] = []): Chunk[] {
+  for (const item of node.queryChunks ?? []) {
+    if (Array.isArray(item)) continue
+    if (item?.queryChunks) flattenChunks(item, out)
+    else if (item) out.push(item)
+  }
+  return out
+}
+
+function resolveUpdateValue(record: Row, key: string, raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || !('queryChunks' in raw)) return raw
+  const chunks = flattenChunks(raw as Chunk)
+  if (key === 'revision' && chunks.some(c => Array.isArray(c.value) && String(c.value[0]).includes('+ 1'))) {
+    return record.revision + 1
+  }
+  const cases = new Map<unknown, unknown>()
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i]
+    const nextText = Array.isArray(chunks[i + 1]?.value) ? String((chunks[i + 1]!.value as unknown[])[0]) : ''
+    if (c?.table && c.name === 'id' && nextText.includes('=')) {
+      const idVal = chunks[i + 2]?.value
+      const thenIdx = chunks.findIndex((item, idx) => idx > i + 2 && Array.isArray(item.value) && String(item.value[0]).includes('then'))
+      if (thenIdx !== -1 && chunks[thenIdx + 1]) {
+        const val = chunks[thenIdx + 1]!.value
+        const castText = Array.isArray(chunks[thenIdx + 2]?.value) ? String((chunks[thenIdx + 2]!.value as unknown[])[0]) : ''
+        cases.set(idVal, castText.includes('::jsonb') && typeof val === 'string' ? JSON.parse(val) : val)
+      }
+    }
+  }
+  if (cases.has(record.id)) return cases.get(record.id)
+  return (record as unknown as Record<string, unknown>)[key]
+}
 
 function select(fields?: Record<string, { name: string }>) {
   let table: unknown
@@ -70,14 +112,15 @@ function select(fields?: Record<string, { name: string }>) {
 }
 
 function update() {
-  let values: Partial<Row> = {}
+  let values: Record<string, unknown> = {}
   let conds: [string, unknown][] = []
   const builder = {
-    set: (v: Partial<Row>) => { values = v; return builder },
+    set: (v: Record<string, unknown>) => { values = v; return builder },
     where: (c: Chunk) => { conds = conditions(c); return builder },
     returning: async () => rows.filter(r => matches(r, conds)).map(r => {
-      writes.push({ id: r.id, metadata: readIssueMetadata(values.content ?? r.content) })
-      return { ...r, ...values }
+      const resolved = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, resolveUpdateValue(r, k, v)])) as Partial<Row>
+      writes.push({ id: r.id, metadata: readIssueMetadata(resolved.content ?? r.content) })
+      return { ...r, ...resolved }
     }),
   }
   return builder
@@ -146,7 +189,6 @@ before(async () => {
     taskIdentifiers: async () => new Map(),
     syncWorkspaceTaskPrefix: async () => {},
   } })
-  mock.module(file('./linear-sync/dispatch.ts'), { namedExports: { dispatchLinearWork: () => {}, dispatchLinearIssueSync: () => {} } })
   mock.module(file('./live/lists.ts'), { namedExports: { issueListChanged: async () => {} } })
   mock.module(file('./live/issue-detail.ts'), { namedExports: { issueRelationsChanged: async () => {}, relationIds: () => [] } })
   ;({ updateIssueRelation } = await import('../app/actions/issue-operations'))

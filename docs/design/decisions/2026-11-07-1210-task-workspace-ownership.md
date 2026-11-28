@@ -1,6 +1,7 @@
 # Task ownership is an immutable workspace binding
 
 - Date: 2026-11-07
+- **Status:** Accepted
 - Source: Alex's delivery instructions for [#1608](https://github.com/alexj11324/Mikka/issues/1608).
 - Builds on: [The workspace is the tenant](2026-11-02-0231-workspace-is-the-tenant.md), T1–T6.
 - Delivery: Workspace P0 first; Team Free/Pro and Enterprise v1 are separate releases. Knowledge bases and RAG are excluded.

@@ -54,3 +54,11 @@ zero. A green canary alongside zero real runs distinguishes a working tested
 path with no demand from an untested idle path. Canary runs themselves enter
 the monitor's ordinary run counts; no synthetic demand-metric exclusion is
 added by this workflow. This check does not certify startup-latency targets.
+
+## Another environment's team admin
+
+By default the smoke accepts only a team whose active admin is the production
+policy identity. An environment with its own smoke identities (such as staging)
+passes `SMOKE_POLICY_ADMIN_EMAIL_SHA256`, the lowercase SHA-256 of its own
+admin's lowercased address; the address itself is never passed. How a hosted
+environment provisions those identities is in the private operations runbook.

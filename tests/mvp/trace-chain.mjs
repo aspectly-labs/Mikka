@@ -23,7 +23,7 @@ import { HostedUsageStore } from '../../lib/abuse/store.ts'
 
 assertMvpEnvironment()
 assert.equal(process.env.NODE_ENV, 'development', 'TRACE_ACCEPTANCE_REQUIRES_DEVELOPMENT_RUNTIME')
-assert.equal(process.env.NEXT_PUBLIC_POSTHOG_KEY, 'phc_trace_fixture_1512')
+assert.equal(process.env.MIKKA_PUBLIC_POSTHOG_KEY, 'phc_trace_fixture_1512')
 assert.equal(process.env.MIKKA_TRACE_ENDPOINT, 'http://127.0.0.1:3196/i/v1/traces')
 assert.equal(process.env.MIKKA_LITELLM_MASTER_KEY, 'mvp-synthetic-decisions')
 const root = resolve(import.meta.dirname, '../..')

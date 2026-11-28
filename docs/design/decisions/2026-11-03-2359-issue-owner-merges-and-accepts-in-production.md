@@ -1,6 +1,7 @@
 # The issue's owner merges its PR and accepts it in production
 
 - Date: 2026-11-03
+- **Status:** Superseded in part by [2026-11-20-1640](2026-11-20-1640-sdlc-delivery.md)
 - Source: Alex, 2026-11-03, on how work is assigned and shipped: work goes
   through a GitHub issue to one agent, which owns it end to end and never
   pushes directly to main.

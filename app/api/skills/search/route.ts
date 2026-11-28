@@ -1,8 +1,9 @@
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { noteLogUser } from '@/lib/request-log'
 import { getVercelOidcToken } from '@vercel/oidc'
 
 import { SKILLS_MAX_PAGE, SKILLS_PAGE_SIZE, SKILLS_SEARCH_MAX, skillsPage, skillsSearchResponseSchema, skillsUpstreamUrl } from '@/lib/skills-search'
 import { auth } from '@/lib/api-auth'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const NO_STORE = { 'Cache-Control': 'private, no-store' }
 
@@ -59,4 +60,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/skills/search', handleGET)
+export const GET = defineRoute<'public', 'none'>(
+  {
+    route: '/api/skills/search',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handleGET(request),
+)

@@ -1,4 +1,9 @@
 import type { SubscriptionRefusalCode } from '@mikka/protocol/subscription'
+import {
+  normalizeLegacyRefusal,
+  type MikkaErrorContract,
+  type MikkaErrorContractOptions,
+} from './primitives/error-contract'
 
 /** Every subscription refusal code, grouped by what the person can do about it. */
 const REFUSALS = {
@@ -39,4 +44,14 @@ const pattern = new RegExp(`^(?:[^]*: )?(${Object.keys(REFUSALS).join('|')})(?: 
 export function subscriptionRefusal(message: string | null | undefined): SubscriptionRefusalNotice | null {
   const match = message ? pattern.exec(message.trim()) : null
   return match ? REFUSALS[match[1] as keyof typeof REFUSALS] : null
+}
+
+/** Additive canonical error contract for a recognized subscription refusal, or null. */
+export function subscriptionRefusalErrorContract(
+  message: string | null | undefined,
+  options?: MikkaErrorContractOptions,
+): MikkaErrorContract | null {
+  const match = message ? pattern.exec(message.trim()) : null
+  if (!match) return null
+  return normalizeLegacyRefusal(match[1], options)
 }

@@ -6,8 +6,7 @@
     "incremental": false,
     "plugins": [],
     "paths": {
-      "@/*": ["../../*"],
-      "@ui-slot/*": ["../../components/slots/*"]
+      "@/*": ["../../*"]
     }
   },
   "include": ["src/renderer", "../../types", "../../lib/platform/window.d.ts"],

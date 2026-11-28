@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { needsOfficialUi } from "./official-ui-tree.mjs";
 import {
   auditPolling,
   auditRepository,
@@ -26,7 +27,7 @@ test("ordinary TypeScript assertions do not hide a positional mobile interval", 
   const source =
     "const path = <string>input\nconst page = useApi<Page>(path, 5000)";
   assert.deepEqual(
-    findPolling("apps/mobile/example.ts", source).map((result) => result.rule),
+    findPolling("lib/example.ts", source).map((result) => result.rule),
     ["polling/helper"],
   );
 });
@@ -71,7 +72,7 @@ test("a stale entry is reported: an allowlisted file with no polling fails", () 
   ]);
   assert.match(
     staleAllowlistEntries({
-      "components/gone.tsx": {
+      "lib/gone.tsx": {
         kind: "ui-timer",
         reason: "deleted file",
         hits: 1,
@@ -319,7 +320,8 @@ test("Cloudflare, API, subscription worker, all packages and scripts belong to s
     );
   const files = pollingPolicyFiles();
   assert.ok(files.includes("cloudflare/eve-runtime/runtime/config.mjs"));
-  assert.ok(files.includes("components/plugins/github-settings.tsx"));
+  // The interface is scanned in the official UI checkout's core/ when it is mounted (official-ui-tree.mjs).
+  if (!needsOfficialUi) assert.ok(files.includes("components/plugins/github-settings.tsx"));
   assert.ok(files.includes("scripts/acceptance/wake-consumer-closeout.mjs"));
   assert.ok(files.includes("scripts/test-subscription-worker.mjs"));
 });

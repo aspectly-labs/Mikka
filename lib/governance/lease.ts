@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg'
 import { deploymentMode } from './edition'
 import { resolveEntitlements, type PlanGrant } from './policy'
 import { GovernanceError } from './errors'
+import { getRuntimeConfig } from '@/lib/runtime-config'
 
 /** The caller owns a membership lease through its APP commit. Only shared locks here. */
 export async function readGovernanceLease(client: Pick<PoolClient, 'query'>, workspaceId: string, userId: string) {
@@ -13,5 +14,14 @@ export async function readGovernanceLease(client: Pick<PoolClient, 'query'>, wor
   const { rows: [grant] } = link
     ? await client.query<PlanGrant>('select plan,source,"seatLimit","expiresAt" from mikka_organization_entitlements where "organizationId"=$1', [link.organizationId])
     : await client.query<PlanGrant>('select plan,source,"seatLimit","expiresAt" from mikka_workspace_entitlements where "workspaceId"=$1', [workspaceId])
-  return { role: workspace.role, organizationId: link?.organizationId ?? null, entitlements: resolveEntitlements({ mode: deploymentMode(), kind: workspace.kind, grant }) }
+  return {
+    role: workspace.role,
+    organizationId: link?.organizationId ?? null,
+    entitlements: resolveEntitlements({
+      mode: deploymentMode(),
+      kind: workspace.kind,
+      grant,
+      capabilityOverrides: getRuntimeConfig('planEntitlementOverrides'),
+    }),
+  }
 }

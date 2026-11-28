@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { channel } from 'node:diagnostics_channel'
 import { readFile } from 'node:fs/promises'
 import { mock, test } from 'node:test'
-import { NextRequest } from '../../lib/server-runtime/server.ts'
+import { RouteRequest } from '../../lib/server-runtime/server.ts'
 import { TestAccountError } from '../test-accounts/pool.mjs'
 import { ReadCacheDiagnosticError } from './read-cache.mjs'
 import { createOwnedRuntimeObserver, loadOwnedDiagnosticSources, observeOwnedRequests, prepareAttestationRoute, prepareLandingRoute, publicOwnedFailure } from './run-read-cache.mjs'
@@ -218,17 +218,17 @@ test('request observations are bounded, ignore foreign and query paths, retain s
   } finally { observed.close() }
 })
 
-test('the workflow binds the canonical NextRequest origin before signing the environment descriptor', async () => {
+test('the workflow binds the canonical RouteRequest origin before signing the environment descriptor', async () => {
   const workflow = await readFile(new URL('../../.github/workflows/read-cache.yml', import.meta.url), 'utf8')
   const authOrigin = /^\s+BETTER_AUTH_URL: (\S+)$/m.exec(workflow)?.[1]
   const baseOrigin = /^\s+E2E_BASE_URL: (\S+)$/m.exec(workflow)?.[1]
   assert.ok(authOrigin); assert.equal(authOrigin, baseOrigin)
-  const route = new NextRequest(`${authOrigin}/mikka/api/test-environment?challenge=${'a'.repeat(64)}`)
+  const route = new RouteRequest(`${authOrigin}/mikka/api/test-environment?challenge=${'a'.repeat(64)}`)
   assert.equal(new URL(route.url).origin, authOrigin, 'the route checks an exact origin before it reads the HMAC key')
-  // Next's NextRequest rewrote IPv4 loopback to `localhost`; the runtime this
+  // Next.js's request type rewrote IPv4 loopback to `localhost`; the runtime this
   // repository owns keeps the host it was handed. Database identity therefore
   // stays separate from the HTTP origin by configuration, not by URL rewriting.
-  assert.equal(new URL(new NextRequest('http://127.0.0.1:3137/mikka/api/test-environment').url).hostname, '127.0.0.1')
+  assert.equal(new URL(new RouteRequest('http://127.0.0.1:3137/mikka/api/test-environment').url).hostname, '127.0.0.1')
   for (const name of ['E2E_DATABASE_URL', 'MIKKA_DATABASE_URL', 'DATABASE_URL']) {
     const value = new RegExp(`^\\s+${name}: (\\S+)$`, 'm').exec(workflow)?.[1]
     assert.ok(value); assert.equal(new URL(value).hostname, '127.0.0.1')
@@ -271,7 +271,7 @@ test('landing compilation makes one bounded anonymous request and never follows 
   const abort = new AbortController()
   const timeout = mock.method(AbortSignal, 'timeout', duration => { assert.equal(duration, 120_000); return abort.signal })
   try {
-    for (const response of [new Response('<html>streamed redirect</html>'), new Response(null, { status: 307, headers: { location: '/api/acceptance' } }), new Response(null, { status: 307, headers: { location: `${environment.origin}/mikka/api/acceptance`, 'set-cookie': 'NEXT_LOCALE=zh-CN; Path=/mikka; SameSite=Lax' } })]) {
+    for (const response of [new Response('<html>streamed redirect</html>'), new Response(null, { status: 307, headers: { location: '/api/acceptance' } }), new Response(null, { status: 307, headers: { location: `${environment.origin}/mikka/api/acceptance`, 'set-cookie': 'mikka-locale=zh-CN; Path=/mikka; SameSite=Lax' } }), new Response(null, { headers: [['set-cookie', 'mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'], ['set-cookie', 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax']] })]) {
       let calls = 0
       await prepareLandingRoute(environment, async (url, options) => {
         calls++
@@ -293,7 +293,7 @@ test('landing compilation makes one bounded anonymous request and never follows 
 test('landing preparation refuses unexpected status, redirect and auth cookies without a second request', async () => {
   for (const response of [new Response(null, { status: 500 }), new Response(null, { status: 404 }), new Response(null, { status: 307 }),
     ...['https://foreign.example/api/acceptance', '//foreign.example/api/acceptance', '/api/acceptance?next=private', '/mikka/api/auth/sign-up/email'].map(location => new Response(null, { status: 307, headers: { location } })),
-    ...['better-auth.session_token=private; HttpOnly', 'NEXT_LOCALE=private', 'NEXT_LOCALE=en, better-auth.session_token=private'].map(cookie => new Response(null, { headers: { 'set-cookie': cookie } })),
+    ...['better-auth.session_token=private; HttpOnly', 'mikka-locale=private', 'mikka-locale=en, better-auth.session_token=private', 'NEXT_LOCALE=private'].map(cookie => new Response(null, { headers: { 'set-cookie': cookie } })),
   ]) {
     let calls = 0
     await assert.rejects(prepareLandingRoute(environment, async () => { calls++; return response }), { code: 'owned_landing_prepare_refused' })

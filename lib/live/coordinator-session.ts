@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { liveGatewayConfig, type LiveScope } from './scope'
 
@@ -22,7 +23,7 @@ export async function coordinatorSessionScope(database: Database, workspaceDatab
 /** Register on the actual outer transaction, including Drizzle savepoints.
  * No scope read or network request extends the business transaction. */
 export async function coordinatorSessionChanged(executor: object, ownerId: string, botId: string | null) {
-  if (!botId || !liveGatewayConfig(process.env)) return
+  if (!botId || !liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterDatabaseCommit(executor, `coordinator_session:${ownerId}:${botId}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

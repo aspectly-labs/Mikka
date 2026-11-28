@@ -6,7 +6,7 @@ import { inboxRecoveryReference } from './inbox-production-recovery.mjs'
 
 export const INBOX_PR = 1822
 export const INBOX_BRANCH = 'feat/inbox-1820'
-const REPOSITORY = 'alexj11324/Mikka'
+const REPOSITORY = 'aspectly-labs/Mikka'
 const API = 'https://api.github.com/repos/' + REPOSITORY
 const SHA = /^[a-f0-9]{40}$/
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i

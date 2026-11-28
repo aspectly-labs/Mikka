@@ -1,10 +1,13 @@
 import { test, expect, app } from './fixtures'
+import { publicEnv } from '../../lib/public-env.mjs'
 
 // Sign-up refusals from #527 (docs/backend/hosted-abuse-controls.md). Better Auth's
-// response is mocked; CI builds without NEXT_PUBLIC_TURNSTILE_SITE_KEY, so the
+// response is mocked; CI builds without MIKKA_PUBLIC_TURNSTILE_SITE_KEY, so the
 // widget renders nothing and no token header is sent.
 
 // The browser logs each refused request; that line is expected, nothing else is.
+const siteKey = publicEnv('MIKKA_PUBLIC_TURNSTILE_SITE_KEY')
+
 const refusedLog = (path: string, status: number) => ({ path: app(path), message: `Failed to load resource: the server responded with a status of ${status} (${status === 429 ? 'Too Many Requests' : 'Bad Request'})` })
 
 for (const { code, status, message } of [
@@ -27,7 +30,7 @@ for (const { code, status, message } of [
     await page.getByLabel('密码', { exact: true }).fill('correct-horse-battery')
     await page.getByRole('button', { name: '创建账号并进入', exact: true }).click()
     await expect(page.getByRole('alert').filter({ hasText: message })).toBeVisible()
-    if (!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY) {
+    if (!siteKey) {
       expect(turnstileHeader).toBeNull()
       await expect(page.locator('[data-slot="turnstile"]')).toHaveCount(0)
     }
@@ -49,7 +52,7 @@ test.describe('重新发送验证邮件', () => {
 test.describe('带站点密钥的构建', () => {
   // Turnstile's own script is replaced by a stand-in that issues a token, so the
   // header can be checked without Cloudflare. Skipped when the build has no key.
-  test.skip(!process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY, 'build has no NEXT_PUBLIC_TURNSTILE_SITE_KEY')
+  test.skip(!siteKey, 'build has no MIKKA_PUBLIC_TURNSTILE_SITE_KEY')
   test.use({ expectedConsoleErrors: [refusedLog('/api/auth/sign-up/email', 400)] })
   test('注册请求带上 Turnstile 令牌', async ({ page }) => {
     await page.route('https://challenges.cloudflare.com/**', route => route.fulfill({ contentType: 'application/javascript', body: `window.turnstile = { render: function (el, o) { el.textContent = 'turnstile'; setTimeout(function () { o.callback('fixture-token') }, 0); return 'w1' }, reset: function () {}, remove: function () {} }` }))

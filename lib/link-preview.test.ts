@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import type { LookupFunction } from 'node:net'
 import { guardedLookup, linkPreview, previewDispatcher, type DispatchedFetchInit } from './link-preview'
+import { LINK_PREVIEW_MAX_URL_LENGTH, LINK_PREVIEWS_PER_REQUEST } from './link-preview-batch'
 
 /** Asks a connect-time lookup the way net.connect does, keeping both callback shapes. */
 function ask(lookupAtConnect: LookupFunction, hostname: string, options: { all?: boolean } = {}) {
@@ -59,4 +60,9 @@ test('linkPreview refuses anything but a public http(s) URL on the default port'
   for (const url of ['file:///etc/passwd', 'http://127.0.0.1/', 'http://169.254.169.254/latest/meta-data/', 'http://example.com:8080/', 'http://user:secret@example.com/']) {
     assert.equal(await linkPreview(url), null, url)
   }
+})
+
+test('batched link-preview limits stay bounded for client and action callers', () => {
+  assert.equal(LINK_PREVIEWS_PER_REQUEST, 50)
+  assert.equal(LINK_PREVIEW_MAX_URL_LENGTH, 2000)
 })

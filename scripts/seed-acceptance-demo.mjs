@@ -72,7 +72,7 @@ try {
           await main.query('INSERT INTO workspace_issue_labels (workspace_id,name,color) VALUES ($1,$2,$3) ON CONFLICT (workspace_id,lower(name)) DO NOTHING', [seedWorkspace.id, name, color])
         }
       }
-      const { rows: [number] } = await main.query(`SELECT COALESCE(MAX((content->'attrs'->'mikka'->>'number')::int),0) AS n FROM issues WHERE "userId"=$1`, [guest.id])
+      const { rows: [number] } = await main.query(`SELECT COALESCE(MAX(CASE WHEN (content->'attrs'->'mikka'->>'number') ~ '^-?[0-9]+$' AND pg_input_is_valid((content->'attrs'->'mikka'->>'number'), 'integer') THEN (content->'attrs'->'mikka'->>'number')::integer ELSE NULL END),0) AS n FROM issues WHERE "userId"=$1`, [guest.id])
       let next = Number(number.n)
       for (const [g, group] of groups.entries()) for (const [i, title] of group.tasks.entries()) {
         const issueId = id(`issue-${g}-${i}`)

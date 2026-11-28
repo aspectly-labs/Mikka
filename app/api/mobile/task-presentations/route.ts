@@ -1,18 +1,15 @@
 import { getTaskPresentations } from '@/app/actions/task-domain'
 import { actAs } from '@/lib/acting-user'
 import { ActionFailureError } from '@/lib/action-error'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { json, unauthorized } from '@/lib/mobile-api'
 import { taskPresentationsInput } from '@/lib/task-presentation-input'
 import { WorkspaceError } from '@/lib/workspace-error'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 
 /** Native Cookie transport for the existing bounded Task presentation reader. */
-async function handlePOST(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
+async function handlePOST(request: Request, user: ApiSession['user']) {
 
   const reader = request.body?.getReader()
   if (!reader) return json({ error: 'invalidRequest' }, 400)
@@ -48,4 +45,12 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withRequestLog('/api/mobile/task-presentations', handlePOST)
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/task-presentations',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async ({ request, user }) => handlePOST(request, user),
+)

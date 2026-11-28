@@ -1,6 +1,6 @@
 # 首次引导（Onboarding）
 
-- **Status:** 当前实现，内容对齐 Capy（决定 [2026-11-15-1900](decisions/2026-11-15-1900-models-on-gateway-like-capy.md) 第 8 条；调研 [2026-11-15-capy-onboarding](../research/2026-11-15-capy-onboarding.md)）。官方构建用 affectUI 的 Onboarding 块，原样使用，只换数据和文字（`mikka-hosted-ui/slots/onboarding.tsx`，`patches/onboarding.patch`）。
+- **Status:** 当前实现，内容对齐 Capy（决定 [2026-11-15-1900](decisions/2026-11-15-1900-models-on-gateway-like-capy.md) 第 8 条；调研 [2026-11-15-capy-onboarding](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/research/2026-11-15-capy-onboarding.md)）。官方构建以 affectUI 的 Onboarding 块为素材，按 Capy 对齐（`mikka-hosted-ui/slots/onboarding.tsx`，`patches/onboarding.patch`；决定 [2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)）。
 - **历史：** 2026-10-30 的对话式引导（Bot 一句句说、背景光、建第一个 Bot）见本文件在 `caa5145c` 及以前的版本；公开构建的 `components/onboarding/onboarding.tsx` 仍是那一版，只要求能编译。
 
 ## 1. 什么时候出现

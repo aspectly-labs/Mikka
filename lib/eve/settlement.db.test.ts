@@ -55,6 +55,98 @@ test('host settlement receipts preserve product publication across native RPC re
           [ownerId, botId, `${sessionId}:child_without_execution:0`])).rows[0].count, 0)
       } finally { loader.deregister() }
     })
+    await t.test('an HTTP finish preserves a rejected receipt and exports only its safe database reason', async t => {
+      const { createServer } = await import('node:http')
+      const { serve } = await import('srvx/node')
+      const { context, propagation, trace } = await import('@opentelemetry/api')
+      const { AlwaysOnSampler, InMemorySpanExporter, SimpleSpanProcessor } = await import('@opentelemetry/sdk-trace-base')
+      const { NodeTracerProvider } = await import('@opentelemetry/sdk-trace-node')
+      const { InMemoryLogRecordExporter } = await import('@opentelemetry/sdk-logs')
+      const { createLogProvider, StageLogProcessor } = await import('../tracing/logs')
+      const { SafeExporter } = await import('../tracing/node')
+      const { RouteAttributesProcessor } = await import('../tracing/spans')
+      const { createApiHandler } = await import('../../apps/api/src/application')
+      const { beginRequestTrace } = await import('../../apps/api/runtime/request-trace')
+      const { internalEveAuthorization } = await import('./auth')
+      const sessionId = await nativeSession(), eventId = randomUUID(), turnId = 'receipt_failure'
+      const canary = 'private_receipt_' + randomUUID().replaceAll('-', '')
+      const constraint = 'private_constraint_' + randomUUID().replaceAll('-', '')
+      await pool.query(`INSERT INTO coordinator_events(id,"userId","botId",kind,"dedupeKey",payload)
+        VALUES($1,$2,$3,'user_message',($1::uuid)::text,$4)`, [eventId,ownerId,botId,{source:'person',text:canary}])
+      await pool.query('INSERT INTO eve_turn_sources(session_id,turn_id,source_event_id)VALUES($1,$2,$3)', [sessionId,turnId,eventId])
+      // A genuine PostgreSQL CHECK rejection, confined to this fixture's session.
+      // Its arbitrary constraint identifier must not become exported metadata.
+      await pool.query(`ALTER TABLE eve_outcome_deliveries ADD CONSTRAINT ${constraint} CHECK(session_id <> '${sessionId}') NOT VALID`)
+      const memory = new InMemorySpanExporter(), logMemory = new InMemoryLogRecordExporter()
+      const logs = createLogProvider({endpoint:'https://unused.test/i/v1/traces',token:'unused',environment:'dev',exporter:logMemory})
+      const provider = new NodeTracerProvider({sampler:new AlwaysOnSampler(),spanProcessors:[
+        new RouteAttributesProcessor(), new StageLogProcessor(logs.getLogger('receipt-fixture'),new SimpleSpanProcessor(new SafeExporter(memory))),
+      ]})
+      provider.register()
+      let disposed = Promise.withResolvers<void>()
+      const app = createApiHandler([{
+        path:'/mikka/api/internal/eve/tools',template:'/api/internal/eve/tools',source:'receipt-fixture',methods:['POST'],
+        load:() => import('../../app/api/internal/eve/tools/route'),
+      }],(request,route) => {
+        const current = beginRequestTrace(request,route)
+        return {...current,finish(status,error) {current.finish(status,error);disposed.resolve()}}
+      })
+      const runtime = serve({manual:true,gracefulShutdown:false,silent:true,trustProxy:false,hostname:'127.0.0.1',port:0,fetch:request=>app.fetch(request)})
+      const server = createServer(runtime.node!.handler)
+      const queries = t.mock.method(pool,'query')
+      try {
+        await new Promise<void>((resolve,reject) => {server.once('error',reject);server.listen(0,'127.0.0.1',resolve)})
+        const address = server.address()
+        assert.ok(address && typeof address !== 'string')
+        for (const sqlstate of ['23514','P0001']) {
+          if (sqlstate === 'P0001') {
+            await pool.query(`ALTER TABLE eve_outcome_deliveries DROP CONSTRAINT ${constraint};
+              CREATE FUNCTION ${constraint}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+                IF NEW.session_id='${sessionId}' THEN RAISE EXCEPTION USING ERRCODE='P0001',MESSAGE='${canary}',DETAIL='${canary}',CONSTRAINT='${constraint}'; END IF;
+                RETURN NEW; END $$;
+              CREATE TRIGGER ${constraint} BEFORE INSERT ON eve_outcome_deliveries FOR EACH ROW EXECUTE FUNCTION ${constraint}()`)
+          }
+          disposed = Promise.withResolvers<void>()
+          memory.reset();logMemory.reset()
+          const response:Response = await fetch(`http://127.0.0.1:${address.port}/mikka/api/internal/eve/tools`, {
+            method:'POST',headers:{authorization:internalEveAuthorization(scope)},
+            body:JSON.stringify({operation:'finish',sessionId,turnId,outcome:'completed',messages:[{role:'assistant',content:canary,mikkaStreamId:`eve:${sessionId}:${turnId}`}]}),
+          })
+          assert.equal(response.status,503)
+          assert.deepEqual(await response.json(),{error:'failed'})
+          await disposed.promise
+          const insert = queries.mock.calls.findLast(call => String(call.arguments[0]).includes('INSERT INTO eve_outcome_deliveries'))
+          assert.ok(insert, 'the authorized HTTP request reached the real receipt INSERT')
+          await assert.rejects(insert.result as unknown as Promise<unknown>,{code:sqlstate,constraint})
+          assert.equal((await pool.query('SELECT count(*)::int n FROM eve_outcome_deliveries WHERE session_id=$1',[sessionId])).rows[0].n,0)
+          assert.equal((await pool.query('SELECT count(*)::int n FROM eve_projection_receipts WHERE session_id=$1 AND event_key=$2',[sessionId,turnId])).rows[0].n,1)
+          assert.equal((await pool.query('SELECT completed_at FROM eve_turn_settlements WHERE session_id=$1 AND turn_id=$2',[sessionId,turnId])).rows[0].completed_at,null)
+          await provider.forceFlush();await logs.forceFlush()
+          const span = memory.getFinishedSpans().find(row => row.name === 'POST /api/internal/eve/tools')
+          assert.ok(span)
+          assert.equal(span.attributes['http.response.status_code'],503)
+          assert.equal(span.attributes['mikka.error.code'],sqlstate)
+          assert.equal(span.attributes['mikka.eve.receipt_phase'],'claim')
+          assert.equal(span.attributes['mikka.error.detail'],undefined, 'only known schema constraints may be exported, never raw PG DETAIL')
+          const record = logMemory.getFinishedLogRecords().find(row => row.spanContext?.spanId === span.spanContext().spanId)
+          assert.ok(record)
+          assert.equal(record.body,'mikka.stage.failed')
+          assert.equal(record.attributes['mikka.error.code'],sqlstate)
+          assert.equal(record.attributes['mikka.eve.receipt_phase'],'claim')
+          const exported = JSON.stringify({span:{attributes:span.attributes,events:span.events,status:span.status},log:{body:record.body,attributes:record.attributes}})
+          for (const privateValue of [canary,constraint,sessionId,ownerId,botId,workspaceId]) assert.ok(!exported.includes(privateValue))
+        }
+      } finally {
+        queries.mock.restore()
+        server.closeAllConnections()
+        await new Promise<void>((resolve,reject) => server.close(error=>error?reject(error):resolve()))
+        await runtime.close()
+        await provider.shutdown();await logs.shutdown()
+        trace.disable();context.disable();propagation.disable()
+        await pool.query(`ALTER TABLE eve_outcome_deliveries DROP CONSTRAINT IF EXISTS ${constraint};
+          DROP TRIGGER IF EXISTS ${constraint} ON eve_outcome_deliveries; DROP FUNCTION IF EXISTS ${constraint}()`)
+      }
+    })
     await t.test('native admission stays pending until its own root projection, including queued and quiet turns',async()=>{
       const {markEventAccepted}=await import('./submission')
       const {chatView,chatVersion,botChatSnapshot}=await import('../coordinator/store')

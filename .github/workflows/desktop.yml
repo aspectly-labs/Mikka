@@ -1,10 +1,12 @@
 name: Desktop shell
 
-# Checks the bundled/shared UI and Electron runtime on Linux.
+# Checks the Electron shell and runtime on Linux. This repository carries no interface, so a
+# build here runs the page a build without the official UI shows (apps/frontend/src/headless.ts).
 # Developer ID signing, notarization and publication stay on release runners.
 
-# Pull requests only: the same suite already passed on the PR, and main's
-# CI workflow (ui-policy.yml) still verifies every merged commit.
+# CI (ui-policy.yml, job desktop-checks) calls this when its trusted selector
+# reports `desktop` (routed on ready pull requests, broad on merge-queue candidates and the daily
+# full run). Main pushes rely on the merge-queue run of the same commit.
 on:
   workflow_call:
     inputs:
@@ -18,8 +20,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # A CI call shares its parent run's lifetime (the parent cancels superseded PR
+  # runs); a manual dispatch never cancels a CI-called run or the reverse.
+  group: desktop-${{ inputs.selected && format('ci-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !inputs.selected }}
 
 env:
   MIKKA_EDITION: cloud
@@ -57,7 +61,7 @@ jobs:
       - run: pnpm --filter @mikka/desktop typecheck
       - run: pnpm --filter @mikka/desktop lint
       - run: pnpm --filter @mikka/desktop test
-      - run: pnpm --filter @mikka/desktop build --public-test-fixture
+      - run: pnpm --filter @mikka/desktop build --without-renderer
       - run: pnpm --filter @mikka/protocol typecheck
       - run: pnpm test:platform
       - run: pnpm lint:ui
@@ -133,7 +137,7 @@ jobs:
       - name: Prepare the isolated E2E schema
         run: pnpm test:e2e:setup
       - name: Build the production web backend
-        run: pnpm generate:agent-ui && pnpm build:app --public-test-fixture
+        run: pnpm build:app
         env:
           NODE_OPTIONS: --max-old-space-size=6144
       - name: Archive the compiled Linux backend
@@ -144,7 +148,7 @@ jobs:
           path: /tmp/desktop-api-build.tar.gz
           retention-days: 2
       - name: Build the dev Electron shell
-        run: pnpm --filter @mikka/desktop build --public-test-fixture
+        run: pnpm --filter @mikka/desktop build
         env:
           MIKKA_DESKTOP_FLAVOR: dev
       - name: Isolated Electron authentication and runtime acceptance

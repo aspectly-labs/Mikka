@@ -1,18 +1,19 @@
 import { cookies } from '@/lib/server-runtime/headers'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/auth'
 import { pool } from '@/lib/db'
 import { withRequestLog } from '@/lib/request-log'
 import { withTaskWorkspace } from '@/lib/task-workspace'
 import { installPlatform, redeemSlackCode, SLACK_CALLBACK_PATH, SLACK_INSTALL_RETURN_PATH, SLACK_STATE_COOKIE } from '@/lib/slack/install-provider'
 import { acceptInstall, consumeInstall } from '@/lib/slack/installation-store'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 async function handle(request: Request) {
   const url = new URL(request.url),
     platform = installPlatform()
   const back = new URL(SLACK_INSTALL_RETURN_PATH, url.origin)
   const redirect = () => {
-    const response = NextResponse.redirect(back)
+    const response = RouteResponse.redirect(back)
     response.cookies.set(SLACK_STATE_COOKIE, '', {
       httpOnly: true,
       sameSite: 'lax',
@@ -44,4 +45,12 @@ async function handle(request: Request) {
   }
   return redirect()
 }
-export const GET = withRequestLog('/api/integrations/slack/callback', handle)
+const unguardedGET = withRequestLog('/api/integrations/slack/callback', handle)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request),
+)

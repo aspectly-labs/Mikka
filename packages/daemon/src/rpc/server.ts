@@ -10,6 +10,7 @@ import {
   DAEMON_PROTOCOL_VERSION,
   DAEMON_RPC_ERRORS,
   daemonRpc,
+  daemonRunActivity,
   type DaemonRpcMethod,
   type DaemonRpcResult,
   type HelloResult,
@@ -20,13 +21,14 @@ import {
   ResponseError,
   SocketMessageReader,
   SocketMessageWriter,
+  type MessageConnection,
 } from "vscode-jsonrpc/node"
 
 import { DaemonError } from "../errors"
 import type { Logger } from "../log"
 
 export type RpcHandlers = {
-  [M in Exclude<DaemonRpcMethod, "daemon.hello">]: (
+  [M in Exclude<DaemonRpcMethod, "daemon.hello" | "daemon.watchRunActivity">]: (
     params: NonNullable<unknown>
   ) => Promise<DaemonRpcResult<M>> | DaemonRpcResult<M>
 }
@@ -36,6 +38,7 @@ export interface RpcServerOptions {
   secret: string
   hello: () => HelloResult
   handlers: RpcHandlers
+  isRunActive?: () => boolean
   log: Logger
 }
 
@@ -67,6 +70,7 @@ function toResponseError(error: unknown, log: Logger): ResponseError<unknown> {
 export class RpcServer {
   private server: Server | null = null
   private sockets = new Set<Socket>()
+  private activityWatchers = new Set<MessageConnection>()
 
   constructor(private readonly options: RpcServerOptions) {}
 
@@ -81,6 +85,12 @@ export class RpcServer {
     })
     chmodSync(socketPath, 0o600)
     this.server = server
+  }
+
+  publishRunActivity(active: boolean) {
+    for (const connection of this.activityWatchers) {
+      void connection.sendNotification(daemonRunActivity.method, { active }).catch(() => undefined)
+    }
   }
 
   private accept(socket: Socket) {
@@ -136,6 +146,14 @@ export class RpcServer {
           )
         }
         const params = daemonRpc[name].params.parse(raw ?? {}) ?? {}
+        if (name === "daemon.watchRunActivity") {
+          const { isRunActive } = this.options
+          if (!isRunActive) throw new ResponseError(ErrorCodes.MethodNotFound, "Run activity unavailable")
+          this.activityWatchers.add(connection)
+          // Queue the initial snapshot on the same stream before subsequent edges.
+          await connection.sendNotification(daemonRunActivity.method, { active: isRunActive() })
+          return { ok: true }
+        }
         return await handlers[name](params)
       } catch (error) {
         return toResponseError(error, log)
@@ -144,7 +162,10 @@ export class RpcServer {
     connection.onError(([error]) =>
       log.debug({ err: error }, "rpc connection error")
     )
-    connection.onClose(() => connection.dispose())
+    connection.onClose(() => {
+      this.activityWatchers.delete(connection)
+      connection.dispose()
+    })
     connection.listen()
   }
 

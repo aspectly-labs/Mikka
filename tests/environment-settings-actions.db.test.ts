@@ -23,6 +23,9 @@ test('environment settings GET keeps canonical storage, fresh membership and pri
   await fixture.query('UPDATE resource_access_policies SET visibility=\'private\' WHERE kind=\'project\' AND id=$1', [privateProject])
   let current: { id: string; name: string; email: string; [tokenWorkspace]?: string } | null = { id: owner, name: 'Owner', email: `${owner}@example.invalid` }
   const mocks = [
+    mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async () =>
+      current ? { user: current, session: { id: 'env-http-session' }, ...(current[tokenWorkspace] ? { tokenWorkspaceId: current[tokenWorkspace] } : {}) } : null
+    } } } }),
     mock.module('@/lib/issue-access', { namedExports: { requireUser: async () => { if (!current) throw new ActionFailureError('authRequired'); return current } } }),
     // Deliberately stale context: the store must recheck the membership row,
     // and canManage must not trust this old admin projection.
@@ -47,7 +50,9 @@ test('environment settings GET keeps canonical storage, fresh membership and pri
   const environment = await store.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Canonical environment', configuration: { setup: { copyFiles: [], command: 'node --version', approved: true } } })
   const recoverable = await store.saveEnvironment(owner, { workspaceId: workspace.id, name: 'Recoverable environment', configuration: { variables: { RESTORED_ENVIRONMENT: 'kept' } } })
   await store.saveEnvironment(owner, { workspaceId: workspace.id, id: recoverable.id, revision: 1, name: 'Recoverable environment', configuration: { variables: { RESTORED_ENVIRONMENT: 'kept' } }, archived: true })
-  await store.setProjectDefaultEnvironment(owner, { workspaceId: workspace.id, projectId: project, revision: 1, environmentId: environment.id })
+  // The retired Project default stays readable for one release (EnvironmentsView.projects).
+  await fixture.query('INSERT INTO workspace_project_environments("projectId","workspaceId","environmentId","isDefault") VALUES($1,$2,$3,true)', [project, workspace.id, environment.id])
+  const mine = await store.saveEnvironment(member, { workspaceId: workspace.id, name: 'Member only', scope: 'personal', configuration: {} })
   const { GET } = await import('../app/api/settings/[read]/route')
   const server = createServer(async (request, response) => {
     try {
@@ -66,7 +71,8 @@ test('environment settings GET keeps canonical storage, fresh membership and pri
   assert.equal(response.headers.get('cache-control'), 'private, no-store')
   let body = await response.json()
   assert.equal(body.canManage, true)
-  assert.deepEqual(body.environments.map((row: { id: string; archived: boolean }) => [row.id, row.archived]), [[environment.id, false], [recoverable.id, true]])
+  assert.deepEqual(body.environments.map((row: { id: string; archived: boolean }) => [row.id, row.archived]), [[environment.id, false], [recoverable.id, true]],
+    'an administrator does not see a member\'s personal environment')
   assert.deepEqual(body.projects.map((row: { id: string; environmentId: string | null }) => [row.id, row.environmentId]), [[project, environment.id]])
   assert.equal(JSON.stringify(body).includes('private Project title'), false)
 
@@ -83,7 +89,11 @@ test('environment settings GET keeps canonical storage, fresh membership and pri
   response = await read(); body = await response.json()
   assert.equal(response.status, 200)
   assert.equal(body.canManage, false, 'an old admin context cannot revive a downgraded role')
+  assert.equal(body.canCreatePersonal, true)
   assert.equal(body.environments[0].id, environment.id)
+  assert.deepEqual(body.environments.filter((row: { scope: string }) => row.scope === 'personal').map((row: { id: string; canEdit: boolean; canShare: boolean }) => [row.id, row.canEdit, row.canShare]),
+    [[mine.id, true, true]], 'a member sees and manages only their own personal environment')
+  assert.equal(body.environments.find((row: { id: string }) => row.id === environment.id).canEdit, false)
   assert.equal((await read(foreign.id)).status, 403)
   current[tokenWorkspace] = foreign.id
   assert.equal((await read()).status, 403, 'a pinned token tenant remains enforced after context resolution')

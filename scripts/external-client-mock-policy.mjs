@@ -45,7 +45,14 @@ export function auditExternalClientMocks(findings, baseline, previous = baseline
     if (count > (baseline[key] ?? 0)) errors.push(`${item.file}:${item.line} provider-module-mock: ${item.module}; use tests/fakes HTTP service`)
   }
   for (const [key, count] of Object.entries(baseline)) {
-    if (!Number.isInteger(count) || count < 1 || count > (previous[key] ?? 0)) errors.push(`${baselinePath}: baseline may only shrink (${key})`)
+    if (!Number.isInteger(count) || count < 1 || count > (previous[key] ?? 0)) {
+      errors.push(`${baselinePath}: baseline may only shrink (${key})`)
+      continue
+    }
+    const actual = counts.get(key) ?? 0
+    if (actual < count) {
+      errors.push(`${baselinePath}: stale entry (${key}: baseline ${count}, actual ${actual}); ${actual ? `lower to ${actual}` : 'remove entry'}`)
+    }
   }
   return errors
 }
@@ -87,6 +94,9 @@ export function trustedPolicyBase(root = process.cwd()) {
 
 export function runExternalClientMockPolicy(root = process.cwd()) {
   const baseline = JSON.parse(readFileSync(resolve(root, baselinePath), 'utf8'))
+  if (Object.keys(baseline).length > 0) {
+    return [`${baselinePath}: permanently locked at 0 entries (found ${Object.keys(baseline).length}); use tests/fakes HTTP service instead of provider module mocks`]
+  }
   // Compare against the merge base so the same PR cannot enlarge its allowance.
   // On the introducing PR there is no older allowance; later PRs can only remove.
   const base = trustedPolicyBase(root)

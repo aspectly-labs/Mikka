@@ -15,7 +15,7 @@ import (
 func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) error {
 	scanner := bufio.NewScanner(input)
 	// The maximum model frame is inclusive; Scanner also needs room for LF.
-	scanner.Buffer(make([]byte, 4096), modelRPCFrameMaxBytes+1)
+	scanner.Buffer(make([]byte, 4096), nativeRPCFrameMaxBytes+1)
 	// Count raw bytes before LF. ScanLines strips CR, which would silently
 	// admit an extra byte for a legacy-method frame ending in CRLF.
 	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
@@ -32,7 +32,7 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 		frame := scanner.Bytes()
 		// A Reader may return final bytes together with io.EOF. In that case
 		// Scanner can return its entire buffer, including our spare LF byte.
-		if len(frame) > modelRPCFrameMaxBytes {
+		if len(frame) > nativeRPCFrameMaxBytes {
 			return ErrUnsupported
 		}
 		var request struct {
@@ -54,9 +54,16 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 		var timing *timingRecorder
 		var err error
 		invalid := decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF || request.ID == "" || len(request.ID) > 64
-		// Raising the model frame budget must not expand execute, nativeStream,
-		// credential operations or any other method's previous transport limit.
-		if len(frame) > legacyRPCFrameMaxBytes && (invalid || request.Method != "executeStream") {
+		limit := legacyRPCFrameMaxBytes
+		if !invalid {
+			switch request.Method {
+			case "executeStream":
+				limit = modelRPCFrameMaxBytes
+			case "nativeStream", "modelSearchStream":
+				limit = nativeRPCFrameMaxBytes
+			}
+		}
+		if len(frame) > limit {
 			return ErrUnsupported
 		}
 		if invalid {
@@ -64,14 +71,14 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 			err = ErrUnsupported
 		} else {
 			timeout := 30 * time.Second
-			if request.Method == "executeStream" || request.Method == "nativeStream" {
+			if request.Method == "executeStream" || request.Method == "nativeStream" || request.Method == "modelSearchStream" {
 				timeout = 270 * time.Second
 			}
 			callCtx, cancel := context.WithTimeout(ctx, timeout)
 			if request.Method == "prepare" || request.Method == "prepareStream" || request.Method == "executeStream" {
 				callCtx, timing = withRequestTiming(callCtx)
 			}
-			if w.ExecutionOnly && request.Method != "executeStream" && request.Method != "execute" && request.Method != "quota" && request.Method != "nativeContext" && request.Method != "nativeStream" {
+			if w.ExecutionOnly && request.Method != "executeStream" && request.Method != "execute" && request.Method != "quota" && request.Method != "nativeContext" && request.Method != "nativeStream" && request.Method != "modelSearchStream" {
 				cancel()
 				_ = encodeTimingMessage(encoder, map[string]any{"id": request.ID, "error": string(ErrUnsupported)}, timing)
 				continue
@@ -79,15 +86,19 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 			switch request.Method {
 			case "nativeContext":
 				result, err = w.NativeContext(callCtx, request.Revision)
-			case "nativeStream":
+			case "nativeStream", "modelSearchStream":
 				var native NativeRequest
 				decoder := json.NewDecoder(bytes.NewReader(request.Payload))
 				decoder.DisallowUnknownFields()
 				if decoder.Decode(&native) != nil || decoder.Decode(new(any)) != io.EOF {
 					err = ErrUnsupported
 				} else {
-					err = w.NativeStream(callCtx, request.Revision, native, func(contentType string) error {
-						return encoder.Encode(map[string]any{"id": request.ID, "head": map[string]any{"contentType": contentType}})
+					stream := w.NativeStream
+					if request.Method == "modelSearchStream" {
+						stream = w.ModelSearchStream
+					}
+					err = stream(callCtx, request.Revision, native, func(contentType, generationID string) error {
+						return encoder.Encode(map[string]any{"id": request.ID, "head": map[string]any{"contentType": contentType, "generationId": generationID}})
 					}, func(chunk []byte) error {
 						return encoder.Encode(map[string]any{"id": request.ID, "binaryChunk": base64.StdEncoding.EncodeToString(chunk)})
 					})

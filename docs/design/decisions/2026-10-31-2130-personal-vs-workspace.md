@@ -1,6 +1,7 @@
 # Personal vs workspace ownership
 
 - Date: 2026-10-31
+- **Status:** Superseded in part by [2026-11-02-1500](2026-11-02-1500-personal-first-team-needs-two.md)
 - Source: Alex, relayed by the coordinator: 「一个人也是一个工作区」,
   「不管你在哪个工作区，你都可以用自己账号」, and on the proposal
   「可以按你的建议来」. Research and audit:

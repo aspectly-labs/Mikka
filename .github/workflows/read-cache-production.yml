@@ -42,7 +42,7 @@ jobs:
     name: Read cache production reads
     needs: guards
     if: >-
-      github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' &&
+      (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 15

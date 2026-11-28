@@ -131,7 +131,6 @@
     "entries": [
       { "name": "packages/eve-cloudflare-world (mikka-eve-world)", "kind": "Worker + Durable Objects", "note": "no containers[] declaration; Eve World authority/streams" },
       { "name": "cloudflare/device-gateway", "kind": "Worker + Durable Objects", "note": "device tunnel signalling" },
-      { "name": "cloudflare/linear-sync", "kind": "Worker", "note": "Linear webhook sync" },
       { "name": "cloudflare/suggestions-cron", "kind": "Worker Cron", "note": "scheduled suggestions" },
       { "name": "business-world queue / CI_WORKFLOW_RESULTS queue / due-timer workflows", "kind": "Queues + Workflows", "note": "existing event-driven wake machinery, reused by #3078/#3083" },
       { "name": "mikka-task-workspaces R2 bucket", "kind": "R2", "note": "workspace persistence for task sandboxes" },

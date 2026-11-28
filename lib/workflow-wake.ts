@@ -1,4 +1,5 @@
 import { afterDatabaseCommit } from './db/commit-effects'
+import { runtimeEnv } from '@/lib/env/server'
 export { wakeTokens } from './workflow-wake-tokens'
 
 /**
@@ -11,7 +12,7 @@ export { wakeTokens } from './workflow-wake-tokens'
  * none (resumeHook would start a local world there); the workflow's fallback
  * timer is then its only wake.
  */
-export function workflowWakesEnabled(env: Record<string, string | undefined> = process.env) {
+export function workflowWakesEnabled(env: Record<string, string | undefined> = runtimeEnv()) {
   return Boolean(wakeTransport.resume || env.VERCEL || env.WORKFLOW_TARGET_WORLD || env.NODE_ENV === 'development')
 }
 

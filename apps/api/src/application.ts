@@ -2,14 +2,14 @@ import { METHOD_NAME_ALL } from 'hono/router'
 import { TrieRouter } from 'hono/router/trie-router'
 import { H3, onDispose } from 'h3'
 import { hostedApiUpgradeRequired, UPDATE_REQUIRED_STATUS } from '@mikka/protocol/version'
-import { NextRequest } from '@/lib/server-runtime/server'
+import { RouteRequest } from '@/lib/server-runtime/server'
 import { NavigationResponse } from '../../../lib/server-runtime/navigation'
 import { allowedMethods, routeMatcher, routerPath, type ApiRoute, type RouteMatch } from './routes'
 import { createRequestScope, requireRequestScope, runRequestScope } from './context'
 import { trailingSlashRedirect } from '../runtime/http-policy.mjs'
 import type { PrepareWebTransport, WebTransport } from '../../../lib/web-connection/transport'
 
-type Trace = { run<T>(work: () => T): T; finish(status: number, error?: unknown): void }
+type Trace = { run<T>(work: () => T): T; response?(response: Response): Response; finish(status: number, error?: unknown): void }
 type TraceFactory = (request: Request, route: string) => Trace
 const noTrace: TraceFactory = () => ({ run: work => work(), finish() {} })
 const failure = (status: number) => Response.json({ error: status === 404 ? 'Not found' : 'Request failed' }, { status, headers: { 'cache-control': 'no-store' } })
@@ -33,7 +33,7 @@ async function dispatchRoute(original: Request, matched: RouteMatch | undefined)
   const module = await route.load()
   const handler = module[selected]
   if (typeof handler !== 'function') throw new Error('API_ROUTE_EXPORT_MISSING')
-  const response: unknown = await handler(new NextRequest(original), { params: Promise.resolve(params) })
+  const response: unknown = await handler(new RouteRequest(original), { params: Promise.resolve(params) })
   if (!(response instanceof Response)) throw new TypeError('API_ROUTE_RESPONSE_REQUIRED')
   if (method !== 'HEAD') return response
   await response.body?.cancel()
@@ -65,7 +65,7 @@ export function createApiHandler(routes: ApiRoute[], beginTrace: TraceFactory = 
     onDispose(event, reason => {
       trace.finish(result?.status ?? 500, caught ?? reason)
     })
-    return trace.run(async () => {
+    const response = await trace.run(async () => {
       let prepared: WebTransport | Response | null | undefined
       const serviceBearer = /^Bearer\s+mksvc_/i.test(original.headers.get('authorization') ?? '')
       const serviceProjectRead = template === '/api/service-identity/projects'
@@ -113,6 +113,7 @@ export function createApiHandler(routes: ApiRoute[], beginTrace: TraceFactory = 
       })
       return transport ? transport.run(dispatch) : dispatch()
     })
+    return trace.response?.(response) ?? response
   })
   return app
 }

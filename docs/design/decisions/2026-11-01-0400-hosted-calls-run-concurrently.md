@@ -1,6 +1,7 @@
 # Hosted model calls run concurrently
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex: 「为什么一次只允许一个模型调用啊？这个是有问题的吧？应该是允许并发的呀」
 - Rule: —
 - Replaces: the "one pending/unknown call per workspace" concurrency limit kept

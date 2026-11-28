@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
+import { readEnv } from '@/lib/env/server'
 import { MapReadError, mapQueryFieldsSchema, type MapQuery } from './read-contracts'
 export const MAP_SNAPSHOT_TTL = 10 * 60 * 1000
 const claimSchema = z.object({
@@ -20,13 +21,13 @@ function key(secret: string | undefined) {
   if (!secret) throw new MapReadError('map_unavailable', { detail: 'signing_key' })
   return createHmac('sha256', secret).update('project-map-cursor:v1').digest()
 }
-export function signMapToken(claims: MapClaims, secret = process.env.BETTER_AUTH_SECRET) {
+export function signMapToken(claims: MapClaims, secret = readEnv('BETTER_AUTH_SECRET')) {
   const parsed = claimSchema.safeParse(claims)
   if (!parsed.success) throw new MapReadError('map_invalid_request', { detail: 'invalid_token', cause: parsed.error })
   const payload = Buffer.from(JSON.stringify(parsed.data)).toString('base64url')
   return payload + '.' + createHmac('sha256', key(secret)).update(payload).digest('base64url')
 }
-export function readMapToken(token: string, scope: Scope, kinds: MapClaims['kind'][], now = Date.now(), secret = process.env.BETTER_AUTH_SECRET): MapClaims {
+export function readMapToken(token: string, scope: Scope, kinds: MapClaims['kind'][], now = Date.now(), secret = readEnv('BETTER_AUTH_SECRET')): MapClaims {
   if (token.length > 8192 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) throw new MapReadError('map_invalid_request', { detail: 'invalid_token' })
   const [payload, mac] = token.split('.')
   const expected = createHmac('sha256', key(secret)).update(payload).digest(), received = Buffer.from(mac, 'base64url')

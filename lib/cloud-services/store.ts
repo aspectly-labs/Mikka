@@ -6,6 +6,7 @@ import { CloudServiceError } from './errors'
 import { cloudJson, parseCloudToken, readCloudJson } from './transport'
 import { AVAILABLE_CLOUD_SCOPES, type CloudConnectionView, type CloudRegistration, type CloudScope, type CloudToken } from './types'
 import { remainingRequestBudget, requestBudgetSignal, type RequestBudget } from '../request-budget'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
 const opaque = () => randomBytes(32).toString('base64url')
@@ -18,7 +19,7 @@ type Database = Pick<PoolClient, 'query'>
 /** All replicas share row locks when rotating refresh tokens. A cached token
  * is encrypted in the DB, so a second replica cannot reuse an old refresh. */
 export class CloudClientStore {
-  constructor(private pool: Pick<Pool, 'connect' | 'query'>, private env: Record<string, string | undefined> = process.env, private send: typeof fetch = fetch) {}
+  constructor(private pool: Pick<Pool, 'connect' | 'query'>, private env: EnvMap = runtimeEnv(), private send: typeof fetch = fetch) {}
 
   private seal(value: unknown, kind: string, id: string) { return sealSecret(JSON.stringify(value), aad(kind, id), this.env) }
   private open<T>(value: Sealed, kind: string, id: string): T {

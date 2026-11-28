@@ -13,23 +13,24 @@ async function parentWithChildren() {
   user[tokenWorkspace] = workspace.id
   const agentId = await seedAgent(pool, user.id)
   const parent = await seedRun(pool, { userId: user.id, agentId, workspaceId: workspace.id, status: 'running' })
-  const mkChild = async (name: string, brief: string, status: string) => {
-    const id = await seedRun(pool, { userId: user.id, agentId, workspaceId: workspace.id, status })
+  const mkChild = async (name: string, brief: string, status: string, finishedAt: Date | null = null) => {
+    const id = await seedRun(pool, { userId: user.id, agentId, workspaceId: workspace.id, status, finishedAt })
     await pool.query(
       `UPDATE agent_runs SET "parentRunId"=$1,"threadRelation"='subagent',name=$2,profile=$3::jsonb,brief=$4 WHERE id=$5`,
       [parent, name, JSON.stringify({ icon: 'lens', color: 'teal' }), brief, id])
     return id
   }
+  const finishedAt = new Date('2026-11-24T10:05:00.000Z')
   const running = await mkChild('检索子代理', '把线索找出来', 'running')
   const paused = await mkChild('修复子代理', '按结论改代码', 'paused')
-  const finished = await mkChild('复核子代理', '读 diff 给结论', 'completed')
+  const finished = await mkChild('复核子代理', '读 diff 给结论', 'completed', finishedAt)
   // A sibling thread (no parent link) and another owner's child stay invisible.
   await seedRun(pool, { userId: user.id, agentId, workspaceId: workspace.id, status: 'running' })
-  return { user, parent, running, paused, finished }
+  return { user, parent, running, paused, finished, finishedAt }
 }
 
 test('listSubagentRuns returns every card field with the shared mark state', async () => {
-  const { user, parent, running, paused, finished } = await parentWithChildren()
+  const { user, parent, running, paused, finished, finishedAt } = await parentWithChildren()
   const cards = await listSubagentRuns(user as never, parent)
   assert.deepEqual(cards.map(card => card.id), [running, paused, finished])
   const [first, second, third] = cards
@@ -37,9 +38,11 @@ test('listSubagentRuns returns every card field with the shared mark state', asy
   assert.deepEqual(first.profile, { icon: 'lens', color: 'teal' })
   assert.equal(first.brief, '把线索找出来')
   assert.equal(first.mark, 'working')
+  assert.equal(first.finishedAt, null)
   // A paused run waits on its owner (Figma 1356:5208, lib/factory/agent-profile-mark.ts runMarkStatusOf).
   assert.equal(second.mark, 'needs-you')
   assert.equal(third.mark, 'idle')
+  assert.equal(third.finishedAt, finishedAt.toISOString())
 })
 
 test('listSubagentRuns hides other threads and rejects other owners', async () => {

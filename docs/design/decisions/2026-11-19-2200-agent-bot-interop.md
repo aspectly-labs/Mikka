@@ -1,6 +1,7 @@
 # Agents and Bots read and message each other (S7)
 
 - Date: 2026-11-19 22:00 UTC
+- **Status:** Accepted
 - Source: Alex, 2026-11-19 — "Agent 和 Bot 都应该能读取其他 Agent 和 Bot 上的各种内容；
   不做前端，但后端能力、接口、API 都要有并且能用；读取、发送、发消息唤醒都要做。"
   Plan section S7 and "Drive 的定位" of the Capy alignment plan.

@@ -8,6 +8,7 @@ import { BOT_DEFAULT_AGENTS, botRunsOnSchema } from '@/lib/bot-settings'
 import { taskDestinationSchema } from '@/lib/task-destination'
 import { MODEL_ROUTING_EFFORTS } from '@/lib/model-routing'
 import { botBody, botRoute } from '@/lib/bot-route'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { withTaskWorkspace } from '@/lib/task-workspace'
 
 const patch = z.object({
@@ -19,8 +20,8 @@ const patch = z.object({
 }).strict()
 
 /** The owner's Bot: its look and Captain settings (GET), or a change to them (PATCH). */
-async function handle(request: Request, { params }: { params: Promise<{ botId: string }> }) {
-  return botRoute(request, params, async ({ userId, workspaceId, botId }) => {
+function handle(request: Request, params: { botId: string }) {
+  return botRoute(request, Promise.resolve(params), async ({ userId, workspaceId, botId }) => {
     const owner = { ownerId: userId, workspaceId }
     const store = await import('@/lib/bot-settings-store')
     const access = await import('@/lib/bot-access')
@@ -43,5 +44,11 @@ async function handle(request: Request, { params }: { params: Promise<{ botId: s
     return { ...bot, ...settings, ...(await access.botAccess(actor, botId)) }
   })
 }
-export const GET = handle
-export const PATCH = handle
+export const GET = defineRoute<'session', 'pat-scoped', { botId: string }>(
+  { auth: 'session', origin: 'any', workspace: 'pat-scoped' },
+  ({ request, params }) => handle(request, params),
+)
+export const PATCH = defineRoute<'session', 'pat-scoped', { botId: string }>(
+  { auth: 'session', origin: 'same-origin-or-desktop', workspace: 'pat-scoped', write: true },
+  ({ request, params }) => handle(request, params),
+)

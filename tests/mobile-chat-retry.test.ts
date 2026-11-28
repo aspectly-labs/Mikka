@@ -17,7 +17,7 @@ mock.module(new URL('../lib/mobile-api.ts', import.meta.url).href, { namedExport
   json, mobileUser: async () => signedIn, writeAllowed: () => writable,
   unauthorized: () => json({ error: 'authRequired' }, 401), forbiddenOrigin: () => json({ error: 'originNotAllowed' }, 403),
 } })
-mock.module(new URL('../lib/request-log.ts', import.meta.url).href, { namedExports: { withRequestLog: (_: string, handler: unknown) => handler, noteLogUser: () => {} } })
+mock.module(new URL('../lib/request-log.ts', import.meta.url).href, { namedExports: { withRequestLog: (_: string, handler: unknown) => handler, noteLogUser: () => {}, noteLogRpcAction: () => {} } })
 mock.module(new URL('../lib/db/index.ts', import.meta.url).href, { namedExports: { db: { select: () => ({ from: () => ({ where: (condition: SQL) => {
   predicates.push(dialect.sqlToQuery(condition).params)
   return { limit: async () => allowed ? [{ id: BOT }] : [] }

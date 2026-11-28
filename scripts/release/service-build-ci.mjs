@@ -297,7 +297,6 @@ async function build(service, planFile, directory) {
   const artifact = async (name, path) => { artifacts[name] = { path, digest: hash(await readFile(join(directory, path))) } }
   if (service === 'api' || service === 'web') {
     run('node', ['scripts/build-subscription-worker.mjs'], 'SUBSCRIPTION_WORKER')
-    run('corepack', ['pnpm', 'generate:agent-ui'], 'AGENT_UI')
     run('node', ['apps/frontend/scripts/build.mjs', 'web'], 'FRONTEND')
     run('node', ['scripts/release/hosted-ui.mjs', 'audit', 'apps/frontend/dist/web'], 'WEB_AUDIT')
   }

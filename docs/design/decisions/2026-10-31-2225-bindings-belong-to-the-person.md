@@ -1,13 +1,14 @@
 # Bindings belong to the person; the workspace where work happens pays
 
 - Date: 2026-10-31
+- **Status:** Superseded in part by [2026-11-01-1152](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-1152-payment-card-row-and-credit-shares.md)
 - Source: Alex, relayed by the coordinator:
   「所有的绑定（绑卡、绑订阅）默认都放给个人…首先是绑到个人，然后再分享到工作区，而不是由管理员统一来设置」
   and 「个人离开这个团队工作区以后…他个人的这个订阅就从团队工作区里面消失，团队工作区就不能用他个人的订阅了」;
   on letting other members use a shared subscription, 「B」; on cloud
   snapshots, 「对你的建议没有错，应该这样去做」
 - Rule: —
-- Superseded in part by: [2026-11-01-1152](2026-11-01-1152-payment-card-row-and-credit-shares.md) (the payer row names the card, with no 「正在支付」)
+- Superseded in part by: [2026-11-01-1152](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-1152-payment-card-row-and-credit-shares.md) (the payer row names the card, with no 「正在支付」)
 - Superseded in part by: [2026-11-01-2240-own-credentials-always-usable](2026-11-01-2240-own-credentials-always-usable.md) (rule 3: no per-workspace opt-in and no admin switch for a person's own subscriptions and API keys; an admin can switch off only 分享给团队成员; app and computer policies never stop a person's own connections or bots)
 - Superseded in part by: [2026-11-06-1800](2026-11-06-1800-machine-is-the-execution-boundary.md) (rule 4 revocation transport and rule 8 credential delivery/runtime lifecycle; ownership and billing remain).
 - Replaces: in [personal vs workspace](2026-10-31-2130-personal-vs-workspace.md),

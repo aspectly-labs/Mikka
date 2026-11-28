@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import ts from 'typescript'
 
@@ -8,7 +8,9 @@ import ts from 'typescript'
 // the connected account's catalogue). No model name is written into lib/ or components/ as an
 // option, a default or a stand-in. This walks every string literal there; comments do not count.
 const ROOT = join(import.meta.dirname, '..')
-const DIRS = ['lib', 'components']
+// The interface's components live in the official UI checkout's core/ (decision 2026-11-24-1000); scan them there when
+// it is mounted.
+const DIRS = ['lib', 'components', '.hosted-ui/core/components'].filter(dir => existsSync(join(ROOT, dir)))
 const MODEL_NAME = /^(?:opus|sonnet|haiku|claude-(?:opus|sonnet|haiku)[\w.-]*|gpt-[\w.-]+|o[1-9](?:-mini|-pro)?|codex-mini[\w.-]*)$/i
 /** Literals that name something else, each with why. Keyed by file and text, so a new use elsewhere still fails. */
 const NOT_MODEL_OPTIONS = new Map<string, string>([

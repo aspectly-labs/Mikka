@@ -1,5 +1,7 @@
 # New thread and Bot visibility in workspace settings
 
+- **Status:** Accepted
+
 P3 of #2956 also supplies the creation preferences promised by #2957. These
 settings concern a new ordinary Bot or root thread. They do not change Task
 creation visibility or replace the separate thread/artifact share-link scope.

@@ -1,6 +1,7 @@
 # The GitHub link answers its own origin
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex, through the coordinator session: 「关联回调不走代理 hub，用发起关联时所在的 origin……预览域名不在 App 登记列表里时，要明确报错，不要静默落到生产。」
 - Rule: —
 - Replaces: —

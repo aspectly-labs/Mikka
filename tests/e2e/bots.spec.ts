@@ -72,7 +72,7 @@ test('连续按下发送只提交一次', async ({ page }) => {
   await register(page)
   await page.route('**/*', async route => {
     const request = route.request()
-    if (request.method() === 'POST' && request.headers()['next-action']) {
+    if (request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') {
       await new Promise(resolve => setTimeout(resolve, 1200))
     }
     return route.fallback()
@@ -95,7 +95,7 @@ test('发送失败的消息留在对话里，点重试后发出', async ({ page 
   await composer.fill('发送失败时保留')
   const failPost = async (route: import('@playwright/test').Route) => {
     const request = route.request()
-    if (request.method() === 'POST' && request.headers()['next-action']) return route.fulfill({ status: 200, contentType: 'text/x-component', body: '' })
+    if (request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') return route.fulfill({ status: 200, contentType: 'application/json', body: '' })
     return route.fallback()
   }
   await page.route('**/*', failPost)

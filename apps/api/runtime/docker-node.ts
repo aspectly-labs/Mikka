@@ -3,6 +3,7 @@ import { serve } from 'srvx/node'
 import type { ServerRequest } from 'srvx'
 import { dockerRequestUrl } from '../../../scripts/test-accounts/docker-ingress.mjs'
 import { dockerOrigin } from '../../../scripts/test-accounts/docker-target.mjs'
+import { LOOPBACK_IPV4 } from '../../../lib/env/hosts'
 
 type Application = { fetch(request: ServerRequest): Response | Promise<Response> }
 type Options = { origin: string; onClose: () => void | Promise<void> }
@@ -24,7 +25,7 @@ export function createDockerNodeRuntime(application: Application, { origin, onCl
   let closing: Promise<void> | undefined
   const runtime = serve({
     manual: true, gracefulShutdown: false, silent: true,
-    hostname: '127.0.0.1', port: 0, trustProxy: false,
+    hostname: LOOPBACK_IPV4, port: 0, trustProxy: false,
     fetch(request) {
       const node = request.runtime?.node
       const absolute = node && urls.get(node.req as IncomingMessage)

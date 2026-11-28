@@ -34,10 +34,26 @@ part of the route inventory rather than being silently dropped.
    Server implementation modules must not enter the browser dependency graph.
 2. A local standard, secure protocol serves only files inside the packaged
    renderer directory. The protocol supplies a restrictive CSP and routes
-   same-origin data requests through main.
+   same-origin data requests through main. Main keeps no per-route list
+   (owner decision, 2026-11-27, as VS Code, Slack, Notion and Linear desktop):
+   it forwards any normalized API path from the app's own origin to the current
+   account's server only, and the server's authorization decides. Main still
+   refuses other origins and non-API paths, checks the path before and after
+   percent-decoding (controls and whitespace included), sends only a URL whose
+   origin and path are exactly the checked ones under the server's base path,
+   puts a `sandbox` CSP on every proxied response, and cuts off a response
+   that echoes a credential main holds. `scripts/ui-api-routes.test.mjs` checks
+   that every route the UI requests exists on the server; the desktop release
+   and the official UI's CI run it with `MIKKA_REQUIRE_OFFICIAL_UI=1`, so a
+   missing UI checkout fails instead of skipping.
 3. Main owns the encrypted session and PKCE exchange state. The renderer asks
    for sign-in, sign-out or a validated application operation; it never receives
-   cookies, bearer credentials, refresh tokens or live-channel tickets.
+   the cookies, bearer token or signed session cache main holds. Credentials the
+   server mints on request (one-time tokens, live tickets, device enrollment,
+   viewer and takeover grants) reach the renderer as they reach the web page
+   ([2026-11-27-1200](decisions/2026-11-27-1200-desktop-renderer-credential-parity.md));
+   making the server stop sending session tokens to the desktop renderer is a
+   server-side follow-up.
 4. One desktop RPC route dispatches an explicit allowlist of actions with Zod
    schemas. Bearer authentication is required independently of any cookies.
    Existing action authorization is retained; desktop transport grants no new

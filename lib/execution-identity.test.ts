@@ -9,7 +9,7 @@ const resourcePolicySql = "select w.kind,l.\"organizationId\",p.\"modelCredentia
 const id = (last: number) => `10000000-0000-4000-8000-${String(last).padStart(12, '0')}`
 function fixture() {
   const members = new Set(['requester', 'bot-owner', 'resource-owner'])
-  const state = { botOwner: 'bot-owner', workspace: id(1), deviceOwner: 'requester', keyOwner: 'requester', share: false, enabled: true, kind: 'local', revision: '1', subscription: true, e2b: true }
+  const state = { botOwner: 'bot-owner', workspace: id(1), deviceOwner: 'requester', keyOwner: 'requester', keyWorkspace: null as string | null, memberKeys: true, share: false, enabled: true, kind: 'local', revision: '1', subscription: true, e2b: true }
   const mcp = { queryError: undefined as Error | undefined }
   const definition = freezeWorkerDefinition({ harness: 'codex', instructions: '', prompt: 'A task', parent: null, executionId: null, model: 'example-model', apiKey: { keyId: id(2), model: 'example-model' } })
   const run = { userId: 'requester', botId: id(3), deviceId: id(4), agentDefinition: definition }
@@ -20,7 +20,9 @@ function fixture() {
     else if (sql.includes('FROM devices')) rows = [{ ownerId: state.deviceOwner, kind: state.kind, enabled: state.enabled }]
     else if (sql.includes('FROM mikka_workspaces w') && sql.includes('JOIN mikka_workspace_members')) rows = [{ id: state.workspace, kind: 'team', name: 'Requester' }]
     else if (sql.includes('FROM personal_mcp_servers') && mcp.queryError) throw mcp.queryError
-    else if (sql.includes('FROM model_api_keys')) rows = [{ ownerId: state.keyOwner, shared: state.share }]
+    // A key is a person's or a workspace's (decision 2026-11-27-1740).
+    else if (sql.includes('FROM model_api_keys')) rows = [{ ownerId: state.keyWorkspace ? null : state.keyOwner, workspaceId: state.keyWorkspace }]
+    else if (sql.includes('FROM workspace_personal_policies')) rows = [{ subscriptions: state.memberKeys }]
     else if (sql.includes('FROM byos_bindings')) rows = state.subscription ? [{ ownerId: state.keyOwner, workspaceId: state.workspace, revision: state.revision, shared: state.share, modelId: 'example-model', route: 'codex_cli' }] : []
     else if (sql.includes('FROM user_e2b_keys')) rows = state.e2b ? [{ found: 1 }] : []
     else if (sql.replace(/\s+/g, ' ').trim() === resourcePolicySql) {
@@ -63,22 +65,39 @@ test('an MCP database failure is not converted into an identity denial', async (
   await assert.rejects(f.freeze, error => error instanceof McpValidationError && error.stage === 'identity_validation' && error.cause === failure)
 })
 
-test('resource ownership is distinct from the Bot owner and explicit sharing is mandatory', async () => {
+test('another member\'s personal key is never usable; the workspace\'s own key bills the workspace', async () => {
   const f = fixture(); f.state.keyOwner = 'resource-owner'
   await assert.rejects(f.freeze, ExecutionIdentityError)
-  f.state.share = true
+  f.state.keyWorkspace = f.state.workspace
   const identity = await f.freeze()
-  assert.equal(identity.billingAccount.model.ownerId, 'resource-owner')
-  assert.equal(identity.resourceBindings[1].access, 'workspace_share')
+  assert.equal(identity.billingAccount.model.ownerId, f.state.workspace)
+  assert.deepEqual(identity.resourceBindings[1], { kind: 'api_key', id: id(2), ownerId: f.state.workspace, access: 'workspace', workspaceId: f.state.workspace })
   assert.equal(identity.billingAccount.runtime.ownerId, 'requester')
-  f.state.share = false
+  f.state.keyWorkspace = id(9)
+  await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError, 'a key no longer this workspace\'s')
+})
+
+for (const who of ['requester', 'bot-owner']) test(`revoking ${who}'s membership ends a previously valid workspace-key grant`, async () => {
+  const f = fixture(); f.state.keyWorkspace = f.state.workspace
+  await f.freeze(); f.members.delete(who)
   await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError)
 })
 
-for (const who of ['requester', 'bot-owner', 'resource-owner']) test(`revoking ${who}'s membership ends a previously valid grant`, async () => {
-  const f = fixture(); f.state.keyOwner = 'resource-owner'; f.state.share = true
-  await f.freeze(); f.members.delete(who)
-  await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError)
+test('the team admin switch decides whether the requester\'s own key serves runs in the workspace', async () => {
+  const f = fixture(); f.state.memberKeys = false
+  await assert.rejects(f.freeze, ExecutionIdentityError, 'off: the own key is refused')
+  f.state.memberKeys = true
+  await f.freeze()
+  f.state.memberKeys = false
+  await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError, 'turning it off ends a frozen own-key run')
+  f.state.keyWorkspace = f.state.workspace
+  assert.equal((await f.freeze()).billingAccount.model.ownerId, f.state.workspace, 'off: the workspace key still serves')
+})
+
+test('the member who added a workspace key leaving keeps it for everyone else', async () => {
+  const f = fixture(); f.state.keyWorkspace = f.state.workspace
+  await f.freeze(); f.members.delete('resource-owner')
+  assert.ok(await revalidateExecutionIdentity(f.query, f.run, f.query))
 })
 
 test('Bot takeover and workspace migration cannot silently reassign an accepted run', async () => {
@@ -95,6 +114,17 @@ test('subscription disconnect and revision changes revoke frozen subscription au
   await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError)
   f.state.revision = '1'; f.state.subscription = false
   await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError)
+})
+
+test('the team switch off withholds the requester\'s own subscription in the workspace', async () => {
+  const f = fixture(); delete f.definition.apiKey
+  f.definition.subscription = { bindingId: id(8), modelId: 'example-model', route: 'codex_cli' }
+  f.state.memberKeys = false
+  await assert.rejects(f.freeze, ExecutionIdentityError)
+  f.state.memberKeys = true
+  await f.freeze()
+  f.state.memberKeys = false
+  await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError, 'turning it off ends a frozen subscription run')
 })
 
 test('retries retain immutable attribution and refuse an injected payment account', async () => {
@@ -115,11 +145,26 @@ test('handoff reauthorizes a same-owner destination without refreshing withdrawn
   await assert.rejects(() => rebindExecutionDevice(f.query, f.run, id(5), f.query), ExecutionIdentityError)
 })
 
-test('E2B billing remains the requester\'s own external account and deletion denies execution', async () => {
+test('a self-hosted E2B run keeps the requester\'s account and deletion denies execution', async t => {
+  const saved = { edition: process.env.MIKKA_EDITION, key: process.env.E2B_API_KEY }
+  process.env.MIKKA_EDITION = 'community'
+  delete process.env.E2B_API_KEY
+  t.after(() => {
+    if (saved.edition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = saved.edition
+    if (saved.key === undefined) delete process.env.E2B_API_KEY
+    else process.env.E2B_API_KEY = saved.key
+  })
   const f = fixture(); f.state.kind = 'cloud'; const identity = await f.freeze()
   assert.deepEqual(identity.billingAccount.runtime, { kind: 'e2b', ownerId: 'requester', resourceId: 'requester', amount: 'provider_unknown' })
   f.state.e2b = false
   await assert.rejects(() => revalidateExecutionIdentity(f.query, f.run, f.query), ExecutionIdentityError)
+  process.env.MIKKA_EDITION = 'cloud'
+  f.state.e2b = true
+  await assert.rejects(() => f.freeze(), ExecutionIdentityError, 'a personal key cannot authorize hosted E2B')
+  f.state.e2b = false
+  process.env.E2B_API_KEY = 'synthetic-managed-e2b-key'
+  assert.equal((await f.freeze()).billingAccount.runtime.kind, 'e2b')
 })
 
 test('historical runs remain unattributed instead of fabricating current owners as past payers', async () => {
@@ -147,11 +192,11 @@ test('the final provider boundary rejects stopped, completed and expired executi
 
 test('usage attributes the frozen payer and leaves external amounts unknown', async () => {
   const { executionAccountUsage } = await import('./usage/execution-accounts')
-  const f = fixture(); f.state.keyOwner = 'resource-owner'; f.state.share = true
+  const f = fixture(); f.state.keyWorkspace = f.state.workspace
   const identity = await f.freeze()
   const rows = executionAccountUsage([{ identity, seconds: 42 }, { identity, seconds: 18 }, { identity: null, seconds: 300 }])
   assert.equal(rows.length, 2)
-  assert.equal(rows.find(row => row.kind === 'api_key')?.ownerId, 'resource-owner')
+  assert.equal(rows.find(row => row.kind === 'api_key')?.ownerId, f.state.workspace)
   assert.equal(rows.find(row => row.kind === 'local_device')?.ownerId, 'requester')
   assert.equal(rows[0].runs, 2); assert.equal(rows[0].seconds, 60)
   assert.equal(rows.find(row => row.kind === 'api_key')?.amount, 'provider_unknown')

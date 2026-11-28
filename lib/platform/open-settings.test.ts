@@ -46,7 +46,13 @@ test('the desktop shell opens the matching settings section in the system browse
     openExternal: async (url: string) => { opened.push(url) },
   })
   assert.equal(await openSettingsInBrowser('integrations', target), 'desktop')
-  assert.deepEqual(opened, [new URL(withBasePath('/?settings=integrations'), 'https://app.example').toString()])
+  assert.equal(await openSettingsInBrowser('connections', target), 'desktop')
+  assert.equal(await openSettingsInBrowser('account', target), 'desktop')
+  assert.deepEqual(opened, [
+    new URL(withBasePath('/settings?section=connections'), 'https://app.example').toString(),
+    new URL(withBasePath('/settings?section=connections'), 'https://app.example').toString(),
+    new URL(withBasePath('/settings?section=account'), 'https://app.example').toString(),
+  ])
 })
 
 test('the desktop shell starts an app path such as GitHub connect in the system browser', async () => {

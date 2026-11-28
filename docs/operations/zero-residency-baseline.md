@@ -31,7 +31,7 @@ declaration appears without an owned manifest entry.
 - The CF `EveRuntime` container is always-on by code:
   `onActivityExpired(){}` and `onStop()` restarts it
   (`cloudflare/eve-runtime/src/index.mjs`). No `mikka-eve-*` application was in
-  the inventory; production Eve is the Oracle VM behind
+  the inventory; production Eve at that capture was the Oracle VM behind
   `mikka-eve-relay-prod`, reached through the cloudflared tunnel to
   `pdf.nebula-spaces.com`.
 - API→Eve deliveries (`MIKKA_EVE_ORIGIN`) have no wake path; the Graphile
@@ -124,7 +124,7 @@ is excluded from retirement.
 |---|---|
 | packages/eve-cloudflare-world (`mikka-eve-world`) | Eve World authority/stream Durable Objects; no containers[] |
 | cloudflare/device-gateway | Worker + DOs, device signalling |
-| cloudflare/linear-sync | Worker, Linear webhooks |
+| cloudflare/linear-sync (retired 2026-11-24) | Worker, Linear webhooks |
 | cloudflare/suggestions-cron | Worker Cron |
 | business-world queue, CI_WORKFLOW_RESULTS queue, due-timer workflows | existing event-driven wake machinery reused by #3078/#3083 |
 | R2 `mikka-task-workspaces` | task sandbox persistence |

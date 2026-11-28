@@ -95,7 +95,7 @@ test('publication reads complete file evidence and retains independently bound m
   assert.deepEqual(JSON.parse(cli.stdout), cloud)
   assert.ok(!cli.stdout.includes('providerManifest') && !cli.stdout.includes('subscriptionAcceptance'))
   assert.deepEqual(applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', ...cloud, E2B_API_KEY: 'platform-only', MIKKA_DECISION_TIMEOUT_MS: '45000' }), {
-    BETTER_AUTH_URL: 'https://app.example', MIKKA_API_INGRESS: 'cloudflare', ...cloud, MIKKA_DECISION_TIMEOUT_MS: '45000',
+    BETTER_AUTH_URL: 'https://app.example', MIKKA_API_INGRESS: 'cloudflare', ...cloud, E2B_API_KEY: 'platform-only', MIKKA_DECISION_TIMEOUT_MS: '45000',
   })
   assert.throws(() => cloudflareRuntimeConfiguration(path, { ...expectedRelease, runAttempt: '3' }), /attempt_mismatch/)
   assert.throws(() => cloudflareRuntimeConfiguration(path, { ...expectedRelease, sha256: 'c'.repeat(64) }), /digest_mismatch/)
@@ -106,6 +106,28 @@ test('publication reads complete file evidence and retains independently bound m
   assert.throws(() => publicationInputFromFile(path, { ...expected, runAttempt: '3' }), /attempt_mismatch/)
   assert.throws(() => publicationInputFromFile(path, { ...expected, sha256: 'c'.repeat(64) }), /digest_mismatch/)
   assert.throws(() => assertReleaseEvidence(publicationInputFromFile(path, { ...expected, templates: { ...TEMPLATES, codex: 'other' } })), /template_invalid/)
+})
+
+test('publication emits every verified task hardware tier and refuses inconsistent reports', () => {
+  const releaseEvidence = structuredClone(EVIDENCE)
+  for (const row of Object.values(releaseEvidence.templates)) {
+    Object.assign(row, { machineSize: 'medium', cpuCount: 2, memoryMB: 8192 })
+  }
+  releaseEvidence.machineVariants = ['claude', 'codex'].map(kind => ({
+    ...releaseEvidence.templates[kind], templateId: `tpl-${kind}-small`, machineSize: 'small', cpuCount: 1, memoryMB: 4096,
+  }))
+  const input = { releaseEvidence, templates: TEMPLATES, models: MODELS, sourceSha: SHA, sourceCommit: COMMIT }
+  assert.doesNotThrow(() => assertReleaseEvidence(input))
+  const env = Object.fromEntries(pairEnv(input).map(({ key, value }) => [key, value]))
+  const catalogue = JSON.parse(env.MIKKA_CLOUD_TEMPLATE_MODELS)
+  assert.deepEqual(catalogue.machineVariants.find(row => row.kind === 'codex' && row.size === 'small'),
+    { kind: 'codex', size: 'small', templateId: 'tpl-codex-small', cpuCount: 1, memoryMB: 4096 })
+  assert.equal(catalogue.machineVariants.length, 5)
+  releaseEvidence.machineVariants[0].memoryMB = 8192
+  assert.throws(() => assertReleaseEvidence(input), /variant_hardware_invalid/)
+  releaseEvidence.machineVariants.pop()
+  releaseEvidence.machineVariants[0].memoryMB = 4096
+  assert.throws(() => assertReleaseEvidence(input), /default_variants_missing/)
 })
 
 test('an absent, empty or non-string Decision timeout leaves the runtime default intact', () => {

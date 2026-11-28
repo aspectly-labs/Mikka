@@ -1,3 +1,5 @@
+import { LOCALE_COOKIE_MAX_AGE } from './locale-cookie.mjs'
+
 export type AppLocale = 'zh-CN' | 'en'
 
 /**
@@ -16,5 +18,6 @@ export const routing: {
   locales: ['zh-CN', 'en'],
   defaultLocale: 'zh-CN',
   localePrefix: 'as-needed',
-  localeCookie: { maxAge: 60 * 60 * 24 * 365 },
+  // The cookie's name and attributes are in ./locale-cookie.mjs.
+  localeCookie: { maxAge: LOCALE_COOKIE_MAX_AGE },
 }

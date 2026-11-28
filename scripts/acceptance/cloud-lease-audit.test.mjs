@@ -40,7 +40,7 @@ test('real CLI survives startup re-importing its lease helpers and writes the pe
 })
 test('ordinary cloud audit uses real daemon spans without claiming a trusted candidate host', async () => {
   const applicationSha = 'a'.repeat(40)
-  const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REF: 'refs/heads/main',
+  const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REF: 'refs/heads/main',
     GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_SHA: applicationSha, APPLICATION_SHA: applicationSha }
   const observed = []
   const report = await runLeaseAudit(env, {
@@ -96,7 +96,7 @@ test('daemon evidence queries only the owned run hash and expiry interval and re
 
 test('plugin collection keeps natural renewal unverified until matching external spans arrive', async () => {
   const applicationSha = 'a'.repeat(40)
-  const env = { GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
+  const env = { GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
     GITHUB_SHA: applicationSha, APPLICATION_SHA: applicationSha, DAEMON_RENEWAL_EVIDENCE: 'posthog_plugin' }
   for (const status of ['renewed', 'outside_natural_window', 'renewal_failed']) {
     const report = await runLeaseAudit(env, {

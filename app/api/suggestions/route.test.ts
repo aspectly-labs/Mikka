@@ -5,7 +5,7 @@ import { before, beforeEach, mock, test } from 'node:test'
 const effects: string[] = []
 const items = [{ id: 'a', source: 'gmail' }, { id: 'b', source: 'gmail' }, { id: 'c', source: 'github' }]
 const lib = (path: string) => new URL(`../../../lib/${path}`, import.meta.url).href
-mock.module(lib('api-auth.ts'), { namedExports: { getApiSession: async () => ({ user: { id: 'owner' } }) } })
+mock.module(lib('api-auth.ts'), { namedExports: { auth: { api: { getSession: async () => ({ user: { id: 'owner' } }) } }, getApiSession: async () => ({ user: { id: 'owner' } }) } })
 mock.module(lib('background.ts'), { namedExports: { afterJob: (name: string) => { effects.push(name) } } })
 mock.module(lib('db/index.ts'), { namedExports: { pool: { query: async () => ({ rows: [{ suggestionId: 'b', status: 'running', runId: null, subagentId: null }] }) } } })
 mock.module(lib('suggestions/action-title.ts'), { namedExports: { ACTION_LOCALES: ['en', 'zh-CN'] } })

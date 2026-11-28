@@ -1,25 +1,24 @@
 import { createFirecrawlProvider } from './firecrawl'
 import { abortable } from './url-policy'
-import { SearchProviderError, type SearchContext, type SearchOutcome, type SearchProvider, type SearchResponse, type ScrapeResponse } from './types'
+import { fetchPublicPage } from './eve-fetch'
+import { SearchProviderError, WEB_USER_LIMIT_PER_MINUTE, type SearchContext, type SearchOutcome, type SearchProvider, type SearchResponse, type ScrapeResponse } from './types'
 
 export * from './types'
 const CACHE_TTL_MS = 60 * 60 * 1000
 const CACHE_MAX = 200
-const USER_LIMIT_PER_MINUTE = 10
 const USER_MAX = 2000
 export type AuthorizeSearch = (ctx: SearchContext) => boolean | Promise<boolean>
 export const allowAllSearch: AuthorizeSearch = () => true
-export function normalizeQuery(query: string) { return query.trim().replace(/\s+/g, ' ').toLowerCase() }
 
 type ConsumeWebRate = (userId: string, now: number, signal: AbortSignal) => Promise<boolean>
 const persistentWebRate: ConsumeWebRate = async (userId, now, signal) => {
   const [{ pool }, { consumeWebRate }] = await Promise.all([import('../db'), import('./rate-limit')])
-  return consumeWebRate(pool, userId, now, USER_LIMIT_PER_MINUTE, signal)
+  return consumeWebRate(pool, userId, now, WEB_USER_LIMIT_PER_MINUTE, signal)
 }
 
 /** Shared search/scrape limit: persistent admission plus a local fast rejection. */
-export function createWebService({ provider = createFirecrawlProvider(), authorize = allowAllSearch, now = Date.now, timeoutMs = 15000, consumeRate = persistentWebRate }: {
-  provider?: SearchProvider; authorize?: AuthorizeSearch; now?: () => number; timeoutMs?: number; consumeRate?: ConsumeWebRate
+export function createWebService({ provider = createFirecrawlProvider(), authorize = allowAllSearch, now = Date.now, timeoutMs = 15000, consumeRate = persistentWebRate, scrapeProvider }: {
+  provider?: SearchProvider; authorize?: AuthorizeSearch; now?: () => number; timeoutMs?: number; consumeRate?: ConsumeWebRate; scrapeProvider?: { name: string; fetch: NonNullable<SearchProvider['scrape']> }
 } = {}) {
   const cache = new Map<string, { at: number; response: Extract<SearchResponse, { ok: true }> }>()
   const calls = new Map<string, number[]>()
@@ -28,7 +27,7 @@ export function createWebService({ provider = createFirecrawlProvider(), authori
     const timeout = AbortSignal.timeout(timeoutMs)
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout
     const log = (outcome: SearchOutcome | 'cache_hit' | 'throttled' | 'denied') => console.info(JSON.stringify({
-      event: operation === 'search' ? 'web_search' : 'web_scrape', provider: provider.name, caller: ctx.caller, outcome, ms: now() - started,
+      event: operation === 'search' ? 'web_search' : 'web_scrape', provider: operation === 'scrape' ? scrapeProvider?.name ?? provider.name : provider.name, caller: ctx.caller, outcome, ms: now() - started,
     }))
     try {
       signal.throwIfAborted()
@@ -47,15 +46,16 @@ export function createWebService({ provider = createFirecrawlProvider(), authori
         return structuredClone({ ...hit.response, cached: true, cacheAgeMs: Math.max(0, cacheReadAt - hit.at) })
       }
       const recent = (calls.get(ctx.userId) ?? []).filter(at => started - at < 60_000)
-      if (recent.length >= USER_LIMIT_PER_MINUTE || !await abortable(() => consumeRate(ctx.userId, started, signal), signal)) {
+      if (recent.length >= WEB_USER_LIMIT_PER_MINUTE || !await abortable(() => consumeRate(ctx.userId, started, signal), signal)) {
         log('throttled')
         return { ok: false as const, error: 'searchUnavailable' as const, outcome: 'rate_limited' as const }
       }
       calls.delete(ctx.userId); calls.set(ctx.userId, [...recent, started])
       if (calls.size > USER_MAX) calls.delete(calls.keys().next().value!)
       if (operation === 'scrape') {
-        if (!provider.scrape) throw new Error('Scrape unsupported')
-        const page = await abortable(() => provider.scrape!(input, { ...options, signal }), signal)
+        const fetchPage = scrapeProvider?.fetch ?? provider.scrape?.bind(provider)
+        if (!fetchPage) throw new Error('Scrape unsupported')
+        const page = await abortable(() => fetchPage(input, { ...options, signal }), signal)
         signal.throwIfAborted()
         log('ok')
         return { ok: true as const, page }
@@ -81,6 +81,6 @@ export function createWebService({ provider = createFirecrawlProvider(), authori
   }
 }
 export function createSearchService(options: Parameters<typeof createWebService>[0] = {}) { return createWebService(options).search }
-const web = createWebService()
+const web = createWebService({ scrapeProvider: { name: 'eve', fetch: fetchPublicPage } })
 export const webSearch = web.search
 export const webScrape = web.scrape

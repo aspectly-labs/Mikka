@@ -3,7 +3,6 @@ import { z } from 'zod'
 import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { appCallAllowed } from './app-permission-keys'
-import { permissionDecision } from './permission-precedence'
 
 type SettingLayers = { workspace: unknown } | null
 
@@ -33,8 +32,7 @@ export async function githubCallDecision(userId: string, botId: string | null, d
   try {
     const layers = await (deps.layers ?? readWorkspacePermissions)(userId, botId)
     const workspace = layer.parse(layers?.workspace) ?? {}
-    const decision = permissionDecision(Object.hasOwn(workspace, 'github') ? [workspace['github']] : [])
-    return appCallAllowed(decision) ? 'allow' : 'deny'
+    return appCallAllowed(Object.hasOwn(workspace, 'github') ? workspace['github'] : null) ? 'allow' : 'deny'
   } catch {
     return 'unavailable'
   }

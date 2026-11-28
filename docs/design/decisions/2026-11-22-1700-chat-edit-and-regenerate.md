@@ -1,8 +1,8 @@
 # Edit and Regenerate on the message line
 
 - Date: 2026-11-22 17:00 UTC
-- Status: accepted (Alex, 2026-11-22)
-- Amends: [2026-11-22-1500-chat-reply-actions-on-hover](2026-11-22-1500-chat-reply-actions-on-hover.md) (the line's contents) and the "no More menu" note in `components/chat/reply-actions.tsx`.
+- **Status:** Accepted (Alex, 2026-11-22)
+- Amends: [2026-11-22-1500-chat-reply-actions-on-hover](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-1500-chat-reply-actions-on-hover.md) (the line's contents) and the "no More menu" note in `components/chat/reply-actions.tsx`.
 
 ## Context
 

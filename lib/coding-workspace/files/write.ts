@@ -9,7 +9,7 @@ import { runChanged } from '../../live/panels'
 import { requestWorkspaceRead } from '../requests'
 import { resolveReviewScope, withReviewTransaction, type ReviewActor } from '../diff/authority'
 import { gitDigest } from '../git/evidence'
-import { claimOperation, finishOperation, insertPreview, readOperation, releaseOperation, type GitOperationRow } from '../git/ops'
+import { claimOperation, finishOperation, insertPreview, releaseOperation, type GitOperationRow } from '../git/ops'
 
 export type FileWriteDependencies = { database: Pool; membership: Pool }
 const retryable = (error: unknown) => error instanceof CodingWorkspaceError
@@ -87,11 +87,4 @@ export async function writeRunFile(dependencies: FileWriteDependencies, actor: R
     await runChanged(client, runId)
     return { ...(applied as WorkspaceFileWriteResult), undoAvailable: saved.undoAvailable }
   }, { historical: true, signal })
-}
-
-/** The operation ledger read for the capability/audit surface. */
-export async function readFileOperation(dependencies: FileWriteDependencies, actor: ReviewActor, runId: string, repoId: string,
-  operationId: string) {
-  await resolveReviewScope(dependencies.database, dependencies.membership, actor, runId, repoId)
-  return readOperation(dependencies.database, actor.userId, operationId)
 }

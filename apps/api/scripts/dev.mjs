@@ -9,11 +9,13 @@ import { apiProxyOptions, developmentPages } from './dev-http.mjs'
 import { installOverlay, prepareDevelopment, provisionDevelopmentAccount } from './dev-preflight.mjs'
 import { assertApiBuildConfiguration, nodeRuntimePackages } from '../build-contract.mjs'
 import { startEveService } from '../../../scripts/eve-service.mjs'
+import { withLegacyPublicDefines } from '../../../lib/public-env.mjs'
+import { runtimeEnv } from '../../../lib/env/runtime.mjs'
 
 const execute = promisify(execFile)
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
 
-export function developmentOptions(args = [], env = process.env) {
+export function developmentOptions(args = [], env = runtimeEnv()) {
   let port = env.PORT ?? env.MIKKA_DEV_PORT ?? '3000'
   let host = env.MIKKA_DEV_HOST ?? 'localhost'
   let allowStaleRoutes = false
@@ -197,24 +199,25 @@ export async function startDevelopment({ args = [], root = repository, log = con
   // the backend. Resolve that exact installed package for its public Node API.
   const frontendRequire = createRequire(join(root, 'apps/frontend/package.json'))
   const { createServer, loadEnv } = await import(pathToFileURL(frontendRequire.resolve('vite')).href)
-  if (process.env.MIKKA_DEV_SKIP_ENV_FILES !== '1') {
-    for (const [key, value] of Object.entries(loadEnv('development', root, ''))) if (process.env[key] === undefined) process.env[key] = value
+  const env = runtimeEnv()
+  if (env.MIKKA_DEV_SKIP_ENV_FILES !== '1') {
+    for (const [key, value] of Object.entries(loadEnv('development', root, ''))) if (env[key] === undefined) env[key] = value
   }
-  process.env.NODE_ENV = 'development'
+  env.NODE_ENV = 'development'
   const options = developmentOptions(args)
   const directory = join(root, '.cache/dev-runtime', String(options.port))
-  if (process.env.WORKFLOW_TARGET_WORLD && process.env.WORKFLOW_TARGET_WORLD !== 'local') throw new Error('API_DEV_LOCAL_WORLD_REQUIRED')
-  process.env.WORKFLOW_TARGET_WORLD = 'local'
-  process.env.WORKFLOW_LOCAL_BASE_URL ??= options.origin
-  process.env.WORKFLOW_LOCAL_DATA_DIR ??= join(directory, 'workflow')
-  process.env.BETTER_AUTH_URL ??= options.origin
+  if (env.WORKFLOW_TARGET_WORLD && env.WORKFLOW_TARGET_WORLD !== 'local') throw new Error('API_DEV_LOCAL_WORLD_REQUIRED')
+  env.WORKFLOW_TARGET_WORLD = 'local'
+  env.WORKFLOW_LOCAL_BASE_URL ??= options.origin
+  env.WORKFLOW_LOCAL_DATA_DIR ??= join(directory, 'workflow')
+  env.BETTER_AUTH_URL ??= options.origin
   // One command: the loopback database exists and is migrated, and the official
   // UI overlay's own dependencies are installed, decided before anything listens.
   // Both used to fail on the first request instead, as a missing relation or an
   // opaque SERVER_DOCUMENT_CANNOT_LOAD_WORKSPACE inside a React boundary.
   const prepared = await prepareDevelopment({ root, log: message => process.stderr.write(`${message}\n`) })
-  Object.assign(process.env, prepared.env)
-  if (prepared.overlay.missingDependencies) installOverlay(join(root, process.env.MIKKA_UI_OVERLAY_DIR))
+  Object.assign(env, prepared.env)
+  if (prepared.overlay.missingDependencies) installOverlay(join(root, env.MIKKA_UI_OVERLAY_DIR))
   const [{ build, createDevServer, createNitro, prepare }, { compileTracing }, { frontendConfig }] = await Promise.all([
     import('nitro/builder'), import('./finalize-build.mjs'), import('../../frontend/vite.config.mjs'),
   ])
@@ -249,7 +252,7 @@ export async function startDevelopment({ args = [], root = repository, log = con
       buildDir: join(directory, 'build'), output: { dir: join(directory, 'output') },
       routes: { '/**': join(root, 'apps/api/runtime/dev-entry.ts') },
       serveStatic: false,
-      replace: { 'process.env.NEXT_PUBLIC_MIKKA_BUILD': '""' },
+      replace: withLegacyPublicDefines({ 'process.env.MIKKA_PUBLIC_BUILD': '""' }),
     }, { dotenv: false })
     assertApiBuildConfiguration(nitro, root, { development: true })
     // Config merging appends arrays; explicitly remove production public assets
@@ -269,14 +272,14 @@ export async function startDevelopment({ args = [], root = repository, log = con
     vite = await createServer({
       ...configuration,
       appType: 'custom',
-      plugins: [...configuration.plugins, developmentPages({ root, origin: process.env.BETTER_AUTH_URL ?? options.origin })],
+      plugins: [...configuration.plugins, developmentPages({ root, origin: env.BETTER_AUTH_URL ?? options.origin })],
       server: {
         ...configuration.server, host: options.host, port: options.port, strictPort: true,
         // Machine endpoints retain their own CORS/auth rules. Only the configured
         // preview hostname is added to Vite's existing loopback host allowance.
         cors: false,
         allowedHosts: configuration.server?.allowedHosts === true ? true : [
-          ...configuration.server?.allowedHosts ?? [], new URL(process.env.BETTER_AUTH_URL).hostname,
+          ...configuration.server?.allowedHosts ?? [], new URL(env.BETTER_AUTH_URL).hostname,
         ],
         proxy: apiProxyOptions(listener.url, proxyAgent),
       },
@@ -302,7 +305,7 @@ export async function startDevelopment({ args = [], root = repository, log = con
     await developmentResponse(workerReady, options.origin, AbortSignal.timeout(30_000))
     log(`[dev] Local: ${options.origin}/mikka`)
     log(`[dev] Ready in ${Math.ceil(performance.now() - started)}ms (Vite + Nitro)`)
-    if (process.env.MIKKA_LOCAL_TEST_ACCOUNTS === '1') {
+    if (env.MIKKA_LOCAL_TEST_ACCOUNTS === '1') {
       await provisionDevelopmentAccount(root, `${options.origin}/mikka`, log).catch(() => {})
     }
     return { ...options, nitro, vite, close }

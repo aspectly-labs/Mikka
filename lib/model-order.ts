@@ -13,6 +13,7 @@ import { gatewayKeyHarnesses } from './model-api-key-providers'
 import { catalogIdFor, type CatalogModel } from './model-catalog'
 import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS, resolveSpeedModesFromEvidence, type ModelRoutingEffort, type ModelServiceTier, type ModelSpeedMode } from './model-routing'
 import { hasStaleOfficialAllowance, shownSubscriptionAvailability, subscriptionAvailability } from './subscription-quota'
+import { jsonbFlagIsNotFalseSql } from './primitives/jsonb-predicates'
 import { providerHealthStates, providerSourceKey } from './model-provider-health'
 import {
   agentsByOffer, defaultOrderByAgent, deviceModel, dispatchOrder, entryKey, latestDefaultCandidates, offerKey, placeStage, planDispatch, sourceId as entrySourceId, whyNoDevice,
@@ -60,7 +61,7 @@ export interface OrderView {
   /** Connected subscriptions and usable API keys here: none means 优先使用的模型 says to connect one (C8). */
   credentials: number
   entries: OrderRow[]
-  candidates: (OrderCandidate & { provider: string; added: boolean; speedModes?: readonly ModelSpeedMode[] })[]
+  candidates: (OrderCandidate & { provider: string; added: boolean; speedModes?: readonly ModelSpeedMode[]; capabilities?: import('./model-capabilities').ModelCapabilities })[]
   /** Devices that take part (参与调度 on). */
   devices: number
   /** 云端: the person's own E2B cloud would take a run now. */
@@ -79,7 +80,9 @@ export interface OrderView {
 }
 
 /** The prompt's display facts; never a model admission or dispatch authority. */
-export type OrderContextView = Pick<OrderView, 'location' | 'preferredHarness' | 'entries' | 'candidates' | 'cloudReady' | 'cloudModels'>
+export type OrderContextView = Pick<OrderView, 'location' | 'preferredHarness' | 'entries' | 'cloudReady' | 'cloudModels'> & {
+  candidates: Omit<OrderView['candidates'][number], 'capabilities'>[]
+}
 
 interface EntryRow { id: string; harness: OrderHarness; model: string; sourceKind: 'subscription' | 'api_key'; sourceId: string }
 const toEntry = (row: EntryRow): StoredEntry => ({
@@ -93,7 +96,7 @@ export interface ModelCandidateSnapshot {
   keys?: UsableApiKey[]
 }
 
-function jsonBoolMap(value: unknown): Record<string, boolean> | null {
+export function jsonBoolMap(value: unknown): Record<string, boolean> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const out: Record<string, boolean> = {}
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -102,7 +105,7 @@ function jsonBoolMap(value: unknown): Record<string, boolean> | null {
   return Object.keys(out).length ? out : null
 }
 
-async function liveCatalogIndex(requireConfigured = true): Promise<Map<string, CatalogModel>> {
+export async function liveCatalogIndex(requireConfigured = true): Promise<Map<string, CatalogModel>> {
   try {
     if (requireConfigured) {
       const { gatewayLiteLlm } = await import('./model-gateway/config')
@@ -116,7 +119,7 @@ async function liveCatalogIndex(requireConfigured = true): Promise<Map<string, C
   }
 }
 
-function gatewayEntryFor(catalog: ReadonlyMap<string, CatalogModel>, model: string, provider: string): CatalogModel | undefined {
+export function gatewayEntryFor(catalog: ReadonlyMap<string, CatalogModel>, model: string, provider: string): CatalogModel | undefined {
   const id = catalogIdFor(model)
   if (!id) return undefined
   const entry = catalog.get(id)
@@ -135,7 +138,7 @@ export async function creditsModelSpeedModes(model: string): Promise<readonly Mo
 }
 
 /** What the person can add here: their usable subscriptions' models and their usable keys' models. */
-export async function orderCandidates(query: Query, scope: OrderScope, cached: ModelCandidateSnapshot = {}): Promise<(OrderCandidate & { provider: string; credentialOwnerId: string; speedModes?: readonly ModelSpeedMode[] })[]> {
+export async function orderCandidates(query: Query, scope: OrderScope, cached: ModelCandidateSnapshot = {}): Promise<(OrderCandidate & { provider: string; credentialOwnerId: string; responsesApi?: boolean; speedModes?: readonly ModelSpeedMode[] })[]> {
   const { ExecutionSettings } = await import('./execution-settings')
   const { usableApiKeys } = await import('./model-api-keys')
   const settings = new ExecutionSettings(query as Pool)
@@ -201,7 +204,7 @@ export async function orderCandidates(query: Query, scope: OrderScope, cached: M
     })
     return {
       harness: harness as OrderHarness, model, name: model,
-      source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId,
+      source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, responsesApi: key.responsesApi, credentialOwnerId: key.ownerId,
       ...(speedModes.length ? { speedModes } : {}),
     }
   })))
@@ -233,7 +236,7 @@ export async function selectedOrderCandidates(query: Query, scope: OrderScope, e
         })
         return {
           harness: entry.harness, model: entry.model, name: entry.model,
-          source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, credentialOwnerId: key.ownerId,
+          source: { kind: 'api_key' as const, keyId: key.id }, provider: key.provider, responsesApi: key.responsesApi, credentialOwnerId: key.ownerId,
           ...(speedModes.length ? { speedModes } : {}),
         }
       })
@@ -284,6 +287,15 @@ export async function selectedOrderCandidates(query: Query, scope: OrderScope, e
     .filter(candidate => entryKey(candidate) === entryKey(entry))
 }
 
+/**
+ * What a new Bot gets when its owner picks nothing (新建 Bot shows it as a real value, never 「默认」): the person's
+ * 运行位置 and reasoning effort in this workspace, as the dispatcher reads them.
+ */
+export async function personalRunDefaults(query: Query, scope: OrderScope): Promise<{ location: RunLocation; effort: ModelRoutingEffort }> {
+  const row = await settingsRow(query, scope)
+  return { location: row.location, effort: row.defaultEffort }
+}
+
 async function settingsRow(query: Query, scope: OrderScope) {
   const { rows: [row] } = await query.query<{ location: RunLocation; customized: boolean; preferredHarness: OrderHarness; autoModelRouting: boolean; defaultEffort: string | null; defaultServiceTier: string | null }>(
     `SELECT location,customized,"preferredHarness","autoModelRouting",
@@ -315,7 +327,7 @@ export async function readOrder(query: Query, scope: OrderScope, candidates?: (O
       LEFT JOIN byos_connections c ON e."sourceKind"='subscription' AND c.id=e."sourceId"
       LEFT JOIN model_api_keys k ON e."sourceKind"='api_key' AND k.id=e."sourceId"
       WHERE e."ownerId"=$1 AND e."workspaceId"=$2
-      AND COALESCE((COALESCE(to_jsonb(c)->'modelSettings',to_jsonb(k)->'modelSettings')->'models'->e.model->>'enabled')::boolean,true)
+      AND ${jsonbFlagIsNotFalseSql(`COALESCE(to_jsonb(c)->'modelSettings',to_jsonb(k)->'modelSettings')->'models'->e.model`, 'enabled')}
       ORDER BY e.position,e.id`,
     [scope.ownerId, scope.workspaceId])
   return { ...settings, entries: rows.map(toEntry) }
@@ -378,11 +390,11 @@ export async function credentialStates(query: Query, scope: OrderScope, entries:
     connections = await readConnections()
     checkedAt = now ?? Date.now()
   }
+  const { memberCredentialsAllowedSql } = await import('./personal-policy')
   const keys = new Map((keyOwners.size ? (await query.query<{ id: string; modelsError: string | null; provider: string }>(
     `SELECT k.id::text AS id,k."modelsError",k.provider FROM model_api_keys k
-      JOIN unnest($1::text[],$2::text[]) AS authorized(id,owner) ON k.id::text=authorized.id AND k."ownerId"=authorized.owner
-      WHERE k."ownerId"=$3 OR (EXISTS (SELECT 1 FROM model_api_key_shares sh WHERE sh."keyId"=k.id AND sh."workspaceId"::text=$4)
-        AND NOT EXISTS (SELECT 1 FROM workspace_personal_policies p WHERE p."workspaceId"::text=$4 AND NOT p.subscriptions))`,
+      JOIN unnest($1::text[],$2::text[]) AS authorized(id,owner) ON k.id::text=authorized.id AND COALESCE(k."ownerId",k."workspaceId"::text)=authorized.owner
+      WHERE (k."ownerId"=$3 AND ${memberCredentialsAllowedSql('$4')}) OR k."workspaceId"::text=$4`,
     [[...keyOwners.keys()], [...keyOwners.values()], scope.ownerId, scope.workspaceId])).rows : []).map(row => [row.id, row]))
   const health = await providerHealthStates(query, scope, authorizedCandidates, checkedAt)
   const states = new Map<string, { credential: CredentialState; provider: string; quotaCheckPending?: true }>()
@@ -483,6 +495,7 @@ export async function orderView(query: Query, scope: OrderScope, readDevices: ()
   const cloudModels = Object.fromEntries(order.entries.map(entry => [entry.id, cloudModelSupport(entry)]))
   const plan = planDispatch({ entries: runnable, location: order.location, devices, credential, cloudReady: ready, cloudModel: entry => cloudModels[entry.id] })
   const firstDevice = plan.kind === 'device' ? devices.find(device => device.id === plan.deviceId) : undefined
+  const menuCandidates = candidates.map(candidate => ({ ...candidate, added: added.has(entryKey(candidate)) }))
   const context: OrderContextView = {
     location: order.location,
     preferredHarness: order.preferredHarness,
@@ -495,9 +508,15 @@ export async function orderView(query: Query, scope: OrderScope, readDevices: ()
         : !(ready && cloudModels[entry.id] === 'ready') && !devices.some(device => deviceModel(device, entry)) ? { reason: 'noDevice', device: whyNoDevice(devices, entry) } : null
       return { ...entry, provider: state.provider, agents: agents.get(offerKey(entry)) ?? [entry.harness], block }
     }),
-    candidates: candidates.map(candidate => ({ ...candidate, added: added.has(entryKey(candidate)) })),
+    candidates: menuCandidates,
   }
   if (projection === 'context') return context
+  // Settings › Models adapts its level and speed controls to each model, from the same resolver the chat uses.
+  const capabilityOf = await (await import('./model-capabilities-server')).modelCapabilityReader(query,
+    candidates.flatMap(candidate => candidate.source.kind === 'subscription' ? [candidate.source.connectionId] : []))
+  const settingsCandidates = menuCandidates.map(candidate => ({ ...candidate, capabilities: candidate.source.kind === 'subscription'
+    ? capabilityOf({ source: 'subscription', connectionId: candidate.source.connectionId, provider: candidate.provider, modelId: candidate.model })
+    : capabilityOf({ source: 'byok', provider: candidate.provider, responsesApi: candidate.responsesApi, modelId: candidate.model, ...(candidate.speedModes ? { advertisedSpeedModes: candidate.speedModes } : {}) }) }))
   return {
     dispatchOrder: deviceSchedulingView({ location: order.location, entries: runnable, devices, credential, cloudReady: ready, cloudModel: entry => cloudModels[entry.id] }),
     location: order.location,
@@ -521,7 +540,7 @@ export async function orderView(query: Query, scope: OrderScope, readDevices: ()
     first: plan.kind === 'cloud' ? { kind: 'cloud' } : firstDevice ? { kind: 'device', id: firstDevice.id, name: firstDevice.name, server: firstDevice.server } : null,
     readyDeviceIds: devices.filter(device => planDispatch({ entries: runnable, location: 'local', devices: [device], credential, cloudReady: false }).kind === 'device').map(device => device.id),
     entries: context.entries,
-    candidates: context.candidates,
+    candidates: settingsCandidates,
   }
 }
 

@@ -34,7 +34,7 @@ let nextMocked = false
 async function mockNextServer() {
   if (nextMocked) return
   const next = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   nextMocked = true
 }
 
@@ -80,6 +80,11 @@ dbTest('device session reports: the newest socket owns the session, reports are 
     const t0 = new Date(Date.now() - 60_000), t1 = new Date(t0.getTime() + 10_000), t2 = new Date(t0.getTime() + 20_000)
 
     const live = await f.run('running'), queued = await f.run('queued'), stopping = await f.run('running', "now() + interval '5 minutes'", 'now()'), lapsed = await f.run('running', "now() - interval '1 second'")
+    const { mintGatewayToken, verifyGatewayToken } = await import('./model-gateway/token')
+    const gateway = await mintGatewayToken(pool, { runId: live, ownerId: f.owner, workspaceId: f.workspaceId,
+      harness: 'codex', model: 'fixture', source: { kind: 'subscription', deviceId: f.device } })
+    const dayTwo = new Date(Date.now() + 48 * 60 * 60 * 1000)
+    assert.equal(await verifyGatewayToken(pool, gateway.token, dayTwo), null)
     const before = { queued: await lease(queued), stopping: await lease(stopping), lapsed: await lease(lapsed) }
 
     await t.test('connected opens the session and extends live leases to the session lease', async () => {
@@ -88,6 +93,7 @@ dbTest('device session reports: the newest socket owns the session, reports are 
       assert.deepEqual([row.opened.getTime(), row.closed, row.socket], [t0.getTime(), null, 'socket-aaaaaaaa'])
       assert.equal(row.lastSeenAt.getTime(), t0.getTime(), 'last seen is the session time, for people only')
       assert.ok((await lease(live))!.getTime() > Date.now() + SESSION_LEASE_MS - 120_000)
+      assert.equal((await verifyGatewayToken(pool, gateway.token, dayTwo))?.runId, live)
       assert.deepEqual({ queued: await lease(queued), stopping: await lease(stopping), lapsed: await lease(lapsed) }, before, 'queued, stopping and ended leases are not extended')
       assert.deepEqual(await report('connected', t0, 'socket-aaaaaaaa'), { applied: true }, 'a retried report is idempotent')
       assert.equal((await session()).socket, 'socket-aaaaaaaa')
@@ -107,6 +113,7 @@ dbTest('device session reports: the newest socket owns the session, reports are 
       const row = await session()
       assert.equal(row.closed.getTime(), t2.getTime())
       assert.ok((await lease(live))!.getTime() <= Date.now(), 'the live run lease ended')
+      assert.equal(await verifyGatewayToken(pool, gateway.token), null)
       assert.ok((await lease(stopping))!.getTime() <= Date.now(), 'a stopping run lease ended too')
       assert.equal((await lease(queued))?.getTime(), before.queued?.getTime(), 'a queued run has no lease to end')
       assert.deepEqual(await report('disconnected', t2, 'socket-bbbbbbbb'), { applied: false }, 'idempotent')
@@ -473,6 +480,8 @@ dbTest('initial claim repository handoff removes a real cloud repos request with
           rowDelta:next.meter.resultRows-old.meter.resultRows,wireDelta:next.meter.sentBytes+next.meter.receivedBytes-old.meter.sentBytes-old.meter.receivedBytes,
           responseBodyDelta:nextResponseBytes-oldResponseBytes}))
       }
+      await pool.query('UPDATE repository_settings SET setup=$2 WHERE "userId"=$1', [owner, JSON.stringify({ approved: false, copyFiles: [], command: 'npm ci' })])
+      assert.deepEqual((await (await get()).json()).repos[0].setup, { approved: true, copyFiles: [], command: 'npm ci' }, 'a recipe stored unapproved is sent approved')
       await pool.query('UPDATE device_repos SET "repoPath"=$2,"remoteUrl"=NULL WHERE id=$1', [repo, '/workspace/repository'])
       const hosted = await (await get()).json()
       assert.deepEqual(hosted.repos, [{ repoId: repo, name: 'repository', path: '/workspace/repository', remoteUrl: null }], 'a hosted worker keeps its provisioned directory without a remote')

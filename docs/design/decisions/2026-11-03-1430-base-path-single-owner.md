@@ -1,6 +1,7 @@
 # One owner for the application URL prefix
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex: 「之前好像也是把链接加了两次，有什么方法可以阻止他这样去做吗？能够一劳永逸地解决这个问题」.
 - Rule: R-82 (navigation).
 

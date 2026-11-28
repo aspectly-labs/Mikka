@@ -5,13 +5,16 @@ import { cloudComputerRunsEnabled } from '@/lib/cloud-computer-flag'
 import { z } from 'zod'
 import { getTranslations } from '@/lib/intl/i18n-server'
 import { AGENT_NAMES, agentHasNoModel, MODEL_SETTINGS_HREF } from '@/lib/agent-no-model'
-import { auth } from '@/lib/api-auth'
 import { pool } from '@/lib/db'
 import { issueForUser } from '@/lib/issue-access'
 import { tiptapToText } from '@/lib/tiptap-text'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
+import { WorkspaceError } from '@/lib/workspace-error'
+import { sameOriginMutationAllowed, workspaceErrorStatus } from '@/lib/http-security'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { FactoryError } from '@/lib/factory/contract'
-import { ComputerError } from '@/lib/computer/store'
+import { ComputerError, TaskWorkspaceArchiveUnavailable } from '@/lib/computer/store'
+import { TaskProviderAdmissionUnavailable } from '@/lib/cloud-computer/task-provider-admission'
 import { latestThreadRunModel } from '@/lib/computer/run-model'
 import { queueFactoryCloudRun } from '@/lib/factory/queue-cloud'
 
@@ -25,12 +28,16 @@ const inputSchema = z.object({ issueId: z.uuid(), harness: z.enum(['codex', 'cla
 const headers = { 'Cache-Control': 'private, no-store' }
 class AgentNoModelError extends Error { constructor(public harness: 'claude_code' | 'codex') { super('agentNoModel') } }
 
-export async function POST(request: Request, { params }: { params: Promise<{ botId: string }> }) {
-  if (!cloudComputerRunsEnabled()) return Response.json({ error: 'Cloud computer task unavailable' }, { status: 503, headers })
-  const session = await auth.api.getSession({ headers: request.headers })
-  if (!session?.user) return Response.json({ error: 'Sign in required' }, { status: 401, headers })
-  if (request.headers.get('origin') !== new URL(request.url).origin) return Response.json({ error: 'Invalid origin' }, { status: 403, headers })
-  const botId = (await params).botId
+export const POST = defineRoute<'session', 'none', { botId: string }>(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+  },
+  async ({ request, session, params }) => {
+    if (!cloudComputerRunsEnabled()) return Response.json({ error: 'Cloud computer task unavailable' }, { status: 503, headers })
+    if (!sameOriginMutationAllowed(request)) return Response.json({ error: 'Invalid origin' }, { status: 403, headers })
+    const botId = params.botId
   const raw = await request.text()
   if (raw.length > 12_000 || !z.uuid().safeParse(botId).success) return Response.json({ error: 'Invalid request' }, { status: 400, headers })
   const parsed = inputSchema.safeParse((() => { try { return JSON.parse(raw) } catch { return null } })())
@@ -109,7 +116,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ bot
     // #3082: the Eve route's machine opens lazily with its first role turn;
     // only the native thread machine needs an explicit start here.
     if (eveDrive) await eveDrive()
-    else if ('runId' in result && result.thread !== 'message') await (await import('@/lib/run-leases')).startThreadMachine({ userId: session.user.id, workspaceId: context.workspace.id }, result.runId)
+    else if ('runId' in result && result.thread !== 'message') {
+      const started = await (await import('@/lib/run-leases')).startThreadMachine({ userId: session.user.id, workspaceId: context.workspace.id }, result.runId)
+      if (started?.state === 'unavailable' && started.reason === 'billing_refused') {
+        return Response.json({ error: started.code, runId: result.runId },
+          { status: started.code === 'points_exhausted' ? 402 : 409, headers })
+      }
+      if (started?.state === 'unavailable' && started.reason === 'provider_unavailable') {
+        const { taskProviderUnavailableMessage } = await import('@/lib/cloud-computer/task-provider-admission')
+        return Response.json({ error: taskProviderUnavailableMessage(started.provider), code: 'task_provider_unavailable',
+          provider: started.provider, runId: result.runId, retryable: true }, { status: 503, headers })
+      }
+      if (started?.state === 'unavailable' && started.reason === 'archive_unavailable') {
+        return Response.json({ error: new TaskWorkspaceArchiveUnavailable().message, code: TaskWorkspaceArchiveUnavailable.code,
+          runId: result.runId, retryable: true }, { status: 503, headers })
+      }
+      if (started?.state === 'unavailable' && started.reason === 'startup_failed') {
+        return Response.json({ error: 'Cloud computer task unavailable', code: 'task_startup_failed', runId: result.runId }, { status: 503, headers })
+      }
+    }
     return Response.json(result, { status: 202, headers })
   } catch (error) {
     if (error instanceof AgentNoModelError) {
@@ -119,7 +144,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ bot
     if (error instanceof AgentProfileError) return Response.json({ error: error.code }, { status: error.status, headers })
     if (error instanceof AgentProfileAdmissionError) return Response.json({ error: error.message }, { status: 409, headers })
     if (error instanceof FactoryError) return Response.json({ error: error.code }, { status: 409, headers })
+    if (error instanceof TaskProviderAdmissionUnavailable) return Response.json({ error: error.message,
+      code: 'task_provider_unavailable', provider: error.provider, retryable: true }, { status: error.status, headers })
     if (error instanceof ComputerError) return Response.json({ error: error.message }, { status: error.status, headers })
+    if (error instanceof WorkspaceError) return Response.json({ error: error.code }, { status: workspaceErrorStatus(error), headers })
     return Response.json({ error: 'Cloud computer task unavailable' }, { status: 503, headers })
   }
-}
+})

@@ -1,7 +1,7 @@
 /**
  * Pure workspace URL builders, location parsers, and history-mark helpers
  * shared across server links, notifications, mobile targets, and web navigation
- * (rules.md R-82, decisions/2026-11-01-1320-navigation-model.md).
+ * (mikka-hosted-ui docs/design/rules.md R-82, decisions/2026-11-01-1320-navigation-model.md).
  */
 export type WorkspaceSection = 'pulls' | 'conversations' | 'inbox' | 'my-issues' | 'agent' | 'coordinator' | 'group' | 'projects' | 'views' | 'team-home' | 'team-issues' | 'team-projects' | 'all-issues' | 'plugins' | 'suggestions' | 'artifacts' | 'memory' | 'automations'
 
@@ -205,7 +205,7 @@ export function canonicalHref(current: URL, botExists?: (id: string) => boolean)
 
 /**
  * Each entry the workspace writes carries a mark in history.state beside
- * Next's own keys (`__NA`, `__PRIVATE_NEXTJS_INTERNALS_TREE`, copied, never
+ * any keys already there (older pages left Next's `__NA`, copied, never
  * replaced): its position and, on a task page, the entry that opened it. ✕
  * steps back there when that entry belongs to this page load (`doc`), so the
  * chat comes back as it was; a pasted link, a reload or a cold start has no

@@ -10,7 +10,7 @@ export const TOOL_IDENTIFIER_SOURCE = '[A-Za-z][A-Za-z0-9_.:-]{0,127}'
 export const TOOL_IDENTIFIER_PATTERN = '^' + TOOL_IDENTIFIER_SOURCE + '$'
 export const TOOL_ERROR_TEXT_PATTERN = '^(' + TOOL_IDENTIFIER_SOURCE + ')(?: \\((' + TOOL_IDENTIFIER_SOURCE + ')\\))?$'
 /** Shared with the JSONB projection; only these string fields leave a full input as a target. */
-export const TOOL_TARGET_KEYS = ['identifier', 'title', 'name', 'query', 'q', 'subject', 'repository', 'repo', 'url', 'path', 'operation', 'text', 'message', 'instruction', 'toolkit'] as const
+export const TOOL_TARGET_KEYS = ['identifier', 'title', 'name', 'query', 'q', 'subject', 'repository', 'repo', 'url', 'path', 'operation', 'command', 'cmd', 'text', 'message', 'instruction', 'toolkit'] as const
 export const DYNAMIC_TOOL_NAMES = {
   github_call: { field: 'name', prefix: 'GitHub' },
   call_personal_mcp_tool: { field: 'name', prefix: 'MCP' },

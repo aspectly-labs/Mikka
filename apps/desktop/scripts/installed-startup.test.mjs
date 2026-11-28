@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import test from 'node:test'
 import { frontendRuntimeSource } from '../../frontend/scripts/frontend-runtime.mjs'
+import { needsOfficialUi, officialRenderer, officialUi, officialUiResolution } from './official-ui.mjs'
 
 const repository = fileURLToPath(new URL('../../..', import.meta.url))
-const renderer = join(repository, 'apps/desktop/src/renderer')
 let sequence = 0
 const names = ['window', 'fetch', '__earlyWorkspaceImports', '__earlyWorkspaceRenders', '__earlyAppStarts', '__earlyAppGate', '__earlyStartupApi']
 const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail }); return { promise, resolve, reject } }
@@ -22,27 +22,27 @@ async function runtimeFixture(t, { url = 'mikka://app/mikka/en', identity } = {}
     window, __earlyWorkspaceImports: 0, __earlyWorkspaceRenders: 0, __earlyAppStarts: 0, __earlyAppGate: gate.promise,
     fetch: async () => { requests++; throw new Error('LOCAL_PRELOAD_MUST_NOT_FETCH_DATA') },
   })
-  const runtime = frontendRuntimeSource('desktop', { frontend: join(repository, 'apps/frontend'), renderer })
+  const runtime = frontendRuntimeSource('desktop', { frontend: join(repository, 'apps/frontend'), overlay: officialUi.dir })
   const result = await build({
-    absWorkingDir: repository, entryPoints: [join(repository, 'apps/frontend/src/index.tsx')],
+    absWorkingDir: repository, entryPoints: [join(repository, 'apps/frontend/src/index.ts')],
     write: false, bundle: true, format: 'esm', platform: 'browser', target: 'es2023',
     tsconfig: join(repository, 'apps/desktop/tsconfig.renderer.json'),
     define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '"/mikka"', 'process.env': '{}' },
     plugins: [{ name: 'installed-startup-order-fixture', setup(builder) {
       builder.onResolve({ filter: /^mikka:frontend-runtime$/ }, () => ({ path: 'runtime', namespace: 'startup-runtime' }))
       builder.onLoad({ filter: /.*/, namespace: 'startup-runtime' }, () => ({ contents: runtime, resolveDir: repository, loader: 'js' }))
-      builder.onResolve({ filter: /^\.\.\/\.\.\/desktop\/src\/renderer\/index$/ }, () => ({ path: 'app', namespace: 'startup-app' }))
+      builder.onResolve({ filter: /^mikka:application$/ }, () => ({ path: 'app', namespace: 'startup-app' }))
       builder.onLoad({ filter: /.*/, namespace: 'startup-app' }, () => ({
-        contents: `import * as api from ${JSON.stringify(join(renderer, 'workspace-loader.ts'))};
+        contents: `import * as api from ${JSON.stringify(join(officialRenderer, 'workspace-loader.ts'))};
           globalThis.__earlyStartupApi = api;
           globalThis.__earlyAppStarts++;
           await globalThis.__earlyAppGate;`, resolveDir: repository, loader: 'js',
       }))
-      builder.onResolve({ filter: /^@ui-slot\/workspace-entry$/ }, args => args.importer.endsWith('workspace-loader.ts') ? { path: 'workspace', namespace: 'startup-workspace' } : undefined)
+      builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args => args.importer.endsWith('workspace-loader.ts') ? { path: 'workspace', namespace: 'startup-workspace' } : undefined)
       builder.onLoad({ filter: /.*/, namespace: 'startup-workspace' }, () => ({
         contents: 'globalThis.__earlyWorkspaceImports++; export function Workspace() { globalThis.__earlyWorkspaceRenders++; return null }', loader: 'js',
       }))
-    } }],
+    } }, officialUiResolution],
   })
   const entry = import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}#early-startup-${++sequence}`)
   t.after(async () => {
@@ -58,7 +58,7 @@ async function runtimeFixture(t, { url = 'mikka://app/mikka/en', identity } = {}
   return { entry, gate, until, calls: () => calls, requests: () => requests }
 }
 
-test('the real desktop runtime starts one retained-session code hint before the application graph finishes', async t => {
+test('the real desktop runtime starts one retained-session code hint before the application graph finishes', { skip: needsOfficialUi }, async t => {
   const identity = deferred()
   const run = await runtimeFixture(t, { identity: identity.promise })
   assert.equal(run.calls(), 1, 'main identity hint begins before the application module can finish')
@@ -79,7 +79,7 @@ test('the real desktop runtime starts one retained-session code hint before the 
   await run.entry
 })
 
-test('the early desktop entry keeps signed-out and public/auth documents lazy and excludes foreign/web origins', async t => {
+test('the early desktop entry keeps signed-out and public/auth documents lazy and excludes foreign/web origins', { skip: needsOfficialUi }, async t => {
   for (const url of [
     'mikka://app/mikka', 'mikka://app/mikka/en/sign-in', 'mikka://app/mikka/en/a/shared-fixture',
     'mikka://app/mikka/en/device', 'mikka://other/mikka/en', 'https://app.example/mikka/en',
@@ -94,13 +94,15 @@ test('the early desktop entry keeps signed-out and public/auth documents lazy an
 })
 
 test('the web runtime remains its existing production/development instrumentation entry without the desktop warm-up', () => {
+  const overlay = join(repository, '.hosted-ui')
   for (const development of [false, true]) {
-    const original = `${development ? 'globalThis[Symbol.for("openui.devtools.autoMount")] = true;\n' : ''}import ${JSON.stringify(join(repository, 'apps/frontend/src/web/runtime.ts'))};\n`
-    assert.equal(frontendRuntimeSource('web', { development, frontend: join(repository, 'apps/frontend'), renderer }), original)
+    const original = `import ${JSON.stringify(join(repository, 'apps/frontend/src/web/runtime.ts'))};\n`
+    assert.equal(frontendRuntimeSource('web', { development, frontend: join(repository, 'apps/frontend'), overlay }), original)
   }
+  assert.throws(() => frontendRuntimeSource('web', { frontend: join(repository, 'apps/frontend') }), /FRONTEND_RUNTIME_REQUIRES_UI/)
 })
 
-test('a failed early identity hint cannot prevent the normal application or authenticated lazy path', async t => {
+test('a failed early identity hint cannot prevent the normal application or authenticated lazy path', { skip: needsOfficialUi }, async t => {
   const identity = deferred()
   const run = await runtimeFixture(t, { identity: identity.promise })
   const cause = new Error('fixture identity IPC failure')

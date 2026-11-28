@@ -48,7 +48,7 @@ export function readReplayReady(value) {
 
 function configuration(ready, env, now) {
   check(env.GITHUB_ACTIONS === 'true' && env.GITHUB_EVENT_NAME === 'workflow_dispatch'
-    && env.GITHUB_REPOSITORY === 'alexj11324/Mikka' && env.GITHUB_REF === 'refs/heads/main'
+    && env.GITHUB_REPOSITORY === 'aspectly-labs/Mikka' && env.GITHUB_REF === 'refs/heads/main'
     && SHA.test(env.MIKKA_EXPECTED_DEPLOYMENT_SHA ?? '') && env.GITHUB_SHA === env.MIKKA_EXPECTED_DEPLOYMENT_SHA, 'browser_source_rejected')
   check(!env.MIKKA_ACCEPTANCE_BASE_URL || env.MIKKA_ACCEPTANCE_BASE_URL === ORIGIN + '/mikka', 'browser_origin_rejected')
   check(!env.DEBUG && !env.PWDEBUG && !env.PW_API_LOG, 'browser_configuration')

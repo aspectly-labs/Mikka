@@ -16,13 +16,13 @@ const issueId = '31300000-0000-4000-8000-000000000002'
 const botId = '31300000-0000-4000-8000-000000000003'
 const workspaceId = '31300000-0000-4000-8000-000000000004'
 const dialect = new PgDialect()
-const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_organization_workspaces\".\"organizationId\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\" = $1 and \"mikka_workspace_members\".\"status\" = $2 and \"mikka_workspaces\".\"id\" = $3 and (\"mikka_workspaces\".\"kind\" = $4 or (\"mikka_workspaces\".\"kind\" = $5 and \"mikka_workspaces\".\"userId\" = $6))) order by \"mikka_workspaces\".\"createdAt\" asc"
+const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\" as \"mfa\", \"mikka_organization_workspaces\".\"organizationId\" as \"org\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\"=$1 and \"mikka_workspace_members\".\"status\"='active' and \"mikka_workspaces\".\"id\"=$2 and (\"mikka_workspaces\".\"kind\"='team' or (\"mikka_workspaces\".\"kind\"='personal' and \"mikka_workspaces\".\"userId\"=\"mikka_workspace_members\".\"userId\"))) order by \"mikka_workspaces\".\"createdAt\" asc"
 let viewer: string | null = 'owner'
 let requestHeaders = new Headers({cookie: 'synthetic-session'})
 let sessionUser: string | null = null
 let freshSession = true
 function fixture() {
-  const run = { id: runId, issueId, workspaceId, deviceRepoId:undefined as string|undefined, userId: 'owner', botId, status: 'running', stopRequestedAt: null as Date | null, prompt: 'Private thread', promptTaskStart: 0, promptTaskLength: Array.from('Private thread').length, report: null, error: null as string | null, questionContinuation: null as (typeof agentRuns.$inferSelect)['questionContinuation'], createdAt: new Date(), finishedAt: null, agentName: 'Owned Bot', harness: 'codex', ownerName: 'Owner' }
+  const run = { id: runId, issueId, workspaceId, deviceRepoId:undefined as string|undefined, userId: 'owner', botId, status: 'running', kind: 'implement' as string | null, threadRelation: null as 'fork' | 'side' | 'subagent' | null, stopRequestedAt: null as Date | null, prompt: 'Private thread', promptTaskStart: 0, promptTaskLength: Array.from('Private thread').length, report: null, error: null as string | null, questionContinuation: null as (typeof agentRuns.$inferSelect)['questionContinuation'], createdAt: new Date(), finishedAt: null, agentName: 'Owned Bot', harness: 'codex', ownerName: 'Owner' }
   return { factoryStages: new Map<string, string>(), controlReads: [] as unknown[][], questions: new Map<string, string>(), questionOwners: new Map<string, string>(), questionReads: [] as unknown[][], epochReads: [] as unknown[][], run, continuation: null as typeof run | null, members: new Set(['owner', 'member', botId]), messages: [] as Array<{ id: string; runId: string; userId: string; text: string }>, updates: 0, transactions: 0, ordinaryDispatches: 0, beforeLock: undefined as (() => void) | undefined, fault: undefined as Error | undefined, recovery: null as Record<string,unknown> | null, recoveryReads: 0, recoveryCalls: [] as Array<{actor:unknown;input:unknown}> }
 }
 let current = fixture()
@@ -145,10 +145,10 @@ before(async () => {
       return { rows: [{ workspaceId, status: live.status, stopRequestedAt: live.stopRequestedAt,
         harness: live.harness, canSteer: false, continuable: Boolean(live.deviceRepoId), interrupt: false }] }
     }
-    if (sql.startsWith('SELECT id,text,status,"failureCode","requestId" FROM (')) {
+    if (sql.startsWith('SELECT id,text,status,"failureCode","requestId","canSendNow" FROM (')) {
       assert.equal(viewer, current.run.userId)
       assert.deepEqual(params, [current.run.userId, workspaceId, current.run.id])
-      assert.match(sql, /"userId"=\$1 AND "workspaceId"=\$2 AND "rootRunId"=\$3/)
+      assert.match(sql, /q\."userId"=\$1 AND q\."workspaceId"=\$2 AND q\."rootRunId"=\$3/)
       return { rows: [] }
     }
     // These ordinary threads have no machine binding; still verify the scoped stop probe.
@@ -166,12 +166,13 @@ before(async () => {
       return {rows:[]}
     }
     if (sql.includes('AS "independentCheck"')) {
-      const liveId = current.continuation?.id ?? current.run.id
+      const live = current.continuation ?? current.run
+      const liveId = live.id
       assert.deepEqual(params, [liveId, 'owner', issueId], 'controls must bind the current run, owner and issue')
       assert.match(sql, /a\."runId"=r\.id AND a\.stage IN \('review','verify','monitor'\)/)
       assert.match(sql, /r\.id=\$1 AND r\."userId"=\$2 AND r\."issueId" IS NOT DISTINCT FROM \$3::uuid/)
       current.controlReads.push(params)
-      return { rows: [{ independentCheck: ['review', 'verify', 'monitor'].includes(current.factoryStages.get(liveId) ?? '') }] }
+      return { rows: [{ independentCheck: ['review', 'verify', 'monitor'].includes(current.factoryStages.get(liveId) ?? ''), subagent: live.threadRelation === 'subagent', kind: live.kind }] }
     }
     // Run chains (BE-18) fold a resumed-question continuation into its thread; covered against real PG in
     // tests/run-chain.db.test.ts and lib/factory/questions/postgres.test.ts.
@@ -238,7 +239,7 @@ before(async () => {
         },
         where: (condition: SQL) => {
           if (projection?.organizationId) {
-            assert.deepEqual(Object.keys(projection), ['id', 'kind', 'organizationId'])
+            assert.deepEqual(Object.keys(projection), ['id', 'kind', 'factorAt', 'organizationId'])
             assert.ok(member && organization && memberJoin && organizationJoin)
             const selected = new QueryBuilder().select(projection as SelectedFields).from(table)
               .innerJoin(member, memberJoin).leftJoin(organization, organizationJoin).where(condition)
@@ -252,7 +253,7 @@ before(async () => {
                   .replaceAll('"' + name + '".', '"' + table + '".')
               }
               assert.equal(actualSql, expectedMembershipSql)
-              assert.deepEqual(compiled.params, [viewer, 'active', workspaceId, 'team', 'personal', viewer])
+              assert.deepEqual(compiled.params, [viewer, workspaceId])
               // SQL NULL keeps the real Enterprise filter on the ordinary
               // Shared path; membership still follows this fixture's state.
               return current.members.has(String(viewer)) ? [{ id: workspaceId, kind: 'team', organizationId: null }] : []
@@ -587,37 +588,46 @@ test('producer and ordinary failed threads keep their existing Retry and reply c
   }
 })
 
-test('an independent check retains strict question Retry without enabling ordinary Send', async () => {
-  current = fixture(); viewer = 'owner'; current.run.status = 'failed'; current.factoryStages.set(runId, 'review')
-  current.recovery = recoveryRow()
-  let detail = await actions.getIssueThread(issueId, runId)
-  assert.equal(detail.thread.retryAvailable, true)
-  assert.equal(detail.thread.replyAvailable, false)
-  current.recovery = { ...recoveryRow(), questionStatus: 'resuming', taskStatus: 'running' }
-  assert.equal((await actions.getIssueThread(issueId, runId)).thread.retryAvailable, false, 'stale blocked state is not recovery authority')
-  current.recovery = { ...recoveryRow(), continuationRunId: 'another-run' }
-  assert.equal((await actions.getIssueThread(issueId, runId)).thread.retryAvailable, false, 'another continuation cannot enable this control')
-  current.recovery = { ...recoveryRow(), questionStatus: 'resuming', taskStatus: 'running', recoveryRequest: { kind: 'question_recover' } }
-  detail = await actions.getIssueThread(issueId, runId)
-  assert.equal(detail.thread.retryAvailable, true, 'the existing durable receipt remains replayable')
-  assert.equal(detail.thread.replyAvailable, false)
-  assert.equal(current.recoveryCalls.length + current.ordinaryDispatches, 0)
-})
-
-test('current check questions and running checks retain their existing message path', async () => {
+test('independent checks and subagents are strictly read-only for humans regardless of state or question (Alex, 2026-11-24)', async () => {
   const routing = process.env.MIKKA_FACTORY_ROUTING_ENABLED, lifecycle = process.env.MIKKA_FACTORY_LIFECYCLE_ENABLED
   try {
     process.env.MIKKA_FACTORY_ROUTING_ENABLED = '1'; process.env.MIKKA_FACTORY_LIFECYCLE_ENABLED = '1'
+    // Waiting independent check (supersedes R-10): no human composer, no human Retry, human send rejected.
     current = fixture(); viewer = 'owner'; current.run.status = 'stopped'; current.factoryStages.set(runId, 'verify'); current.questions.set(runId, 'waiting_user')
     const waiting = await actions.getIssueThread(issueId, runId)
     assert.equal(waiting.thread.question, 'waiting')
-    assert.equal(waiting.thread.replyAvailable, true, 'the composer must still answer the current question')
+    assert.equal(waiting.thread.replyAvailable, false, 'independent checks never open a human composer')
     assert.equal(waiting.thread.retryAvailable, false)
-    current = fixture(); viewer = 'owner'; current.factoryStages.set(runId, 'monitor')
+    assert.deepEqual(await actions.sendIssueThreadReply({ issueId, runId, text: 'Answer' }), { error: 'threadCannotContinue', params: undefined })
+
+    // Failed independent check with a recovery row stays strictly read-only for humans.
+    current = fixture(); viewer = 'owner'; current.run.status = 'failed'; current.factoryStages.set(runId, 'review')
+    current.recovery = recoveryRow()
+    const failed = await actions.getIssueThread(issueId, runId)
+    assert.equal(failed.thread.replyAvailable, false)
+    assert.equal(failed.thread.retryAvailable, false)
+    assert.deepEqual(await actions.sendIssueThreadReply({ issueId, runId, text: 'Retry', retryOriginalSession: true }), { error: 'threadCannotContinue', params: undefined })
+    assert.equal(current.recoveryCalls.length + current.ordinaryDispatches, 0)
+
+    // Active independent check: strictly read-only for humans (no composer, no /btw, no /compact).
+    current = fixture(); viewer = 'owner'; current.run.status = 'running'; current.factoryStages.set(runId, 'monitor')
     const working = await actions.getIssueThread(issueId, runId)
-    assert.equal(working.thread.replyAvailable, true, 'active checks retain mailbox messages')
+    assert.equal(working.thread.replyAvailable, false)
     assert.equal(working.thread.retryAvailable, false)
-    assert.deepEqual(current.controlReads, [], 'an active run needs no continuation probe')
+    assert.deepEqual(current.controlReads, [[runId, 'owner', issueId]])
+    assert.deepEqual(await actions.sendIssueThreadReply({ issueId, runId, text: 'Steer check' }), { error: 'threadCannotContinue', params: undefined })
+    await assert.rejects(actions.btwIssueThreadMessage({ issueId, runId, text: 'Side note' }), rejected('threadCannotContinue'))
+    await assert.rejects(actions.compactThread({ issueId, runId }), rejected('threadCannotContinue'))
+
+    // Subagent run: exposes threadRelation='subagent', strictly read-only for humans.
+    current = fixture(); viewer = 'owner'; current.run.status = 'running'; current.run.threadRelation = 'subagent'
+    const subagent = await actions.getIssueThread(issueId, runId)
+    assert.equal(subagent.thread.threadRelation, 'subagent')
+    assert.equal(subagent.thread.replyAvailable, false)
+    assert.equal(subagent.thread.retryAvailable, false)
+    assert.deepEqual(await actions.sendIssueThreadReply({ issueId, runId, text: 'Hello subagent' }), { error: 'threadCannotContinue', params: undefined })
+    await assert.rejects(actions.btwIssueThreadMessage({ issueId, runId, text: 'Side note' }), rejected('threadCannotContinue'))
+    await assert.rejects(actions.compactThread({ issueId, runId }), rejected('threadCannotContinue'))
   } finally {
     if (routing === undefined) delete process.env.MIKKA_FACTORY_ROUTING_ENABLED; else process.env.MIKKA_FACTORY_ROUTING_ENABLED = routing
     if (lifecycle === undefined) delete process.env.MIKKA_FACTORY_LIFECYCLE_ENABLED; else process.env.MIKKA_FACTORY_LIFECYCLE_ENABLED = lifecycle

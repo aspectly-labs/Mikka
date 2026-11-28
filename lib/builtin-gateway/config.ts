@@ -1,12 +1,13 @@
 import { createHmac } from 'node:crypto'
 import { isCloudEdition } from '../edition'
+import { runtimeEnv } from '../env/runtime.mjs'
 
 type Environment = Readonly<Record<string, string | undefined>>
 export type GatewayConfig = { url: string; secret: string; mode: 'worker' | 'builtin' }
 
 /** Explicit Worker configuration always wins. An incomplete override must not
  * silently send its traffic to a different gateway. */
-export function gatewayConfig(env: Environment = process.env): GatewayConfig | null {
+export function gatewayConfig(env: Environment = runtimeEnv()): GatewayConfig | null {
   if (env.DEVICE_GATEWAY_URL) {
     if (!env.DEVICE_GATEWAY_PUSH_SECRET) return null
     try {
@@ -30,7 +31,7 @@ export function gatewayURL(config: Pick<GatewayConfig, 'url'>, path: string) {
   return new URL(`${config.url}${path}`)
 }
 
-export function builtinGatewayConfig(env: Environment = process.env) {
+export function builtinGatewayConfig(env: Environment = runtimeEnv()) {
   const config = gatewayConfig(env)
   return config?.mode === 'builtin' ? config : null
 }

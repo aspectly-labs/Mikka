@@ -55,6 +55,17 @@ test('主人有意去掉的工具不会被加回来', () => {
   assert.deepEqual(platformEffectiveTools({ source: 'user', createdAt: undefined, tools: ['web_search'] }, DEFAULT_AGENT_DEFINITION.tools), ['web_search'])
 })
 
+test('older custom policies inherit Web Fetch only when they granted public Web Search', () => {
+  for (const source of ['user', 'improvement'] as const) {
+    const old = { source, createdAt: BEFORE_GITHUB, tools: without('web_fetch') }
+    assert.ok(platformEffectiveTools(old, DEFAULT_AGENT_DEFINITION.tools).includes('web_fetch'))
+    const denied = { ...old, tools: without('web_search', 'web_fetch') }
+    assert.ok(!platformEffectiveTools(denied, DEFAULT_AGENT_DEFINITION.tools).includes('web_fetch'))
+    const explicit = { ...old, createdAt: '2026-11-28T00:00:00Z', tools: ['web_fetch'] as const }
+    assert.deepEqual(platformEffectiveTools(explicit, DEFAULT_AGENT_DEFINITION.tools), ['web_fetch'])
+  }
+})
+
 test('ledger tools never join the scheduled read-only allowlist', () => {
   for (const id of ['github_tools', 'github_call', 'find_repository', 'call_app_tool', 'mailbox_send', 'schedule_create'] as const) {
     assert.equal((SCHEDULE_READ_TOOL_IDS as readonly string[]).includes(id), false, id)

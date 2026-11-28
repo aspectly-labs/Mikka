@@ -8,6 +8,7 @@ import { readRunChain } from '@/lib/run-chain'
 import { sendOwnedRunMessage } from '@/lib/run-control'
 import { continuationNote } from '@/lib/thread-continuation'
 import { withTaskDispatchLock } from '@/lib/task-dispatch-lock'
+import { jsonbFlagIsTrueSql } from './primitives/jsonb-predicates'
 export { continuationNote } from '@/lib/thread-continuation'
 
 // One task, one thread (decision 2026-11-01-1330-one-thread-per-task, R-81).
@@ -49,13 +50,13 @@ type Query = Pick<PoolClient, 'query'>
 export async function latestTaskRun(query: Query, userId: string, issueId: string): Promise<TaskThreadRun | null> {
   const { rows: [run] } = await query.query(`SELECT r.id,r.status,r."stopRequestedAt",r."agentId",r."deviceRepoId",r."botId",r."stopReason",r.error,
       r.report->>'summary' AS summary,r."lastReply",d."remoteUrl",
-      coalesce(r."agentDefinition"->>'harness',a.harness) AS harness,coalesce((r."agentDefinition"->>'readOnly')::boolean,false) AS "readOnly",
+      coalesce(r."agentDefinition"->>'harness',a.harness) AS harness,${jsonbFlagIsTrueSql('r."agentDefinition"', 'readOnly')} AS "readOnly",
       (r."agentDefinition"->>'allowLocalRecovery')='true' AS "allowLocalRecovery",
       b."workspaceId" AS "cloudWorkspaceId",b."botId" AS "cloudBotId"
     FROM agent_runs r JOIN agents a ON a.id=r."agentId"
     LEFT JOIN device_repos d ON d.id=r."deviceRepoId"
     LEFT JOIN computer_run_bindings b ON b."runId"=r.id AND b."ownerId"=r."userId"
-    WHERE r."userId"=$1 AND r."issueId"=$2 AND r.kind<>'group_chat' AND r."deletedAt" IS NULL
+    WHERE r."userId"=$1 AND r."issueId"=$2 AND r.kind<>'group_chat' AND r."threadRelation" IS DISTINCT FROM 'side' AND r."deletedAt" IS NULL
       AND NOT EXISTS (SELECT 1 FROM factory_attempts fa WHERE fa."runId"=r.id AND fa.stage IN ('review','verify','monitor'))
     ORDER BY r."createdAt" DESC,r.id DESC LIMIT 1`, [userId, issueId])
   if (!run) return null
@@ -94,6 +95,8 @@ export async function dispatchToTask<R extends { runId: string }, E extends { er
   creation?: { eventId: string; botId: string; workspaceId: string }
   /** A browser submission already bound its original target before taking the task lock. */
   expectedRunId?: string
+  /** Explicit continuation of a finished side thread (kept separate from the primary task thread). */
+  sideRunId?: string
   /** A selected model applies only to a newly admitted run. */
   requireContinuation?: boolean
   /** The caller asked for a new thread; it is granted only when `explicit()` says the person asked for it. */
@@ -123,7 +126,9 @@ export async function dispatchToTask<R extends { runId: string }, E extends { er
         return { thread: 'existing' as const, runId, threadId: chain?.rootRunId ?? runId }
       }
     }
-    const previous = await latestTaskRun(pool, userId, issueId)
+    const previous = input.sideRunId
+      ? await readSideTaskRun(pool, userId, issueId, input.sideRunId)
+      : await latestTaskRun(pool, userId, issueId)
     if (input.expectedRunId && previous?.id !== input.expectedRunId) throw new ActionFailureError('threadReplaced')
     if (!previous) {
       const result = await input.start(null, input.note)
@@ -161,10 +166,28 @@ export async function dispatchToTask<R extends { runId: string }, E extends { er
     }
     const result = await input.start(previous, continuationNote(input.note, previous))
     if (!queued(result)) return result
-    const continued = await db.execute((await import('drizzle-orm')).sql`UPDATE agent_runs SET "continuesRunId"=${previous.id}::uuid,"updatedAt"=now() WHERE id=${result.runId}::uuid AND "userId"=${userId} AND id<>${previous.id}::uuid RETURNING id`)
+    const continued = input.sideRunId
+      ? await db.execute((await import('drizzle-orm')).sql`UPDATE agent_runs SET "continuesRunId"=${previous.id}::uuid,"threadRelation"='side',"updatedAt"=now() WHERE id=${result.runId}::uuid AND "userId"=${userId} AND id<>${previous.id}::uuid RETURNING id`)
+      : await db.execute((await import('drizzle-orm')).sql`UPDATE agent_runs SET "continuesRunId"=${previous.id}::uuid,"updatedAt"=now() WHERE id=${result.runId}::uuid AND "userId"=${userId} AND id<>${previous.id}::uuid RETURNING id`)
     if (continued.rowCount) { await runListChanged(db, result.runId); await runChanged(db, result.runId) }
     return { ...result, thread: 'continued' as const, threadId, continuesRunId: previous.id }
   })
+}
+
+async function readSideTaskRun(query: Query, userId: string, issueId: string, runId: string): Promise<TaskThreadRun | null> {
+  const { rows: [run] } = await query.query(`SELECT r.id,r.status,r."stopRequestedAt",r."agentId",r."deviceRepoId",r."botId",r."stopReason",r.error,
+      r.report->>'summary' AS summary,r."lastReply",d."remoteUrl",
+      coalesce(r."agentDefinition"->>'harness',a.harness) AS harness,${jsonbFlagIsTrueSql('r."agentDefinition"', 'readOnly')} AS "readOnly",
+      (r."agentDefinition"->>'allowLocalRecovery')='true' AS "allowLocalRecovery",
+      b."workspaceId" AS "cloudWorkspaceId",b."botId" AS "cloudBotId"
+    FROM agent_runs r JOIN agents a ON a.id=r."agentId"
+    LEFT JOIN device_repos d ON d.id=r."deviceRepoId"
+    LEFT JOIN computer_run_bindings b ON b."runId"=r.id AND b."ownerId"=r."userId"
+    WHERE r.id=$3 AND r."userId"=$1 AND r."issueId"=$2 AND r.kind<>'group_chat' AND r."threadRelation"='side' AND r."deletedAt" IS NULL
+    LIMIT 1`, [userId, issueId, runId])
+  if (!run) return null
+  const { cloudWorkspaceId, cloudBotId, ...rest } = run
+  return { ...rest, cloud: cloudWorkspaceId && cloudBotId ? { workspaceId: cloudWorkspaceId, botId: cloudBotId } : null } as TaskThreadRun
 }
 
 import { runChanged } from './live/panels'

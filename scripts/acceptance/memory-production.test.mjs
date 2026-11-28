@@ -438,8 +438,8 @@ test('stream success requires a committed exact reply; a tool, provider error or
 
 test('the main-dispatch live-build guard includes the memory issue without a relabelled event or credential bypass', async () => {
   assert.ok(CORE_ISSUES.includes(1821))
-  const repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } }, api = 'https://api.github.com/repos/alexj11324/Mikka'
-  const env = { MIKKA_ACCEPTANCE_TARGET_MODE: CORE_MODE, GITHUB_REPOSITORY: repository.full_name, GITHUB_REPOSITORY_OWNER: 'alexj11324',
+  const repository = { full_name: 'aspectly-labs/Mikka', owner: { login: 'aspectly-labs' } }, api = 'https://api.github.com/repos/aspectly-labs/Mikka'
+  const env = { MIKKA_ACCEPTANCE_TARGET_MODE: CORE_MODE, GITHUB_REPOSITORY: repository.full_name, GITHUB_REPOSITORY_OWNER: 'aspectly-labs',
     GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_SHA: SHA, GITHUB_RUN_ID: '17', GITHUB_RUN_ATTEMPT: '1',
     GITHUB_WORKFLOW_REF: repository.full_name + '/' + CORE_WORKFLOW + '@refs/heads/main', GH_TOKEN: 'synthetic-token' }
   const event = { repository }

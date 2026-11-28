@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { Window } from 'happy-dom'
+import { needsOfficialUi, officialRenderer, officialUiResolution } from './official-ui.mjs'
 
 // Use the actual production scheduler: act()/fake clocks would flush away the
 // lazy-first-read fallback that this startup regression needs to exercise.
@@ -21,24 +22,25 @@ const React = await import('react')
 const { createRoot } = await import('react-dom/client')
 const require = createRequire(import.meta.url)
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
-const renderer = resolve(repository, 'apps/desktop/src/renderer')
+const renderer = officialRenderer
 const directory = await mkdtemp(join(tmpdir(), 'mikka-installed-workspace-'))
 const key = Symbol.for('mikka.test.installed-workspace')
-const compiled = await build({
+const compiled = needsOfficialUi ? null : await build({
   absWorkingDir: repository,
   stdin: {
     contents: 'export { InstalledWorkspace } from "./installed-workspace"; export { loadWorkspace, readLoadedWorkspace } from "./workspace-loader";',
     resolveDir: renderer, sourcefile: 'workspace-regression.ts', loader: 'ts',
   },
   bundle: true, format: 'esm', platform: 'browser', target: 'es2022', jsx: 'automatic', write: false,
+  tsconfig: resolve(repository, 'apps/desktop/tsconfig.renderer.json'),
   define: { 'process.env.MIKKA_BASE_PATH': '"/mikka"' },
   plugins: [{
     name: 'workspace-module-and-view-fixtures',
     setup(builder) {
       builder.onResolve({ filter: /^react(?:\/.*)?$/ }, args => ({ path: require.resolve(args.path), external: true }))
       builder.onResolve({ filter: /^@\/lib\/base-path$/ }, () => ({ path: resolve(repository, 'lib/base-path.ts') }))
-      builder.onResolve({ filter: /^@\/components\/workspace\/workspace-loading$/ }, () => ({ path: 'loading', namespace: 'fixture' }))
-      builder.onResolve({ filter: /^@ui-slot\/workspace-entry$/ }, args => {
+      builder.onResolve({ filter: /^@hosted\/core\/components\/workspace\/workspace-loading$/ }, () => ({ path: 'loading', namespace: 'fixture' }))
+      builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args => {
         assert.equal(args.importer, resolve(renderer, 'workspace-loader.ts'))
         return { path: 'workspace', namespace: 'fixture' }
       })
@@ -49,10 +51,10 @@ const compiled = await build({
         loader: 'js',
       }))
     },
-  }],
+  }, officialUiResolution],
 })
 const filename = join(directory, 'boundary.mjs')
-await writeFile(filename, compiled.outputFiles[0].contents)
+if (compiled) await writeFile(filename, compiled.outputFiles[0].contents)
 after(async () => {
   delete globalThis[key]
   await window.happyDOM.close()
@@ -111,7 +113,7 @@ async function fixture(t) {
   }
 }
 
-test('a completed preload waits for authentication, then renders synchronously without a fallback', { timeout: 10_000 }, async t => {
+test('a completed preload waits for authentication, then renders synchronously without a fallback', { timeout: 10_000, skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   const loading = f.loadWorkspace()
   assert.equal(f.loadWorkspace(), loading)
@@ -127,7 +129,7 @@ test('a completed preload waits for authentication, then renders synchronously w
   assert.equal(f.state.mounts, 1)
 })
 
-test('an unfinished preload keeps normal Suspense and never changes component type after resolving', { timeout: 10_000 }, async t => {
+test('an unfinished preload keeps normal Suspense and never changes component type after resolving', { timeout: 10_000, skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   const loading = f.loadWorkspace()
   assert.equal(f.readLoadedWorkspace(), undefined)
@@ -147,7 +149,7 @@ test('an unfinished preload keeps normal Suspense and never changes component ty
   assert.equal(f.state.fallbacks, 1)
 })
 
-test('a rejected preload is never promoted to a resolved component and reaches the normal error boundary', { timeout: 10_000 }, async t => {
+test('a rejected preload is never promoted to a resolved component and reaches the normal error boundary', { timeout: 10_000, skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   const failure = new Error('fixture-module-rejected')
   const loading = f.loadWorkspace()

@@ -4,8 +4,9 @@ import { SCHEDULE_DUE_SQL } from './schedules/store'
 import { RUN_RECOVERY_DUE_SQL, runRecoveryDueParams } from './run-recovery-due'
 import { ACCOUNT_DELETIONS_DUE_SQL } from './account-deletions-due'
 import { AUDIT_OUTBOX_DUE_SQL, AUDIT_RETENTION_DUE_SQL } from './audit-retention-due'
+import { WRITE_RECEIPTS_DUE_SQL } from './operations/write-receipt-due'
 
-export type ReconcileDue = { wakes: boolean; schedules: boolean; recovery: boolean; deletions: boolean; audit: boolean; pushReceipts: boolean; workspaceEphemera: boolean }
+export type ReconcileDue = { wakes: boolean; schedules: boolean; recovery: boolean; deletions: boolean; audit: boolean; pushReceipts: boolean; workspaceEphemera: boolean; writeReceipts: boolean }
 
 /**
  * The one safety-net check (#1371), every 15 minutes: which event-driven jobs
@@ -22,6 +23,8 @@ export type ReconcileDue = { wakes: boolean; schedules: boolean; recovery: boole
  *   database where the outbox lives) an audit receipt not yet delivered.
  * - pushReceipts: a due, unleased push receipt whose Workflow wake was lost.
  * - workspaceEphemera: expired live-read residues or source references.
+ * - writeReceipts: a write proposal still pending, or a run-bound write receipt
+ *   still running after its run ended (lib/operations/write-receipt-due.ts).
  */
 export async function reconcileDue(pool: Pick<Pool, 'query'>, options: { factoryLifecycle: boolean; workspace?: Pick<Pool, 'query'> }): Promise<ReconcileDue> {
   const { rows } = await pool.query<ReconcileDue>(`SELECT
@@ -34,9 +37,10 @@ export async function reconcileDue(pool: Pick<Pool, 'query'>, options: { factory
     EXISTS (SELECT 1 FROM mobile_push_receipts WHERE (next_check_at<=now() OR created_at<=now()-interval '1 day')
       AND (lease_until IS NULL OR lease_until<=now())) AS "pushReceipts",
     (EXISTS (SELECT 1 FROM coding_workspace_requests WHERE "expiresAt"<=now())
-      OR EXISTS (SELECT 1 FROM coding_workspace_mentions WHERE "expiresAt"<=now())) AS "workspaceEphemera"`,
+      OR EXISTS (SELECT 1 FROM coding_workspace_mentions WHERE "expiresAt"<=now())) AS "workspaceEphemera",
+    EXISTS (${WRITE_RECEIPTS_DUE_SQL}) AS "writeReceipts"`,
   runRecoveryDueParams(options.factoryLifecycle))
-  const due = rows[0] ?? { wakes: false, schedules: false, recovery: false, deletions: false, audit: false, pushReceipts: false, workspaceEphemera: false }
+  const due = rows[0] ?? { wakes: false, schedules: false, recovery: false, deletions: false, audit: false, pushReceipts: false, workspaceEphemera: false, writeReceipts: false }
   if (!due.audit && options.workspace) {
     const outbox = await options.workspace.query<{ due: boolean }>(`SELECT coalesce((SELECT min(at) FROM (${AUDIT_OUTBOX_DUE_SQL}) o) <= now(), false) AS due`)
     due.audit = Boolean(outbox.rows[0]?.due)

@@ -5,6 +5,7 @@ import { withBasePath } from '@/lib/base-path'
 import { verifyRunToken } from '@/lib/mcp/worker'
 import { authorizeRunApp } from '@/lib/run-app-mcp'
 import { runAppEntry, runAppToolkits } from '@/lib/app-tools-server'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { CUSTOM_MCP_TOOLKIT } from '@/lib/plugins/run-mcp'
 
 export const maxDuration = 60
@@ -47,4 +48,12 @@ async function route(request: Request, context: { params: Promise<{ toolkit: str
   return withMcpAuth(authed => serve(authed, toolkit), verifyRunToken, { required: true, resourceMetadataPath: withBasePath('/.well-known/oauth-protected-resource') })(request)
 }
 
-export { route as GET, route as POST, route as DELETE }
+const spec = { auth: 'public', origin: 'any', workspace: 'none' } as const
+
+// MCP run tokens are verified by withMcpAuth/verifyRunToken inside `route`.
+export const GET = defineRoute<'public', 'none', { toolkit: string }>(spec, ({ request, params }) =>
+  route(request, { params: Promise.resolve(params) }))
+export const POST = defineRoute<'public', 'none', { toolkit: string }>(spec, ({ request, params }) =>
+  route(request, { params: Promise.resolve(params) }))
+export const DELETE = defineRoute<'public', 'none', { toolkit: string }>(spec, ({ request, params }) =>
+  route(request, { params: Promise.resolve(params) }))

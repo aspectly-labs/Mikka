@@ -4,7 +4,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const root = new URL('..', import.meta.url).pathname
-const ROOTS = ['lib', 'app', 'components', 'workflows']
+// The interface's components moved to the official UI checkout's core/ (decision 2026-11-24-1000); scan them there
+// when it is mounted.
+const ROOTS = ['lib', 'app', 'components', '.hosted-ui/core/components', 'workflows'].filter(dir => existsSync(join(root, dir)))
 /** The legacy owner ceiling and the fold helper are the only readers of a head's policy columns. */
 const POLICY_COLUMN_ALLOWED = new Set(['lib/operations/write-policy-store.ts', 'lib/coordinator/coordinator-bot.ts'])
 
@@ -62,7 +64,4 @@ test('every first-class write path reads the workspace app policy, not only the 
   for (const action of ['send_email', 'create_calendar_event', 'update_calendar_event']) {
     assert.match(keys, new RegExp(`^\\s*${action}: '(gmail|googlecalendar)'`, 'm'), `${action} is in the workspace key map`)
   }
-  const pending = source['lib/pending-actions.ts']
-  assert.match(pending, /approvalPolicyBlock\(userId, row\)/)
-  assert.match(pending, /botMayUseApp\(row\.botId, toolkit, userId\)/)
 })

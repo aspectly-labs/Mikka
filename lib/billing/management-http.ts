@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { auth, apiWorkspaceAllowed } from '@/lib/api-auth'
+import { auth, apiWorkspaceAllowed, type ApiSession } from '@/lib/api-auth'
 import { desktopSameOriginRequest } from '@/lib/desktop-auth'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { requireEnterpriseOrganization } from '@/lib/enterprise/access'
@@ -11,16 +11,23 @@ import { isActionErrorCode } from '@/lib/workspace-admin/action'
 import { billingManagementView, mutateBillingManagement } from './management'
 import type { BillingScope } from './management-contract'
 
-export async function billingManagementResponse(request: Request, scope: BillingScope) {
+export async function billingManagementResponse(request: Request, scope: BillingScope, verifiedSession?: ApiSession) {
   const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'private, no-store' } })
   try {
-    const session = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
+    const session = verifiedSession ?? await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true } })
     if (!session) return json({ error: 'authRequired' }, 401)
     if (scope.kind === 'workspace' ? !apiWorkspaceAllowed(session, scope.id) : Boolean(session.tokenWorkspaceId)) throw new WorkspaceError('workspaceAccessDenied')
     if (scope.kind === 'organization') await requireEnterpriseOrganization(session.user.id, z.uuid().parse(scope.id), session.session.id)
     if (request.method === 'GET') {
       const query = new URL(request.url).searchParams
-      return json(await billingManagementView(session.user.id, scope, query.get('budgetWorkspace'), session.user[enterprisePrincipal], query.get('usageMember')))
+      return json(await billingManagementView(
+        session.user.id,
+        scope,
+        query.get('budgetWorkspace'),
+        session.user[enterprisePrincipal],
+        query.get('usageMember'),
+        query.get('month'),
+      ))
     }
     if (!desktopSameOriginRequest(request) || !request.headers.get('content-type')?.startsWith('application/json')) throw new WorkspaceError('workspaceAccessDenied')
     return json(await mutateBillingManagement(session.user.id, scope, await governanceJson(request), session.user[enterprisePrincipal]))

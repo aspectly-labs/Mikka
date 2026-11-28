@@ -16,6 +16,7 @@ import { LEASED_RUN_STATUSES } from '@/lib/run-retry'
 import { activeTaskWorkspaces, withTaskWorkspace } from '@/lib/task-workspace'
 import { ActionFailureError } from '@/lib/action-error'
 import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
+import { syntheticLocalRequest } from '@/lib/env/hosts'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 
 // The worker side of the MCP server: the agent inside a run reports progress,
@@ -125,7 +126,7 @@ export async function blocked(run: ReturnType<typeof workerRun>, reason: string)
 /** A run may update only its own issue's basic fields. Source comes exclusively
  * from a freshly verified run credential, never from the tool arguments. */
 export async function updateOwnIssue(auth: AuthInfo | undefined, input: { issueId: string; title?: string; status?: string; priority?: string }) {
-  const verified = await verifyRunToken(new Request('http://localhost/api/mcp'), auth?.token)
+  const verified = await verifyRunToken(syntheticLocalRequest('/api/mcp'), auth?.token)
   const extra = verified?.extra
   if (!verified || extra?.credentialKind !== 'run' || typeof extra.runId !== 'string' || typeof extra.userId !== 'string' ||
       typeof extra.issueId !== 'string' || typeof extra.workspaceId !== 'string' || typeof extra.agentId !== 'string' || extra.issueId !== input.issueId) {

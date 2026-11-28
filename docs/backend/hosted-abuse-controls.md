@@ -70,8 +70,9 @@ verification grants exactly USD 1 once, not a periodically renewed credit.
   after the purchased balance has been consumed.
 - The signup and verification-mail requests must send a fresh Turnstile token
   in `x-turnstile-token` (or `turnstileToken` in the request body). Keys are
-  `TURNSTILE_SECRET_KEY` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY`, already set by
-  Claude. No secret is returned by these APIs. OAuth does not require Turnstile.
+  `TURNSTILE_SECRET_KEY` and `MIKKA_PUBLIC_TURNSTILE_SITE_KEY` (the old
+  `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is still accepted, see
+  [the rename](../operations/public-env-rename.md)), already set by Claude. No secret is returned by these APIs. OAuth does not require Turnstile.
 - Missing Turnstile secret in Vercel production fails with
   `SIGNUP_VERIFICATION_UNAVAILABLE` and an error log. Local and other
   non-production runs without keys skip verification. Invalid/missing tokens use
@@ -229,6 +230,15 @@ rejection is deliberately omitted: OAuth's existing verified-email path stays
 unchanged.
 
 ## Verification
+
+Public Web Search/Fetch admission keeps its separate per-user sliding minute
+in the existing `rateLimit` table. The per-user transaction lock stays in its
+own statement so a waiting worker reads the preceding worker's committed slot.
+One subsequent statement deletes only that user's expired rows, counts active
+rows and conditionally inserts one slot. An admission takes four database
+round trips including `BEGIN` and `COMMIT`; refusal also takes four. A failure
+still prevents the provider call. This does not change Better Auth's independent
+request limiter, signup/mail counters, quotas, or provider billing.
 
 `test:abuse` covers the policy, metered provider boundary and Stripe fixtures.
 `test:abuse-db` uses an isolated local PostgreSQL schema, actual migrations,

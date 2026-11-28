@@ -7,8 +7,7 @@
     "plugins": [],
     "types": ["vite/client"],
     "paths": {
-      "@/*": ["../../*"],
-      "@ui-slot/*": ["../../components/slots/*"]
+      "@/*": ["../../*"]
     }
   },
   "include": ["src", "../desktop/src/renderer", "../../types", "../../lib/platform/window.d.ts", "../../i18n/global.ts"],

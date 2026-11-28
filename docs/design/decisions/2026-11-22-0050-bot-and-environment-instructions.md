@@ -1,5 +1,7 @@
 # Environment instructions, private Bot instructions, and pre-message preview
 
+- **Status:** Accepted
+
 Source: [#3110](https://github.com/aspectly-labs/Mikka/issues/3110), [#2957](https://github.com/aspectly-labs/Mikka/issues/2957) (Frame 16, WS-F).
 
 ## Context

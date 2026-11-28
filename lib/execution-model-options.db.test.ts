@@ -17,7 +17,8 @@ test('catalogue reads deduplicate in PostgreSQL, page without losing microsecond
   const pool = new Pool({ connectionString: url, options: `-c search_path=${schema}`, max: 1 })
   try {
     await pool.query(`CREATE TABLE byos_connections (id uuid PRIMARY KEY,"ownerId" text,epoch bigint,state text,paused boolean,provider text,"accountLabel" text,quota jsonb,"modelCatalog" jsonb,"removedAt" timestamptz);
-      CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"consumerId" text,"workspaceId" text,"modelId" text,route text,"connectionId" uuid,"connectionRevision" bigint,"createdAt" timestamptz)`)
+      CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"consumerId" text,"workspaceId" text,"modelId" text,route text,"connectionId" uuid,"connectionRevision" bigint,"createdAt" timestamptz);
+      CREATE TABLE workspace_personal_policies ("workspaceId" uuid PRIMARY KEY,subscriptions boolean NOT NULL DEFAULT true)`)
     const scope = { ownerId: 'reader', workspaceId: randomUUID() }
     const elsewhere = randomUUID(), connection = randomUUID(), foreign = randomUUID()
     const quota = { plan: 'Fixture', status: 'ok', windows: [{ kind: 'five_hour', used: 0.1, resetsAt: '2026-11-05T15:00:00Z' }], observedAt: '2026-11-05T11:00:00Z', vendor: 'codex', source: 'official' }

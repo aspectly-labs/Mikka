@@ -6,12 +6,31 @@ import type { RequestBudget } from '../request-budget'
 const originalAppId = process.env.GITHUB_APP_ID
 let cloudMode = false
 let cloudCredential: { token: string; expiresAt: Date; installationId: string; githubAccountId?: string } | null = null
-const cloudMint = mock.fn(async (_userId: string, _remoteKey?: string, _budget?: RequestBudget) => cloudCredential)
-const cloudRepositories = mock.fn(async () => null)
-mock.module(new URL('./cloud.ts', import.meta.url).href, { namedExports: {
-  cloudGitHubRepositories: cloudRepositories, cloudGitHubCredential: cloudMint, useCloudGitHub: async () => cloudMode,
+let cloudMintError: Error | null = null
+const cloudCalls: { userId: string; scope: string; path: string; body?: Record<string, unknown>; budget?: RequestBudget }[] = []
+mock.module(new URL('../db/index.ts', import.meta.url).href, { namedExports: { pool: {
+  async query(sql: string) {
+    if (sql.includes('cloud_service_bindings')) return { rows: cloudMode ? [{ revoked: false, scopes: ['github'] }] : [], rowCount: cloudMode ? 1 : 0 }
+    if (sql.includes('cloud_github_installations')) return {
+      rows: cloudCredential ? [{ installation_id: cloudCredential.installationId, account_id: '42', account_login: 'owner', account_type: 'User', github_account_id: cloudCredential.githubAccountId ?? null }] : [],
+      rowCount: cloudCredential ? 1 : 0,
+    }
+    return { rows: [], rowCount: 0 }
+  },
+  async connect() { return { async query() { return { rows: [], rowCount: 0 } }, release() {} } },
+} } })
+mock.module(new URL('../edition.ts', import.meta.url).href, { namedExports: { isCloudEdition: () => false } })
+mock.module(new URL('../cloud-services/runtime.ts', import.meta.url).href, { namedExports: {
+  cloudRequest: async (userId: string, scope: string, path: string, init?: RequestInit, budget?: RequestBudget) => {
+    cloudCalls.push({ userId, scope, path, ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}), budget })
+    if (cloudMintError) throw cloudMintError
+    if (path === '/v1/github/installation-token' && cloudCredential) {
+      return Response.json({ token: cloudCredential.token, expiresAt: cloudCredential.expiresAt.toISOString() })
+    }
+    return Response.json({ installations: [], githubAccountId: null, subject: 'user:person-1', workspaceId: '00000000-0000-4000-8000-000000000001' })
+  },
 } })
-mock.module(new URL('./app-config.ts', import.meta.url).href, { namedExports: { readGitHubAppConfig: async () => ({ id: process.env.GITHUB_APP_ID ?? null }) } })
+mock.module(new URL('./app-config.ts', import.meta.url).href, { namedExports: { readGitHubAppConfig: async () => ({ id: process.env.GITHUB_APP_ID ?? null, source: 'environment' }) } })
 const requestHeaders = new Headers({ cookie: 'test-session' })
 let user: string | null = 'person-1'
 let sessionUsers: (string | null)[] = []
@@ -34,7 +53,7 @@ mock.module(new URL('./connection.ts', import.meta.url).href, { namedExports: {
   githubConnection: async () => connectionLogin ? { githubAccountId: '42', githubLogin: connectionLogin } : null,
   disconnectGitHub: async () => {},
 } })
-mock.module(new URL('../request-log.ts', import.meta.url).href, { namedExports: { noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler } })
+mock.module(new URL('../request-log.ts', import.meta.url).href, { namedExports: { noteLogRpcAction: () => {}, noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler } })
 
 const repository = { id: 91, full_name: 'Owner/Project', private: true }
 const installation = { id: 11, app_id: 4840908, suspended_at: null }
@@ -64,10 +83,9 @@ beforeEach(() => {
   connected = null
   cloudMode = false
   cloudCredential = null
+  cloudMintError = null
   expectedToken = 'private-test-token'
-  cloudMint.mock.resetCalls()
-  cloudMint.mock.mockImplementation(async () => cloudCredential)
-  cloudRepositories.mock.resetCalls()
+  cloudCalls.length = 0
   connectionLogin = null
   connectConfigured = true
   connectionToken.mock.resetCalls()
@@ -160,7 +178,18 @@ test('a pull request’s files are read inside the admitted repository ID and co
   assert.deepEqual([files.changes.additions, files.changes.deletions], [3, 1])
   // A file GitHub sent no patch for lists and draws no lines; the rest of the change is not claimed.
   assert.deepEqual([files.patchUnavailable, files.moreFiles], [1, false])
+  assert.equal('patch' in files, false)
   assert.equal(paths().filter(path => path.endsWith('/pulls/7/files')).length, 2)
+  // Opt-in ?format=patch exposes the raw unified diff text alongside parsed changes.
+  const patchRes = await call('repo=Owner/Project&number=7&format=patch')
+  assert.equal(patchRes.status, 200)
+  const patchFiles = await patchRes.json()
+  assert.equal(typeof patchFiles.patch, 'string')
+  assert.match(patchFiles.patch, /diff --git a\/src\/app\.ts b\/src\/app\.ts\n--- a\/src\/app\.ts\n\+\+\+ b\/src\/app\.ts\n@@/)
+  assert.match(patchFiles.patch, /--- \/dev\/null\n\+\+\+ b\/\.github\/workflows\/ci\.yml\n@@/)
+  assert.match(patchFiles.patch, /--- a\/src\/old\.ts\n\+\+\+ b\/src\/new\.ts\n@@/)
+  assert.match(patchFiles.patch, /\+added/)
+  assert.equal((await call('repo=Owner/Project&number=7&format=invalid')).status, 400)
   // Another repository than the admitted one never receives a pull request read.
   assert.equal((await call('repo=Other/Repo&number=7')).status, 403)
   assert.equal((await call('repo=Owner/Project&number=0')).status, 400)
@@ -178,15 +207,14 @@ test('an exact repository read uses one viewer token for live user/App intersect
   assert.deepEqual(paths(), ['/user', '/user/installations', '/user/installations/11/repositories', '/repos/owner/project'])
   assert.deepEqual(connectionToken.mock.calls.map(call => call.arguments), [['person-1', { budget }]])
   assert.equal(getAccessToken.mock.callCount(), 0)
-  assert.equal(cloudMint.mock.callCount(), 0)
-  assert.equal(cloudRepositories.mock.callCount(), 0, 'an exact read does not discover unrelated cloud repositories')
+  assert.deepEqual(cloudCalls, [], 'an exact local read does not call cloud mint or discover unrelated cloud repositories')
   assert.ok(fetchMock.mock.calls.every(call => call.arguments[1]?.signal instanceof AbortSignal))
 })
 
 test('an unselected exact repository never receives a credential, even if another repository is authorized', async () => {
   await assert.rejects(access.githubRepositoryReadCredential('person-1', 'v2/github.com/owner/unselected'), failure('githubRepositoryForbidden', 403))
   assert.deepEqual(paths(), ['/user', '/user/installations', '/user/installations/11/repositories'])
-  assert.equal(cloudMint.mock.callCount(), 0)
+  assert.deepEqual(cloudCalls, [])
 })
 
 test('a repository name reused for a different GitHub ID is refused after the live intersection', async () => {
@@ -207,17 +235,17 @@ test('a cloud read mints only the frozen repository with the caller budget and t
   assert.equal(credential.repository.id, '91')
   assert.equal(credential.repository.installationId, '22')
   assert.equal(credential.token, expectedToken)
-  assert.deepEqual(cloudMint.mock.calls.map(call => call.arguments), [['person-1', 'v2/github.com/owner/project', budget]])
+  assert.deepEqual(cloudCalls, [{ userId: 'person-1', scope: 'github', path: '/v1/github/installation-token', body: { installationId: '22', repositories: ['project'] }, budget }])
   assert.deepEqual(paths(), ['/repos/owner/project'])
-  assert.equal(cloudRepositories.mock.callCount(), 0)
   assert.equal(connectionToken.mock.callCount(), 0)
   assert.equal(getAccessToken.mock.callCount(), 0)
 })
 
 test('a refused cloud mint never falls back to a local user credential', async () => {
   cloudMode = true
+  cloudCredential = { token: 'installation-read-fixture', installationId: '22', githubAccountId: '42', expiresAt: new Date(Date.now() + 3_600_000) }
   const refusal = new Error('Fixture broker refusal')
-  cloudMint.mock.mockImplementation(async () => { throw refusal })
+  cloudMintError = refusal
   await assert.rejects(access.githubRepositoryReadCredential('person-1', 'v2/github.com/owner/project'), error => error === refusal)
   assert.equal(connectionToken.mock.callCount(), 0)
   assert.equal(getAccessToken.mock.callCount(), 0)
@@ -229,7 +257,7 @@ test('a cloud installation credential can never supply a missing human write ide
   cloudCredential = { token: 'installation-read-fixture', installationId: '22', expiresAt: new Date(Date.now() + 3_600_000) }
   accounts = []
   await assert.rejects(access.githubTokenForUser('person-1'), failure('githubNotConnected', 409))
-  assert.equal(cloudMint.mock.callCount(), 0)
+  assert.deepEqual(cloudCalls, [])
   assert.equal(fetchMock.mock.callCount(), 0)
 })
 
@@ -584,4 +612,41 @@ test('admitted repository returns matching recent PR openers, independent of rev
     return previous(url)
   }
   assert.deepEqual(await access.recentRepositoryPullAuthors('person-1', 'v2/github.com/owner/project', 'ad', { deadline: Date.now() + 25_000 }), ['Ada'])
+})
+
+test('workspace merge totals count both periods and withhold a partial or inaccessible denominator', async () => {
+  connected = { token: expectedToken, githubAccountId: '42' }
+  const previous = answer
+  const queries: string[] = []
+  answer = url => {
+    if (url.pathname !== '/search/issues') return previous(url)
+    const q = url.searchParams.get('q')!
+    queries.push(q)
+    return json({ total_count: q.endsWith('11-07') ? 5 : 8, incomplete_results: false })
+  }
+  const read = (...keys: string[]) => access.countWorkspaceMergedPulls('person-1', keys,
+    new Date('2026-11-08Z'), new Date('2026-11-15Z'), new Date('2026-11-01Z'))
+  const key = 'v2/github.com/owner/project'
+  assert.deepEqual(await read(key, key), { current: 8, previous: 5 })
+  assert.deepEqual(queries.sort(), ['repo:Owner/Project is:pr is:merged merged:2026-11-01..2026-11-07', 'repo:Owner/Project is:pr is:merged merged:2026-11-08..2026-11-14'])
+  connected = null // The older GitHub sign-in account must also be able to count merges.
+  assert.deepEqual(await read(key), { current: 8, previous: 5 })
+  assert.deepEqual(await read(key, 'v2/github.com/other/private'), { current: null, previous: null })
+  answer = url => url.pathname === '/search/issues' ? json({ total_count: 0, incomplete_results: true }) : previous(url)
+  assert.deepEqual(await read(key), { current: null, previous: null })
+})
+
+test('unknown webhook mergeability uses the same authorized repository, installation, PR and commit', async () => {
+  connected = { token: expectedToken, githubAccountId: '42' }
+  const head = '1'.repeat(40)
+  const original = answer
+  answer = url => url.pathname === '/repositories/91/pulls/7' ? json({ number: 7, state: 'open', head: { sha: head }, mergeable: false }) : original(url)
+  const check = (installation: number, sha = head) => access.authorizedPullWake('person-1', 'owner/project', 91, installation, { number: 7, head: sha })
+  assert.equal(await check(11), true)
+  assert.equal(await check(12), false)
+  assert.equal(await access.authorizedPullWake('person-1', 'owner/project', 91, 12), false)
+  assert.equal(await check(11, '2'.repeat(40)), false)
+  answer = url => url.pathname === '/repositories/91/pulls/7' ? json({ number: 7, state: 'open', head: { sha: head }, mergeable: null }) : original(url)
+  assert.equal(await check(11), null)
+  assert.equal(await check(11, '2'.repeat(40)), false, 'a different head cannot schedule a recheck')
 })

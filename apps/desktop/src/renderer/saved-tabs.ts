@@ -5,7 +5,7 @@ export const MAX_SAVED_TABS = 50
 
 const NEVER_PERSIST_PATHS = [
   /^\/(?:en\/|zh-CN\/)?(?:sign-in|sign-up|forgot-password|reset-password|verify-email|oauth|device)(?:\/|$)/,
-  /^\/(?:en\/|zh-CN\/)?(?:invite|organization-invite|a)(?:\/|$)/,
+  /^\/(?:en\/|zh-CN\/)?(?:invite|organization-invite|a|threads\/shared)(?:\/|$)/,
 ]
 const SENSITIVE_QUERY_KEY = /^(?:access_token|refresh_token|id_token|token|code|secret|password|credential|state|api[_-]?key|key|authorization|auth)$/i
 
@@ -34,13 +34,26 @@ export function readSavedTabs(storage: Pick<Storage, 'getItem'>): SavedTabs | nu
     if (!raw) return null
     const parsed = savedTabs.safeParse(JSON.parse(raw))
     if (!parsed.success || parsed.data.items.length === 0 || parsed.data.active >= parsed.data.items.length) return null
-    const items = parsed.data.items.map(tab => {
-      const entries = tab.entries.map(entry => persistableHref(entry))
-      if (entries.some(entry => entry === null)) return null
-      return { entries: entries as string[], index: tab.index }
-    })
-    if (items.some(item => item === null)) return null
-    return { items: items as SavedTabs['items'], active: parsed.data.active }
+    const items: SavedTabs['items'] = []
+    let active = -1
+    let keptBeforeActive = 0
+    for (let tabIndex = 0; tabIndex < parsed.data.items.length; tabIndex++) {
+      const tab = parsed.data.items[tabIndex]!
+      const entries: string[] = []
+      let keptAtOrBefore = 0
+      for (let entryIndex = 0; entryIndex < tab.entries.length; entryIndex++) {
+        const safe = persistableHref(tab.entries[entryIndex]!)
+        if (!safe) continue
+        entries.push(safe)
+        if (entryIndex <= tab.index) keptAtOrBefore++
+      }
+      if (entries.length === 0) continue
+      if (tabIndex === parsed.data.active) active = items.length
+      else if (tabIndex < parsed.data.active) keptBeforeActive++
+      items.push({ entries, index: keptAtOrBefore > 0 ? keptAtOrBefore - 1 : 0 })
+    }
+    if (items.length === 0) return null
+    return { items, active: active >= 0 ? active : Math.min(keptBeforeActive, items.length - 1) }
   } catch {
     return null
   }
@@ -112,6 +125,46 @@ export function closeTab(tabs: SavedTabs, index: number, fallbackHref: string): 
   return { items, active }
 }
 
+/** Keeps only the tab at `index` (Close Other Tabs); it becomes the active one. */
+export function closeOtherTabs(tabs: SavedTabs, index: number): SavedTabs {
+  const keep = tabs.items[index]
+  if (!keep || tabs.items.length === 1) return tabs
+  return { items: [keep], active: 0 }
+}
+
+/** Closes every tab after `index` (Close Tabs to the Right); an active tab among them hands over to `index`. */
+export function closeTabsToRight(tabs: SavedTabs, index: number): SavedTabs {
+  if (index < 0 || index >= tabs.items.length - 1) return tabs
+  return { items: tabs.items.slice(0, index + 1), active: tabs.active > index ? index : tabs.active }
+}
+
+/** Closes every tab before `index` (Close Tabs to the Left); an active tab among them hands over to `index`. */
+export function closeTabsToLeft(tabs: SavedTabs, index: number): SavedTabs {
+  if (index <= 0 || index >= tabs.items.length) return tabs
+  return { items: tabs.items.slice(index), active: tabs.active < index ? 0 : tabs.active - index }
+}
+
+/** A copy of the tab at `index`, with its own back/forward history, opened right after it and made active. */
+export function duplicateTab(tabs: SavedTabs, index: number): SavedTabs {
+  const source = tabs.items[index]
+  if (!source || tabs.items.length >= MAX_SAVED_TABS) return tabs
+  const copy = { entries: [...source.entries], index: source.index }
+  return { items: [...tabs.items.slice(0, index + 1), copy, ...tabs.items.slice(index + 1)], active: index + 1 }
+}
+
+/** ⌘1–⌘8 pick that tab when it exists; ⌘9 always picks the last tab, as browsers do. */
+export function tabForNumber(count: number, number: number): number | null {
+  if (count < 1 || !Number.isInteger(number) || number < 1 || number > 9) return null
+  if (number === 9) return count - 1
+  return number <= count ? number - 1 : null
+}
+
+/** ⌃Tab / ⌃⇧Tab: the next or previous tab, wrapping around. */
+export function cycleTabIndex(count: number, current: number, direction: 'next' | 'previous'): number | null {
+  if (count < 2 || current < 0 || current >= count) return null
+  return direction === 'next' ? (current + 1) % count : (current - 1 + count) % count
+}
+
 export function nextTabIndex(count: number, current: number, key: string): number | null {
   if (count < 1 || current < 0 || current >= count) return null
   if (key === 'Home') return 0
@@ -135,18 +188,67 @@ export function activeHref(tabs: SavedTabs): string {
   return tab?.entries[tab.index] ?? '/'
 }
 
+const SECTION_TAB_LABELS: Record<string, string> = {
+  threads: 'Threads',
+  tasks: 'Tasks',
+  issues: 'Tasks',
+  board: 'Tasks',
+  projects: 'Projects',
+  'team-projects': 'Projects',
+  pulls: 'Pulls',
+  suggestions: 'Inbox',
+  inbox: 'Inbox',
+  plugins: 'Plugins',
+  connections: 'Plugins',
+  mcp: 'Plugins',
+  automations: 'Automations',
+  artifacts: 'Artifacts',
+  files: 'Artifacts',
+  memory: 'Memory',
+  chat: 'Chat',
+}
+
+const SEGMENT_TAB_LABELS: Record<string, string> = {
+  dashboard: 'Home',
+  settings: 'Settings',
+  devices: 'Devices',
+  teams: 'Teams',
+  members: 'Members',
+  tasks: 'Tasks',
+  projects: 'Projects',
+  pulls: 'Pulls',
+  plugins: 'Plugins',
+  automations: 'Automations',
+  artifacts: 'Artifacts',
+  inbox: 'Inbox',
+  threads: 'Threads',
+  memory: 'Memory',
+}
+
 export function tabLabel(href: string): string {
   try {
     const url = new URL(href, 'https://mikka.invalid')
-    if (url.searchParams.has('issue')) return 'Issue'
     const path = url.pathname.replace(/^\/mikka(?=\/|$)/, '').replace(/^\/(?:en|zh-CN)(?=\/|$)/, '')
-    if (!path || path === '/') return 'Home'
-    const segment = path.split('/').filter(Boolean).pop() ?? 'Home'
-    if (segment === 'dashboard') return 'Home'
-    if (segment === 'settings') return 'Settings'
-    if (segment === 'devices') return 'Devices'
-    if (segment === 'teams') return 'Teams'
-    if (segment === 'members') return 'Members'
+    const segments = path.split('/').filter(Boolean)
+    if (url.searchParams.has('issue')) return 'Task'
+    if (segments[0] === 'tasks' && segments.length > 1) return 'Task'
+    if (url.searchParams.has('mainThread') || (segments[0] === 'threads' && segments.length > 1)) return 'Thread'
+    if (url.searchParams.has('group')) return 'Group'
+    if (url.searchParams.has('bot')) return 'Chat'
+    if (segments[0] === 'settings') {
+      const section = segments[1] ?? url.searchParams.get('section')
+      if (section === 'devices') return 'Devices'
+      if (section === 'members') return 'Members'
+      if (section === 'teams') return 'Teams'
+      return 'Settings'
+    }
+    if (segments.length === 0 || segments[0] === 'dashboard') {
+      const section = url.searchParams.get('section')
+      if (section && Object.hasOwn(SECTION_TAB_LABELS, section)) return SECTION_TAB_LABELS[section]!
+      return 'Home'
+    }
+    const segment = segments[segments.length - 1] ?? 'Home'
+    if (Object.hasOwn(SEGMENT_TAB_LABELS, segment)) return SEGMENT_TAB_LABELS[segment]!
     return decodeURIComponent(segment).replace(/[-_]+/g, ' ').replace(/\b\w/g, character => character.toUpperCase()).slice(0, 24)
   } catch {
     return 'Mikka'

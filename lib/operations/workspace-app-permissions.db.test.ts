@@ -86,9 +86,12 @@ test('workspace app permissions', { skip: !dbUrl }, async t => {
     assert.equal(denied.status, 403)
     assert.deepEqual(await denied.json(), { error: 'workspaceAccessDenied' })
     assert.equal(appPermissionValue((await settings.readWorkspace(workspaceScope)).permissions, 'slack'), 'deny')
-    const saved = await handler(command(admin, bot, { slack: 'ask' }, before), bot)
+    // Allow or deny only (ADR 2026-11-27-1615): an ask is refused and changes nothing.
+    assert.equal((await handler(command(admin, bot, { slack: 'ask' }, before), bot)).status, 400)
+    assert.equal(appPermissionValue((await settings.readWorkspace(workspaceScope)).permissions, 'slack'), 'deny')
+    const saved = await handler(command(admin, bot, { slack: 'allow' }, before), bot)
     assert.equal(saved.status, 200)
-    assert.equal(appPermissionValue((await settings.readWorkspace(workspaceScope)).permissions, 'slack'), 'ask')
+    assert.equal(appPermissionValue((await settings.readWorkspace(workspaceScope)).permissions, 'slack'), 'allow')
   })
 
 })

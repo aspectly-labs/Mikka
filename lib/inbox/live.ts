@@ -1,10 +1,11 @@
 import { afterDatabaseCommit } from '@/lib/db/commit-effects'
+import { runtimeEnv } from '@/lib/env/server'
 import { liveGatewayConfig } from '@/lib/live/scope'
 
 /** Accepted suggestions use the same read key as reject and snooze. Register
  * on the writer so a failed submission or outer rollback emits nothing. */
 export async function suggestionInboxChanged(executor: object, userId: string, botId: string | null) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   afterDatabaseCommit(executor, `inbox-suggestion:${userId}:${botId}`, async () => {
     const { scheduleLive } = await import('@/lib/live/notify')
     scheduleLive(async () => {

@@ -1,6 +1,7 @@
 # One file per decision
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, 2026-10-31: 「可以，你开个小PR做吧」, after the question of why every merge conflicted in `decisions.md`
 - Rule: —
 - Replaces: the single `decisions.md` table with newest rows inserted at the top

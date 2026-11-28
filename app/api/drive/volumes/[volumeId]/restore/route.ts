@@ -1,7 +1,14 @@
 import { driveResponse } from '@/lib/drive/server'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 60
 
-export async function POST(request: Request, { params }: { params: Promise<{ volumeId: string }> }) {
-  return driveResponse(request, 'restore', await params)
-}
+export const POST = defineRoute<'session', 'none', { volumeId: string }>(
+  {
+    route: '/api/drive/volumes/[volumeId]/restore',
+    auth: 'session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request, params, session }) => driveResponse(request, 'restore', params, session),
+)

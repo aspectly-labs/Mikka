@@ -16,33 +16,42 @@ import { normalizeRepository } from '@mikka/protocol/repository'
 import { apiKeyHarnesses } from '../lib/model-api-key-providers'
 import { dbUrl, seedBot, seedIssue, seedPersonalWorkspace, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { recordPushGrant } from './support/github-app-stub'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 import { sealSecret, userE2bKeyAad } from '../lib/secrets/crypto'
 import { fakeThreadMachines } from './support/thread-machine-fake'
+import { templateModelsFixture } from './support/template-models'
 import { verifyGatewayToken } from '../lib/model-gateway/token'
 import { withBasePath } from '../lib/base-path'
 
 test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, subscription first, withdrawn key refused', { skip: !dbUrl }, async t => {
-  const saved = { key: process.env.WORKSPACE_SECRETS_KEY, byos: process.env.MIKKA_BYOS_ENABLED, liteLLMUrl: process.env.MIKKA_LITELLM_URL, liteLLMKey: process.env.MIKKA_LITELLM_MASTER_KEY }
+  const saved = { key: process.env.WORKSPACE_SECRETS_KEY, byos: process.env.MIKKA_BYOS_ENABLED, liteLLMUrl: process.env.MIKKA_LITELLM_URL, liteLLMKey: process.env.MIKKA_LITELLM_MASTER_KEY, e2b: process.env.E2B_API_KEY }
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   process.env.MIKKA_BYOS_ENABLED = '1'
   process.env.MIKKA_LITELLM_URL = 'https://models.example.test/v1'
   process.env.MIKKA_LITELLM_MASTER_KEY = 'synthetic-claim-only'
+  process.env.E2B_API_KEY = 'synthetic-api-key-runs-e2b-key'
   delete process.env.MIKKA_CLOUD_COMPUTER_TASKS
   delete process.env.MIKKA_FACTORY_ROUTING_ENABLED
   const next = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   const { Pool } = await import('pg')
   const pool = new Pool({ connectionString: dbUrl, max: 3 })
   const { pool: appPool } = await import('../lib/db')
   const { workspacePool } = await import('../lib/workspace-db')
   const keys = await import('../lib/model-api-keys')
   const { queueRun } = await import('../lib/agent-runs')
-  const { queueCloudRun } = await import('../lib/computer/queue-run')
+  const { queueCloudRun: rawQueueCloudRun } = await import('../lib/computer/queue-run')
+  const queueCloudRun: typeof rawQueueCloudRun = async (...args) => {
+    const templates = templateModelsFixture(['key-model-a', 'subscription-model'], { hostedSizes: true })
+    try { return await rawQueueCloudRun(...args) } finally { templates.restore() }
+  }
   const { hashDeviceToken } = await import('../lib/device-link')
   const claimRoute = await import('../app/v1/devices/[deviceId]/runs/[runId]/claim/route')
   const users: string[] = []
+  const workspaces: string[] = []
   t.after(async () => {
-    for (const [name, value] of [['WORKSPACE_SECRETS_KEY', saved.key], ['MIKKA_BYOS_ENABLED', saved.byos], ['MIKKA_LITELLM_URL', saved.liteLLMUrl], ['MIKKA_LITELLM_MASTER_KEY', saved.liteLLMKey]] as const) if (value === undefined) delete process.env[name]; else process.env[name] = value
+    for (const [name, value] of [['WORKSPACE_SECRETS_KEY', saved.key], ['MIKKA_BYOS_ENABLED', saved.byos], ['MIKKA_LITELLM_URL', saved.liteLLMUrl], ['MIKKA_LITELLM_MASTER_KEY', saved.liteLLMKey], ['E2B_API_KEY', saved.e2b]] as const) if (value === undefined) delete process.env[name]; else process.env[name] = value
+    await pool.query('DELETE FROM mikka_workspace_entitlements WHERE "workspaceId" = ANY($1::uuid[])', [workspaces])
     await pool.query('DELETE FROM model_api_key_runs m USING agent_runs r WHERE r.id=m."runId" AND r."userId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_native_runs n USING agent_runs r WHERE r.id=n."runId" AND r."userId" = ANY($1)', [users])
     await pool.query('DELETE FROM computer_run_bindings WHERE "ownerId" = ANY($1)', [users])
@@ -78,6 +87,8 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
     const id = await seedUser(pool, label)
     users.push(id)
     const ws = await seedWorkspace(pool, id, [{ userId: id, role: 'admin' }])
+    workspaces.push(ws.id)
+    await pool.query('INSERT INTO mikka_workspace_entitlements ("workspaceId",plan,source) VALUES ($1,\'pro\',\'cloud\')', [ws.id])
     const botId = await seedBot(pool, ws.id, id)
     const issueId = await task(id, ws.id)
     const remote = `https://github.com/mikka-ci/api-key-runs-${randomUUID()}.git`
@@ -178,14 +189,13 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
       const selected = await createWorkspaceSecret(p.id, p.workspaceId, { name: 'PROJECT_PASSWORD', kind: 'secret', value: selectedValue, scope: { type: 'repository', repository: repositoryKey.slice('v2/github.com/'.length) }, delivery: { mode: 'direct', exposeToAgent: true } })
       await createWorkspaceSecret(p.id, p.workspaceId, { name: 'UNSELECTED_PASSWORD', kind: 'secret', value: unselectedValue })
       configuration.secretIds = [selected.id]
-      const environment = await resources.saveEnvironment(p.id, { workspaceId: p.workspaceId, name: 'Actual claim environment', configuration })
+      const environment = await resources.saveEnvironment(p.id, { workspaceId: p.workspaceId, name: 'Actual claim environment', configuration,
+        repositories: [{ key: repositoryKey, clone: 'start', baseBranch: 'environment-base', primary: true }] })
       await pool.query(`INSERT INTO workspace_projects(id,"userId","workspaceId",name,summary,description,status,priority,lead,team,"startDate","targetDate","issueIds",revision)
         VALUES($1,$2,$3,'Environment execution','','','planned','none','','','','','[]',1)`, [projectId, p.id, p.workspaceId])
       await (await import('../lib/resource-access/projects')).registerProjectAccess(p.id, projectId, p.workspaceId)
       await seedProjectTasks(pool, projectId, [p.issueId, changedIssue, revokedIssue])
-      await resources.saveProjectResources(p.id, { workspaceId: p.workspaceId, projectId, revision: 1,
-        repositories: [{ repositoryKey, baseBranch: 'environment-base', environmentId: environment.id, isPrimary: true }],
-        environmentIds: [environment.id], defaultEnvironmentId: environment.id })
+      await assignTaskEnvironment(pool, p.id, p.workspaceId, [p.issueId, changedIssue, revokedIssue], environment.id)
       const queue = (issueId: string) => queueRun(p.id, { issueId, agentId: p.agents.claude_code, repo: p.remote, model: 'fixture-model' }, p.botId)
       const persisted = async (runId: string) => ({
         run: (await pool.query('SELECT * FROM agent_runs WHERE id=$1', [runId])).rows[0],
@@ -266,7 +276,7 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
       await noPlaintext()
     } finally {
       rmSync(root, { recursive: true, force: true })
-      await workspacePool.query('DELETE FROM workspace_project_repositories WHERE "projectId"=$1', [projectId])
+      await workspacePool.query('DELETE FROM workspace_task_environments WHERE "workspaceId"=$1', [p.workspaceId])
       await workspacePool.query('DELETE FROM workspace_projects WHERE id=$1', [projectId])
       await workspacePool.query('DELETE FROM workspace_environments WHERE "workspaceId"=$1', [p.workspaceId])
       await workspacePool.query('DELETE FROM workspace_repository_policies WHERE "workspaceId"=$1', [p.workspaceId])
@@ -394,6 +404,20 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
     const run = (await pool.query('SELECT status,"stopReason" FROM agent_runs WHERE id=$1', [runId])).rows[0]
     assert.notEqual(run.status, 'queued', 'the run does not wait for a key that is gone')
     assert.notEqual(run.status, 'preparing')
+    assert.equal(await recorded(runId), null)
+  })
+
+  await t.test('a key newly known rejected refuses the frozen run at claim with credential health', async () => {
+    const p = await person('key-rejected-before-claim')
+    const key = await addKey(p.id, 'anthropic', `sk-ant-${randomBytes(16).toString('hex')}`, ['key-model-a'])
+    const { runId } = await queueRun(p.id, { issueId: p.issueId, agentId: p.agents.claude_code, repo: p.remote, model: 'key-model-a' }, p.botId)
+    assert.equal((await definition(runId)).apiKey.keyId, key.id)
+    await pool.query('UPDATE model_api_keys SET "modelsError"=$2 WHERE id=$1', [key.id, 'invalid'])
+    const response = await claim(p.deviceId, runId, p.token)
+    assert.equal(response.status, 409)
+    assert.deepEqual(await response.json(), { error: 'API key unavailable.', code: 'apiKeyUnavailable',
+      health: { reason: 'key_rejected', action: 'replace_key' } })
+    assert.equal((await pool.query('SELECT "stopReason" FROM agent_runs WHERE id=$1', [runId])).rows[0]?.stopReason, 'blocked')
     assert.equal(await recorded(runId), null)
   })
 
@@ -548,7 +572,7 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
         runId: queued.runId, deviceId: target.deviceId, model: frozen.model, subscription: frozen.subscription,
         binding: { bindingId: frozen.subscription.bindingId, ownerId: p.id, workspaceId: p.workspaceId, consumerId: target.agentId, route: 'claude_code_cli' },
       })], { encoding: 'utf8', timeout: 15_000 })
-      assert.deepEqual(JSON.parse(output), { model: providerModel, leaseReads: 1, outcome: 'succeeded' }, 'the actual native CLI configuration must match the provider model in its lease')
+      assert.deepEqual(JSON.parse(output), { model: providerModel, baseUrl: 'https://mikka.test/api/model-gateway/anthropic', outcome: 'succeeded' }, 'the native CLI uses the frozen provider model through the run gateway')
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 
@@ -738,7 +762,9 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
       const assignment = JSON.parse(text)
       await assertGatewayCredential(assignment, 'anthropic', secret)
       assert.equal(assignment.computer, undefined, 'a repository task gets no computer')
-      assert.notEqual(assignment.policy.permissions.computer_use, 'allow', 'a deny workspace grants no computer use')
+      // Full access (ADR 2026-11-27-1615) leaves the policy's computer_use at its default; a computer is
+      // usable only through a computer grant, and the workspace's Block setting withholds every grant.
+      assert.equal(assignment.localComputer, undefined, 'a deny workspace grants no computer use')
 
       const refused = await claim(computerTask.deviceId, computerTask.runId, computerTask.token)
       assert.equal(refused.status, 409, await refused.text())

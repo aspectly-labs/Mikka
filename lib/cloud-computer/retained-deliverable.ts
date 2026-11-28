@@ -1,4 +1,5 @@
 import 'server-only'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -11,6 +12,7 @@ import { snapshotMatchesScope } from '../factory/deliverable-snapshot'
 import type { FactoryTask } from '../factory/store'
 import { retainedDeliverableProbeCommand } from './retained-deliverable-probe.mjs'
 import { recordThreadMaintenanceSession } from './thread-machine-sessions'
+import { readEnv } from '@/lib/env/server'
 
 type Budget = (maximumMs: number) => number
 type ProbeOptions = { user: 'user'; timeoutMs: number; requestTimeoutMs: number; signal: AbortSignal }
@@ -29,8 +31,8 @@ const requestOptions = (budget: Budget, maximumMs: number) => {
   return { requestTimeoutMs, signal: AbortSignal.timeout(requestTimeoutMs), retries: 0 }
 }
 async function ownerOptions(scope: RetainedDeliverableScope) {
-  const { e2bApiKey } = await import('../secrets/e2b-runtime')
-  return { apiKey: await e2bApiKey(scope.ownerId, 'Cloud runtime unavailable'), proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy }
+  const account = await e2bResourceAccount(scope.ownerId, 'sandbox', scope.sandboxId)
+  return { providerScope: account.scope, apiKey: account.apiKey, proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') }
 }
 const defaultRuntime: RetainedDeliverableRuntime = {
   async state(scope, budget) {
@@ -41,7 +43,12 @@ const defaultRuntime: RetainedDeliverableRuntime = {
   },
   async connect(scope, budget) {
     const [{ Sandbox }, { withE2BErrors }, options] = await Promise.all([import('e2b'), import('../secrets/e2b-runtime'), ownerOptions(scope)])
-    return withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, { ...options, timeoutMs: 60_000, ...requestOptions(budget, 10_000) }))
+    const { withE2BProviderTime, E2B_TIMEOUT_REQUEST_BUDGET_MS } = await import('./e2b-compute-billing')
+    return withE2BProviderTime(scope.ownerId, scope.sandboxId, 60_000, { providerScope: options.providerScope,
+      inspect: () => withE2BErrors(scope.ownerId, false, () => Sandbox.getInfo(scope.sandboxId, { ...options, ...requestOptions(budget, 8_000) })) },
+    timeoutMs => withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, {
+      ...options, timeoutMs, ...requestOptions(budget, E2B_TIMEOUT_REQUEST_BUDGET_MS),
+    })))
   },
   async pause(scope, budget) {
     const [{ Sandbox }, { withE2BErrors }, options] = await Promise.all([import('e2b'), import('../secrets/e2b-runtime'), ownerOptions(scope)])
@@ -216,6 +223,10 @@ export function createRetainedDeliverableObserver(pool: Pool,
     }
     if (failure && leased && (!connectAttempted || (connectConfirmed && confirmedPaused))) {
       await release().catch(() => undefined)
+    }
+    if (confirmedPaused && runtime === defaultRuntime) {
+      const { settleE2BAwakeInterval } = await import('./e2b-compute-billing')
+      await settleE2BAwakeInterval(scope.ownerId, scope.sandboxId)
     }
     if (failure || !snapshot || !confirmedPaused) {
       try { runtime.log(JSON.stringify({ event: 'retained_deliverable_observation_failed', runId: scope.machineRunId, phase, ...(probeCode ? { code: probeCode } : {}) })) } catch { /* Diagnostics never change the recovery outcome. */ }

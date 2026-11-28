@@ -1,8 +1,9 @@
 import { verifyVercelOidcToken } from '@vercel/oidc'
 import { CredentialError } from './contracts'
+import { envValue } from '../env/runtime.mjs'
 
 /** Verify the exact app project, team, issuer, audience and environment. */
-export async function verifyAppOidc(token: string, environment = process.env.VERCEL_ENV) {
+export async function verifyAppOidc(token: string, environment = envValue('VERCEL_ENV')) {
   try {
     if ((environment !== 'preview' && environment !== 'production') || token.length > 16_384) throw new Error()
     await verifyVercelOidcToken(token, {

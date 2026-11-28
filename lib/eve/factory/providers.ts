@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { EVE_FACTORY_PROVIDER_DEFAULT_MODELS } from '../../model-catalog-metadata'
 import { eveFactoryRefusal, type EveFactoryDispatchRole } from './contract'
 
 /**
@@ -40,10 +41,10 @@ export interface EveFactoryProviderDescriptor {
  * the gateway itself resolves the vendor, so the adapter holds no vendor key.
  */
 const REGISTERED_PROVIDERS: Record<string, EveFactoryProviderDescriptor> = {
-  'vercel-ai-gateway': { id: 'vercel-ai-gateway', models: ['*'], defaultModel: 'vercel-ai-gateway/anthropic/claude-sonnet-4.5', effort: ['low', 'medium', 'high'], independentReviewer: true, workspaceWrite: true },
-  'openrouter': { id: 'openrouter', models: ['*'], defaultModel: 'openrouter/anthropic/claude-sonnet-4.5', effort: ['low', 'medium', 'high'], independentReviewer: true, workspaceWrite: true },
-  'bedrock': { id: 'bedrock', models: ['*'], defaultModel: 'bedrock/anthropic.claude-sonnet-4-5', effort: ['low', 'medium', 'high'], independentReviewer: true, workspaceWrite: true },
-  'vertex-ai': { id: 'vertex-ai', models: ['*'], defaultModel: 'vertex_ai/claude-sonnet-4-5', effort: ['low', 'medium', 'high'], independentReviewer: true, workspaceWrite: true },
+  'vercel-ai-gateway': { id: 'vercel-ai-gateway', models: ['*'], defaultModel: EVE_FACTORY_PROVIDER_DEFAULT_MODELS['vercel-ai-gateway'], effort: ['low', 'medium', 'high'], independentReviewer: true, workspaceWrite: true },
+  'openrouter': { id: 'openrouter', models: ['*'], defaultModel: EVE_FACTORY_PROVIDER_DEFAULT_MODELS['openrouter'], effort: ['low', 'medium', 'high'], independentReviewer: true, workspaceWrite: true },
+  'bedrock': { id: 'bedrock', models: ['*'], defaultModel: EVE_FACTORY_PROVIDER_DEFAULT_MODELS['bedrock'], effort: ['low', 'medium', 'high'], independentReviewer: true, workspaceWrite: true },
+  'vertex-ai': { id: 'vertex-ai', models: ['*'], defaultModel: EVE_FACTORY_PROVIDER_DEFAULT_MODELS['vertex-ai'], effort: ['low', 'medium', 'high'], independentReviewer: true, workspaceWrite: true },
 }
 
 export function resolveEveFactoryProvider(provider: unknown): EveFactoryProviderDescriptor {

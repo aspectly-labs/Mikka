@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { lstat, readFile, realpath } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,6 +13,7 @@ import { load as loadYaml } from 'js-yaml'
 import { POSTER_BINARY_ARCHIVE, POSTER_BINARY_MANIFEST, POSTER_BINARY_MAX_BYTES,
   POSTER_LICENSE_FILES, POSTER_RUNTIME_DIRECTORY } from '../lib/captures/poster-binary.mjs'
 import { readCompiledBuild } from './start-app.mjs'
+import { publicEnv } from '../lib/public-env.mjs'
 
 export const analyticsKey = 'phc_synthetic_ssr_regression'
 export const analyticsPaths = ['/mikka', '/mikka/sign-in', '/mikka/en/sign-in']
@@ -27,7 +29,7 @@ const posterResources = new Set([POSTER_BINARY_ARCHIVE, POSTER_BINARY_MANIFEST,
 
 export function analyticsEnvironment(env = process.env) {
   assert.equal(env.CI, 'true', 'Requires an isolated CI environment')
-  assert.equal(env.NEXT_PUBLIC_POSTHOG_KEY, analyticsKey, 'Only the synthetic analytics project is allowed')
+  assert.equal(publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', env), analyticsKey, 'Only the synthetic analytics project is allowed')
   const database = new URL(env.E2E_DATABASE_URL)
   assert.ok(['postgres:', 'postgresql:'].includes(database.protocol))
   assert.ok(['127.0.0.1', 'localhost'].includes(database.hostname))
@@ -155,8 +157,19 @@ export async function inspectAnalyticsBuild(root = process.cwd()) {
     assets.set(path, hash(packed))
     if (packed.includes(Buffer.from(analyticsKey))) configuredAssets.add(path)
   }
-  assert.ok(configuredAssets.size > 0, 'Synthetic analytics configuration must be compiled into actual JavaScript')
-  return { built, resources, assets, configuredAssets, manifestSha256: hash(manifestBytes) }
+  let headless = false
+  if (existsSync(join(root, 'apps/frontend/dist/web/renderer-manifest.json'))) {
+    const [sourceManifest, packedManifest] = await Promise.all([
+      regularBytes(root, 'apps/frontend/dist/web/renderer-manifest.json'),
+      regularBytes(root, '.output/public/mikka/renderer-manifest.json'),
+    ])
+    assert.equal(hash(sourceManifest), hash(packedManifest), 'The served renderer manifest must match the real Vite output')
+    headless = JSON.parse(sourceManifest.toString())?.headless === true
+  }
+  if (!headless) {
+    assert.ok(configuredAssets.size > 0, 'Synthetic analytics configuration must be compiled into actual JavaScript')
+  }
+  return { built, resources, assets, configuredAssets, headless, manifestSha256: hash(manifestBytes) }
 }
 
 export function localAnalyticsRequest(value, origin) {
@@ -202,7 +215,7 @@ export async function checkAnalytics({ root = process.cwd(), env = process.env }
     E2E_DATABASE_URL: database, DATABASE_URL: database, MIKKA_DATABASE_URL: database,
     // The browser key is already proven in the compiled assets. Disabling the
     // server token prevents anonymous flag lookups from contacting PostHog.
-    NEXT_PUBLIC_POSTHOG_KEY: '' }
+    MIKKA_PUBLIC_POSTHOG_KEY: '' }
   const child = spawn(process.execPath, ['scripts/start-app.mjs', '--hostname', 'localhost', '--port', String(port)], {
     cwd: root, env: serverEnv, stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -225,7 +238,6 @@ export async function checkAnalytics({ root = process.cwd(), env = process.env }
     const results = []
     for (const path of analyticsPaths) {
       const locale = path.startsWith('/mikka/en/') ? 'en' : 'zh-CN'
-      const messages = JSON.parse(await readFile(join(root, 'messages', `${locale}.json`), 'utf8'))
       const context = await browser.newContext({ locale: 'zh-CN', serviceWorkers: 'block' })
       const analytics = Promise.withResolvers(), loaded = new Set(), pending = []
       let blocked = 0, pageErrors = 0
@@ -258,19 +270,28 @@ export async function checkAnalytics({ root = process.cwd(), env = process.env }
         const response = await page.goto(origin + path, { waitUntil: 'domcontentloaded', timeout: 30_000 })
         assert.equal(response?.status(), 200, 'The actual anonymous page must load')
         const app = page.locator('#root')
-        await expect(app.getByRole('heading', { name: messages.Auth.welcome, exact: true })).toBeVisible()
-        await expect(app.locator('input[name="email"]')).toBeEditable()
-        await expect(app.locator('input[name="password"]')).toBeEditable()
         await expect(page.locator('html')).toHaveAttribute('lang', locale)
-        await deadline(analytics.promise, 15_000, 'ANALYTICS_BROWSER_INITIALIZATION_MISSING')
-        await deadline(Promise.all(pending), 30_000, 'ANALYTICS_ASSET_BODY_TIMEOUT')
-        assert.ok([...build.configuredAssets].some(asset => loaded.has(asset)), 'The browser must execute an asset containing the synthetic project')
+        if (build.headless) {
+          const heading = locale.startsWith('zh') ? '这台服务器没有网页界面' : 'This server has no web interface'
+          await expect(page.locator('html')).toHaveAttribute('data-mikka-headless', 'true')
+          await expect(app.getByRole('heading', { name: heading, exact: true })).toBeVisible()
+          await deadline(Promise.all(pending), 30_000, 'ANALYTICS_ASSET_BODY_TIMEOUT')
+          assert.ok(loaded.size > 0, 'The browser must execute the reviewed headless asset')
+        } else {
+          const messages = JSON.parse(await readFile(join(root, 'messages', `${locale}.json`), 'utf8'))
+          await expect(app.getByRole('heading', { name: messages.Auth.welcome, exact: true })).toBeVisible()
+          await expect(app.locator('input[name="email"]')).toBeEditable()
+          await expect(app.locator('input[name="password"]')).toBeEditable()
+          await deadline(analytics.promise, 15_000, 'ANALYTICS_BROWSER_INITIALIZATION_MISSING')
+          await deadline(Promise.all(pending), 30_000, 'ANALYTICS_ASSET_BODY_TIMEOUT')
+          assert.ok([...build.configuredAssets].some(asset => loaded.has(asset)), 'The browser must execute an asset containing the synthetic project')
+        }
         assert.equal(pageErrors, 0, 'The actual React application must mount without page errors')
         assert.equal(serverFailure, false, 'The server must remain free of React initialization errors')
-        results.push({ path, locale, status: 'pass', loadedAssets: loaded.size, blockedExternalRequests: blocked, pageErrors })
+        results.push({ path, locale, status: 'pass', headless: build.headless, loadedAssets: loaded.size, blockedExternalRequests: blocked, pageErrors })
       } finally { await context.close() }
     }
-    return { revision: build.built.revision, runtime: 'vite-nitro', analytics: 'synthetic-enabled-network-blocked',
+    return { revision: build.built.revision, runtime: 'vite-nitro', analytics: build.headless ? 'headless-public-build' : 'synthetic-enabled-network-blocked',
       assetManifestSha256: build.manifestSha256, runtimeResources: build.resources, paths: results }
   } finally {
     try { await browser?.close() }

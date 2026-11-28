@@ -16,8 +16,8 @@ const SECOND_TEAM = '40000000-0000-4000-8000-000000000003'
 // Public Owner identity from comment #1504/6691409495; fixture data, never a login.
 const POLICY_ADMIN_EMAIL = 'alex@acme.aspectlylabs.com', POLICY_ADMIN_ID = 'policy-admin'
 const ACCESS = 'mka_SYNTHETIC_PRIVATE_ACCESS_TOKEN'
-const event = { ref: OPS_REF, after: SOURCE, repository: { full_name: 'alexj11324/Mikka' } }
-const environment = () => ({ GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_EVENT_NAME: 'push',
+const event = { ref: OPS_REF, after: SOURCE, repository: { full_name: 'aspectly-labs/Mikka' } }
+const environment = () => ({ GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_EVENT_NAME: 'push',
   GITHUB_REF: OPS_REF, GITHUB_SHA: SOURCE, APPLICATION_SHA: APP, GH_TOKEN: 'SYNTHETIC_GH_TOKEN',
   SMOKE_OWNER_EMAIL: EMAIL, SMOKE_OWNER_PASSWORD: PASSWORD })
 const json = (value, status = 200, headers = {}) => Response.json(value, { status, headers })
@@ -315,13 +315,14 @@ test('the shared helper retains its DCR default and rejects unknown registration
 })
 
 function deployedFixture(business, originalEnv, { changed = () => false } = {}) {
-  const env = { ...originalEnv, MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target',
-    GITHUB_REPOSITORY_OWNER: 'alexj11324', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
-    GITHUB_WORKFLOW_REF: 'alexj11324/Mikka/.github/workflows/issue1415-deployed-production.yml@refs/heads/main',
+  // The deployed-target dispatch runs in the canonical repository (deployed-target.mjs).
+  const env = { ...originalEnv, MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target', GITHUB_REPOSITORY: 'aspectly-labs/Mikka',
+    GITHUB_REPOSITORY_OWNER: 'aspectly-labs', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    GITHUB_WORKFLOW_REF: 'aspectly-labs/Mikka/.github/workflows/issue1415-deployed-production.yml@refs/heads/main',
     GITHUB_RUN_ID: '99', GITHUB_RUN_ATTEMPT: '1' }
-  const repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } }
+  const repository = { full_name: 'aspectly-labs/Mikka', owner: { login: 'aspectly-labs' } }
   const event = { repository, inputs: { application_sha: env.APPLICATION_SHA } }
-  const api = 'https://api.github.com/repos/alexj11324/Mikka'
+  const api = 'https://api.github.com/repos/aspectly-labs/Mikka'
   const metadata = []
   const now = business.now ?? Date.now
   const fetchImpl = async (input, init = {}) => {

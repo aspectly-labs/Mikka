@@ -38,12 +38,31 @@ BOOTSTRAP_FILES = ('official-files.py', 'e2b-finalization-files.json', 'e2b-cert
 INSTANCE_BOOTSTRAP = 'packages/daemon/scripts/official-e2b-instance-bootstrap.sh'
 RECIPE_PATHS = (*(f'scripts/e2b/{name}' for name in BOOTSTRAP_FILES),
                 'scripts/e2b/build-template.py', 'scripts/e2b/template-capabilities.json',
-                'scripts/e2b/acceptance-daemon.mts', 'scripts/e2b/acceptance-bootstrap.mts',
+                'scripts/e2b/machine-sizes.json', 'scripts/e2b/acceptance-daemon.mts', 'scripts/e2b/acceptance-bootstrap.mts',
                 *(f'scripts/e2b/{name}' for name in COMPUTER_FILES))
 # Each kind of machine: the official E2B template it starts from, and the
 # CLIs installed on it (packages/daemon/harness/pins.json). The `claude` and
 # `codex` templates keep the CLI E2B ships (any Codex works); the desktop one
 # has neither, so it gets both.
+MACHINE_SIZES = json.loads(Path(__file__).with_name('machine-sizes.json').read_text())
+
+
+def available_sizes(kind, confirmed_gib):
+    if confirmed_gib not in (8, 16, 32):
+        raise ValueError('e2b_confirmed_memory_invalid')
+    if kind == 'desktop':
+        return ['medium']
+    return [size for size, hardware in MACHINE_SIZES.items() if hardware['memoryMB'] <= confirmed_gib * 1024]
+
+
+def verify_sandbox_hardware(template_id, sandbox_id, size, api_key, request=None):
+    info = (request or _request)('GET', '/sandboxes/' + sandbox_id, api_key)
+    expected = MACHINE_SIZES[size]
+    if (info.get('sandboxID') != sandbox_id or info.get('templateID') != template_id
+            or any(type(info.get(field)) is not int or info[field] != expected[field] for field in ('cpuCount', 'memoryMB'))):
+        raise ValueError('e2b_observed_hardware_mismatch')
+
+
 KINDS = {
     'desktop': {'base': 'desktop', 'harnesses': ('claude_code', 'codex')},
     'claude': {'base': 'claude', 'harnesses': ()},
@@ -524,7 +543,7 @@ def validate_model_receipt(receipt, source_commit, worker_sha, manifest, kind):
     return [row for row in reports if row['harness'] in required]
 
 
-def probe_models(template_id, kind, api_key, source_commit, worker_sha, sandbox_factory=None):
+def probe_models(template_id, kind, api_key, source_commit, worker_sha, sandbox_factory=None, *, expected_size=None):
     """Read the real probe that made the snapshot ready; never launch a second cold worker."""
     if (not re.fullmatch(r'[a-f0-9]{40}', source_commit) or not re.fullmatch(r'[a-f0-9]{40}', worker_sha)
             or kind not in KINDS):
@@ -546,6 +565,8 @@ def probe_models(template_id, kind, api_key, source_commit, worker_sha, sandbox_
         return data
 
     try:
+        if expected_size is not None:
+            verify_sandbox_hardware(template_id, sandbox.sandbox_id, expected_size, api_key)
         path = '/home/user/.mikka/preloaded-models.json'
         # No identity has been handed to this disposable instance. Check that
         # the writer is still the anonymous, ready process before trusting its
@@ -913,17 +934,38 @@ def verify_release_evidence(report):
     """
     if not re.fullmatch(r'[a-f0-9]{40}', report.get('sourceCommit', '')) or not re.fullmatch(r'[a-f0-9]{40}', report.get('workerSha', '')):
         raise ValueError('release_source_invalid')
-    for kind in KINDS:
-        template = report.get('templates', {}).get(kind, {})
+    rows = [(kind, 'medium', report.get('templates', {}).get(kind, {})) for kind in KINDS]
+    variants = report.get('machineVariants', [])
+    if not isinstance(variants, list) or len(variants) > 6:
+        raise ValueError('release_variants_invalid')
+    for template in variants:
+        kind = template.get('baseTemplate')
+        size = template.get('machineSize')
+        if kind not in ('claude', 'codex') or size == 'medium':
+            raise ValueError('release_variant_kind_invalid')
+        rows.append((kind, size, template))
+    seen, ids = set(), set()
+    confirmed = int(os.environ.get('MIKKA_E2B_CONFIRMED_MEMORY_GIB') or '8')
+    for kind, size, template in rows:
+        if 'machineVariants' in report:
+            if (size not in available_sizes(kind, confirmed) or (kind, size) in seen
+                    or template.get('machineSize') != size
+                    or any(type(template.get(field)) is not int or template[field] != MACHINE_SIZES[size][field]
+                           for field in ('cpuCount', 'memoryMB'))):
+                raise ValueError('release_variant_hardware_invalid')
+            seen.add((kind, size))
         if (template.get('baseTemplate') != kind or template.get('preinstalled') is not True
                 or not re.fullmatch(r'[A-Za-z0-9_-]+', template.get('templateId', ''))
-                or not template.get('buildId')):
+                or template['templateId'] in ids or not template.get('buildId')):
             raise ValueError(f'release_template_invalid {kind}')
+        ids.add(template['templateId'])
         proof = template.get('conservation', {})
         try:
             official_files_guard().validate_receipt(proof, kind)
         except (ValueError, KeyError, TypeError):
             raise ValueError(f'release_conservation_invalid {kind}') from None
+    if 'machineVariants' in report and not {('claude', 'small'), ('codex', 'small')} <= seen:
+        raise ValueError('release_default_variants_missing')
     return report
 
 def publish(template_id, build_id, api_key, opener=urllib.request.urlopen):
@@ -957,7 +999,7 @@ def main(argv=None):
         raise SystemExit('E2B_API_KEY is not set')
     if args.publish_verified:
         report = verify_release_evidence(json.loads(args.publish_verified.read_text()))
-        for template in report['templates'].values():
+        for template in [*report['templates'].values(), *report.get('machineVariants', [])]:
             template.update(publish(template['templateId'], template['buildId'], api_key))
         print(json.dumps(report))
         return
@@ -968,30 +1010,37 @@ def main(argv=None):
     worker_sha = worker_hash(sha)
     # Confirm absence before claiming cleanup ownership. A manual collision
     # must never turn into deletion of a previous candidate.
-    candidates = [{'kind': kind, 'name': f'{args.name}-{kind}'} for kind in kinds]
+    confirmed = int(os.environ.get('MIKKA_E2B_CONFIRMED_MEMORY_GIB') or '8')
+    candidates = [{'kind': kind, 'size': size, 'name': f'{args.name}-{kind}' + ('' if size == 'medium' else '-' + size)}
+                  for kind in kinds for size in available_sizes(kind, confirmed)]
     for candidate in candidates:
         assert_new_template(candidate['name'], api_key)
 
-    def one(kind):
-        name = f'{args.name}-{kind}'
-        logs = (lambda entry: print(f'[{kind}] {entry}', file=sys.stderr, flush=True)) if args.json else None
-        _, result = build(name, sha, api_key=api_key, on_build_logs=logs, kind=kind)
+    def one(candidate):
+        kind, size, name = candidate['kind'], candidate['size'], candidate['name']
+        hardware = MACHINE_SIZES[size]
+        logs = (lambda entry: print(f'[{kind}/{size}] {entry}', file=sys.stderr, flush=True)) if args.json else None
+        _, result = build(name, sha, api_key=api_key, on_build_logs=logs, kind=kind,
+                          cpu_count=hardware['cpuCount'], memory_mb=hardware['memoryMB'])
         entry = {'templateId': result.template_id, 'buildId': result.build_id, 'name': name,
-                 'baseTemplate': kind, 'preinstalled': True}
-        entry['models'] = probe_models(result.template_id, kind, api_key, sha, worker_sha)
+                 'baseTemplate': kind, 'preinstalled': True, 'machineSize': size,
+                 'cpuCount': hardware['cpuCount'], 'memoryMB': hardware['memoryMB']}
+        entry['models'] = probe_models(result.template_id, kind, api_key, sha, worker_sha, expected_size=size)
         entry['conservation'] = probe_conservation(result.template_id, api_key, kind)
-        return kind, entry
+        return entry
 
     # The templates share nothing at build time; build them side by side.
     from concurrent.futures import ThreadPoolExecutor
     try:
         with ThreadPoolExecutor(max_workers=len(kinds)) as pool:
-            templates = dict(pool.map(one, kinds))
+            rows = list(pool.map(one, candidates))
     except BaseException:
         cleanup = cleanup_templates(candidates, api_key)
         print('mikka-template-cleanup ' + json.dumps(cleanup, separators=(',', ':')), file=sys.stderr, flush=True)
         raise
-    out = {'sourceCommit': sha, 'workerSha': worker_sha, 'templates': templates}
+    out = {'sourceCommit': sha, 'workerSha': worker_sha,
+           'templates': {row['baseTemplate']: row for row in rows if row['machineSize'] == 'medium'},
+           'machineVariants': [row for row in rows if row['machineSize'] != 'medium']}
     if args.json:
         print(json.dumps(out))
     else:

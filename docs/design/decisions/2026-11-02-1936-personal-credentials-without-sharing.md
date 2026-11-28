@@ -1,6 +1,7 @@
 # Personal credential use never requires team sharing
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex in the subscription/settings review: 「个人订阅始终要对这个人是可用的」「只有分享给其他人时，才需要另行授权。包括密钥也是一样，个人始终拥有自己密钥的使用权，是否分享看个人」「尽量不要设计得太过复杂，毕竟我们这个不是专门的密钥产品」。
 - Rule: Reaffirms [2026-11-01-2240](2026-11-01-2240-own-credentials-always-usable.md).
 - Replaces: —

@@ -1,5 +1,7 @@
 # Registered settings and retained identifier authority
 
+- **Status:** Accepted
+
 Source: Alex's backend task [#2956](https://github.com/alexj11324/Mikka/issues/2956).
 
 Settings use one field registry and typed value columns. Null means personal

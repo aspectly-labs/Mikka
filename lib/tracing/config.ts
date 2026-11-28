@@ -1,3 +1,5 @@
+import { isLoopbackHost } from '@/lib/env/hosts'
+import { runtimeEnv } from '@/lib/env/server'
 import { posthogConfig } from '@/lib/posthog-config'
 import { deploymentStage } from '../deployment-stage.mjs'
 
@@ -9,9 +11,9 @@ export const SERVICE_NAME = 'mikka-web'
 export const DEFAULT_SAMPLE_RATE = 0.1
 
 export type TraceEnvironment = 'production' | 'preview' | 'dev'
-type Env = Record<string, string | undefined>
+type Env = Readonly<Record<string, string | undefined>>
 
-export function traceEnvironment(env: Env = process.env): TraceEnvironment {
+export function traceEnvironment(env: Env = runtimeEnv()): TraceEnvironment {
   const stage = deploymentStage(env)
   if (stage === 'production' || stage === 'preview') return stage
   return 'dev'
@@ -21,7 +23,7 @@ export function traceEnvironment(env: Env = process.env): TraceEnvironment {
  * Head sampling rate between 0 and 1. Tests and CI always get 0 (no tracer at
  * all); otherwise MIKKA_TRACE_SAMPLE_RATE, default 10%.
  */
-export function traceSampleRate(env: Env = process.env): number {
+export function traceSampleRate(env: Env = runtimeEnv()): number {
   if (env.NODE_ENV === 'test') return 0
   if (env.CI) return 0
   const raw = env.MIKKA_TRACE_SAMPLE_RATE?.trim()
@@ -33,7 +35,7 @@ export function traceSampleRate(env: Env = process.env): number {
 export type TraceSettings = { endpoint: string; token: string; sampleRate: number; environment: TraceEnvironment; version?: string }
 
 /** Null when tracing must stay off: no project token, or a sample rate of 0. */
-export function traceSettings(env: Env = process.env, token = posthogConfig.token): TraceSettings | null {
+export function traceSettings(env: Env = runtimeEnv(), token = posthogConfig.token): TraceSettings | null {
   const sampleRate = traceSampleRate(env)
   if (!token || sampleRate <= 0) return null
   return {
@@ -47,7 +49,7 @@ export function traceSettings(env: Env = process.env, token = posthogConfig.toke
 }
 
 /** Public ingestion configuration piggybacks on authenticated device registration; no extra request. */
-export function daemonTraceSettings(env: Env = process.env, token = posthogConfig.token): { endpoint: string; projectToken: string; sampleRate: number; environment: TraceEnvironment } | undefined {
+export function daemonTraceSettings(env: Env = runtimeEnv(), token = posthogConfig.token): { endpoint: string; projectToken: string; sampleRate: number; environment: TraceEnvironment } | undefined {
   const settings = traceSettings(env, token)
   // Only a public project ingestion token may leave the server, never a personal management key.
   if (!settings || !/^phc_[A-Za-z0-9_-]{8,128}$/.test(settings.token)) return undefined
@@ -57,7 +59,7 @@ export function daemonTraceSettings(env: Env = process.env, token = posthogConfi
     && !endpoint.port && endpoint.pathname === '/i/v1/traces'
   // Test collectors are allowed only on the local development server, never distributed by production.
   const local = env.NODE_ENV === 'development' && endpoint.protocol === 'http:'
-    && ['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname)
+    && isLoopbackHost(endpoint.hostname)
   if ((!posthog && !local) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) return undefined
   return { endpoint: endpoint.href, projectToken: settings.token, sampleRate: settings.sampleRate, environment: settings.environment }
 }

@@ -20,6 +20,7 @@
     "create_calendar_event",
     "update_calendar_event",
     "web_search",
+    "web_fetch",
     "list_issues",
     "get_issue",
     "create_issue",

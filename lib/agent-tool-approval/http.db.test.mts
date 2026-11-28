@@ -114,27 +114,11 @@ test('real HTTP claim carries policy, and its run gate creates no approvals (dec
   const link = new HttpServerLink(origin)
   Object.assign(link, { credential: 'synthetic' })
   const settings = async (cookie: string, payload: object) => fetch(`${origin}/api/agent-cli-policy`, { method:'POST', headers:{cookie,origin,'content-type':'application/json'}, body:JSON.stringify(payload) })
-  const unstartedAgent = randomUUID()
-  await pool.query(`INSERT INTO agents (id,"userId",harness,name) VALUES ($1,$2,'codex','Synthetic unstarted worker')`, [unstartedAgent,owner])
-  // A worker alone has no workspace to authorize; the settings Bot binds it to the fixture workspace.
-  const settingsBot = randomUUID()
-  // `workspaceId` is scoped to the `before` hook; resolve the same fixture
-  // workspace here so the Bot points at the row the policy was written to.
-  const settingsWorkspaceId = await seedFixtureWorkspace(pool, owner)
-  await pool.query(`INSERT INTO bots (id,"ownerId","workspaceId",name) VALUES ($1,$2,$3,'Synthetic settings Bot')`, [settingsBot,owner,settingsWorkspaceId])
-  const beforeFirstRun = await settings('owner=1',{operation:'readAgent',agentId:unstartedAgent,botId:settingsBot})
-  assert.equal(beforeFirstRun.status,200)
-  const empty = await beforeFirstRun.json() as {revision:string}
-  assert.equal((await settings('other=1',{operation:'setAgent',agentId:unstartedAgent,botId:settingsBot,target:'workspace',expectedRevision:empty.revision,policy:{permissions:{install_dependency:'deny'}}})).status,409)
-  assert.equal((await settings('owner=1',{operation:'setAgent',agentId:unstartedAgent,botId:settingsBot,target:'workspace',expectedRevision:empty.revision,policy:{permissions:{install_dependency:'deny'}}})).status,200)
-  assert.equal((await pool.query('SELECT count(*)::int AS count FROM agent_runs WHERE "agentId"=$1',[unstartedAgent])).rows[0].count,0)
   const settingsRead = await settings('owner=1',{operation:'read',runId})
   assert.equal(settingsRead.status,200)
-  const previous = await settingsRead.json() as {revision:string}
-  assert.equal((await settings('other=1',{operation:'set',runId,target:'workspace',expectedRevision:previous.revision,policy:{permissions:{install_dependency:'deny'}}})).status,409)
-  const changed = await settings('owner=1',{operation:'set',runId,target:'workspace',expectedRevision:previous.revision,policy:{permissions:{install_dependency:'allow'}}})
-  assert.equal(changed.status,200)
-  assert.equal((await settings('owner=1',{operation:'set',runId,target:'workspace',expectedRevision:previous.revision,policy:{}})).status,409)
+  assert.equal((await settings('other=1',{operation:'read',runId})).status,409)
+  // Agents run with full access (ADR 2026-11-27-1615): there is no policy to set.
+  for (const operation of ['set','setAgent','readAgent']) assert.equal((await settings('owner=1',{operation,runId})).status,400)
   await pool.query('UPDATE devices SET harnesses=$2 WHERE id=$1',[deviceId,harnesses(false)])
   const oldDaemon = await fetch(`${origin}/v1/devices/${deviceId}/runs/${runId}/claim`, { method:'POST', headers:{ 'x-mikka-client-version':'0.0.456','x-mikka-device-session':'1', authorization:'Bearer synthetic',[REPO_ORIGIN_HEADER]:'1' } })
   assert.equal(oldDaemon.status,409)
@@ -166,7 +150,7 @@ test('real HTTP claim carries policy, and its run gate creates no approvals (dec
   claimed = assignment
 })
 
-test('policy changes persist a stop command; operations check locally and legacy HTTP checks retain safe diagnostics', async () => {
+test('a policy stop persists a stop command; operations check locally and legacy HTTP checks retain safe diagnostics', async () => {
   assert.ok(claimed, 'the claim test above runs first')
   const { HttpServerLink } = await import('../../packages/daemon/src/server-link-http')
   const sends: string[] = []
@@ -199,7 +183,13 @@ test('policy changes persist a stop command; operations check locally and legacy
     const settings = async (payload: object) => fetch(`${origin}/api/agent-cli-policy`, { method:'POST', headers:{cookie:'owner=1',origin,'content-type':'application/json'}, body:JSON.stringify(payload) })
     const current = await (await settings({operation:'read',runId})).json() as {revision:string}
     assert.equal(current.revision, claimed.policyRevision, 'nothing changed the run policy since its claim')
-    assert.equal((await settings({operation:'set',runId,target:'workspace',expectedRevision:current.revision,policy:{permissions:{install_dependency:'deny'}}})).status,200)
+    // A policy stop (the workspace computer policy's path) persists the stop command.
+    const { stopRunsForPolicyChange } = await import('../run-policy-stop')
+    const { rows: [{ workspaceId: runWorkspace }] } = await pool.query('SELECT "workspaceId" FROM agent_runs WHERE id=$1',[runId])
+    const client = await pool.connect()
+    try { await client.query('BEGIN'); await stopRunsForPolicyChange(client,{kind:'workspace',workspaceId:runWorkspace}); await client.query('COMMIT') }
+    catch (error) { await client.query('ROLLBACK'); throw error }
+    finally { client.release() }
     const persisted = (await pool.query('SELECT "stopRequestedAt","leaseExpiresAt"<=clock_timestamp() AS expired FROM agent_runs WHERE id=$1',[runId])).rows[0]
     assert.ok(persisted.stopRequestedAt)
     assert.equal(persisted.expired, true)

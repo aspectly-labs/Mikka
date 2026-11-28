@@ -1,6 +1,7 @@
 # Headless public engine and standalone UI decoupling
 
-Status: accepted (Alex, 2026-11-22). Builds on [2026-11-08-2133](2026-11-08-2133-one-ui.md) and supersedes the long-term overlay direction in [2026-11-06-2000](2026-11-06-2000-hosted-ui-overlay.md). Tracked by [issue #3174](https://github.com/aspectly-labs/Mikka/issues/3174).
+- **Status:** Superseded in part by [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) (phase 4 completed; public authentication and server-status pages moved to `mikka-hosted-ui`)
+- Implementation note: accepted (Alex, 2026-11-22); completed and, where it kept public sign-in and status pages, superseded by [2026-11-24-1000](2026-11-24-1000-all-ui-in-hosted.md). Builds on [2026-11-08-2133](2026-11-08-2133-one-ui.md) and supersedes the long-term overlay direction in [2026-11-06-2000](2026-11-06-2000-hosted-ui-overlay.md). Tracked by [issue #3174](https://github.com/aspectly-labs/Mikka/issues/3174).
 
 ## Decision
 

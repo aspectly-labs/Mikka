@@ -150,7 +150,7 @@ async function main() {
   const queued = await api(`/api/bots/${botId}/computer/runs`, { issueId: issue.id, harness: 'claude_code', note: `Use the selected ${metric.model}. Write cloud-acceptance.txt with ${marker}, then submit. Do not push or open a PR.` })
   runId = queued.runId
   assert.ok(runId)
-  const frozen = (await pool.query('SELECT r."agentDefinition",k.provider FROM agent_runs r JOIN model_api_keys k ON k.id=(r."agentDefinition"->\'apiKey\'->>\'keyId\')::uuid AND k."ownerId"=r."userId" WHERE r.id=$1 AND r."userId"=$2', [runId, actor.userId])).rows[0]
+  const frozen = (await pool.query('SELECT r."agentDefinition",k.provider FROM agent_runs r JOIN model_api_keys k ON k.id=CASE WHEN (r."agentDefinition"->\'apiKey\'->>\'keyId\') ~* \'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\' THEN (r."agentDefinition"->\'apiKey\'->>\'keyId\')::uuid ELSE NULL END AND k."ownerId"=r."userId" WHERE r.id=$1 AND r."userId"=$2', [runId, actor.userId])).rows[0]
   assert.equal(frozen?.provider, 'deepseek', 'Cloud run must freeze the selected provider at the LiteLLM boundary')
   assert.equal(frozen.agentDefinition.modelSource, 'api_key')
   assert.equal(frozen.agentDefinition.model, metric.model)
