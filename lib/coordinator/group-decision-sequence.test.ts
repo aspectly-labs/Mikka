@@ -84,7 +84,7 @@ test('current mentioned intent offers only intervention choices before the provi
   assert.deepEqual(offered,[
     'reply_useful_answer','reply_independent_contributions',
     'delegate_execution_requested','delegate_task_followup',
-    'clarify_missing_information','clarify_missing_permission','uncertain',
+    'clarify_missing_information','uncertain',
   ])
   assert.equal(route.action,'reply');assert.deepEqual(route.responders,[ids[1]]);assert.equal(t.calls(),1)
 })
@@ -101,7 +101,7 @@ test('current unmentioned intent keeps ignore and observe available',async()=>{
       'ignore_ordinary_conversation','ignore_outside_capabilities','observe_context','observe_already_answered',
       'reply_useful_answer','reply_independent_contributions',
       'delegate_execution_requested','delegate_task_followup',
-      'clarify_missing_information','clarify_missing_permission','uncertain',
+      'clarify_missing_information','uncertain',
     ])
     assert.equal(route.action,value.startsWith('ignore_')?'ignore':'observe')
     assert.deepEqual(route.responders,[]);assert.equal(t.calls(),1)

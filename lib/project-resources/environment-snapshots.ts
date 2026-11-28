@@ -13,7 +13,6 @@ import { sizedTaskTemplate, environmentSnapshotApiKey, environmentSnapshotScope 
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { pool as appPool } from '@/lib/db'
 import { cliPolicyLayerSchema, mergeCliPolicyValues } from '@/lib/agent-tool-approval/policy-store'
-import { resolveTrustedRunPolicy } from '@/lib/agent-tool-approval/policy-snapshot'
 import { githubRepositoryReadCredential } from '@/lib/github/user-access'
 import type { EnvironmentConfiguration } from './contracts'
 import { listProjectResources } from './store'
@@ -52,19 +51,10 @@ export async function snapshotConfiguration(reader: Reader, input: SnapshotInput
   )
   const layer = cliPolicyLayerSchema.parse(policyRow ? policyRow.policy : {})
   const configured = mergeCliPolicyValues(layer.defaults ?? {}, layer)
-  const policy = resolveTrustedRunPolicy({
-    workspace: {
-      permissions: configured.permissions,
-      networkAllow: configured.networkAllow,
-    },
-    personalApprovalMode: configured.approvalMode,
-    environment: 'cloud',
-  })
-  // Agents run with full access (ADR 2026-11-27-1615): stored network and
-  // dependency-install permission levels never decide snapshot eligibility.
+  // Agents run with full access (ADR 2026-11-27-1615): stored permission levels
+  // and a legacy read-only approval mode never decide snapshot eligibility.
   // A network allowlist still does, since the snapshot's setup ran unrestricted.
   const eligible =
-    !policy.readOnly &&
     configured.networkAllow === undefined &&
     (config.harness === 'any' || config.harness === harness) &&
     eligibleConfiguration(config, environment.repositories, resources.policy)

@@ -1478,22 +1478,10 @@ export class RunSupervisor {
         )
       }
       const policy = runPolicy(assignment.policy)
-      // Enforce workspace install_dependency policy on repository setup shell commands:
-      // strip setup.command when install_dependency !== 'allow' while keeping approved:false
-      // skip semantics and safe file-copy behavior intact.
-      const repoSetupCommandBlocked = Boolean(
-        repo.setup?.approved && repo.setup.command && policy.permissions.install_dependency !== 'allow'
-      )
-      if (repoSetupCommandBlocked) {
-        log.warn({ runId, repoId: repo.repoId }, 'Skipping repository setup command because install_dependency is not allowed')
-      }
-      const effectiveRepoSetup = repoSetupCommandBlocked && repo.setup
-        ? { ...repo.setup, command: undefined }
-        : repo.setup
-      const effectiveRepo = effectiveRepoSetup === repo.setup ? repo : { ...repo, setup: effectiveRepoSetup }
-      const setup = policy.readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree, effectiveRepo) : await this.deps.worktrees.bootstrap(worktree, repo.path, effectiveRepoSetup)
-      if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup?.approved) {
-        if (policy.permissions.install_dependency !== 'allow') throw new Error('Environment setup requires dependency-install permission')
+      // The repository's and the project's setup recipes run as configured
+      // (ADR 2026-11-27-1615); only a read-only check skips them.
+      const setup = policy.readOnly === true ? 'read-only' : continued ? 'continued' : this.deps.bootstrap ? await this.deps.bootstrap(worktree, repo) : await this.deps.worktrees.bootstrap(worktree, repo.path, repo.setup)
+      if (!continued && !policy.readOnly && assignment.projectEnvironment?.setup) {
         const { setup } = assignment.projectEnvironment
         const recipe = usedEnvironmentSnapshot ? { ...setup, command: setup.maintenance } : setup
         await this.deps.worktrees.bootstrap(worktree, repo.path, recipe, taskEnv, { includeWorktreeFile: false })

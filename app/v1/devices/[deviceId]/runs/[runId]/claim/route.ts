@@ -10,12 +10,12 @@ import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { and, eq, isNull } from 'drizzle-orm'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
-import { applyApprovalMode } from '@mikka/protocol/agent-policy'
+import { readOnlyRunPolicy } from '@mikka/protocol/agent-policy'
 import { readRepositorySettings } from '@/lib/device-repositories'
 import { daemonTestMode, repositoryBindingMatches } from '@mikka/protocol/repository'
 import { localExecutionHarnesses } from '@/lib/device-agents'
 import { runTestFixture } from '@/lib/run-test-fixture'
-import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_SNAPSHOT_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, portableTaskWorkspaceReceiptSchema, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
+import { MIN_DAEMON_VERSION, SESSION_LEASE_MS, isDeviceOnline, REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_SNAPSHOT_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, portableTaskWorkspaceReceiptSchema, ENVIRONMENT_REPOSITORIES_HEADER, RECOVERY_WORKTREE_HEADER, MODEL_CREDENTIAL_HEADER, MODEL_GATEWAY_LOOPBACK_HEADER, RUN_CREDENTIALS_HEADER, INITIAL_REPOSITORY_HEADER, CUSTOM_TASK_BRANCH_HEADER, deviceRepoSchema, runnableSetup, runModelCredentialSchema, type RunModelCredential } from '@mikka/protocol/device'
 import { SUBSCRIPTION_GATEWAY_HEADER, type NativeBrokerContext } from '@mikka/protocol/subscription'
 import { POLICY_SNAPSHOT_HEADER, POLICY_SNAPSHOT_VERSION } from '@mikka/protocol/policy-snapshot'
 import { issuePolicySnapshot, policyDistributionContext } from '@/lib/agent-tool-approval/policy-distribution'
@@ -592,10 +592,12 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const push = publication && !cliPolicy.policy.readOnly && publication.policy.permissions.git_push === 'allow' ? 'allow' as const : 'deny' as const
   const resolvedPolicy = { ...cliPolicy.policy, permissions: { ...cliPolicy.policy.permissions, git_push: push } }
   // A read-only run cannot change its worktree.
-  const executionPolicy = run.agentDefinition?.readOnly ? applyApprovalMode(resolvedPolicy, 'read_only') : resolvedPolicy
+  const executionPolicy = run.agentDefinition?.readOnly ? readOnlyRunPolicy(resolvedPolicy) : resolvedPolicy
+  const claimedComputer = computer?.permission ?? localComputer?.permission
+  // A legacy computer grant of `ask` never waited for anyone; it reads as allow.
   const computerPermission = device.computerUseEnabled === false
     ? 'deny' as const
-    : (computer?.permission ?? localComputer?.permission)
+    : claimedComputer === 'ask' ? 'allow' as const : claimedComputer
   // Computer authority comes from its persisted claim; retain every trusted
   // CLI restriction and its revision when attaching that independent grant.
   const policy = computerPermission
@@ -664,7 +666,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
       request.headers.get(INITIAL_REPOSITORY_HEADER) === '1'
       ? deviceRepoSchema.safeParse({ repoId: repo.id, path: repo.repoPath,
         name: repo.repoPath.split('/').filter(Boolean).pop() ?? repo.repoPath, remoteUrl: repo.remoteUrl,
-        ...(settings?.setup ? { setup: settings.setup } : {}),
+        ...(settings?.setup ? { setup: runnableSetup(settings.setup) } : {}),
         ...(settings?.networkAllow ? { networkAllow: settings.networkAllow } : {}) }).data : undefined
     return RouteResponse.json({
     ...(publication?.pushBranch ? { pushBranch: publication.pushBranch } : {}),
@@ -704,7 +706,7 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
     ...(computer && assignmentPolicy.permissions.computer_use !== 'deny' ? { computer: { botId: computer.botId, ownerId: computer.ownerId, display: computer.display, policyVersion: computer.policyVersion } } : {}),
     ...(localComputer ? { localComputer } : {}),
     ...(portableTaskWorkspace ? { portableTaskWorkspace } : {}),
-    ...(projectEnvironment ? { projectEnvironment: { id: projectEnvironment.id, revision: projectEnvironment.revision, ...(fromEnvironmentSnapshot ? { fromSnapshot: true } : {}), ...(startup.length ? { startupRepositories: startup } : {}), ...(projectEnvironment.setup ? { setup: projectEnvironment.setup } : {}) } } : {}),
+    ...(projectEnvironment ? { projectEnvironment: { id: projectEnvironment.id, revision: projectEnvironment.revision, ...(fromEnvironmentSnapshot ? { fromSnapshot: true } : {}), ...(startup.length ? { startupRepositories: startup } : {}), ...(projectEnvironment.setup ? { setup: runnableSetup(projectEnvironment.setup) } : {}) } } : {}),
     ...(Object.keys(assignedEnv).length ? { taskEnv: assignedEnv } : {}),
     ...(taskSecretNames.length ? { taskSecretNames } : {}),
     ...(taskSecrets ? { taskSecrets } : {}),

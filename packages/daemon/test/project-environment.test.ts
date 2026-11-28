@@ -7,7 +7,7 @@ import { cleanupTempDirs, makeRepo, tempDir } from './helpers'
 
 afterEach(() => cleanupTempDirs())
 
-it('executes approved environment setup with only the controlled task variables', async () => {
+it('executes environment setup with only the controlled task variables', async () => {
   const repo = await makeRepo()
   const manager = new WorktreeManager(tempDir())
   const worktree = await manager.create('environment-test', repo, 'main')
@@ -16,12 +16,13 @@ it('executes approved environment setup with only the controlled task variables'
   expect(JSON.parse(readFileSync(join(worktree, 'environment-proof.json'), 'utf8'))).toEqual({ mode: 'project-config', reserved: null })
 })
 
-it('does not execute an unapproved setup recipe', async () => {
+it('runs a setup recipe whatever its legacy approved flag (ADR 2026-11-27-1615)', async () => {
   const repo = await makeRepo()
   const manager = new WorktreeManager(tempDir())
-  const worktree = await manager.create('unapproved-environment', repo, 'main')
-  await manager.bootstrap(worktree, repo, { copyFiles: [], command: 'touch unexpected', approved: false }, { FEATURE_MODE: 'project-config' })
-  expect(existsSync(join(worktree, 'unexpected'))).toBe(false)
+  const worktree = await manager.create('restored-environment', repo, 'main')
+  // A recipe restored or saved by an older build still carries approved: false; it is not skipped.
+  expect(await manager.bootstrap(worktree, repo, { copyFiles: [], command: 'touch expected', approved: false }, { FEATURE_MODE: 'project-config' })).toBe('done')
+  expect(existsSync(join(worktree, 'expected'))).toBe(true)
 })
 
 it('moves prebuilt dependencies into the task worktree and checks out the requested commit', async () => {

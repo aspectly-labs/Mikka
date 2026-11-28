@@ -123,7 +123,7 @@ test(
       await recordPushGrant(pool, userId, remoteKey(remoteUrl));
       let number = 0;
       const fixture = async (
-        kind: "context" | "decision" | "permission" | "external" = "context",
+        kind: "context" | "decision" | "external" = "context",
         record = true,
       ) => {
         const issueId = randomUUID(),

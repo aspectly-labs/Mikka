@@ -22,7 +22,6 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import {
   defaultRunPolicy,
-  DEFAULT_NETWORK_ALLOW,
   type RunPolicy,
 } from "@mikka/protocol/agent-policy";
 import { Pool } from "pg";
@@ -1584,7 +1583,7 @@ test(
         assert.deepEqual(await state(pending.task.id),pending);
         assert.deepEqual((await db.query('SELECT id FROM agent_runs WHERE "issueId"=$1 ORDER BY id',[pending.task.issueId])).rows,beforeRuns);
       });
-      for (const decision of ["allow", "ask", "deny"] as const)
+      for (const decision of ["allow", "deny"] as const)
         await t.test(
           `claim retains host network ${decision} and its frozen domain list`,
           async () => {
@@ -1642,9 +1641,8 @@ test(
             );
             assert.equal(extras.baseBranch, sha);
             assert.equal(extras.verifyCommand, command);
-            assert.deepEqual((extras.policy as any).networkAllow, [
-              ...DEFAULT_NETWORK_ALLOW,
-            ]);
+            // No domain list: network access is open (ADR 2026-11-27-1615).
+            assert.deepEqual((extras.policy as any).networkAllow, []);
             await tx.query("ROLLBACK");
           } finally {
             await tx.query("ROLLBACK");

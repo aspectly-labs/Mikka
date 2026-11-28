@@ -67,7 +67,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "501951b90a7e2c763707295580512ffbedb5b7509ef5f79b74424d8a4f5f0254"
+      "sourceHash": "325d796cb6d556075e2c71c2a23f90802e6d08df9fcf878974e6fd334d58be49"
     },
     {
       "path": "/mikka/api/agent/images",
@@ -3983,10 +3983,9 @@
       "template": "/api/workspaces/[workspaceId]/governance",
       "source": "app/api/workspaces/[workspaceId]/governance/route.ts",
       "methods": [
-        "GET",
-        "POST"
+        "GET"
       ],
-      "sourceHash": "591da476440bdfc5edcc700e2a132a9f02bb69163d868a4a38b09b15faf0dd96"
+      "sourceHash": "a0a39351b342bb9ce82dc649ca64976f51bb58c4b90b8f2c677c22e9da40616b"
     },
     {
       "path": "/mikka/api/workspaces/[workspaceId]/governance/usage",
@@ -4307,7 +4306,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "13b41baae34fc6a1aaf09477f32f0b6da44ebeeaa2f3f573af48daae3c2992b6"
+      "sourceHash": "45583bed1ceb6a8d801fd125f60bc1f457b3103351525a53203ed036e5a7dc79"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs",
@@ -4334,7 +4333,7 @@
       "methods": [
         "POST"
       ],
-      "sourceHash": "f4d356a376f1a12b04a274be32c9314ebaab65a9806602174749b1697cb64fc7"
+      "sourceHash": "159839a2a9938fdd80e0bdeb8c03627879c4f008c4bc64ed140a4c1869ddbf40"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/computer-authority",

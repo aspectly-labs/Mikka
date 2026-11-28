@@ -356,10 +356,18 @@ export const setupRecipeSchema = z.object({
   command: z.string().max(2_000).optional(),
   /** Optional command to refresh an environment restored from its prebuilt snapshot. */
   maintenance: z.string().max(2_000).optional(),
-  /** Approved once per repo by the user; unapproved recipes never run. */
+  /** Legacy: nobody approves a recipe (ADR 2026-11-27-1615) and the daemon
+   * runs it either way. Still sent, as true, for released daemons that skip
+   * a recipe whose flag is false. */
   approved: z.boolean(),
 })
 export type SetupRecipe = z.infer<typeof setupRecipeSchema>
+
+/** A recipe as the server sends it to a daemon: `approved` is always true, so
+ * a released daemon also runs one stored before approval was removed. */
+export function runnableSetup(recipe: SetupRecipe): SetupRecipe {
+  return { ...recipe, approved: true }
+}
 
 export const REPO_ORIGIN_HEADER = "x-mikka-repo-origin-check"
 export const ENVIRONMENT_SNAPSHOT_HEADER = "x-mikka-environment-snapshot"

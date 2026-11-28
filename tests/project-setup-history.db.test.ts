@@ -70,7 +70,8 @@ test('Environment setup history restores only the recipe after fresh scope, reac
   assert.equal(stored.name, 'Current name')
   assert.equal(stored.configuration.runtime, 'local')
   assert.deepEqual(stored.configuration.variables, { CURRENT_VALUE: 'now' })
-  assert.deepEqual(stored.configuration.setup, { command: 'node --version', copyFiles: ['fixture.txt'], approved: false })
+  // A restored recipe runs as configured (ADR 2026-11-27-1615); older daemons skip a false flag.
+  assert.deepEqual(stored.configuration.setup, { command: 'node --version', copyFiles: ['fixture.txt'], approved: true })
   await assert.rejects(store.rollbackProjectSetup(owner, { ...request, bindingSnapshot: reached.bindingSnapshot }), { code: 'projectResourceConflict' })
   assert.equal((await database.query("select count(*)::integer count from workspace_resource_events where kind='environment.setup_restored' and \"resourceId\"=$1", [env.id])).rows[0].count, 1)
 

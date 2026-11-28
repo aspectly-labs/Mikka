@@ -408,7 +408,7 @@ test('claim refuses legacy or endpoint-mismatched repository bindings before tak
 })
 test('cloud claim preserves main scoped claim and frozen subscription',async()=>{
  cloud=true;const response=await request();assert.equal(response.status,200);assert.equal(cloudClaimed.mock.callCount(),1);assert.equal(claimed.mock.callCount(),0);assert.equal(typeof (cloudClaimed.mock.calls[0].arguments as unknown[])[6],'function');assert.deepEqual(scopedBinding.mock.calls[0].arguments.slice(1),[owner,agentId,'codex',workspace,binding.id])
- const body=await response.json();assert.equal(body.computer.botId,botId);assert.equal(body.pushBranch,undefined);assert.equal(body.policy.permissions.computer_use,'ask');assert.equal(prepared.mock.callCount(),0);assert.equal(completed.mock.callCount(),0)
+ const body=await response.json();assert.equal(body.computer.botId,botId);assert.equal(body.pushBranch,undefined);assert.equal(body.policy.permissions.computer_use,'allow');assert.equal(prepared.mock.callCount(),0);assert.equal(completed.mock.callCount(),0)
 })
 test('claim refuses legacy or endpoint-mismatched bindings before approval, token or lease creation',async()=>{
  for(const target of ['legacy-key','repo-url']){mismatch=target;selectIndex=0;assert.equal((await request()).status,409)}

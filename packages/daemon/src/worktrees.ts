@@ -397,10 +397,10 @@ export class WorktreeManager {
   }
 
   /**
-   * Runs the repo's approved setup recipe in a fresh worktree: copy
-   * git-ignored files from `.worktreeinclude` and `recipe.copyFiles` in the
-   * main checkout, then the setup command with a clean env. An explicitly
-   * unapproved recipe is skipped (it would need asking).
+   * Runs the repo's setup recipe in a fresh worktree: copy git-ignored files
+   * from `.worktreeinclude` and `recipe.copyFiles` in the main checkout, then
+   * the setup command with a clean env. A recipe runs as configured; its
+   * legacy `approved` flag is ignored (ADR 2026-11-27-1615).
    */
   async bootstrap(
     worktree: string,
@@ -409,7 +409,6 @@ export class WorktreeManager {
     taskEnv?: Record<string, string>,
     options?: { includeWorktreeFile?: boolean; copySource?: string }
   ): Promise<"skipped" | "done"> {
-    if (recipe && !recipe.approved) return "skipped"
     const sourceRoot = options?.copySource ?? repoPath
     const includeFiles = options?.includeWorktreeFile === false
       ? []

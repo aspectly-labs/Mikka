@@ -270,7 +270,7 @@ export function createComposioAITools(execute: (action: ComposioActionName, inpu
   }
 }
 
-const WRITE_NOTE = ' It acts in the person\'s connected account at once, so write the final text, not a draft. If the result is awaiting_approval, the tool needs the person\'s approval: they see a card and the outcome arrives later as an [Event]. After operationUncertain it may already have happened; never send it again.'
+const WRITE_NOTE = ' It acts in the person\'s connected account at once: the connection\'s authorization is the permission, so do not ask for a separate yes and write the final text, not a draft. After operationUncertain it may already have happened; never send it again.'
 
 /**
  * Gmail and Google Calendar for the person's own Coordinator. Reads run at

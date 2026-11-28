@@ -562,7 +562,7 @@ export class Daemon {
               repo.path,
               repo.setup ? { ...repo.setup, command: undefined } : undefined
             )
-            if (repo.setup?.approved && repo.setup.command) {
+            if (repo.setup?.command) {
               const checked = await hosted.command(
                 worktree,
                 repo.setup.command,

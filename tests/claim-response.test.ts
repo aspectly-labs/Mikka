@@ -5,7 +5,7 @@ import { gzipSync } from 'node:zlib'
 import { defaultRunPolicy } from '@mikka/protocol/agent-policy'
 import { CodedError } from '@mikka/protocol/coded-error'
 import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
-import { REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, RECOVERY_WORKTREE_HEADER, RUN_CREDENTIALS_HEADER, MODEL_CREDENTIAL_HEADER, CUSTOM_TASK_BRANCH_HEADER, type RunCheckpoint } from '@mikka/protocol/device'
+import { REPO_ORIGIN_HEADER, PROJECT_ENVIRONMENT_HEADER, INITIAL_REPOSITORY_HEADER, ENVIRONMENT_REPOSITORIES_HEADER, PORTABLE_TASK_WORKSPACE_HEADER, RECOVERY_WORKTREE_HEADER, RUN_CREDENTIALS_HEADER, MODEL_CREDENTIAL_HEADER, CUSTOM_TASK_BRANCH_HEADER, type RunCheckpoint } from '@mikka/protocol/device'
 import { SUBSCRIPTION_GATEWAY_HEADER } from '@mikka/protocol/subscription'
 import { normalizeRepository } from '@mikka/protocol/repository'
 import { SKILL_ARTIFACT_HEADER } from '@mikka/protocol/skill'
@@ -89,6 +89,7 @@ function fixture() {
     credentialFailure: undefined as Error | undefined,
     beforeCredential: undefined as (() => Promise<void>) | undefined,
     environmentCapability: undefined as string | undefined,
+    initialRepositoryCapability: false,
     environmentInjection: undefined as TaskSecretInjection | undefined,
     environmentSnapshot: undefined as string | undefined,
     environmentSnapshotError: undefined as Error | undefined,
@@ -119,6 +120,7 @@ async function claim(probe: ReturnType<typeof fixture>, preparation = ['skill-pr
     ...(probe.subscriptionGatewayCapability && { [SUBSCRIPTION_GATEWAY_HEADER]: '1' }),
     ...(probe.portableWorkspaceCapability && { [PORTABLE_TASK_WORKSPACE_HEADER]: '1' }),
     ...(probe.environmentCapability && { [PROJECT_ENVIRONMENT_HEADER]: probe.environmentCapability }),
+    ...(probe.initialRepositoryCapability && { [INITIAL_REPOSITORY_HEADER]: '1' }),
     ...(probe.secretCapability && { [TASK_SECRETS_HEADER]: probe.secretCapability }),
     ...(probe.nativeMcpServers && { [TASK_MCP_HEADER]: probe.taskMcpVersion }),
     ...(probe.taskMcpToolFilter && { [TASK_MCP_TOOL_FILTER_HEADER]: '1' }),
@@ -890,6 +892,36 @@ test('a capable cloud claim pins the full Claude model and issues Anthropic gate
     assert.equal(probe.nativeContextCalls.length, 1)
   } finally {
     keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index] })
+  }
+})
+
+test('a setup stored unapproved reaches the daemon approved, for released daemons that skip unapproved recipes', async () => {
+  const previousCloud = process.env.MIKKA_CLOUD_COMPUTER_TASKS
+  process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1'
+  overrideDeploymentSwitch('byos', true)
+  try {
+    const probe = fixture()
+    const { snapshot, definition } = selectEnvironment(probe, 'cloud')
+    const stored = { copyFiles: ['config/example.json'], command: 'pnpm install --frozen-lockfile', approved: false }
+    snapshot.environment!.setup = { ...stored }
+    const frozen = structuredClone(definition)
+    probe.environmentCapability = '1'
+    probe.initialRepositoryCapability = true
+    definition.subscription = { bindingId: 'environment-binding', modelId: 'claude-haiku-5-5', route: 'claude_code_cli' }
+    Object.assign(probe, { repositorySettings: { setup: { ...stored, command: 'npm ci' }, networkAllow: null },
+      caller: { userId: 'member', scopeDeviceId: 'device', scopeWorkspaceId: workspaceId },
+      cloud: { subscription: { id: definition.subscription.bindingId, workspaceId, modelId: definition.subscription.modelId, route: definition.subscription.route, consumerId: 'agent' } } })
+    Object.assign(probe.device, { kind: 'cloud', harnesses: [{ harness: 'claude_code', installed: true, toolApproval: true, subscriptionBroker: true }] })
+    const response = await claim(probe, ['skill-preflight', 'policy', 'model-admission', 'environment-secrets', 'claim', 'skill-claim', 'benchmark-claim', 'token', 'settings', 'environment-snapshot'])
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.deepEqual(body.repo.setup, { ...stored, command: 'npm ci', approved: true }, 'the repository recipe is sent approved')
+    assert.deepEqual(body.projectEnvironment.setup, { ...stored, approved: true }, 'the Environment recipe is sent approved')
+    assert.deepEqual(definition.projectExecution, frozen.projectExecution, 'claim never rewrites the stored recipe')
+  } finally {
+    overrideDeploymentSwitch('byos', undefined)
+    if (previousCloud === undefined) delete process.env.MIKKA_CLOUD_COMPUTER_TASKS
+    else process.env.MIKKA_CLOUD_COMPUTER_TASKS = previousCloud
   }
 })
 

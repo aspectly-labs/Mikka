@@ -480,6 +480,8 @@ dbTest('initial claim repository handoff removes a real cloud repos request with
           rowDelta:next.meter.resultRows-old.meter.resultRows,wireDelta:next.meter.sentBytes+next.meter.receivedBytes-old.meter.sentBytes-old.meter.receivedBytes,
           responseBodyDelta:nextResponseBytes-oldResponseBytes}))
       }
+      await pool.query('UPDATE repository_settings SET setup=$2 WHERE "userId"=$1', [owner, JSON.stringify({ approved: false, copyFiles: [], command: 'npm ci' })])
+      assert.deepEqual((await (await get()).json()).repos[0].setup, { approved: true, copyFiles: [], command: 'npm ci' }, 'a recipe stored unapproved is sent approved')
       await pool.query('UPDATE device_repos SET "repoPath"=$2,"remoteUrl"=NULL WHERE id=$1', [repo, '/workspace/repository'])
       const hosted = await (await get()).json()
       assert.deepEqual(hosted.repos, [{ repoId: repo, name: 'repository', path: '/workspace/repository', remoteUrl: null }], 'a hosted worker keeps its provisioned directory without a remote')

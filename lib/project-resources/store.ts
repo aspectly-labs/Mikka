@@ -554,7 +554,7 @@ export async function rollbackProjectSetup(reader: Reader, raw: z.input<typeof r
       where "workspaceId"=${input.workspaceId} and "environmentId"=${environment.id} and revision=${input.version}`)).rows[0]
     if (!historical) throw new ActionFailureError('projectEnvironmentUnavailable')
     const { setup: _previous, ...current } = environment.configuration
-    const configuration = environmentConfiguration.parse({ ...current, ...(historical.recipe ? { setup: { ...historical.recipe, approved: false } } : {}) })
+    const configuration = environmentConfiguration.parse({ ...current, ...(historical.recipe ? { setup: { ...historical.recipe, approved: true } } : {}) })
     const revision = environment.revision + 1
     await persistEnvironment(tx, reader, input.workspaceId, environment.id, environment.name, { configuration, repositories: environmentRepositoryRows(environment), revision, archivedAt: null })
     await audit(tx, reader, input.workspaceId, 'environment.setup_restored', environment.id, { ...(input.projectId ? { projectId: input.projectId } : {}), fromRevision: input.version, revision })
