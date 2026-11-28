@@ -3,7 +3,8 @@ WITH
     spans AS (
         SELECT timestamp, service_name,
             toFloatOrNull(attributes['mikka.trace.sample_rate']) AS sample_rate,
-            if(sample_rate > 0 AND sample_rate <= 1, 1 / sample_rate, NULL) AS sample_weight,
+            1 / nullIf(sample_rate, 0) AS inverse_rate,
+            if(sample_rate > 0 AND sample_rate <= 1 AND isFinite(inverse_rate), inverse_rate, NULL) AS sample_weight,
             coalesce(nullIf(attributes['mikka.route'], ''), 'unknown') AS route,
             if(match(attributes['mikka.request_id'], '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'), attributes['mikka.request_id'], '') AS request_id,
             if(match(attributes['mikka.user_id_hash'], '^[0-9a-f]{16}$'), attributes['mikka.user_id_hash'], '') AS user_hash,
