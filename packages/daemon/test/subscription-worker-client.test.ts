@@ -323,3 +323,65 @@ it('run-associated streams retain the original prepare path and never use the ne
   expect(preRead).not.toHaveBeenCalled()
   expect(readFileSync(journal, 'utf8').trim().split('\n')).toEqual(['prepare', 'executeStream'])
 })
+
+function metadataFailureClient(frame: Record<string, unknown>) {
+  const directory = tempDir('mikka-worker-metadata-')
+  const binary = join(directory, 'worker.mjs')
+  writeFileSync(binary, `#!/usr/bin/env node
+import {createInterface} from 'node:readline'
+let configured = false; const lines = createInterface({input:process.stdin})
+lines.on('line',line=>{const value=JSON.parse(line); if(!configured){configured=true;return}
+console.log(JSON.stringify({...${JSON.stringify(frame)},id:value.id})); lines.close()})
+`)
+  chmodSync(binary, 0o700)
+  return new SubscriptionWorkerClient({ binary }, { scope: { ownerId: 'fixture-private-owner', workspaceId: 'fixture-private-workspace', connectionId: '20000000-0000-4000-8000-000000000001', provider: 'codex' }, databaseUrl: 'synthetic', infisicalOrigin: 'https://fixture.invalid', project: 'fixture', environment: 'test', path: '/grants', workloadToken: 'fixture-private-credential' })
+}
+
+it('records bounded metadata diagnostics while retaining the original failure even if logging throws', async () => {
+  const revision = '1'.repeat(40)
+  const diagnostics = [
+    { phase: 'record_scan', sqlState: '55000', build: { revision, dirty: 'clean' } },
+    { phase: 'record_scan', sqlState: '42P01', build: { revision, dirty: 'dirty' } },
+    { phase: 'disconnect', sqlState: '25006', build: { revision: 'unknown', dirty: 'unknown' } },
+    { phase: 'disconnect', sqlState: 'unknown', build: { revision: 'unknown', dirty: 'unknown' } },
+  ]
+  for (const throws of [false, true]) {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => { if (throws) throw new Error('fixture-private-logger-failure') })
+    try {
+      for (const diagnostic of diagnostics) {
+        const client = metadataFailureClient({ error: 'metadata_unavailable', metadataFailure: diagnostic })
+        await expect(client.call('status')).rejects.toMatchObject({ name: 'WorkerRefusal', code: 'metadata_unavailable', message: 'metadata_unavailable' })
+      }
+      expect(warn.mock.calls.map(call => JSON.parse(String(call[0])))).toEqual(diagnostics.map(diagnostic => ({ level: 'warn', msg: 'subscription_worker_metadata_failure', phase: diagnostic.phase, sqlState: diagnostic.sqlState, buildRevision: diagnostic.build.revision, buildDirty: diagnostic.build.dirty })))
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('fixture-private')
+    } finally { warn.mockRestore() }
+  }
+})
+
+it('ignores missing, unknown, and malformed metadata diagnostics without accepting the failed request', async () => {
+  const valid = { phase: 'record_scan', sqlState: '55000', build: { revision: '1'.repeat(40), dirty: 'clean' } }
+  const invalid = [undefined, null, [], {}, 'fixture-private',
+    { ...valid, phase: 'unknown' }, { ...valid, phase: 'fixture-private' },
+    { ...valid, sqlState: undefined }, { ...valid, sqlState: null }, { ...valid, sqlState: '55000 fixture-private' },
+    { ...valid, sqlState: '00000' }, { ...valid, sqlState: 55000 }, { ...valid, sqlState: '42p01' },
+    { ...valid, owner: 'fixture-private' }, { ...valid, message: 'fixture-private' },
+    { ...valid, build: undefined }, { ...valid, build: null }, { ...valid, build: [] },
+    { ...valid, build: { revision: 'fixture-private', dirty: 'clean' } },
+    { ...valid, build: { revision: valid.build.revision, dirty: false } },
+    { ...valid, build: { revision: 'unknown', dirty: 'clean' } },
+    { ...valid, build: { revision: valid.build.revision, dirty: 'unknown' } },
+    { ...valid, build: { ...valid.build, source: 'fixture-private' } },
+  ]
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  try {
+    for (const metadataFailure of invalid) {
+      const client = metadataFailureClient({ error: 'metadata_unavailable', metadataFailure })
+      await expect(client.call('status')).rejects.toMatchObject({ name: 'WorkerRefusal', code: 'metadata_unavailable' })
+    }
+    const unrelated = metadataFailureClient({ error: 'account_unavailable', metadataFailure: valid })
+    await expect(unrelated.call('status')).rejects.toMatchObject({ code: 'account_unavailable' })
+    const success = metadataFailureClient({ result: { state: 'pending' }, metadataFailure: valid })
+    await expect(success.call('status')).resolves.toEqual({ state: 'pending' })
+    expect(warn).not.toHaveBeenCalled()
+  } finally { warn.mockRestore() }
+})

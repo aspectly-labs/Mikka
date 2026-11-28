@@ -54,6 +54,22 @@ function providerDiagnostic(value: unknown, provider: string): { provider: strin
   if (e.message !== undefined && (typeof e.message !== 'string' || !e.message.length || e.message.length > 512)) return
   return { provider, ...(typeof v.status === 'number' ? { status: v.status } : {}), error: { type: e.type, ...(typeof e.message === 'string' ? { message: e.message } : {}) } }
 }
+function recordMetadataFailure(value: unknown): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return
+  const v = value as Record<string, unknown>
+  if (Object.keys(v).length !== 3 || Object.keys(v).some(key => !['phase', 'sqlState', 'build'].includes(key))) return
+  if (v.phase !== 'record_scan' && v.phase !== 'disconnect') return
+  if (typeof v.sqlState !== 'string' || (v.sqlState !== 'unknown' && (!/^[A-Z0-9]{5}$/.test(v.sqlState) || v.sqlState === '00000'))) return
+  if (!v.build || typeof v.build !== 'object' || Array.isArray(v.build)) return
+  const build = v.build as Record<string, unknown>
+  if (Object.keys(build).length !== 2 || Object.keys(build).some(key => !['revision', 'dirty'].includes(key))) return
+  const unknown = build.revision === 'unknown' && build.dirty === 'unknown'
+  const known = typeof build.revision === 'string' && /^[a-f0-9]{40}$/.test(build.revision) && (build.dirty === 'clean' || build.dirty === 'dirty')
+  if (!unknown && !known) return
+  try {
+    console.warn(JSON.stringify({ level: 'warn', msg: 'subscription_worker_metadata_failure', phase: v.phase, sqlState: v.sqlState, buildRevision: build.revision, buildDirty: build.dirty }))
+  } catch { /* diagnostics cannot change the original metadata refusal */ }
+}
 const STORE_FAILURE = /^(secret_store_failure (GET|POST|DELETE) (no_token|network|http_\d{3})|subscription_upstream_failure (claude|codex) (transport|response|event|incomplete|convert) \d{1,3} [a-z_]{1,40})$/
 const REQUEST_BYTES = '(0|[1-9]\\d{0,9})'
 const REQUEST_FAILURE = new RegExp('^subscription_request_failure (claude|codex|unknown) (' +
@@ -135,6 +151,7 @@ export class SubscriptionWorkerClient {
           }
           else if (typeof frame.chunk === "string" && chunk) { timing?.chunk(); chunk(frame.chunk) }
           else if (frame.error) {
+            if (frame.error === 'metadata_unavailable') recordMetadataFailure(frame.metadataFailure)
             timing?.terminal(frame.timing, Object.hasOwn(frame, 'timing'))
             timing?.terminalTransport(frame.transportTiming, Object.hasOwn(frame, 'transportTiming'))
             timing?.terminalServiceTier(frame.serviceTier, Object.hasOwn(frame, 'serviceTier'))
