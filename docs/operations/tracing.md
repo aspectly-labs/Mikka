@@ -89,6 +89,15 @@ stacks are excluded. The job still returns its original delivery counts and
 leaves the receipt pending for the existing idempotent retry; diagnostic status
 does not acknowledge, delete or modify the receipt.
 
+Native Eve outcome receipt failures enrich their current request/job span and
+its correlated failure log with `mikka.eve.receipt_phase` (`claim` or `finish`).
+The existing safe error fields retain five-character SQLSTATE codes in
+`mikka.error.code` and only the receipt table's known migration constraints in
+`mikka.error.detail`; arbitrary constraint names are omitted. No query parameters,
+row contents or raw messages are exported. The original exception still reaches
+the caller: HTTP failures stay failures, and an uncertain dispatch is not sent
+again because diagnostics were added.
+
 ## Runtime initialization
 
 `apps/api/scripts/finalize-build.mjs` compiles
