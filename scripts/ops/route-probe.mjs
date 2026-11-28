@@ -84,6 +84,7 @@ export async function runRouteProbe({ baseUrl, manifest, fetchImpl = fetch, surf
         result.status = response.status
         const allowed = (response.headers.get('allow') ?? '').split(',').map(value => value.trim()).filter(Boolean).sort()
         if (response.status !== probe.expectedStatus) result.error = 'route_probe_status'
+        else if (probe.expectedStatus === 404 && response.headers.has('allow')) result.error = 'route_probe_allow'
         else if (allowed.length !== probe.allowed.length || allowed.some((method, i) => method !== probe.allowed[i])) result.error = 'route_probe_allow'
         else result.ok = true
       } catch { result.error = 'route_probe_request_failed' }

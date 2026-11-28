@@ -65,6 +65,7 @@ test('a staged Cloudflare edge must hide CPA chat while direct API dispatch rema
   assert.equal((await probe(baseUrl, hidden)).status, 'pass')
   assert.equal((await probe(baseUrl, registered)).failed, 1)
   assert.equal((await probe(baseUrl, () => new Response(null, { status: 404, headers: { allow: 'POST' } }))).failed, 1)
+  assert.equal((await probe(baseUrl, () => new Response(null, { status: 404, headers: { allow: '' } }))).failed, 1)
   assert.equal((await probe('http://127.0.0.1', registered)).status, 'pass')
   assert.equal((await probe(baseUrl, registered, 'api')).status, 'pass')
   assert.throws(() => routeProbePlan(manifest([route(subscriptionChatPath, ['POST', 'OPTIONS'])]), 'cloudflare'), /route_probe_private_method_invalid/)
