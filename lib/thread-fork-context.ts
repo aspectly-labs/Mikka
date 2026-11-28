@@ -46,32 +46,69 @@ function tail(text: string, max: number) {
   return text.length <= max ? text : `…${text.slice(text.length - max + 1)}`
 }
 
+const RUN_SCOPED_UUID_RE = /:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/i
+
+function resolveEffectivePoint(chain: RunChain, point: ForkPoint): ForkPoint {
+  if (!point.itemId) return point
+  const embedded = RUN_SCOPED_UUID_RE.exec(point.itemId)?.[1]?.toLowerCase()
+  if (embedded && chain.attempts.some(attempt => attempt.runId.toLowerCase() === embedded)) {
+    const matchedAttempt = chain.attempts.find(attempt => attempt.runId.toLowerCase() === embedded)!
+    return { runId: matchedAttempt.runId, itemId: point.itemId.replace(`:${matchedAttempt.runId}:`, ':') }
+  }
+  return { ...point, itemId: point.itemId.replace(`:${point.runId}:`, ':') }
+}
+
 /**
  * The brief of the fork's first run, or null when the point is not a message of the owner's chain (an item id that
  * does not exist in its run included). The person's own instruction for the fork comes last.
  */
 export async function forkNote(q: RunChainQueryable, ownerId: string, chain: RunChain, point: ForkPoint, mode: ForkMode, instruction: string): Promise<string | null> {
-  const runs = await runsUpTo(q, ownerId, chain, point)
+  const effective = resolveEffectivePoint(chain, point)
+  let runs = await runsUpTo(q, ownerId, chain, effective)
   if (!runs?.length) return null
-  // The thread view scopes ids to their run (lib/conversation/ids.ts); a run's own items here use the ids the run gave.
-  if (point.itemId) point = { ...point, itemId: point.itemId.replace(`:${point.runId}:`, ':') }
   const asked = runs[0].asked.trim().slice(0, ASK_MAX)
+  const itemsByRun = new Map<string, ThreadItem[]>()
+  const loadRunItems = async (runId: string) => {
+    const cached = itemsByRun.get(runId)
+    if (cached) return cached
+    const loaded = await runItems(q, ownerId, runId)
+    itemsByRun.set(runId, loaded)
+    return loaded
+  }
+  const matchesItem = (item: ThreadItem, targetId: string) => item.id === targetId
+  let cutoffRunId = effective.runId
+  if (effective.itemId) {
+    const targetItems = await loadRunItems(effective.runId)
+    let foundIndex = targetItems.findIndex(item => matchesItem(item, effective.itemId!))
+    if (foundIndex < 0) {
+      // A caller anchored at `liveRunId` may pass an unscoped user-message id from an earlier attempt in the same chain.
+      for (let i = runs.length - 2; i >= 0; i--) {
+        const candidateRun = runs[i]
+        const candidateItems = await loadRunItems(candidateRun.id)
+        const normalized = effective.itemId.replace(`:${candidateRun.id}:`, ':')
+        const idx = candidateItems.findIndex(item => matchesItem(item, normalized))
+        if (idx >= 0) {
+          cutoffRunId = candidateRun.id
+          runs = runs.slice(0, i + 1)
+          foundIndex = idx
+          effective.itemId = normalized
+          break
+        }
+      }
+      if (foundIndex < 0) return null
+    }
+  }
   let body: string
   if (mode === 'summary') {
-    if (point.itemId) {
-      // The summary describes whole runs; the point still has to be a message of its run.
-      const items = await runItems(q, ownerId, point.runId)
-      if (!items.some(item => item.id === point.itemId)) return null
-    }
     body = runs.map((run, index) => [`Run ${index + 1}: ${run.status}${run.stopReason ? ` (${run.stopReason})` : ''}`,
       run.summary ? `Summary: ${run.summary}` : null, run.error ? `Error: ${run.error.split('\n')[0]}` : null,
       run.lastReply ? `Last reply: ${run.lastReply}` : null].filter(Boolean).join('\n')).join('\n\n')
   } else {
     const lines: string[] = []
     for (const run of runs) {
-      let items = await runItems(q, ownerId, run.id)
-      if (run.id === point.runId && point.itemId) {
-        const at = items.findIndex(item => item.id === point.itemId)
+      let items = await loadRunItems(run.id)
+      if (run.id === cutoffRunId && effective.itemId) {
+        const at = items.findIndex(item => matchesItem(item, effective.itemId!))
         if (at < 0) return null
         items = items.slice(0, at + 1)
       }
@@ -92,9 +129,21 @@ export async function forkNote(q: RunChainQueryable, ownerId: string, chain: Run
 async function runItems(q: RunChainQueryable, ownerId: string, runId: string): Promise<ThreadItem[]> {
   const [{ rows: chunks }, { rows: messages }] = await Promise.all([
     q.query('SELECT c.chunk,c."createdAt" AS at FROM run_chunks c JOIN agent_runs r ON r.id=c."runId" AND r."userId"=$2 WHERE c."runId"=$1 ORDER BY c.seq', [runId, ownerId]),
-    q.query(`SELECT m.id::text,m.text,m."createdAt" AS at FROM run_messages m JOIN agent_runs r ON r.id=m."runId" AND r."userId"=$2
-      WHERE m."runId"=$1 AND length(trim(m.text)) > 0 ORDER BY m."createdAt",m.id`, [runId, ownerId]),
+    q.query(`SELECT m.id::text, m.text, m."createdAt" AS at,
+        (e.payload#>>'{threadSubmission,requestId}') AS "submissionId"
+      FROM run_messages m
+      JOIN agent_runs r ON r.id=m."runId" AND r."userId"=$2
+      LEFT JOIN coordinator_events e
+        ON e.id=m.id AND e."userId"=m."userId" AND e.kind='user_message'
+      WHERE m."runId"=$1 AND length(trim(m.text)) > 0 ORDER BY m."createdAt", m.id`, [runId, ownerId]),
   ])
   return threadItems(chunks as { chunk: Record<string, unknown>; at: Date }[],
-    messages.map(row => ({ id: String(row.id), text: String(row.text), author: '', mine: true, at: row.at as Date })), runId)
+    messages.map(row => ({
+      id: String(row.id),
+      ...(row.submissionId ? { submissionId: String(row.submissionId) } : {}),
+      text: String(row.text),
+      author: '',
+      mine: true,
+      at: row.at as Date,
+    })), runId)
 }

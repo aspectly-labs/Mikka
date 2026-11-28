@@ -452,3 +452,159 @@ test('queued /compact preserves replay across jsonb key order, blocks Send Now w
   assert.equal(literalControl?.kind, 'client_composed')
 })
 
+test('enrichSideNoteEvents resolves pending, answered (lastReply & chunk fallback), and failed side runs from PG17', async () => {
+  const { enrichSideNoteEvents } = await import('@/lib/thread-commands')
+  type SystemEvent = import('@mikka/protocol/slash-commands').SystemEventData
+  const { workspace, agentId, issueId, rootId: parentId } = await fixture()
+  const pendingSideId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'running' })
+  const answeredSideId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'succeeded' })
+  const chunkSideId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'succeeded' })
+  const failedSideId = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'failed' })
+  kept.push(pendingSideId, answeredSideId, chunkSideId, failedSideId)
+  await pool.query(`UPDATE agent_runs SET "parentRunId"=$1, "threadRelation"='side' WHERE id=ANY($2::uuid[])`, [parentId, [pendingSideId, answeredSideId, chunkSideId, failedSideId]])
+  await pool.query(`UPDATE agent_runs SET "lastReply"='Redis listens on 6379.' WHERE id=$1`, [answeredSideId])
+  await pool.query(`UPDATE agent_runs SET error='sandbox timed out' WHERE id=$1`, [failedSideId])
+  await pool.query(
+    `INSERT INTO run_chunks (id, "runId", seq, chunk) VALUES ($1, $2, 1, $3::jsonb), ($4, $2, 2, $5::jsonb)`,
+    [randomUUID(), chunkSideId, JSON.stringify({ type: 'text-delta', id: 't1', delta: 'Chunk ' }), randomUUID(), JSON.stringify({ type: 'text-delta', id: 't1', delta: 'answer.' })],
+  )
+
+  const rows: { systemEvent: SystemEvent }[] = [
+    { systemEvent: { kind: 'side_note', question: 'Q1', sideRunId: pendingSideId, status: 'pending' } },
+    { systemEvent: { kind: 'side_note', question: 'Q2', sideRunId: answeredSideId, status: 'pending' } },
+    { systemEvent: { kind: 'side_note', question: 'Q3', sideRunId: chunkSideId, status: 'pending' } },
+    { systemEvent: { kind: 'side_note', question: 'Q4', sideRunId: failedSideId, status: 'pending' } },
+  ]
+  const enriched = await enrichSideNoteEvents(pool, owner.id, rows)
+  const e0 = enriched[0]?.systemEvent
+  const e1 = enriched[1]?.systemEvent
+  const e2 = enriched[2]?.systemEvent
+  const e3 = enriched[3]?.systemEvent
+  assert.equal(e0?.kind === 'side_note' ? e0.status : null, 'pending')
+  assert.equal(e1?.kind === 'side_note' ? e1.status : null, 'answered')
+  assert.equal(e1?.kind === 'side_note' ? e1.answer : null, 'Redis listens on 6379.')
+  assert.equal(e2?.kind === 'side_note' ? e2.status : null, 'answered')
+  assert.equal(e2?.kind === 'side_note' ? e2.answer : null, 'Chunk answer.')
+  assert.equal(e3?.kind === 'side_note' ? e3.status : null, 'failed')
+  assert.equal(e3?.kind === 'side_note' ? e3.error : null, 'sandbox timed out')
+})
+
+test('forkNote resolves web-submitted user messages by submissionId and cuts off multi-attempt chains accurately', async () => {
+  const { forkNote } = await import('@/lib/thread-fork-context')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const { workspace, agentId, issueId, rootId: run1 } = await fixture()
+  const msg1Id = randomUUID()
+  const req1Id = randomUUID()
+  await pool.query(
+    `INSERT INTO coordinator_events (id, "userId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt")
+     VALUES ($1, $2, $3, 'user_message', $4, $5::jsonb, 'background', now())`,
+    [msg1Id, owner.id, issueId, `thread-sub-test:${msg1Id}`, JSON.stringify({ threadSubmission: { requestId: req1Id } })],
+  )
+  await pool.query(
+    `INSERT INTO run_messages (id, "runId", "userId", text, origin, "mailboxWakeDepth", "deliveredAt")
+     VALUES ($1, $2, $3, 'User follow-up in attempt 1', 'owner', 0, now())`,
+    [msg1Id, run1, owner.id],
+  )
+  await pool.query(
+    `INSERT INTO run_chunks (id, "runId", seq, chunk) VALUES ($1, $2, 1, $3::jsonb), ($4, $2, 2, $5::jsonb)`,
+    [randomUUID(), run1, JSON.stringify({ type: 'text-start', id: 'r1-a1' }), randomUUID(), JSON.stringify({ type: 'text-delta', id: 'r1-a1', delta: 'Attempt 1 reply' })],
+  )
+  const run2 = await seedRun(pool, { userId: owner.id, agentId, workspaceId: workspace.id, issueId, status: 'succeeded' })
+  kept.push(run2)
+  await pool.query(`UPDATE agent_runs SET "continuesRunId"=$1 WHERE id=$2`, [run1, run2])
+  await pool.query(
+    `INSERT INTO run_chunks (id, "runId", seq, chunk) VALUES ($1, $2, 1, $3::jsonb), ($4, $2, 2, $5::jsonb)`,
+    [randomUUID(), run2, JSON.stringify({ type: 'text-start', id: 'r2-a1' }), randomUUID(), JSON.stringify({ type: 'text-delta', id: 'r2-a1', delta: 'Attempt 2 secret later reply' })],
+  )
+
+  const chain = await readRunChain(pool, owner.id, run2)
+  assert.ok(chain)
+
+  // Branch from web-submitted user message (identified by submissionId UUID, even when caller anchors on run2).
+  const fromUserNote = await forkNote(pool, owner.id, chain, { runId: run2, itemId: req1Id }, 'full', 'Take another route')
+  assert.ok(fromUserNote, 'forkNote must resolve user message by submissionId across multi-attempt chain')
+  assert.match(fromUserNote, /User follow-up in attempt 1/)
+  assert.doesNotMatch(fromUserNote, /Attempt 2 secret later reply/)
+
+  // Branch from attempt 1 agent message (scoped with run1 UUID even when caller passes run2).
+  const fromAgentNote = await forkNote(pool, owner.id, chain, { runId: run2, itemId: `text:${run1}:r1-a1` }, 'full', 'Try alternative fix')
+  assert.ok(fromAgentNote, 'forkNote must resolve run-scoped earlier attempt agent message')
+  assert.match(fromAgentNote, /Attempt 1 reply/)
+  assert.doesNotMatch(fromAgentNote, /Attempt 2 secret later reply/)
+})
+
+test('deviceWork correlates run_messages to owner coordinator_events without dropping control or bleeding across tenants', async () => {
+  const { deviceWork } = await import('@/lib/device-link')
+  const { agentId, issueId, rootId } = await fixture()
+  const deviceId = randomUUID(), repoId = randomUUID()
+  const remote = 'https://github.com/acme/device-work-corr.git'
+  await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,enabled,harnesses) VALUES ($1,$2,'local-corr','local',true,'[{"harness":"claude_code","installed":true}]'::jsonb)`, [deviceId, owner.id])
+  await pool.query(`UPDATE agents SET "deviceId"=$2, harness='claude_code' WHERE id=$1`, [agentId, deviceId])
+  await pool.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath","remoteUrl") VALUES ($1,$2,$3,$4,$5)`, [repoId, deviceId, owner.id, remoteKey(remote), remote])
+  await pool.query(`UPDATE agent_runs SET status='running',"deviceId"=$2,"deviceRepoId"=$3,"agentDefinition"=$4::jsonb WHERE id=$1`, [
+    rootId, deviceId, repoId, JSON.stringify({ harness: 'claude_code', model: 'claude-sonnet-4-6' }),
+  ])
+
+  // Seed a distracting earlier coordinator_events row without control, AND a cross-tenant steer+compact row.
+  const distractorId = randomUUID()
+  const foreignEventId = randomUUID()
+  await pool.query(
+    `INSERT INTO coordinator_events (id, "userId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt", "createdAt")
+     VALUES
+       ($1, $2, $3, 'user_message', $4, '{"text":"distractor"}'::jsonb, 'background', now(), now() - interval '10 seconds'),
+       ($5, $6, $3, 'user_message', $7, '{"threadSubmission":{"delivery":"steer","control":{"kind":"compact","instructions":"foreign"}}}'::jsonb, 'background', now(), now() - interval '9 seconds')`,
+    [distractorId, owner.id, issueId, `corr-dist:${distractorId}`, foreignEventId, outsider.id, `corr-foreign:${foreignEventId}`],
+  )
+
+  const compactMsgId = randomUUID()
+  const slashMsgId = randomUUID()
+  const composedMsgId = randomUUID()
+  const plainMsgId = randomUUID()
+  const crossTenantMsgId = randomUUID()
+
+  await pool.query(
+    `INSERT INTO coordinator_events (id, "userId", "issueId", kind, "dedupeKey", payload, tier, "deliveredAt")
+     VALUES
+       ($1, $2, $3, 'user_message', $4, $5::jsonb, 'background', now()),
+       ($6, $2, $3, 'user_message', $7, $8::jsonb, 'background', now()),
+       ($9, $2, $3, 'user_message', $10, $11::jsonb, 'background', now()),
+       ($12, $13, $3, 'user_message', $14, $15::jsonb, 'background', now())`,
+    [
+      compactMsgId, owner.id, issueId, `corr-c:${compactMsgId}`, JSON.stringify({ threadSubmission: { control: { kind: 'compact', instructions: 'keep schemas' } } }),
+      slashMsgId, `corr-s:${slashMsgId}`, JSON.stringify({ threadSubmission: { control: { kind: 'slash', name: 'review', args: 'src/' } } }),
+      composedMsgId, `corr-t:${composedMsgId}`, JSON.stringify({ threadSubmission: { control: { kind: 'client_composed' } } }),
+      // Deliberately insert a coordinator_events row with crossTenantMsgId under `outsider.id` to verify userId scoping!
+      crossTenantMsgId, outsider.id, `corr-x:${crossTenantMsgId}`, JSON.stringify({ threadSubmission: { delivery: 'steer', control: { kind: 'compact', instructions: 'hijack' } } }),
+    ],
+  )
+  await pool.query(
+    `INSERT INTO run_messages (id, "runId", "userId", text, origin, "mailboxWakeDepth", "createdAt")
+     VALUES
+       ($1, $2, $3, '/compact keep schemas', 'owner', 0, now() - interval '4 seconds'),
+       ($4, $2, $3, '/review src/', 'owner', 0, now() - interval '3 seconds'),
+       ($5, $2, $3, '/login', 'owner', 0, now() - interval '2 seconds'),
+       ($6, $2, $3, 'plain follow up', 'owner', 0, now() - interval '1 second'),
+       ($7, $2, $3, 'owner message sharing id with foreign event', 'owner', 0, now())`,
+    [compactMsgId, rootId, owner.id, slashMsgId, composedMsgId, plainMsgId, crossTenantMsgId],
+  )
+
+  const work = await deviceWork(deviceId, [], { activeTurnSteer: true, runControlCommands: true })
+  const byId = new Map(work.commands.filter((c): c is Extract<typeof c, { messageId: string }> => 'messageId' in c).map(c => [c.messageId, c]))
+
+  assert.deepEqual(byId.get(compactMsgId), { kind: 'compact', runId: rootId, messageId: compactMsgId, instructions: 'keep schemas' })
+  assert.deepEqual(byId.get(slashMsgId), { kind: 'input', runId: rootId, messageId: slashMsgId, text: '/review src/', slashCommand: { name: 'review', args: 'src/' } })
+  assert.deepEqual(byId.get(composedMsgId), { kind: 'input', runId: rootId, messageId: composedMsgId, text: '/login', clientComposed: true })
+  assert.equal(byId.get(plainMsgId)?.kind, 'input', 'plain message must not inherit steer or compact control from unrelated rows')
+  assert.equal(byId.get(crossTenantMsgId)?.kind, 'input', 'owner message must never inherit steer or compact control from another user coordinator_events row')
+  assert.equal('clientComposed' in (byId.get(crossTenantMsgId) ?? {}), false)
+
+  // Also verify listIssueRunChains excludes spawned side threads so task composer never gets hijacked.
+  const side = await spawnThread(owner, rootId, { relation: 'side', question: 'Which port?' })
+  assert.ok(side)
+  kept.push(side.id)
+  const { listIssueRunChains } = await import('@/lib/run-chain')
+  const chains = await listIssueRunChains(pool, issueId, [owner.id], 20)
+  assert.deepEqual(chains.map(c => c.rootRunId), [rootId], 'listIssueRunChains must exclude side threads from task conversation roots')
+})
+
+

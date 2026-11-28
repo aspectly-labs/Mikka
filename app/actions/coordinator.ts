@@ -327,28 +327,42 @@ export async function issueCreationAvailable(): Promise<boolean> {
   return issueMutationsEnabled()
 }
 
+async function runEveSessionControl(botId: string | null, control: 'compact' | 'clear'): Promise<boolean> {
+  const user = await getUser()
+  const bot = await ownBot(user, botId)
+  if (!await coordinatorEnabled(user.id, bot.id)) throw new ActionFailureError('coordinatorUnavailable')
+  const { assertEveScope } = await import('@/lib/eve/scope')
+  const { eveInternalOrigin } = await import('@/lib/eve/server-client')
+  const { eveRetryHeaders } = await import('@/lib/eve/retry')
+  const { Client } = await import('eve/client')
+  const { emptySessionView, foldEvents, idle, session: readSession } = await import('eve/events')
+  const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
+  const base = new URL(eveInternalOrigin())
+  base.searchParams.set('botId', scope.botId)
+  const client = new Client({ baseUrl: base.toString(), headers: eveRetryHeaders(await headers()), redirect: 'manual' })
+  try {
+    const { session } = await client.sessions.create()
+    const snapshot = await session.snapshot({ signal: AbortSignal.timeout(10_000) })
+    const view = foldEvents(emptySessionView(), snapshot.events)
+    // Eve buffers compact/clear deliveries on unstarted (`new`) prewarmed sessions until the first turn runs,
+    // so awaiting delivery.result() there would hang until timeout. An empty session is already compact/clear.
+    if (readSession(view).status === 'new') return true
+    if (!idle(view)) throw new ActionFailureError('threadWorking')
+    const delivery = control === 'compact' ? await session.compact() : await session.clear()
+    const settled = await delivery.result({ signal: AbortSignal.timeout(30_000) })
+    return settled.status !== 'failed'
+  } catch (error) {
+    if (error instanceof ActionFailureError) throw error
+    throw new ActionFailureError('coordinatorUnavailable', undefined, undefined, { cause: error })
+  }
+}
+
 /**
  * Real Eve `/compact` (#3333 Bug 2): calls the Eve session's `…/compact` HTTP route
  * (`ClientSession.compact()`) directly rather than sending a wrapped text message.
  */
 export async function compactBotChat(botId: string | null = null): Promise<ActionResult<{ compacted: boolean }>> {
-  return runAction(async () => {
-    const user = await getUser()
-    const bot = await ownBot(user, botId)
-    if (!await coordinatorEnabled(user.id, bot.id)) throw new ActionFailureError('coordinatorUnavailable')
-    const { assertEveScope } = await import('@/lib/eve/scope')
-    const { eveInternalOrigin } = await import('@/lib/eve/server-client')
-    const { eveRetryHeaders } = await import('@/lib/eve/retry')
-    const { Client } = await import('eve/client')
-    const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
-    const base = new URL(eveInternalOrigin())
-    base.searchParams.set('botId', scope.botId)
-    const client = new Client({ baseUrl: base.toString(), headers: eveRetryHeaders(await headers()), redirect: 'manual' })
-    const { session } = await client.sessions.create()
-    const delivery = await session.compact()
-    const settled = await delivery.result()
-    return { compacted: settled.status !== 'failed' }
-  })
+  return runAction(async () => ({ compacted: await runEveSessionControl(botId, 'compact') }))
 }
 
 /**
@@ -356,23 +370,7 @@ export async function compactBotChat(botId: string | null = null): Promise<Actio
  * `ClientSession.clear()`.
  */
 export async function clearBotChat(botId: string | null = null): Promise<ActionResult<{ cleared: boolean }>> {
-  return runAction(async () => {
-    const user = await getUser()
-    const bot = await ownBot(user, botId)
-    if (!await coordinatorEnabled(user.id, bot.id)) throw new ActionFailureError('coordinatorUnavailable')
-    const { assertEveScope } = await import('@/lib/eve/scope')
-    const { eveInternalOrigin } = await import('@/lib/eve/server-client')
-    const { eveRetryHeaders } = await import('@/lib/eve/retry')
-    const { Client } = await import('eve/client')
-    const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
-    const base = new URL(eveInternalOrigin())
-    base.searchParams.set('botId', scope.botId)
-    const client = new Client({ baseUrl: base.toString(), headers: eveRetryHeaders(await headers()), redirect: 'manual' })
-    const { session } = await client.sessions.create()
-    const delivery = await session.clear()
-    const settled = await delivery.result()
-    return { cleared: settled.status !== 'failed' }
-  })
+  return runAction(async () => ({ cleared: await runEveSessionControl(botId, 'clear') }))
 }
 
 /** Unified `/` commands for an Eve Bot / Coordinator chat (#3333). */

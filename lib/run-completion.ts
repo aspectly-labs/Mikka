@@ -14,7 +14,7 @@ import { ActionFailureError } from '@/lib/action-error'
 import { recordCoordinatorEvent } from '@/lib/coordinator-event-store'
 import { runFinishedEvent } from '@/lib/coordinator-events'
 import { issueListChanged, runListChanged } from './live/lists'
-import { runChanged } from './live/panels'
+import { runChanged, threadChanged } from './live/panels'
 import { issueRelationsChanged } from './live/issue-detail'
 
 const LIVE_STATUSES = ['queued', 'preparing', 'running', 'paused', 'waiting_input', 'finishing'] as const
@@ -82,12 +82,15 @@ async function completeRunTransaction(userId: string, hint: { id: string; issueI
       scheduleThreadTitle(tx, ended.id, run.run.userId, 'first_run_ended')
       await runListChanged(tx, ended.id)
       await runChanged(tx, ended.id)
+      if (run.run.threadRelation === 'side' && run.run.parentRunId) {
+        await threadChanged(tx, run.run.parentRunId)
+      }
       await tx.update(runTokens).set({ revokedAt: new Date() }).where(and(eq(runTokens.runId, ended.id), isNull(runTokens.revokedAt)))
       await recordCoordinatorEvent(tx, runFinishedEvent({ ...run.run, status, stopReason, report }))
       // 评审中 only as a step forward, and never over a status the person set after this run was asked for
-      // (lib/task-status-advance.ts). The move is a versioned system change.
+      // (lib/task-status-advance.ts). Side threads never advance the parent task's status.
       const since = run.run.createdAt
-      const moves = issue && reachesReview(stopReason, report) && advancesTo(issue.status, 'review')
+      const moves = run.run.threadRelation !== 'side' && issue && reachesReview(stopReason, report) && advancesTo(issue.status, 'review')
         && !(await tx.execute<{ changed: boolean }>(sql`SELECT ${personChangedStatusSince(issue.id, since)} AS changed`)).rows[0]?.changed
       const [review] = moves ? await tx.update(issues).set({ status: 'review', revision: issue.revision + 1, updatedAt: new Date() }).where(eq(issues.id, issue.id)).returning() : []
       if (review) await tx.insert(issueVersions).values({ id: crypto.randomUUID(), issueId: review.id, userId: review.userId, revision: review.revision, title: review.title, content: review.content, status: review.status, priority: review.priority, ...systemActor('run-review') })

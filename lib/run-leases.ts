@@ -1,4 +1,4 @@
-import { runChanged } from './live/panels'
+import { runChanged, threadChanged } from './live/panels'
 import { taskProviderUnavailableMessage } from './cloud-computer/task-provider-admission'
 import { scheduleThreadTitle } from '@/lib/thread-title-schedule'
 import 'server-only'
@@ -476,6 +476,9 @@ export async function failUnclaimedCloudStart(actor: { userId: string; workspace
     // The terminal row changed even when its durable completion event already exists.
     await runListChanged(tx, ended.id)
     await runChanged(tx, ended.id)
+    if (ended.threadRelation === 'side' && ended.parentRunId) {
+      await threadChanged(tx, ended.parentRunId)
+    }
     return ended
   })
   if (!failed) return false

@@ -1,6 +1,7 @@
 import 'server-only'
 import type { Pool } from 'pg'
 import { z } from 'zod'
+import { readEnv } from '@/lib/env/server'
 
 /** #2941 item 2: a typed reference the composer attaches to a message. `id` is
  * the type's natural key — task: issue uuid, pr: the pull url, thread: run
@@ -88,10 +89,32 @@ export async function resolveStructuredMentions(
   ownerId: string,
   workspaceId: string | null,
   mentions: readonly import('@mikka/protocol/slash-commands').StructuredMention[],
+  options?: {
+    slackChannels?: readonly { id: string; name: string }[] | null
+    runtimeSkills?: readonly { name: string; description?: string }[]
+  },
 ): Promise<ResolvedStructuredMention[]> {
   const unique = mentions.filter(
     (m, idx, arr) => arr.findIndex(o => o.kind === m.kind && o.id === m.id) === idx,
   )
+  let slackChannelsPromise: Promise<readonly { id: string; name: string }[] | null> | null = null
+  const readVerifiedSlackChannels = () => {
+    if (options && 'slackChannels' in options) return Promise.resolve(options.slackChannels ?? null)
+    if (!slackChannelsPromise) {
+      slackChannelsPromise = (async () => {
+        const app = readEnv('SLACK_APP_ID')?.trim()
+        if (!app || !workspaceId) return null
+        const { slackInstallationChannels } = await import('@/lib/slack/automation-channels')
+        return await slackInstallationChannels(app, ownerId, workspaceId)
+      })().catch(() => null)
+    }
+    return slackChannelsPromise
+  }
+  const runtimeSkillByLower = new Map<string, { name: string; description?: string }>()
+  for (const skill of options?.runtimeSkills ?? []) {
+    const normalized = skill.name.trim().replace(/^\/+/, '').toLowerCase()
+    if (normalized) runtimeSkillByLower.set(normalized, skill)
+  }
   return Promise.all(unique.map(async (m): Promise<ResolvedStructuredMention> => {
     const fail: ResolvedStructuredMention = { kind: m.kind, id: m.id, state: 'broken', title: m.label ?? null, detail: null }
     try {
@@ -125,7 +148,11 @@ export async function resolveStructuredMentions(
           return fail
         }
         case 'folder': {
-          return { kind: 'folder', id: m.id, state: 'ok', title: m.label ?? m.id, detail: 'folder' }
+          const clean = m.id.trim()
+          if (clean && !clean.startsWith('/') && !clean.includes('..') && !clean.includes('\0')) {
+            return { kind: 'folder', id: clean, state: 'ok', title: m.label ?? clean, detail: 'folder' }
+          }
+          return fail
         }
         case 'chat': {
           if (!workspaceId) return fail
@@ -164,15 +191,21 @@ export async function resolveStructuredMentions(
             `SELECT name, slug, source FROM personal_skills WHERE user_id=$1 AND enabled=true AND (id::text=$2 OR lower(slug)=lower($2) OR lower(name)=lower($2)) LIMIT 1`,
             [ownerId, m.id],
           )
-          return row
-            ? { kind: m.kind, id: m.id, state: 'ok', title: row.name, detail: row.slug }
-            : m.label
-              ? { kind: m.kind, id: m.id, state: 'ok', title: m.label, detail: m.kind }
-              : fail
+          if (row) return { kind: m.kind, id: m.id, state: 'ok', title: row.name, detail: row.slug }
+          if (m.kind === 'skill') {
+            const runtimeSkill = runtimeSkillByLower.get(m.id.trim().replace(/^\/+/, '').toLowerCase())
+            if (runtimeSkill) {
+              return { kind: 'skill', id: runtimeSkill.name, state: 'ok', title: runtimeSkill.name, detail: runtimeSkill.description || 'skill' }
+            }
+          }
+          return fail
         }
         case 'slack_channel': {
-          const name = (m.label ?? m.id).replace(/^#/, '')
-          return { kind: 'slack_channel', id: m.id, state: 'ok', title: `#${name}`, detail: `channel ${m.id}` }
+          const channels = await readVerifiedSlackChannels()
+          const matched = channels?.find(c => c.id === m.id)
+          if (!matched) return fail
+          const name = matched.name.replace(/^#/, '')
+          return { kind: 'slack_channel', id: matched.id, state: 'ok', title: `#${name}`, detail: `channel ${matched.id}` }
         }
       }
     } catch {

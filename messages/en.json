@@ -10585,6 +10585,7 @@
     "unavailableBody": "It may have expired, been used or been revoked. Ask the person who invited you to send a new one"
   },
   "Common": {
+    "add": "Add",
     "undo": "Undo",
     "resize": {
       "groupPanel": "Resize right panel",

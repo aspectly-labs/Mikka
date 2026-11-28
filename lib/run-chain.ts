@@ -103,6 +103,7 @@ const selectAttempts = (ownerDetail = false) => `a."depthExceeded", a.root::text
 export async function listIssueRunChains(q: RunChainQueryable, issueId: string, userIds: readonly string[], limit: number): Promise<RunChain[]> {
   const { rows } = await q.query(`
     WITH RECURSIVE ${runChainSql(`r."issueId" = $1 AND r."userId" = ANY($2::text[])
+      AND r."threadRelation" IS DISTINCT FROM 'side'
       AND EXISTS (SELECT 1 FROM issues i WHERE i.id=r."issueId" AND i."ownershipState"='bound' AND i."workspaceId"=r."workspaceId")`, '$4')},
     roots AS (
       SELECT DISTINCT a.root, n."createdAt" FROM assigned a JOIN runs n ON n.id = a.root

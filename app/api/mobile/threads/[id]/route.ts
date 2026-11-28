@@ -116,7 +116,10 @@ export const POST = defineRoute<'mobile-or-session', 'pat-scoped', { id: string 
     write: true,
   },
   async ({ request, params, user }) => {
-    const body = z.object({ text: z.string().trim().min(1).max(10_000) }).safeParse(await request.json().catch(() => null))
+    const body = z.object({
+      text: z.string().trim().min(1).max(10_000),
+      sendAsText: z.boolean().optional(),
+    }).safeParse(await request.json().catch(() => null))
     if (!body.success) return json({ error: 'messageRequired' }, 400)
     const id = params.id
     if (z.uuid().safeParse(id).success && await runOutsideToken(user, id)) return json({ error: 'runNotFound' }, 404)
@@ -132,9 +135,27 @@ export const POST = defineRoute<'mobile-or-session', 'pat-scoped', { id: string 
         return json({ error: 'threadCannotContinue' }, 400)
       }
     }
+    let textToSend = body.data.text
+    let control: import('@/lib/thread-continue').ThreadMessageControl | undefined
+    if (z.uuid().safeParse(id).success) {
+      const { prepareThreadSlashMessage } = await import('@/lib/thread-commands')
+      const prepared = await prepareThreadSlashMessage(pool, user.id, id, body.data.text, { sendAsText: body.data.sendAsText })
+      if (prepared.kind === 'blocked') {
+        return json({ error: 'commandBlocked', blocked: prepared.blocked }, 400)
+      }
+      control = prepared.control
+      if (!control && prepared.runtime) {
+        const runtimeSkills = prepared.runtime.commands.filter(c => c._meta.source === 'skill').map(c => c.name)
+        if (runtimeSkills.length) {
+          const { resolveSkillMentionsForHarness } = await import('@mikka/protocol/slash-commands')
+          const resolved = resolveSkillMentionsForHarness(prepared.runtime.harness, textToSend, runtimeSkills)
+          if (resolved.text.length <= 10_000) textToSend = resolved.text
+        }
+      }
+    }
     try {
       // A working thread gets it as a message; an ended one runs again in the same thread (R-81).
-      await sendThreadMessage(user.id, id, body.data.text)
+      await sendThreadMessage(user.id, id, textToSend, 'user', undefined, undefined, undefined, control)
     } catch (error) {
       if (error instanceof ActionFailureError) return json({ error: error.code }, 400)
       throw error

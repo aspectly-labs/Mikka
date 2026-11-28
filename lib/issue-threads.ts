@@ -223,12 +223,15 @@ export function threadProfile(value: unknown): ThreadProfile | null {
   return { id: row.profileId, name: row.name, ...resolveProfileMark({ name: row.name, roles, description: typeof row.description === 'string' ? row.description : '' }, { icon: row.icon, color: row.color }) }
 }
 
-/** A run that is part of the task's conversation: implement or plan. A read without kinds counts every run. */
-export const isThreadRun = (thread: { kind?: string }) => !thread.kind || thread.kind === 'implement' || thread.kind === 'plan'
+/** A run that is part of the task's conversation: implement or plan, excluding side and subagent child runs. A read without kinds counts every non-child run. */
+export const isThreadRun = (thread: { kind?: string; threadRelation?: string | null }) =>
+  thread.threadRelation !== 'side' &&
+  thread.threadRelation !== 'subagent' &&
+  (!thread.kind || thread.kind === 'implement' || thread.kind === 'plan')
 
 /** Pick from a viewer's authorized conversation heads. The mobile detail and Web root selector
  * use the same ordering, including when an older root received the most recent continuation. */
-export function latestConversationRun(runs: readonly { runId: string; kind?: string; createdAt: Date | string }[]): string | null {
+export function latestConversationRun(runs: readonly { runId: string; kind?: string; threadRelation?: string | null; createdAt: Date | string }[]): string | null {
   let latest: { runId: string; time: number } | null = null
   for (const run of runs) {
     if (!isThreadRun(run)) continue
@@ -240,11 +243,11 @@ export function latestConversationRun(runs: readonly { runId: string; kind?: str
 
 /** A teammate's redacted root is activity metadata. A Factory check is readable evidence.
  * Opening either never changes where a reply goes. */
-export function taskThreadRoots<T extends Pick<IssueThread, 'id' | 'kind' | 'detail' | 'attempts' | 'latestRunId'> & { createdAt: Date | string }>(threads: readonly T[]) {
+export function taskThreadRoots<T extends Pick<IssueThread, 'id' | 'kind' | 'threadRelation' | 'detail' | 'attempts' | 'latestRunId'> & { createdAt: Date | string }>(threads: readonly T[]) {
   const readable = threads.filter(thread => thread.detail !== null).sort((a, b) =>
     new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() || a.id.localeCompare(b.id))
   const latestId = latestConversationRun(readable.map(thread => ({
-    runId: thread.latestRunId, kind: thread.kind,
+    runId: thread.latestRunId, kind: thread.kind, threadRelation: thread.threadRelation,
     createdAt: thread.attempts.find(attempt => attempt.runId === thread.latestRunId)?.createdAt ?? thread.createdAt,
   })))
   return { readable, reply: readable.find(thread => thread.latestRunId === latestId) ?? null }
