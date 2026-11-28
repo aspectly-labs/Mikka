@@ -69,6 +69,16 @@ Public evidence uses `deploy-pipeline-<runId>-<attempt>` with
 has GitHub deployment/issue write permission and no runtime credential. It
 records the completed result and reports failures under the deployment issue.
 
+Never re-run a deployment run whose Deploy step ran, whether through "Re-run
+all jobs" or "Re-run failed jobs": GitHub deletes a re-run job's earlier
+artifacts, so the re-run erases the `deploy-pipeline-<runId>-<attempt>` receipt
+the next selection must read. Push a new main commit instead. The gate still
+fails closed without that receipt, and never reads a log in its place: the re-run
+itself stops with `pipeline_rerun_after_deploy_refused`, and every later
+selection with `pipeline_rerun_erased_receipt_requires_recovery` until the
+reviewed `stage-all` bootstrap resets the staging baseline, as for an expired
+receipt.
+
 ## Production activation
 
 Production promotion is disabled in the initial reviewed private policy. It
