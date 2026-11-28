@@ -105,6 +105,22 @@ test('production notes are updated by tile ID and an unrelated text tile is pres
   assert.deepEqual((await sync(posthog)).actions, [])
 })
 
+test('missing or mismatched dashboard readback does not write a tile patch', async () => {
+  const posthog = fakePosthog()
+  await sync(posthog, { apply: true })
+  const [dashboard] = posthog.store.dashboards
+  const getDashboard = posthog.dashboard
+  for (const response of [null, { id: dashboard.id }, { id: dashboard.id + 1, tiles: [] }]) {
+    let reads = 0
+    posthog.dashboard = async id => ++reads === 1 ? getDashboard(id) : response
+    posthog.writes.length = 0
+    await assert.rejects(sync(posthog, { apply: true }), /tile state unavailable/)
+    assert.deepEqual(posthog.writes, [])
+  }
+  posthog.dashboard = getDashboard
+  assert.deepEqual((await sync(posthog)).actions, [])
+})
+
 test('the plan is read-only and names only what differs', async () => {
   const posthog = fakePosthog()
   await sync(posthog, { apply: true })
