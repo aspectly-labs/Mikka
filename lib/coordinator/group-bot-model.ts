@@ -10,12 +10,23 @@ export async function freezeGroupBotModel(scope: HostedModelScope, client: PoolC
     import('@/lib/bot-model-selection'), import('@/lib/subscription-runtime'), import('@/lib/db'), import('@/lib/subscription-model-snapshot'),
   ])
   const value = await withDatabaseClient(client, () => freezeBotModel(scope, { service: () => subscriptionRuntime(), workspace: authorizeSubscriptionWorkspace }))
-  return { harness: value.harness, model: value.model, ...(value.modelSelection === undefined ? {} : { modelSelection: hostedModelSelectionSchema.parse(value.modelSelection) }) }
+  return {
+    harness: value.harness,
+    model: value.model,
+    ...(value.modelSelection === undefined ? {} : { modelSelection: hostedModelSelectionSchema.parse(value.modelSelection) }),
+    ...(value.cyberAccessProgram ? { cyberAccessProgram: value.cyberAccessProgram } : {}),
+  }
 }
 
 export async function resolveGroupBotModel(scope: HostedModelScope, runtime: HostedRuntimeSnapshot, signal: AbortSignal) {
   const [{ resolveFrozenHostedModel }, { subscriptionRuntime, authorizeSubscriptionWorkspace }] = await Promise.all([
     import('@/lib/subscription-model-snapshot'), import('@/lib/subscription-runtime'),
   ])
-  return resolveFrozenHostedModel(scope, runtime, { service: () => subscriptionRuntime(), workspace: authorizeSubscriptionWorkspace }, signal)
+  const modelRequestPolicy = runtime.modelSelection?.type === 'subscription' && runtime.cyberAccessProgram
+    ? { codexCyberAccessProgram: runtime.cyberAccessProgram }
+    : undefined
+  return resolveFrozenHostedModel(scope, runtime, {
+    service: () => subscriptionRuntime(false, false, modelRequestPolicy ? { modelRequestPolicy } : undefined),
+    workspace: authorizeSubscriptionWorkspace,
+  }, signal)
 }

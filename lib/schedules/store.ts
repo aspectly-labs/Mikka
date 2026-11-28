@@ -56,7 +56,7 @@ export type AutomationSeams = {
   /** Whether the workspace can still use a repository an event trigger names. */
   repository?: (workspaceId: string, repository: string) => Promise<boolean>
   /** Whether the workspace still has this Environment, not archived. */
-  environment?: (workspaceId: string, environmentId: string) => Promise<boolean>
+  environment?: (workspaceId: string, environmentId: string, ownerId: string) => Promise<boolean>
   /** Whether the person may still send to this thread (its root run) in the workspace. */
   thread?: (ownerId: string, workspaceId: string, threadId: string) => Promise<boolean>
   /** The person's Coordinator chat in a workspace, which a page-made automation reports to; null without one. */
@@ -183,7 +183,7 @@ export class ScheduleStore {
     if(def.task.kind==='dispatch_task'){
       if(!workspaceId||!this.automation.check)throw new ScheduleError('scheduleDispatchUnavailable',503)
       await this.automation.check(tx,owner,workspaceId,def.task)
-      if(def.environmentId&&(!this.automation.environment||!await this.automation.environment(workspaceId,def.environmentId)))throw new ScheduleError('scheduleEnvironmentUnavailable',403)
+      if(def.environmentId&&(!this.automation.environment||!await this.automation.environment(workspaceId,def.environmentId,owner)))throw new ScheduleError('scheduleEnvironmentUnavailable',403)
       if(def.singleThreadId&&(!this.automation.thread||!await this.automation.thread(owner,workspaceId,def.singleThreadId)))throw new ScheduleError('scheduleThreadUnavailable',403)
       for(const repository of new Set((def.events??[]).flatMap(trigger=>trigger.source==='github'?trigger.repositories:[]))){
         if(!this.automation.repository||!await this.automation.repository(workspaceId,repository))throw new ScheduleError('scheduleRepositoryUnavailable',403)
@@ -675,7 +675,14 @@ export class ScheduleStore {
       const dailyLimited=!misfireSkipped&&!concurrencyLimited&&await this.dailyFull(tx,current,o.id)
       const skipReason=misfireSkipped?'misfireSkipped':concurrencyLimited?'concurrencyLimit':dailyLimited?'dailyRunLimit':null
       const runner=skipReason?row.owner_id:await this.runner(access,current,o.definition)
-      const issue=skipReason?null:await this.permission(tx,runner,row.bot_id,row.workspace_id,o.definition)
+      let issue = null
+      if (!skipReason) {
+        const permission = () => this.permission(tx, runner, row.bot_id, row.workspace_id, o.definition)
+        if (row.workspace_id) {
+          const { withWorkspaceFactorJob } = await import('@/lib/enterprise/workspace-factor-job')
+          issue = await withWorkspaceFactorJob(runner, row.workspace_id, permission)
+        } else issue = await permission()
+      }
       const task=o.definition.task
       // The task is created and handed over after this commit, outside the schedule's locks; the lease fences it.
       if(!skipReason&&task.kind==='dispatch_task')return {dispatch:o,runner}

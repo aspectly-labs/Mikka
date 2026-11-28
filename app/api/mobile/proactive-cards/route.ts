@@ -1,7 +1,8 @@
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { json, mobileUser, unauthorized } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
 import { readMobileProactiveCards } from '@/lib/mobile-proactive-cards'
 import { WorkspaceError } from '@/lib/workspace-error'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 /**
  * `GET /api/mobile/proactive-cards`: Coordinator proactive cards for mobile
@@ -9,10 +10,7 @@ import { WorkspaceError } from '@/lib/workspace-error'
  * suggestions / in-progress handoffs). Pass `?readonly=1` for side-effect-free
  * background/count checks.
  */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const params = new URL(request.url).searchParams
   try {
     return json(
@@ -34,4 +32,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/mobile/proactive-cards', handleGET)
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/proactive-cards',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)

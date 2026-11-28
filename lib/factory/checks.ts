@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { orchestratorSettings } from '@mikka/protocol/orchestrator';
 import { deviceIsOnline } from "../device-presence";
 import {
-  applyApprovalMode,
+  readOnlyRunPolicy,
   defaultRunPolicy,
   runPolicySchema,
   type RunPolicy,
@@ -385,7 +385,7 @@ export async function configureFactoryCheck(
     inferCommand: row.kind === 'repository' && !row.verifyCommand?.trim() && !(task.stage === 'review' && factoryFlowVersion(task) === 2),
     reportOnly: row.kind === 'deliverable' || row.kind === 'report' || (task.stage === 'review' && (factoryFlowVersion(task) === 2 || !row.verifyCommand?.trim())),
     deviceRepoId: row.deviceRepoId,
-    policy: applyApprovalMode(intersectRunPolicy(hostPolicy, row.policyCeiling ?? undefined), "read_only"),
+    policy: readOnlyRunPolicy(intersectRunPolicy(hostPolicy, row.policyCeiling ?? undefined)),
     ...(observations?.sources.length ? { questionCommandSources: observations.sources } : {}),
     ...(observations ? { questionExecutionObservation: { projectionVersion: 2, watermark: observations.execution.watermark, digest: observations.execution.digest } } : {}),
     ...(priorReview ? { priorReviewArtifactObservation: { digest: priorReview.digest } } : {}),
@@ -537,7 +537,7 @@ async function readFactoryCheckAssignment(
     ...(check.command ? { verifyCommand: check.command as string } : {}),
     factoryCheck: { stage: row.stage as 'review' | 'verify', inferCommand: check.inferCommand === true, reportOnly: check.reportOnly === true },
     // Reuse the canonical read-only policy; network allow/ask/deny remains the host's.
-    policy: applyApprovalMode(policy.data, "read_only"),
+    policy: readOnlyRunPolicy(policy.data),
   };
 }
 

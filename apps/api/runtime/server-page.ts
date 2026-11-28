@@ -1,12 +1,13 @@
 import { isCloudEdition } from '../../../lib/edition'
 import { serverPageKind } from '../../../lib/server-pages'
 import { applySecurityHeaders, isPagePath, pageResponse, prefersServerHtml } from './http-policy.mjs'
+import { runtimeEnv, type EnvMap } from '../../../lib/env/server'
 
-type Environment = Record<string, string | undefined>
+type Environment = EnvMap
 
 /** The backend owns dispatch and the public viewmodel; Claude's page can use
  * the same /api/server contract without coupling its layout to this router. */
-export async function serverPageResponse(request: Request, spaHtml: string, serverInfo: (request: Request) => Promise<Response>, env: Environment = process.env) {
+export async function serverPageResponse(request: Request, spaHtml: string, serverInfo: (request: Request) => Promise<Response>, env: Environment = runtimeEnv()) {
   if (isCloudEdition(env)) return pageResponse(request, () => spaHtml)
   const url = new URL(request.url)
   if (!isPagePath(url.pathname)) return applySecurityHeaders(request, new Response(null, { status: 404 }))

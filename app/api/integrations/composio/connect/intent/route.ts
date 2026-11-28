@@ -12,6 +12,7 @@ import { assertCatalogToolkit, composioToolkitLister } from '@/lib/plugins/catal
 import { PluginError } from '@/lib/plugins/contracts'
 import { noteLogUser, withRequestLog } from '@/lib/request-log'
 import { freshSessionRoute } from '@/lib/fresh-session'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /**
  * A Composio link from the desktop app: a one-time token naming the app's own
@@ -60,4 +61,13 @@ async function handlePOST(request: Request) {
 }
 
 // A credential flow: the session is read from the database, not the cookie cache.
-export const POST = freshSessionRoute(withRequestLog('/api/integrations/composio/connect/intent', handlePOST))
+const unguardedPOST = freshSessionRoute(withRequestLog('/api/integrations/composio/connect/intent', handlePOST))
+export const POST = defineRoute(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPOST(request),
+)

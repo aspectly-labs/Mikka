@@ -7,12 +7,15 @@ import { WorkspaceMcpStore } from './workspace-mcp'
 import { coordinatorSkillSection } from './skill-prompt'
 import { McpConnectionStore } from './connection-store'
 import { McpDeviceChecks } from './device-checks'
+import { WorkspaceMcpServers } from './workspace-servers'
 
 export const personalPlugins = new PersonalPluginStore(pool)
 export const runPersonalMcp = createPersonalMcpRuntime(personalPlugins)
 export const workspaceMcp = new WorkspaceMcpStore(pool)
 export const mcpConnections = new McpConnectionStore(personalPlugins)
 export const mcpDeviceChecks = new McpDeviceChecks(personalPlugins)
+/** Workspace (organization) MCP servers, managed by any active member. */
+export const workspaceMcpServers = new WorkspaceMcpServers(pool)
 
 /** The skills section of the Coordinator's prompt for one round. With
  * `read_personal_skill` in the round's frozen grant the section is metadata

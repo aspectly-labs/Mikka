@@ -54,11 +54,19 @@ S3 配置优先于 R2。配置其中一部分却缺少必要字段时会拒绝�
 
 旧 `MIKKA_DEFAULT_MODEL_*`、`ZEROCAT_*`、应用内 Workers AI 配置、`DECISIONS_URL`、`DECISIONS_API_KEY`、`OPENAI_DECISIONS_API_KEY` 和 `DECISION_MODEL` 不再提供独立模型路径。把实际模型、端点和上游凭据迁到 LiteLLM 配置后，再升级应用；只设置旧变量无法启用默认模型。Decisions 使用 LiteLLM 的原生 `/v1/decisions` 协议，别名是 `mikka-decision`。
 
-官方 Claude Code / Codex 订阅 OAuth 保留独立连接路径，仍需完成下文部署的订阅后端。这是 [LiteLLM 决策](design/decisions/2026-11-20-0530-litellm-only-model-egress.md) 中等待兼容性验证和 Alex 决定的明确例外。未配置 LiteLLM 时，订阅连接本身不代表服务器的默认模型可用。
+官方 Claude Code 和 Codex 订阅的推理、登录、续期和额度查询由独立 CPA Subscription Worker 负责。用户自带 API Key 和 Managed Model 继续使用 LiteLLM。滚动升级时保留 Compose 的内网聊天回调，直到回滚版本也使用独立 CPA 路径。[订阅推理决定](design/decisions/2026-11-27-2304-official-subscription-cpa-egress.md)
 
 ## PostHog 与功能缺省值
 
 `POSTHOG_HOST` 配置完整的 ingestion URL，默认 `https://us.i.posthog.com`。项目 token 为 `MIKKA_PUBLIC_POSTHOG_KEY`（旧名 `NEXT_PUBLIC_POSTHOG_KEY` 和 `NEXT_PUBLIC_POSTHOG_HOST` 仍可使用，见[改名说明](operations/public-env-rename.md)）；本地求值使用的 secret 仍为 `POSTHOG_SECRET_KEY`。不设置项目 token 时，不创建客户端、不发送统计。Web 前端的公开 token 和 host 属于前端构建配置；桌面客户端使用连接服务器的功能快照。
+
+### 桌面客户端的统计、错误报告和功能 flag
+
+- **功能 flag**：桌面渲染进程的 CSP 只连接 app 自己，不加载 PostHog SDK。它读的 flag（`lib/feature-flags.ts` 的 `CLIENT_FLAG_KEYS`）由所连服务器在 bootstrap 里按同一个用户 id、在服务器配置的同一个 PostHog 项目中求值（`lib/desktop-rpc/features.ts`），再经 Web 同一个 `postHogFlag` 读出。所以自托管服务器的桌面客户端看到的是这台服务器自己 PostHog 项目的值；服务器没配 PostHog 时用上表的缺省值。flag 变化在下一次 bootstrap（启动、换账号或换工作区）生效，不另外轮询。安全和计费判断始终在服务器上做，客户端的值只决定界面显示。
+- **统计和错误报告**：只有官方构建带 PostHog 项目的公开 ingestion key（发布时读取 `MIKKA_PUBLIC_POSTHOG_KEY`，旧名 `NEXT_PUBLIC_POSTHOG_KEY`）。发送地址取构建时的 `POSTHOG_HOST`（旧名 `NEXT_PUBLIC_POSTHOG_HOST`），未设置时为 `https://us.i.posthog.com`，与 Web 的缺省一致；官方发布不设置它，因为 Mikka Cloud 的 PostHog 项目在美国区。社区版和自己构建的桌面客户端没有 key，什么都不发。官方客户端只在当前账号位于内置服务器（Mikka Cloud）时发送；连到自托管服务器的账号不向 Mikka 发送任何事件。
+- **发什么**：由主进程发送，经过与 Web 相同的白名单（`lib/analytics-policy.ts`）：页面浏览（路由去掉 id 和查询串）、Web Vitals、渲染进程错误（`$exception`：错误类名和 app 自己打包代码的栈帧，即函数名、`mikka://app` 下的打包文件和行列号；桌面端把错误信息换成类名，不发送）、渲染/运行错误的类名（`frontend_render_error`、`frontend_runtime_error`），以及桌面自己的 `desktop_api_error`（被拒绝或失败的 API 请求：路由模板、方法、状态码、错误码）、`desktop_main_error`（主进程错误类名，不含信息和堆栈）和 `desktop_process_gone`（子进程退出原因）。每个事件带 `platform=desktop`、版本号和公开仓库、官方 UI 两个提交 SHA。不发送消息、代码、文件内容、路径里的 id、错误信息，也不发送 app 自身代码以外的栈帧。主进程自己的报告每小时最多 200 条，同一种失败 10 分钟内只报一次；共享关闭、自托管或构建没有 key 时，这些报告既不发送也不计数。
+- **关闭**：设置 › 电脑 › 隐私 ›「共享使用情况和错误报告」，默认开；选择保存在本机用户数据目录的 `telemetry.json`（同时保存登录前使用的匿名 id），关闭后统计和错误报告都不再发送，与 Web 的退出开关同时停止统计和错误事件的做法一致。
+- **崩溃转储**：Electron `crashReporter` 需要接收 minidump 的端点，目前没有，所以不启用；渲染进程崩溃只以 `desktop_process_gone` 记录原因。
 
 以下是没有 PostHog 时的社区版默认行为。明确设置的管理员旧环境变量仍优先；连接了 PostHog 后，明确的远程布尔值优先。云版 deployment switch 保持原有远程/旧变量回退顺序。
 
@@ -94,6 +102,7 @@ S3 配置优先于 R2。配置其中一部分却缺少必要字段时会拒绝�
 | `mikka-email-sign-in-off` | `false` | 邮箱登录可用 |
 | `mikka-computer-tab-off` | `false` | 电脑 tab 可用 |
 | `mikka-proactive-profile` / `mikka-proactive-research` | `false` | 不打开实验能力 |
+| `mikka-track-owner-clicks` | `false` | 不上报控件点击（owner-click 分析） |
 | 四个 `mikka-upcoming-*` | `false` | 不显示尚未实现的功能 |
 | 未知 flag | `false` | 不凭未知 key 打开能力 |
 | `mikka-linear-sync` | 关闭 | 保留 Alex 关闭的全局 Linear 同步；连接自己的 Linear 账号是另一条路径 |

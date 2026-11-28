@@ -311,7 +311,7 @@
     "conclusion": "No already exposed production-build fixture option in these inspected paths preserves the original setup and changes the affected child edition. No entry swap or rebuild is performed."
   },
   "separate_unexecuted_selector_risk": {
-    "source": "docs/design/decisions/2026-11-09-2330-overview-as-work-area-tab.md",
+    "source": "mikka-hosted-ui/docs/design/decisions/2026-11-09-2330-overview-as-work-area-tab.md",
     "fact": "The hosted layout moved the old right-hand overview column into a work-area tab. The temporary script borrowed the public right-panel selector.",
     "classification": "Potential stale selector in our temporary orchestration, separate from the proven current status-document failure.",
     "required_followup": "After legitimate product UI entry is restored, inspect the actual DOM and adapt navigation/locators to the existing hosted contract while retaining actual Bot update HTTP, scoped PostgreSQL write, fresh-context normal-login readback and cleanup assertions."
@@ -409,7 +409,7 @@
       "sha256": "5d7d38105456ad5abb3b95710e8e775bd3a0c59b8bfc042ac7487e4e92dfd62d"
     },
     {
-      "path": "docs/design/decisions/2026-11-09-2330-overview-as-work-area-tab.md",
+      "path": "mikka-hosted-ui/docs/design/decisions/2026-11-09-2330-overview-as-work-area-tab.md",
       "blob": "92e1103de65e1958690b7274b98d199ce511f1ab",
       "sha256": "8e1ac73c0249452e749aaa9e7a8e3b109fea14040e8f65a6e3dc6b9c79030c03"
     }

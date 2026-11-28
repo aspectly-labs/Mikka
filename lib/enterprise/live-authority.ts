@@ -17,6 +17,7 @@ import { enterprisePrincipal } from './principal'
 import { enterpriseWorkspaceAllowed } from './access'
 import { currentLiveCapabilities, hasEnterpriseLiveScope, lockLiveCapability, lockLiveRegistration,
   registerEnterpriseLiveCapability, rememberEnterpriseLiveScope, revokeWorkspaceLiveCapabilities, type EnterpriseLiveCapability } from './live-store'
+import { runtimeEnv } from '@/lib/env/server'
 
 type GatewayConfig = NonNullable<ReturnType<typeof liveGatewayConfig>>
 type TicketResult = { status: 'allowed'; ticket: ReturnType<typeof liveTicket> } | { status: 'denied' } | { status: 'pending' }
@@ -127,7 +128,7 @@ export async function fenceWorkspaceLive(workspaceId: string) {
     })
   })
   armDueTimerSoon('audit-retention')
-  if (liveGatewayConfig(process.env)) return drainLiveRevocations({ workspaceId })
+  if (liveGatewayConfig(runtimeEnv())) return drainLiveRevocations({ workspaceId })
   return { delivered: 0, failed: 0, pending: true }
 }
 
@@ -135,7 +136,7 @@ export async function fenceWorkspaceLive(workspaceId: string) {
 export async function retireWorkspaceLiveBinding(workspaceId: string, organizationId: string | null) {
   await writeTransaction(pool, tx => revokeWorkspaceLiveCapabilities(tx, workspaceId, organizationId))
   armDueTimerSoon('audit-retention')
-  if (liveGatewayConfig(process.env)) return drainLiveRevocations({ workspaceId })
+  if (liveGatewayConfig(runtimeEnv())) return drainLiveRevocations({ workspaceId })
   return { delivered: 0, failed: 0, pending: true }
 }
 
@@ -145,7 +146,7 @@ export async function drainOrganizationLiveRevocations(organizationId: string) {
   const links = await workspaceDb.select({ workspaceId: organizationWorkspaces.workspaceId }).from(organizationWorkspaces)
     .where(eq(organizationWorkspaces.organizationId, organizationId))
   for (const link of links) await fenceWorkspaceLive(link.workspaceId)
-  if (liveGatewayConfig(process.env)) return drainLiveRevocations({ organizationId })
+  if (liveGatewayConfig(runtimeEnv())) return drainLiveRevocations({ organizationId })
   return { delivered: 0, failed: 0, pending: true }
 }
 
@@ -170,7 +171,7 @@ export function scheduleSessionLiveRevocation(userId: string): void {
  * the already committed source barrier closed and retryable. */
 export async function drainLiveRevocations(filter: RevokeFilter = {}, force = true,
   revoke?: (channel: string) => Promise<boolean>) {
-  if (!revoke && !liveGatewayConfig(process.env)) return { delivered: 0, failed: 0, pending: true }
+  if (!revoke && !liveGatewayConfig(runtimeEnv())) return { delivered: 0, failed: 0, pending: true }
   const values = [filter.organizationId ?? null, filter.workspaceId ?? null, filter.userId ?? null, force]
   const { rows } = await pool.query<{ channel: string }>(`with pending as (
     select channel from enterprise_live_capabilities where "revokedAt" is not null and "deliveredAt" is null

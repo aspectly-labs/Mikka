@@ -5,16 +5,17 @@ import { issueOrganizationInvitations, listOrganizationInvitations, revokeOrgani
 import { organizationInvitationMailEnabled, sendOrganizationInvitationEmails } from '@/lib/governance/organization-invitation-mail'
 import { appOrigin } from '@/lib/mcp/resource'
 import { afterJob } from '@/lib/background'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 type Context = { params: Promise<{ organizationId: string }> }
 
-export const GET = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const GETBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const { organizationId } = await context.params
   const session = await organizationSession(request, organizationId)
   return listOrganizationInvitations(organizationId, session.user.id)
 }))
 
-export const POST = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const POSTBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const { organizationId } = await context.params
   const session = await organizationSession(request, organizationId)
   // Persist the invitation and audit record before any external mail side effect.
@@ -43,8 +44,41 @@ export const POST = freshSessionRoute(async (request: Request, context: Context)
   return result
 }))
 
-export const DELETE = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const DELETEBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const { organizationId } = await context.params
   const session = await organizationSession(request, organizationId)
   return revokeOrganizationInvitation(organizationId, session.user.id, await governanceJson(request))
 }))
+
+export const GET = defineRoute<'public', 'none', { organizationId: string }>(
+  {
+    route: '/api/organizations/[organizationId]/invitations',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)
+
+export const POST = defineRoute<'public', 'none', { organizationId: string }>(
+  {
+    route: '/api/organizations/[organizationId]/invitations',
+    auth: 'public',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => POSTBody(request, { params: Promise.resolve(params) }),
+)
+
+export const DELETE = defineRoute<'public', 'none', { organizationId: string }>(
+  {
+    route: '/api/organizations/[organizationId]/invitations',
+    auth: 'public',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => DELETEBody(request, { params: Promise.resolve(params) }),
+)

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { internalOnlyPath } from '../../cloudflare/api/ingress/internal-only.mjs'
 
 const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 const placeholder = '__mikka_route_probe__'
@@ -9,8 +10,13 @@ const placeholder = '__mikka_route_probe__'
 /** Inspect the existing dispatch contract without invoking a route handler.
  * An undeclared OPTIONS is answered by the API dispatcher with 204 + Allow.
  * Routes declaring OPTIONS use another undeclared method and require 405 +
- * Allow. Do not replace this with GET: several GET handlers start real work. */
-export function routeProbePlan(manifest) {
+ * Allow. Do not replace this with GET: several GET handlers start real work.
+ * A route the public edge keeps internal (cloudflare/api/ingress/internal-only.mjs,
+ * the same predicate the ingress worker uses) must answer 404 from the public
+ * edge; any other status means it is publicly reachable and fails the probe.
+ * `publicEdge: false` probes the API dispatcher directly (no edge in front):
+ * there an internal-only route must be registered like any other. */
+export function routeProbePlan(manifest, { publicEdge = true } = {}) {
   assert.ok(manifest?.version === 1 && manifest.basePath === '/mikka'
     && Array.isArray(manifest.routes) && manifest.routes.length > 0, 'route_probe_manifest_invalid')
   const paths = new Set()
@@ -36,7 +42,9 @@ export function routeProbePlan(manifest) {
     // A future route implementing every method needs an explicit safe probe;
     // silently calling its handler would turn this gate into a business writer.
     assert.ok(method, 'route_probe_safe_method_missing')
-    return { route: route.path, path: segments.join('/'), method,
+    const path = segments.join('/')
+    if (publicEdge && internalOnlyPath(route.path)) return { route: route.path, path, method, expectedStatus: 404, internal: true }
+    return { route: route.path, path, method,
       expectedStatus: method === 'OPTIONS' ? 204 : 405, allowed: [...allowed].sort() }
   })
 }
@@ -55,9 +63,9 @@ function targetOrigin(baseUrl) {
  * methods, status codes and closed failure codes; response bodies and request
  * origins never enter logs. A successful result proves route registration and
  * method dispatch, while production-smoke covers authenticated feature reads. */
-export async function runRouteProbe({ baseUrl, manifest, fetchImpl = fetch }) {
+export async function runRouteProbe({ baseUrl, manifest, fetchImpl = fetch, publicEdge = true }) {
   const origin = targetOrigin(baseUrl)
-  const plan = routeProbePlan(manifest)
+  const plan = routeProbePlan(manifest, { publicEdge })
   const results = Array.from({ length: plan.length })
   let cursor = 0
   async function worker() {
@@ -74,7 +82,11 @@ export async function runRouteProbe({ baseUrl, manifest, fetchImpl = fetch }) {
         })
         result.status = response.status
         const allowed = (response.headers.get('allow') ?? '').split(',').map(value => value.trim()).filter(Boolean).sort()
-        if (response.status !== probe.expectedStatus) result.error = 'route_probe_status'
+        // An internal-only route answering anything but 404 is reachable from the public edge.
+        if (probe.internal) {
+          if (response.status === 404) result.ok = true
+          else result.error = 'route_probe_internal_reachable'
+        } else if (response.status !== probe.expectedStatus) result.error = 'route_probe_status'
         else if (allowed.length !== probe.allowed.length || allowed.some((method, i) => method !== probe.allowed[i])) result.error = 'route_probe_allow'
         else result.ok = true
       } catch { result.error = 'route_probe_request_failed' }

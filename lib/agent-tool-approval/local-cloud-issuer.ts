@@ -3,6 +3,7 @@ import type { Pool } from 'pg'
 import { localTestAccountsMode } from '@mikka/protocol/local-test-mode'
 import { BASE_PATH } from '@/lib/base-path'
 import { requestPolicyIssuer } from './policy-distribution'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Caller = { userId: string; tokenId: string; scopeDeviceId?: string; scopeWorkspaceId?: string }
 
@@ -14,7 +15,7 @@ type Caller = { userId: string; tokenId: string; scopeDeviceId?: string; scopeWo
 export async function requestDevicePolicyIssuer(request: Request, caller: Caller, deviceId: string, runId: string,
   options: { env?: Record<string, string | undefined>; query?: Pick<Pool, 'query'> } = {}) {
   const fallback = requestPolicyIssuer(request)
-  if (!localTestAccountsMode(options.env ?? process.env) || caller.scopeDeviceId !== deviceId || !caller.scopeWorkspaceId) return fallback
+  if (!localTestAccountsMode(options.env ?? runtimeEnv()) || caller.scopeDeviceId !== deviceId || !caller.scopeWorkspaceId) return fallback
   const query = options.query ?? (await import('@/lib/db')).pool
   let issuer: string | undefined
   try {

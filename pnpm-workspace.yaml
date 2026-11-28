@@ -29,7 +29,6 @@ allowBuilds:
   # 7-Zip binary onto a repo that has no Windows runner, or sends telemetry it already guards with try/catch. None of
   # it is needed to run what this repo uses the package for.
   '@mongodb-js/zstd': false
-  '@openuidev/lang-core': false
   cbor-extract: false
   core-js: false
   core-js-pure: false

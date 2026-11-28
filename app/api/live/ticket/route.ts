@@ -1,12 +1,13 @@
 import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/api-auth'
 import { activeTaskWorkspaces } from '@/lib/task-workspace'
-import { withRequestLog } from '@/lib/request-log'
 import { LIVE_ID } from '@/lib/live/events'
 import { liveGatewayConfig } from '@/lib/live/scope'
 import { workspaceLiveTicket } from '@/lib/enterprise/live-authority'
 import { desktopBearerHeaders } from '@/lib/desktop-rpc/handler'
 import { homeScopeProof } from '@/lib/live/home-scope-proof'
+import { defineRoute } from '@/lib/primitives/define-route'
+import { runtimeEnv } from '@/lib/env/server'
 
 const headers = { 'cache-control': 'private, no-store' }
 
@@ -22,7 +23,7 @@ async function ticket(request: Request) {
   if (!LIVE_ID.test(workspaceId)) return RouteResponse.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
   const [workspace] = await activeTaskWorkspaces(session.user, workspaceId)
   if (!workspace) return RouteResponse.json({ error: 'workspaceAccessDenied' }, { status: 403, headers })
-  const config = liveGatewayConfig(process.env)
+  const config = liveGatewayConfig(runtimeEnv())
   if (!config) return RouteResponse.json({ url: null, protocol: null, expiresAt: null }, { headers })
   const scope = { ownerId: session.user.id, workspaceId }
   const result = await workspaceLiveTicket(scope, session.session?.id ?? '', config)
@@ -33,4 +34,12 @@ async function ticket(request: Request) {
   return RouteResponse.json({ ...issued, ...(homeScope ? { homeScope } : {}) }, { headers })
 }
 
-export const GET = withRequestLog('/api/live/ticket', ticket)
+export const GET = defineRoute<'public', 'none'>(
+  {
+    route: '/api/live/ticket',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => ticket(request),
+)

@@ -3,7 +3,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
 import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
-import { diffSnapshot, taskReviewRef, WorkspaceReviewError, type TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
+import { diffSnapshot, taskReviewRef, WorkspaceReviewError, type TaskReviewPullRef, type TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
 import { issueForUser } from '../../issue-access'
 import { tokenWorkspace } from '../../tokens/principal'
 import { latestTaskRun } from '../../thread-dispatch'
@@ -64,4 +64,14 @@ export async function assertCurrentTaskReview(database: Query, actor: ReviewActo
   if (await reviewTaskOwner(database, actor, expected.taskId) !== expected.ownerId
     || (await latestTaskRun(database, expected.ownerId, expected.taskId))?.id !== expected.scope.identity.runId)
     throw new WorkspaceReviewError('workspace_snapshot_outdated')
+}
+
+/** A native locator never substitutes the viewer's source or creates archive
+ * evidence. Historical receipt retries keep their original authorized Run. */
+export async function selectedTaskPullReview(deps: DiffDependencies, actor: ReviewActor, taskId: string,
+  reference: TaskReviewPullRef, signal?: AbortSignal): Promise<TaskReviewContext> {
+  const ownerId = await reviewTaskOwner(deps.database, actor, taskId)
+  const scope = await ensureReviewScope(deps, actor, reference.runId, reference.repoId, signal)
+  if (scope.taskId !== taskId || scope.identity.ownerId !== ownerId) throw denied()
+  return { taskId, ownerId, scope }
 }

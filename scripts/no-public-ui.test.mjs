@@ -1,8 +1,8 @@
-// This repository carries no web or desktop interface (decision 2026-11-24-1000-all-ui-in-hosted). The interface,
-// its base components, hooks used only by it, styles and fonts live in the private mikka-hosted-ui checkout's
-// core/, web/ and slots/; the public build compiles that checkout (lib/ui-overlay.mjs) or a page that says the
-// server has no interface (apps/frontend/src/headless.ts). This test keeps the interface from coming back.
-// The mobile app (apps/mobile) keeps its own interface and overlay and is outside this rule.
+// This repository carries no web, desktop, or mobile interface (decisions 2026-11-24-1000-all-ui-in-hosted
+// and 2026-11-25-0915-delete-legacy-apps-mobile). All Web, Desktop, and iOS interfaces live in the private
+// mikka-hosted-ui checkout (core/, web/, slots/, mobile-next/); the public build compiles that checkout
+// (lib/ui-overlay.mjs) or a page that says the server has no interface (apps/frontend/src/headless.ts).
+// This test keeps any UI source, stylesheet, font, or paid library from returning to public Mikka.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -13,17 +13,17 @@ const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--excl
   .split('\0').filter(Boolean)
   // The checkout is mounted inside this repository for official builds; it is not part of it.
   .filter(file => !file.startsWith('.hosted-ui/') && !(overlay && file.startsWith(`${overlay}/`)))
-const outsideMobile = tracked.filter(file => !file.startsWith('apps/mobile/'))
 /** An import of `prefix` in any form: static, dynamic, require or re-export. */
 const imports = (prefix, text) => new RegExp(`(?:\\bfrom|\\bimport\\s*\\(?|\\brequire\\()\\s*['"\`]${prefix}`).test(text)
-const sources = outsideMobile.filter(file => /\.(?:[cm]?[jt]sx?)$/.test(file) && !/^(?:docs|plans)\//.test(file))
+const sources = tracked.filter(file => /\.(?:[cm]?[jt]sx?)$/.test(file) && !/^(?:docs|plans)\//.test(file))
 
-test('no interface source, stylesheet or font outside the mobile app', () => {
-  assert.deepEqual(outsideMobile.filter(file => /\.(?:jsx|tsx|css|scss|sass|less|woff2?|ttf|otf)$/.test(file)), [])
+test('no interface source, stylesheet, font, or legacy apps/mobile tree exists in public Mikka', () => {
+  assert.deepEqual(tracked.filter(file => file.startsWith('apps/mobile/')), [])
+  assert.deepEqual(tracked.filter(file => /\.(?:jsx|tsx|css|scss|sass|less|woff2?|ttf|otf)$/.test(file)), [])
 })
 
 test('no components/ or hooks/ tree: base components and interface hooks live in the official UI checkout', () => {
-  assert.deepEqual(outsideMobile.filter(file => /^(?:components|hooks|app\/fonts)\//.test(file)), [])
+  assert.deepEqual(tracked.filter(file => /^(?:components|hooks|app\/fonts)\//.test(file)), [])
 })
 
 test('the retired @ui-slot/ seam is not imported again', () => {
@@ -40,7 +40,7 @@ test('only the build glue and its tests name the checkout through @hosted/', () 
 test('no paid component library is a dependency or an import here', () => {
   const paid = /['"`](?:@affectui|@beui(?:-pro)?|@collectui\/(?!bdui['"`])|@boardui)\b/
   assert.deepEqual(sources.filter(file => file !== 'scripts/no-public-ui.test.mjs' && paid.test(readFileSync(file, 'utf8'))), [])
-  for (const manifest of outsideMobile.filter(file => /(?:^|\/)package\.json$/.test(file))) {
+  for (const manifest of tracked.filter(file => /(?:^|\/)package\.json$/.test(file))) {
     const { dependencies = {}, devDependencies = {} } = JSON.parse(readFileSync(manifest, 'utf8'))
     assert.deepEqual(Object.keys({ ...dependencies, ...devDependencies }).filter(name => /^@(?:affectui|beui|boardui)\b/.test(name)), [], manifest)
   }

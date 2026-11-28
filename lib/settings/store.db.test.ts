@@ -40,7 +40,12 @@ before(async () => {
   mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en', getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
   const testSession = async () => (currentUser ? { user: currentUser, session: { id: sessionId } } : null)
   mock.module('@/lib/session', { namedExports: { getSession: testSession } })
-  mock.module('@/lib/api-auth', { namedExports: { auth: { api: { getSession: testSession } }, getApiSession: testSession, apiWorkspaceAllowed: () => true } })
+  mock.module('@/lib/api-auth', { namedExports: {
+    auth: { api: { getSession: testSession } },
+    getApiSession: testSession,
+    apiWorkspaceAllowed: (session: { tokenWorkspaceId?: string }, workspaceId: string) =>
+      !session.tokenWorkspaceId || session.tokenWorkspaceId === workspaceId,
+  } })
   mock.module('@/lib/suggestions/sources', { namedExports: { connectedComposioApps: async () => [] } })
   ;({ pool } = await import('@/lib/db'))
   pool.options.max = 1
@@ -719,4 +724,31 @@ dbTest('gitAuthorName and gitAuthorEmail persist, inherit, enforce write auth, a
   const schemaJson = await (await schema.GET(request('schema'))).json()
   assert.ok(schemaJson.settings.some((entry: { key: string; page: string }) => entry.key === 'gitAuthorName' && entry.page === 'git'))
   assert.ok(schemaJson.settings.some((entry: { key: string; page: string }) => entry.key === 'gitAuthorEmail' && entry.page === 'git'))
+})
+
+dbTest('workspace security settings apply to the actual workspace policy', async () => {
+  const { readPersonalSecurity } = await import('../governance/organization-security')
+  as(member)
+  assert.equal((await workspace.PATCH(request('workspace', 'PATCH', patch({ requireTwoFactor: true })), context())).status, 403)
+  as(owner)
+  assert.equal((await workspace.PATCH(request('workspace', 'PATCH', patch({ requireTwoFactor: true })), context())).status, 200)
+  assert.ok((await readPersonalSecurity(member, 'no-session')).workspaces.some(row => row.workspaceId === workspaceId && row.status === 'enrollment_required'))
+  assert.ok(!(await readPersonalSecurity(outsider, 'no-session')).workspaces.some(row => row.workspaceId === workspaceId))
+  const { enterpriseWorkspaceAllowed } = await import('../enterprise/access')
+  const oldSession = randomUUID(), newSession = randomUUID()
+  await pool.query(`INSERT INTO session(id,token,"userId","createdAt","updatedAt","expiresAt") VALUES
+    ($1,$1,$3,now()-interval '1 day',now(),now()+interval '1 day'),
+    ($2,$2,$3,now(),now(),now()+interval '1 day')`, [oldSession, newSession, member])
+  assert.equal(await enterpriseWorkspaceAllowed(member, workspaceId, { kind: 'session', sessionId: oldSession }), true)
+  assert.equal(await enterpriseWorkspaceAllowed(member, workspaceId, { kind: 'session', sessionId: newSession }), false)
+  assert.equal(await enterpriseWorkspaceAllowed(member, otherWorkspaceId, { kind: 'session', sessionId: newSession }), true)
+  const { withWorkspaceFactorJob } = await import('../enterprise/workspace-factor-job')
+  const job = () => enterpriseWorkspaceAllowed(member, workspaceId)
+  assert.equal(await withWorkspaceFactorJob(member, workspaceId, job), false)
+  await pool.query('UPDATE "user" SET "twoFactorEnabled"=true WHERE id=$1', [member])
+  await pool.query(`INSERT INTO "twoFactor"(id,"userId",secret,"backupCodes") VALUES ($1,$2,'fixture','[]')`, [randomUUID(), member])
+  assert.equal(await withWorkspaceFactorJob(member, workspaceId, job), true)
+  assert.equal(await withWorkspaceFactorJob(member, otherWorkspaceId, job), false)
+  assert.equal(await withWorkspaceFactorJob(owner, workspaceId, job), false)
+  assert.equal(await withWorkspaceFactorJob(member, workspaceId, () => enterpriseWorkspaceAllowed(member, workspaceId, { kind: 'session', sessionId: newSession })), false)
 })

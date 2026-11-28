@@ -4,25 +4,40 @@ import { runListChanged } from './live/lists'
 import { runControlChanged } from './device-gateway-notify'
 import { armDueTimerAfterCommit } from './due-timer'
 import { readBatchSubscriptionPolicy } from './desktop-rpc/read-batch-context'
-import { workspaceResourcePolicy } from './governance/resource-access'
+import { memberCredentialsAllowedSql } from './member-credentials-sql'
 
 /**
- * Decision 2026-11-01-2240: a person's own subscriptions and API keys always run
- * that person's own bots and runs, in every workspace they belong to.
  * Decision 2026-11-17: a Claude or Codex subscription serves its owner only; no
- * other member's bot or run can use it. The admin switch (团队权限 › 订阅与 API
- * Key) still decides whether other members may use shared API keys.
+ * other member's bot or run can use it. Decision 2026-11-27-1740: the same holds
+ * for API keys; a workspace adds its own keys instead, and the team admin switch
+ * 团队权限 › 订阅与 API Key decides whether members' own API keys are used for
+ * their runs in that workspace (on: their own first, then the workspace's; off:
+ * the workspace's keys only).
  */
 type Query = Pick<Pool | PoolClient, 'query'>
 
-/** The admin switch over other members' use of shared API keys; an absent row means on. It never limits the owner's own use. */
-export async function memberSubscriptionsAllowed(query: Query, workspaceId: string): Promise<boolean> {
-  if ((await workspaceResourcePolicy(workspaceId)).modelCredentialSharing === 'deny') return false
+/**
+ * The team admin switch 团队权限 › 订阅与 API Key as stored for the workspace; an
+ * absent row (and every personal workspace) means on. Members' own API keys serve
+ * their runs in this workspace only while it is on (decision 2026-11-27-1740).
+ */
+export async function workspaceMemberCredentialsAllowed(query: Query, workspaceId: string): Promise<boolean> {
   return readBatchSubscriptionPolicy(query, workspaceId, async () => {
     const { rows: [row] } = await query.query<{ subscriptions: boolean }>('SELECT subscriptions FROM workspace_personal_policies WHERE "workspaceId"=$1', [workspaceId])
     return row?.subscriptions ?? true
   })
 }
+
+/**
+ * The switch as the settings page shows it: exactly the value that governs runs.
+ * The Organization's model-credential sharing rule governed only borrowed
+ * credentials, which no longer exist, so it no longer turns this off (decision 2026-11-27-1740).
+ */
+export async function memberSubscriptionsAllowed(query: Query, workspaceId: string): Promise<boolean> {
+  return workspaceMemberCredentialsAllowed(query, workspaceId)
+}
+
+export { memberCredentialsAllowedSql }
 
 /**
  * Withdrawing a credential stops the runs using it now: disconnecting or leaving
@@ -52,10 +67,10 @@ export async function stopRunsUsingSubscriptions(query: Query, scope: { ownerId?
 /**
  * SQL for a run's subscription (decision 2026-11-17: a subscription serves its
  * owner only): may the credential owner's subscription serve the run owner's
- * run? Only when they are the same person. Membership lives in the workspace
- * database, so callers still check it there (authorizeSubscriptionWorkspace).
+ * run? Only when they are the same person, and only while the workspace's team
+ * switch 团队权限 › 订阅与 API Key allows members' own credentials (decision
+ * 2026-11-27-1740). Membership lives in the workspace database, so callers still
+ * check it there (authorizeSubscriptionWorkspace).
  */
 export const runMayUseCredentialSql = (credentialOwner: string, runOwner: string, workspace: string) =>
-  // The workspace expression stays referenced (and typed) so a caller's bound
-  // parameter for it remains inferable; it no longer widens the grant.
-  `(${credentialOwner}=${runOwner} AND ((${workspace})::text IS NULL OR true))`
+  `(${credentialOwner}=${runOwner} AND ${memberCredentialsAllowedSql(workspace)})`

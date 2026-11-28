@@ -1,4 +1,3 @@
-import { freshSessionRoute } from '@/lib/fresh-session'
 import { forbiddenOrigin, json, unauthorized, writeAllowed } from '@/lib/mobile-api'
 import { MobileAvatarError, readMobileAvatarPayload } from '@/lib/mobile-profile-contract'
 import {
@@ -6,7 +5,8 @@ import {
   requireMobileHumanSession,
   updateMobileProfileAvatar,
 } from '@/lib/mobile-profile'
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { noteLogUser } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /**
  * `POST /api/mobile/profile/avatar`: uploads a PNG, JPEG or WebP avatar
@@ -44,4 +44,12 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = freshSessionRoute(withRequestLog('/api/mobile/profile/avatar', handlePOST))
+export const POST = defineRoute<'mobile-or-session', 'none'>(
+  {
+    route: '/api/mobile/profile/avatar',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request }) => handlePOST(request),
+)

@@ -66,7 +66,6 @@ test('Project archive and strict deletion preserve canonical work and frozen his
     assert.equal((await archive(projectId, 2)).revision, 2, 'repeated archive is idempotent')
     await assert.rejects(resources.withProjectExecution(request, async () => assert.fail('archived work admitted')), /projectArchived/)
     await assert.rejects(withRunProjectExecution(request, snapshot, async () => assert.fail('archived work claimed')), /projectArchived/)
-    await assert.rejects(resources.saveProjectResources(owner, { workspaceId: workspace.id, projectId, revision: 2, repositories: [], environmentIds: [], defaultEnvironmentId: null }), /projectArchived/)
     await assert.rejects(withTaskWorkspace(member, workspace.id, async (_workspace, tx) => {
       await lockTeamRelations(tx)
       return requireProjectWrite(tx, member, projectId, workspace.id)

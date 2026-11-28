@@ -1,11 +1,12 @@
 import { withBasePath } from '@/lib/base-path'
 import { resolveAppOrigin } from '@/lib/auth-config'
+import { runtimeEnv } from '@/lib/env/server'
 
 /** The one scope an MCP access token needs: act in Mikka as the person. */
 export const MCP_SCOPE = 'mikka'
 
 /** The configured application origin, without its separately configured base path. */
-export const appOrigin = resolveAppOrigin(process.env)
+export const appOrigin = resolveAppOrigin(runtimeEnv())
 
 /** The MCP server's URL. Clients name it as the OAuth `resource` (RFC 8707). */
 export const mcpResourceURL = appOrigin ? `${appOrigin}${withBasePath('/api/mcp')}` : undefined

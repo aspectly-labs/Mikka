@@ -1,7 +1,7 @@
 import { Pool } from 'pg'
 import { seedFixtureWorkspace } from '../../tests/helpers/task-workspace'
 import assert from 'node:assert/strict'
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
@@ -812,15 +812,16 @@ dbTest('captures stay with their run\'s owner, uploads are checked, and recordin
     const { Sandbox } = await import('e2b')
     const { screenCaptures } = await import('./screen')
     const { threadMachineAction } = await import('../cloud-computer/thread-machines')
-    const originalKill = Sandbox.kill, originalStop = screenCaptures.stopRunRecordings, originalSecretKey = process.env.WORKSPACE_SECRETS_KEY
+    const { bindE2BResource } = await import('../secrets/e2b-resource')
+    const { environmentSnapshotScope } = await import('../secrets/e2b-runtime')
+    const originalKill = Sandbox.kill, originalStop = screenCaptures.stopRunRecordings, originalApiKey = process.env.E2B_API_KEY
+    const instanceKey = 'synthetic-captures-instance'
     try {
-      process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
-      const {sealSecret,e2bKeyAad}=await import('../secrets/crypto')
-      const sealed=sealSecret('synthetic-captures',e2bKeyAad(workspaceId))
-      await pool.query('INSERT INTO workspace_e2b_keys ("workspaceId",ciphertext,iv,"keyVersion",last4,"createdBy","updatedBy") VALUES ($1,$2,$3,$4,$5,$6,$6)',[workspaceId,sealed.ciphertext,sealed.iv,sealed.keyVersion,'ures',alice])
+      process.env.E2B_API_KEY = instanceKey
+      await bindE2BResource(alice, 'sandbox', `sandbox-${threadRun}`, environmentSnapshotScope())
       screenCaptures.stopRunRecordings = ids => screen.stopRunRecordings(ids)
       Sandbox.kill = async (id: string, options?: {apiKey?:string}) => {
-        assert.equal(options?.apiKey,'synthetic-captures','the end path uses the workspace BYO key')
+        assert.equal(options?.apiKey, instanceKey, 'the end path uses the sandbox account key')
         assert.equal(id, `sandbox-${threadRun}`)
         const recording = (await pool.query('SELECT status FROM run_captures WHERE id=$1', [threadRecording.recordingId])).rows[0]
         assert.equal(recording.status, 'ready', 'the actual end path saves evidence before destroying the filesystem')
@@ -834,9 +835,9 @@ dbTest('captures stay with their run\'s owner, uploads are checked, and recordin
     } finally {
       Sandbox.kill = originalKill
       screenCaptures.stopRunRecordings = originalStop
-      await pool.query('DELETE FROM workspace_e2b_keys WHERE "workspaceId"=$1',[workspaceId])
-      if (originalSecretKey === undefined) delete process.env.WORKSPACE_SECRETS_KEY
-      else process.env.WORKSPACE_SECRETS_KEY = originalSecretKey
+      if (originalApiKey === undefined) delete process.env.E2B_API_KEY
+      else process.env.E2B_API_KEY = originalApiKey
+      await pool.query(`DELETE FROM e2b_resource_accounts WHERE kind='sandbox' AND id=$1 AND "ownerId"=$2`, [`sandbox-${threadRun}`, alice])
     }
     assert.ok(calls.every(call => !call.includes(`sandbox-${workspaceId}`)), 'completion never reads the source Bot machine')
     // A missing dedicated sandbox must not reinterpret the run as a Bot run.

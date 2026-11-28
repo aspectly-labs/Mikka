@@ -118,3 +118,16 @@ export function parseGatewayModel(raw: unknown): CatalogModel | null {
     ...(speedModes && speedModes.length ? { speedModes } : {}),
   }
 }
+
+export {
+  CATALOG_EFFORT_MODELS,
+  CATALOG_MODEL_TIERS,
+  EVE_FACTORY_PROVIDER_DEFAULT_MODELS,
+  LEGACY_DECISION_MODEL,
+  LEGACY_WRITE_PLANNING_SNAPSHOT,
+  catalogModelTier,
+  catalogSupportedModelEfforts,
+  defaultEveFactoryModelForProvider,
+  type EveFactoryProviderId,
+} from './model-catalog-metadata'
+

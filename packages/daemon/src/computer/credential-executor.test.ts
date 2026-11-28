@@ -6,7 +6,8 @@ import { createHostedComputerExecutor, type CredentialIntent, type CredentialExe
 import { cleanupTempDirs, tempDir } from '../../test/helpers'
 
 afterEach(cleanupTempDirs)
-it.each(['allow', 'ask'] as const)('host broker invokes credential executor with %s action identity and a live fence', async permission => {
+// Only an `allow` grant exists (ADR 2026-11-27-1720); a legacy `ask` grants nothing (broker.test.mjs).
+it.each(['allow'] as const)('host broker invokes credential executor with %s action identity and a live fence', async permission => {
   const driver = { installed: true as const, version: 'fixture', path: '/fixture', fingerprint: 'f'.repeat(64) }
   let active = true, executions = 0, seen = '', fence = false
   const authority: CredentialExecutorAuthority = {

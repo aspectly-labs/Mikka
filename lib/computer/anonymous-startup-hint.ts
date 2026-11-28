@@ -2,7 +2,7 @@ import { cloudStartupDiagnosticCandidate } from './startup-diagnostics'
 import { createHash } from 'node:crypto'
 import { anonymousClaudeHintSchema } from '@mikka/protocol/claude-startup'
 import { anonymousCodexHintSchema } from '@mikka/protocol/codex-startup'
-import { applyApprovalMode, resolveAgentSettings } from '@mikka/protocol/agent-policy'
+import { readOnlyRunPolicy, resolveAgentSettings } from '@mikka/protocol/agent-policy'
 import type { WorkerDefinitionSnapshot } from '../agent-kit/worker'
 import { RUN_DECISION_CATALOGUE } from '../project-map/mcp-tool'
 
@@ -31,7 +31,7 @@ export function anonymousStartupHint(input: {
     !['implement', 'fix', 'plan'].includes(input.kind) || !input.repository?.startsWith('v2/github.com/')) return ''
   let policy = d.policyCeiling ?? resolveAgentSettings(null, null, 'cloud').policy
   policy = { ...policy, permissions: { ...policy.permissions, git_push: d.repositoryAdmission ? 'allow' : 'deny' } }
-  if (d.readOnly) policy = applyApprovalMode(policy, 'read_only')
+  if (d.readOnly) policy = readOnlyRunPolicy(policy)
   const claude = d.harness === 'claude_code'
   const schema = claude ? anonymousClaudeHintSchema : anonymousCodexHintSchema
   const parsed = schema.safeParse({

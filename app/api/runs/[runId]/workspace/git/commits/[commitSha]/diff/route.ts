@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { reviewHttp } from '@/lib/coding-workspace/diff/http'
 import { diffPage } from '@/lib/coding-workspace/diff/service'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 30
 const sha = z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/)
@@ -16,10 +17,16 @@ const handler = reviewHttp(async ({ deps, actor, runId, repoId, input, request }
     request.signal)
 })
 
-export async function GET(request: Request, context: { params: Promise<{ runId: string; commitSha: string }> }) {
-  const { runId, commitSha } = await context.params
-  const url = new URL(request.url)
-  url.searchParams.set('headSha', sha.parse(commitSha))
-  return handler(new Request(url, { method: 'GET', headers: request.headers, signal: request.signal }),
-    { params: Promise.resolve({ runId }) })
-}
+export const GET = defineRoute<'session', 'pat-scoped', { runId: string; commitSha: string }>(
+  {
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  ({ request, params }) => {
+    const url = new URL(request.url)
+    url.searchParams.set('headSha', sha.parse(params.commitSha))
+    return handler(new Request(url, { method: 'GET', headers: request.headers, signal: request.signal }),
+      { params: Promise.resolve({ runId: params.runId }) })
+  },
+)

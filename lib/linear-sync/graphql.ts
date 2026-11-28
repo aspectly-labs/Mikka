@@ -1,7 +1,7 @@
 import 'server-only'
 
 export class LinearApiError extends Error {
-  constructor(message: string, readonly retryable: boolean, readonly status?: number) {
+  constructor(message: string, readonly retryable: boolean, readonly status?: number, readonly credentialRejected = false) {
     super(message)
     this.name = 'LinearApiError'
   }
@@ -43,7 +43,7 @@ export async function linearGraphQL<T>(accessToken: string, query: string, varia
   if (!response.ok || error || result.data === undefined) {
     const code = error?.extensions?.code
     const message = sanitizeLinearError(error?.message ?? `Linear request failed (${response.status})`)
-    throw new LinearApiError(message, response.status >= 500 || response.status === 429 || code === 'RATELIMITED', response.status)
+    throw new LinearApiError(message, response.status >= 500 || response.status === 429 || code === 'RATELIMITED', response.status, response.status === 401 || (response.ok && code === 'AUTHENTICATION_ERROR'))
   }
   return result.data
 }

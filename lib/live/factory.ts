@@ -3,6 +3,7 @@ import { afterCommit, hasCommitEffect } from '../db/commit-effects'
 import { liveGatewayConfig, type LiveScope } from './scope'
 import type { LiveInvalidation } from './events'
 import { armDueTimerAfterCommit } from '@/lib/due-timer'
+import { runtimeEnv } from '@/lib/env/server'
 
 type TaskIdentity = { id: string; userId: string; issueId: string }
 
@@ -64,7 +65,7 @@ async function sender(taskId: string, ownerId: string | null) {
 export async function factoryChanged(tx: PoolClient, task: TaskIdentity) {
   // The Factory watchdog's due time moves with every task write (#1212).
   armDueTimerAfterCommit(tx, 'run-recovery')
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const key = `factory_task:${task.id}`
   if (hasCommitEffect(tx, key)) return
   await (await import('./project-map')).projectMapIssueChanged(tx, task.issueId)
@@ -73,7 +74,7 @@ export async function factoryChanged(tx: PoolClient, task: TaskIdentity) {
 
 /** For provider outcomes and verified webhooks whose UPDATE is already autocommitted. */
 export async function factoryCommitted(taskId: string) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   ;(await sender(taskId, null))()
   const { pool } = await import('../db/request-scope')
   await (await import('./project-map')).projectMapTaskChanged(pool, taskId)

@@ -16,7 +16,7 @@ const intent = {
 }
 const stub = (path: string, exports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports: exports })
 mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest, RouteResponse, after: () => {} } })
-stub('../../../../../lib/request-log.ts', { noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
+stub('../../../../../lib/request-log.ts', { noteLogUser: () => {}, noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
 stub('../../../../../lib/auth.ts', { auth: { api: { getSession: async () => sessionUser ? { user: { id: sessionUser } } : null } }, authBaseURL: 'https://example.test' })
 stub('../../../../../lib/composio.ts', { getComposio: () => composio })
 stub('../../../../../lib/composio-config.ts', { isComposioCallbackVerifierConfigured: () => true })

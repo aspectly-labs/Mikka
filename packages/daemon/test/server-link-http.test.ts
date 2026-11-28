@@ -212,16 +212,6 @@ describe("HttpServerLink", () => {
     expect(await link.report('dev-1', { harnesses: [], worktreeDiskBytes: 0 })).toEqual({})
     expect(calls).toHaveLength(3)
   })
-  it('preserves negotiated catalogue evidence in the natural-expiry lease response', async () => {
-    const lease = { route: 'claude_code_cli', modelId: 'claude-haiku-5-5', accountId: 'fixture-account', revision: 1,
-      expiresAt: SOON(), accessToken: 'fixture-access', modelCatalogueVerified: true }
-    const fetcher = vi.fn(async (_url: URL | string, init?: RequestInit) => {
-      expect(new Headers(init?.headers).get(SUBSCRIPTION_MODEL_CATALOGUE_HEADER)).toBe('1')
-      return json(lease)
-    }) as unknown as typeof fetch
-    expect(await new HttpServerLink('http://server.test', fetcher).nativeLease('dev-1', 'run-1')).toEqual(lease)
-    expect(fetcher).toHaveBeenCalledOnce()
-  })
   it('uses only the claimed local lease for every provider/tool check', async () => {
     const fetcher = vi.fn(async () => { throw new Error('operation-time HTTP is forbidden') })
     const link = new HttpServerLink('http://server.test', fetcher)

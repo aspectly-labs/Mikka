@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { computerGone, readComputerMetrics } from '@/lib/computer/e2b-provider'
 import { ReviewAuthorityError, taskReviewAuthority } from '@/lib/coding-workspace/review-authority'
 import { E2BKeyError } from '@/lib/secrets/flag'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 export const maxDuration = 30
 
@@ -14,7 +15,7 @@ const sample = z.object({
 })
 
 /** Return a recent sample of the owner's current Run without connecting to or waking its VM. */
-export async function GET(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
+async function unguardedGET(request: Request, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
   try {
     const scope = await taskReviewAuthority(request, taskId)
@@ -41,3 +42,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ task
     return json({ error: 'machine_metrics_unavailable' }, 503)
   }
 }
+export const GET = defineRoute<'public','none',{ taskId: string }>(
+  {
+    route: '/api/tasks/[taskId]/review/machine-metrics',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, params }) => unguardedGET(request, { params: Promise.resolve(params) }),
+)

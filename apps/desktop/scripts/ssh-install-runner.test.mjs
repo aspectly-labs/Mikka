@@ -24,7 +24,8 @@ test('the SSH preload acceptance builds only main and preload, while every deskt
   }, { filename: 'tests/ssh-install/run.mjs', timeout: 2000 })
   const build = commands.find(command => command.args[0] === 'apps/desktop/scripts/build.mjs')
   assert.ok(build, 'the actual SSH runner still builds the installed preload')
-  assert.deepEqual([...build.args.slice(1)], ['--without-renderer'])
+  // The runner's arrays come from the VM realm; copy into this realm before a strict comparison.
+  assert.deepEqual(Array.from(build.args).slice(1), ['--without-renderer'])
   const names = ['MIKKA_UI_OVERLAY_DIR', 'MIKKA_UI_OVERLAY_SHA', 'MIKKA_DEPLOYMENT_STAGE', 'VERCEL', 'VERCEL_ENV']
   const previous = names.map(name => process.env[name])
   try {

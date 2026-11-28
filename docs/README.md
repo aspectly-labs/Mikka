@@ -11,7 +11,7 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
   covering specification, architecture primitives, static gates, verification,
   fail-closed promotion, and blameless COE. Use its templates for
   [design docs](engineering/templates/design-doc.md),
-  [UI specs](engineering/templates/ui-spec.md), and
+  [UI specs](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/templates/ui-spec.md), and
   [COE postmortems](engineering/templates/coe-postmortem.md).
 - [Development workflow](dev-workflow.md) covers issue ownership, local work,
   pull requests, merging and release follow-through.
@@ -31,24 +31,33 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 
 - [Design entry point](design/README.md) defines source priority and which
   document owns each kind of rule.
-- [Design System v2](design/design-system.md) is the executable visual and
+- UI rules, UI-only decision records, design research and screenshots, and
+  research derived from competitor apps live in the private hosted repository
+  ([design docs](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/README.md),
+  `mikka-hosted-ui/docs/research/`); links into it work for people with access.
+- [Design System v2](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/design-system.md) is the executable visual and
   interaction standard (tokens, restricted primitives, viewport budgets, the
   7-state contract, copy density and automated enforcement) across Web, Desktop
   and iOS.
 - [Glossary](design/glossary.md) defines bots, chats, threads and Agents.
-- [Rules](design/rules.md), [components](design/components.md) and
-  [copy](design/copy.md) guide product and UI changes.
+- [Rules](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md), [components](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md) and
+  [copy](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/copy.md) guide product and UI changes.
 - [Effective design and product rules](design/README.md) are read first. Tier 2
   dated [decision records](design/decisions/README.md) preserve immutable
   provenance with explicit `Status:` headers (`Accepted` or `Superseded by`);
   superseded entries and the [legacy decision log](design/decisions.md) are not active instructions.
-- [Feature specification template](design/spec-template.md) supplies the
+- [Feature specification template](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/spec-template.md) supplies the
   structure for a feature specification.
 - [Execution rules](execution-rules.md) describe model and machine selection.
 - [Settings](settings.md) maps personal and workspace settings.
 - [7-layer primitive architecture](architecture/primitives.md) maps Mikka's
   executable UI, error, route-guard, conversation-protocol, SQL-safety, ops and
   rule-as-code primitives to their owning modules and CI gates.
+- [Five-Tier Truth Model & anti-hardcoding gates](architecture/five-tier-truth.md)
+  separates structural code invariants (T1), validated env boundaries (T2),
+  authoritative domain/billing catalogs (T3), mutable runtime configuration (T4),
+  and parameterized localized copy (T5), enforced by zero-baseline gates G1–G6
+  and full-repository semantic AST linting.
 
 ## Connect and run Mikka
 
@@ -61,7 +70,7 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
 - [GitHub App setup](github-app-manifest.md), [Telegram](telegram.md),
   [Slack](slack-bot.md) covers integrations. [Linear sync](linear-sync.md) is retired (2026-11-24) and kept for reference.
 - [Desktop](../apps/desktop/README.md) covers the Electron client.
-- [Mobile](../apps/mobile/README.md) covers the Expo client.
+- [Mobile](design/mobile.md) covers the iOS client specification (the app source lives in private `mikka-hosted-ui/mobile-next/apps/mobile`; legacy 1.x `apps/mobile` is deleted per [decision 2026-11-25-0915](design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)).
 
 ## Verify and operate
 
@@ -77,12 +86,19 @@ in [`AGENTS.md`](../AGENTS.md) and [the contribution guide](../CONTRIBUTING.md).
   and its application, database and lease boundaries.
 - [UI review checklist](review-checklist.md) applies before presenting UI.
 - [Current build source of truth](operations/build-source-of-truth.md) separates public-root official builds, private UI Overlay, Cloudflare CI and the transitional OCI publisher.
+- [Cloud execution and secrets](operations/cloud-execution-and-secrets.md) defines E2B machine execution authority, LiteLLM-only managed model egress, task Secret isolation, native Task MCP delivery and additive E2B releases.
 - [Shared web and desktop runtime](operations/web-runtime.md) documents build
   outputs, startup and rollback.
 - [Hosted operations](operations/README.md) directs authorized operators to the private deployment and credential runbooks.
 - [Zero-residency baseline](operations/zero-residency-baseline.md) inventories Cloudflare and Oracle compute residency with per-service ownership for epic #3076.
 - [Web deployment](operations/web-deploy.md) and [production smoke](production-smoke.md) retain links to their private operating guides.
 - [Tracing](operations/tracing.md) locates requests and database queries.
+- [Configuration contracts](operations/config-contracts.md) is the generated
+  inventory of Tier-4 runtime configuration keys and Tier-3 workspace capability
+  owners, verified mechanically by G6 (`pnpm check:config-contracts`).
+- [Semantic lint calibration](operations/semantic-lint-calibration.md) documents
+  the four full-repository semantic AST lint rules, allowlists, and calibration
+  results for `pnpm lint:semantic`.
 - [Hosted credential operations](infisical-cloud.md) points to the private operating guide.
 
 - [Inbox API](inbox-api.md) defines pending, snoozed and completed items, actions, permissions and live refresh.

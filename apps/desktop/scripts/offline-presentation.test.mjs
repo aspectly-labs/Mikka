@@ -56,3 +56,41 @@ test('standalone and bundled offline surfaces use the same factual state copy wi
     }
   }
 })
+
+test('desktop offline.html and update.html do not hardcode zh-CN and honor ?lang=', async () => {
+  const [offlineHtml, updateHtml] = await Promise.all([
+    readFile(new URL('../src/offline.html', import.meta.url), 'utf8'),
+    readFile(new URL('../src/update.html', import.meta.url), 'utf8'),
+  ])
+  assert.doesNotMatch(offlineHtml, /<html\s+lang="zh-CN"/i)
+  assert.doesNotMatch(updateHtml, /<html\s+lang="zh-CN"/i)
+  assert.doesNotMatch(offlineHtml, /<h1 id="title">[^<]+<\/h1>/)
+  assert.doesNotMatch(offlineHtml, /<a id="retry" href="#">[^<]+<\/a>/)
+
+  const offlineScript = /<script>([\s\S]*?)<\/script>/.exec(offlineHtml)?.[1]
+  const updateScript = /<script>([\s\S]*?)<\/script>/.exec(updateHtml)?.[1]
+  assert.ok(offlineScript && updateScript)
+
+  for (const [queryLang, expectedLang] of [['en', 'en'], ['zh-CN', 'zh-CN']]) {
+    const win = new Window()
+    try {
+      win.document.body.innerHTML = offlineHtml.match(/<body>([\s\S]*?)<script>/)[1]
+      runInNewContext(offlineScript, {
+        document: win.document, navigator: { language: 'fr-FR' }, URLSearchParams,
+        location: { search: `?reason=server&lang=${queryLang}&app=${encodeURIComponent('https://example.invalid/mikka')}` },
+      })
+      assert.equal(win.document.documentElement.lang, expectedLang)
+    } finally { await win.happyDOM.close() }
+
+    const updateWin = new Window()
+    try {
+      updateWin.document.body.innerHTML = updateHtml.match(/<body>([\s\S]*?)<script>/)[1]
+      runInNewContext(updateScript, {
+        window: updateWin, document: updateWin.document, navigator: { language: 'fr-FR' }, URLSearchParams,
+        location: { search: `?lang=${queryLang}`, hash: '' },
+        history: { replaceState() {} },
+      })
+      assert.equal(updateWin.document.documentElement.lang, expectedLang)
+    } finally { await updateWin.happyDOM.close() }
+  }
+})

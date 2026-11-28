@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { channel } from 'node:diagnostics_channel'
 import { context, SpanStatusCode, trace } from '@opentelemetry/api'
 import { withNativeSessionCache } from './desktop-rpc/session-cache-context.ts'
+import { envValue } from './env/runtime.mjs'
 
 // Start and completion JSON lines per API request, written to stdout so Vercel Runtime Logs
 // (free on every plan) can search it. Only safe fields: never headers,
@@ -74,7 +75,7 @@ export function noteLogOutcome(outcome: RequestLogOutcome) {
 }
 
 export function hashUserId(userId: string): string {
-  const salt = process.env.LOG_HASH_SALT ?? ''
+  const salt = envValue('LOG_HASH_SALT') ?? ''
   return createHash('sha256').update(salt + userId).digest('hex').slice(0, 16)
 }
 

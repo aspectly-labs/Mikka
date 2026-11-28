@@ -9,6 +9,7 @@ import {
   checkMobileWriteOrigin,
   createRouteGuard,
   defineRoute,
+  resolveApiAuthSession,
   routeJson,
   type RouteGuardDependencies,
 } from './define-route'
@@ -133,9 +134,8 @@ test('spec validation fails fast on invalid auth/origin/workspace combinations',
   )
   assert.throws(
     () =>
-      defineRoute(
-        // @ts-expect-error webhook routes require verifyWebhook
-        { auth: 'webhook-signature', origin: 'any', workspace: 'none' },
+      // @ts-expect-error webhook routes require verifyWebhook
+      defineRoute({ auth: 'webhook-signature', origin: 'any', workspace: 'none' },
         () => routeJson({ ok: true }),
       ),
     /requires a verifyWebhook function/,
@@ -609,7 +609,7 @@ test('disableRefresh, fail-closed onOriginFailure/onAuthError, and zero-arg publ
   assert.equal(ok.status, 200)
   assert.deepEqual(harness.sessionCalls.at(-1)?.query, { disableCookieCache: true, disableRefresh: true })
 
-  // onOriginFailure preserves route-specific 403 contract and ignores non-403 bypass attempts fail-closed.
+  // onOriginFailure preserves route-specific 401/403 contracts BEFORE auth runs and ignores bypass attempts fail-closed.
   const customOrigin = harness.guard(
     {
       auth: 'public',
@@ -623,6 +623,29 @@ test('disableRefresh, fail-closed onOriginFailure/onAuthError, and zero-arg publ
   assert.equal(rejected.status, 403)
   assert.deepEqual(await rejected.json(), { error: 'originRejected' })
   assert.equal(rejected.headers.get('x-custom'), '1')
+
+  const sessionCallsBeforeForeignOrigin = harness.sessionCalls.length
+  const legacy401Origin = harness.guard(
+    {
+      auth: 'human-session-only',
+      origin: 'same-origin-or-desktop',
+      workspace: 'none',
+      freshSession: true,
+      write: true,
+      onOriginFailure: () => Response.json({ error: 'unauthorized' }, { status: 401 }),
+      onAuthFailure: () => Response.json({ error: 'unauthorized' }, { status: 401 }),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  const foreignOriginRefused = await legacy401Origin(
+    req('/api/agent-cli-policy', {
+      method: 'POST',
+      headers: { origin: 'https://evil.example', cookie: 'better-auth.session_token=abc' },
+    }),
+  )
+  assert.equal(foreignOriginRefused.status, 401)
+  assert.deepEqual(await foreignOriginRefused.json(), { error: 'unauthorized' })
+  assert.equal(harness.sessionCalls.length, sessionCallsBeforeForeignOrigin, 'foreign-origin writes must fail before session lookup')
 
   const badOriginHook = harness.guard(
     {
@@ -673,4 +696,81 @@ test('disableRefresh, fail-closed onOriginFailure/onAuthError, and zero-arg publ
     () => new Response('ok', { status: 200 }),
   )
   assert.equal((await zeroArgRoute()).status, 200)
+})
+
+test('onWorkspaceError preserves anti-enumeration 404 fail-closed and resolveApiAuthSession handles getApiSession-only mocks', async () => {
+  const harness = makeHarness()
+  let handlerCalls = 0
+
+  const antiEnumRoute = harness.guard(
+    {
+      auth: 'mobile-or-session',
+      origin: 'any',
+      workspace: 'pat-scoped',
+      onWorkspaceError: () => routeJson({ error: 'issueNotFound' }, 404),
+    },
+    async () => {
+      handlerCalls++
+      throw new WorkspaceError('workspaceAccessDenied')
+    },
+  )
+
+  // Malformed x-mikka-workspace-id fails before handler runs and returns the route's anti-enumeration 404.
+  const badHeader = await antiEnumRoute(req('/api/mobile/tasks/t1', {
+    headers: { 'x-mikka-workspace-id': 'not-a-workspace' },
+  }))
+  assert.equal(badHeader.status, 404)
+  assert.deepEqual(await badHeader.json(), { error: 'issueNotFound' })
+  assert.equal(handlerCalls, 0)
+
+  // Cross-workspace PAT mismatch also returns 404 before handler runs.
+  harness.setSession(makePatSession(WS_A))
+  const patMismatch = await antiEnumRoute(req('/api/mobile/tasks/t1', {
+    headers: { 'x-mikka-workspace-id': WS_B },
+  }))
+  assert.equal(patMismatch.status, 404)
+  assert.deepEqual(await patMismatch.json(), { error: 'issueNotFound' })
+  assert.equal(handlerCalls, 0)
+
+  // Handler-thrown WorkspaceError also routes through onWorkspaceError.
+  harness.setSession(makeHumanSession())
+  const handlerRefused = await antiEnumRoute(req('/api/mobile/tasks/t1'))
+  assert.equal(handlerRefused.status, 404)
+  assert.deepEqual(await handlerRefused.json(), { error: 'issueNotFound' })
+  assert.equal(handlerCalls, 1)
+
+  // A non-403/404/409 return from onWorkspaceError is ignored fail-closed.
+  const bypassAttempt = harness.guard(
+    {
+      auth: 'session',
+      origin: 'any',
+      workspace: 'pat-scoped',
+      onWorkspaceError: () => routeJson({ bypass: true }, 200),
+    },
+    async () => routeJson({ ok: true }),
+  )
+  const closed = await bypassAttempt(req('/api/mobile/tasks/t1', {
+    headers: { 'x-mikka-workspace-id': 'not-a-workspace' },
+  }))
+  assert.equal(closed.status, 403)
+  assert.deepEqual(await closed.json(), { error: 'workspaceAccessDenied' })
+
+  // resolveApiAuthSession supports both `{ auth: { api: { getSession } } }` and `{ getApiSession }` shapes.
+  const expected = makeHumanSession('user-mock')
+  const viaAuth = await resolveApiAuthSession(
+    { auth: { api: { getSession: async () => expected } } },
+    { headers: new Headers() },
+  )
+  assert.equal(viaAuth?.user.id, 'user-mock')
+
+  const viaDirect = await resolveApiAuthSession(
+    { getApiSession: async () => expected },
+    { headers: new Headers() },
+  )
+  assert.equal(viaDirect?.user.id, 'user-mock')
+
+  await assert.rejects(
+    () => resolveApiAuthSession({ auth: {} }, { headers: new Headers() }),
+    /api-auth session getter unavailable/,
+  )
 })

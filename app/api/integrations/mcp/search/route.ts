@@ -3,8 +3,9 @@ import { pluginActor } from '@/lib/plugins/actor'
 import { pluginResponse } from '@/lib/plugins/http'
 import { mcpConnections } from '@/lib/plugins/runtime'
 import { PluginError } from '@/lib/plugins/contracts'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const GET = (request: Request) => pluginResponse(async () => {
+const unguardedGET = (request: Request) => pluginResponse(async () => {
   const userId = await pluginActor(request)
   const query = new URL(request.url).searchParams
   const input = z.object({ workspaceId: z.uuid().optional(), environmentId: z.uuid().optional(), query: z.string().max(200).optional() }).safeParse({
@@ -13,3 +14,12 @@ export const GET = (request: Request) => pluginResponse(async () => {
   if (!input.success) throw new PluginError('invalidPluginInput', 400)
   return mcpConnections.search(userId, input.data)
 })
+export const GET = defineRoute(
+  {
+    route: '/api/integrations/mcp/search',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  ({ request }) => unguardedGET(request),
+)

@@ -7,6 +7,7 @@ import {
   DAEMON_PROTOCOL_VERSION,
   DAEMON_RPC_ERRORS,
   daemonRpc,
+  daemonRunActivity,
   type DaemonRpcMethod,
   type DaemonRpcParams,
   type DaemonRpcResult,
@@ -26,12 +27,13 @@ export { ResponseError }
 
 export interface DaemonClient {
   readonly hello: HelloResult
-  request<M extends Exclude<DaemonRpcMethod, "daemon.hello">>(
+  request<M extends Exclude<DaemonRpcMethod, "daemon.hello" | "daemon.watchRunActivity">>(
     method: M,
     ...params: undefined extends DaemonRpcParams<M>
       ? [DaemonRpcParams<M>?]
       : [DaemonRpcParams<M>]
   ): Promise<DaemonRpcResult<M>>
+  watchRunActivity(listener: (active: boolean) => void): Promise<void>
   /** Fires when the daemon goes away (exit, restart, drain). */
   onClose(listener: () => void): void
   close(): void
@@ -102,6 +104,19 @@ export async function connectDaemon(
       async request(method, ...params) {
         const result = await connection.sendRequest(method, params[0] ?? {})
         return daemonRpc[method].result.parse(result) as never
+      },
+      async watchRunActivity(listener) {
+        const subscription = connection.onNotification(daemonRunActivity.method, raw => {
+          const activity = daemonRunActivity.payload.safeParse(raw)
+          if (activity.success) listener(activity.data.active)
+        })
+        try {
+          const response = await connection.sendRequest("daemon.watchRunActivity", {})
+          daemonRpc["daemon.watchRunActivity"].result.parse(response)
+        } catch (error) {
+          subscription.dispose()
+          throw error
+        }
       },
       onClose(listener) {
         connection.onClose(listener)

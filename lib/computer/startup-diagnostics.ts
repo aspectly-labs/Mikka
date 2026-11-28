@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 const diagnosticWindow = z.object({
   version: z.literal(1), requesterId: z.string().min(1).max(128), workspaceId: z.uuid(), botId: z.uuid(),
@@ -24,7 +25,7 @@ type Scope = {
  * This adds no authority, database work or persisted assignment flag. Ordinary
  * user-configured task variables remain unchanged, including explicit opt-ins. */
 export function cloudStartupDiagnosticCandidate(scope: Scope,
-  env: Record<string, string | undefined> = process.env, now = Date.now()): boolean {
+  env: EnvMap = runtimeEnv(), now = Date.now()): boolean {
   const raw = env.MIKKA_CLOUD_DIAGNOSTIC_WINDOW
   if (!raw || raw.length > 4096) return false
   let parsed: unknown
@@ -45,6 +46,6 @@ export function cloudStartupDiagnosticCandidate(scope: Scope,
 /** The candidate predicate does not grant diagnostics; publication remains
  * inside the existing final fresh claim fence. */
 export function cloudStartupDiagnosticEnv(taskEnv: Record<string, string>, scope: Scope,
-  env: Record<string, string | undefined> = process.env, now = Date.now()): Record<string, string> {
+  env: EnvMap = runtimeEnv(), now = Date.now()): Record<string, string> {
   return cloudStartupDiagnosticCandidate(scope, env, now) ? { ...taskEnv, CLOUD_STARTUP_TIMING: '1' } : taskEnv
 }

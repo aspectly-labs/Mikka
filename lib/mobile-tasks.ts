@@ -14,7 +14,7 @@ import { taskAssignees, taskIdentifiers } from '@/lib/task-identifier-server'
 import { githubPullRequestKey, readIssueMetadata, taskWorkOwner } from '@/lib/issue-metadata'
 import { taskRelationKinds } from './issue-relations'
 import { taskPullConversations } from './task-work-pulls'
-import { issueContentToMarkdown } from '@/lib/linear-sync/markdown'
+import { issueContentToMarkdown } from '@/lib/task-comments/markdown'
 import { runBotId } from '@/lib/run-bot-name'
 import { taskSchedule, taskScheduleLabels, taskScheduleView } from '@/lib/task-block-runs'
 import { enrichActivityActors } from '@/lib/activity-actor-server'
@@ -127,7 +127,7 @@ async function readMobileTask(user: Exclude<IssueReader, string>, workspaceId: s
   const reviews = await taskReviewSummaries(user, decoration?.codingReview ? [id] : [], workspaceId)
   const history = deriveIssueActivity(await enrichActivityActors(versions, issue.userId), [], Infinity)
   const creation = history.find(event => event.kind === 'created')
-  const { loadIssueDocument, readIssueThreads } = await import('./linear-sync/document')
+  const { loadIssueDocument, readIssueThreads } = await import('./task-comments/issue-document')
   const doc = document ? loadIssueDocument(document.state, issue.content) : null
   let timeline
   try {

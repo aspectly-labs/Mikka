@@ -9,6 +9,7 @@ import { workspaceDb } from '@/lib/workspace-db'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
 import type { EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { autoRechargePolicy, saveAutoRechargePolicy } from './auto-recharge'
+import { overagePolicy, readMonthlyOverageMicroUsd, saveOveragePolicy } from './overage'
 import type { BillingReceiptsPolicyView, WorkspaceBillingSettingsView } from './contract'
 
 /**
@@ -84,6 +85,7 @@ export async function readWorkspaceBillingSettings(
     .from(workspaceBilling)
     .where(eq(workspaceBilling.workspaceId, accountWorkspaceId))
     .limit(1)
+  const spentOverageMicroUsd = await readMonthlyOverageMicroUsd(accountWorkspaceId)
   return {
     workspaceId,
     accountWorkspaceId,
@@ -92,6 +94,7 @@ export async function readWorkspaceBillingSettings(
     source: BILLING_RECEIPTS_POLICY.source,
     receipts: BILLING_RECEIPTS_POLICY,
     autoRecharge: autoRechargePolicy(billing),
+    overage: overagePolicy(billing, spentOverageMicroUsd),
   }
 }
 
@@ -108,6 +111,12 @@ export async function writeWorkspaceAutoRecharge(
   )
   if (!canManageRecharge) throw new WorkspaceError('workspaceAccessDenied')
   const saved = await saveAutoRechargePolicy(actorId, accountWorkspaceId, rawPolicy)
+  const [billing] = await db
+    .select()
+    .from(workspaceBilling)
+    .where(eq(workspaceBilling.workspaceId, accountWorkspaceId))
+    .limit(1)
+  const spentOverageMicroUsd = await readMonthlyOverageMicroUsd(accountWorkspaceId)
   return {
     workspaceId,
     accountWorkspaceId,
@@ -116,5 +125,36 @@ export async function writeWorkspaceAutoRecharge(
     source: BILLING_RECEIPTS_POLICY.source,
     receipts: BILLING_RECEIPTS_POLICY,
     autoRecharge: saved,
+    overage: overagePolicy(billing, spentOverageMicroUsd),
+  }
+}
+
+export async function writeWorkspaceOveragePolicy(
+  actorId: string,
+  workspaceId: string,
+  rawPolicy: unknown,
+  principal?: EnterprisePrincipal,
+): Promise<WorkspaceBillingSettingsView> {
+  const { accountWorkspaceId, canManageRecharge } = await resolveWorkspaceBillingSettingsAuthority(
+    actorId,
+    workspaceId,
+    principal,
+  )
+  if (!canManageRecharge) throw new WorkspaceError('workspaceAccessDenied')
+  const savedOverage = await saveOveragePolicy(actorId, accountWorkspaceId, rawPolicy)
+  const [billing] = await db
+    .select()
+    .from(workspaceBilling)
+    .where(eq(workspaceBilling.workspaceId, accountWorkspaceId))
+    .limit(1)
+  return {
+    workspaceId,
+    accountWorkspaceId,
+    canManageRecharge,
+    receiptsManagedBy: BILLING_RECEIPTS_POLICY.receiptsManagedBy,
+    source: BILLING_RECEIPTS_POLICY.source,
+    receipts: BILLING_RECEIPTS_POLICY,
+    autoRecharge: autoRechargePolicy(billing),
+    overage: savedOverage,
   }
 }

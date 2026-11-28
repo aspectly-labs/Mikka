@@ -7,14 +7,18 @@ import { configuredDeploymentId } from '../../../lib/deployment-id.mjs'
 import { publicEnv } from '../../../lib/public-env.mjs'
 import { nodeRuntimePackages } from '../build-contract.mjs'
 import { assertNoFixtureAuthInDirectories } from '../../../scripts/fixtures/bundle-check.mjs'
+import { envValue } from '../../../lib/env/runtime.mjs'
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const within = (root, path) => path === root || path.startsWith(`${root}${sep}`)
 
 /** Compile app-owned tracing only; the actual pg/OTel packages stay external. */
-export async function compileTracing(root) {
+export async function compileTracing(root, revision) {
+  if (revision !== undefined && (typeof revision !== 'string' || !/^[a-f0-9]{40}$/.test(revision))) throw new Error('API_BUILD_SHA_REQUIRED')
   const result = await build({
-    absWorkingDir: root, entryPoints: ['apps/api/runtime/tracing-start.ts'],
+    absWorkingDir: root,
+    stdin: { contents: `import { startBuildTracing } from './apps/api/runtime/tracing-start'; startBuildTracing(${JSON.stringify(revision)});`,
+      resolveDir: root, sourcefile: 'mikka-tracing-entry.mjs' },
     bundle: true, platform: 'node', format: 'esm', target: 'node22',
     alias: { '@': root }, external: nodeRuntimePackages, write: false, metafile: true,
     sourcemap: false,
@@ -28,21 +32,21 @@ export async function finalizeBuild({ root, output, preset, revision }) {
   root = resolve(root); output = resolve(output)
   if (!within(root, output) || output === root) throw new Error('API_OUTPUT_LOCATION_INVALID')
   if (preset !== 'node-server') throw new Error('API_BUILD_PRESET_UNSUPPORTED')
-  const tracing = await compileTracing(root)
+  const tracing = await compileTracing(root, revision)
   const { resources, posterBinary, copyResources } = await runtimeResources(root)
   const evidence = { version: 1, revision, preset, node: process.version,
-    target: process.env.MIKKA_BUILD_TARGET === 'local-fixture' ? 'local-fixture' : 'production',
+    target: envValue('MIKKA_BUILD_TARGET') === 'local-fixture' ? 'local-fixture' : 'production',
     basePath: '/mikka',
     appBuild: publicEnv('MIKKA_PUBLIC_BUILD') || revision,
-    testDeploymentSha: process.env.MIKKA_TEST_DEPLOYMENT_SHA ?? '',
+    testDeploymentSha: envValue('MIKKA_TEST_DEPLOYMENT_SHA') ?? '',
     lockSha256: hash(await readFile(join(root, 'pnpm-lock.yaml'))),
     routesSha256: hash(await readFile(join(root, 'apps/api/generated/routes.json'))),
     tracingSha256: hash(tracing), posterBinary, resources }
   if (evidence.testDeploymentSha && evidence.testDeploymentSha !== revision) throw new Error('API_TEST_BUILD_SHA_MISMATCH')
-  if (evidence.target === 'local-fixture' && (process.env.VERCEL || process.env.VERCEL_ENV)) throw new Error('FIXTURE_DEPLOYMENT_FORBIDDEN')
-  evidence.overlaySha = process.env.MIKKA_UI_OVERLAY_SHA || null
+  if (evidence.target === 'local-fixture' && (envValue('VERCEL') || envValue('VERCEL_ENV'))) throw new Error('FIXTURE_DEPLOYMENT_FORBIDDEN')
+  evidence.overlaySha = envValue('MIKKA_UI_OVERLAY_SHA') || null
   evidence.deploymentId = configuredDeploymentId() ?? null
-  if (process.env.MIKKA_EDITION === 'cloud' && evidence.overlaySha && evidence.deploymentId) {
+  if (envValue('MIKKA_EDITION') === 'cloud' && evidence.overlaySha && evidence.deploymentId) {
     const { buildCloudflareWorld } = await import('../../../scripts/build-cloudflare-world.mjs')
     const path = 'world-business.mjs'
     const file = await buildCloudflareWorld('business', join(output, path))

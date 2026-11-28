@@ -13,6 +13,7 @@ export class HostedWorkflowModel implements Model {
     readonly modelId: string,
     /** The Bot chat turn this model serves (lib/usage-turn-ref.ts), recorded on each call's receipt. */
     readonly turnRef: UsageTurnRef | null = null,
+    readonly pro = false,
   ) {}
   static [WORKFLOW_SERIALIZE](value: HostedWorkflowModel) {
     return {
@@ -20,15 +21,17 @@ export class HostedWorkflowModel implements Model {
       botId: value.botId,
       modelId: value.modelId,
       turnRef: value.turnRef,
+      ...(value.pro ? { pro: true } : {}),
     }
   }
   static [WORKFLOW_DESERIALIZE](value: {
     ownerId: string
     botId: string | null
     modelId: string
+    pro?: boolean
     turnRef?: string | null
   }) {
-    return new HostedWorkflowModel(value.ownerId, value.botId, value.modelId, isUsageTurnRef(value.turnRef) ? value.turnRef : null)
+    return new HostedWorkflowModel(value.ownerId, value.botId, value.modelId, isUsageTurnRef(value.turnRef) ? value.turnRef : null, value.pro === true)
   }
   async doGenerate(options: Parameters<Model['doGenerate']>[0]) {
     'use step'
@@ -46,7 +49,7 @@ export class HostedWorkflowModel implements Model {
         this.modelId,
         undefined,
         this.ownerId,
-        { operation: this.botId ? 'bot' : 'coordinator' },
+        { operation: this.botId ? 'bot' : 'coordinator' }, this.pro,
       )
     ).doGenerate(options), { runId: identity.workflowRunId, appVersion: APP_BUILD, credential: 'api_key', requestBodyValues: { prompt: options.prompt, tools: options.tools, providerOptions: options.providerOptions, headers: options.headers } }))
   }
@@ -65,7 +68,7 @@ export class HostedWorkflowModel implements Model {
     const identity = await stepIdentity()
     const workspaceId = await executionWorkspace(this.ownerId, this.botId)
     const result = await hostedBillingScope.run({ workspaceId, ownerId: this.ownerId, actorId: this.ownerId, ...(this.turnRef ? { turnRef: this.turnRef } : {}) }, () => workflowFailureStream(async () => {
-      const model = await hostedModel(workspaceId, this.modelId, undefined, this.ownerId, { operation: this.botId ? 'bot' : 'coordinator' })
+      const model = await hostedModel(workspaceId, this.modelId, undefined, this.ownerId, { operation: this.botId ? 'bot' : 'coordinator' }, this.pro)
       requestedAt = Date.now()
       return model.doStream({ ...options, prompt: withCacheBreakpoints(options.prompt, 'anthropic') })
     }, { runId: identity.workflowRunId, appVersion: APP_BUILD, credential: 'api_key', requestBodyValues: { prompt: options.prompt, tools: options.tools, providerOptions: options.providerOptions, headers: options.headers } }))

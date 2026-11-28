@@ -30,8 +30,8 @@ test('current and older trusted selectors schedule the docs classifier suite onc
   }
 })
 
-test('core and integration lanes ignore retired public Web UI tasks from older trusted selectors', () => {
-  const retired = ['ci-core-8', 'ci-core-49', 'ci-core-57', 'ci-core-view-state']
+test('core and integration lanes ignore retired public Web UI and OpenUI tasks from older trusted selectors', () => {
+  const retired = ['ci-core-8', 'ci-core-49', 'ci-core-52', 'ci-core-57', 'ci-core-view-state']
   const combined = ['ci-core-7', ...retired, 'ci-integration-2']
   for (const [kind, expected] of [['core', ['core-7']], ['integration', ['integration-2']]]) {
     const result = main(kind, { CI_UNITS: JSON.stringify(combined) }, (_command, args) => {

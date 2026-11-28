@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg'
 import { sql } from 'drizzle-orm'
 import type { workspaceDb } from '../workspace-db'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { liveGatewayConfig, type LiveScope } from './scope'
 import type { LiveInvalidation } from './events'
@@ -124,7 +125,7 @@ type Resolve = (database: Database, workspaceDatabase: Database) => Promise<Targ
 /** Register at the real writer. A nested savepoint or held query wrapper does
  * not publish before the outer COMMIT, and deferred reads retain its database. */
 async function changed(executor: object, key: string, resolve: Resolve) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive } = await import('./notify')
   afterDatabaseCommit(executor, `list:${key}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')
@@ -256,7 +257,7 @@ export const ownerWorkspaceListsChanged = (executor: object, ownerId: string, ki
  * transaction. A removed member may clear this known list after COMMIT; this
  * snapshot never grants a ticket or authorizes a subsequent content read. */
 export async function workspaceListScopesBeforeChange(executor: Pick<typeof workspaceDb, 'execute'>, workspaceId: string): Promise<LiveScope[]> {
-  if (!liveGatewayConfig(process.env)) return []
+  if (!liveGatewayConfig(runtimeEnv())) return []
   const { rows } = await executor.execute<LiveScope>(sql`SELECT m."userId" AS "ownerId",w.id AS "workspaceId" FROM mikka_workspaces w
     JOIN mikka_workspace_members m ON m."workspaceId"=w.id AND m.status='active'
     WHERE w.id=${workspaceId} AND (w.kind='team' OR w."userId"=m."userId")`)
@@ -278,7 +279,7 @@ export const workspaceListScopeChanged = (executor: object, workspaceId: string,
 
 /** Called with the actual locked issue before its scope changes. */
 export async function issueListScopesBeforeChange(issue: IssueScope): Promise<LiveScope[]> {
-  if (!liveGatewayConfig(process.env)) return []
+  if (!liveGatewayConfig(runtimeEnv())) return []
   try {
     const { workspacePool } = await import('../workspace-db')
     return await issueListScopes(workspacePool, issue)

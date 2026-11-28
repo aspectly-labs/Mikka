@@ -69,7 +69,7 @@ test('AI failure summary distinguishes both service span names and exports only 
 })
 
 test('decodes the exact production OTLP wire format and retains only explicit metadata', async () => {
-  const resource = resourceFromAttributes({ 'service.name': 'mikka-daemon' })
+  const resource = resourceFromAttributes({ 'service.name': 'mikka-daemon', 'service.version': 'b'.repeat(12), private: 'private resource' })
   const traces = new InMemorySpanExporter(), logs = new InMemoryLogRecordExporter()
   const tracer = new BasicTracerProvider({ resource, sampler: new AlwaysOnSampler(), spanProcessors: [new SimpleSpanProcessor(traces)] })
   const logger = new LoggerProvider({ resource, processors: [new SimpleLogRecordProcessor({ exporter: logs })] })
@@ -81,9 +81,11 @@ test('decodes the exact production OTLP wire format and retains only explicit me
   const decodedSpans = decodeOtlp(Buffer.from(ProtobufTraceSerializer.serializeRequest(traces.getFinishedSpans())), 'traces')
   const decodedLogs = decodeOtlp(Buffer.from(ProtobufLogsSerializer.serializeRequest(logs.getFinishedLogRecords())), 'logs')
   assert.equal(decodedSpans[0].traceId, span.spanContext().traceId)
+  assert.equal(decodedSpans[0].serviceVersion, 'b'.repeat(12))
   assert.equal(decodedSpans[0].status, 2)
   assert.equal(decodedSpans[0].attributes['mikka.ai.input_tokens'], 12)
   assert.equal(decodedLogs[0].traceId, span.spanContext().traceId)
+  assert.equal(decodedLogs[0].serviceVersion, 'b'.repeat(12))
   assert.equal(decodedLogs[0].spanId, span.spanContext().spanId)
   assert.equal(decodedLogs[0].severity, 17)
   assert.equal(decodedLogs[0].body, 'mikka.stage.failed')

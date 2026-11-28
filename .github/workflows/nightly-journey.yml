@@ -2,9 +2,10 @@ name: Nightly offline journeys
 
 # #2890 explicitly limits browser journeys to nightly/manual execution.
 # Pull requests retain the API/CLI policy from decisions 1520 and 2225.
+# The daily full CI run (ui-policy.yml, job nightly-journey) calls this; it can
+# also be dispatched by hand on main.
 on:
-  schedule:
-    - cron: '43 6 * * *'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -17,7 +18,9 @@ concurrency:
 jobs:
   journey:
     name: Offline MVP journeys
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main'
+    # The repository id survives the move from alexj11324/Mikka to aspectly-labs/Mikka;
+    # the old name guard skipped every scheduled run after the move.
+    if: github.repository_id == '1427517699' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     permissions:
@@ -86,7 +89,6 @@ jobs:
         run: node scripts/test-accounts/bootstrap.mjs --output "$MIKKA_TEST_ENVIRONMENT_FILE"
       - name: Compile the local API and Eve around the verified official renderer
         run: |
-          pnpm generate:agent-ui
           node scripts/build-eve.mjs
           node apps/api/scripts/build.mjs
           node scripts/package-eve.mjs

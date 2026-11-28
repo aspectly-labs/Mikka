@@ -97,11 +97,9 @@ test('page requests never wait for unrelated AI routes or readiness marker files
   assert.match(dev, /apps\/frontend\/index\.html/)
 })
 
-test('preview bootstrap script runs before any application import, and no inline env lands in the document', async () => {
-  // The devtools guard is emitted by the Vite runtime entry ahead of the app
-  // graph, so it never renders into HTML; the document carries no server env.
+test('preview bootstrap script runs before any application import, and no inline env or retired OpenUI devtools lands in the document', async () => {
   const runtime = await readFile(new URL('../apps/frontend/scripts/frontend-runtime.mjs', import.meta.url), 'utf8')
-  assert.match(runtime, /development \? 'globalThis\[Symbol\.for\("openui\.devtools\.autoMount"\)\] = true;\\n' : ''/)
+  assert.doesNotMatch(runtime, /openui\.devtools/)
   const html = await readFile(new URL('../apps/frontend/index.html', import.meta.url), 'utf8')
   assert.doesNotMatch(html, /process\.env/)
   assert.doesNotMatch(html, /openui\.devtools/)

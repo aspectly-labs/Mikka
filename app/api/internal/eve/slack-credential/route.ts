@@ -6,7 +6,8 @@ import { withTaskWorkspace } from '@/lib/task-workspace'
 import { pool } from '@/lib/db'
 import { installationCredential } from '@/lib/slack/installation-store'
 import { slackTeamId, slackUserId } from '@/lib/slack/install-provider'
-import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
+import { readEnv } from '@/lib/env/server'
 
 const shape = z
   .object({
@@ -19,7 +20,7 @@ const shape = z
 async function handle(request: Request) {
   const refuse = () => new Response(null, { status: 403, headers: { 'Cache-Control': 'no-store' } })
   const scope = internalEveRequestScope(request),
-    app = process.env.SLACK_APP_ID
+    app = readEnv('SLACK_APP_ID')
   if (scope?.surface !== 'slack' || !app) return refuse()
   try {
     const input = shape.safeParse(await request.json())
@@ -49,4 +50,13 @@ async function handle(request: Request) {
     return refuse()
   }
 }
-export const POST = withRequestLog('/api/internal/eve/slack-credential', handle)
+
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/internal/eve/slack-credential',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handle(request),
+)

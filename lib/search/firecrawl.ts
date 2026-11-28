@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { readEnv } from '@/lib/env/server'
 import { SearchProviderError, type SearchOptions, type SearchProvider } from './types'
 import { abortable, assertPublicWebUrl, webUrlSchema, type ResolveHost } from './url-policy'
 
@@ -44,7 +45,7 @@ export function createFirecrawlProvider(fetchImpl: typeof fetch = fetch, options
       return await abortable(() => work(combined, async body => {
         combined.throwIfAborted()
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-        const key = process.env.FIRECRAWL_API_KEY
+        const key = readEnv('FIRECRAWL_API_KEY')
         if (key) headers.Authorization = `Bearer ${key}`
         const response = await abortable(() => fetchImpl(ENDPOINT + operation, {
           method: 'POST', headers, body: JSON.stringify(body), signal: combined,

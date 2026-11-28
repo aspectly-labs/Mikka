@@ -6,6 +6,7 @@ import { withRequestLog, noteLogUser } from '@/lib/request-log';
 import { factoryBrowserSession } from '@/lib/factory/browser-human';
 import { factoryHumanStore, factorySpecApproval } from '@/lib/factory/server';
 import { handleFactoryFlow } from '@/lib/factory/flow-http';
+import { defineRoute } from '@/lib/primitives/define-route'
 const respond = withRequestLog('/api/factory/tasks/[taskId]/flow', async (request: Request, context: { params: Promise<{ taskId: string }> }) => {
   const session = await factoryBrowserSession(request,headers => auth.api.getSession({ headers, query: { disableCookieCache: true } }));
   const actor = session ? { userId: session.user.id, sessionId: session.session.id } : null;
@@ -23,5 +24,22 @@ const respond = withRequestLog('/api/factory/tasks/[taskId]/flow', async (reques
   });
 
 });
-export const GET = respond;
-export const POST = respond;
+export const GET = defineRoute<'public','none',{ taskId: string }>(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => respond(request, { params: Promise.resolve(params) }),
+)
+
+export const POST = defineRoute<'public','none',{ taskId: string }>(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => respond(request, { params: Promise.resolve(params) }),
+)

@@ -59,22 +59,23 @@ checks: the template builds, both CLIs start and the execution fence opens.
 E2B uses the user's own key, so there is no subscription run before publication
 ([#2789](https://github.com/alexj11324/Mikka/pull/2789)).
 
-The release starts by itself. When a run of the Cloudflare application
+The runtime release starts by itself. When a run of the Cloudflare application
 deployment workflow finishes with a serving-release observation
 (`gateway-observe` after a cutover, or a per-service Web `service-production`),
-the runtime workflow and Desktop release receive that `workflow_run` event.
-Runtime applies the initial current-main selection above and its existing
-input checks. Desktop accepts a served product in main's history and skips a
-commit whose installer is already the latest release. Both use
-`actions:RUN_ID:ATTEMPT` of that observation as their receipt, and every gate
-rechecks it as below. The
+the runtime workflow receives that `workflow_run` event, applies the initial
+current-main selection above and its existing input checks, and uses
+`actions:RUN_ID:ATTEMPT` of that observation as its receipt; every gate
+rechecks it as below. Desktop does not start from these observations (see the
+Desktop paragraph below). The
 [workflow reference](../../.github/workflows/README.md#cloud-worker-template-release)
 owns runtime candidate checks and recovery.
 
 To retry by hand, dispatch the official runtime workflow on current main with
 its retry reason and `cloudflare_receipt`. A dispatch without a receipt fails
 before any builder starts. For a Cloudflare-to-Cloudflare
-promotion, run the existing Cloudflare application deployment workflow with phase
+promotion, the owner (`gateway-observe` is owner-only,
+[promotion switch](build-source-of-truth.md#break-glass-phases-that-bypass-the-staging-evidence))
+runs the existing Cloudflare application deployment workflow with phase
 `gateway-observe` on the reviewed operations commit containing the prepared
 checklist. The observer only reads the provider and canonical application.
 Use `actions:RUN_ID:ATTEMPT` from that successful observation in the consumer
@@ -93,12 +94,23 @@ The same release produces the immutable template report for the private
 Cloudflare API deployment.
 
 Desktop uses its existing signed and notarized macOS workflow. A push records
-in its run summary that no installer was built. The serving-release observation
-starts it as described above; a manual dispatch on main with a fresh
-`cloudflare_receipt` still works.
+in its run summary that no installer was built. Only an automatic
+`pipeline-production` promotion (`pipeline:RUN_ID:ATTEMPT`, bound to its
+`deploy-production` receipt archive and funded model acceptance; it exists only
+while `autoProduction` is `true`) starts it by itself. A serving-release
+observation or a manual `pipeline-promote` never starts it; a promoter
+(`config/release-promoters.json`) dispatches it on main with either receipt
+([promotion switch](build-source-of-truth.md#production-promotion-switch)). Automatic pipeline triggers
+skip commits only when the latest release's `mikka-ui-overlay.json` matches
+the promoted overlay, its commit already covers the served Web/API builds, and
+no Desktop input path changed.
 It verifies the serving Web version and exact overlay before allocating the
 Mac, before loading credentials, and immediately before publishing the sealed
-installer. The approved backend must contain the installer commit.
+installer. For serving observations the approved backend must contain the
+installer commit; for automatic `pipeline-production` promotions the promoted
+manifest cryptographically binds the served Web/API builds (rebuilt or reused
+under identical `contextDigest`) to the installer commit and rejects any stale
+receipt behind `releases/latest`.
 
 See the [private runbook](https://github.com/alexj11324/mikka-cloud/blob/main/docs/operations/web-deploy.md).
 

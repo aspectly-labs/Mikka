@@ -1,5 +1,4 @@
-import { freshSessionRoute } from '@/lib/fresh-session'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { json, unauthorized } from '@/lib/mobile-api'
 import { mobileProfilePatchSchema } from '@/lib/mobile-profile-contract'
 import {
   MobileProfileSessionError,
@@ -7,13 +6,12 @@ import {
   requireMobileHumanSession,
   updateMobileProfileName,
 } from '@/lib/mobile-profile'
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { noteLogUser } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 /** `GET /api/mobile/profile`: the signed-in person's profile fields. */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const profile = await readMobileProfile(user.id)
   if (!profile) return unauthorized()
   return json({ user: profile })
@@ -26,7 +24,6 @@ async function handleGET(request: Request) {
  * PATs are rejected with `403 sessionRequired`.
  */
 async function handlePATCH(request: Request) {
-  if (!writeAllowed(request)) return forbiddenOrigin()
   let session
   try {
     session = await requireMobileHumanSession(request)
@@ -46,5 +43,22 @@ async function handlePATCH(request: Request) {
   return response
 }
 
-export const GET = withRequestLog('/api/mobile/profile', handleGET)
-export const PATCH = freshSessionRoute(withRequestLog('/api/mobile/profile', handlePATCH))
+export const GET = defineRoute<'mobile-or-session', 'none'>(
+  {
+    route: '/api/mobile/profile',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)
+
+export const PATCH = defineRoute<'mobile-or-session', 'none'>(
+  {
+    route: '/api/mobile/profile',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request }) => handlePATCH(request),
+)

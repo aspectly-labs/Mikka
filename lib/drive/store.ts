@@ -15,7 +15,7 @@ import { createUlidFactory } from './ulid'
  * `lib/computer/claim.ts` and the Factory store use, and the same idempotency
  * receipt `lib/factory/monitor-cycle.db.test.ts` proves with ten replays. It is
  * the same idea as Capy's Drive write, with the naming kept Mikka's own: a
- * `driveScope`, not a Capy "scope"; a `volume`, not a "workspace".
+ * `driveScope`, not a "scope"; a `volume`, not a "workspace".
  *
  * The invariant the whole feature rests on: a write either lands completely or
  * changes nothing. Every check happens under the volume row's lock, and every

@@ -7,6 +7,7 @@ import { sweepOrganizationAuditRetention } from '../governance/audit-export'
 import { deliverIdentityAudits } from './audit-outbox'
 import { drainLiveRevocations } from './live-authority'
 import { liveGatewayConfig } from '../live/scope'
+import { runtimeEnv } from '@/lib/env/server'
 
 /** Reuses the existing durable audit-maintenance timer; this is not a periodic polling loop. */
 export async function maintainEnterpriseGovernance() {
@@ -25,7 +26,7 @@ export async function nextEnterpriseMaintenanceDue(main: Pick<Pool, 'query'>, wo
       select coalesce("lastAttemptAt"+interval '30 seconds',"createdAt") as at from enterprise_scim_outbox where "deliveredAt" is null
       union all select coalesce("lastAttemptAt"+interval '30 seconds',"createdAt") from enterprise_audit_outbox where "deliveredAt" is null
       union all select coalesce("lastAttemptAt"+interval '30 seconds',"createdAt") from enterprise_live_capabilities
-        where "revokedAt" is not null and "deliveredAt" is null and $1) pending`, [!!liveGatewayConfig(process.env)]),
+        where "revokedAt" is not null and "deliveredAt" is null and $1) pending`, [!!liveGatewayConfig(runtimeEnv())]),
     workspace.query<{ at: string | null }>(`select ceil(extract(epoch from min(at))*1000)::bigint::text as at from (
       select "createdAt" as at from mikka_governance_member_outbox where "deliveredAt" is null
       union all select "createdAt" from mikka_organization_policy_outbox where "deliveredAt" is null

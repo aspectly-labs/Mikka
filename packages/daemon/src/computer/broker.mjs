@@ -30,8 +30,9 @@ export class ComputerBroker {
     // Cloud desktops must be bound by the trusted caller, never the model.
     if (display !== undefined && !/^:[1-9][0-9]{0,2}$/.test(display))
       throw new Error("Invalid desktop display");
-    // Missing or unknown policy never grants access.
-    if (this.suspended || (this.transport === "tcp" && !this.server?.listening) || !this.driver || !permission || !["ask", "allow"].includes(permission))
+    // Only `allow` grants, and a granted action runs at once: nobody is asked
+    // (ADR 2026-11-27-1720). Deny, a missing or an unknown policy grants nothing.
+    if (this.suspended || (this.transport === "tcp" && !this.server?.listening) || !this.driver || permission !== "allow")
       return undefined;
     const token = randomBytes(32).toString("hex");
     this.grants.set(token, { runId, fingerprint: this.driver.fingerprint, display, permission });
@@ -92,7 +93,7 @@ export class ComputerBroker {
     const step = actionStep(value);
     return this.requestCall(token, grant, call, signal, step);
   }
-  /** Timings cover execution itself, excluding decision and human-approval waits. */
+  /** Timings cover execution itself. */
   async executeRecorded(driver, call, display, runId, context, step) {
     const started = this.now();
     try { return await this.execute(driver, call, display, runId, context); }

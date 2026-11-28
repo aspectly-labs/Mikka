@@ -75,12 +75,38 @@ const safeVerifyCommand = z.string().trim().min(1).max(2000).refine(
   { message: 'Invalid verify command.' },
 )
 
+const FORBIDDEN_SETUP_COPY_PATH = /(^|\/)(\.git|\.codex\/auth\.json|\.claude\/\.credentials\.json)(\/|$)/
+
+const safeSetupCopyFile = z.string().trim().min(1).max(1000).refine(
+  value => !value.includes('\0')
+    && !value.startsWith('/')
+    && !value.startsWith('\\')
+    && !value.split(/[\\/]/).includes('..')
+    && !FORBIDDEN_SETUP_COPY_PATH.test(value.replace(/\\/g, '/')),
+  { message: 'Copy file must be a safe relative path inside the repository.' },
+)
+
+export const deviceRepositorySetupInput = z.object({
+  command: z.string().trim().max(2000).refine(value => !value.includes('\0'), { message: 'Invalid setup command.' }).optional(),
+  copyFiles: z.array(safeSetupCopyFile).max(200).default([]),
+  approved: z.boolean().default(true),
+}).strict()
+
+export type DeviceRepositorySetupInput = z.infer<typeof deviceRepositorySetupInput>
+
+export interface DeviceRepositorySetup {
+  command: string | null
+  copyFiles: string[]
+  approved: boolean
+}
+
 export const upsertDeviceRepositoryInput = z.object({
   repoKey: z.string().trim().min(1).max(4000).optional(),
   repository: z.string().trim().min(1).max(4000).optional(),
   localPath: safeLocalPath.nullable().optional(),
   baseBranch: safeBaseBranch.nullable().optional(),
   verifyCommand: safeVerifyCommand.nullable().optional(),
+  setup: deviceRepositorySetupInput.nullable().optional(),
 }).strict().refine(
   value => Boolean(value.repoKey ?? value.repository),
   { message: 'repoKey or repository is required.' },
@@ -95,11 +121,12 @@ export const patchDeviceRepositoryInput = z.object({
   localPath: safeLocalPath.nullable().optional(),
   baseBranch: safeBaseBranch.nullable().optional(),
   verifyCommand: safeVerifyCommand.nullable().optional(),
+  setup: deviceRepositorySetupInput.nullable().optional(),
 }).strict().refine(
   value => Boolean(value.id ?? value.repoKey ?? value.repository),
   { message: 'id, repoKey or repository is required.' },
 ).refine(
-  value => value.localPath !== undefined || value.baseBranch !== undefined || value.verifyCommand !== undefined,
+  value => value.localPath !== undefined || value.baseBranch !== undefined || value.verifyCommand !== undefined || value.setup !== undefined,
   { message: 'At least one mutable repository field is required.' },
 )
 
@@ -124,6 +151,7 @@ export interface DeviceRepositoryItem {
   localPath: string | null
   baseBranch: string | null
   verifyCommand: string | null
+  setup: DeviceRepositorySetup | null
   createdAt: string
 }
 

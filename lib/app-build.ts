@@ -1,5 +1,6 @@
 import { meetsMinimumVersion } from '@mikka/protocol/version'
 import { withBasePath } from '@/lib/base-path'
+import { getPublicBuild } from './env/public.ts'
 
 // Which deployment this page was built by. A page left open across a deploy
 // (a desktop window, a long-lived tab) keeps calling the old deployment's
@@ -7,7 +8,7 @@ import { withBasePath } from '@/lib/base-path'
 // compares its build with the server's and offers a reload instead.
 
 /** Inlined at build time (apps/frontend/vite.config.mjs, apps/api/nitro.config.ts); empty without one. */
-export const APP_BUILD = process.env.MIKKA_PUBLIC_BUILD ?? ''
+export const APP_BUILD = getPublicBuild()
 
 const refreshAbort = new AbortController()
 export const pageRefreshSignal = () => refreshAbort.signal

@@ -41,7 +41,7 @@ mock.module(new URL('./settings/work-creation.ts', import.meta.url).href, { name
 } })
 mock.module(new URL('./project-resources/store.ts', import.meta.url).href, { namedExports: {
   withProjectExecution: async (input: ProjectExecutionInput, operation: (snapshot: ProjectExecutionSnapshot) => Promise<unknown>, requireExisting: boolean) => {
-    assert.deepEqual(input, { userId: owner, workspaceId, issueId, repositoryKey: null, baseBranch: 'main', runtime: 'cloud', harness: 'codex' })
+    assert.deepEqual(input, { userId: owner, botId, workspaceId, issueId, repositoryKey: null, baseBranch: 'main', runtime: 'cloud', harness: 'codex' })
     assert.equal(requireExisting, false)
     assert.equal(projectLeaseActive, false)
     if (projectDenied) throw new ActionFailureError('projectRepositoryDenied')
@@ -147,13 +147,10 @@ test('actual cloud producer pins the existing host-authorized Bot/workspace with
       assert.deepEqual(params, [workspaceId])
       return { rows: [] }
     }
-    if (sql === `SELECT id,"ownerId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features,to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings" FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`) {
-      assert.deepEqual(params, [owner])
-      return { rows: [] }
-    }
-    if (sql === `SELECT k.id,k."ownerId",k.provider,k.name,k."baseUrl",k.protocol,k.last4,k.models,k."modelsError",k."responsesApi",k.features,to_jsonb(k)->'modelSettings' AS "modelSettings" FROM model_api_key_shares s JOIN model_api_keys k ON k.id=s."keyId"
-    WHERE s."workspaceId"=$1 AND k."ownerId"<>$2 ORDER BY s."createdAt",k.id`) {
-      assert.deepEqual(params, [workspaceId, owner])
+    // The person's own keys and the workspace's own keys, in one read (decision 2026-11-27-1740).
+    if (sql === `SELECT id,"ownerId","workspaceId"::text AS "workspaceId",provider,name,"baseUrl",protocol,last4,models,"modelsError","responsesApi",features,to_jsonb(model_api_keys)->'modelSettings' AS "modelSettings",to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys
+    WHERE ("ownerId"=$1 OR "workspaceId"=$2::uuid) ORDER BY ("ownerId" IS NULL),"createdAt",id`) {
+      assert.equal(params[0], owner)
       return { rows: [] }
     }
     if (sql.startsWith('SELECT "ownerId","workspaceId" FROM bots')) return { rows: [{ ownerId: owner, workspaceId }] }
@@ -184,7 +181,7 @@ test('actual cloud producer pins the existing host-authorized Bot/workspace with
     assert.equal(projectLeaseActive, false)
     assert.ok(sql.startsWith('SELECT repo."repoPath",repo."remoteUrl",a.harness,'))
     assert.ok(sql.includes('i."workspaceId"=$5') && sql.includes('i."ownershipState"=\'bound\'') && sql.includes('repo."userId"=$3'))
-    assert.deepEqual(params, [repoId, agentId, owner, issueId, workspaceId, null])
+    assert.deepEqual(params, [repoId, agentId, owner, issueId, workspaceId, null, false])
     return { rows: [{ ...cloudRepository, harness: 'codex' }] }
   } } as unknown as Parameters<typeof queueCloudRun>[0]
   observeCommitEffects(client as unknown as PoolClient, queuePool)

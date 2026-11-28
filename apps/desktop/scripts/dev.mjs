@@ -17,6 +17,11 @@ const define = {
   __MIKKA_APP_URL__: JSON.stringify(process.env.MIKKA_DESKTOP_APP_URL ?? 'http://localhost:3000/mikka'),
   __MIKKA_APP_VERSION__: JSON.stringify(pkg.version),
   __MIKKA_FLAVOR__: JSON.stringify('dev'),
+  // A dev shell sends no telemetry (src/main/telemetry.ts).
+  __MIKKA_POSTHOG_KEY__: '""',
+  __MIKKA_POSTHOG_HOST__: '""',
+  __MIKKA_PUBLIC_SHA__: '""',
+  __MIKKA_OVERLAY_SHA__: '""',
 }
 
 let child

@@ -1,16 +1,32 @@
 import { driveResponse } from '@/lib/drive/server'
+import { defineRoute } from '@/lib/primitives/define-route'
 
+export const GET = defineRoute<'session', 'none', { volumeId: string; shareId: string }>(
+  {
+    route: '/api/drive/volumes/[volumeId]/shares/[shareId]',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none', freshSession: true,
+  },
+  async ({ request, params, session }) => driveResponse(request, 'link', params, session),
+)
 
-type Context = { params: Promise<{ volumeId: string; shareId: string }> }
+export const PATCH = defineRoute<'session', 'none', { volumeId: string; shareId: string }>(
+  {
+    route: '/api/drive/volumes/[volumeId]/shares/[shareId]',
+    auth: 'session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request, params, session }) => driveResponse(request, 'link', params, session),
+)
 
-export async function GET(request: Request, { params }: Context) {
-  return driveResponse(request, 'link', await params)
-}
-
-export async function PATCH(request: Request, { params }: Context) {
-  return driveResponse(request, 'link', await params)
-}
-
-export async function DELETE(request: Request, { params }: Context) {
-  return driveResponse(request, 'link', await params)
-}
+export const DELETE = defineRoute<'session', 'none', { volumeId: string; shareId: string }>(
+  {
+    route: '/api/drive/volumes/[volumeId]/shares/[shareId]',
+    auth: 'session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request, params, session }) => driveResponse(request, 'link', params, session),
+)

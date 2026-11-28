@@ -10,6 +10,7 @@ import { isPersonalWorkspace } from '@/lib/tokens/scope'
 import { readIssueMetadata } from '@/lib/issue-metadata'
 import { requireLockedIssueScope } from '@/lib/issue-scope-authorization'
 import { revalidateExecutionIdentity } from '@/lib/execution-identity'
+import { syntheticLocalRequest } from '@/lib/env/hosts'
 import { maskFor, maskForRun } from '@/lib/secrets/runtime'
 import { ProjectMapError, recordDecisionSchema, type DecisionActor, type DecisionSourceInput, type RecordDecisionInput } from './contracts'
 import { projectForIssue, readerId, resolveProjectScope, withProjectWriteScope, type ProjectScope } from './scope'
@@ -31,7 +32,7 @@ async function actorContext(actor: DecisionActor, input: ReturnType<typeof recor
   if (actor.kind === 'run') {
     if (!actor.token) throw new ProjectMapError('RUN_NOT_AUTHORIZED', 403)
     const { verifyRunToken } = await import('@/lib/mcp/worker')
-    const authorization = await verifyRunToken(new Request('http://localhost'), actor.token)
+    const authorization = await verifyRunToken(syntheticLocalRequest('/'), actor.token)
     if (authorization?.extra?.runId !== actor.runId || authorization.extra.userId !== userId) throw new ProjectMapError('RUN_NOT_AUTHORIZED', 403)
     ;[run] = await db.select().from(agentRuns).where(and(eq(agentRuns.id, actor.runId), eq(agentRuns.userId, userId))).limit(1)
     if (!run?.issueId) throw new ProjectMapError('RUN_PROJECT_REQUIRED')
