@@ -27,6 +27,11 @@ const NOTION_PAGE_LIMIT = 3
 // Slack is left out: it is moving off Composio to Mikka's own Slack app.
 const COMPOSIO_TOOLKITS = ['gmail', 'notion'] as const
 const PEOPLE_CONCURRENCY = 4
+/**
+ * At most this many people are read per run, least recently checked first; the rest are next
+ * run's. It bounds the sweep's read and its work, so one run never grows with the user count.
+ */
+export const PEOPLE_PER_RUN = 100
 
 /** A provider read that failed, with the connected account it ran through when it got that far. */
 class ProviderReadError extends Error {
@@ -98,6 +103,12 @@ export interface ReconcileResult {
   /** Connections whose provider refused the person's authorization: theirs to reconnect, not a failed run. */
   reconnect: Record<string, number>
   deferred: number; linear: { deliveries: number; notifications: number }; github: RedeliveryResult | null
+  /**
+   * People whose pass was still running at the deadline: the run stopped waiting for them (a stalled
+   * provider call or database connection would otherwise hold the response past the route's limit).
+   * Their writes are idempotent and they stay due, so the next run takes them again. Counted in `deferred` too.
+   */
+  overran?: number
 }
 
 /** Returns how many provider reads failed; the caller only stamps a clean pass as reconciled. */
@@ -162,10 +173,12 @@ export async function reconcileSuggestions({ now = new Date(), deadline = Infini
   const people = (await db.select({ userId: suggestionTriggerChecks.userId }).from(suggestionTriggerChecks)
     .where(or(lt(suggestionTriggerChecks.checkedAt, new Date(now.getTime() - TRIGGER_CHECK_INTERVAL_MS)),
       or(isNull(suggestionTriggerChecks.reconciledAt), lt(suggestionTriggerChecks.reconciledAt, new Date(now.getTime() - RECONCILE_DUE_MS)))))
-    .orderBy(suggestionTriggerChecks.checkedAt)).map(row => row.userId)
+    .orderBy(suggestionTriggerChecks.checkedAt).limit(PEOPLE_PER_RUN)).map(row => row.userId)
   for (let index = 0; index < people.length; index += PEOPLE_CONCURRENCY) {
     if (Date.now() > deadline) { result.deferred = people.length - index; break }
-    await Promise.all(people.slice(index, index + PEOPLE_CONCURRENCY).map(async userId => {
+    const batch = people.slice(index, index + PEOPLE_CONCURRENCY)
+    let settled = 0
+    const passes = Promise.all(batch.map(async userId => {
       try {
         const accounts = await listComposioPages(cursor => composio.connectedAccounts.list({ userIds: [userId], toolkitSlugs: [...COMPOSIO_TOOLKITS], statuses: ['ACTIVE'], cursor }))
         const toolkits = [...new Set(accounts.filter(account => account.status === 'ACTIVE' && !account.isDisabled).map(account => account.toolkit.slug.toLowerCase()))]
@@ -181,8 +194,25 @@ export async function reconcileSuggestions({ now = new Date(), deadline = Infini
       } catch (error) {
         result.failed.composio = (result.failed.composio ?? 0) + 1
         console.error('Suggestions backfill could not list connected apps', error instanceof Error ? error.name : 'unknown')
-      }
+      } finally { settled++ }
     }))
+    // The deadline bounds the run, not only when the next batch starts: a pass stuck on a call
+    // that never answers is left behind (and taken again next run) instead of holding the response.
+    if (!await beforeDeadline(passes, deadline)) {
+      result.overran = batch.length - settled
+      result.deferred = people.length - index - settled
+      console.warn(`Suggestions backfill stopped waiting at its deadline: ${result.overran} passes still running`)
+      break
+    }
   }
   return result
+}
+
+/** Whether `work` settles before `deadline`; it is never cancelled, only no longer waited for. */
+async function beforeDeadline(work: Promise<unknown>, deadline: number): Promise<boolean> {
+  if (!Number.isFinite(deadline)) { await work; return true }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<false>(resolve => { timer = setTimeout(resolve, Math.max(0, deadline - Date.now()), false) })
+  try { return await Promise.race([work.then(() => true as const), late]) }
+  finally { clearTimeout(timer) }
 }
