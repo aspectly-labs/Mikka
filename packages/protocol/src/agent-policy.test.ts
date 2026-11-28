@@ -109,6 +109,14 @@ describe("resolveAgentSettings", () => {
     delete legacy.permissions.computer_use
     expect(runAssignmentSchema.parse({ ...assignment, policy: legacy }).policy?.permissions.computer_use).toBeUndefined()
   })
+
+  it("grants the local computer without asking anyone; an older server's ask reads as allow (ADR 2026-11-27-1720)", () => {
+    const assignment = { runId: "r1", issueId: "i1", deviceId: "d1", repoId: "p1", baseBranch: "main", harness: "mock", prompt: "x" }
+    const grant = { botId: "7d4f3f5e-8a3c-4a45-9a52-1a2b3c4d5e6f", ownerId: "owner", workspaceId: "2b1f3f5e-8a3c-4a45-9a52-1a2b3c4d5e6f" }
+    for (const permission of ["allow", "ask"])
+      expect(runAssignmentSchema.parse({ ...assignment, localComputer: { ...grant, permission } }).localComputer?.permission).toBe("allow")
+    expect(runAssignmentSchema.safeParse({ ...assignment, localComputer: { ...grant, permission: "deny" } }).success).toBe(false)
+  })
 })
 
 describe("the read-only check role (ADR 0046)", () => {

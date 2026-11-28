@@ -77,15 +77,14 @@ export class ComputerStore {
           version=CASE WHEN workspace_computer_policies.permission=$2 THEN workspace_computer_policies.version ELSE workspace_computer_policies.version+1 END
         RETURNING version`, [workspaceId, permission])).rows[0]
       if (previous !== permission) {
-        await client.query('UPDATE computer_run_bindings SET "approvedForRun"=false WHERE "workspaceId"=$1', [workspaceId])
         // Local and cloud direct runners use the authority admitted at claim.
         // Revoke that generation through a durable stop, never a per-call read.
         await stopRunsForPolicyChange(client, { kind: 'workspace', workspaceId })
       }
       if (permission === 'deny') {
-        // Previously delivered approvals cannot be rebound to a later policy
-        // generation. Stop these threads so they cannot appear to resume with
-        // stale authority after an administrator re-enables computer use.
+        // Computer authority admitted under an earlier policy generation
+        // cannot carry over. Stop these threads so they cannot appear to resume
+        // with stale authority after an administrator re-enables computer use.
         const stopped = await client.query<{ id: string }>(`UPDATE agent_runs r SET "stopRequestedAt"=coalesce(r."stopRequestedAt",now()),"updatedAt"=now(),
           "finishedAt"=CASE WHEN r.status='queued' THEN now() ELSE r."finishedAt" END,
           status=CASE WHEN r.status='queued' THEN 'stopped' ELSE r.status END
@@ -123,7 +122,7 @@ export class ComputerStore {
         }
       }
       // Every transition increments the policy version. The display lock
-      // fences old approvals even if the subsequent database commit fails.
+      // fences older driver leases even if the subsequent database commit fails.
       await sync()
       if (previous !== permission) await computerWorkspaceChanged(client, this.pool, workspaceId)
       await client.query('COMMIT')

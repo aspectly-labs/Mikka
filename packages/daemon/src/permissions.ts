@@ -45,8 +45,9 @@ export function decide(
   // reports, and stops. It takes no action it does not know either.
   if (policy?.readOnly && (!Object.hasOwn(PERMISSION_DEFAULTS, action) || READ_ONLY_DENIED.includes(action as PermissionAction)))
     return "deny"
-  // The computer grant is the host's (workspace computer policy, the device's
-  // own consent); an older server's assignment without one reads as allow.
+  // The computer grant is the host's: the workspace's computer-use setting and
+  // the device's own switch, never a question to a person (ADR 2026-11-27-1720).
+  // An older server's assignment without one reads as allow.
   if (action === "computer_use") return policy?.permissions.computer_use ?? "allow"
   // Everything else is allowed, the agent's own git push included (decision
   // 2026-11-02-1600); the daemon's own push is `pushDecision`.

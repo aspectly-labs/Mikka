@@ -21,7 +21,7 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `218` dated decision records here carry verified `Status:` headers (`156` Accepted, `13` Superseded, `49` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
+All `219` dated decision records here carry verified `Status:` headers (`157` Accepted, `13` Superseded, `49` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
 
 ### Key active architectural decisions
 
@@ -38,6 +38,7 @@ All `218` dated decision records here carry verified `Status:` headers (`156` Ac
 | **One state-mark registry** | [2026-11-19-1630-one-mark-registry.md](2026-11-19-1630-one-mark-registry.md) | Accepted | [`mikka-hosted-ui/docs/design/components.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md) |
 | **Automatic UTC migration IDs** | [2026-11-11-1151-automatic-migration-ids.md](2026-11-11-1151-automatic-migration-ids.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
 | **Native MCP configuration & credential delivery** | [2026-11-11-0534-eve-and-native-mcp.md](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
+| **No consent asks: once a person has spoken, the agent acts (workspace screen Block kept)** | [2026-11-27-1720-no-consent-asks.md](2026-11-27-1720-no-consent-asks.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
 | **Personal MCP servers are not shareable; a thread uses its starter's own** | [2026-11-27-1700-personal-mcp-not-shareable.md](2026-11-27-1700-personal-mcp-not-shareable.md) (supersedes in part [2026-11-19](2026-11-19-native-mcp-authorization.md), [2026-11-11-0534](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-20-1852](2026-11-20-1852-mcp-connection-settings.md)) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
 | **Model API keys are a person's or a workspace's; a personal key is never shared** | [2026-11-27-1740-model-keys-personal-or-workspace.md](2026-11-27-1740-model-keys-personal-or-workspace.md) (supersedes in part [2026-10-31-2300](2026-10-31-2300-orchestration-spec.md), [2026-11-01-2240](2026-11-01-2240-own-credentials-always-usable.md), [2026-11-17-1400](2026-11-17-1400-subscriptions-owner-only.md)) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`docs/design/orchestration.md`](../orchestration.md) |
 | **Workspace MCP servers, as Capy's organization servers** | [2026-11-27-1705-workspace-mcp-servers-like-capy.md](2026-11-27-1705-workspace-mcp-servers-like-capy.md) | Accepted | [`docs/operations/cloud-execution-and-secrets.md`](../../operations/cloud-execution-and-secrets.md) |

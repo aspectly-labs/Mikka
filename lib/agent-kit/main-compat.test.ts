@@ -26,7 +26,8 @@ const bindingById=mock.fn(async()=>{if(missing)throw Error('missing binding');re
 const latestBinding=mock.fn(async()=>subscription)
 const scopedBinding=mock.fn(async()=>{if(missing)throw Error('missing binding');return subscription})
 const claimed=mock.fn(async(_pool:unknown,_run:string,_device:string,lease:Date)=>{currentRun.status='preparing';currentRun.leaseExpiresAt=lease;return 'claimed'})
-let computerPermission: 'ask' | 'allow' = 'ask'
+// The claim reads a stored legacy `ask` as allow (lib/computer/claim.ts), so a grant is only ever allow.
+let computerPermission = 'allow' as const
 const cloudClaimed=mock.fn(async(_pool:unknown,_owner:unknown,_run:string,_device:string,lease:Date)=>{currentRun.status='preparing';currentRun.leaseExpiresAt=lease;return {botId,ownerId:owner,display:':3',policyVersion:1,permission:computerPermission}})
 const publicationPolicy=defaultRunPolicy()
 publicationPolicy.permissions.git_push='allow'
@@ -267,7 +268,7 @@ before(async()=>{
  claim=(await import('../../app/v1/devices/[deviceId]/runs/[runId]/claim/route')).POST
  queue=(await import('../computer/queue-run')).queueCloudRun
 })
-beforeEach(()=>{definition=frozen();subscription={...binding};missing=false;cloud=false;localCapable=false;cliReadOnly=false;cliPolicy.permissions.git_push='deny';publicationPolicy.permissions.git_push='allow';computerPermission='ask';mismatch=undefined;protocolVersion=3;selectIndex=0;stopDuringToken=false;githubAccount=null;revokeDuringToken=false;memberActive=true;memberLease=false;repositoryDenied=false;resourceReads.length=0;lockOrder.length=0;process.env.MIKKA_BYOS_ENABLED='1';process.env.MIKKA_LITELLM_URL='http://litellm.invalid';process.env.MIKKA_LITELLM_MASTER_KEY='synthetic-only';process.env.MIKKA_AGENT_KIT='1';process.env.MIKKA_CLOUD_COMPUTER_TASKS='1';for(const fn of [modelAdmissionCheck,bindingById,latestBinding,scopedBinding,claimed,cloudClaimed,prepared,completed,githubConfigured,githubCredential])fn.mock.resetCalls()})
+beforeEach(()=>{definition=frozen();subscription={...binding};missing=false;cloud=false;localCapable=false;cliReadOnly=false;cliPolicy.permissions.git_push='deny';publicationPolicy.permissions.git_push='allow';computerPermission='allow';mismatch=undefined;protocolVersion=3;selectIndex=0;stopDuringToken=false;githubAccount=null;revokeDuringToken=false;memberActive=true;memberLease=false;repositoryDenied=false;resourceReads.length=0;lockOrder.length=0;process.env.MIKKA_BYOS_ENABLED='1';process.env.MIKKA_LITELLM_URL='http://litellm.invalid';process.env.MIKKA_LITELLM_MASTER_KEY='synthetic-only';process.env.MIKKA_AGENT_KIT='1';process.env.MIKKA_CLOUD_COMPUTER_TASKS='1';for(const fn of [modelAdmissionCheck,bindingById,latestBinding,scopedBinding,claimed,cloudClaimed,prepared,completed,githubConfigured,githubCredential])fn.mock.resetCalls()})
 const request=(headers:Record<string,string>={})=>{requestedRunId=randomUUID();return claim(new Request('https://example.test/v1/devices/'+deviceId+'/runs/'+requestedRunId+'/claim',{method:'POST',headers:{[REPO_ORIGIN_HEADER]:'1',[RUN_CREDENTIALS_HEADER]:'1',[SUBSCRIPTION_GATEWAY_HEADER]:'1',...headers}}),{params:Promise.resolve({deviceId,runId:requestedRunId})})}
 const assertCliPolicy=(body:{policy:ReturnType<typeof defaultRunPolicy>;policyRevision:string})=>{assert.equal(body.policy.permissions.network,'deny');assert.equal(body.policy.permissions.install_dependency,'deny');assert.deepEqual(body.policy.networkAllow,['cli-policy.invalid']);assert.equal(body.policyRevision,'a'.repeat(64))}
 // A non-GitHub repository keeps these queue cases focused on frozen worker
