@@ -4324,7 +4324,7 @@
       "methods": [
         "GET"
       ],
-      "sourceHash": "231b466e95a17ec416d2a51a8c8d4939ebfea89b5c829319a6261c630728fa66"
+      "sourceHash": "f37f16c45e5593149c77bd59f0b099c12ab66c7b1039c5ba17215b5d48b4e733"
     },
     {
       "path": "/mikka/v1/devices/[deviceId]/runs/[runId]/claim",
@@ -4445,7 +4445,7 @@
         "POST"
       ],
       "maxDuration": 30,
-      "sourceHash": "b17bd96cd4a12f53438262bc8c2cd525659502c4afe83925d26cf2f258055ffc"
+      "sourceHash": "0686f6d960cb341f4a6ebf6036fa8bab1a6dcd714b1f5be605a21bb6ba9b09c1"
     },
     {
       "path": "/mikka/v1/runs/[runId]/complete",
