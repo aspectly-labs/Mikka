@@ -260,9 +260,9 @@ test('every manual deployment job is gated on the committed promoters list befor
   const skipped = { pipeline: { result: 'skipped', outputs: {} }, 'pipeline-record': { result: 'skipped' } }
   const breakGlass = ['service-production', 'production-web', 'production-api', 'production-migrate-database', 'cloud-services-production',
     'eve-retire', 'gateway-observe']
-  assert.ok(breakGlass.every(isBreakGlassPhase) && !['stage-all', 'gateway-prepare', 'service-stage', 'pipeline-promote'].some(isBreakGlassPhase))
+  assert.ok(breakGlass.every(isBreakGlassPhase) && !['stage-all', 'gateway-prepare', 'service-stage', 'pipeline-promote', 'cloud-services-promote'].some(isBreakGlassPhase))
   const cases = [...breakGlass.map(phase => ['deploy-application', phase]), ['deploy-application', 'stage-all'], ['deploy-application', 'gateway-prepare'],
-    ['deploy-application', 'service-stage'], ['deploy-application', 'cloud-services-stage'],
+    ['deploy-application', 'service-stage'], ['deploy-application', 'cloud-services-stage'], ['deploy-application', 'cloud-services-promote'],
     ['pipeline', 'pipeline-stage'], ['pipeline', 'pipeline-rollback'], ['pipeline-production', 'pipeline-promote']]
   for (const [name, phase] of cases) {
     const run = github => evaluate(workflow.jobs[name].if, { github: { ...promoter, ...github }, inputs: { phase }, needs: skipped })
