@@ -72,7 +72,8 @@ const compiled = needsOfficialUi ? null : await build({
     builder.onResolve({ filter: /^(?:\.\/|\.\.\/).*rpc$/ }, args => {
       if (resolve(dirname(args.importer), args.path) === resolve(renderer, 'rpc') && args.importer !== resolve(web, 'rpc.ts')) return { path: resolve(web, 'rpc.ts') }
     })
-    builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args => args.importer === resolve(official, 'workspace-loader.ts') ? { path: 'workspace', namespace: 'auth-fixture' } : undefined)
+    const workspaceLoaders = new Set([resolve(official, 'workspace-loader.ts'), resolve(officialUi.dir, 'routes/workspace-loader.ts')])
+    builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args => workspaceLoaders.has(args.importer) ? { path: 'workspace', namespace: 'auth-fixture' } : undefined)
     builder.onResolve({ filter: /^\.\/offline$/ }, args => args.importer === resolve(official, 'app.tsx') ? { path: 'offline', namespace: 'auth-fixture' } : undefined)
     builder.onResolve({ filter: /^\.\/deep-link-routes$/ }, args => args.importer === resolve(official, 'app.tsx') ? { path: 'deep-links', namespace: 'auth-fixture' } : undefined)
     builder.onResolve({ filter: /^@hosted\// }, args => builder.resolve(`./${args.path.slice('@hosted/'.length)}`, { resolveDir: officialUi.dir, kind: args.kind, importer: args.importer }))

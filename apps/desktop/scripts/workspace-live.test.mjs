@@ -9,12 +9,16 @@ import { build } from 'esbuild'
 import { Window } from 'happy-dom'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { needsOfficialUi, officialRenderer, officialUiResolution } from './official-ui.mjs'
+import { needsOfficialUi, officialRenderer, officialUi, officialUiResolution } from './official-ui.mjs'
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
 // The runtime (location, transport) is this repository's; the App around it is the official UI's core/renderer.
 const renderer = resolve(repository, 'apps/desktop/src/renderer')
 const official = officialRenderer
+const workspaceLoaders = new Set([
+  resolve(official, 'workspace-loader.ts'),
+  ...(officialUi.dir ? [resolve(officialUi.dir, 'routes/workspace-loader.ts')] : []),
+])
 const require = createRequire(import.meta.url)
 const directory = await mkdtemp(join(tmpdir(), 'mikka-workspace-live-'))
 const key = Symbol.for('mikka.test.workspace-live')
@@ -86,7 +90,7 @@ const compiled = needsOfficialUi ? null : await build({
     builder.onResolve({ filter: /^mikka:platform$/ }, () => ({ path: resolve(official, 'platform.tsx') }))
     builder.onResolve({ filter: /.*/ }, args => fixtureModules.has(args.path) ? { path: args.path, namespace: 'live-fixture' } : undefined)
     builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args =>
-      args.importer === resolve(official, 'workspace-loader.ts') ? { path: 'workspace', namespace: 'live-fixture' } : undefined)
+      workspaceLoaders.has(args.importer) ? { path: 'workspace', namespace: 'live-fixture' } : undefined)
     builder.onResolve({ filter: /^@\/apps\/desktop\/src\/renderer\/(?:auth-client|open-settings)$/ }, args => ({ path: args.path.split('/').at(-1), namespace: 'live-fixture' }))
     builder.onResolve({ filter: /^\.\// }, args => {
       const target = resolve(dirname(args.importer), args.path)
