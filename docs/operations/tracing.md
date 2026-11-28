@@ -79,6 +79,12 @@ late for database instrumentation. `.vercel/output/mikka-build.json` or
 `.output/mikka-build.json` records the compiled tracing hash. An artifact hash
 proves the entry was packaged, not that production spans reached PostHog.
 
+Release tracing embeds the same source commit as `mikka-build.json` at build
+time. Both spans and logs export its first 12 characters as the OpenTelemetry
+resource `service.version`; a missing or conflicting runtime revision cannot
+relabel that artifact. Development workers retain the optional runtime revision.
+Use this resource when comparing deployed revisions in PostHog.
+
 ## Mobile app
 
 The iOS app exports no spans of its own. Every request it sends to Mikka's
