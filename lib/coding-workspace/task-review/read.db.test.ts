@@ -17,6 +17,7 @@ import type { JournalEntry } from '../../../packages/daemon/src/runs/journal'
 import { orderMigrations } from '../../../scripts/migration-order.mjs'
 import { disposableDatabase, E2E_DB_RULE } from '../../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../../tests/support/drop-test-database'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import type { ReviewActor } from '../diff/authority'
 import type { ExternalDiffProvider } from '../diff/service'
 import type { GitHubPullSummary, ObservedPullState } from '../diff/github-state'
@@ -33,6 +34,20 @@ const code = (expected: string) => (error: unknown) =>
   (error instanceof CodingWorkspaceError || error instanceof WorkspaceReviewError) && error.code === expected
 const remote = 'https://github.com/mikka-fixtures/task-review.git'
 const reference = (snapshot: DiffSnapshot): TaskReviewRef => ({ snapshotId: snapshot.id, sourceVersion: snapshot.revision.version })
+function nativePull(snapshot: DiffSnapshot, override: Partial<GitHubPullSummary> = {}) {
+  const number = override.number ?? snapshot.pullRequest!.number, head = override.headSha ?? snapshot.revision.headSha!
+  return { number, headRefOid: head, baseRefOid: override.baseSha ?? snapshot.pullRequest!.baseSha,
+    state: override.state === 'merged' ? 'MERGED' : override.state === 'closed' ? 'CLOSED' : 'OPEN',
+    reviewDecision: override.state === 'changes_requested' ? 'CHANGES_REQUESTED' : override.state === 'open' ? null : 'APPROVED',
+    repository: { fullDatabaseId: override.repositoryId ?? snapshot.sourceAccess!.repositoryId, nameWithOwner: 'mikka-fixtures/task-review' },
+    changedFiles: override.files ?? 9, additions: override.additions ?? 42, deletions: override.deletions ?? 7,
+    isDraft: override.draft ?? false, mergeable: 'MERGEABLE',
+    commits: { nodes: [{ commit: { oid: head, statusCheckRollup: { contexts: {
+      totalCount: 4, checkRunCount: 3, statusContextCount: 1,
+      checkRunCountsByState: [{ state: 'SUCCESS', count: 2 }, { state: 'FAILURE', count: 1 }],
+      statusContextCountsByState: [{ state: 'PENDING', count: 1 }],
+    } } } }] } }
+}
 
 /** Real PG authority and immutable evidence; Git creates the full checkpoint
  * proofs. Only the Next request context is supplied. No provider or model runs. */
@@ -48,10 +63,48 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
   const directory = await mkdtemp(join(tmpdir(), 'mikka-task-review-db-'))
   const environment = { MIKKA_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), ORVILO_DATABASE_URL: target.toString(),
     E2E_DATABASE_URL: target.toString(), BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
-    BETTER_AUTH_URL: 'http://127.0.0.1:3199', WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') }
+    BETTER_AUTH_URL: 'http://127.0.0.1:3199', WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'),
+    GITHUB_CLIENT_ID: 'fixture-client', GITHUB_CLIENT_SECRET: 'fixture-client-secret', GITHUB_APP_ID: '4840908' }
   const previous = Object.fromEntries(Object.keys(environment).map(name => [name, process.env[name]]))
   Object.assign(process.env, environment)
   let appPool: Pool | undefined, workspacePool: Pool | undefined
+  const tokens = new Map<string, { token: string; githubAccountId: string }>()
+  const httpPulls = new Map<number, ReturnType<typeof nativePull>>()
+  const nativeReads = new Map<string, unknown>()
+  const summaryCalls: { number: number; userId: string }[] = []
+  const deniedUsers = new Set<string>()
+  let beforeSummary: ((number: number) => Promise<void>) | undefined, summaryStatus = 200
+  const githubHttp = await startGitHubAccessHttp({
+    getUser: request => {
+      const entry = [...tokens.entries()].find(([, value]) => `Bearer ${value.token}` === request.headers.authorization)
+      return entry && !deniedUsers.has(entry[0]) ? { id: entry[1].githubAccountId, login: 'read-fixture' } : null
+    },
+    getRepositories: request => [...tokens.values()].some(value => `Bearer ${value.token}` === request.headers.authorization)
+      ? [{ id: '61393725', full_name: 'mikka-fixtures/task-review', private: true }] : [],
+    onRequest: async (url, request, body) => {
+      if (request.method === 'GET' && nativeReads.has(url.pathname)) return Response.json(nativeReads.get(url.pathname))
+      if (request.method === 'GET' && /^\/repos\/mikka-fixtures\/task-review\/pulls\/\d+$/.test(url.pathname)) {
+        const pull = httpPulls.get(Number(url.pathname.split('/').at(-1)))
+        if (!pull) return Response.json({ message: 'Synthetic missing pull' }, { status: 404 })
+        return Response.json({ number: pull.number, html_url: `https://github.com/mikka-fixtures/task-review/pull/${pull.number}`,
+          state: pull.state === 'OPEN' ? 'open' : 'closed', merged: pull.state === 'MERGED', changed_files: pull.changedFiles,
+          base: { sha: pull.baseRefOid, repo: { id: pull.repository.fullDatabaseId, full_name: pull.repository.nameWithOwner } },
+          head: { sha: pull.headRefOid } })
+      }
+      if (url.pathname !== '/graphql') return
+      const { query, variables } = JSON.parse(body) as { query: string; variables: { number: number } }
+      assert.equal(request.method, 'POST'); assert.match(query, /^query\b/)
+      const entry = [...tokens.entries()].find(([, value]) => `Bearer ${value.token}` === request.headers.authorization)
+      assert.ok(entry)
+      if (query.includes('WorkspaceReviewSummary')) {
+        summaryCalls.push({ number: variables.number, userId: entry[0] })
+        await beforeSummary?.(variables.number)
+        if (summaryStatus !== 200) return Response.json({ message: 'Synthetic summary failure' }, { status: summaryStatus })
+      }
+      return Response.json({ data: { repository: { pullRequest: httpPulls.get(variables.number) ?? null } } })
+    },
+  })
+  mock.method(globalThis, 'fetch', githubHttp.routeFetch(globalThis.fetch))
   try {
     const migrations = new URL('../../../drizzle/', import.meta.url)
     for (const name of orderMigrations((await readdir(migrations)).filter(name => name.endsWith('.sql'))))
@@ -75,8 +128,10 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
     const { taskCommentAnchor } = await import('./anchor')
     const { readTaskReview, readTaskReviewFile, readTaskReviewSummary, summarySnapshot, taskReviewSummary } = await import('./read')
     const { readTaskReviewResources } = await import('./resources')
+    const { GET: readReviewHttp } = await import('../../../app/api/tasks/[taskId]/review/route')
     const { markTaskReviewFiles } = await import('./reviewed')
     const { retainTaskPullState } = await import('./pull-state')
+    const { githubDiffProvider } = await import('../diff/github')
     const { hasCommitEffect } = await import('../../db/commit-effects')
     const { wakeTokens, wakeTransport } = await import('../../workflow-wake')
     const { taskReviewDiff, taskReviewFile } = await import('./projection')
@@ -101,6 +156,13 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
     }
     type User = Awaited<ReturnType<typeof user>>
     const owner = await user(), member = await user(), outsider = await user()
+    const { saveGitHubConnection } = await import('../../github/connection')
+    for (const person of [owner, member]) {
+      const credential = { token: 'fixture-read-' + randomUUID(), githubAccountId: String(5_000_000 + tokens.size) }
+      tokens.set(person.id, credential)
+      await saveGitHubConnection(person.id, { githubAccountId: credential.githubAccountId, githubLogin: 'read-fixture' },
+        { access_token: credential.token, expires_in: 3600 })
+    }
     async function workspace() {
       const id = randomUUID(), teamId = randomUUID()
       await pool.query('INSERT INTO mikka_workspaces(id,"userId",name) VALUES($1,$2,\'Task review fixture\')', [id, owner.id])
@@ -216,6 +278,31 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
       assert.ok(result.context, 'a real Task source must reach the protected renderer')
       return withReviewTransaction(pool, pool, who, result.context.scope.identity.runId, result.context.scope.identity.repoId,
         async (tx, scope) => (await result.render(tx, scope)).body as T)
+    }
+    async function httpPage(f: Fixture, query: Record<string, unknown>, person = owner) {
+      const { rows: [session] } = await pool.query<{ token: string }>('SELECT token FROM "session" WHERE id=$1', [person.sessionId])
+      assert.ok(session)
+      const search = new URLSearchParams(Object.entries({ workspaceId: f.where.id, ...query }).map(([key, value]) => [key, String(value)]))
+      return readReviewHttp(new Request(`http://127.0.0.1:3199/api/tasks/${f.taskId}/review?${search}`, {
+        headers: { authorization: 'Bearer ' + session.token },
+      }), { params: Promise.resolve({ taskId: f.taskId }) })
+    }
+    async function captureRoutes(f: Fixture, native: Awaited<ReturnType<typeof localSnapshot>>, snapshot: DiffSnapshot) {
+      const prefix = '/repos/mikka-fixtures/task-review', base = native.revision.baseSha!, head = native.revision.headSha!
+      nativeReads.set(`${prefix}/compare/${base}...${head}`, { base_commit: { sha: base }, merge_base_commit: { sha: base } })
+      nativeReads.set(`${prefix}/pulls/${snapshot.pullRequest!.number}/files`, native.files.map(file => ({ filename: file.path,
+        status: file.status === 'deleted' ? 'removed' : file.status, sha: file.newBlob ?? file.oldBlob,
+        additions: file.additions, deletions: file.deletions })))
+      for (const commit of [base, head]) {
+        const tree = await git(f.worktree, 'rev-parse', commit + '^{tree}')
+        const entries = (await git(f.worktree, 'ls-tree', '-r', '-l', '-z', commit)).split('\0').filter(Boolean).map(line => {
+          const match = /^([0-7]+) (blob) ([a-f0-9]+)\s+(\d+)\t(.+)$/.exec(line)
+          assert.ok(match, 'fixture trees come from the actual Git object database')
+          return { mode: match[1], type: match[2], sha: match[3], size: Number(match[4]), path: match[5] }
+        })
+        nativeReads.set(`${prefix}/git/commits/${commit}`, { sha: commit, tree: { sha: tree } })
+        nativeReads.set(`${prefix}/git/trees/${tree}`, { sha: tree, truncated: false, tree: entries })
+      }
     }
     const page = async (f: Fixture, query: Record<string, unknown>, who = f.who) => render<Page>(await readTaskReview(input(f, query, who)), who)
     const mark = async (f: Fixture, value: Record<string, unknown>, who = f.who) =>
@@ -545,6 +632,7 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
       assert.equal(complete.files.length, 3); assert.notEqual(complete.revision.headSha, selectedSha)
       await associatePull(f, 104)
       const whole = await retainPull(f, complete, 104)
+      httpPulls.set(104, nativePull(whole, { files: 3 }))
       const sourceAccess = { kind: 'github' as const, repositoryId: '61393725', manifestComplete: true as const }
       const files = subset.files.map(value => {
         const metadata = { ...value, github: { repositoryId: sourceAccess.repositoryId, patchSha256: null, page: null } }
@@ -554,6 +642,7 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
       let captures = 0
       const verified: string[] = [], provider: ExternalDiffProvider = {
         ...external(async (_scope, selected) => { verified.push(selected.id) }),
+        pullSummary: githubDiffProvider(pool, member.id).pullSummary,
         capture: async (scope, selection) => {
           captures++; assert.equal(scope.identity.runId, f.runId)
           assert.deepEqual(selection, { source: 'commit', baseSha: f.baseSha, headSha: selectedSha })
@@ -567,8 +656,9 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
       assert.deepEqual(filtered.summary.reviewRef, reference(whole)); assert.equal(filtered.summary.pr?.number, 104)
       assert.equal(filtered.summary.files, 3); assert.notDeepEqual(filtered.diff.reviewRef, filtered.summary.reviewRef)
       const current = await render<Summary>(await readTaskReviewSummary(request({})), f.viewer)
-      assert.deepEqual(filtered.summary, current)
-      assert.deepEqual(verified, [filtered.diff.reviewRef!.snapshotId, whole.id])
+      assert.deepEqual({ ...filtered.summary, pr: { ...filtered.summary.pr, observedAt: current.pr?.observedAt },
+        checks: { ...filtered.summary.checks, observedAt: current.checks?.observedAt } }, current)
+      assert.deepEqual(verified, [filtered.diff.reviewRef!.snapshotId])
     })
 
     await t.test('PR state cache retains the newest per-viewer observation and wakes the run only for actual state changes', async () => {
@@ -687,7 +777,9 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
       const summary = await render<Summary>(await readTaskReviewSummary(request()), f.who)
       assert.deepEqual(summary.reviewRef, reference(a)); assert.equal(summary.pr?.number, 101)
       assert.deepEqual(verified, [a.id])
-      const complete = await render<Page>(await readTaskReview(request(reference(a))), f.who)
+      httpPulls.set(101, nativePull(a))
+      const complete = await render<Page>(await readTaskReview({ ...request(reference(a)),
+        deps: { ...deps, external: { ...provider, pullSummary: githubDiffProvider(pool, owner.id).pullSummary } } }), f.who)
       assert.deepEqual(complete.summary.reviewRef, summary.reviewRef); assert.deepEqual(complete.diff.reviewRef, summary.reviewRef)
       const pending = await readTaskReviewSummary(request())
       await associatePull(f, 102)
@@ -752,6 +844,129 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
       await assert.rejects(() => render<Summary>(pending, f.who), code('workspace_snapshot_outdated'),
         'the publication may not move to a different PR while GitHub is being read')
     })
+
+    await t.test('the full page reads current PR state and checks over real GitHub HTTP while preserving the historical diff', async () => {
+      const f = await fixture(), native = await commitSnapshot(f)
+      await associatePull(f, 109)
+      const snapshot = await retainPull(f, native, 109), liveHead = hash('new full-page GitHub HEAD').slice(0, 40)
+      httpPulls.set(109, nativePull(snapshot, { headSha: liveHead, state: 'changes_requested' }))
+      const before = (await pool.query('SELECT snapshot FROM coding_workspace_snapshots WHERE id=$1', [snapshot.id])).rows
+      const request = { ...input(f, reference(snapshot), f.viewer), deps: { ...deps, external: githubDiffProvider(pool, member.id) } }
+      const complete = await render<Page>(await readTaskReview(request), f.viewer)
+      assert.equal(complete.summary.pr?.headSha, liveHead)
+      assert.equal(complete.summary.pr?.state, 'changes_requested')
+      assert.equal(complete.summary.files, 9); assert.equal(complete.summary.additions, 42); assert.equal(complete.summary.deletions, 7)
+      assert.equal(complete.summary.checks?.sha, liveHead); assert.equal(complete.summary.checks?.failed, 1)
+      assert.equal(complete.summary.reviewRef, null); assert.equal(complete.summary.permissions.canSend, false)
+      assert.equal(complete.summary.mergeTarget, null); assert.equal(complete.summary.permissions.canMerge, false)
+      assert.deepEqual(complete.diff.reviewRef, reference(snapshot)); assert.equal(complete.diff.head, native.revision.headSha)
+      assert.equal(complete.diff.source.stale, true)
+      assert.deepEqual(summaryCalls.at(-1), { number: 109, userId: member.id })
+      assert.deepEqual((await pool.query('SELECT snapshot FROM coding_workspace_snapshots WHERE id=$1', [snapshot.id])).rows, before)
+    })
+
+    await t.test('the full-page HTTP route preserves matching-source permissions and withdraws them for a later HEAD or base', async () => {
+      const f = await fixture(), native = await commitSnapshot(f)
+      await associatePull(f, 110)
+      const snapshot = await retainPull(f, native, 110)
+      httpPulls.set(110, nativePull(snapshot))
+      const freshResponse = await httpPage(f, reference(snapshot))
+      assert.equal(freshResponse.status, 200)
+      const fresh = await freshResponse.json() as Page
+      assert.deepEqual(fresh.summary.reviewRef, reference(snapshot)); assert.equal(fresh.summary.permissions.canSend, true)
+      assert.equal(fresh.diff.source.stale, false); assert.equal(fresh.summary.pr?.state, 'approved')
+      for (const moved of [{ headSha: hash('full-page push').slice(0, 40) }, { baseSha: hash('full-page retarget').slice(0, 40) }]) {
+        httpPulls.set(110, nativePull(snapshot))
+        beforeSummary = async () => { httpPulls.set(110, nativePull(snapshot, moved)) }
+        try {
+          const response = await httpPage(f, reference(snapshot))
+          assert.equal(response.status, 200)
+          const value = await response.json() as Page
+          assert.equal(value.summary.reviewRef, null); assert.equal(value.summary.permissions.canSend, false)
+          assert.equal(value.summary.permissions.canMerge, false); assert.equal(value.summary.mergeTarget, null)
+          assert.deepEqual(value.diff.reviewRef, reference(snapshot)); assert.equal(value.diff.source.stale, true)
+        } finally { beforeSummary = undefined }
+      }
+      assert.equal((await pool.query('SELECT count(*)::int AS count FROM coding_workspace_pull_states WHERE "snapshotId"=$1', [snapshot.id])).rows[0].count, 0,
+        'the live full-page reader no longer writes the old pull-state cache')
+    })
+
+    await t.test('explicit historical Run pagination keeps the original diff while reading current GitHub metadata', async () => {
+      const f = await fixture(), native = await commitSnapshot(f)
+      await associatePull(f, 111)
+      const snapshot = await retainPull(f, native, 111)
+      httpPulls.set(111, nativePull(snapshot))
+      const firstResponse = await httpPage(f, { ...reference(snapshot), limit: 1 })
+      assert.equal(firstResponse.status, 200)
+      const first = await firstResponse.json() as Page
+      assert.ok(first.diff.nextCursor)
+      await extraRun(f, owner, 60)
+      const newHead = hash('historical PR pushed').slice(0, 40)
+      httpPulls.set(111, nativePull(snapshot, { headSha: newHead }))
+      const remainingResponse = await httpPage(f, { cursor: first.diff.nextCursor, limit: 100 })
+      assert.equal(remainingResponse.status, 200)
+      const remaining = await remainingResponse.json() as Page
+      assert.deepEqual(remaining.diff.reviewRef, reference(snapshot)); assert.equal(remaining.diff.head, snapshot.revision.headSha)
+      assert.deepEqual([...first.diff.files, ...remaining.diff.files].map(file => file.path).sort(), ['alpha.txt', 'beta.txt', 'gamma.txt'])
+      assert.equal(remaining.summary.pr?.headSha, newHead); assert.equal(remaining.summary.reviewRef, null)
+      assert.equal(remaining.summary.permissions.canSend, false)
+    })
+
+    await t.test('a failed full-page GitHub summary cannot return an archived successful response', async () => {
+      const f = await fixture(), native = await commitSnapshot(f)
+      await associatePull(f, 112)
+      const snapshot = await retainPull(f, native, 112)
+      httpPulls.set(112, nativePull(snapshot))
+      summaryStatus = 503
+      try {
+        const response = await httpPage(f, reference(snapshot))
+        assert.equal(response.status, 502); assert.deepEqual(await response.json(), { error: 'workspace_review_github_unavailable' })
+      } finally { summaryStatus = 200 }
+      const unsupported = { ...githubDiffProvider(pool, owner.id), pullSummary: undefined }
+      await assert.rejects(() => readTaskReview({ ...input(f, reference(snapshot)), deps: { ...deps, external: unsupported } }),
+        code('workspace_review_github_unavailable'))
+    })
+
+    await t.test('a current full-page capture rejects a newer owner Run after its real GitHub summary read', async () => {
+      const f = await fixture(), native = await commitSnapshot(f)
+      await associatePull(f, 113)
+      const snapshot = await retainPull(f, native, 113)
+      httpPulls.set(113, nativePull(snapshot, { files: native.files.length }))
+      await captureRoutes(f, native, snapshot)
+      beforeSummary = async () => { await extraRun(f, owner, 60) }
+      try {
+        const response = await httpPage(f, {})
+        assert.equal(response.status, 409); assert.deepEqual(await response.json(), { error: 'workspace_snapshot_outdated' })
+      } finally { beforeSummary = undefined }
+    })
+
+    for (const changed of ['association', 'membership', 'session', 'task-owner', 'repository'] as const) {
+      await t.test(`the full-page HTTP route rejects ${changed} changes during GitHub I/O`, async () => {
+        const f = await fixture(), native = await commitSnapshot(f)
+        await associatePull(f, 114)
+        const snapshot = await retainPull(f, native, 114)
+        httpPulls.set(114, nativePull(snapshot))
+        const reader = changed === 'session' ? { ...member, sessionId: randomUUID() } : member
+        if (changed === 'session') await pool.query('INSERT INTO "session"(id,token,"userId","expiresAt","createdAt","updatedAt") VALUES($1,$2,$3,now()+interval \'1 hour\',now(),now())',
+          [reader.sessionId, randomUUID(), reader.id])
+        beforeSummary = async () => {
+          if (changed === 'association') await associatePull(f, 115)
+          if (changed === 'membership') await pool.query('UPDATE mikka_workspace_members SET status=\'suspended\' WHERE "workspaceId"=$1 AND "userId"=$2', [f.where.id, member.id])
+          if (changed === 'session') await pool.query('UPDATE "session" SET "expiresAt"=now()-interval \'1 minute\' WHERE id=$1', [reader.sessionId])
+          if (changed === 'task-owner') await pool.query('UPDATE issues SET "userId"=$2 WHERE id=$1', [f.taskId, member.id])
+          if (changed === 'repository') httpPulls.set(114, nativePull(snapshot, { repositoryId: '999999999' }))
+        }
+        try {
+          const response = await httpPage(f, reference(snapshot), reader)
+          assert.equal(response.status, changed === 'association' ? 409 : changed === 'session' ? 401 : changed === 'repository' ? 403 : 404)
+          const value = await response.json()
+          assert.equal(typeof value.error, 'string'); assert.equal(value.summary, undefined); assert.equal(value.diff, undefined)
+        } finally {
+          beforeSummary = undefined
+          if (changed === 'session') await pool.query('DELETE FROM "session" WHERE id=$1', [reader.sessionId])
+        }
+      })
+    }
 
     await t.test('summary rendering rejects a different working source selected after the initial read', async () => {
       const f = await fixture(), first = (await localSnapshot(f)).snapshot
@@ -874,6 +1089,7 @@ test('Task review reads preserve exact source, tenancy and accepted comments on 
       await assert.rejects(() => render<File>(pending, f.viewer), code('workspace_not_found'))
     })
   } finally {
+    await githubHttp.close()
     mock.restoreAll()
     for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value }
     await dropTestDatabase(admin, database, pool, appPool, workspacePool)

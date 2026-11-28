@@ -64,6 +64,16 @@ Source records its actual kind, observation time, staleness and reclamation.
 Only a fresh, available working-tree read from a running machine is `live`.
 A retained working snapshot shared with a teammate is historical evidence.
 
+For a PR, the full-page response reads its summary state, counts and checks
+from GitHub using the current viewer's connection. A failed live read returns
+an error instead of archived metadata. The diff and its reference keep their
+original source; a changed native HEAD or base makes that diff stale and
+withdraws the old summary reference and write capabilities. This read does
+not update the old pull-state cache. Default pages recheck the current Task
+Run after network I/O. Explicit references and cursors may still read their
+authorized historical Run, with its publication association rechecked before
+rendering. Commit filters continue to show that Run's whole-review summary.
+
 Sent inline comments come only from accepted Agent batches with this exact
 snapshot and source version. The mutable board, a draft and a separately
 accepted GitHub review cannot fabricate an Agent-delivered comment. Comments
@@ -155,7 +165,8 @@ accepted delivery share the original queue transaction.
 
 ## Approve and merge
 
-`GET /summary` reads the associated PR's current metadata from GitHub. Its
+`GET /summary` and the PR summary in `GET /` read the associated PR's current
+metadata from GitHub. Their
 additive `nativeMergeTarget` is null or a native intent that does not require
 an archived diff:
 

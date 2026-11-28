@@ -36,6 +36,10 @@ function decode<T>(schema: z.ZodType<T>, value: string): T {
 }
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
 const running = (scope: ReviewScope) => !scope.stopped && UNFINISHED_RUN_STATUSES.some(status => status === scope.status)
+async function optionalTaskPull(database: Parameters<typeof associatedGitHubPull>[0], scope: ReviewScope) {
+  try { return await associatedGitHubPull(database, scope) }
+  catch (error) { if (!(error instanceof WorkspaceReviewError) || error.code !== 'workspace_snapshot_unavailable') throw error }
+}
 export async function taskReviewSummary(tx: Pick<PoolClient, 'query'>, actor: ReviewActor, scope: ReviewScope, snapshot: DiffSnapshot | null,
   currentPull?: GitHubPullSummary, currentFactory?: DiffSnapshot['factory']) {
   const factory = currentPull ? currentFactory : snapshot?.factory
@@ -101,24 +105,44 @@ export async function readTaskReview(input: TaskReviewHttpInput): Promise<TaskRe
   }
   // The existing provider rechecks the viewing person's native GitHub access
   // and current PR association before any retained metadata is returned.
+  const associated = selected.pullRequest ? { number: selected.pullRequest.number, ...(selected.factory ? { factory: selected.factory } : {}) }
+    : selected.revision.source === 'commit' ? await optionalTaskPull(deps.database, context.scope) : undefined
   if (selected.sourceAccess || selected.pullRequest) {
     if (!deps.external) throw new WorkspaceReviewError('workspace_review_github_unavailable')
     const observation = await deps.external.verify(context.scope, selected)
     if (observation) selected = { ...selected, isStale: observation.isStale }
   }
-  const pullState = selected.pullRequest && !selected.isStale ? await deps.external?.pullState?.(context.scope, selected) : undefined
+  let currentPull: GitHubPullSummary | undefined
+  if (associated) {
+    if (!deps.external?.pullSummary) throw new WorkspaceReviewError('workspace_review_github_unavailable')
+    currentPull = await deps.external.pullSummary(context.scope, associated.number)
+    if (selected.sourceAccess && selected.sourceAccess.repositoryId !== currentPull.repositoryId)
+      throw new WorkspaceReviewError('workspace_review_github_forbidden')
+    // A push between native verification and this later metadata read also
+    // makes the old diff stale; its immutable reference remains readable.
+    if (selected.pullRequest) selected = { ...selected, isStale: selected.revision.headSha !== currentPull.headSha
+      || selected.pullRequest.baseSha !== currentPull.baseSha }
+  }
   return { context, render: async (tx, scope) => {
+    // A current page must still be current after network I/O. Explicit refs
+    // and cursors deliberately keep their original, authorized historical Run.
+    if (!reference) await assertCurrentTaskReview(tx, actor, context)
+    if (associated || selected.revision.source === 'commit') {
+      if (!isDeepStrictEqual(await optionalTaskPull(tx, scope), associated)) throw new WorkspaceReviewError('workspace_snapshot_outdated')
+    }
     const snapshot = selected.availability === 'unavailable' ? selected : {
       ...await readDiffSnapshot(tx, scope, selected.id), observedAt: selected.observedAt, isStale: selected.isStale,
     }
     const page = snapshot.availability === 'unavailable' ? { files: [], nextCursor: null, boardRevision: null }
       : await readDiffFilePage(tx, scope, snapshot, actor.userId, { cursor: after?.position, limit: query.limit, unreviewed })
-    await retainTaskPullState(tx, actor, scope, snapshot, pullState)
     const counts = await sentCounts(tx, scope, snapshot, page.files.map(file => file.path))
     const { rows } = await tx.query<{ path: string; known: boolean }>(`SELECT path,coalesce(patch->>'format' IN ('text','binary'),false) AS known
       FROM coding_workspace_snapshot_files WHERE "snapshotId"=$1 AND path=ANY($2::text[])`, [snapshot.id, page.files.map(file => file.path)])
     const known = new Map(rows.map(row => [row.path, row.known]))
-    const summary = await taskReviewSummary(tx, actor, scope, snapshot.revision.source === 'commit' ? await summarySnapshot(tx, scope) : snapshot)
+    const summarySource = snapshot.revision.source === 'commit' ? await summarySnapshot(tx, scope, associated) : snapshot
+    if (currentPull && summarySource?.sourceAccess && summarySource.sourceAccess.repositoryId !== currentPull.repositoryId)
+      throw new WorkspaceReviewError('workspace_review_github_forbidden')
+    const summary = await taskReviewSummary(tx, actor, scope, summarySource, currentPull, associated?.factory)
     const files = page.files.map(file => taskReviewFile(file, { reviewed: file.reviewed, countsKnown: known.get(file.path) ?? false, comments: counts.get(file.path) ?? 0 }))
     return { body: { summary, diff: { ...taskReviewDiff(snapshot, files, { running: summary.running, reclaimed: summary.reclaimed,
       nextCursor: page.nextCursor ? encode({ reviewRef: reviewReference(snapshot), position: page.nextCursor, unreviewed }) : null }), boardRevision: page.boardRevision } } }
