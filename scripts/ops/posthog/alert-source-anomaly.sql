@@ -151,7 +151,7 @@ SELECT
         covered_hours >= 24 AND greatest(toFloat(observed_queries), current_queries) > threshold_queries, 1,
         unknown_weight_queries > 0, NULL,
         byte_covered_hours >= 24 AND current_byte_coverage >= 0.95 AND current_bytes > threshold_bytes, 1,
-        covered_hours >= 24 OR (byte_covered_hours >= 24 AND current_byte_coverage >= 0.95), 0,
+        covered_hours >= 24 AND byte_covered_hours >= 24 AND current_byte_coverage >= 0.95, 0,
         NULL
     ) AS row_value,
     concat(service_name, ' ', route, ' | UTC hour=', toString(toTimeZone(evaluated_hour, 'UTC')),
@@ -173,7 +173,7 @@ SELECT
 FROM metrics
     )
 SELECT
-    max(row_value) AS value,
+    multiIf(countIf(row_value = 1) > 0, 1, count() = 0 OR countIf(isNull(row_value)) > 0, NULL, 0) AS value,
     if(countIf(row_value = 1) > 0,
         concat(toString(countIf(row_value = 1)), ' breaching: ', arrayStringConcat(arraySlice(groupArrayIf(row_source, row_value = 1), 1, 5), ' || ')),
         concat('breaches=0; unknown sources=', toString(countIf(isNull(row_value))), ' | top: ', argMax(row_source, current_bytes))) AS source,
