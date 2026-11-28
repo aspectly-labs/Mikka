@@ -489,30 +489,24 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     assert.equal(await recoverProviderFailure(pool, p.id, runId), null)
   })
 
-  await t.test('a model fallback preserves the original workspace permission ceiling through claim', async () => {
+  await t.test('a model fallback inherits no restriction from a legacy workspace policy layer', async () => {
+    // A workspace cli_run_policy an older build stored restricts nothing (ADR 2026-11-27-1615):
+    // neither the original run nor its fallback continuation is read-only or network-capped by it.
     const { p } = await twoModels('provider-policy-ceiling', true)
     await pool.query(`INSERT INTO workspace_computer_policies ("workspaceId",permission,cli_run_policy) VALUES ($1,'allow',$2)
       ON CONFLICT ("workspaceId") DO UPDATE SET cli_run_policy=excluded.cli_run_policy`, [p.workspaceId,
       { approvalMode: 'read_only', permissions: { git_push: 'deny' }, networkAllow: ['api.example.invalid'] }])
     const runId = await running(p)
-    assert.equal((await row(runId)).agentDefinition.readOnly, undefined, 'the constraint originates in workspace policy, not a readOnly run argument')
+    assert.equal((await row(runId)).agentDefinition.readOnly, undefined)
     await end(p, runId, balance)
     const [continuation] = await children(runId)
     assert.ok(continuation)
     assert.equal(continuation.agentDefinition.harness, 'claude_code')
-    assert.equal(continuation.agentDefinition.policyCeiling.readOnly, true)
-    // Even a later relaxation of the workspace cannot remove the inherited cap.
-    // Open network is network=allow without a domain ceiling; bare '*' is not
-    // a valid stored networkAllow domain and would reject the policy itself.
-    await pool.query(`INSERT INTO workspace_computer_policies ("workspaceId",permission,cli_run_policy) VALUES ($1,'allow',$2)
-      ON CONFLICT ("workspaceId") DO UPDATE SET cli_run_policy=excluded.cli_run_policy`, [p.workspaceId,
-      { approvalMode: 'ask', permissions: { git_push: 'allow', network: 'allow' } }])
-    // A non-empty workspace layer requires a signed-policy consumer at claim.
+    assert.notEqual(continuation.agentDefinition.policyCeiling?.readOnly, true, 'a legacy read-only layer is not inherited')
     const assignment = await claim(p, continuation.id, { snapshot: true })
-    assert.equal(assignment.policy.readOnly, true)
-    assert.equal(assignment.policy.permissions.git_push, 'deny')
-    assert.equal(assignment.policy.permissions.computer_use, 'deny')
-    assert.deepEqual(assignment.policy.networkCeiling, ['api.example.invalid'])
+    assert.notEqual(assignment.policy.readOnly, true)
+    assert.equal(assignment.policy.networkCeiling, undefined)
+    assert.equal(assignment.policy.permissions.computer_use, 'deny', 'no computer grant: no computer use')
   })
 
   await t.test('when every entry of the thread\'s Agent is bad, the blocked card has each of its models and its specific reason, and none of the other Agent\'s', async () => {
