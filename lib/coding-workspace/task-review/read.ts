@@ -37,7 +37,8 @@ function decode<T>(schema: z.ZodType<T>, value: string): T {
 const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
 const running = (scope: ReviewScope) => !scope.stopped && UNFINISHED_RUN_STATUSES.some(status => status === scope.status)
 export async function taskReviewSummary(tx: Pick<PoolClient, 'query'>, actor: ReviewActor, scope: ReviewScope, snapshot: DiffSnapshot | null,
-  currentPull?: GitHubPullSummary) {
+  currentPull?: GitHubPullSummary, currentFactory?: DiffSnapshot['factory']) {
+  const factory = currentPull ? currentFactory : snapshot?.factory
   const { rows: [facts] } = await tx.query<TaskSummaryFacts>(`SELECT p.branch,ps.observation AS "pullObservation",
     coalesce(m.state='ended' AND m."sandboxId" IS NULL,false) AS reclaimed,
     EXISTS(SELECT 1 FROM factory_tasks t JOIN factory_candidates c ON c.id=t."candidateId" AND c."taskId"=t.id
@@ -52,11 +53,11 @@ export async function taskReviewSummary(tx: Pick<PoolClient, 'query'>, actor: Re
     LEFT JOIN thread_machines m ON m."runId"=r.id AND m."ownerId"=r."userId" AND m."workspaceId"=$9
     LEFT JOIN coding_workspace_pull_states ps ON ps."snapshotId"=$10 AND ps."userId"=$11 AND ps."workspaceId"=$9
     WHERE r.id=$1 AND r."userId"=$2 AND r."issueId"=$3`,
-  [scope.identity.runId, scope.identity.ownerId, scope.taskId, scope.identity.repositoryKey, snapshot?.factory?.taskId ?? null,
-    snapshot?.factory?.candidateId ?? null, snapshot?.factory?.sha ?? null, snapshot?.factory?.producerRunId ?? null, actor.workspaceId, snapshot?.id ?? null, actor.userId])
+  [scope.identity.runId, scope.identity.ownerId, scope.taskId, scope.identity.repositoryKey, factory?.taskId ?? null,
+    factory?.candidateId ?? null, factory?.sha ?? null, factory?.producerRunId ?? null, actor.workspaceId, snapshot?.id ?? null, actor.userId])
   const checks = !currentPull && snapshot && snapshot.availability !== 'unavailable'
     ? await latestTaskReviewChecks(tx, actor, scope, snapshot, await reviewMasks(actor, scope)) : null
-  return projectTaskReviewSummary(actor, scope, snapshot, facts, checks, currentPull)
+  return projectTaskReviewSummary(actor, scope, snapshot, facts, checks, currentPull, currentFactory)
 }
 
 /** Sent comments come from an accepted agent batch, not the mutable local
@@ -144,7 +145,7 @@ export async function readTaskReviewSummary(input: TaskReviewHttpInput): Promise
         // Retained evidence only supplies an old client's comment/merge reference.
         // Display metadata always comes from GitHub; a moved HEAD never receives
         // that old reference or permission to merge the earlier candidate.
-        return { body: await taskReviewSummary(tx, input.actor, scope, selected, currentPull) }
+        return { body: await taskReviewSummary(tx, input.actor, scope, selected, currentPull, currentAssociation.factory) }
       } }
     }
   }

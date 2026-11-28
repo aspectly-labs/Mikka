@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { diffSnapshot, reviewedFileChange, taskReviewRef, type TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
+import { diffSnapshot, reviewedFileChange, taskReviewPullRef, taskReviewRef, type TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
 import { REVIEW_DENIAL_REASONS, type ReviewCheck, type ReviewDiff, type ReviewFile, type ReviewFileRead, type ReviewRead, type ReviewSummary } from './contract'
 
 export { taskReviewRef }
@@ -9,12 +9,18 @@ export const reason = z.enum(REVIEW_DENIAL_REASONS)
 
 export const summarySchema = z.object({
   taskId: z.string().min(1),
-  pr: z.object({ number: z.number().int().positive(), state: z.enum(['open', 'changes_requested', 'approved', 'merged', 'closed']), url: z.string().url(), observedAt: z.iso.datetime().optional() }).nullable(),
+  pr: z.object({ number: z.number().int().positive(), state: z.enum(['open', 'changes_requested', 'approved', 'merged', 'closed']), url: z.string().url(), observedAt: z.iso.datetime().optional(),
+    headSha: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/).optional(), mergeable: z.boolean().nullable().optional(), draft: z.boolean().optional() }).nullable(),
   reviewRef: taskReviewRef.nullable().optional(),
   countsKnown: z.boolean().optional(),
   reclaimed: z.boolean().optional(),
   mergeTarget: z.object({
     reviewRef: taskReviewRef,
+    binding: z.object({ taskId: z.string().min(1), issueId: z.string().min(1), attemptId: z.string().min(1), revision: count, candidateId: z.string().min(1) }),
+    expectedHeadSha: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/),
+  }).nullable().optional(),
+  nativeMergeTarget: z.object({
+    pullRef: taskReviewPullRef,
     binding: z.object({ taskId: z.string().min(1), issueId: z.string().min(1), attemptId: z.string().min(1), revision: count, candidateId: z.string().min(1) }),
     expectedHeadSha: z.string().regex(/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/),
   }).nullable().optional(),
