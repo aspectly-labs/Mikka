@@ -14,15 +14,50 @@ const worldMethods = new Map([
   ['/world/queue/publish', ['POST']], ['/world/queue/claim', ['POST']], ['/world/queue/release', ['POST']],
 ])
 
+/** HTTP transports can supply a stream even when the request contains no bytes. */
+async function emptyRedeliveryBody(request, signal) {
+  if (signal.aborted) return false
+  if (request.body === null) return true
+  let reader
+  try { reader = request.body.getReader() } catch { return false }
+  let complete = false
+  const cancel = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener('abort', cancel, { once: true })
+  try {
+    // Empty chunks carry no information. Bound them too, so a synthetic stream
+    // cannot starve the deadline with an endless chain of resolved reads.
+    for (let reads = 0; reads < 16; reads++) {
+      const { done, value } = await reader.read()
+      if (signal.aborted) return false
+      if (done) { complete = true; return true }
+      if (!(value instanceof Uint8Array) || value.byteLength) return false
+    }
+    return false
+  } catch { return false }
+  finally {
+    signal.removeEventListener('abort', cancel)
+    if (!complete) cancel()
+    reader.releaseLock()
+  }
+}
+
 /** App-wide maintenance has one private operation and no caller-selected authority. */
-export function githubRedeliveryRequest(request, binding) {
+export async function githubRedeliveryRequest(request, binding) {
   const url = new URL(request.url)
   if (url.origin !== GITHUB_REDELIVERY_ORIGIN || url.username || url.password || url.search || url.hash
-    || url.pathname !== '/redeliver' || request.method !== 'POST' || request.body !== null) return no(404)
+    || url.pathname !== '/redeliver' || request.method !== 'POST') return no(404)
+  const signal = AbortSignal.any([request.signal, AbortSignal.timeout(40_000)])
+  if (!await emptyRedeliveryBody(request, signal) || signal.aborted) return no(404)
   if (!binding) return no(503)
-  return binding.fetch(new Request(GITHUB_REDELIVERY_ORIGIN + '/redeliver', {
-    method: 'POST', redirect: 'error', cache: 'no-store', signal: request.signal,
+  // workerd does not implement redirect: 'error'. Never follow another target.
+  const response = await binding.fetch(new Request(GITHUB_REDELIVERY_ORIGIN + '/redeliver', {
+    method: 'POST', redirect: 'manual', cache: 'no-store', signal,
   }))
+  if (response.status >= 300 && response.status < 400) {
+    void response.body?.cancel().catch(() => {})
+    return no(502)
+  }
+  return response
 }
 
 export function businessWorldRequest(request, binding, capability) {

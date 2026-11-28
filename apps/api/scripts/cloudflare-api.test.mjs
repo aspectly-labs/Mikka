@@ -540,7 +540,6 @@ test('GitHub redelivery outbound permits one bodyless private operation and forw
   for (const [url, options] of [
     [origin + '/ready', { method: 'GET' }], [origin + '/redeliver', { method: 'GET' }],
     [origin + '/redeliver', { method: 'PUT' }], [origin + '/redeliver', { method: 'POST', body: '{}' }],
-    [origin + '/redeliver', { method: 'POST', body: '' }],
     [origin + '/redeliver?app=other', { method: 'POST' }], [origin + '/redeliver#other', { method: 'POST' }],
     [origin + '/redeliver/', { method: 'POST' }], ['https://other.example/redeliver', { method: 'POST' }],
   ]) assert.equal((await githubRedeliveryRequest(new Request(url, options), binding)).status, 404)
@@ -558,6 +557,114 @@ test('GitHub redelivery outbound permits one bodyless private operation and forw
   assert.deepEqual([...forwarded[0].headers], [])
   abort.abort()
   assert.equal(forwarded[0].signal.aborted, true)
+})
+
+test('GitHub redelivery accepts actual empty streams and rejects payloads, failed streams and cancellation before dispatch', async () => {
+  const { githubRedeliveryRequest } = await import('../../../cloudflare/api/ingress/services.mjs')
+  const endpoint = 'https://github-redelivery.internal/redeliver'
+  for (const body of ['', new ReadableStream({ start(controller) {
+    controller.enqueue(new Uint8Array()); controller.close()
+  } })]) {
+    let calls = 0
+    const request = new Request(endpoint, { method: 'POST', body, duplex: 'half' })
+    assert.notEqual(request.body, null)
+    const result = await githubRedeliveryRequest(request, { async fetch(sent) {
+      calls++; assert.equal(sent.url, endpoint); assert.equal(sent.body, null)
+      assert.deepEqual([...sent.headers], [])
+      return new Response(null, { status: 204 })
+    } })
+    assert.equal(result.status, 204); assert.equal(calls, 1); assert.equal(request.body.locked, false)
+  }
+  const never = { fetch() { assert.fail('Invalid maintenance request reached the private binding') } }
+  const failed = new ReadableStream({ start(controller) { controller.error(new Error('synthetic stream failure')) } })
+  for (const body of ['x', failed]) {
+    const request = new Request(endpoint, { method: 'POST', body, duplex: 'half', headers: { 'content-length': '0' } })
+    assert.equal((await githubRedeliveryRequest(request, never)).status, 404)
+    assert.equal(request.body.locked, false)
+  }
+  let cancelled = false
+  const abort = new AbortController()
+  const stalled = new Request(endpoint, { method: 'POST', duplex: 'half', signal: abort.signal,
+    body: new ReadableStream({ cancel() { cancelled = true } }) })
+  const pending = githubRedeliveryRequest(stalled, never)
+  abort.abort()
+  assert.equal((await pending).status, 404)
+  assert.equal(cancelled, true); assert.equal(stalled.body.locked, false)
+  const alreadyCancelled = new Request(endpoint, { method: 'POST', signal: abort.signal })
+  assert.equal((await githubRedeliveryRequest(alreadyCancelled, never)).status, 404)
+})
+
+test('GitHub redelivery bounds unfinished bodies without waiting for cancellation and shares the deadline with the binding', async t => {
+  const { githubRedeliveryRequest } = await import('../../../cloudflare/api/ingress/services.mjs')
+  const endpoint = 'https://github-redelivery.internal/redeliver'
+  const deadline = new AbortController(), timeoutCalls = []
+  let currentDeadline = deadline
+  t.mock.method(AbortSignal, 'timeout', ms => { timeoutCalls.push(ms); return currentDeadline.signal })
+  let cancelled = 0
+  const request = new Request(endpoint, { method: 'POST', duplex: 'half',
+    body: new ReadableStream({ cancel() { cancelled++; return new Promise(() => {}) } }) })
+  const pending = githubRedeliveryRequest(request, { fetch() { assert.fail('Incomplete body reached the binding') } })
+  deadline.abort()
+  assert.equal((await pending).status, 404)
+  assert.equal(cancelled, 1); assert.equal(request.body.locked, false)
+  assert.deepEqual(timeoutCalls, [40_000])
+
+  const forwardedDeadline = new AbortController()
+  currentDeadline = forwardedDeadline
+  let forwarded
+  assert.equal((await githubRedeliveryRequest(new Request(endpoint, { method: 'POST', body: '' }), {
+    async fetch(sent) { forwarded = sent; return new Response(null, { status: 204 }) },
+  })).status, 204)
+  assert.equal(forwarded.signal.aborted, false)
+  forwardedDeadline.abort()
+  assert.equal(forwarded.signal.aborted, true)
+  assert.deepEqual(timeoutCalls, [40_000, 40_000])
+})
+
+test('GitHub redelivery rejects the first body byte and malformed or unbounded empty chunks before dispatch', async () => {
+  const { githubRedeliveryRequest } = await import('../../../cloudflare/api/ingress/services.mjs')
+  const endpoint = 'https://github-redelivery.internal/redeliver'
+  for (const value of [new Uint8Array([1]), 'malformed']) {
+    let cancelled = 0
+    const request = new Request(endpoint, { method: 'POST', duplex: 'half', body: new ReadableStream({
+      start(controller) { controller.enqueue(value) },
+      cancel() { cancelled++; return new Promise(() => {}) },
+    }) })
+    assert.equal((await githubRedeliveryRequest(request, { fetch() { assert.fail('Payload reached the binding') } })).status, 404)
+    assert.equal(cancelled, 1); assert.equal(request.body.locked, false)
+  }
+  for (const count of [15, 16, Infinity]) {
+    let cancelled = 0, chunks = 0, calls = 0
+    const request = new Request(endpoint, { method: 'POST', duplex: 'half', body: new ReadableStream({
+      pull(controller) { if (chunks++ === count) controller.close(); else controller.enqueue(new Uint8Array()) },
+      cancel() { cancelled++; return new Promise(() => {}) },
+    }) })
+    const response = await githubRedeliveryRequest(request, { async fetch() { calls++; return new Response(null, { status: 204 }) } })
+    assert.equal(response.status, count === 15 ? 204 : 404)
+    assert.equal(calls, count === 15 ? 1 : 0)
+    if (count === Infinity) assert.equal(cancelled, 1)
+    assert.equal(request.body.locked, false)
+  }
+  const locked = new Request(endpoint, { method: 'POST', body: '' })
+  const reader = locked.body.getReader()
+  try { assert.equal((await githubRedeliveryRequest(locked, { fetch() { assert.fail('Locked body reached the binding') } })).status, 404) }
+  finally { reader.releaseLock() }
+})
+
+test('GitHub redelivery refuses binding redirects without disclosing their location or body', async () => {
+  const { githubRedeliveryRequest } = await import('../../../cloudflare/api/ingress/services.mjs')
+  for (const status of [300, 301, 302, 303, 304, 307, 308]) {
+    let calls = 0
+    const response = await githubRedeliveryRequest(new Request('https://github-redelivery.internal/redeliver', { method: 'POST' }), {
+      async fetch(request) {
+        calls++; assert.equal(request.redirect, 'manual')
+        return new Response(status === 304 ? null : 'synthetic-private-canary', { status, headers: { location: 'https://untrusted.example/other' } })
+      },
+    })
+    assert.equal(calls, 1); assert.equal(response.status, 502)
+    assert.equal(response.headers.get('location'), null); assert.equal(await response.text(), '')
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+  }
 })
 
 test('the existing API Container installs private redelivery interception without exporting signing keys or a public route', async () => {
