@@ -1,7 +1,7 @@
 # The person's own E2B key is enough for cloud runs
 
 - Date: 2026-11-01
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-25-2130](2026-11-25-2130-mikka-cloud-on-mikka-e2b.md) (Mikka Cloud machines on Mikka's own E2B; a person's own E2B key only on self-hosted). Earlier status: Accepted
 - Source: Alex, relayed by the coordinator session for the MVP blocker where a
   dispatched run answered 「这个任务需要一台电脑来跑」 although the person had
   their own E2B key: cloud tasks waited on `MIKKA_CLOUD_COMPUTER_TASKS=1` and a
