@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { auditDatabases, connectAuditDatabases, requireAuditAdmin } from './database'
 import { recordAudit } from './record'
 import { armDueTimerSoon } from '@/lib/due-timer'
+import { AUDIT_RETENTION_DUE_WORKSPACES_SQL } from '@/lib/audit-retention-due'
 
 export const auditRetentionInput = z.object({ retentionDays: z.number().int().min(1).max(36500).nullable(), legalHold: z.boolean() }).strict()
 export type AuditRetentionInput = z.infer<typeof auditRetentionInput>
@@ -88,9 +89,16 @@ async function expireDeletedWorkspace(app: PoolClient, ws: PoolClient, workspace
   return { deleted: removed.rowCount ?? 0, skipped: null }
 }
 
-export async function sweepAuditRetention(database = auditDatabases()) {
-  const policies = (await database.main.query<{ workspaceId: string }>(`SELECT "workspaceId" FROM workspace_audit_retention WHERE "retentionDays" IS NOT NULL AND "legalHold"=false
-    UNION SELECT d.id FROM workspace_deletions d WHERE NOT EXISTS (SELECT 1 FROM workspace_audit_retention p WHERE p."workspaceId"=d.id AND p."legalHold") ORDER BY 1`)).rows
+/** Workspaces applied per sweep; the due timer and the next reconcile take the rest. */
+export const AUDIT_RETENTION_SWEEP_LIMIT = 100
+
+/**
+ * Applies retention to the workspaces it is due for now (AUDIT_RETENTION_DUE_SQL, the same
+ * times the due timer sleeps until): one read, then one locked pass per due workspace. Nothing
+ * due costs that one read: no transaction is opened for a workspace with nothing to remove.
+ */
+export async function sweepAuditRetention(database = auditDatabases(), limit = AUDIT_RETENTION_SWEEP_LIMIT) {
+  const policies = (await database.main.query<{ workspaceId: string }>(AUDIT_RETENTION_DUE_WORKSPACES_SQL, [limit])).rows
   let deleted = 0, pending = 0
   for (const policy of policies) {
     try { deleted += (await applyAuditRetention(policy.workspaceId, new Date(), database)).deleted }

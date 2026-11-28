@@ -12,16 +12,24 @@ const DELETED_WORKSPACE_RETENTION_DAYS = 90
  *   its oldest event passes that period.
  * The oldest event is read from workspace_audit_events_ws_created_idx.
  */
-export const AUDIT_RETENTION_DUE_SQL = `SELECT date_trunc('hour', e.oldest + (p."retentionDays" * interval '24 hours'), 'UTC') + interval '1 hour' AS at
+export const AUDIT_RETENTION_DUE_SQL = `SELECT date_trunc('hour', e.oldest + (p."retentionDays" * interval '24 hours'), 'UTC') + interval '1 hour' AS at, p."workspaceId"
     FROM workspace_audit_retention p CROSS JOIN LATERAL (SELECT min("createdAt") AS oldest FROM workspace_audit_events WHERE "workspaceId" = p."workspaceId") e
     WHERE p."retentionDays" IS NOT NULL AND NOT p."legalHold" AND e.oldest IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM workspace_deletions d WHERE d.id = p."workspaceId")
   UNION ALL SELECT greatest(d."deletedAt" + (${DELETED_WORKSPACE_RETENTION_DAYS} * interval '24 hours'),
       CASE WHEN p."retentionDays" IS NULL THEN '-infinity'::timestamptz
-        ELSE date_trunc('hour', e.oldest + (p."retentionDays" * interval '24 hours'), 'UTC') + interval '1 hour' END)
+        ELSE date_trunc('hour', e.oldest + (p."retentionDays" * interval '24 hours'), 'UTC') + interval '1 hour' END), d.id
     FROM workspace_deletions d LEFT JOIN workspace_audit_retention p ON p."workspaceId" = d.id
     CROSS JOIN LATERAL (SELECT min("createdAt") AS oldest FROM workspace_audit_events WHERE "workspaceId" = d.id) e
     WHERE p."legalHold" IS NOT TRUE`
+
+/**
+ * The workspaces whose retention is due now, oldest due first, at most $1 (one statement). The
+ * sweep applies retention to these only: a workspace in its deletion grace, under a legal hold,
+ * or with nothing past its period is not opened, locked or written every run.
+ */
+export const AUDIT_RETENTION_DUE_WORKSPACES_SQL = `SELECT "workspaceId" FROM (${AUDIT_RETENTION_DUE_SQL}) due
+    WHERE at <= now() GROUP BY "workspaceId" ORDER BY min(at), "workspaceId" LIMIT $1`
 
 /** On the workspace database: an audit receipt not yet delivered to the main store is due at once. */
 export const AUDIT_OUTBOX_DUE_SQL = `SELECT min(coalesce("lastAttemptAt", "createdAt")) AS at FROM workspace_audit_outbox WHERE "deliveredAt" IS NULL`
