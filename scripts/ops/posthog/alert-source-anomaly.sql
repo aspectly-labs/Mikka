@@ -2,7 +2,8 @@ WITH
     toStartOfHour(now()) - INTERVAL 1 HOUR AS evaluated_hour,
     spans AS (
         SELECT timestamp, service_name,
-            1 / coalesce(toFloatOrNull(attributes['mikka.trace.sample_rate']), 0.1) AS sample_weight,
+            toFloatOrNull(attributes['mikka.trace.sample_rate']) AS sample_rate,
+            if(sample_rate > 0 AND sample_rate <= 1, 1 / sample_rate, NULL) AS sample_weight,
             coalesce(nullIf(attributes['mikka.route'], ''), 'unknown') AS route,
             if(match(attributes['mikka.request_id'], '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'), attributes['mikka.request_id'], '') AS request_id,
             if(match(attributes['mikka.user_id_hash'], '^[0-9a-f]{16}$'), attributes['mikka.user_id_hash'], '') AS user_hash,
@@ -36,8 +37,10 @@ WITH
     ),
     hourly AS (
         SELECT service_name, route, toStartOfHour(timestamp) AS hour,
-            count() AS observed_queries, sum(sample_weight) AS estimated_queries,
-            sum(span_bytes * sample_weight) AS estimated_bytes, sumIf(sample_weight, bytes_known) AS estimated_queries_with_bytes
+            count() AS observed_queries, countIf(isNull(sample_weight)) AS unknown_weight_queries,
+            coalesce(sum(sample_weight), 0) AS estimated_queries,
+            coalesce(sum(span_bytes * sample_weight), 0) AS estimated_bytes,
+            coalesce(sumIf(sample_weight, bytes_known), 0) AS estimated_queries_with_bytes
         FROM spans WHERE is_db AND timestamp >= evaluated_hour - INTERVAL 7 DAY
         GROUP BY service_name, route, hour
     ),
@@ -52,6 +55,7 @@ WITH
         FROM sources s JOIN covered_hour_grid h ON s.service_name = h.service_name
         LEFT JOIN hourly q ON q.service_name = s.service_name AND q.route = s.route AND q.hour = h.hour
         WHERE h.hour >= toStartOfHour(s.first_seen) + INTERVAL 1 HOUR
+          AND coalesce(q.unknown_weight_queries, 0) = 0
         GROUP BY s.service_name, s.route
     ),
     byte_baseline AS (
@@ -60,6 +64,7 @@ WITH
         FROM sources s JOIN covered_hour_grid h ON s.service_name = h.service_name
         LEFT JOIN hourly q ON q.service_name = s.service_name AND q.route = s.route AND q.hour = h.hour
         WHERE h.hour >= toStartOfHour(s.first_seen) + INTERVAL 1 HOUR
+          AND coalesce(q.unknown_weight_queries, 0) = 0
           AND (coalesce(q.estimated_queries, 0) = 0
            OR coalesce(q.estimated_queries_with_bytes, 0) >= 0.95 * q.estimated_queries)
         GROUP BY s.service_name, s.route
@@ -84,7 +89,7 @@ WITH
         SELECT s.service_name AS service_name, s.route AS route,
             coalesce(nullIf(s.user_hash, ''), nullIf(a.request_user_hash, ''), 'unattributed') AS attributed_user_hash,
             coalesce(nullIf(s.rpc_action, ''), nullIf(a.request_rpc_action, ''), 'unattributed') AS attributed_rpc_action,
-            sum(s.sample_weight) AS estimated_queries
+            sum(coalesce(s.sample_weight, 0)) AS estimated_queries
         FROM spans s
         LEFT ANY JOIN current_request_attribution a ON s.service_name = a.service_name AND s.request_id = a.request_id
         WHERE s.is_db AND s.timestamp >= evaluated_hour
@@ -117,6 +122,8 @@ WITH
             coalesce(b.baseline_hours, 0) AS covered_hours,
             coalesce(cs.observed_spans, 0) > 0 AS current_service_observed,
             coalesce(bb.baseline_hours, 0) AS byte_covered_hours,
+            coalesce(c.observed_queries, 0) AS observed_queries,
+            coalesce(c.unknown_weight_queries, 0) AS unknown_weight_queries,
             coalesce(c.estimated_queries, 0) AS current_queries,
             coalesce(c.estimated_bytes, 0) AS current_bytes,
             coalesce(c.estimated_queries, 0) - coalesce(c.estimated_queries_with_bytes, 0) AS missing_byte_queries,
@@ -139,11 +146,17 @@ WITH
     ),
     per_source AS (
 SELECT
-    if(NOT current_service_observed, NULL,
-        if((covered_hours >= 24 AND current_queries > threshold_queries)
-           OR (byte_covered_hours >= 24 AND current_byte_coverage >= 0.95 AND current_bytes > threshold_bytes), 1, 0)) AS row_value,
+    multiIf(
+        NOT current_service_observed, NULL,
+        covered_hours >= 24 AND greatest(toFloat(observed_queries), current_queries) > threshold_queries, 1,
+        unknown_weight_queries > 0, NULL,
+        byte_covered_hours >= 24 AND current_byte_coverage >= 0.95 AND current_bytes > threshold_bytes, 1,
+        covered_hours >= 24 OR (byte_covered_hours >= 24 AND current_byte_coverage >= 0.95), 0,
+        NULL
+    ) AS row_value,
     concat(service_name, ' ', route, ' | UTC hour=', toString(toTimeZone(evaluated_hour, 'UTC')),
-        ' | estimated queries=', if(current_service_observed, toString(current_queries), 'unknown'), ' median=', if(covered_hours > 0, toString(round(median_queries, 1)), 'unavailable'),
+        ' | observed queries=', toString(observed_queries), ' unknown weights=', toString(unknown_weight_queries),
+        ' | weighted known queries=', if(current_service_observed, toString(current_queries), 'unknown'), ' median=', if(covered_hours > 0, toString(round(median_queries, 1)), 'unavailable'),
         ' threshold=', toString(round(threshold_queries, 1)),
         '; estimated JSON bytes=', if(current_service_observed, toString(round(current_bytes, 0)), 'unknown'), ' median=', if(byte_covered_hours > 0, toString(round(median_bytes, 0)), 'unavailable'),
         ' threshold=', toString(round(threshold_bytes, 0)), '; missing bytes=', toString(missing_byte_queries), '/', toString(current_queries),
@@ -151,8 +164,10 @@ SELECT
         ' | users top3/', toString(user_groups), ': ', if(user_breakdown = '', 'no observed query', user_breakdown),
         ' | RPC actions top5/', toString(action_groups), ': ', if(action_breakdown = '', 'no observed query', action_breakdown),
         ' | unattributed user/action queries=', toString(user_unattributed_queries), '/', toString(action_unattributed_queries),
-        if(NOT current_service_observed, ' NO CURRENT TELEMETRY; evaluation suppressed', if(covered_hours < 24, ' WARMUP; monthly 50% and heartbeat remain', '')),
-        ' | route-local warmup; per-span 1/sample_rate; legacy rate=0.1; bytes require 95% weighted coverage; not provider egress') AS row_source,
+        multiIf(NOT current_service_observed, ' NO CURRENT TELEMETRY',
+            unknown_weight_queries > 0, ' INCOMPLETE WEIGHTS; byte evaluation suppressed',
+            isNull(row_value), ' INSUFFICIENT BASELINE OR BYTE COVERAGE', ''),
+        ' | route-local warmup; known weights only; bytes require 95% weighted coverage; not provider egress') AS row_source,
     route, current_queries, current_bytes, median_queries, median_bytes, threshold_queries, threshold_bytes,
     covered_hours, byte_covered_hours, current_service_observed, missing_byte_queries, current_byte_coverage, evaluated_hour AS hour_start
 FROM metrics
@@ -161,8 +176,9 @@ SELECT
     max(row_value) AS value,
     if(countIf(row_value = 1) > 0,
         concat(toString(countIf(row_value = 1)), ' breaching: ', arrayStringConcat(arraySlice(groupArrayIf(row_source, row_value = 1), 1, 5), ' || ')),
-        concat('no breach | top: ', argMax(row_source, current_bytes))) AS source,
+        concat('breaches=0; unknown sources=', toString(countIf(isNull(row_value))), ' | top: ', argMax(row_source, current_bytes))) AS source,
     countIf(row_value = 1) AS breaching_sources,
-    count() AS evaluated_sources,
+    countIf(isNotNull(row_value)) AS evaluated_sources,
+    countIf(isNull(row_value)) AS unknown_sources,
     any(hour_start) AS hour_start
 FROM (SELECT * FROM per_source ORDER BY row_value DESC, current_bytes DESC, current_queries DESC)
