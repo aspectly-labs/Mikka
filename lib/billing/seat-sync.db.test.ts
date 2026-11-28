@@ -211,21 +211,24 @@ test('multi-plan Stripe checkout/webhooks, org per_seat quantity, and event-driv
     const proCustomer = (await fixture.query<{ stripeCustomerId: string }>('SELECT "stripeCustomerId" FROM workspace_billing WHERE "workspaceId"=$1', [proWs.id])).rows[0].stripeCustomerId
     const entCustomer = (await fixture.query<{ stripeCustomerId: string }>('SELECT "stripeCustomerId" FROM workspace_billing WHERE "workspaceId"=$1', [entWs.id])).rows[0].stripeCustomerId
 
-    stripe.subscriptions.set('sub_pro_multi', {
-      id: 'sub_pro_multi', customer: proCustomer, status: 'active', workspaceId: proWs.id,
-      priceId: PRICE_PRO, itemId: 'si_pro_multi', quantity: 1,
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 12)
+    const proSubId = `sub_pro_${suffix}`
+    const entSubId = `sub_ent_${suffix}`
+    stripe.subscriptions.set(proSubId, {
+      id: proSubId, customer: proCustomer, status: 'active', workspaceId: proWs.id,
+      priceId: PRICE_PRO, itemId: `si_pro_${suffix}`, quantity: 1,
     })
-    stripe.subscriptions.set('sub_ent_multi', {
-      id: 'sub_ent_multi', customer: entCustomer, status: 'active', workspaceId: entWs.id,
-      priceId: PRICE_ENT, itemId: 'si_ent_multi', quantity: 2,
+    stripe.subscriptions.set(entSubId, {
+      id: entSubId, customer: entCustomer, status: 'active', workspaceId: entWs.id,
+      priceId: PRICE_ENT, itemId: `si_ent_${suffix}`, quantity: 2,
     })
 
     await applyStripeEvent(
-      { id: `evt_${randomUUID()}`, type: 'customer.subscription.created', data: { object: { id: 'sub_pro_multi', metadata: { workspaceId: proWs.id } } } },
+      { id: `evt_${randomUUID()}`, type: 'customer.subscription.created', data: { object: { id: proSubId, metadata: { workspaceId: proWs.id } } } },
       { env: TEST_ENV, fetchImpl: stripe.fetchImpl },
     )
     await applyStripeEvent(
-      { id: `evt_${randomUUID()}`, type: 'customer.subscription.created', data: { object: { id: 'sub_ent_multi', metadata: { workspaceId: entWs.id } } } },
+      { id: `evt_${randomUUID()}`, type: 'customer.subscription.created', data: { object: { id: entSubId, metadata: { workspaceId: entWs.id } } } },
       { env: TEST_ENV, fetchImpl: stripe.fetchImpl },
     )
 
@@ -283,33 +286,36 @@ test('multi-plan Stripe checkout/webhooks, org per_seat quantity, and event-driv
     assert.equal(sessionReq?.body?.get('line_items[0][quantity]'), '3', 'Organization per_seat Checkout must bill all active Organization members')
 
     const customerId = (await fixture.query<{ stripeCustomerId: string }>('SELECT "stripeCustomerId" FROM workspace_billing WHERE "workspaceId"=$1', [billingWs.id])).rows[0].stripeCustomerId
-    stripe.subscriptions.set('sub_org_team', {
-      id: 'sub_org_team', customer: customerId, status: 'active', workspaceId: billingWs.id,
-      priceId: PRICE_TEAM, itemId: 'si_org_team', quantity: 3,
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 12)
+    const orgSubId = `sub_org_${suffix}`
+    const orgItemId = `si_org_${suffix}`
+    stripe.subscriptions.set(orgSubId, {
+      id: orgSubId, customer: customerId, status: 'active', workspaceId: billingWs.id,
+      priceId: PRICE_TEAM, itemId: orgItemId, quantity: 3,
     })
     await applyStripeEvent(
-      { id: `evt_${randomUUID()}`, type: 'customer.subscription.created', data: { object: { id: 'sub_org_team', metadata: { workspaceId: billingWs.id } } } },
+      { id: `evt_${randomUUID()}`, type: 'customer.subscription.created', data: { object: { id: orgSubId, metadata: { workspaceId: billingWs.id } } } },
       { env: TEST_ENV, fetchImpl: stripe.fetchImpl },
     )
 
     // Add 4th active org member -> always_invoice on seat increase.
     await addOrganizationMember(org.id, ownerId, { userId: memberC, role: 'member' })
     await syncPerSeatSubscriptionForOrganization(org.id, { env: TEST_ENV, fetchImpl: stripe.fetchImpl })
-    const increaseReq = stripe.requests.filter(r => r.method === 'POST' && r.path === 'subscription_items/si_org_team').at(-1)
+    const increaseReq = stripe.requests.filter(r => r.method === 'POST' && r.path === `subscription_items/${orgItemId}`).at(-1)
     assert.equal(increaseReq?.body?.get('quantity'), '4')
     assert.equal(increaseReq?.body?.get('proration_behavior'), 'always_invoice')
     assert.equal((await fixture.query<{ seats: number }>('SELECT seats FROM workspace_billing WHERE "workspaceId"=$1', [billingWs.id])).rows[0].seats, 4)
 
     // Unchanged repeat sync is a zero-POST no-op.
-    const postCountBefore = stripe.requests.filter(r => r.method === 'POST' && r.path === 'subscription_items/si_org_team').length
+    const postCountBefore = stripe.requests.filter(r => r.method === 'POST' && r.path === `subscription_items/${orgItemId}`).length
     const noop = await syncPerSeatSubscriptionQuantity(billingWs.id, { env: TEST_ENV, fetchImpl: stripe.fetchImpl })
     assert.deepEqual(noop, { synced: false, reason: 'unchanged', seats: 4 })
-    assert.equal(stripe.requests.filter(r => r.method === 'POST' && r.path === 'subscription_items/si_org_team').length, postCountBefore)
+    assert.equal(stripe.requests.filter(r => r.method === 'POST' && r.path === `subscription_items/${orgItemId}`).length, postCountBefore)
 
     // Remove org member -> create_prorations on seat decrease.
     await removeOrganizationMember(org.id, ownerId, memberC)
     await syncPerSeatSubscriptionForOrganization(org.id, { env: TEST_ENV, fetchImpl: stripe.fetchImpl })
-    const decreaseReq = stripe.requests.filter(r => r.method === 'POST' && r.path === 'subscription_items/si_org_team').at(-1)
+    const decreaseReq = stripe.requests.filter(r => r.method === 'POST' && r.path === `subscription_items/${orgItemId}`).at(-1)
     assert.equal(decreaseReq?.body?.get('quantity'), '3')
     assert.equal(decreaseReq?.body?.get('proration_behavior'), 'create_prorations')
     assert.equal((await fixture.query<{ seats: number }>('SELECT seats FROM workspace_billing WHERE "workspaceId"=$1', [billingWs.id])).rows[0].seats, 3)
@@ -332,14 +338,16 @@ test('multi-plan Stripe checkout/webhooks, org per_seat quantity, and event-driv
       { userId: ownerId, role: 'admin' },
       { userId: memberId, role: 'member' },
     ])
-    const customerId = `cus_outage_${randomUUID().slice(0, 8)}`
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 12)
+    const customerId = `cus_outage_${suffix}`
+    const outageSubId = `sub_outage_${suffix}`
     const stripe = makeMockStripe({ failItemUpdate: true })
-    stripe.subscriptions.set('sub_ws_outage', {
-      id: 'sub_ws_outage', customer: customerId, status: 'active', workspaceId: ws.id,
-      priceId: PRICE_TEAM, itemId: 'si_ws_outage', quantity: 2,
+    stripe.subscriptions.set(outageSubId, {
+      id: outageSubId, customer: customerId, status: 'active', workspaceId: ws.id,
+      priceId: PRICE_TEAM, itemId: `si_outage_${suffix}`, quantity: 2,
     })
     await applyStripeEvent(
-      { id: `evt_${randomUUID()}`, type: 'customer.subscription.created', data: { object: { id: 'sub_ws_outage', metadata: { workspaceId: ws.id } } } },
+      { id: `evt_${randomUUID()}`, type: 'customer.subscription.created', data: { object: { id: outageSubId, metadata: { workspaceId: ws.id } } } },
       { env: TEST_ENV, fetchImpl: stripe.fetchImpl },
     )
 
