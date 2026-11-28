@@ -10,6 +10,7 @@ import { executionInstructions } from '../agent-kit/execution-instructions'
 import { withCoordinatorPresentation } from './native-prompt'
 import { instructionsWithPersonal, cachedContextLines, promptWithCachedContext } from './context'
 import { SCHEDULE_INSTRUCTIONS } from '../schedules/instructions'
+import { GitHubAccessError } from '../github/user-access-error'
 
 const owner = 'synthetic-prompt-owner', peer = 'synthetic-prompt-peer'
 const bot = '10000000-0000-4000-8000-000000000001'
@@ -116,7 +117,7 @@ const unexpectedAuth = () => { throw new Error('Unexpected authentication or OAu
 stub('../auth.ts', { auth: new Proxy({}, { get: unexpectedAuth }), authBaseURL: 'https://auth-fixture.example.invalid' })
 stub('../device-link.ts', { DEVICE_ONLINE_WINDOW_MS: 60000, WORKSPACE_ID: 'synthetic-unused', issueDeviceToken: unexpectedAuth })
 stub('../composio.ts', { runComposioAction: forbidden })
-stub('../github/user-access.ts', { readAuthorizedIssue: forbidden })
+stub('../github/user-access.ts', { readAuthorizedIssue: forbidden, githubRepositoryReadCredential: forbidden, GitHubAccessError })
 stub('../pending-action-store.ts', { writeAccountAction: forbidden })
 stub('../telegram/client.ts', { postTelegramText: forbidden })
 stub('../../workflows/coordinator/tool-scope.ts', { assertNativeToolScope: forbidden })
