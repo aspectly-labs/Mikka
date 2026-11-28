@@ -59,13 +59,16 @@ export function decodeOtlp(body, signal) {
   const output = []
   for (const resource of values(fields(body), 1)) {
     const group = fields(resource)
-    const service = attributes(values(fields(first(group, 1)), 1))['service.name']
+    const resourceAttributes = attributes(values(fields(first(group, 1)), 1))
+    const service = resourceAttributes['service.name']
+    const version = resourceAttributes['service.version']
+    const serviceVersion = typeof version === 'string' && version.length <= 128 ? version : undefined
     for (const scope of values(group, 2)) for (const item of values(fields(scope), 2)) {
       const data = fields(item)
-      if (signal === 'traces') output.push({ service, name: string(first(data, 5)), traceId: hex(first(data, 1)), spanId: hex(first(data, 2)),
+      if (signal === 'traces') output.push({ service, serviceVersion, name: string(first(data, 5)), traceId: hex(first(data, 1)), spanId: hex(first(data, 2)),
         parentSpanId: hex(first(data, 4)), status: first(data, 15) ? Number(first(fields(first(data, 15)), 3) ?? 0n) : 0,
         attributes: safe(attributes(values(data, 9))) })
-      else output.push({ service, traceId: hex(first(data, 9)), spanId: hex(first(data, 10)), severity: Number(first(data, 2) ?? 0n),
+      else output.push({ service, serviceVersion, traceId: hex(first(data, 9)), spanId: hex(first(data, 10)), severity: Number(first(data, 2) ?? 0n),
         body: first(data, 5) ? any(first(data, 5)) : undefined, attributes: safe(attributes(values(data, 6))) })
     }
   }

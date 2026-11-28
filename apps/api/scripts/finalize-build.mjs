@@ -13,9 +13,12 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 const within = (root, path) => path === root || path.startsWith(`${root}${sep}`)
 
 /** Compile app-owned tracing only; the actual pg/OTel packages stay external. */
-export async function compileTracing(root) {
+export async function compileTracing(root, revision) {
+  if (revision !== undefined && (typeof revision !== 'string' || !/^[a-f0-9]{40}$/.test(revision))) throw new Error('API_BUILD_SHA_REQUIRED')
   const result = await build({
-    absWorkingDir: root, entryPoints: ['apps/api/runtime/tracing-start.ts'],
+    absWorkingDir: root,
+    stdin: { contents: `import { startBuildTracing } from './apps/api/runtime/tracing-start'; startBuildTracing(${JSON.stringify(revision)});`,
+      resolveDir: root, sourcefile: 'mikka-tracing-entry.mjs' },
     bundle: true, platform: 'node', format: 'esm', target: 'node22',
     alias: { '@': root }, external: nodeRuntimePackages, write: false, metafile: true,
     sourcemap: false,
@@ -29,7 +32,7 @@ export async function finalizeBuild({ root, output, preset, revision }) {
   root = resolve(root); output = resolve(output)
   if (!within(root, output) || output === root) throw new Error('API_OUTPUT_LOCATION_INVALID')
   if (preset !== 'node-server') throw new Error('API_BUILD_PRESET_UNSUPPORTED')
-  const tracing = await compileTracing(root)
+  const tracing = await compileTracing(root, revision)
   const { resources, posterBinary, copyResources } = await runtimeResources(root)
   const evidence = { version: 1, revision, preset, node: process.version,
     target: envValue('MIKKA_BUILD_TARGET') === 'local-fixture' ? 'local-fixture' : 'production',

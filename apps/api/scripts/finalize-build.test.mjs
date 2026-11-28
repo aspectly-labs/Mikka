@@ -5,7 +5,7 @@ import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import test from 'node:test'
-import { finalizeBuild } from './finalize-build.mjs'
+import { compileTracing, finalizeBuild } from './finalize-build.mjs'
 import { createCapturePosterBinary, POSTER_BINARY_ARCHIVE, POSTER_BINARY_MANIFEST,
   POSTER_BINARY_RESOURCE, POSTER_LICENSE_FILES, POSTER_RUNTIME_DIRECTORY } from '../../../lib/captures/poster-binary.mjs'
 
@@ -36,6 +36,7 @@ test('Node bundles extract the verified real ffmpeg once and preserve its licens
     // fake executable or a source-path assertion. A lost mode bit must fail.
     const evidence = await finalizeBuild({ root, output, preset,
       revision: process.env.MIKKA_TEST_DEPLOYMENT_SHA || 'a'.repeat(40) })
+    assert.equal(evidence.tracingSha256, hash(await compileTracing(root, evidence.revision)), 'packaged telemetry uses the recorded artifact revision')
     for (const resource of expected) {
       assert.deepEqual(evidence.resources.find(item => item.path === resource.path), resource)
       const copied = await readFile(join(packaged, resource.path))

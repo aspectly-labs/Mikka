@@ -63,6 +63,23 @@ The native worker retains its existing bounded shutdown/credential-persistence
 behavior. No account labels, model lists, URLs or provider response contents are
 exported.
 
+HTTP response timing separates readiness from connection lifetime.
+`mikka.http.response_headers_ms` measures entry to the response headers being
+ready; `mikka.http.response_kind` is `regular`, `event_stream` or `ndjson`.
+For the two stream kinds, `mikka.http.ttfb_ms` records the first nonempty body
+chunk observed by the server, while the request span still ends at disposal.
+This is server-side first-byte timing, not browser receipt or model first-token
+timing. Empty streams omit it. The observer preserves backpressure and forwards
+body cancellation without collecting content.
+
+`mikka.http.outcome` is `completed`, `client_cancelled` or `error`. Only a
+successful stream with an aborted incoming request signal and a matching client
+disconnect reason is `client_cancelled`. An observed upstream body error takes
+precedence, and HTTP 5xx remains an error. Eve proxy spans additionally carry
+`mikka.eve.route`, a closed route template without session IDs or query strings;
+unknown paths use a catch-all template. Connection failures keep the existing
+503 response and record safe cause names/codes on the span and its failure log.
+
 Mikka-managed model calls use the AI request span described below, with
 `mikka.ai.route = litellm` and the requested alias in the model field. The
 LiteLLM call ID and response cost connect that request to the proxy's spend
@@ -97,6 +114,12 @@ must happen before application modules load pg; a Nitro plugin alone is too
 late for database instrumentation. `.vercel/output/mikka-build.json` or
 `.output/mikka-build.json` records the compiled tracing hash. An artifact hash
 proves the entry was packaged, not that production spans reached PostHog.
+
+Release tracing embeds the same source commit as `mikka-build.json` at build
+time. Both spans and logs export its first 12 characters as the OpenTelemetry
+resource `service.version`; a missing or conflicting runtime revision cannot
+relabel that artifact. Development workers retain the optional runtime revision.
+Use this resource when comparing deployed revisions in PostHog.
 
 ## Mobile app
 
