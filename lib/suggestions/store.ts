@@ -1,6 +1,7 @@
 import 'server-only'
 import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { randomUUID } from 'node:crypto'
+import { CodedError } from '@mikka/protocol/coded-error'
 import { scoreNotification } from '@/lib/attention/score'
 import { judgmentContext, recordNotice } from '@/lib/attention/store'
 import { briefingEvent } from '@/lib/coordinator-events'
@@ -35,6 +36,7 @@ export async function ingestNotifications(incoming: readonly ExternalNotificatio
   return decisionBatchCache.run(new Map(), async () => {
   const woken = new Set<string>()
   const actionItems = new Map<string, ActionTitleInput[]>()
+  let unresolved = false
   // Apps the person turned off as a source in Settings are not read at all.
   const notifications = await keepEnabledSources(incoming)
   await Promise.all(notifications.map(async notification => {
@@ -44,8 +46,9 @@ export async function ingestNotifications(incoming: readonly ExternalNotificatio
     const now = new Date()
     const { same, matters, ids } = await judgmentContext(notification.userId, notification.matterKey, now)
     const score = await scoreNotification(notification, matters, same, now)
-    // No answer from the Decisions API: nothing is stored, so the next delivery or the hourly backfill asks again.
-    if (!score) return
+    // Missing evidence is unresolved work, not a negative decision. Finish the
+    // other recipients before keeping this delivery retryable.
+    if (!score) { unresolved = true; return }
     const continuesId = score.continues ? ids.get(score.continues) ?? null : null
     const level = score.level
     const id = randomUUID()
@@ -79,6 +82,8 @@ export async function ingestNotifications(incoming: readonly ExternalNotificatio
     const { wakeCoordinator } = await import('@/lib/coordinator/wake')
     for (const userId of woken) await wakeCoordinator(userId)
   }
+  // Stored recipients still dedupe before another decision call on redelivery.
+  if (unresolved) throw new CodedError('suggestion_decision_unavailable')
   })
 }
 
