@@ -21,13 +21,14 @@ Every dated ADR (`20*.md`) carries a canonical status line within its first 15 l
 
 ## Inventory summary
 
-All `219` dated decision records here carry verified `Status:` headers (`157` Accepted, `13` Superseded, `49` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
+All `220` dated decision records here carry verified `Status:` headers (`155` Accepted, `13` Superseded, `52` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
 
 ### Key active architectural decisions
 
 | Area | Decision record | Status | Owning Tier 1 standard |
 | --- | --- | --- | --- |
 | **Hosted-UI CI: routed Electron e2e per PR, nightly full suite + DOM layout audit, no pixel comparison** | [2026-11-27-1100-electron-e2e-ci-no-pixel-diff.md](2026-11-27-1100-electron-e2e-ci-no-pixel-diff.md) (supersedes [2026-11-26-0645](2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md)) | Accepted | [`HANDBOOK.md`](../../engineering/HANDBOOK.md), `mikka-hosted-ui/AGENTS.md` |
+| **Mikka Cloud on Mikka's E2B; own E2B key only self-hosted; task machines on Cloudflare or E2B behind a switch** | [2026-11-25-2130-mikka-cloud-on-mikka-e2b.md](2026-11-25-2130-mikka-cloud-on-mikka-e2b.md) | Accepted | [`docs/design/orchestration.md`](../orchestration.md), [`docs/design/cloud-computer-backend.md`](../cloud-computer-backend.md) |
 | **All Web/Desktop UI in `mikka-hosted-ui`** | [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |
 | **Node 24 CI toolchain** | [2026-11-22-1430-ci-node24-only.md](2026-11-22-1430-ci-node24-only.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
 | **Scripted model acceptance (no live inference in CI)** | [2026-11-20-1855-scripted-model-acceptance.md](2026-11-20-1855-scripted-model-acceptance.md) | Accepted | [`docs/acceptance.md`](../../acceptance.md), [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |

@@ -1,7 +1,7 @@
 # Orchestration has one spec
 
 - Date: 2026-10-31
-- **Status:** Superseded in part by [2026-11-27-1740-model-keys-personal-or-workspace.md](2026-11-27-1740-model-keys-personal-or-workspace.md) (no 「分享给团队成员」 for API keys; personal and workspace keys are added separately)
+- **Status:** Superseded in part by [2026-11-25-2130](2026-11-25-2130-mikka-cloud-on-mikka-e2b.md) (Mikka Cloud machines on Mikka's own E2B; a person's own E2B key only on self-hosted) and [2026-11-27-1740-model-keys-personal-or-workspace.md](2026-11-27-1740-model-keys-personal-or-workspace.md) (no 「分享给团队成员」 for API keys; personal and workspace keys are added separately)
 - Source: Alex, relayed by the coordinator session: the rules of 2026-10-31
   on personal workspaces, account-bound subscriptions and shares, model
   resolution, who pays, machines (「Mikka 不托管沙盒」, own E2B → own device →

@@ -2,6 +2,7 @@
 // Every destructive case seeds a second workspace and proves it is untouched.
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { count, dbUrl, seedAgent, seedBot, seedIssue, seedProject, seedRun, seedTeam, seedTeamIssue, seedUser, seedWorkspace } from './support/workspace-admin-db'
 
@@ -116,6 +117,80 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     assert.equal(await count(pool, 'mikka_workspaces where id=$1', [ws.id]), 1)
   })
 
+  await t.test('workspace deletion journal rejects incomplete scope, progress and result receipts', async () => {
+    // Schema fixtures only. The action does not create or resume these jobs yet.
+    const id = randomUUID(), workspaceId = randomUUID(), actor = await seedUser(pool, 'journal-owner')
+    const insert = (jobId: string, target = workspaceId) => pool.query(`INSERT INTO workspace_deletion_jobs
+      (id,"workspaceId","requestedBy","authorizationVersion","authorizedAt") VALUES($1,$2,$3,1,now())`, [jobId, target, actor])
+    await insert(id)
+    const reject = (statement: string, values: unknown[] = []) => assert.rejects(pool.query(statement, [id, ...values]), { code: '23514' })
+    await assert.rejects(insert(randomUUID()), { code: '23505' })
+    for (const statement of [
+      'UPDATE workspace_deletion_jobs SET "authorizationVersion"=2 WHERE id=$1',
+      'UPDATE workspace_deletion_jobs SET "requestedBy"=\' \' WHERE id=$1',
+      'UPDATE workspace_deletion_jobs SET "authorizedAt"=\'infinity\' WHERE id=$1',
+      'UPDATE workspace_deletion_jobs SET stage=\'unknown\' WHERE id=$1',
+      'UPDATE workspace_deletion_jobs SET stage=\'completed\',"completedAt"=now(),"updatedAt"=now(),"nextAttemptAt"=NULL,"retentionUntil"=now() WHERE id=$1',
+      'UPDATE workspace_deletion_jobs SET "nextAttemptAt"=NULL WHERE id=$1',
+      'UPDATE workspace_deletion_jobs SET "nextAttemptAt"=\'infinity\' WHERE id=$1',
+      'UPDATE workspace_deletion_jobs SET "retentionUntil"=now() WHERE id=$1',
+    ]) await reject(statement)
+    const prepare = `UPDATE workspace_deletion_jobs SET stage='prepared',"preparedAt"=now(),"updatedAt"=now(),
+      "teamIds"=$2::uuid[],"projectIds"=$3::uuid[] WHERE id=$1`
+    const teamId = randomUUID(), projectId = randomUUID()
+    for (const [teams, projects] of [[null, []], [[], null], [[null], []], [[], [null]], [[[teamId]], []], [[], [[projectId]]]]) {
+      await reject(prepare, [teams, projects])
+    }
+    await pool.query(prepare, [id, [], []])
+    assert.deepEqual((await pool.query('SELECT "teamIds","projectIds" FROM workspace_deletion_jobs WHERE id=$1', [id])).rows, [{ teamIds: [], projectIds: [] }], 'an empty frozen scope is explicit')
+    await reject(`UPDATE workspace_deletion_jobs SET stage='cancelled',"cancelledAt"=now(),"updatedAt"=now(),"nextAttemptAt"=NULL,"retentionUntil"=now() WHERE id=$1`)
+    const main = `UPDATE workspace_deletion_jobs SET stage='main_deleted',"mainDeletedAt"=now(),"updatedAt"=now(),"deletedCounts"=$2::jsonb WHERE id=$1`
+    const appCounts = { bots: 1, threads: 0, tasks: 2 }
+    for (const counts of [null, [], {}, { bots: 1, threads: 0 }, { ...appCounts, tasks: null }, { ...appCounts, tasks: '2' },
+      { ...appCounts, tasks: -1 }, { ...appCounts, tasks: 1.5 }, { ...appCounts, token: 'forbidden' }]) {
+      await reject(main, [JSON.stringify(counts)])
+    }
+    await assert.rejects(pool.query(main, [id, null]), { code: '23502' })
+    await pool.query(main, [id, JSON.stringify(appCounts)])
+    const workspace = `UPDATE workspace_deletion_jobs SET stage='workspace_deleted',"workspaceDeletedAt"=now(),"updatedAt"=now(),"deletedCounts"=$2::jsonb WHERE id=$1`
+    const counts = { ...appCounts, projects: 1, teams: 1, invitations: 0, members: 2 }
+    await reject(workspace, [JSON.stringify(appCounts)])
+    await reject(workspace, [JSON.stringify({ ...counts, members: null })])
+    await pool.query(workspace, [id, JSON.stringify(counts)])
+    const complete = `UPDATE workspace_deletion_jobs SET stage='completed',"completedAt"=now(),"updatedAt"=now(),"nextAttemptAt"=NULL,"retentionUntil"=$2::timestamptz WHERE id=$1`
+    for (const retentionUntil of [null, '2000-01-01T00:00:00Z', 'infinity', new Date(Date.now() + 91 * 86400_000).toISOString()]) {
+      await reject(complete, [retentionUntil])
+    }
+    await pool.query(complete, [id, new Date(Date.now() + 86400_000).toISOString()])
+    await assert.rejects(insert(randomUUID()), { code: '23505' }, 'a completed request keeps its idempotency scope until receipt expiry')
+    assert.deepEqual((await pool.query('SELECT stage,"deletedCounts" FROM workspace_deletion_jobs WHERE id=$1', [id])).rows, [{ stage: 'completed', deletedCounts: counts }])
+
+    const cancelled = randomUUID(), retryWorkspace = randomUUID()
+    await insert(cancelled, retryWorkspace)
+    await pool.query(`UPDATE workspace_deletion_jobs SET stage='cancelled',"cancelledAt"=now(),"updatedAt"=now(),"nextAttemptAt"=NULL,"retentionUntil"=now()+interval '1 day' WHERE id=$1`, [cancelled])
+    await insert(randomUUID(), retryWorkspace)
+  })
+
+  await t.test('journal expansion leaves historical deletion records unchanged and creates no requests', async () => {
+    const client = await pool.connect(), schema = `journal_upgrade_${randomUUID().replaceAll('-', '')}`
+    const prior = await readFile(new URL('../drizzle/20261102031002_workspace_deletions.sql', import.meta.url), 'utf8')
+    const expansion = await readFile(new URL('../drizzle/20261128123456_workspace_deletion_journal.sql', import.meta.url), 'utf8')
+    try {
+      await client.query(`CREATE SCHEMA ${schema}; SET search_path TO ${schema}`)
+      await client.query(prior)
+      const oldId = randomUUID(), at = new Date('2026-01-01T00:00:00Z')
+      await client.query('INSERT INTO workspace_deletions(id,"deletedAt") VALUES($1,$2)', [oldId, at])
+      await client.query(expansion)
+      assert.deepEqual((await client.query('SELECT * FROM workspace_deletions')).rows, [{ id: oldId, deletedAt: at }])
+      assert.equal((await client.query('SELECT count(*)::int AS count FROM workspace_deletion_jobs')).rows[0].count, 0)
+    } finally {
+      await client.query('ROLLBACK')
+      await client.query('SET search_path TO public')
+      await client.query(`DROP SCHEMA ${schema} CASCADE`)
+      client.release()
+    }
+  })
+
   await t.test('deleteWorkspaceData: name check, Factory decision cleanup, other workspace untouched, personal data kept', async () => {
     const admin = await seedUser(pool, 'admin'), member = await seedUser(pool, 'member')
     const ws = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }, { userId: member, role: 'member' }], 'Doomed')
@@ -181,6 +256,10 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     }
     const doomed = await seed(ws.id)
     const kept = await seed(keep.id)
+    const journalIds = [randomUUID(), randomUUID()]
+    await pool.query(`INSERT INTO workspace_deletion_jobs(id,"workspaceId","requestedBy","authorizationVersion","authorizedAt")
+      VALUES($1,$2,$3,1,now()),($4,$5,$3,1,now())`, [journalIds[0], ws.id, admin, journalIds[1], keep.id])
+    const journalsBefore = (await pool.query('SELECT * FROM workspace_deletion_jobs WHERE id=ANY($1::uuid[]) ORDER BY id', [journalIds])).rows
     // A newly tenant-keyed legacy row can have only its mailbox provenance.
     // Cleanup may follow that relation, but cannot sweep a bound foreign run.
     const foreignRun = randomUUID()
@@ -208,6 +287,8 @@ test('workspace settings backend', { skip: !dbUrl }, async t => {
     const result = await general.deleteWorkspaceData(admin, ws.id, ' Doomed ')
     assert.deepEqual(result.deleted, { bots: 1, threads: 1, tasks: 1, projects: 1, teams: 1, invitations: 1, members: 2 })
     assert.equal(result.nextWorkspaceId, keep.id)
+    assert.deepEqual((await pool.query('SELECT * FROM workspace_deletion_jobs WHERE id=ANY($1::uuid[]) ORDER BY id', [journalIds])).rows, journalsBefore,
+      'the real workspace deletion retains both recovery journals byte-for-byte; it does not pretend to advance an unconnected consumer')
     for (const [table, id] of [['mikka_workspaces where id=$1', ws.id], ['mikka_workspace_members where "workspaceId"=$1', ws.id], ['mikka_teams where "workspaceId"=$1', ws.id], ['bots where id=$1', doomed.bot], ['agent_runs where id=$1', doomed.run], ['issues where id=$1', doomed.issue], ['workspace_projects where id=$1', doomed.project], ['factory_tasks where id=$1', doomed.factoryTask], ['project_decisions where id=$1', doomed.decision], ['conversations where "workspaceId"=$1', ws.id], ['workspace_settings where "workspaceId"=$1', ws.id], ['workspace_billing where "workspaceId"=$1', ws.id], ['mikka_workspace_invitations where "workspaceId"=$1', ws.id]] as const) {
       assert.equal(await count(pool, table, [id]), 0, table)
     }
