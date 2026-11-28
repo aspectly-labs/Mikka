@@ -3,7 +3,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import { pool } from '@/lib/db'
 import { organizationMembers, organizations, organizationWorkspaces } from '@/lib/db/governance-schema'
 import { workspaceMembers, workspaces } from '@/lib/db/workspace-schema'
-import { workspaceDb } from '@/lib/workspace-db'
+import { workspaceDb, workspaceTransactionKey } from '@/lib/workspace-db'
 import { enqueueOrganizationAudit } from '@/lib/governance/audit'
 import { ScimStore, type DirectoryChange, type ScimConnection } from './scim-store'
 import { enqueueMemberLifecycle, drainMemberLifecycleOutbox } from '@/lib/governance/member-outbox'
@@ -18,8 +18,8 @@ export async function synchronizeEnterpriseLogin(proof: EnterpriseLoginProof, au
     await assertOrganizationAccountWritable(tx, proof.userId)
     const [organization] = await tx.select({ archivedAt: organizations.archivedAt }).from(organizations).where(eq(organizations.id, proof.organizationId)).for('share').limit(1)
     if (!organization || organization.archivedAt) throw new Error('enterprise_organization_unavailable')
-    await tx.insert(organizationMembers).values({ organizationId: proof.organizationId, userId: proof.userId, role: 'member', status: 'active', ...rows[0] }).onConflictDoNothing()
-    if (!audit) return
+    const [insertedMember] = await tx.insert(organizationMembers).values({ organizationId: proof.organizationId, userId: proof.userId, role: 'member', status: 'active', ...rows[0] }).onConflictDoNothing().returning({ userId: organizationMembers.userId })
+    if (!audit) return Boolean(insertedMember)
     await enqueueOrganizationAudit(tx, { organizationId: proof.organizationId, actorId: proof.userId, action: 'sso.signed_in', targetId: audit.sessionId,
       correlationId: audit.correlationId, metadata: { providerId: proof.providerId } })
     const memberships = await tx.select({ workspaceId: workspaceMembers.workspaceId }).from(workspaceMembers)
@@ -27,6 +27,12 @@ export async function synchronizeEnterpriseLogin(proof: EnterpriseLoginProof, au
       .where(and(eq(organizationWorkspaces.organizationId, proof.organizationId), eq(workspaceMembers.userId, proof.userId), eq(workspaceMembers.status, 'active')))
     for (const { workspaceId } of memberships) await enqueueWorkspaceAudit(tx, { workspaceId,
       actor: { type: 'user', id: proof.userId, name: rows[0].name }, action: 'auth.signed_in', target: { type: 'session', id: audit.sessionId }, metadata: { method: 'sso' } })
+    return Boolean(insertedMember)
+  }).then(async added => {
+    if (added && workspaceTransactionKey() === null) {
+      const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+      await syncPerSeatSubscriptionForOrganization(proof.organizationId)
+    }
   })
 }
 
@@ -71,6 +77,11 @@ export async function synchronizeDirectoryUser({ connection, user, action, event
       for (const workspaceId of workspaceIds) await drainMemberLifecycleOutbox(workspaceId, user.userId)
     }
     await pool.query('update enterprise_revocation set "deliveredAt"=now() where "directoryUserId"=$1 and "deliveredAt" is null', [user.id])
+  }
+  // When invoked inside ScimStore.drain's enclosing workspaceDb transaction, drain() syncs once after commit.
+  if (workspaceTransactionKey() === null) {
+    const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+    await syncPerSeatSubscriptionForOrganization(connection.organizationId, { affectedWorkspaceIds: workspaceIds })
   }
 }
 

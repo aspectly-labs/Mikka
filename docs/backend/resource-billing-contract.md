@@ -20,18 +20,19 @@ Shared Workspace 的 `activeHumanLimit` 为 `null`。Personal Workspace 仍只�
 
 `STRIPE_TEAM_PRICE_ID` 只识别历史订阅。它不能创建资源套餐 Checkout。历史价格的 Stripe 数量和收费条款保持原样；取消、改价或迁移真实订阅需要独立财务授权。
 
-资源 Checkout 使用单独配置的 `STRIPE_TEAM_RESOURCE_PRICE_ID`，数量固定为 1。服务器从 Stripe 读取 Price 并验证以下合同：
+资源 Checkout 支持配置多档 `resource_v1` 价格（`STRIPE_PRO_RESOURCE_PRICE_ID`、`STRIPE_TEAM_RESOURCE_PRICE_ID`、`STRIPE_ENTERPRISE_RESOURCE_PRICE_ID`），由调用方传入已配置的 `priceId`（省略时默认使用 `STRIPE_TEAM_RESOURCE_PRICE_ID`，否则按已配置价格回退）。`per_workspace` 套餐数量固定为 1；`per_seat` 套餐按该计费账户当前的活跃席位数计费（指定为 Organization 计费账户时统计活跃 Organization 成员与已附属 Workspace 活跃成员的去重并集，否则统计当前 Workspace 活跃成员数，至少为 1），并在成员增删、停用/恢复、Workspace 附属/解除或 Organization 计费账户变更提交后，在事务外事件驱动同步 Stripe 订阅项数量（增席使用 `always_invoice` 立即开票触发按比例补额，减席使用 `create_prorations` 结转下期）。服务器从 Stripe 读取 Price 并验证以下合同：
 
 | 字段 | 要求 |
 | --- | --- |
-| `id` | 与部署配置的 ID 相同 |
+| `id` | 属于部署已配置的 `resource_v1` Price ID 集合 |
 | `active` | 创建 Checkout 时为 `true` |
 | `currency` | `usd` |
 | `type` / `billing_scheme` | `recurring` / `per_unit` |
 | `recurring` | 每 1 个月，`usage_type: licensed` |
 | `metadata.mikka_billing_model` | `resource_v1` |
 | `metadata.mikka_plan` | `pro` 或 `enterprise` |
-| `metadata.mikka_monthly_points` | 0–100,000,000 的十进制整数 |
+| `metadata.mikka_monthly_points` | 0–100,000,000 的十进制整数（`at_cost_v1` 下省略时默认等于 `unit_amount`） |
+| `metadata.mikka_seat_model` | 可选，`per_workspace`（默认）或 `per_seat` |
 
 没有配置或者验证失败时，返回 `billingResourcePlanUnavailable`。不能用昵称猜测套餐、复用旧每席位 Price 或在应用启动时创建价格。年度计划需要独立的按月授额合同，不得把一年的付款误当成一份月度额度。归档 Price 不影响其已付费订阅的付款期间。
 
@@ -41,7 +42,7 @@ Shared Workspace 的 `activeHumanLimit` 为 `null`。Personal Workspace 仍只�
 
 `billing_checkout_requests` 保存一份待支付请求的 UUID、账户、Actor、客户、Price 和固定参数，不保存卡片或凭证。每个账户同时只能有一份未结束请求。APP 先提交请求，再以 `resource-checkout:<UUID>` 为 Stripe 幂等键创建 Session；并发点击、网络超时或调用方改变返回页面都不能改变正在执行的付款参数。点数购买与套餐复用现有客户绑定代码，避免建立不同的付款客户来源。
 
-继续结账前按客户读取 Stripe 的权威订阅列表。即使付款已经完成而 webhook 尚未抵达，任何非 `canceled` / `incomplete_expired` 订阅都阻止创建第二份订阅。Session 结果丢失且已经接近过期时，按固定客户、创建期间和请求 metadata 恢复原始 Session，不重放可能已超过 Stripe 保留期的幂等键。只有提供商确认过期，或已完成 Session 的订阅确认终结后，才能关闭旧请求并新建请求。无法确认的状态返回 `billingCheckoutPending`，不自动取消真实订阅或发起退款。
+继续结账前按客户读取 Stripe 的权威订阅列表。即使付款已经完成而 webhook 尚未抵达，任何非 `canceled` / `incomplete_expired` 订阅都阻止创建第二份订阅。若存在未完成但价格或 `per_seat` 席位数与本次请求不一致的 `open` Session，服务端先向 Stripe 显式调用 `POST /v1/checkout/sessions/:id/expire` 使其失效，待确认非 `open` 后关闭旧请求并新建请求，避免切档或增减席位后锁死或重复扣款。Session 结果丢失且已经接近过期时，按固定客户、创建期间和请求 metadata 恢复原始 Session，不重放可能已超过 Stripe 保留期的幂等键。只有提供商确认过期，或已完成 Session 的订阅确认终结后，才能关闭旧请求并新建请求。无法确认的状态返回 `billingCheckoutPending`，不自动取消真实订阅或发起退款。
 
 列表恢复每次最多读取 20 页；分页不完整或状态未知时拒绝新付款，保留原请求供下一次明确操作重试。没有自动轮询、真实支付或后台重复扣款。每份新请求只写一次 `billing.checkout_started` 审计。
 

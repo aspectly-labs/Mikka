@@ -59,3 +59,16 @@ test('applicationEnvironment does not forward Open Artifact host-only secrets to
     assert.equal(Object.hasOwn(env, hostOnly), false, `${hostOnly} must never reach Business API`)
   }
 })
+
+test('applicationEnvironment forwards all multi-plan STRIPE_*_RESOURCE_PRICE_ID bindings', () => {
+  const env = applicationEnvironment({
+    PUBLIC_ORIGIN: 'https://app.example',
+    STRIPE_PRO_RESOURCE_PRICE_ID: 'price_pro_live',
+    STRIPE_TEAM_RESOURCE_PRICE_ID: 'price_team_live',
+    STRIPE_ENTERPRISE_RESOURCE_PRICE_ID: 'price_ent_live',
+  })
+
+  assert.equal(env.STRIPE_PRO_RESOURCE_PRICE_ID, 'price_pro_live')
+  assert.equal(env.STRIPE_TEAM_RESOURCE_PRICE_ID, 'price_team_live')
+  assert.equal(env.STRIPE_ENTERPRISE_RESOURCE_PRICE_ID, 'price_ent_live')
+})

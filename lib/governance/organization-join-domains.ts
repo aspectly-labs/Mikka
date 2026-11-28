@@ -153,9 +153,15 @@ export async function joinOrganizationByDomain(organizationId: string, user: Acc
     const [member] = await tx.select({ status: organizationMembers.status, role: organizationMembers.role }).from(organizationMembers)
       .where(and(eq(organizationMembers.organizationId, organizationId), eq(organizationMembers.userId, user.id)))
     if (member?.status === 'suspended') throw new GovernanceError('access_denied')
-    if (member) return { organizationId, joined: true, role: member.role }
+    if (member) return { organizationId, joined: true, role: member.role, added: false }
     await tx.insert(organizationMembers).values({ organizationId, userId: user.id, name: account.name, email: account.email, role: 'member' })
     await enqueueOrganizationAudit(tx, { organizationId, actorId: user.id, action: 'organization.member_joined_by_domain', targetId: allowed.id, metadata: { role: 'member' } })
-    return { organizationId, joined: true, role: 'member' as const }
+    return { organizationId, joined: true, role: 'member' as const, added: true }
+  }).then(async ({ added, ...result }) => {
+    if (added) {
+      const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+      await syncPerSeatSubscriptionForOrganization(organizationId)
+    }
+    return result
   })
 }

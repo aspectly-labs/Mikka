@@ -211,7 +211,11 @@ async function updateWorkspaceMemberBody(input: { workspaceId: string; userId: s
       return target.status
     }) } finally { await drainRevokedReviewSessions(pool, reviewIds) }
     // §8.3: a suspended member's share and bots leave with them; reactivation brings their bots back.
-    if (previous !== status) await drainMemberLifecycleOutbox(input.workspaceId, input.userId)
+    if (previous !== status) {
+      await drainMemberLifecycleOutbox(input.workspaceId, input.userId)
+      const { syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
+      await syncPerSeatSubscriptionForWorkspace(input.workspaceId)
+    }
   })
 }
 
@@ -235,15 +239,19 @@ async function acceptWorkspaceInvitationBody(token: string) {
     tokenSchema.parse(token)
     const request = auditRequestContext(await headers())
     await ensurePersonalFirst(user)
-    const workspaceId = await workspaceDb.transaction(async tx => {
+    const admitted = await workspaceDb.transaction(async tx => {
       const admission = await acceptHumanInvitation(tx, user, hashToken(token))
       if (admission.joined) await enqueueWorkspaceAudit(tx, { workspaceId: admission.workspaceId, actor: { type: 'user', id: user.id, name: user.name }, action: 'member.joined', target: { type: 'member', id: user.id }, metadata: { role: admission.role }, ...request })
       await workspaceListChanged(tx, admission.workspaceId, ['workspace_settings', 'issue_list'])
       await ownerWorkspaceListsChanged(tx, user.id, ['workspace_settings'])
-      return admission.workspaceId
+      return admission
     })
-    await rememberWorkspace(workspaceId)
-    return { workspaceId }
+    await rememberWorkspace(admitted.workspaceId)
+    if (admitted.joined) {
+      const { syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
+      await syncPerSeatSubscriptionForWorkspace(admitted.workspaceId)
+    }
+    return { workspaceId: admitted.workspaceId }
   })
 }
 

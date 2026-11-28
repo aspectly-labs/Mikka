@@ -11,9 +11,10 @@ import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { BILLING_LIVE_STATUSES } from '@/lib/workspace-admin/general'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
 import { workspaceDb } from '@/lib/workspace-db'
-import { stripeConfig, stripeGet, stripePost, StripeRequestError, type StripeConfig } from './stripe'
+import { configuredResourcePriceIds, defaultResourcePriceId, stripeConfig, stripeGet, stripePost, StripeRequestError, type StripeConfig } from './stripe'
 import { applyPointsEvent, type PointsWebhookOptions } from './points-webhook'
 import { resourcePrice } from './resource-plan'
+import { activeSeatCountForBillingAccount } from './seat-sync'
 import { applySubscriptionEvent } from './subscription-webhook'
 import { applyPlanRefundEvent, drainPlanRefundReceipts } from './plan-refunds'
 import { drainBillingEntitlements } from './entitlement-outbox'
@@ -78,9 +79,10 @@ export async function readBillingAccount(workspaceId: string, env: Env, members?
     readMonthlyOverageMicroUsd(workspaceId),
   ])
   const status = billing?.status ?? null
+  const config = stripeConfig(env)
   return {
-    configured: Boolean(stripeConfig(env)),
-    resourceCheckoutAvailable: Boolean(stripeConfig(env)?.resourcePriceId && stripeConfig(env)?.webhookSecret),
+    configured: Boolean(config),
+    resourceCheckoutAvailable: Boolean(configuredResourcePriceIds(config).length > 0 && config?.webhookSecret),
     billingModel: billing?.billingModel ?? null,
     entitlementPlan: billing?.billingExpiresAt && billing.billingExpiresAt > new Date() ? billing.billingPlan : 'free',
     entitlementExpiresAt: billing?.billingExpiresAt?.toISOString() ?? null,
@@ -134,23 +136,38 @@ export async function billingPortalUrl(actorId: string, workspaceId: string, bac
   })
 }
 
-/** A capacity plan is one verified resource price, regardless of human membership. */
-export async function planCheckoutUrl(actorId: string, workspaceId: string, back: string, fetchImpl: typeof fetch = fetch, env: Env = runtimeEnv()): Promise<{ url: string }> {
+/** A capacity plan is one verified configured resource price (per-workspace or per-seat). */
+export async function planCheckoutUrl(
+  actorId: string,
+  workspaceId: string,
+  back: string,
+  fetchImpl: typeof fetch = fetch,
+  env: Env = runtimeEnv(),
+  requestedPriceId?: string | null,
+): Promise<{ url: string }> {
   const config = requireConfig(env)
   return withBillingAuthority(actorId, workspaceId, async () => {
     if (!config.webhookSecret) throw new WorkspaceError('billingNotConfigured')
-    if (!config.resourcePriceId) throw new WorkspaceError('billingResourcePlanUnavailable')
+    if (requestedPriceId != null && typeof requestedPriceId !== 'string') {
+      throw new WorkspaceError('billingResourcePlanUnavailable')
+    }
+    const allowedPriceIds = configuredResourcePriceIds(config)
+    const targetPriceId = requestedPriceId == null ? defaultResourcePriceId(config) : requestedPriceId.trim()
+    if (!targetPriceId || !allowedPriceIds.includes(targetPriceId)) {
+      throw new WorkspaceError('billingResourcePlanUnavailable')
+    }
     const back_ = returnUrl(back, env)
     let price: ReturnType<typeof resourcePrice>
-    const configuredPrice = await provider(() => stripeGet<unknown>(config, `prices/${config.resourcePriceId}`, fetchImpl))
-    try { price = resourcePrice(configuredPrice, config.resourcePriceId) }
+    const configuredPrice = await provider(() => stripeGet<unknown>(config, `prices/${encodeURIComponent(targetPriceId)}`, fetchImpl))
+    try { price = resourcePrice(configuredPrice, targetPriceId) }
     catch (error) { throw new WorkspaceError('billingResourcePlanUnavailable', { cause: error }) }
-    const { extractStripeProductId, prepareCheckoutOfferCandidate, resolveEligibleCheckoutOffer } = await import('./catalog')
+    const { billingCatalogPlanId, extractStripeProductId, prepareCheckoutOfferCandidate, resolveEligibleCheckoutOffer } = await import('./catalog')
     const { pointsToCreditCents } = await import('./hosted-usage')
+    const catalogId = billingCatalogPlanId(price.plan, price.seatModel)
     const planEntry = {
-      id: price.plan,
+      id: catalogId,
       plan: price.plan,
-      name: price.plan,
+      name: catalogId,
       stripePriceId: price.id,
       amountCents: price.amountCents,
       currency: price.currency,
@@ -160,7 +177,9 @@ export async function planCheckoutUrl(actorId: string, workspaceId: string, back
       seatModel: price.seatModel,
       active: true,
     }
-    const quantity = price.seatModel === 'per_seat' ? Math.max(1, await activeMembers(workspaceId)) : 1
+    const quantity = price.seatModel === 'per_seat'
+      ? (await activeSeatCountForBillingAccount(workspaceId)).seats
+      : 1
     const verifiedOffer = await prepareCheckoutOfferCandidate({
       plan: planEntry,
       planProductId: extractStripeProductId(configuredPrice),

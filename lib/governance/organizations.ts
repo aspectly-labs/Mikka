@@ -127,6 +127,8 @@ export async function attachOrganizationWorkspace(organizationId: string, worksp
     await markWorkspaceLiveBinding(workspaceId, organizationId, tx)
   })
   await fenceWorkspaceLive(workspaceId)
+  const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+  await syncPerSeatSubscriptionForOrganization(organizationId)
 }
 
 export async function detachOrganizationWorkspace(organizationId: string, workspaceId: string, userId: string) {
@@ -142,6 +144,8 @@ export async function detachOrganizationWorkspace(organizationId: string, worksp
     await enqueueOrganizationAudit(tx, { organizationId, actorId: userId, action: 'organization.workspace_detached', targetId: workspaceId })
   })
   await retireWorkspaceLiveBinding(workspaceId, organizationId)
+  const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+  await syncPerSeatSubscriptionForOrganization(organizationId)
 }
 
 export async function updateOrganizationMember(organizationId: string, actorId: string, input: unknown) {
@@ -212,7 +216,7 @@ export async function restoreOrganizationMember(organizationId: string, actorId:
 }
 
 async function admitOrganizationMember(organizationId: string, actorId: string, { userId, role }: z.output<typeof admissionInput>, operation: 'add' | 'restore') {
-  return workspaceDb.transaction(async tx => {
+  const result = await workspaceDb.transaction(async tx => {
     await assertOrganizationAccountWritable(tx, userId)
     const actor = await requireOrganizationAdmin(tx, organizationId, actorId)
     if (role === 'owner' && (operation === 'restore' || actor.membership.role !== 'owner')) throw new GovernanceError('access_denied')
@@ -238,11 +242,16 @@ async function admitOrganizationMember(organizationId: string, actorId: string, 
         eq(organizationMembers.role, role), eq(organizationMembers.status, 'active'),
       )).for('share').limit(1)
       if (!existing) throw new GovernanceError('invalid_request')
-      return { member: existing, image: user.image }
+      return { member: existing, image: user.image, added: false }
     }
     await enqueueOrganizationAudit(tx, { organizationId, actorId, action: 'organization.member_changed', targetId: userId, metadata: { role, status: 'active' } })
-    return { member, image: user.image }
+    return { member, image: user.image, added: true }
   })
+  if (result.added) {
+    const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+    await syncPerSeatSubscriptionForOrganization(organizationId)
+  }
+  return { member: result.member, image: result.image }
 }
 
 /** Directory reprovisioning may later create an ordinary Org member, but cannot restore this user's workspace grants or old Org role. */
@@ -272,6 +281,8 @@ export async function removeOrganizationMember(organizationId: string, actorId: 
   })
   await pool.query('update session set "enterpriseOrganizationId"=null,"enterpriseProviderId"=null,"enterpriseDirectoryUserId"=null,"enterpriseIdentityId"=null where "userId"=$1 and "enterpriseOrganizationId"=$2', [userId, organizationId])
   for (const id of workspaceIds) await drainMemberLifecycleOutbox(id, userId)
+  const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+  await syncPerSeatSubscriptionForOrganization(organizationId, { affectedWorkspaceIds: workspaceIds })
 }
 
 /** Delete is a tombstone: detach workspaces and revoke providers first; audit records remain governed by retention/legal hold. */

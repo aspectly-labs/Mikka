@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import test from 'node:test'
-import { stripeConfig, stripeForm, stripePost, StripeRequestError, verifyStripeSignature } from './stripe'
+import { configuredResourcePriceIds, defaultResourcePriceId, stripeConfig, stripeForm, stripePost, StripeRequestError, verifyStripeSignature } from './stripe'
 import { resourcePrice, subscriptionEntitlement } from './resource-plan'
 import { purchasedGrantExpiresAt } from './points'
 
@@ -9,6 +9,26 @@ test('config is null without a key; form encoding nests the way Stripe expects',
   assert.equal(stripeConfig({}), null)
   assert.equal(stripeConfig({ STRIPE_SECRET_KEY: 'sk_test_x' }), null)
   assert.deepEqual(stripeConfig({ MIKKA_EDITION: 'cloud', STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_TEAM_PRICE_ID: 'price_1' }), { secretKey: 'sk_test_x', teamPriceId: 'price_1', resourcePriceId: null, webhookSecret: null })
+  const multi = stripeConfig({
+    MIKKA_EDITION: 'cloud',
+    STRIPE_SECRET_KEY: 'sk_test_x',
+    STRIPE_PRO_RESOURCE_PRICE_ID: 'price_pro',
+    STRIPE_TEAM_RESOURCE_PRICE_ID: 'price_team',
+    STRIPE_ENTERPRISE_RESOURCE_PRICE_ID: 'price_ent',
+  })
+  assert.deepEqual(configuredResourcePriceIds(multi), ['price_pro', 'price_team', 'price_ent'])
+  assert.equal(defaultResourcePriceId(multi), 'price_team')
+  const proOnly = stripeConfig({
+    MIKKA_EDITION: 'cloud',
+    STRIPE_SECRET_KEY: 'sk_test_x',
+    STRIPE_PRO_RESOURCE_PRICE_ID: 'price_pro',
+  })
+  assert.deepEqual(configuredResourcePriceIds(proOnly), ['price_pro'])
+  assert.equal(defaultResourcePriceId(proOnly), 'price_pro')
+  assert.deepEqual(
+    configuredResourcePriceIds({ proResourcePriceId: 'price_same', resourcePriceId: 'price_same', enterpriseResourcePriceId: 'price_ent' }),
+    ['price_same', 'price_ent'],
+  )
   assert.deepEqual(stripeForm({ mode: 'subscription', line_items: [{ price: 'p', quantity: 2 }], metadata: { workspaceId: 'w' }, skip: undefined }),
     ['mode=subscription', 'line_items%5B0%5D%5Bprice%5D=p', 'line_items%5B0%5D%5Bquantity%5D=2', 'metadata%5BworkspaceId%5D=w'])
 })

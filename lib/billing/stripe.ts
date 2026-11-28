@@ -9,6 +9,8 @@ export interface StripeConfig {
   /** Historical per-seat subscriptions only. Never used for new Checkout. */
   teamPriceId: string | null
   resourcePriceId?: string | null
+  proResourcePriceId?: string | null
+  enterpriseResourcePriceId?: string | null
   webhookSecret: string | null
 }
 
@@ -17,9 +19,44 @@ export function stripeConfig(env: EnvMap = runtimeEnv()): StripeConfig | null {
   if (!isCloudEdition(env)) return null
   const secretKey = env.STRIPE_SECRET_KEY?.trim()
   if (!secretKey) return null
-  return { secretKey, teamPriceId: env.STRIPE_TEAM_PRICE_ID?.trim() || null,
+  const proResourcePriceId = env.STRIPE_PRO_RESOURCE_PRICE_ID?.trim() || null
+  const enterpriseResourcePriceId = env.STRIPE_ENTERPRISE_RESOURCE_PRICE_ID?.trim() || null
+  return {
+    secretKey,
+    teamPriceId: env.STRIPE_TEAM_PRICE_ID?.trim() || null,
     resourcePriceId: env.STRIPE_TEAM_RESOURCE_PRICE_ID?.trim() || null,
-    webhookSecret: env.STRIPE_WEBHOOK_SECRET?.trim() || null }
+    ...(proResourcePriceId ? { proResourcePriceId } : {}),
+    ...(enterpriseResourcePriceId ? { enterpriseResourcePriceId } : {}),
+    webhookSecret: env.STRIPE_WEBHOOK_SECRET?.trim() || null,
+  }
+}
+
+/** Ordered, deduplicated list of all configured resource_v1 Stripe price IDs (Pro → Team → Enterprise). */
+export function configuredResourcePriceIds(
+  config: Pick<StripeConfig, 'resourcePriceId' | 'proResourcePriceId' | 'enterpriseResourcePriceId'> | null | undefined,
+): string[] {
+  if (!config) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const raw of [config.proResourcePriceId, config.resourcePriceId, config.enterpriseResourcePriceId]) {
+    const id = raw?.trim()
+    if (id && !seen.has(id)) {
+      seen.add(id)
+      result.push(id)
+    }
+  }
+  return result
+}
+
+/** Default resource_v1 Stripe price ID when a caller omits an explicit selection. */
+export function defaultResourcePriceId(
+  config: Pick<StripeConfig, 'resourcePriceId' | 'proResourcePriceId' | 'enterpriseResourcePriceId'> | null | undefined,
+): string | null {
+  if (!config) return null
+  return config.resourcePriceId?.trim()
+    || config.proResourcePriceId?.trim()
+    || config.enterpriseResourcePriceId?.trim()
+    || null
 }
 
 export class StripeRequestError extends Error {
