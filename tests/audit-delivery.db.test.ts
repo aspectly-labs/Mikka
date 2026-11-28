@@ -123,7 +123,12 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
       })
       assert.deepEqual(result, { delivered: 0, failed: 1 })
       await provider.forceFlush(); await logs.forceFlush()
-      const [failure] = spans.getFinishedSpans(), [record] = records.getFinishedLogRecords()
+      // The committed role change also schedules an `after:live-notify` background job with its
+      // own root span, which can finish before or after this one. Judge the delivery job's span.
+      const jobs = spans.getFinishedSpans().filter(span => span.name === 'cron:reconcile')
+      assert.equal(jobs.length, 1); const [failure] = jobs
+      const [record] = records.getFinishedLogRecords().filter(log => log.spanContext?.spanId === failure.spanContext().spanId)
+      assert.ok(record, 'the failed job emits its correlated stage log')
       assert.equal(failure.status.code, SpanStatusCode.ERROR, 'a retained receipt failure must remain visible on its job')
       for (const attributes of [failure.attributes, record.attributes]) {
         assert.equal(attributes['error.type'], 'DrizzleQueryError')
