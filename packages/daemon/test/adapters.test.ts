@@ -16,7 +16,13 @@ import { Daemon } from "../src/main"
 import { RunJournal } from "../src/runs/journal"
 import { MemoryServer } from "../src/server-link"
 import { cleanupTempDirs, makeRepo, tempDir, waitFor } from "./helpers"
-import { resolveAgentSettings } from "@mikka/protocol/agent-policy"
+import { resolveAgentSettings, type RunPolicy } from "@mikka/protocol/agent-policy"
+
+/** A policy as a server sends it: the daemon's own push is the host's flag. */
+const sentPolicy = (git_push: RunPolicy["permissions"]["git_push"]): RunPolicy => {
+  const base = resolveAgentSettings(null).policy
+  return { ...base, permissions: { ...base.permissions, git_push } }
+}
 
 const FAKES = resolve(import.meta.dirname, "fakes")
 const BINARIES = {
@@ -89,7 +95,7 @@ function queue(
     prompt,
     verifyCommand,
     // The server admitted this run's push (the GitHub App grant) and sends allow.
-    policy: resolveAgentSettings({ permissions: { git_push: "allow" } }).policy,
+    policy: sentPolicy("allow"),
   })
 }
 
@@ -249,7 +255,7 @@ describe("the issue branch", () => {
     const runId = server.queueRun(DEVICE, {
       issueId: "issue-unverified", repoId: "repo", baseBranch: "main",
       harness: "claude_code", prompt: "Please SUBMIT", pushBranch: "mikka/orv-4",
-      policy: resolveAgentSettings({ permissions: { git_push: "allow" } }).policy,
+      policy: sentPolicy("allow"),
     })
     await started(daemon, runId)
     expect(await ended(daemon, runId)).toMatchObject({ state: "succeeded" })
@@ -266,7 +272,7 @@ describe("the issue branch", () => {
       prompt: "Please SUBMIT",
       verifyCommand: "test -f NOTES.md",
       pushBranch,
-      ...(claimApproved ? { policy: resolveAgentSettings({ permissions: { git_push: 'allow' } }).policy } : {}),
+      ...(claimApproved ? { policy: sentPolicy("allow") } : {}),
     })
   }
 
@@ -364,8 +370,7 @@ describe("workspace agent policy (ADR 0028)", () => {
       harness: "claude_code",
       prompt: "Please SUBMIT",
       verifyCommand: "test -f NOTES.md",
-      policy: resolveAgentSettings({ permissions: { git_push: "deny" } })
-        .policy,
+      policy: sentPolicy("deny"),
     })
     await started(daemon, runId)
     expect(await ended(daemon, runId)).toMatchObject({ state: "succeeded" })
@@ -393,7 +398,7 @@ describe("workspace agent policy (ADR 0028)", () => {
       verifyCommand: "test -f NOTES.md",
       kind: "acceptance",
       policy: {
-        ...resolveAgentSettings({ permissions: { git_push: "allow" } }).policy,
+        ...sentPolicy("allow"),
         readOnly: true,
       },
     })

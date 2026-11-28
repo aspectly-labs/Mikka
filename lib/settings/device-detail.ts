@@ -46,9 +46,9 @@ export async function readDeviceSettingsDetail(reader: EnterpriseReader, input: 
       ? await workspacePool.query<{ projectId: string; environmentIds: string[] }>(`SELECT p.id AS "projectId",
         coalesce(array_agg(e.id ORDER BY e.id) FILTER(WHERE e.id IS NOT NULL),'{}'::uuid[]) AS "environmentIds"
         FROM workspace_projects p LEFT JOIN workspace_project_environments b ON b."projectId"=p.id AND b."workspaceId"=p."workspaceId"
-        LEFT JOIN workspace_environments e ON e.id=b."environmentId" AND e."workspaceId"=b."workspaceId" AND e."archivedAt" IS NULL
+        LEFT JOIN workspace_environments e ON e.id=b."environmentId" AND e."workspaceId"=b."workspaceId" AND e."archivedAt" IS NULL AND (e.scope='workspace' OR e."ownerId"=$3)
         WHERE p."workspaceId"=$1 AND p.id=ANY($2::uuid[]) AND p."archivedAt" IS NULL
-        GROUP BY p.id ORDER BY p.id`, [workspaceId, directories.map(row => row.projectId)])
+        GROUP BY p.id ORDER BY p.id`, [workspaceId, directories.map(row => row.projectId), reader.id])
       : { rows: [] }
     const { rows: checkpoints } = await tx.query<{ runId: string; baseCommit: string; files: number; takenAt: Date; unavailableReason: 'too_large' | null }>(`SELECT c."runId",c."baseCommit",c.files,c."takenAt",c."unavailableReason"
       FROM run_checkpoints c JOIN agent_runs r ON r.id=c."runId" AND r."userId"=c."userId"

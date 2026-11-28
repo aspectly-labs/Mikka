@@ -121,7 +121,7 @@ export async function setDefaultIssueState(input: SetDefaultIssueStateInput): Pr
 }
 
 /**
- * Capy's MoveAndDelete: every task in the state moves to `moveTo` (each move versioned for `actor`), then the
+ * Deleting a state, as Capy does: every task in the state moves to `moveTo` (each move versioned for `actor`), then the
  * state is deleted. A category's default cannot be deleted: make another state the default first.
  */
 export async function deleteIssueState(input: DeleteIssueStateInput, actor: ActivityActor): Promise<{ moved: number }> {

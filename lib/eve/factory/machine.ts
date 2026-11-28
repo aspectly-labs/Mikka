@@ -64,7 +64,7 @@ export async function openEveFactoryMachine(
   }
   if (handoff) {
     if (!await fundMachineChunk({
-      ownerId: actor.userId, workspaceId: actor.workspaceId, runId,
+      provider: 'cloudflare', ownerId: actor.userId, workspaceId: actor.workspaceId, runId,
       operationId: handoff.operationId, index: handoff.index,
       size: handoff.size as typeof DEFAULT_MACHINE_SIZE,
     })) throw new PaidResourceError('points_exhausted')

@@ -7,6 +7,7 @@ import { readGovernanceLease } from '@/lib/governance/lease'
 import { GovernanceError } from '@/lib/governance/errors'
 import { usageRange } from '@/lib/governance/usage'
 import { isRunChainRootSql } from '@/lib/run-chain'
+import { countWorkspaceMergedPulls } from '@/lib/github/user-access'
 import type { EnterpriseReader } from '@/lib/enterprise/principal'
 import { threadCostsPending, type WorkspaceContributionDay, type WorkspaceSettingsActivity } from './device-activity-contract'
 
@@ -21,11 +22,21 @@ export async function readWorkspaceSettingsActivity(reader: EnterpriseReader, wo
   z.uuid().parse(workspaceId)
   if (groupBy && groupBy !== 'member') throw new GovernanceError('invalid_request')
   const { from, to } = usageRange(range)
-  return withTaskWorkspace(reader, workspaceId, async () => {
+  const previousFrom = new Date(from.getTime() - (to.getTime() - from.getTime()))
+  const { rows, keys, counts } = await withTaskWorkspace(reader, workspaceId, async () => {
     const scope = await readGovernanceLease(workspacePool, workspaceId, reader.id)
     if (scope.role !== 'admin') throw new GovernanceError('access_denied')
     const { rows: members } = await workspacePool.query<{ userId: string }>(`SELECT "userId" FROM mikka_workspace_members
       WHERE "workspaceId"=$1 AND status='active' ORDER BY "userId"`, [workspaceId])
+    const { rows: configured } = await workspacePool.query<{ key: string }>(`WITH environments AS (
+      SELECT e.configuration,to_jsonb(e)->'repositories' AS repositories FROM workspace_environments e WHERE e."workspaceId"=$1
+      AND e."archivedAt" IS NULL AND (coalesce(to_jsonb(e)->>'scope','workspace')='workspace' OR to_jsonb(e)->>'ownerId'=$2)
+    ) SELECT DISTINCT key FROM (
+      SELECT jsonb_array_elements_text(configuration->'repositoryKeys') AS key FROM environments
+      UNION ALL SELECT jsonb_array_elements(repositories)->>'key' FROM environments
+      UNION ALL SELECT "repositoryKey" FROM workspace_project_repositories WHERE "workspaceId"=$1
+      UNION ALL SELECT jsonb_array_elements_text("repositoryKeys") FROM workspace_repository_policies WHERE "workspaceId"=$1
+    ) keys WHERE key IS NOT NULL`, [workspaceId, reader.id])
     const { rows } = await pool.query<WorkspaceContributionDay>(`WITH
       visible_tasks AS (
         SELECT i.id,i."userId" FROM issues i WHERE i."workspaceId"=$1 AND i."ownershipState"='bound'
@@ -70,8 +81,33 @@ export async function readWorkspaceSettingsActivity(reader: EnterpriseReader, wo
       )
       SELECT day,member AS "memberId",sum(tasks)::int AS "completedTasks",sum(pulls)::int AS "mergedPullRequests",sum(threads)::int AS threads
       FROM events WHERE member=ANY($2::text[]) GROUP BY day,member ORDER BY day,member`,
-    [workspaceId, members.map(member => member.userId), from, to, reader.id])
-    return { workspaceId, from: from.toISOString(), toExclusive: to.toISOString(), timeZone: 'UTC', groupBy: 'member',
-      dateSource: 'recorded_events', contributions: rows, threadCosts: threadCostsPending }
+    [workspaceId, members.map(member => member.userId), previousFrom, to, reader.id])
+    const { rows: published } = await pool.query<{ key: string }>(`SELECT DISTINCT p."remoteKey" AS key FROM run_publications p
+      JOIN issues i ON i.id=p."issueId" JOIN agent_runs r ON r.id=p."runId" AND r."workspaceId"=i."workspaceId"
+      WHERE i."workspaceId"=$1 AND i."ownershipState"='bound' AND p."pullRequest" IS NOT NULL
+      AND mikka_resource_acl_allowed('account',$2,i."workspaceId",'task',i.id,'canReadContent')`, [workspaceId, reader.id])
+    const { rows: [counts] } = await pool.query<{ current: number; previous: number }>(`WITH visible AS (
+      SELECT DISTINCT ON (lower(p."pullRequest"->>'url')) lower(p."pullRequest"->>'url') AS url,p."issueId",
+        p."pullRequest"->>'mergedAt' AS merged_at FROM run_publications p JOIN issues i ON i.id=p."issueId"
+      JOIN agent_runs r ON r.id=p."runId" AND r."workspaceId"=i."workspaceId"
+      WHERE i."workspaceId"=$1 AND i."ownershipState"='bound' AND p."pullRequest"->>'state'='merged'
+        AND mikka_resource_acl_allowed('account',$2,i."workspaceId",'task',i.id,'canReadContent')
+      ORDER BY lower(p."pullRequest"->>'url'),p."pullRequest"->>'mergedAt' NULLS LAST,p."createdAt"
+    ), merges AS (
+      SELECT coalesce(merged_at::timestamptz,(SELECT min(v."createdAt") FROM issue_versions v
+        WHERE v."issueId"=visible."issueId" AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(${issueMetadata('v')}->'pullRequests')='array'
+            THEN ${issueMetadata('v')}->'pullRequests' ELSE '[]'::jsonb END) pr
+          WHERE lower(rtrim(pr->>'url','/'))=visible.url AND pr->>'state'='merged'))) AS at FROM visible
+    ) SELECT count(*) FILTER(WHERE at>=$3 AND at<$4)::int AS current,
+      count(*) FILTER(WHERE at>=$5 AND at<$3)::int AS previous FROM merges`, [workspaceId, reader.id, from, to, previousFrom])
+    return { rows, counts, keys: [...new Set([...published, ...configured].map(row => row.key))] }
   })
+  const start = from.toISOString().slice(0, 10)
+  const contributions = rows.filter(row => row.day >= start)
+  const merged = await countWorkspaceMergedPulls(reader.id, keys, from, to, previousFrom)
+  const previous = { mergedPullRequests: counts.previous,
+      mergedPullRequestsAll: merged.previous }
+  return { workspaceId, from: from.toISOString(), toExclusive: to.toISOString(), timeZone: 'UTC', groupBy: 'member',
+      dateSource: 'recorded_events', contributions, mergedPullRequests: counts.current, mergedPullRequestsAll: merged.current, previous, threadCosts: threadCostsPending }
 }

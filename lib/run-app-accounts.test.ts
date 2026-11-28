@@ -27,7 +27,6 @@ stub('./composio-account-store.ts', { chosenComposioDefault: async () => chosen 
 stub('./db/index.ts', { db: {}, pool: {} })
 stub('./execution-identity.ts', { activeExecutionIdentity: async (...args: unknown[]) => { authorityChecks.push(args); if (!live) throw Error('revoked'); return { workspaceId: 'owned-workspace' } } })
 stub('./coordinator/decide.ts', { decide: async () => { throw Error('Native app calls do not use Decision') } })
-stub('./pending-action-store.ts', { proposeAppToolCall: async () => { throw Error('No write in this fixture') } })
 stub('./app-policy/store.ts', { botMayUseApp: async () => allowed })
 stub('./plugins/catalog.ts', { composioToolkitLister: () => async () => ({ items: [] }), isNoAuthToolkit: async () => false })
 const { runAppEntry } = await import('./app-tools-server')

@@ -15,7 +15,12 @@ HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('build_template', HERE / 'build-template.py')
 builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
-IDENTITY_MAX_BYTES = 2048
+IDENTITY_MAX_BYTES = 4096
+CANDIDATE_SUFFIXES = {
+    **{kind: kind for kind in builder.KINDS},
+    **{f'{kind}-{size}': kind for kind in ('claude', 'codex')
+       for size in builder.MACHINE_SIZES if size != 'medium'},
+}
 
 
 def identities(environ, report=None):
@@ -25,18 +30,26 @@ def identities(environ, report=None):
     prefix = f"mikka-{metadata['sourceCommit'][:12]}-{metadata['runId']}-"
     attempts = {metadata['runAttempt']}
     candidates = []
-    for kind in builder.KINDS:
-        row = (report or {}).get('templates', {}).get(kind)
+    templates = dict((report or {}).get('templates', {}))
+    for row in (report or {}).get('machineVariants', []):
+        suffix = f"{row.get('baseTemplate')}-{row.get('machineSize')}"
+        if suffix not in CANDIDATE_SUFFIXES or suffix in templates:
+            raise ValueError('cleanup_candidate_identity_mismatch')
+        templates[suffix] = row
+    if templates.keys() - CANDIDATE_SUFFIXES.keys():
+        raise ValueError('cleanup_candidate_identity_mismatch')
+    for suffix, kind in CANDIDATE_SUFFIXES.items():
+        row = templates.get(suffix)
         if row:
-            match = re.fullmatch(re.escape(prefix) + r'([1-9][0-9]*)-' + kind, row.get('name', ''))
+            match = re.fullmatch(re.escape(prefix) + r'([1-9][0-9]*)-' + suffix, row.get('name', ''))
             if ((report or {}).get('sourceCommit') != metadata['sourceCommit'] or not match
                     or int(match[1]) > int(metadata['runAttempt']) or row.get('baseTemplate') != kind
                     or not re.fullmatch(r'[A-Za-z0-9_-]+', row.get('templateId', ''))):
                 raise ValueError('cleanup_candidate_identity_mismatch')
             attempts.add(match[1])
             candidates.append({'kind': kind, 'name': row['name'], 'templateId': row['templateId']})
-        else:
-            candidates.append({'kind': kind, 'name': prefix + metadata['runAttempt'] + '-' + kind})
+        elif not report or report.get('runAttempt', metadata['runAttempt']) == metadata['runAttempt']:
+            candidates.append({'kind': kind, 'name': prefix + metadata['runAttempt'] + '-' + suffix})
     return [{**metadata, 'runAttempt': attempt} for attempt in sorted(attempts, key=int)], candidates
 
 
@@ -50,13 +63,13 @@ def identity_receipt(raw, environ):
             or value['sourceCommit'] != builder.runtime_source(environ) or value['runId'] != environ['GITHUB_RUN_ID']
             or not isinstance(value['runAttempt'], str) or not re.fullmatch(r'[1-9][0-9]*', value['runAttempt'])
             or int(value['runAttempt']) > int(environ['GITHUB_RUN_ATTEMPT'])
-            or not isinstance(value['templates'], dict) or set(value['templates']) != set(builder.KINDS)):
+            or not isinstance(value['templates'], dict) or not set(builder.KINDS) <= value['templates'].keys() <= CANDIDATE_SUFFIXES.keys()):
         raise ValueError('cleanup_identity_receipt_invalid')
     prefix = f"mikka-{value['sourceCommit'][:12]}-{value['runId']}-{value['runAttempt']}-"
     ids = set()
-    for kind, row in value['templates'].items():
+    for suffix, row in value['templates'].items():
         if (not isinstance(row, dict) or set(row) != {'baseTemplate', 'name', 'templateId'}
-                or row['baseTemplate'] != kind or row['name'] != prefix + kind
+                or row['baseTemplate'] != CANDIDATE_SUFFIXES[suffix] or row['name'] != prefix + suffix
                 or not isinstance(row['templateId'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', row['templateId'])
                 or row['templateId'] in ids):
             raise ValueError('cleanup_identity_receipt_invalid')

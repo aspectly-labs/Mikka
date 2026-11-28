@@ -6,14 +6,35 @@ name: Mobile next OTA update
 # Credentials are Infisical prod:/platform names read through OIDC only:
 # HOSTED_UI_READ_KEY and EXPO_TOKEN. Private install, test, and Metro bundler
 # output goes to $RUNNER_TEMP on the runner and is never echoed or uploaded.
+#
+# Phases (production promotion switch, docs/operations/build-source-of-truth.md):
+# - stage (default): verify and publish to the `next-staging` EAS branch, which no user
+#   channel serves, and upload a public-safe stage receipt.
+# - publish: publish straight to `next` users; only while private mikka-cloud
+#   deploy-pipeline.json says mobileProduction: true.
+# - promote: the owner republishes the exact update group of a successful stage run to
+#   `next`; allowed while that policy is readable (paused: mobileProduction: false).
+# publish and promote mint a read-only mikka-cloud contents token to read that policy;
+# an unreadable policy publishes nothing to `next`.
 
 on:
   workflow_dispatch:
     inputs:
+      phase:
+        description: stage (next-staging branch), publish (straight to next; only when mobileProduction is true) or promote (owner; republish a staged update to next)
+        type: choice
+        options: [stage, publish, promote]
+        default: stage
+        required: false
       hosted_ui_ref:
-        description: mikka-hosted-ui revision to publish ("main" or a 40-char commit SHA on main)
+        description: mikka-hosted-ui revision to publish ("main" or a 40-char commit SHA on main; promote needs the staged SHA)
         type: string
         default: 'main'
+        required: false
+      stage_run:
+        description: promote only, the successful stage run of this workflow whose update group goes to next
+        type: string
+        default: ''
         required: false
       message:
         description: Optional EAS update message (defaults to mobile-next OTA (<sha>))
@@ -37,17 +58,22 @@ env:
 
 jobs:
   update:
-    name: Publish mobile-next OTA (next channel)
+    name: Stage, publish or promote mobile-next OTA
     if: >-
       (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main'
+      && (inputs.phase == 'stage' || inputs.phase == '' || (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor)))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
       id-token: write
     env:
       HOSTED_UI_REF: ${{ inputs.hosted_ui_ref || 'main' }}
       UPDATE_MESSAGE: ${{ inputs.message }}
+      MOBILE_OTA_PHASE: ${{ inputs.phase || 'stage' }}
+      STAGE_RUN: ${{ inputs.stage_run }}
+      MIKKA_OPERATIONS_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
       APP_DIR: .hosted-ui/mobile-next/apps/mobile
       EAS_CHANNEL: next
     steps:
@@ -57,6 +83,7 @@ jobs:
             echo "::error::hosted_ui_ref must be 'main' or a full 40-character lowercase commit SHA."
             exit 1
           fi
+          case "$MOBILE_OTA_PHASE" in stage|publish|promote) ;; *) echo "::error::phase must be stage, publish or promote."; exit 1 ;; esac
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -70,6 +97,81 @@ jobs:
           import { privateMikkaRepository } from './scripts/cloudflare-source.mjs'
           privateMikkaRepository('mikka-hosted-ui')
           JS
+      # publish and promote: only a promoter gets here (job if). Read the policy on private main with a
+      # read-only contents token before any other secret, and require the promoter list there too.
+      - name: Select the source App before policy access
+        if: env.MOBILE_OTA_PHASE != 'stage'
+        id: source-app
+        env:
+          SOURCE_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324' }}
+          ORG_SECRET_PATH: ${{ vars.MIKKA_ORG_GITHUB_SECRET_PATH }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs'
+          const owner = process.env.SOURCE_OWNER
+          if (!['alexj11324', 'aspectly-labs'].includes(owner)) throw Error('CI_SOURCE_APP_OWNER_REQUIRED')
+          const path = owner === 'aspectly-labs' ? process.env.ORG_SECRET_PATH?.trim() : '/github'
+          if (!path || /[\r\n]/.test(path)) throw Error('CI_SOURCE_APP_SECRET_PATH_REQUIRED')
+          appendFileSync(process.env.GITHUB_OUTPUT, `owner=${owner}\nsecret-path=${path}\napp-id=${owner === 'aspectly-labs' ? '5853576' : '4840908'}\n`)
+          JS
+      - name: Read the existing source App id
+        if: env.MOBILE_OTA_PHASE != 'stage'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+      - name: Read the existing source App private key
+        if: env.MOBILE_OTA_PHASE != 'stage'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+      - name: Verify the selected source App
+        if: env.MOBILE_OTA_PHASE != 'stage'
+        env:
+          EXPECTED_SOURCE_APP_ID: ${{ steps.source-app.outputs.app-id }}
+        run: node -e 'if (!process.env.EXPECTED_SOURCE_APP_ID || process.env.GITHUB_APP_ID !== process.env.EXPECTED_SOURCE_APP_ID) throw Error("CI_SOURCE_APP_ID_MISMATCH")'
+      - name: Mint a short-lived read-only release policy token
+        if: env.MOBILE_OTA_PHASE != 'stage'
+        id: policy-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ env.MIKKA_OPERATIONS_OWNER }}
+          repositories: mikka-cloud
+          permission-contents: read
+      - name: Remove App credentials before reading the policy
+        if: env.MOBILE_OTA_PHASE != 'stage'
+        run: |
+          echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
+          echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+      - name: Require the reviewed mobile production policy
+        if: env.MOBILE_OTA_PHASE != 'stage'
+        env:
+          MIKKA_OPERATIONS_READ_TOKEN: ${{ steps.policy-token.outputs.token }}
+        run: node scripts/release/mobile-next-update.mjs policy "$MOBILE_OTA_PHASE"
+      # promote: only a promoter, only an update group a successful stage run of this workflow staged
+      # from exactly hosted_ui_ref. The rest of the job re-verifies that same app revision.
+      - name: Verify the staged update before credential access
+        if: env.MOBILE_OTA_PHASE == 'promote'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/release/mobile-next-update.mjs verify-stage
       - name: Read existing HOSTED_UI_READ_KEY through OIDC
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
@@ -159,6 +261,17 @@ jobs:
             echo "::error::mobile-next adapter tests failed; private diagnostics withheld."
             exit 1
           fi
+      # publish and promote: re-read the policy right before the Expo credential (any change stops the
+      # run) and run every mobile check the policy lists.
+      - name: Recheck the release policy and run the required mobile checks
+        if: env.MOBILE_OTA_PHASE != 'stage'
+        env:
+          MIKKA_OPERATIONS_READ_TOKEN: ${{ steps.policy-token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MIKKA_RELEASE_SOURCE: ${{ github.sha }}
+        run: |
+          node scripts/release/mobile-next-update.mjs policy-recheck "$MOBILE_OTA_PHASE"
+          node scripts/release/release-checks.mjs run mobile
       - name: Read existing EXPO_TOKEN through OIDC
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
@@ -178,6 +291,7 @@ jobs:
             exit 1
           fi
       - name: Publish EAS Update to next channel
+        if: env.MOBILE_OTA_PHASE == 'publish'
         working-directory: .hosted-ui/mobile-next/apps/mobile
         env:
           APP_VARIANT: production
@@ -211,6 +325,85 @@ jobs:
             --json \
             > "$RUNNER_TEMP/eas-update.json" 2> "$RUNNER_TEMP/eas-update.err"; then
             echo "::error::EAS Update publish failed; private diagnostics withheld."
+            exit 1
+          fi
+          node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" summarize "$RUNNER_TEMP/eas-update.json"
+      - name: Stage EAS Update on the staging branch
+        if: env.MOBILE_OTA_PHASE == 'stage'
+        working-directory: .hosted-ui/mobile-next/apps/mobile
+        env:
+          APP_VARIANT: production
+          EXPO_NO_GIT_STATUS: '1'
+          CI: '1'
+        run: |
+          set -euo pipefail
+          [[ "$EAS_CHANNEL" == "next" ]] || { echo "::error::EAS_CHANNEL must be next."; exit 1; }
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view "$EAS_CHANNEL" --json --non-interactive > "$RUNNER_TEMP/eas-channel-next.json" 2> "$RUNNER_TEMP/eas-channel-view.err"; then
+            echo "::error::Could not read EAS channel '$EAS_CHANNEL' to keep the staging branch away from users; private diagnostics withheld."
+            exit 1
+          fi
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view production --json --non-interactive > "$RUNNER_TEMP/eas-channel-prod.json" 2> "$RUNNER_TEMP/eas-channel-prod.err"; then
+            echo "::error::Could not read EAS 'production' channel mapping to verify branch isolation; private diagnostics withheld."
+            exit 1
+          fi
+          staging_branch="$(node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" verify-staging-channel "$RUNNER_TEMP/eas-channel-next.json" "$RUNNER_TEMP/eas-channel-prod.json")"
+          message="$(node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" format-message)"
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" update \
+            --branch "$staging_branch" \
+            --platform ios \
+            --message "staged: $message" \
+            --non-interactive \
+            --json \
+            > "$RUNNER_TEMP/eas-update.json" 2> "$RUNNER_TEMP/eas-update.err"; then
+            echo "::error::EAS Update staging publish failed; private diagnostics withheld."
+            exit 1
+          fi
+          node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" stage-receipt "$RUNNER_TEMP/eas-update.json"
+      - name: Upload the public-safe stage receipt
+        if: env.MOBILE_OTA_PHASE == 'stage'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mobile-ota-stage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mobile-ota-stage/receipt.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Promote the staged update to next channel
+        if: env.MOBILE_OTA_PHASE == 'promote'
+        working-directory: .hosted-ui/mobile-next/apps/mobile
+        env:
+          APP_VARIANT: production
+          EXPO_NO_GIT_STATUS: '1'
+          CI: '1'
+        run: |
+          set -euo pipefail
+          [[ "$EAS_CHANNEL" == "next" ]] || { echo "::error::EAS_CHANNEL must be next."; exit 1; }
+          [[ "$STAGED_UPDATE_GROUP" =~ ^[A-Za-z0-9-]+$ ]] || { echo "::error::No verified staged update group."; exit 1; }
+          [[ "$STAGED_RUNTIME_VERSION" == "$MOBILE_OTA_RUNTIME_VERSION" ]] || { echo "::error::The staged update targets another runtime version."; exit 1; }
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" update:view "$STAGED_UPDATE_GROUP" --json > "$RUNNER_TEMP/eas-staged-group.json" 2> "$RUNNER_TEMP/eas-staged-group.err"; then
+            echo "::error::Could not read the staged update group from EAS; private diagnostics withheld."
+            exit 1
+          fi
+          node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" verify-staged-group "$RUNNER_TEMP/eas-staged-group.json"
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view "$EAS_CHANNEL" --json --non-interactive > "$RUNNER_TEMP/eas-channel-next.json" 2> "$RUNNER_TEMP/eas-channel-view.err"; then
+            echo "::error::Could not read EAS channel '$EAS_CHANNEL'; private diagnostics withheld."
+            exit 1
+          fi
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" channel:view production --json --non-interactive > "$RUNNER_TEMP/eas-channel-prod.json" 2> "$RUNNER_TEMP/eas-channel-prod.err"; then
+            echo "::error::Could not read EAS 'production' channel mapping to verify branch isolation; private diagnostics withheld."
+            exit 1
+          fi
+          verified_branch="$(node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" verify-channel "$RUNNER_TEMP/eas-channel-next.json" "$RUNNER_TEMP/eas-channel-prod.json")"
+          export VERIFIED_EAS_BRANCH="$verified_branch"
+          message="$(node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" format-message)"
+          if ! npx -y "eas-cli@${EAS_CLI_VERSION}" update:republish \
+            --group "$STAGED_UPDATE_GROUP" \
+            --destination-branch "$verified_branch" \
+            --platform ios \
+            --message "$message" \
+            --non-interactive \
+            --json \
+            > "$RUNNER_TEMP/eas-update.json" 2> "$RUNNER_TEMP/eas-update.err"; then
+            echo "::error::EAS Update republish failed; private diagnostics withheld."
             exit 1
           fi
           node "$GITHUB_WORKSPACE/scripts/release/mobile-next-update.mjs" summarize "$RUNNER_TEMP/eas-update.json"

@@ -185,6 +185,12 @@ export type ReviewBatchReceipt = z.infer<typeof reviewBatchReceipt>
  * must travel with a draft; a Task id, path or HEAD alone is not a version. */
 export const taskReviewRef = z.strictObject({ snapshotId: z.uuid(), sourceVersion: digest })
 export type TaskReviewRef = z.infer<typeof taskReviewRef>
+/** A native merge intent freezes the observed PR and its host publication.
+ * These are locators, not authority: the server rechecks the Task, Factory
+ * candidate, repository grant and live head/base before the existing merge. */
+export const taskReviewPullRef = z.strictObject({ runId: z.uuid(), repoId: z.uuid(), repositoryId: githubId,
+  number: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), baseSha: sha, producerRunId: z.uuid() })
+export type TaskReviewPullRef = z.infer<typeof taskReviewPullRef>
 export const taskReviewLineComment = z.strictObject({ path, line: z.number().int().positive().max(1_000_000),
   side: z.enum(['old', 'new']), body: z.string().trim().min(1).max(4000) })
 export const taskReviewSubmission = z.strictObject({ reviewRef: taskReviewRef,

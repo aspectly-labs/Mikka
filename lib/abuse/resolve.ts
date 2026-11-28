@@ -3,6 +3,7 @@ import type { HostedModelScope } from '../subscription-model-snapshot'
 export async function resolveDefaultHostedModel(
   scope: HostedModelScope,
   modelId: string,
+  pro = false,
 ) {
   'use step'
   const { executionWorkspace } = await import('../execution-settings')
@@ -12,6 +13,6 @@ export async function resolveDefaultHostedModel(
     modelId,
     undefined,
     scope.ownerId,
-    { operation: scope.botId ? 'bot' : 'coordinator' },
+    { operation: scope.botId ? 'bot' : 'coordinator' }, pro,
   )
 }

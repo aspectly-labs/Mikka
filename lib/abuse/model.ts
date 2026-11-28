@@ -1,9 +1,11 @@
 import 'server-only'
+import { GatewayError } from '@ai-sdk/gateway'
 import { randomUUID } from 'node:crypto'
 import type { LanguageModel } from 'ai'
 import { modelAdmission } from '@/lib/model-admission/runtime'
 import { ModelAdmissionError } from '@/lib/model-admission/contract'
 import { createLiteLLMModel, liteLLMBaseUrl, liteLLMCost, liteLLMGenerationId } from '@/lib/model-gateway/litellm-client'
+import { managedSearchRoute, nativeWebSearchBackendForTools } from '@/lib/model-gateway/provider-config'
 import { hostedBillingScope } from './context'
 import { checkAbuseAlerts } from './alerts'
 import { canUseMikkaPaid, hostedUsage as defaultHostedUsage } from './runtime'
@@ -12,6 +14,7 @@ import { withSharedCredits } from '@/lib/credit-shares'
 import { observedModel, recordAiRoute, recordAiUsage, type AiMetadata } from '@/lib/tracing/ai'
 import { modelTokenUsage, stepIdentity } from '@/lib/model-call-timing'
 import { hostedCallId } from '@/lib/model-gateway/hosted-call-id.mjs'
+import { isGatewayGenerationId } from '@/lib/model-gateway/gateway-generation-id.mjs'
 import { HOSTED_CALL_TIMEOUT_MS, PaidResourceError } from './policy'
 import { runtimeEnv } from '@/lib/env/server'
 type Model = Extract<LanguageModel, { specificationVersion: 'v4' }>
@@ -34,6 +37,12 @@ export async function admitHostedModel(scope: { workspaceId: string; ownerId?: s
 }
 
 type CallArgs = Parameters<Model['doGenerate']>[0]
+
+function gatewayErrorGenerationId(error: unknown) {
+  const id = GatewayError.isInstance(error) ? error.generationId : undefined
+  return id && isGatewayGenerationId(id) ? id : undefined
+}
+
 /** Every SDK tool step reaches this model boundary, including compaction. */
 export async function hostedModel(
   workspaceId: string,
@@ -41,6 +50,7 @@ export async function hostedModel(
   provider?: Model,
   ownerId?: string,
   metadataOrBilling: AiMetadata | HostedModelBilling = {},
+  pro = false,
 ): Promise<Model> {
   const billingAdapter = 'usage' in metadataOrBilling ? metadataOrBilling as HostedModelBilling : undefined
   const metadata: AiMetadata = billingAdapter ? {} : metadataOrBilling as AiMetadata
@@ -52,8 +62,8 @@ export async function hostedModel(
     return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
   })
   if (provider) throw new ModelAdmissionError('modelRouteDenied')
-  const model = createLiteLLMModel(modelId, { user: workspaceId })
-  const forCall = async (id: string) => createLiteLLMModel(modelId, { user: workspaceId, callId: hostedCallId(id, await stepIdentity()) })
+  const model = createLiteLLMModel(modelId, { user: workspaceId, ...(pro ? { pro } : {}) })
+  const forCall = async (id: string) => createLiteLLMModel(modelId, { user: workspaceId, ...(pro ? { pro } : {}), callId: hostedCallId(id, await stepIdentity()) })
   const reserve = async (id: string, args: CallArgs) => {
     await admitHostedModel(scope, modelId, { signal: args.abortSignal, auditAllowed: false })
     // An input-size boundary, not a prepaid or estimated-cost balance check.
@@ -62,6 +72,12 @@ export async function hostedModel(
     )
     if (promptBytes > 16 * 1024 * 1024)
       throw new PaidResourceError('usage_cost_unavailable')
+    const search = nativeWebSearchBackendForTools(args.tools)
+    if (search) {
+      if (!scope.ownerId || search !== managedSearchRoute(modelId)?.backend) throw new Error('model_native_web_search_unavailable')
+      const [{ pool }, { admitWebRequest }] = await Promise.all([import('@/lib/db'), import('@/lib/search/rate-limit')])
+      if (!await admitWebRequest(pool, scope.ownerId, args.abortSignal)) throw new Error('web_search_rate_limited')
+    }
     await withSharedCredits(workspaceId, payer => hostedUsage.reserve(payer, modelId, id, runtimeEnv()), billingPrincipal)
   }
   const bounded = (value: CallArgs) => ({
@@ -77,7 +93,7 @@ export async function hostedModel(
     get(target, key) {
       if (key === 'doGenerate')
         return async (args: CallArgs) => {
-          const id = randomUUID()
+          const id = billing?.byokWebSearchId ?? randomUUID()
           await reserve(id, args)
           let requestStarted = false
           try {
@@ -105,13 +121,15 @@ export async function hostedModel(
               throw new PaidResourceError('usage_cost_unavailable')
             return result
           } catch (error) {
-            await hostedUsage.settle(id, requestStarted ? null : 0)
+            await hostedUsage.settle(id, requestStarted ? null : 0, 0, 0, requestStarted ? gatewayErrorGenerationId(error) : undefined)
             throw error
           }
         }
       if (key === 'doStream')
         return async (args: Parameters<Model['doStream']>[0]) => {
-          const id = randomUUID()
+          const id = billing?.byokWebSearchId ?? randomUUID()
+          const search = nativeWebSearchBackendForTools(args.tools)
+          if (search && managedSearchRoute(modelId)?.backend !== search) throw new Error('model_native_web_search_unavailable')
           await reserve(id, args)
           let requestStarted = false
           try {
@@ -151,13 +169,12 @@ export async function hostedModel(
                       if (!consumerCancelled) controller.close()
                       return
                     }
-                    // LiteLLM exposes its lookup ID on the first content chunk,
-                    // before a finish receipt can be lost to interruption.
+                    // Persist the lookup ID before a finish receipt can be lost to interruption.
                     if (chunk.type !== 'finish' && 'providerMetadata' in chunk) {
                       const observed = liteLLMGenerationId(chunk.providerMetadata)
                       if (observed && observed !== generationId) {
-                        await hostedUsage.recordGeneration(id, observed)
                         generationId = observed
+                        await hostedUsage.recordGeneration(id, observed)
                       }
                     }
                     if (chunk.type === 'finish') {
@@ -180,6 +197,7 @@ export async function hostedModel(
                     }
                     if (!consumerCancelled) controller.enqueue(chunk)
                   } catch (error) {
+                    generationId ??= gatewayErrorGenerationId(error)
                     let failure = error
                     try { await interrupt(error) } catch (cleanupError) { failure = cleanupError }
                     if (!consumerCancelled) controller.error(failure)
@@ -192,7 +210,7 @@ export async function hostedModel(
               }),
             }
           } catch (error) {
-            await hostedUsage.settle(id, requestStarted ? null : 0)
+            await hostedUsage.settle(id, requestStarted ? null : 0, 0, 0, requestStarted ? gatewayErrorGenerationId(error) : undefined)
             throw error
           }
         }

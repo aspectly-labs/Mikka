@@ -93,7 +93,7 @@ async function runItems(q: RunChainQueryable, ownerId: string, runId: string): P
   const [{ rows: chunks }, { rows: messages }] = await Promise.all([
     q.query('SELECT c.chunk,c."createdAt" AS at FROM run_chunks c JOIN agent_runs r ON r.id=c."runId" AND r."userId"=$2 WHERE c."runId"=$1 ORDER BY c.seq', [runId, ownerId]),
     q.query(`SELECT m.id::text,m.text,m."createdAt" AS at FROM run_messages m JOIN agent_runs r ON r.id=m."runId" AND r."userId"=$2
-      WHERE m."runId"=$1 ORDER BY m."createdAt",m.id`, [runId, ownerId]),
+      WHERE m."runId"=$1 AND length(trim(m.text)) > 0 ORDER BY m."createdAt",m.id`, [runId, ownerId]),
   ])
   return threadItems(chunks as { chunk: Record<string, unknown>; at: Date }[],
     messages.map(row => ({ id: String(row.id), text: String(row.text), author: '', mine: true, at: row.at as Date })), runId)

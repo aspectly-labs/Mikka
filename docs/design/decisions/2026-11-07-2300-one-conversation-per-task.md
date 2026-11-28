@@ -1,18 +1,18 @@
 # A task has one conversation; the hand is only on the task; 受阻 has its own icon
 
 - Date: 2026-11-07
-- **Status:** Superseded in part by [2026-11-09-0045](2026-11-09-0045-no-attempt-word.md)
-- Source: Alex, 2026-11-07, on the iOS build of [2230](2026-11-07-2230-one-icon-per-task-state.md):
+- **Status:** Superseded in part by [2026-11-09-0045](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-0045-no-attempt-word.md)
+- Source: Alex, 2026-11-07, on the iOS build of [2230](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-2230-one-icon-per-task-state.md):
   - on the two attempts in 活动, newest first, each opening its own thread: 「为什么这里第二次尝试会分给两个不同的 thread？你第二次尝试明显应该在第一次之后呀！」;
   - on the hand on the second attempt: 「举手符号是在待处理的时候，需要我去处理时才会用到……怎么会用到这个举手符号呢？」. He also said that a blocked item needs its own symbol, not the hand;
   - on the large title below the buttons: 「该放在最顶上，你放在左上角干嘛？」.
 - Rule: R-52; `mobile.md` 「Where it lives」
-- Superseded in part by: [2026-11-09-0045](2026-11-09-0045-no-attempt-word.md) (no 「尝试」 in the UI: a task is one conversation; only an Agent switch gets a divider)
-- Superseded in part by: [2026-11-08-0120](2026-11-08-0120-ios-header-like-comma.md) (the phone's title row uses one centred native title).
+- Superseded in part by: [2026-11-09-0045](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-09-0045-no-attempt-word.md) (no 「尝试」 in the UI: a task is one conversation; only an Agent switch gets a divider)
+- Superseded in part by: [2026-11-08-0120](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-08-0120-ios-header-like-comma.md) (the phone's title row uses one centred native title).
 - Replaces, in part: [2045](2026-11-07-2045-tasks-only-threads-inside.md):
   - rule 2's 「newest first」 order and its one-thread-per-attempt opening;
   - rule 5's 「an attempt pushes over the task」.
-- Also replaces, in part, [2230](2026-11-07-2230-one-icon-per-task-state.md): 受阻 under the hand; the attempt icons.
+- Also replaces, in part, [2230](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-07-2230-one-icon-per-task-state.md): 受阻 under the hand; the attempt icons.
 
 ## One conversation per task
 

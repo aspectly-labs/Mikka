@@ -132,7 +132,6 @@ before(async () => {
   mock.module('@/lib/tokens/scope', {
     namedExports: {
       isPersonalWorkspace: async (_userId: string, wsId: string) => personalWorkspaceIds.has(wsId),
-      pendingActionsOutsideToken: async () => new Set<string>(),
       suggestionsOutsideToken: async () => new Set<string>(),
     },
   })
@@ -142,12 +141,6 @@ before(async () => {
       afterJob: (name: string, fn: () => unknown) => {
         afterJobs.push({ name, fn })
       },
-    },
-  })
-
-  mock.module('@/lib/pending-action-store', {
-    namedExports: {
-      listPendingActions: async () => [],
     },
   })
 

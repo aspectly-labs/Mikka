@@ -8,6 +8,8 @@ export type TaskMachineGrant = Readonly<{
   runId:string; operationId:string; expiresAt:number
   /** The instance type the machine starts at: the billed size recorded at admission (#3080). Absent starts the default. */
   size?: MachineSize
+  metered?: true
+  portableWorkspace?: { size: number; sha256: string; headSha: string }
   requiredCheckpoint?: { instanceId:string; id:string; sha256:string }
 }>
 

@@ -40,8 +40,16 @@ async function sessionConnected(deviceId: string, report: DeviceSessionReport): 
   if (!device) return { applied: false }
   // Live leases last as long as the session. Revocation, stop and policy
   // changes end a lease when they happen (lib/run-policy-stop.ts and friends).
-  const extended = await pool.query<{ id: string }>(`UPDATE agent_runs SET "leaseExpiresAt"=now()+make_interval(secs => $3::double precision/1000), "updatedAt"=now()
-    WHERE "deviceId"=$1 AND status=ANY($2::text[]) AND "stopRequestedAt" IS NULL AND "leaseExpiresAt">now() RETURNING id`,
+  // Carry each active subscription token's expiry forward with its run lease.
+  const extended = await pool.query<{ id: string }>(`WITH renewed AS (
+    UPDATE agent_runs SET "leaseExpiresAt"=now()+make_interval(secs => $3::double precision/1000), "updatedAt"=now()
+    WHERE "deviceId"=$1 AND status=ANY($2::text[]) AND "stopRequestedAt" IS NULL AND "leaseExpiresAt">now()
+    RETURNING id, "leaseExpiresAt"
+  ), renewed_gateway_tokens AS (
+    UPDATE model_gateway_tokens t SET "expiresAt"=r."leaseExpiresAt" FROM renewed r
+    WHERE t."runId"=r.id AND t."deviceId"=$1 AND t."sourceKind"='subscription' AND t."expiresAt">now()
+  )
+  SELECT id FROM renewed`,
   [deviceId, [...LEASED_RUN_STATUSES], SESSION_LEASE_MS])
   if (extended.rowCount) armDueTimerSoon('run-recovery')
   await ownerListChanged(db, device.ownerId, PRESENCE_LISTS)

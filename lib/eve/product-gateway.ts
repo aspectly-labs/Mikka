@@ -3,17 +3,20 @@ import { asSchema } from 'ai'
 import { z } from 'zod'
 import type { EveScope } from './scope'
 import { asProductPrincipal, productContext, productTools } from './product-definitions'
+import { hostedApiKeySnapshotSchema, selectionScope } from '../hosted-model-selection'
 
 const id = z.string().min(1).max(256)
 const common = { sessionId: id, turnId: id, executionId: z.uuid().nullable().optional() }
 const toolCall = { ...common, name: z.string().min(1).max(128), input: z.unknown(), callId: id }
+// Accepted and ignored for one release: an older Eve deployment may still send
+// it. Nothing is approved by a person any more (ADR 2026-11-27-1615).
 const approvalResponder = z.object({
   authenticator: z.literal('mikka'), principalType: z.literal('user'), principalId: id,
   attributes: z.object({ botId: z.uuid(), workspaceId: z.uuid(), surface: z.enum(['web', 'slack']) }).strict(),
 }).strict()
 const requestSchema = z.discriminatedUnion('operation', [
   z.object({ ...toolCall, operation: z.literal('approval') }).strict(),
-  z.object({ ...toolCall, operation: z.literal('execute'), approvalResponder: approvalResponder.optional() }).strict(),
+  z.object({ ...toolCall, operation: z.literal('execute'), approvalResponder: approvalResponder.optional(), webSearchModel: hostedApiKeySnapshotSchema.nullable().optional() }).strict(),
   z.object({ ...common, operation: z.literal('finish'), outcome: z.enum(['completed', 'failed', 'cancelled']), messages: z.array(z.unknown()).optional() }).strict(),
 ])
 type Input = z.infer<typeof requestSchema>
@@ -51,6 +54,13 @@ export async function handleEveProductRequest(request: Request, services: EvePro
     if (!scope) return Response.json({ error: 'authRequired' }, { status: 401 })
     const parsed = requestSchema.safeParse(await boundedBody(request))
     if (!parsed.success) return Response.json({ error: 'validationGeneric' }, { status: 400 })
+    if (parsed.data.operation === 'execute' && parsed.data.webSearchModel !== undefined) {
+      const frozen = parsed.data.webSearchModel && selectionScope(parsed.data.webSearchModel)
+      // Eve passes its concrete Bot ID to freezeBotModel, including the Coordinator chat.
+      if (parsed.data.name !== 'web_search' || scope.surface === 'factory'
+          || (frozen && (frozen.ownerId !== scope.ownerId || frozen.botId !== scope.botId || frozen.workspaceId !== scope.workspaceId)))
+        return Response.json({ error: 'notFound' }, { status: 404 })
+    }
     await services.assertSession(scope, parsed.data.sessionId)
     const result = await services.run(scope, parsed.data, request.signal, request)
     return Response.json(result, { headers: { 'Cache-Control': 'private, no-store' } })
@@ -78,7 +88,8 @@ const defaultServices: EveProductGatewayServices = {
         return finishEveTurn(scope, input)
       }
       const { execution, sourceEventId, scheduledRead, taskEventId, entryOrigin } = await productContext(scope, input)
-      const tools = await productTools(scope, execution, sourceEventId, scheduledRead, taskEventId,entryOrigin)
+      const tools = await productTools(scope, execution, sourceEventId, scheduledRead, taskEventId,entryOrigin,
+        input.operation === 'execute' ? input.webSearchModel : undefined)
       const tool = Object.hasOwn(tools, input.name) ? tools[input.name] : undefined
       if (!tool?.execute) throw new Error('notFound')
       const validator = asSchema(tool.inputSchema).validate
@@ -91,7 +102,7 @@ const defaultServices: EveProductGatewayServices = {
         const call = { ...scope, sessionId: input.sessionId, turnId: input.turnId, executionId: execution?.id, sourceEventId, name: input.name, input: checked.value, callId: input.callId }
         const { reviewEveProductApproval, executeEveApprovedWrite } = await import('./product-approval')
         if (input.operation === 'approval') return reviewEveProductApproval(call, signal)
-        const approved = await executeEveApprovedWrite(call, input.approvalResponder, signal)
+        const approved = await executeEveApprovedWrite(call, signal)
         if (approved) return approved.output
         return tool.execute!(checked.value, { toolCallId: input.callId, messages: [], context: {}, abortSignal: signal })
       })

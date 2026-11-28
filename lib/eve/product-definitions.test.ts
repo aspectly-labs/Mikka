@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { z } from 'zod'
 import type { EveScope } from './scope'
 import type { DynamicModelContext } from 'eve'
+import type { HostedRuntimeSnapshot } from '../hosted-model-selection'
 import { DEFAULT_AGENT_DEFINITION } from '../agent-kit/builtin'
 
 const scope: EveScope = {
@@ -13,6 +14,10 @@ const scope: EveScope = {
 const binding = { sessionId: 'fixture-session', turnId: 'turn_1', executionId: 'fixture-execution' }
 const tokenWorkspace = Symbol('fixture-workspace')
 const runtime = { harness: 'ai_sdk' as const, model: 'frozen-model' }
+const byokRuntime: HostedRuntimeSnapshot = { ...runtime, modelSelection: {
+  type: 'api_key', modelId: runtime.model, ownerId: scope.ownerId, consumerId: scope.botId, workspaceId: scope.workspaceId,
+  keyId: '00000000-0000-4000-8000-000000000003',
+} }
 const policy = { definition: DEFAULT_AGENT_DEFINITION, effectiveTools: ['list_issues', 'inspect_computer'] }
 const execution = { id: binding.executionId, snapshot: { runtime } }
 const reservations: unknown[] = [], reads: unknown[] = [], principals: unknown[] = [], toolOptions: unknown[] = [], allocationQueries: string[] = []
@@ -20,6 +25,7 @@ let executionClosed = false, toolsEnabled = true, writesEnabled = false, definit
 let source: { source_event_id: string; id: string; payload: Record<string, unknown> } | undefined
 let leaseDenied = false, preparationEnabled = true, agentKitEnabled = true, settled = false
 let sourceReads = 0, leaseChecks = 0
+let latestRuntime: HostedRuntimeSnapshot = runtime
 
 mock.module(new URL('./scope.ts', import.meta.url).href, { namedExports: { scopeFromAuth: () => scope } })
 mock.module(new URL('./product-rpc.ts', import.meta.url).href, { namedExports: {
@@ -30,8 +36,11 @@ mock.module(new URL('../acting-user.ts', import.meta.url).href, { namedExports: 
 } })
 mock.module(new URL('../tokens/principal.ts', import.meta.url).href, { namedExports: { tokenWorkspace } })
 mock.module(new URL('../../workflows/coordinator/agent-kit-steps.ts', import.meta.url).href, { namedExports: {
-  async beginAgentExecution(...args: unknown[]) { reservations.push(args); return preparationEnabled ? execution : null },
-  async botRuntime() { return runtime },
+  async beginAgentExecution(...args: unknown[]) {
+    reservations.push(args)
+    return preparationEnabled ? { ...execution, snapshot: { runtime: args[5] ?? latestRuntime } } : null
+  },
+  async botRuntime() { return latestRuntime },
 } })
 mock.module(new URL('../agent-kit/service.ts', import.meta.url).href, { namedExports: {
   agentKitEnabled: () => agentKitEnabled,
@@ -99,14 +108,14 @@ mock.module(new URL('./evaluation-runtime.ts', import.meta.url).href, { namedExp
   evaluationForSession: async () => null, evaluationNativeTools: () => ({}), evaluationModel: () => null,
 } })
 mock.module(new URL('./product-tool.ts', import.meta.url).href, { namedExports: {
-  createProductTool: (actual: EveScope, current: unknown, definition: { name: string }) => {
+  createProductTool: (actual: EveScope, current: { sessionId: string; turnId: string; runtime: HostedRuntimeSnapshot }, definition: { name: string }) => {
     assert.deepEqual(actual, scope)
-    assert.deepEqual(current, { sessionId: binding.sessionId, turnId: binding.turnId })
-    return { name: definition.name }
+    assert.deepEqual(current, { sessionId: binding.sessionId, turnId: binding.turnId, runtime: turnModel.get() })
+    return { name: definition.name, binding: current }
   },
 } })
 
-const { beginProductAction, productCatalogue, productContext } = await import('./product-definitions')
+const { beginProductAction, productCatalogue, productContext, productTools } = await import('./product-definitions')
 const { turnModel, turnPolicy, turnRequest } = await import('./runtime')
 const { ContextContainer, contextStorage } = await import(new URL('./context/container.js', import.meta.resolve('eve')).href)
 const { default: nativeProductTools } = await import('../../apps/eve/agent/tools/product')
@@ -117,6 +126,7 @@ beforeEach(() => {
   executionClosed = leaseDenied = false
   writesEnabled = settled = false
   toolsEnabled = preparationEnabled = agentKitEnabled = true
+  latestRuntime = runtime
   source = undefined
   definitions = fetches = sourceReads = leaseChecks = 0
   mock.method(globalThis, 'fetch', async () => { fetches++; throw new Error('Definition HTTP callbacks are forbidden') })
@@ -155,12 +165,40 @@ test('native catalogue preserves schemas and supplies the scheduled occurrence d
 test('the first action allocates its existing business execution and binds the current running key', async () => {
   const action = { sessionId: binding.sessionId, turnId: binding.turnId }
   assert.equal(await beginProductAction(scope, action), binding.executionId)
-  assert.deepEqual(reservations, [[scope.ownerId, scope.botId, `${binding.sessionId}:${binding.turnId}`, 0, { harness: 'ai_sdk' }]])
+  assert.deepEqual(reservations, [[scope.ownerId, scope.botId, `${binding.sessionId}:${binding.turnId}`, 0, { harness: 'ai_sdk' }, undefined]])
   assert.equal(reads.length, 0)
   assert.equal(allocationQueries.length, 2)
   assert.equal(await beginProductAction(scope, action), binding.executionId)
   assert.equal(reservations.length, 2)
   await assert.rejects(productContext(scope, action), /agentExecutionClosed/)
+})
+
+test('a mid-turn model change leaves the Eve action allocation and metered Web Search on the actual turn model', async () => {
+  const evaluate = nativeProductTools as unknown as (ctx: unknown) => Promise<Record<string, { binding: { sessionId: string; turnId: string; runtime: HostedRuntimeSnapshot } }>>
+  await contextStorage.run(new ContextContainer(), async () => {
+    turnModel.update(() => byokRuntime)
+    turnPolicy.update(() => policy)
+    latestRuntime = { harness: 'ai_sdk', model: 'switched-managed-model' }
+    const action = (await evaluate(context)).list_issues.binding
+    await beginProductAction(scope, action, action.runtime)
+    assert.equal((reservations[0] as unknown[])[5], byokRuntime)
+    assert.equal(action.runtime.model, 'frozen-model')
+  })
+  const saved = { ...execution, snapshot: { ...execution.snapshot, runtime: latestRuntime } }
+  const route = byokRuntime.modelSelection?.type === 'api_key' ? byokRuntime.modelSelection : undefined
+  const { entryOrigin } = await productContext(scope, binding)
+  await productTools(scope, saved as never, undefined, null, undefined, entryOrigin, route)
+  assert.deepEqual((toolOptions.at(-1) as { webSearchRuntime: HostedRuntimeSnapshot }).webSearchRuntime, byokRuntime)
+  const scheduled = { occurrenceId: 'scheduled', leaseToken: 'lease', allowedActions: ['web_search'], prompt: 'Read only' }
+  const savedByok = { ...saved, snapshot: { runtime: byokRuntime } } as never
+  await productTools(scope, savedByok, undefined, null, undefined, entryOrigin, null)
+  assert.deepEqual((toolOptions.at(-1) as { webSearchRuntime: HostedRuntimeSnapshot }).webSearchRuntime, { harness: 'ai_sdk', model: null })
+  for (const legacyExecution of [null, saved as never, savedByok]) {
+    await productTools(scope, legacyExecution, undefined, null, undefined, entryOrigin)
+    assert.equal((toolOptions.at(-1) as { webSearchRuntime: null }).webSearchRuntime, null)
+    await productTools(scope, legacyExecution, undefined, scheduled, undefined, entryOrigin)
+    assert.deepEqual((toolOptions.at(-1) as { webSearchRuntime: HostedRuntimeSnapshot }).webSearchRuntime, { harness: 'ai_sdk', model: null })
+  }
 })
 
 test('existing action bindings retain current execution and scheduled authority', async () => {

@@ -28,6 +28,12 @@ spans (see [Mobile app](#mobile-app)).
   `@opentelemetry/instrumentation-pg` on the `pg` pool behind `lib/db`
   (drizzle `node-postgres`). Statements outside any span are not traced, and
   neither are connect spans.
+- Native Node `fetch`/Undici HTTP attempts, observed through its diagnostic
+  channels without wrapping fetch or changing headers, bodies or cancellation.
+  Each attempt is a `CLIENT` child of its initiating active span. Unparented and
+  SDK-suppressed requests are not traced, including telemetry exports. Existing
+  explicitly supplied propagation headers remain unchanged; the observer never
+  sends internal Mikka correlation headers to third parties.
 - Background work, each as a labelled job (see [Background work](#background-work)):
   `after()` callbacks, Workflow steps and cron handlers.
 
@@ -43,6 +49,61 @@ Every span has `service.name=mikka-web` and `deployment.environment`
 | `mikka.user_id_hash` | The authenticated account's existing salted SHA-256 prefix (16 hex characters), when known. Matches `userIdHash` in request logs; never an email, raw account ID or client-supplied PostHog identity |
 | `mikka.rpc.action` | A key confirmed present in the shared browser/desktop RPC registry. No arguments or unknown action strings are exported |
 | `error.type`, `mikka.error.code`, `mikka.error.detail` | On a failed request or job: the error's class name, and the code and detail of the first coded error in its cause chain (`@mikka/protocol/tracing`). Never the message |
+
+Subscription catalogue reads record `mikka.catalogue.cache` (`hit`, `miss` or
+`optional_metadata`), `mikka.catalogue.refresh_candidates`, and
+`mikka.catalogue.deferred` on their request span. A valid current-revision
+catalogue is immediately usable; menu/settings reads defer missing optional
+capabilities to the existing owned `after:subscription-catalogue` job. A cold or
+stale credential revision still waits for bounded discovery. The single
+persisted catalogue remains authoritative and unreported capabilities stay
+unknown. Concurrent discovery is shared only within the same database, owner,
+workspace, connection and credential revision; each caller then reads its own
+authorized view. There is no result cache or polling loop.
+
+The `subscription.models` client span records the closed provider name in
+`mikka.catalogue.provider`, one `mikka.catalogue.refresh_count`, and safe error
+names/codes. Automatic catalogue reads and budgeted menu refreshes now pass
+their existing deadline to actual discovery; late replies cannot update the
+catalogue after timeout or credential revocation. Direct manual refreshes add
+no menu deadline and retain the native worker's existing bounded lifetime,
+shutdown and credential-persistence behavior. No account labels, model lists,
+URLs or provider response contents are exported.
+
+HTTP response timing separates readiness from connection lifetime.
+`mikka.http.response_headers_ms` measures entry to the response headers being
+ready; `mikka.http.response_kind` is `regular`, `event_stream` or `ndjson`.
+For the two stream kinds, `mikka.http.ttfb_ms` records the first nonempty body
+chunk observed by the server, while the request span still ends at disposal.
+This is server-side first-byte timing, not browser receipt or model first-token
+timing. Empty streams omit it. The observer preserves backpressure and forwards
+body cancellation without collecting content.
+
+`mikka.http.outcome` is `completed`, `client_cancelled` or `error`. Only a
+successful stream with an aborted incoming request signal and a matching client
+disconnect reason is `client_cancelled`. An observed upstream body error takes
+precedence, and HTTP 5xx remains an error. Eve proxy spans additionally carry
+`mikka.eve.route`, a closed route template without session IDs or query strings;
+unknown paths use a catch-all template. Connection failures keep the existing
+503 response and record safe cause names/codes on the span and its failure log.
+
+Outbound HTTP spans carry method, status and `mikka.http.peer`, a closed label
+(`github`, `composio`, configured `eve`/`cloud`/`litellm`, or `other`). URLs,
+paths, query strings, private hostnames, request/response headers and bodies are
+never recorded by the observer. `mikka.http.transport=undici` identifies this
+coverage; transports that do not use Undici keep their existing instrumentation.
+`mikka.http.response_headers_ms` measures response-header readiness; the span
+lasts until the complete body or transport error, including long-lived streams.
+It is not page latency or model first-token latency.
+
+Client outcomes are `completed`, `http_error`, `transport_error`, `timeout` or
+`aborted`. An explicit transport abort records `aborted`, without inferring an
+end-user disconnect or a successful operation. HTTP 4xx/5xx, timeouts and other
+transport failures mark the client span ERROR with an HTTP status or closed
+error code; aborting an already-failed HTTP response does not clear its error.
+Incoming request outcomes remain independently authoritative for user-facing
+success/error rates. No error messages, stack traces or arbitrary abort reasons
+are exported.
 
 Mikka-managed model calls use the AI request span described below, with
 `mikka.ai.route = litellm` and the requested alias in the model field. The
@@ -62,6 +123,25 @@ Database spans also have:
 | `db.response.returned_rows` | Rows returned or affected |
 | `mikka.db.response_bytes_approx` | Result JSON size, estimated from the first 50 rows (not wire bytes) |
 
+An audit receipt that cannot reach the main store marks its current maintenance
+job as an error with `mikka.audit.delivery_failed=true`. The job's trace and
+structured failure log retain only `error.type`, `mikka.audit.error_code`
+(PostgreSQL SQLSTATE or a bounded driver code), and `mikka.audit.constraint`
+when available, using the existing `auditFailureSummary` identifier checks.
+Audit payloads, tenant and actor identifiers, SQL parameters, error messages and
+stacks are excluded. The job still returns its original delivery counts and
+leaves the receipt pending for the existing idempotent retry; diagnostic status
+does not acknowledge, delete or modify the receipt.
+
+Native Eve outcome receipt failures enrich their current request/job span and
+its correlated failure log with `mikka.eve.receipt_phase` (`claim` or `finish`).
+The existing safe error fields retain five-character SQLSTATE codes in
+`mikka.error.code` and only the receipt table's known migration constraints in
+`mikka.error.detail`; arbitrary constraint names are omitted. No query parameters,
+row contents or raw messages are exported. The original exception still reaches
+the caller: HTTP failures stay failures, and an uncertain dispatch is not sent
+again because diagnostics were added.
+
 ## Runtime initialization
 
 `apps/api/scripts/finalize-build.mjs` compiles
@@ -78,6 +158,12 @@ must happen before application modules load pg; a Nitro plugin alone is too
 late for database instrumentation. `.vercel/output/mikka-build.json` or
 `.output/mikka-build.json` records the compiled tracing hash. An artifact hash
 proves the entry was packaged, not that production spans reached PostHog.
+
+Release tracing embeds the same source commit as `mikka-build.json` at build
+time. Both spans and logs export its first 12 characters as the OpenTelemetry
+resource `service.version`; a missing or conflicting runtime revision cannot
+relabel that artifact. Development workers retain the optional runtime revision.
+Use this resource when comparing deployed revisions in PostHog.
 
 ## Mobile app
 

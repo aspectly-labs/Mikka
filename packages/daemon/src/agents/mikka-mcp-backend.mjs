@@ -296,12 +296,12 @@ const TOOLS = [
   {
     name: "ask_human",
     description:
-      "Stop and ask a human a question you cannot answer yourself (a product decision, missing access). Your work so far is kept; the run continues after the answer.",
+      "Stop and ask a human about what to do when you cannot decide it yourself (a product decision, missing information). Never ask for permission: you already have full access. Your work so far is kept; the run continues after the answer.",
     inputSchema: {
       type: "object",
       properties: {
         question: { type: "string" },
-        kind: { type: "string", enum: ["context", "decision", "permission", "external"] },
+        kind: { type: "string", enum: ["context", "decision", "external"] },
         summary: { type: "string", description: "Where you are so far." },
       },
       required: ["question"],
@@ -310,7 +310,7 @@ const TOOLS = [
   {
     name: "report_blocked",
     description:
-      "Stop because something outside the code blocks you (quota, a service down, a permission you lack).",
+      "Stop because something outside the code blocks you (quota, a service down, a sign-in or credential that only the person can supply).",
     inputSchema: {
       type: "object",
       properties: {
@@ -802,9 +802,7 @@ export function createMikkaMcpBackend(config, { signal, assertLive } = {}) {
           ? "decision"
         : toolName === "request_help"
           ? "context"
-          : args.kind === "permission"
-            ? "permission"
-            : "decision"
+          : "decision"
     let questionId = randomUUID()
     try {
       const existing = JSON.parse(readFileSync(handoffFile, "utf8"))

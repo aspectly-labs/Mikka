@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { getCookies } from 'better-auth/cookies'
 import { recoverAcceptanceSession } from '../lib/acceptance-recovery.ts'
+import { officialUiSkip } from '../scripts/official-ui-requirement.mjs'
 
 test('预览分区 Cookie 保持 HttpOnly、Secure 和 SameSite=None', async () => {
   const source = await readFile(new URL('../lib/auth.ts', import.meta.url), 'utf8')
@@ -23,7 +24,8 @@ test('预览分区 Cookie 保持 HttpOnly、Secure 和 SameSite=None', async () 
 
 test('验收恢复需要用户授权，且不改用不安全的客户端会话', async t => {
   const path = new URL('../.hosted-ui/web/components/acceptance-entry.tsx', import.meta.url)
-  if (!existsSync(path)) { t.skip('.hosted-ui not checked out'); return }
+  const missing = officialUiSkip(existsSync(path), '.hosted-ui')
+  if (missing) { t.skip(missing); return }
   const source = await readFile(path, 'utf8')
   assert.match(source, /onClick=\{recoverSession\}/)
   assert.match(source, /\(\) => document\.requestStorageAccess\(\)/)

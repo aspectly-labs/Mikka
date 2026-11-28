@@ -11,7 +11,9 @@
 // POSTHOG_PERSONAL_API_KEY (phx_…, scopes insight/dashboard/alert read+write) comes
 // from the environment, e.g. `infisical run --env=prod --path=/platform -- node …`.
 // It is never printed. POSTHOG_HOST and POSTHOG_PROJECT_ID default to production.
+// Text tile changes use the official posthog-cli dashboard tools.
 
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
@@ -38,8 +40,12 @@ const queriesChart = hourlyChart('estimated_queries_weighted', '估算查询数�
 const bytesChart = hourlyChart('estimated_json_bytes_weighted', '估算 JSON 字节（按采样率加权）', { style: 'short', suffix: ' B', decimalPlaces: 1 })
 const single = { chartSettings: { showNullsAsZero: false } }
 const combinedErrors = `WITH error_spike AS (${sql('alert-error-spike')}), decision_errors AS (${sql('alert-decision-error-rate')})
-SELECT max(value) AS value, arrayStringConcat(groupArrayIf(source, value > 0), ' || ') AS source
-FROM (SELECT value, source FROM error_spike UNION ALL SELECT value, source FROM decision_errors)`
+SELECT
+    multiIf(coalesce(spike.value, 0) = 1 OR coalesce(decision.value, 0) = 1, 1,
+        isNull(spike.value) AND isNull(decision.value), NULL, 0) AS value,
+    concat(spike.source, ' || ', decision.source) AS source
+FROM error_spike AS spike CROSS JOIN decision_errors AS decision
+LIMIT 1`
 
 /** Every insight, in dashboard order. `shortId` is the production object; `tile` is its dashboard layout. */
 export const INSIGHTS = [
@@ -76,6 +82,12 @@ export const INSIGHTS = [
   { key: 'errors-7d', shortId: 'y3Vykg2b', name: '7d 错误路由 Top 100 · route / code / detail · 采样原数 / 加权估算', tags: ['issue-1324', 'tracing'], tile: { h: 6, w: 12, x: 0, y: 43 },
     description: 'status_code=2；code 回退 error.type。按 1/sample_rate 加权，历史缺失按 0.1；保留实际条数。一次失败可有多个 spans。',
     query: hogql(sql('errors'), { dateFrom: '-7d', display: 'ActionsTable' }) },
+  { key: 'telemetry-version-coverage', shortId: 'iOwEnkpu', name: '24h 遥测质量 · 版本与采样率覆盖', tags: ['operations', 'tracing', 'issue-3427'], tile: { h: 4, w: 12, x: 0, y: 49 },
+    description: '仅生产实际保留 spans；分别检查版本、缺失/无效采样权重。不推算全量流量或真实错误率。',
+    query: { ...hogql(sql('telemetry-version-coverage'), { dateFrom: '-24h', display: 'ActionsTable' }), tableSettings: { pinnedColumns: ['service'] } } },
+  { key: 'http-status-weight-coverage', shortId: 'qGzT7dJq', name: '24h HTTP 状态与权重覆盖 · 版本/路由诊断', tags: ['operations', 'tracing', 'issue-3427'], tile: { h: 6, w: 12, x: 0, y: 53 },
+    description: '按方法、路由和版本显示实际 HTTP 5xx 与采样估计。未知状态、无效权重或重复 span 时不计算估计比例；仅诊断，非正式 SLO。',
+    query: { ...hogql(sql('http-status-weight-coverage'), { dateFrom: '-24h', display: 'ActionsTable' }), tableSettings: { pinnedColumns: ['method', 'route'] } } },
   // Alert-only insights: not on this dashboard (the heartbeat sits on the monitoring dashboard).
   { key: 'heartbeat', shortId: 'r8wuvlUx', name: 'Mikka monitoring heartbeat', tags: ['database-egress', 'operations'],
     description: 'Latest snapshot within one hour must be healthy and contain supplier hour/day fields. Missing or failed collection returns unhealthy.',
@@ -87,17 +99,17 @@ export const INSIGHTS = [
     description: 'UTC today bytes / elapsed hours through reported bucket ×24×month days vs 500GB. ≥3h; same UTC day; healthy snapshot≤60m/provider≤180m. Assumes complete provider day cumulative. Daily pace equivalent, not billing-period forecast; monthly 50% retained.',
     query: hogql(sql('alert-daily-pace'), { display: 'ActionsTable' }) },
   { key: 'alert-error-spike', shortId: 'STBizeTe', name: '[1324] Mikka 错误码小时突增', tags: ['mikka', 'issue-1324', 'observability', 'source-alerts'],
-    description: 'Weighted errors >max(3×7d hourly median,50). Excludes closed Workflow 404/409/410 only with own successful wake/cron/step ancestry or invocation→2xx delivery (direct/one vqs.process parent or unique link). Missing proof stays counted. Weight=1/sample_rate (legacy 0.1); warmup 24 covered hours; zero-fill observed service hours only; no current telemetry→NULL. Spans≠failed requests.',
-    query: hogql(sql('alert-error-spike'), { display: 'ActionsTable' }) },
-  { key: 'alert-combined-errors', name: 'Mikka error spikes and LiteLLM decision failures', tags: ['mikka', 'observability'],
-    description: 'Existing error-spike conditions OR >20% of at least 3 LiteLLM decision generations failing in the last hour. Decision traffic below 3 calls returns NULL, without warmup. Reuses the existing error-spike alert and subscribers within the five-alert plan.',
+    description: 'Mixed error score >max(3×7d hourly median,50), excluding proven handled Workflow attempts. Uses valid inverse weights and counts unknown-weight rows once. OR >20% non-success among at least 3 unique, fully weighted production LiteLLM decision spans over the last hour. Low volume or incomplete decision coverage is reported. Spans are observations.',
     query: hogql(combinedErrors, { display: 'ActionsTable' }) },
 ]
 
 export const DASHBOARD = {
   id: 2306506, name: 'Mikka 数据库与错误', pinned: true, tags: ['operations', 'issue-1324', 'tracing'],
   description: '按路由、来源、SQL 与错误原因检查生产链路。关键路径全量、普通流量采样；数量和 JSON 近似字节按每条 sample_rate 加权；预算沿用供应商数据，UTC 口径。',
-  note: { body: readFileSync(new URL('dashboard-note.md', here), 'utf8').trimEnd(), layout: { h: 6, w: 12, x: 0, y: 0 } },
+  notes: [
+    { id: 14851052, body: readFileSync(new URL('dashboard-note.md', here), 'utf8').trimEnd(), layout: { h: 6, w: 12, x: 0, y: 0 } },
+    { id: 16419477, body: readFileSync(new URL('dashboard-sli-note.md', here), 'utf8').trimEnd(), layout: { h: 8, w: 12, x: 0, y: 64 } },
+  ],
   monitoringDashboard: MONITORING_DASHBOARD,
 }
 
@@ -112,7 +124,7 @@ export const ALERTS = [
     ...hourly, enabled: true, schedule_start_time: '00:15', threshold: { type: 'absolute', bounds: { upper: 0.5 } }, config: { type: 'HogQLAlertConfig', column: 'value', evaluation: 'first_row', label_column: 'source' } },
   { key: 'daily-pace', id: '01a1a144-b4dc-0000-fbbe-edbede0dfdb5', insight: 'alert-daily-pace', name: '[1324] Mikka 日速率外推超过500GB月额度',
     ...hourly, enabled: true, schedule_start_time: '00:15', threshold: { type: 'absolute', bounds: { upper: 1 } }, config: { type: 'HogQLAlertConfig', column: 'value', evaluation: 'first_row', label_column: 'source' } },
-  { key: 'error-spike', id: '01a1a144-b9d6-0000-6229-896dc85243ec', insight: 'alert-combined-errors', name: '[1324] Mikka 错误码小时突增',
+  { key: 'error-spike', id: '01a1a144-b9d6-0000-6229-896dc85243ec', insight: 'alert-error-spike', name: '[1324] Mikka 错误码小时突增',
     ...hourly, enabled: true, schedule_start_time: '00:15', threshold: { type: 'absolute', bounds: { upper: 0.5 } }, config: { type: 'HogQLAlertConfig', column: 'value', evaluation: 'first_row', label_column: 'source' } },
 ]
 
@@ -163,7 +175,7 @@ export function alertChanges(definition, remote, insightId) {
 
 // --- API -----------------------------------------------------------------
 
-export function posthogApi({ key, host = 'https://us.posthog.com', project = '670821', fetchImpl = fetch }) {
+export function posthogApi({ key, host = 'https://us.posthog.com', project = '670821', fetchImpl = fetch, execFileImpl = execFileSync }) {
   if (!/^phx_[A-Za-z0-9_-]{8,}$/.test(key ?? '')) throw new Error('POSTHOG_PERSONAL_API_KEY must be a personal API key (phx_…)')
   const base = `${host.replace(/\/$/, '')}/api/projects/${encodeURIComponent(project)}`
   const call = async (method, path, body) => {
@@ -176,6 +188,20 @@ export function posthogApi({ key, host = 'https://us.posthog.com', project = '67
     if (!response.ok) throw new Error(`PostHog ${method} ${path.split('?')[0]} failed: ${response.status}`)
     return response.status === 204 ? null : response.json()
   }
+  const callDashboardTool = (tool, input) => {
+    const args = ['--host', host, 'api', 'call', '--project-id', String(project), '--json']
+    const payload = JSON.stringify(input)
+    const options = { env: { ...process.env, POSTHOG_API_KEY: key, POSTHOG_CLI_API_KEY: key }, encoding: 'utf8', timeout: 60_000, stdio: ['ignore', 'pipe', 'pipe'] }
+    try {
+      const preview = JSON.parse(execFileImpl('posthog-cli', [...args, '--dry-run', tool, payload], options))
+      if (preview?.dryRun !== true || preview.valid !== true || preview.tool !== tool) throw new Error('Invalid preview')
+      const result = JSON.parse(execFileImpl('posthog-cli', [...args, tool, payload], options))
+      if (!result || typeof result !== 'object' || Array.isArray(result) || result.isError || result.error || result.success === false)
+        throw new Error('Invalid tool result')
+    } catch {
+      throw new Error(`PostHog ${tool} failed for dashboard ${input.id}`)
+    }
+  }
   return {
     insightByShortId: async shortId => (await call('GET', `/insights/?short_id=${encodeURIComponent(shortId)}&limit=1`))?.results?.find(item => !item.deleted) ?? null,
     insightsByName: async name => ((await call('GET', `/insights/?search=${encodeURIComponent(name)}&saved=true&limit=100`))?.results ?? []).filter(item => !item.deleted),
@@ -185,6 +211,8 @@ export function posthogApi({ key, host = 'https://us.posthog.com', project = '67
     dashboardsByName: async name => ((await call('GET', `/dashboards/?search=${encodeURIComponent(name)}&limit=100`))?.results ?? []).filter(item => !item.deleted),
     createDashboard: body => call('POST', '/dashboards/', body),
     updateDashboard: (id, body) => call('PATCH', `/dashboards/${id}/`, body),
+    createDashboardTextTile: (id, body) => callDashboardTool('dashboard-create-tile', { id, type: 'text', ...body }),
+    updateDashboardTextTile: (id, tileId, body) => callDashboardTool('dashboard-update-text-tile', { id, tile_id: tileId, ...body }),
     alerts: async () => (await call('GET', '/alerts/?limit=100'))?.results ?? [],
     createAlert: body => call('POST', '/alerts/', body),
     updateAlert: (id, body) => call('PATCH', `/alerts/${id}/`, body),
@@ -193,6 +221,21 @@ export function posthogApi({ key, host = 'https://us.posthog.com', project = '67
 }
 
 // --- sync ------------------------------------------------------------------
+
+function resolveDashboardNotes(current) {
+  const tiles = current.tiles.filter(tile => !tile.deleted)
+  const used = new Set()
+  return DASHBOARD.notes.map(definition => {
+    const heading = definition.body.split('\n', 1)[0]
+    const pinned = current.id === DASHBOARD.id ? tiles.find(tile => tile.id === definition.id) : undefined
+    const matches = pinned ? [pinned] : tiles.filter(tile => tile.text?.body?.split('\n', 1)[0] === heading)
+    const [note] = matches
+    if (matches.length > 1 || (note && (!note.text || !Number.isSafeInteger(note.id) || note.id <= 0 || used.has(note.id))))
+      throw new Error(`PostHog dashboard ${current.id} note ${definition.id} has ambiguous tile identity`)
+    if (note) used.add(note.id)
+    return { definition, note }
+  })
+}
 
 /**
  * Brings PostHog to the definitions. With `apply: false` it only reads and
@@ -238,17 +281,41 @@ export async function sync(api, { apply = false, log = () => {} } = {}) {
   // Layout and the reading note, once every tile exists.
   if (dashboard?.id) {
     const current = apply ? await api.dashboard(dashboard.id) : dashboard
-    const tiles = (current?.tiles ?? []).filter(tile => !tile.deleted)
+    if (current?.id !== dashboard.id || !Array.isArray(current.tiles))
+      throw new Error(`PostHog dashboard ${dashboard.id} tile state unavailable`)
+    const tiles = current.tiles.filter(tile => !tile.deleted)
+    const notes = resolveDashboardNotes(current)
     const updates = []
     for (const definition of INSIGHTS.filter(item => item.tile)) {
       const tile = tiles.find(item => item.insight && (item.insight.id === ids[definition.key] || item.insight.short_id === definition.shortId))
       if (tile && !same(tile.layouts?.sm, definition.tile)) updates.push({ id: tile.id, layouts: { ...tile.layouts, sm: definition.tile } })
     }
-    const note = tiles.find(tile => tile.text)
-    if (!note) updates.push({ text: { body: DASHBOARD.note.body }, layouts: { sm: DASHBOARD.note.layout } })
-    else if (note.text.body !== DASHBOARD.note.body || !same(note.layouts?.sm, DASHBOARD.note.layout))
-      updates.push({ id: note.id, text: { ...note.text, body: DASHBOARD.note.body }, layouts: { ...note.layouts, sm: DASHBOARD.note.layout } })
     if (updates.length) await act(`update dashboard ${dashboard.id} tiles (${updates.length})`, () => api.updateDashboard(dashboard.id, { tiles: updates }))
+    let notesChanged = false
+    for (const { definition, note } of notes) {
+      if (!note) {
+        await act(`create dashboard ${dashboard.id} note ${definition.id}`, () => api.createDashboardTextTile(dashboard.id, {
+          body: definition.body, layouts: { sm: definition.layout },
+        }))
+        notesChanged = true
+        continue
+      }
+      const changes = {}
+      if (note.text.body !== definition.body) changes.body = definition.body
+      if (!same(note.layouts?.sm, definition.layout)) changes.layouts = { ...note.layouts, sm: definition.layout }
+      if (Object.keys(changes).length) {
+        await act(`update dashboard ${dashboard.id} note ${note.id}`, () => api.updateDashboardTextTile(dashboard.id, note.id, changes))
+        notesChanged = true
+      }
+    }
+    if (apply && notesChanged) {
+      const verified = await api.dashboard(dashboard.id)
+      if (verified?.id !== dashboard.id || !Array.isArray(verified.tiles) || resolveDashboardNotes(verified).some(({ definition, note }, index) => {
+        const previous = notes[index].note
+        return (previous && note?.id !== previous.id) || note?.text.body !== definition.body || !same(note.layouts?.sm, definition.layout)
+      }))
+        throw new Error(`PostHog dashboard ${dashboard.id} note readback did not match the declarations`)
+    }
   }
 
   const alerts = await api.alerts()

@@ -57,7 +57,7 @@ export const AGENT_PROFILE_TEMPLATES = [
       'Procedure: inspect the candidate yourself instead of trusting the implementer summary. Check correctness, regressions, authorization boundaries, data integrity, failure handling and missing evidence in proportion to the change. This is the task\'s single review; do not introduce another stage.',
       'Output: concrete, reproducible findings with affected files and evidence, or an explicit statement of what was checked when nothing actionable remains. Identify missing observations as unverified, not as a pass.',
       'Verification: do not modify the implementation, rerun delivery, or accept your own review on the implementer\'s behalf.',
-      'Do not request a second review, expand your permissions, or merge. Acceptance and merge stay with the existing human approval flow.',
+      'Do not request a second review or merge. Acceptance and merge stay with the task owner.',
     ].join('\n'),
   },
 ] as const

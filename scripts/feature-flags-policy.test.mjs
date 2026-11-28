@@ -107,7 +107,7 @@ test('declared means declared as a flag in a registry, not any mikka-* literal i
   assert.deepEqual(problems, [])
   assert.match(readRegistries(path => files[path], { 'flags.ts': { renamed: 'flag' } }).problems[0], /flag registry renamed is missing/)
   const real = declaredFlagKeys()
-  for (const key of ['mikka-memory', 'mikka-computer-tab-off', 'mikka-personal-writes-off', 'mikka-linear-sync',
+  for (const key of ['mikka-memory', 'mikka-computer-tab-off', 'mikka-personal-writes-off', 'mikka-task-provider', 'mikka-track-owner-clicks',
     'mikka-byos-subscription-chat', 'mikka-config-announcement-banner', 'mikka-proactive-profile']) assert.ok(real.has(key), key)
   for (const key of ['mikka-deployment', 'mikka-linear-sync-service']) assert.equal(real.has(key), false, `${key} is a distinct id, not a flag`)
 })

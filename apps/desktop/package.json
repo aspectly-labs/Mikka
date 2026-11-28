@@ -17,6 +17,7 @@
     "package": "node scripts/build.mjs && electron-builder --config electron-builder.yml --publish never",
     "package:dir": "node scripts/build.mjs && electron-builder --dir --config electron-builder.yml --publish never",
     "package:mac": "node scripts/build.mjs && electron-builder --config electron-builder.yml --mac --arm64 --publish never",
+    "package:mac:prebuilt": "electron-builder --config electron-builder.yml --mac --arm64 --publish never",
     "package:dev:mac": "node scripts/package-dev.mjs"
   },
   "devDependencies": {

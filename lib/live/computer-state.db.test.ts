@@ -30,6 +30,12 @@ async function loadRuntime() {
 after(() => mock.restoreAll())
 
 test('real PG: computer changes publish committed owner state without heartbeat polling', { skip: !url, timeout: 120_000 }, async t => {
+  const edition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (edition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = edition
+  })
   const connectionString = await isolatedPostgresURL(url!)
   const admin = new Pool({ connectionString })
   const schema = `computer_live_${randomUUID().replaceAll('-', '')}`
@@ -98,7 +104,7 @@ test('real PG: computer changes publish committed owner state without heartbeat 
     }
     await database.query('CREATE TABLE user_e2b_keys ("userId" text PRIMARY KEY); CREATE TABLE workspace_e2b_keys ("createdBy" text)')
     await database.query('INSERT INTO user_e2b_keys VALUES ($1),($2)', [actor.userId, peer.userId])
-    await database.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL REFERENCES "user"(id),kind text NOT NULL CHECK (kind IN ('personal','team')));
+    await database.query(`CREATE TABLE mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL REFERENCES "user"(id),kind text NOT NULL CHECK (kind IN ('personal','team')), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
       CREATE TABLE mikka_workspace_members ("workspaceId" uuid,"userId" text,status text,PRIMARY KEY("workspaceId","userId"));
       CREATE TABLE session (id text PRIMARY KEY,"userId" text NOT NULL REFERENCES "user"(id),"expiresAt" timestamptz NOT NULL,
         "enterpriseOrganizationId" uuid,"enterpriseProviderId" text,"enterpriseDirectoryUserId" text,"enterpriseIdentityId" text);
@@ -108,7 +114,7 @@ test('real PG: computer changes publish committed owner state without heartbeat 
         "stopRequestedAt" timestamptz,"updatedAt" timestamptz,"finishedAt" timestamptz,"resumeStatus" text,"pauseReason" text,
         "botId" uuid,"machineAuthority" boolean NOT NULL DEFAULT false,cli_policy_hierarchy jsonb,"workspaceId" uuid);
       CREATE TABLE computer_run_bindings ("runId" uuid PRIMARY KEY REFERENCES agent_runs(id),"botId" uuid,"ownerId" text,"workspaceId" uuid,
-        "approvedForRun" boolean NOT NULL DEFAULT false,FOREIGN KEY ("botId","workspaceId","ownerId") REFERENCES bots(id,"workspaceId","ownerId"));
+        FOREIGN KEY ("botId","workspaceId","ownerId") REFERENCES bots(id,"workspaceId","ownerId"));
       CREATE TABLE thread_machines ("runId" uuid PRIMARY KEY,"botId" uuid,"ownerId" text,"workspaceId" uuid,"deviceId" uuid,state text,"sandboxId" text,epoch integer);`)
     await database.query(await readFile(new URL('../../drizzle/20261027164510_local_computer_reviews.sql', import.meta.url), 'utf8'))
     for (const name of ['20261109035020_organization_governance.sql', '20261109035023_enterprise_live_session_authority.sql']) {

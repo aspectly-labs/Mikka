@@ -67,7 +67,7 @@ stub('../lib/search/index.ts',{webSearch:effect})
 stub('../lib/device-link.ts',{DEVICE_ONLINE_WINDOW_MS:60_000})
 stub('../lib/composio.ts',{runComposioAction:effect})
 stub('../lib/app-policy/store.ts',{botMayUseApp:policyChecks})
-stub('../lib/composio-actions.ts',{COMPOSIO_ACTIONS:{fetch_recent_gmail:{toolkit:'gmail'},send_email:{toolkit:'gmail'}}})
+stub('../lib/composio-actions.ts',{COMPOSIO_ACTIONS:{fetch_recent_gmail:{toolkit:'gmail'},send_email:{toolkit:'gmail'}},createComposioAITools:()=>({}),createGoogleAITools:()=>({})})
 stub('../lib/operations/write-runtime.ts',{personalWriteFromRun:effect})
 stub('../lib/pending-action-store.ts',{writeAccountAction:effect,proposeRepositoryPush:effect})
 stub('../lib/issue-access.ts',{issueForUser:effect})
@@ -86,6 +86,9 @@ const projectDecisionWrite = mock.fn(async (..._args: unknown[]) => ({ decisionI
 let projectExecutionActive = true
 let projectExecutionMissing = false
 stub('../lib/agent-kit/service.ts', {
+  agentKitDefaults: () => assert.fail('search must not allocate an execution'),
+  agentKitEnabled: () => false,
+  agentScopeWithBotMetadata: async () => assert.fail('search must not allocate an execution'),
   agentScope: async (ownerId: string, botId: string) => ({ ownerId, botId, workspaceId: 'host-workspace' }),
   agentKitStore: { readExecution: async () => projectExecutionMissing ? null : ({ status: projectExecutionActive ? 'running' : 'completed', snapshot: { effectiveTools: ['record_decision'], runtime: { harness: 'codex', model: 'host-model' } } }) },
 })
@@ -104,6 +107,21 @@ beforeEach(()=>{
   hostQuestionReference.binding.candidateId=null
   bridgeResult={}
   for (const fn of [checks,effect,readRunResult,readQuestion,escalateQuestion,readUserEvent,readPublicTask,factoryForBot,bridge]) fn.mock.resetCalls()
+})
+
+test('an unavailable interactive Eve search returns without calling the legacy search provider', async () => {
+  const { createCoordinatorRegistry } = await import('../workflows/coordinator/tools')
+  const context = { toolCallId: 'eve-search-call', messages: [], context: {} }
+  const unavailable = createCoordinatorRegistry(user, COORDINATOR_BOT, undefined, { webSearchRuntime: null })
+  assert.deepEqual(await unavailable.web_search!.execute!({ query: 'fixture' }, context), {
+    ok: false, error: 'searchUnavailable', outcome: 'error',
+  })
+  assert.equal(effect.mock.callCount(), 0)
+  const authorized = createCoordinatorRegistry(user, COORDINATOR_BOT, undefined, {
+    webSearchRuntime: { harness: 'ai_sdk', model: null },
+  })
+  assert.deepEqual(await authorized.web_search!.execute!({ query: 'fixture' }, context), { ok: true })
+  assert.equal(effect.mock.callCount(), 1)
 })
 
 const binding={taskId:'task',issueId:'issue',attemptId:'attempt',revision:1,candidateId:null}

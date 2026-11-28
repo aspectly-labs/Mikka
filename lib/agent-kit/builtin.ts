@@ -34,6 +34,8 @@ export function platformEffectiveTools(stored: StoredToolSource, builtinTools: r
   const created = stored.createdAt ? new Date(stored.createdAt).getTime() : Number.NaN
   if (Number.isNaN(created)) return [...stored.tools]
   const added = builtinTools.filter(id => {
+    // The Web Fetch rollout inherits an existing public web grant on older custom Bots.
+    if (id === 'web_fetch' && !stored.tools.includes('web_search')) return false
     const at = PLATFORM_TOOL_ADDED[id]
     return !stored.tools.includes(id) && at !== undefined && Date.parse(at) > created
   })

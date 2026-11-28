@@ -1,6 +1,6 @@
 # 订阅只给自己用
 
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-27-1740-model-keys-personal-or-workspace.md](2026-11-27-1740-model-keys-personal-or-workspace.md) (API Key 的团队分享也取消；工作区自己添加 API Key)
 
 2026-11-17：用户决定，Claude 和 Codex 订阅只给订阅的主人用，成员之间不再共享订阅。
 

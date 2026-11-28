@@ -45,7 +45,8 @@ export async function runAuthAudit({ env = process.env, fetchImpl = fetch } = {}
     const response = await request('/api/integrations/mcp/shares', { method: 'PATCH',
       headers: { 'content-type': 'application/json' }, body: '{}' })
     const body = await response.json()
-    check(response.status === 400 && body?.error === 'invalidPluginInput', 'human_boundary_failed')
+    // The retired share route (decision 2026-11-27-1700) still authenticates a human session, then answers 410.
+    check(response.status === 410 && body?.error === 'mcpSharingRetired', 'human_boundary_failed')
     return { httpStatus: response.status, authenticated: true, noGrantMutation: true }
   }
   try {

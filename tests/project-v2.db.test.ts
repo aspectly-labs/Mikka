@@ -346,7 +346,7 @@ test('Project v2: split database migration, canonical relationships and live ten
       const renamed = await actAs(member, () => actions.updateProjectProperties({ id: createdId, revision: row.revision, changes: { name: 'Renamed through ID' }, workspaceId: alpha }))
       assert.ok('project' in renamed, JSON.stringify(renamed))
       const views = await projectViewsForTasks([{ id: initialTasks[1], workspaceId: alpha }, { id: initialTasks[0], workspaceId: alpha }, { id: foreignTask, workspaceId: beta }])
-      assert.deepEqual(views.get(initialTasks[1]), { projectId: createdId, project: 'Renamed through ID' })
+      assert.deepEqual(views.get(initialTasks[1]), { projectId: createdId, project: 'Renamed through ID', environmentId: null })
       assert.equal(views.has(initialTasks[0]), false)
       assert.equal(views.has(foreignTask), false)
       assert.equal((await projectViewsForTasks([{ id: initialTasks[1], workspaceId: beta }])).size, 0)

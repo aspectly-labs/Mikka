@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import sizes from '../scripts/e2b/machine-sizes.json'
 import { harnessInfoSchema } from '@mikka/protocol/harness'
 import type { OrderEntry } from './model-order-plan'
 import { runtimeEnv } from '@/lib/env/server'
@@ -7,11 +8,21 @@ export type CloudTemplateKind = z.infer<typeof cloudTemplateKindSchema>
 const template = z.object({ templateId: z.string().regex(/^[A-Za-z0-9_-]+$/), models: z.array(harnessInfoSchema).max(4),
   baseTemplate: cloudTemplateKindSchema.optional(), preinstalled: z.boolean().optional(),
 }).strict().refine(row => (row.baseTemplate === undefined) === (row.preinstalled === undefined))
+const variant = z.object({
+  kind:cloudTemplateKindSchema, size:z.enum(['small','medium','large','ultra']), templateId:z.string().regex(/^[A-Za-z0-9_-]+$/),
+  cpuCount:z.number().int(), memoryMB:z.number().int(),
+}).strict().refine(row => (row.kind !== 'desktop' || row.size === 'medium') && sizes[row.size].cpuCount === row.cpuCount && sizes[row.size].memoryMB === row.memoryMB)
 export const cloudTemplateModelsSchema = z.object({
   version: z.literal(1), workerSha: z.string().regex(/^[a-f0-9]{40}$/),
   sourceCommit: z.string().regex(/^[a-f0-9]{40}$/).optional(),
   templates: z.object({ desktop: template, claude: template, codex: template }).strict(),
-}).strict()
+  machineVariants:z.array(variant).max(9).optional(),
+}).strict().refine(catalog => {
+  const rows = catalog.machineVariants
+  if (!rows) return true
+  if (new Set(rows.map(r=>r.templateId)).size !== rows.length || new Set(rows.map(r=>r.kind+'/'+r.size)).size !== rows.length) return false
+  return cloudTemplateKindSchema.options.every(kind => rows.some(r=>r.kind === kind && r.size === 'medium' && r.templateId === catalog.templates[kind].templateId))
+})
 export type CloudModelState = 'ready' | 'cloudModelsUnknown' | 'cloudModelNotReported'
 export function cloudTemplateModels(env: Record<string, string | undefined> = runtimeEnv()) {
   try {
@@ -27,11 +38,7 @@ export function cloudTemplateModels(env: Record<string, string | undefined> = ru
   } catch { return null }
 }
 
-/** Only release-gated catalogue IDs identify additive images. Bare official
- * names remain usable for rollback; arbitrary replacement IDs are refused. */
-export function cloudTemplateOrigin(templateId: string, env: Record<string, string | undefined> = runtimeEnv()): { kind: CloudTemplateKind; preinstalled: boolean } | null {
-  const official = cloudTemplateKindSchema.safeParse(templateId)
-  if (official.success) return { kind: official.data, preinstalled: false }
+function releasedCloudTemplates(env: Record<string, string | undefined>) {
   const catalogues = [cloudTemplateModels(env)]
   try {
     const previous = JSON.parse(env.MIKKA_CLOUD_RUNTIME_PREVIOUS ?? '')
@@ -39,8 +46,28 @@ export function cloudTemplateOrigin(templateId: string, env: Record<string, stri
       catalogues.push(cloudTemplateModels(previous.configuration))
     }
   } catch { /* No previous release is configured. */ }
-  for (const catalogue of catalogues) {
+  return catalogues
+}
+
+/** A paused desktop's exact release image identifies the worker installed by
+ * the release, independent of the currently selected template ID. */
+export function releasedDesktopWorker(templateId: string, env: Record<string, string | undefined> = runtimeEnv()) {
+  for (const catalogue of releasedCloudTemplates(env)) {
+    const desktop = catalogue?.templates.desktop
+    if (desktop?.templateId === templateId && desktop.preinstalled === true) return catalogue?.workerSha
+  }
+  return undefined
+}
+
+/** Only release-gated catalogue IDs identify additive images. Bare official
+ * names remain usable for rollback; arbitrary replacement IDs are refused. */
+export function cloudTemplateOrigin(templateId: string, env: Record<string, string | undefined> = runtimeEnv()): { kind: CloudTemplateKind; preinstalled: boolean } | null {
+  const official = cloudTemplateKindSchema.safeParse(templateId)
+  if (official.success) return { kind: official.data, preinstalled: false }
+  for (const catalogue of releasedCloudTemplates(env)) {
     if (!catalogue) continue
+    const variant = catalogue.machineVariants?.find(row => row.templateId === templateId)
+    if (variant) return { kind:variant.kind, preinstalled:true }
     for (const kind of cloudTemplateKindSchema.options) {
       const row = catalogue.templates[kind]
       if (row.templateId === templateId && row.baseTemplate === kind && row.preinstalled === true) return { kind, preinstalled: true }
@@ -60,11 +87,13 @@ export function threadMachineTemplateKind(machine: { snapshotId?: unknown; templ
   return known?.kind ?? null
 }
 /** The release proves the selected image has its Agent. Credentials admit models. */
-export type CloudModelPurpose = 'task' | 'desktop' | 'cloudflare_task'
+export type CloudModelPurpose = 'task' | 'desktop' | 'cloudflare_task' | 'repository_admission'
 export function cloudModelSupport(entry: Pick<OrderEntry, 'harness' | 'model' | 'source'>, purpose: CloudModelPurpose = 'task', env: Record<string, string | undefined> = runtimeEnv()): CloudModelState {
   // The protected task image release verifies both native binaries. Its
   // subscription catalogue and current allowance are authorized by dispatch.
   // Mikka 额度 reaches any catalogue model through the model gateway, on either image.
+  // Repository admission selects and validates the machine after model selection.
+  if (purpose === 'repository_admission') return 'ready'
   if (purpose === 'cloudflare_task') return entry.source.kind === 'subscription' || entry.source.kind === 'credits' ? 'ready' : 'cloudModelNotReported'
   const catalogue = cloudTemplateModels(env)
   if (!catalogue) return 'cloudModelsUnknown'

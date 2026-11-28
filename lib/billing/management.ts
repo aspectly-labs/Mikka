@@ -18,6 +18,7 @@ import { readCreditBillingAccount } from './history'
 import { readResourceBudgets } from './resource-budgets'
 import { setWorkspaceBudget } from './budget-service'
 import { saveAutoRechargePolicy } from './auto-recharge'
+import { saveOveragePolicy } from './overage'
 import { setOrganizationBillingAccount } from './organization-account'
 import { pointsPurchaseUrl } from './points-purchase'
 import { resolveAppOrigin } from '@/lib/auth-config'
@@ -26,6 +27,7 @@ import { ensureLegacyVerification } from '@/lib/abuse/runtime'
 import { withBillingAuthority } from './authority'
 import type { BillingManagementOperation, BillingManagementView, BillingScope } from './management-contract'
 import { runtimeEnv } from '@/lib/env/server'
+import { BYOK_WEB_SEARCH_USAGE_LABEL } from '@/lib/search/types'
 
 export const billingScopeSchema = z.object({ kind: z.enum(['workspace', 'organization']), id: z.uuid() })
 
@@ -130,13 +132,14 @@ export async function billingManagementView(actorId: string, target: BillingScop
         or "agentDefinition"->'executionIdentity'->'billingAccount'->'runtime'->>'amount'='provider_unknown')`, [usageIds, start, end]),
       pool.query<{ available: boolean }>(`select to_regclass('resource_access_policies') is not null available`),
       usageMemberId && effective.usageExport
-        ? pool.query<NonNullable<BillingManagementView['usage']['memberDetail']>['models'][number]>(`select model,
+        ? pool.query<NonNullable<BillingManagementView['usage']['memberDetail']>['models'][number]>(`select
+          case when to_jsonb(u)->>'byokWebSearch'='true' then $7::text else model end as model,
           coalesce(sum("costMicroUsd"),0)::float8 as "costMicroUsd",
           coalesce(sum("inputTokens"),0)::text as "inputTokens", coalesce(sum("outputTokens"),0)::text as "outputTokens",
           count(*) filter (where "costMicroUsd" is null)::int as "unknownCalls"
-          from hosted_usage where "createdAt">=$1 and "createdAt"<$2 and ${payerFilter} and "actorId"=$6 and state='settled'
+          from hosted_usage u where "createdAt">=$1 and "createdAt"<$2 and ${payerFilter} and "actorId"=$6 and state='settled'
           and COALESCE("billingSource",'credits')='credits'
-          group by model order by "costMicroUsd" desc, model`, [...usageParams, usageMemberId])
+          group by 1 order by "costMicroUsd" desc, model`, [...usageParams, usageMemberId, BYOK_WEB_SEARCH_USAGE_LABEL])
         : null,
     ])
     const resources = budgetWorkspaceId && policies.rows[0]?.available ? (await pool.query<BillingManagementView['resourceTargets'][number]>(`
@@ -166,6 +169,7 @@ const operation = z.discriminatedUnion('action', [
   z.object({ action: z.literal('budget'), workspaceId: z.uuid(), budget: z.unknown() }).strict(),
   z.object({ action: z.literal('account'), workspaceId: z.uuid().nullable() }).strict(),
   z.object({ action: z.literal('recharge'), policy: z.unknown(), accountWorkspaceId: z.uuid() }).strict(),
+  z.object({ action: z.literal('overage'), policy: z.unknown(), accountWorkspaceId: z.uuid() }).strict(),
   z.object({ action: z.enum(['checkout', 'portal']), accountWorkspaceId: z.uuid() }).strict(),
   z.object({ action: z.literal('topup'), amount: z.number(), locale: z.enum(['en', 'zh-CN']), accountWorkspaceId: z.uuid() }).strict(),
 ])
@@ -186,6 +190,10 @@ export async function mutateBillingManagement(actorId: string, target: BillingSc
   if (value.action === 'recharge') {
     if (!current.canManageRecharge) throw new WorkspaceError('workspaceAccessDenied')
     return saveAutoRechargePolicy(actorId, current.account.workspaceId, value.policy)
+  }
+  if (value.action === 'overage') {
+    if (!current.canManageRecharge) throw new WorkspaceError('workspaceAccessDenied')
+    return saveOveragePolicy(actorId, current.account.workspaceId, value.policy)
   }
   if (!current.canManagePayments) throw new WorkspaceError('workspaceAccessDenied')
   if (value.action !== 'portal' && !current.canPurchasePlatform) throw new WorkspaceError('billingPolicyChanged')

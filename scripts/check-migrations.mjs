@@ -31,6 +31,20 @@ export const LEGACY_FROZEN = {
   '0014_workspace_teams.sql': 'ebde945d5cfc',
 }
 
+// The one approved rewrite of a timestamp migration already on main (Alex, 2026-11-28: 破一次例修改).
+// 20261127170716_workspace_mcp_servers.sql never ran on staging or production: staging's
+// automatic-migration admission rejected it before any write (BEGIN/COMMIT and partial indexes on
+// CREATE TABLE IF NOT EXISTS tables are outside the automatic subset). Bound to the exact SHA-256 of
+// the published bytes and of the replacement: any other edit to it, and every other migration, still fails.
+export const APPROVED_REWRITES = Object.freeze({
+  '20261127170716_workspace_mcp_servers.sql': Object.freeze({
+    from: 'd5597ebc355e1f8367aa2cb80fff79d538a796bdfae95a0e0aa13ba48819ddbf',
+    to: 'a1c7fff30cb1f9c78d45af204fbf711eb48ea16916c6788a5a72eada35a9780e',
+  }),
+})
+
+const sha256 = (text) => createHash('sha256').update(text).digest('hex')
+
 const TIMESTAMP = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})_[a-z0-9_]+\.sql$/
 
 export function parseTimestamp(name) {
@@ -68,7 +82,7 @@ export function removesColumn(sql) {
 }
 
 // files: 当前分支的 [{name, content}]；mainFiles: main 上的文件快照（兼容旧的文件名数组）。
-export function checkMigrations(files, mainFiles, legacy = LEGACY_FROZEN) {
+export function checkMigrations(files, mainFiles, legacy = LEGACY_FROZEN, rewrites = APPROVED_REWRITES) {
   const problems = []
   const names = files.map((f) => f.name)
   if (new Set(names).size !== names.length) problems.push('存在重复的迁移文件名')
@@ -92,7 +106,10 @@ export function checkMigrations(files, mainFiles, legacy = LEGACY_FROZEN) {
   for (const entry of mainFiles ?? []) {
     const { name, content } = typeof entry === 'string' ? { name: entry } : entry
     if (!current.has(name)) problems.push(`${name}：main 上的迁移不能删除或改名`)
-    else if (content !== undefined && current.get(name) !== content) problems.push(`${name}：main 上的迁移不能修改，请新增修正迁移`)
+    else if (content !== undefined && current.get(name) !== content
+      && !(Object.hasOwn(rewrites, name) && sha256(content) === rewrites[name].from && sha256(current.get(name)) === rewrites[name].to)) {
+      problems.push(`${name}：main 上的迁移不能修改，请新增修正迁移`)
+    }
   }
   const inherited = new Set((mainFiles ?? []).map(entry => typeof entry === 'string' ? entry : entry.name))
   if (mainFiles) for (const { name, content } of files) {

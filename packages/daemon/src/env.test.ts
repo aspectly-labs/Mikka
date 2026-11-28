@@ -77,6 +77,11 @@ describe("buildChildEnv", () => {
     expect(env).not.toHaveProperty("CLAUDE_CONFIG_DIR")
   })
 
+  it("keeps deployment E2B custody outside agent and setup children", () => {
+    expect(buildChildEnv({ host: { PATH: "/bin", E2B_API_KEY: "test-only", E2B_TEAM_ID: "test-team" },
+      adapterAllow: ["E2B_API_KEY", "E2B_TEAM_ID"] })).toEqual({ PATH: "/bin" })
+  })
+
   it("classifies names", () => {
     expect(isDeniedEnvName("MCP_ANYTHING")).toBe(true)
     expect(isDeniedEnvName("PATH")).toBe(false)

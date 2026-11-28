@@ -98,7 +98,7 @@ test('a PR webhook records its line counts on the delivery and on the tasks it b
       { actor_type: 'system', actor_id: 'github-webhook', revision: 3 },
     ])
     const { rows: [publication] } = await pool.query('SELECT "pullRequest" FROM run_publications WHERE "runId"=$1', [runId])
-    assert.deepEqual(publication.pullRequest, { url, state: 'merged', title: 'Fix the login page', additions: 18, deletions: 4 })
+    assert.deepEqual(publication.pullRequest, { url, state: 'merged', mergedAt: '2026-11-02T00:00:00.000Z', title: 'Fix the login page', additions: 18, deletions: 4 })
     // A task with no delivery for this PR is never touched.
     assert.equal((await task(unrelated)).revision, 1)
     assert.deepEqual((await task(unrelated)).content.attrs.mikka.pullRequests, [{ url, state: 'open' }])

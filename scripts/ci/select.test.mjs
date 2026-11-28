@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import yaml from 'js-yaml'
-import { select, diffRange } from './select.mjs'
+import { select, diffRange, emit, desktopClosure, desktopEntryFiles, desktopRunPaths, desktopWorkspaceRoots, DESKTOP_VIRTUAL_INPUT, DESKTOP_PATH } from './select.mjs'
 import { buildGraph, dbId, sourceId, strictCommand } from './graph.mjs'
 import { selectScripts, shardScripts } from '../run-db-tests.mjs'
 
@@ -99,10 +99,11 @@ test('enrolled billing fixture edits retain their real DB consumers without unre
   ].map(file => change(file)))
   assert.equal(result.full, false)
   // Keep both explicit package owners and the existing source-contract callers.
+  // The scope suite no longer imports the Linear archive fixtures.
   assert.deepEqual(result.db_suites, [
     'test:abuse-db', 'test:approved-writes-db', 'test:bot-threads-db',
     'test:coordinator-task-binding-db', 'test:migration-steps-db',
-    'test:onboarding-db', 'test:scope-detachment-db', 'test:workspace-admin-db',
+    'test:onboarding-db', 'test:workspace-admin-db',
   ])
   assert(result.source)
   for (const flag of ['daemon', 'desktop', 'analytics']) assert.equal(result[flag], false, flag)
@@ -247,8 +248,9 @@ test('the actual required gate scripts reject drafts, unselected failures and se
       else assert(!run({DB_RESULT:result}))
     }
     if (job === 'ui-policy') {
-      assert(!/\b(?:EXPECT_)?DESKTOP\b/.test(script), 'the automatic gate has no Desktop consumer')
-      for (const retired of ['DESKTOP', 'IMAGE']) {
+      // Desktop is a selected lane again (desktop-checks calls desktop.yml); the image lane stays retired.
+      assert(names.includes('DESKTOP'), 'the automatic gate requires the selected Desktop suite')
+      for (const retired of ['IMAGE']) {
         assert(!new RegExp(`\\b(?:EXPECT_)?${retired}\\b`).test(script), retired)
         for (const result of ['success', 'skipped', 'failure', 'cancelled', 'timed_out', ''])
           assert(run({ ['EXPECT_' + retired]: 'true', [retired]: result }), `a retired ${retired} result does not affect the automatic gate`)
@@ -321,4 +323,128 @@ test('filesystem-based i18n and generated catalog policies cannot disappear from
       assert(result.units.includes(`ci-${key}`), `${file}: ${command}`)
     }
   }
+})
+
+// Dry run of the Desktop route: the selector's real GitHub outputs feed the real `desktop-checks` condition in CI.
+test('desktop paths route CI to desktop.yml; web-only and docs-only changes do not', async () => {
+  const ci = yaml.load(readFileSync('.github/workflows/ui-policy.yml', 'utf8'))
+  const job = ci.jobs['desktop-checks']
+  assert.equal(job.uses, './.github/workflows/desktop.yml')
+  assert.deepEqual(job.with, { selected: true })
+  const evaluate = (expression, context) => runInNewContext(expression.replace(/\.([\w-]+)/g, '[$1]').replace(/\[([\w-]+)\]/g, '["$1"]'), context)
+  const directory = mkdtempSync(join(tmpdir(), 'desktop-route-'))
+  const outputsFor = async (files, event) => {
+    const output = join(directory, `output-${Math.random().toString(36).slice(2)}`)
+    writeFileSync(output, '')
+    const log = console.log
+    console.log = () => {}
+    try { emit(await select(plan, files.map(file => change(file)), { event, desktopInputs: { lockfile: false, manifest: false } }), { GITHUB_OUTPUT: output }) } finally { console.log = log }
+    return Object.fromEntries(readFileSync(output, 'utf8').trim().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]))
+  }
+  const routed = async (files, event = 'pull_request', draft = false) => evaluate(job.if, {
+    needs: { changes: { result: 'success', outputs: await outputsFor(files, event) } },
+    github: { event_name: event, event: { pull_request: { draft } } },
+  })
+  try {
+    for (const file of ['apps/desktop/src/main/index.ts', 'apps/desktop/scripts/build.mjs']) {
+      assert.equal((await outputsFor([file], 'pull_request')).desktop, 'true', file)
+      for (const event of ['pull_request', 'merge_group', 'schedule', 'workflow_dispatch']) assert.equal(await routed([file], event), true, `${file} on ${event}`)
+      assert.equal(await routed([file], 'pull_request', true), false, 'a draft defers Desktop like every runner-heavy lane')
+      assert.equal(await routed([file], 'push'), false, 'main pushes rely on the merge-queue run of the same commit')
+    }
+    for (const file of ['docs/ci/incremental.md']) {
+      assert.equal(await routed([file]), false, file)
+      assert.equal(await routed([file], 'merge_group'), false, file)
+    }
+    // The page a build without the official UI compiles, reached through the plugin's virtual `mikka:application`.
+    for (const event of ['pull_request', 'merge_group']) assert.equal(await routed(['apps/frontend/src/headless.ts'], event), true, event)
+    // A global input no longer selects Desktop on a pull request; the merge group still runs it.
+    for (const file of ['scripts/ci/select.mjs', '.github/workflows/ui-policy.yml', 'pnpm-lock.yaml', 'package.json']) {
+      assert.equal(await routed([file]), false, file)
+      assert.equal(await routed([file], 'merge_group'), true, file)
+    }
+    for (const file of ['packages/protocol/src/index.ts', '.github/workflows/desktop.yml']) assert.equal(await routed([file]), true, file)
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('on a pull request Desktop follows its Nx closure, its workflow, and lockfile or manifest changes that reach it', async () => {
+  const pr = (files, options = {}) => select(plan, files.map(file => typeof file === 'string' ? change(file) : file), { event: 'pull_request', ...options })
+  const closure = desktopClosure(plan)
+  assert.ok(closure.has('packages/protocol/src/index.ts'))
+  assert.ok(!closure.has('apps/frontend/src/headless.ts'), 'the graph does not see the virtual import; DESKTOP_VIRTUAL_INPUT does')
+  // A shared module Desktop imports, found through the graph rather than a path list.
+  const shared = [...closure].find(file => file.startsWith('lib/') && !file.includes('.test.'))
+  assert.ok(shared, 'Desktop imports at least one lib module')
+  assert.equal((await pr([shared])).desktop, true, shared)
+  // A file only desktop.yml runs (test:platform) is a Desktop input too.
+  for (const file of desktopEntryFiles(process.cwd(), plan.files)) assert.ok(closure.has(file), file)
+  assert.ok(desktopEntryFiles(process.cwd(), plan.files).some(file => file.startsWith('lib/platform/')))
+  for (const [inputs, expected] of [[{ lockfile: false }, false], [{ lockfile: true }, true], [{}, true]]) {
+    assert.equal((await pr(['pnpm-lock.yaml'], { desktopInputs: inputs })).desktop, expected, JSON.stringify(inputs))
+  }
+  for (const file of ['pnpm-workspace.yaml', 'nx.json']) assert.equal((await pr([file])).desktop, true, file)
+  // A deleted module Desktop imported leaves a dangling import in the closure.
+  const importer = [...closure].find(file => file.startsWith('apps/desktop/src/') && file.endsWith('.ts') && !file.includes('.test.'))
+  const dangling = { ...plan, unresolved: [...plan.unresolved, { file: importer, spec: './removed-module' }] }
+  assert.equal((await select(dangling, [change('lib/removed-module.ts', { status: 'D', mode: '000000' })], { event: 'pull_request' })).desktop, true)
+  assert.equal((await pr([change('lib/removed-module.ts', { status: 'D', mode: '000000' })])).desktop, false, 'a deletion Desktop never imported')
+  // No trustworthy diff, merge groups and docs keep their rules.
+  assert.equal((await select(plan, [], { event: 'pull_request' })).desktop, true)
+  assert.equal((await select(plan, [change('scripts/ci/select.mjs')], { event: 'merge_group' })).desktop, true)
+  assert.equal((await pr(['docs/ci/incremental.md'])).desktop, false)
+})
+
+test('on a pull request Desktop follows every workspace package it links and every path desktop.yml runs, present or not', async () => {
+  const pr = changes => select(plan, changes, { event: 'pull_request' })
+  // Derived from apps/desktop/package.json, followed through each linked package's own workspace: links.
+  const desktop = JSON.parse(readFileSync('apps/desktop/package.json', 'utf8'))
+  const direct = Object.entries({ ...desktop.dependencies, ...desktop.devDependencies }).filter(([, version]) => String(version).startsWith('workspace:')).map(([name]) => name)
+  const roots = desktopWorkspaceRoots()
+  for (const name of direct) {
+    const dir = roots.find(root => JSON.parse(readFileSync(`${root}package.json`, 'utf8')).name === name)
+    assert.ok(dir, `${name} is a Desktop input`)
+  }
+  for (const dir of ['packages/config/', 'packages/daemon/', 'packages/protocol/']) assert.ok(roots.includes(dir), dir)
+  for (const file of ['packages/config/tsconfig.base.json', 'packages/config/package.json', 'packages/daemon/package.json', '.npmrc'])
+    assert.equal((await pr([change(file)])).desktop, true, file)
+  // A path desktop.yml runs selects Desktop even when the pull request deletes it (it is gone from the candidate tree).
+  const run = desktopRunPaths()
+  assert.ok(run.includes('scripts/test-accounts/cli.mjs'))
+  assert.ok(run.includes('apps/desktop/scripts/install-electron.mjs'), 'a step\'s working-directory prefixes its paths')
+  const withoutCli = { ...plan, files: plan.files.filter(file => file !== 'scripts/test-accounts/cli.mjs') }
+  assert.ok(!desktopEntryFiles(process.cwd(), withoutCli.files).includes('scripts/test-accounts/cli.mjs'))
+  for (const status of ['D', 'M']) {
+    const deleted = change('scripts/test-accounts/cli.mjs', status === 'D' ? { status, mode: '000000' } : {})
+    assert.equal((await select(withoutCli, [deleted], { event: 'pull_request' })).desktop, true, status)
+  }
+  assert.equal((await pr([change('scripts/ci/select.mjs')])).desktop, false, 'a script desktop.yml does not run')
+
+  // The bundled smoke's main subject is Desktop's own server API end to end: sign-in, discovery, config and RPC.
+  for (const file of ['app/api/desktop/return/route.ts', 'app/api/desktop/rpc/route.ts', 'lib/desktop-auth-server.ts']) {
+    for (const event of ['pull_request', 'merge_group']) assert.equal((await select(plan, [change(file)], { event })).desktop, true, `${file} on ${event}`)
+  }
+})
+
+test('every file the application plugin and Vite config read by name is a Desktop input on pull requests and merge groups', async () => {
+  const closure = desktopClosure(plan)
+  const covered = file => DESKTOP_PATH.test(file) || DESKTOP_VIRTUAL_INPUT.test(file) || closure.has(file)
+  for (const source of ['apps/frontend/scripts/application-plugin.mjs', 'apps/frontend/vite.config.mjs']) {
+    const text = readFileSync(source, 'utf8')
+    const literals = [...text.matchAll(/resolve\((frontend|repository|renderer|actionDirectory), '([^'$`]+)'\)/g)].map(([, base, path]) =>
+      ({ frontend: 'apps/frontend/', repository: '', renderer: 'apps/desktop/src/renderer/', actionDirectory: 'app/actions/' })[base] + path)
+      .filter(path => !/^(?:\.\.|public$|apps\/desktop\/dist$|dist)/.test(path) && /\.[a-z]+$/.test(path))
+    if (source.endsWith('application-plugin.mjs')) assert.ok(literals.includes('apps/frontend/src/headless.ts'), 'the plugin names the headless entry')
+    for (const path of literals) assert.ok(covered(path), `${source} reads ${path}`)
+  }
+  for (const file of ['apps/frontend/index.html', 'app/actions/billing.ts', 'lib/desktop-rpc/registry.ts']) {
+    for (const event of ['pull_request', 'merge_group']) assert.equal((await select(plan, [change(file)], { event })).desktop, true, `${file} on ${event}`)
+  }
+})
+
+test('a tree without desktop.yml runs nothing through it instead of failing the selection', () => {
+  const root = mkdtempSync(join(tmpdir(), 'mikka-no-desktop-yml-'))
+  try {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ scripts: {} }))
+    assert.deepEqual(desktopRunPaths(root), [])
+  } finally { rmSync(root, { recursive: true, force: true }) }
 })

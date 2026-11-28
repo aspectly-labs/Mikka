@@ -23,7 +23,7 @@
       "contentPlaceholder": "Steps the Agent follows on matching tasks…",
       "emptySectionTitle": "Skill files",
       "invalidInput": "Enter owner/repo and an alphanumeric slug.",
-      "addSkill": "Add skill",
+      "addSkill": "New skill",
       "scopePersonal": "Personal",
       "scopeWorkspace": "Workspace",
       "slugLabel": "Skill slug",
@@ -42,7 +42,13 @@
       "selectedSkillLabel": "Selected skill",
       "sourcePlaceholder": "owner/repo",
       "backToSkills": "Skills",
-      "addTitle": "Add skill"
+      "addTitle": "Add skill",
+      "policyHeading": "Workspace skills",
+      "policyLabel": "Publishing to the workspace",
+      "policyOpen": "Open",
+      "policyReview": "Requires review",
+      "policyOff": "Off",
+      "pendingTag": "Coming soon"
     },
     "agentProfiles": {
       "reasons": {
@@ -295,8 +301,8 @@
         "title": "Workspace general"
       },
       "connections": {
-        "keywords": "plugins integrations connections apps custom mcp servers",
-        "title": "Plugins"
+        "keywords": "connectors plugins apps tools custom mcp servers",
+        "title": "Connectors & MCP"
       },
       "usage": {
         "title": "Usage"
@@ -342,7 +348,8 @@
         "title": "Team permissions"
       },
       "privacy": {
-        "title": "Data & privacy"
+        "title": "Data & privacy",
+        "keywords": "data privacy export shared links archived delete"
       },
       "security": {
         "title": "Security"
@@ -358,6 +365,18 @@
       },
       "secrets": {
         "title": "Secrets & Credentials"
+      },
+      "integrations": {
+        "title": "Integrations",
+        "keywords": "integrations github linear slack telegram accounts connect"
+      },
+      "agent-configs": {
+        "title": "Agent configurations",
+        "keywords": "agent configurations profiles roles model instructions bot task"
+      },
+      "identity": {
+        "title": "Identity & access",
+        "keywords": "identity access domains single sign-on sso saml two-step verification"
       }
     },
     "mcpConnections": {
@@ -428,7 +447,7 @@
       "transferWorkspace": "Transfer workspace",
       "deleting": "Deleting…",
       "deleteBots": "{count, plural, one {# bot} other {# bots}}, the threads they dispatched and their cloud computers",
-      "newWorkVisibility": "Default visibility of my new work",
+      "newWorkVisibility": "My default for new work",
       "taskPrefixHint": "This workspace's prefix. Numbers already issued stay as they are.",
       "personalUndeletable": "A personal workspace cannot be deleted",
       "transferTitle": "Transfer “{name}”",
@@ -450,15 +469,15 @@
       "transferNoMembers": "No other members",
       "address": "Workspace address",
       "deleteWorkspace": "Delete workspace",
-      "workspaceWorkVisibility": "Default visibility of new workspace work",
+      "workspaceWorkVisibility": "New work starts as",
       "allowPrivate": "Allow private work",
       "idHint": "Used for support and API requests.",
       "name": "Name",
       "profile": "Workspace profile",
       "taskPrefix": "Task prefix",
       "deleteKept": "Members’ personal accounts and model subscriptions are kept.",
-      "deletePoints": "{points} unused purchased points",
-      "workspaceWorkHint": "Used when a member has not chosen a personal default.",
+      "deletePoints": "{points} unused purchased credits",
+      "workspaceWorkHint": "When a member has no default of their own",
       "replay": "Replay",
       "transferPick": "Choose a member",
       "replaying": "Replaying…",
@@ -727,29 +746,29 @@
       "consentLabel": "Authorize automatic top-ups within the configured threshold and monthly cap once supported",
       "receiptsRowDescription": "Billing receipts and invoice emails are managed in the Stripe Customer Portal.",
       "saveFailed": "Failed to save auto-recharge settings.",
-      "toggleRowDescription": "Top up points at a preset tier when balance drops below threshold.",
+      "toggleRowDescription": "Top up by the preset amount when the balance drops below the threshold",
       "savedStatus": "Saved",
       "manageInStripePortal": "Manage in billing portal",
-      "validationHint": "Threshold must be below the recharge tier, and monthly cap must be at least the recharge tier.",
+      "validationHint": "The threshold must be below the top-up amount, and the monthly cap at least the top-up amount.",
       "kindTeam": "Shared",
       "viewUsage": "View usage",
       "receiptsRowTitle": "Email receipts",
       "activeMembersCount": "{count} active members",
-      "monthlyCapLabel": "Monthly cap (points)",
+      "monthlyCapLabel": "Monthly cap",
       "sectionHeading": "Receipts and auto-recharge",
-      "thresholdLabel": "Threshold (points)",
+      "thresholdLabel": "Threshold",
       "currentPeriod": "Current period",
       "toggleRowTitle": "Auto-recharge",
       "workspaceSection": "Workspace",
       "amountLabel": "Recharge tier",
       "saveButton": "Save auto-recharge settings",
-      "amountOption": "{points} pts",
+      "amountOption": "{points} credits",
       "providerUnsupportedBadge": "Stripe Managed Payments auto-charge unavailable",
-      "quotaNoPlan": "0 / 0 pts",
+      "quotaNoPlan": "0 / 0 credits",
       "readOnlyNote": "Only the billing account owner can update auto-recharge limits.",
       "workspaceKind": "Workspace type",
       "kindPersonal": "Personal",
-      "quotaPointsUsed": "{used} / {total} pts",
+      "quotaPointsUsed": "{used} / {total} credits",
       "portalAfterFirstCharge": "Available in the Stripe Customer Portal after your first subscription or top-up",
       "loadFailed": "Failed to load auto-recharge settings.",
       "thresholdPlaceholder": "e.g. 25",
@@ -764,8 +783,8 @@
         "past_due": "Payment failed",
         "incomplete": "Payment pending"
       },
-      "notConfiguredBody": "Plans and points need a payment provider, which whoever runs this server turns on.",
-      "purchasedPoints": "Purchased points",
+      "notConfiguredBody": "Plans and credits need the deployment's payment service.",
+      "purchasedPoints": "Purchased credits",
       "changePlan": "Manage plan",
       "loading": "Loading billing",
       "seatsUsed": "{used} of {total} used",
@@ -785,14 +804,20 @@
       "members": "Members",
       "membersNotBilled": "Membership does not affect resource plan pricing.",
       "neverExpires": "Never expire",
-      "planPoints": "Plan points this period",
-      "points": "Points",
+      "topupExpiresAfterMonths": "Expires after {months} months",
+      "overageTitle": "Overage",
+      "overageCapLabel": "Monthly cap",
+      "overageSaved": "Saved",
+      "overageDisabledHint": "Overage is off by default",
+      "planPoints": "Plan credits this period",
+      "points": "Credits",
       "invoices": "Invoices",
       "paymentMethod": "Payment method",
       "subscribe": "Subscribe to Mikka Pro",
       "team": "Mikka Pro",
-      "pointsValue": "{points} points",
-      "notConfiguredTitle": "Billing isn't set up on this server"
+      "pointsValue": "{points} credits",
+      "notConfiguredTitle": "Billing isn't set up on this server",
+      "paymentAndInvoices": "Payment and invoices"
     },
     "passkeys": {
       "loadError": "Could not load passkeys",
@@ -874,7 +899,7 @@
       "requirePasskeyEmptyHint": "Add a passkey before requiring passkey sign-in."
     },
     "usage": {
-      "points": "{points} points",
+      "points": "{points} credits",
       "month": "Month",
       "hours": "{count} h",
       "yourBots": "Your bots",
@@ -984,7 +1009,7 @@
       "confirmWorkspace": "Everyone in {workspace} can use {name}?",
       "value": "Value",
       "confirmWorkspaceMany": "Everyone in {workspace} can use these {count} secrets?",
-      "empty": "No secrets yet.",
+      "empty": "No secrets yet",
       "deleting": "Deleting…",
       "bulkTitle": "Bulk add",
       "importDone": "Added {created}, replaced {replaced}, skipped {kept}.",
@@ -1022,7 +1047,9 @@
       "modeDirect": "Environment secret (Direct env)",
       "modeDirectHint": "Write-only; exposed in process env for legacy SDKs (log masking applies to values ≥ 8 chars).",
       "modePlainEnv": "Plain variable",
-      "modePlainEnvHint": "Non-sensitive configuration readable by the Agent."
+      "modePlainEnvHint": "Non-sensitive configuration readable by the Agent.",
+      "mineGroup": "Personal",
+      "scopeLabel": "Scope"
     },
     "audit": {
       "actions": {
@@ -1087,8 +1114,9 @@
           "card_verified": "verified a card",
           "limits_changed": "changed usage limits",
           "auto_recharge_changed": "changed auto recharge",
+          "overage_changed": "changed overage settings",
           "checkout_started": "opened checkout",
-          "credits_purchased": "bought points"
+          "credits_purchased": "Purchased credits"
         },
         "auth": {
           "sign_in_failed": "failed to sign in",
@@ -1111,6 +1139,12 @@
         },
         "integration": {
           "permission_changed": "set {integration} to {to}"
+        },
+        "task": {
+          "comment_deleted": "deleted a comment on {target}"
+        },
+        "thread": {
+          "bulk_deleted": "Deleted own threads"
         }
       },
       "actorTypes": {
@@ -1134,9 +1168,9 @@
         "time": "Time",
         "place": "Where",
         "actor": "Who",
-        "category": "Category"
+        "category": "Category",
+        "target": "Subject"
       },
-      "unknownAction": "recorded “{action}”",
       "access": {
         "ask": "ask first",
         "deny": "blocked",
@@ -1187,7 +1221,10 @@
       "categoryFilter": "Category",
       "exportCsv": "Export CSV",
       "empty": "Nothing in the last 90 days.",
-      "loadedFilterNotice": "Filtering loaded entries"
+      "loadedFilterNotice": "Filtering loaded entries",
+      "title": "Audit log",
+      "allActors": "All actors",
+      "eventId": "Event ID"
     },
     "memory": {
       "correct": "Correct",
@@ -1214,7 +1251,7 @@
       "delete": "Delete"
     },
     "polish": {
-      "issueStatesLead": "View Open and Closed task state categories and workspace labels.",
+      "issueStatesLead": "The states every task moves through, and the labels that tag them",
       "serviceAccountsHeading": "Service accounts",
       "auditNoMatch": "No matching entries",
       "apiKeysHeading": "API keys",
@@ -1245,10 +1282,10 @@
       "personalSecretsAndLoginsHeading": "Personal secrets & logins",
       "statesCount": "{count} states",
       "onlyMeScope": "Only you",
-      "workspaceSecretsHint": "Referenced by secretIds without storing plaintext.",
+      "workspaceSecretsHint": "Environment variables reference secrets; no plaintext is stored.",
       "auditSearchPlaceholder": "Search by actor or target",
       "envSetupApproved": "Approved",
-      "personalSecretsAndLoginsEmpty": "No personal secrets or saved logins yet.",
+      "personalSecretsAndLoginsEmpty": "No personal secrets or saved logins yet",
       "auditColumnTime": "Time ↓",
       "apiKeysDescription": "Call the API as yourself or a service account.",
       "tokenNameRequired": "Enter a key name.",
@@ -1315,7 +1352,7 @@
       "advanced": "Advanced colors",
       "altEnter": "⌥ / Alt + Enter",
       "systemDefault": "System default",
-      "altEnterHint": "What ⌥ / Alt + Enter does while a run is in progress.",
+      "altEnterHint": "What pressing ⌥/Alt+Enter does mid-run",
       "hiddenAll": "Fold all",
       "theme_sakura": "Warm gray",
       "theme_lilac": "Lilac",
@@ -1350,7 +1387,7 @@
       "hiddenNone": "Don't fold",
       "background": "Background",
       "languageEn": "English",
-      "myThemesEmpty": "No themes of your own yet.",
+      "myThemesEmpty": "No themes of your own yet",
       "steer": "Steer the current run",
       "theme_oled": "OLED",
       "hiddenShow": "Show",
@@ -1369,7 +1406,7 @@
       "dashboardBackground": "Dashboard background",
       "displayMode": "Display mode",
       "title": "Appearance",
-      "enterHint": "What Enter does while a run is in progress.",
+      "enterHint": "What pressing Enter does mid-run",
       "noPermission": "You cannot change this",
       "openInApp": "Open links in the desktop app",
       "codeLarge": "Large",
@@ -1400,6 +1437,7 @@
       "hidden": "Hidden files",
       "diffViewHint": "How code changes show in a thread",
       "unavailable": "No API for this yet",
+      "saveFailed": "Could not save the setting.",
       "theme_softPurple": "Soft purple",
       "fill": "Background",
       "accent": "Accent",
@@ -1407,10 +1445,23 @@
       "interrupt": "Interrupt the current run",
       "colors": "Colors",
       "enter": "Enter",
-      "modEnterHint": "What ⌘ / Ctrl + Enter does while a run is in progress.",
+      "modEnterHint": "What pressing ⌘/Ctrl+Enter does mid-run",
       "diffBlue": "Blue / orange",
       "synced": "Synced",
-      "theme_forest": "Forest"
+      "theme_forest": "Forest",
+      "enterRow": "Enter behavior",
+      "modEnterRow": "⌘/Ctrl+Enter behavior",
+      "altEnterRow": "⌥/Alt+Enter behavior",
+      "sidebarPagesCount": "Showing {count} of {total} pages",
+      "systemMode": "System",
+      "editSidebarPages": "Edit sidebar pages",
+      "chatFont": "Chat font",
+      "chatFontDefault": "Default",
+      "chatFontSans": "Sans",
+      "chatFontSystem": "System",
+      "chatFontReadable": "Readable",
+      "chatSection": "Threads",
+      "chatFontRow": "Font"
     },
     "activityPage": {
       "allBots": "All Bots",
@@ -1458,7 +1509,8 @@
         "onlineDevices": "Online devices",
         "onlineDevicesSub": "{bound} bound · {bots} active Bots",
         "storage": "Workspace storage",
-        "mergedPrs": "Merged pull requests"
+        "mergedPrs": "Merged pull requests",
+        "contributionChange": "{points} pts"
       },
       "filterMemberLabel": "Filter member",
       "filterKindLabel": "Activity type",
@@ -1486,7 +1538,7 @@
       "dailyThreadsHeading": "Daily new threads",
       "timelineLoadFailed": "Failed to load activity timeline.",
       "timelineEmpty": "No activity records match the current filter.",
-      "subtitle": "View workspace run queues, channels, storage, and Agent hours.",
+      "subtitle": "What Mikka got done for this workspace",
       "filterBotLabel": "Filter Bot",
       "timelineHeading": "Personal actions and reminders",
       "pendingAnalyticsHeading": "Contribution and review analytics",
@@ -1520,19 +1572,19 @@
       "optionAsMeta": "Use Option as Meta",
       "recordWaiting": "Press keys, then click Save",
       "scopes": {
-        "listFocused": "List or search focused",
-        "splitDivider": "Split pane divider focused",
-        "pullListIdle": "Pull request list focused when not typing",
+        "listFocused": "Lists",
+        "splitDivider": "Split divider",
+        "pullListIdle": "Pull request list",
         "board": "Board",
         "always": "Always",
-        "boardCardIdle": "Board card focused when not typing",
-        "workspaceIdle": "Workspace when not typing",
-        "workspaceTask": "Workspace with a reviewable task",
+        "boardCardIdle": "Board card",
+        "workspaceIdle": "Workspace",
+        "workspaceTask": "Task page",
         "composer": "Thread input",
-        "dialogOrEditor": "Dialog or editor open",
-        "dialogOrComposer": "Dialog or thread input",
+        "dialogOrEditor": "Dialog, editor",
+        "dialogOrComposer": "Dialog, composer",
         "notTyping": "When not typing",
-        "devices": "Devices settings",
+        "devices": "Devices page",
         "details": "Details page"
       },
       "voiceGestureHint": "Hold the shortcut to speak and release to insert text.",
@@ -1563,7 +1615,9 @@
       "columnKeys": "Keys",
       "scopeAll": "All",
       "scopeGlobal": "Global",
-      "scopeWorkspace": "Workspace"
+      "scopeWorkspace": "Workspace",
+      "fixedHeading": "Built-in shortcuts",
+      "resetDescription": "{count, plural, one {# custom shortcut returns to its default keys.} other {# custom shortcuts return to their default keys.}}"
     },
     "threadTitles": {
       "triggers": "Regenerate the title when",
@@ -1609,7 +1663,8 @@
       "countWorkspace": "{count} · workspace",
       "archiveDays": "{days} days",
       "scopeMine": "Personal",
-      "archiveOff": "Off"
+      "archiveOff": "Off",
+      "workspaceDefaults": "Workspace defaults"
     },
     "modelOrder": {
       "add": "Add models",
@@ -1724,7 +1779,7 @@
         "personal": "Personal",
         "workspace": "Workspace"
       },
-      "previewBotNone": "No Bot",
+      "previewBotNone": "You",
       "scopeBot": "Bot",
       "personalTitle": "My instructions",
       "previewTitle": "Pre-first-message preview",
@@ -1741,7 +1796,7 @@
       "filesTitle": "Instruction files",
       "previewBotLabel": "Preview Bot",
       "scopeEnvironment": "Environment",
-      "previewEnvNone": "No environment",
+      "previewEnvNone": "Default environment",
       "scopeWorkspace": "Workspace",
       "charLimit": "{count} / {max} chars",
       "readOnlyBadge": "Read-only",
@@ -1763,7 +1818,7 @@
       "teamLabel": "Linear team",
       "syncDisabled": "Sync paused",
       "title": "Linear",
-      "oauthSuccess": "Linear is connected. Choose a team to start syncing.",
+      "oauthSuccess": "Linear is connected.",
       "connected": "Connected",
       "operationError": "The Linear sync action failed. Try again.",
       "inboundFailures": "Linear updates that need attention",
@@ -1828,10 +1883,28 @@
       "authorEmailHint": "Uses local Git config or the default run email when blank",
       "prAutoMerge": "Auto-merge",
       "gitTitle": "Git",
-      "saved": "Saved"
+      "saved": "Saved",
+      "pendingTag": "Coming soon",
+      "commitAuthorship": "Commit author",
+      "authorshipYouCoauthor": "You, Mikka co-author",
+      "authorshipYou": "You",
+      "authorshipMikkaCoauthor": "Mikka, you co-author",
+      "authorshipMikka": "Mikka",
+      "commitInstructions": "Commit message instructions",
+      "addInstructions": "Add",
+      "mergeMethod": "Merge method",
+      "mergeSquash": "Squash",
+      "mergeCommit": "Merge commit",
+      "mergeRebase": "Rebase",
+      "wakeOnReview": "Continue on review comments",
+      "wakeOnCi": "Continue when CI fails",
+      "reviewBots": "Review bots",
+      "addBot": "Add"
     },
     "usagePage": {
       "historyHeading": "History and external accounts",
+      "webSearch": "Web Search",
+      "webSearchUnknown": "{count, plural, one {# call awaiting cost} other {# calls awaiting cost}}",
       "byEnvironmentHeading": "By environment",
       "sorts": {
         "duration": "Longest runtime",
@@ -1841,17 +1914,17 @@
       "quotaPlan": "Mikka Pro",
       "resetFilters": "Reset filters",
       "sources": {
-        "byok": "BYOK",
+        "byok": "Subscriptions / API keys",
         "all": "All",
-        "billed": "Billed"
+        "billed": "Mikka credits"
       },
-      "emptyByok": "No BYOK or external subscription runs recorded in the selected range.",
+      "emptyByok": "No subscription or API key runs in the selected range.",
       "byModelHeading": "By model",
       "dimensions": {
         "total": "Total",
         "environment": "By environment",
         "model": "By model",
-        "byok": "BYOK",
+        "byok": "Subscriptions / API keys",
         "member": "By member"
       },
       "reservedLegend": "Reserved",
@@ -1871,7 +1944,7 @@
         "resets": "Resets",
         "runTime": "Run time"
       },
-      "quotaPurchased": "Purchased points",
+      "quotaPurchased": "Purchased credits",
       "summarySpend": "{settled} settled this month",
       "chartMetrics": {
         "runs": "Runs",
@@ -1909,7 +1982,8 @@
       "chartMetricLabel": "Chart metric",
       "emptyModels": "No model calls recorded in the selected range.",
       "sourceLabel": "Billing source",
-      "creditRate": "{points} credits = {amount}"
+      "creditRate": "{points} credits = {amount}",
+      "spendKpi": "Spend"
     },
     "notificationsMatrix": {
       "dndRowHint": "Mute push notifications during the scheduled window",
@@ -1918,7 +1992,7 @@
       "previewSound": "Preview sound",
       "dndDaysHint": "Choose which days of the week apply",
       "dndWindowHint": "Applies in your account time zone, including overnight windows",
-      "emailInvitations": "Organization invitation emails",
+      "emailInvitations": "Email",
       "testRowHint": "Ring this device the way a finished thread does",
       "day_wed": "Wed",
       "day_mon": "Mon",
@@ -1979,7 +2053,7 @@
       "matrixSubtitle": "Choose which notifications reach you on each channel.",
       "dndHeading": "Scheduled Do Not Disturb",
       "matrixDesktopHeader": "Desktop",
-      "emailRowHint": "Account, billing, and organization invitation emails",
+      "emailRowHint": "Account, billing and organization invitations",
       "devicesSubtitle": "Push notifications reach these browsers and installed apps even when Mikka is closed.",
       "dndStartLabel": "Start time",
       "category_briefing_hint": "Summary of workspace updates and open items",
@@ -2017,7 +2091,10 @@
       "manage": "Manage",
       "manageNone": "You have no shared links right now",
       "linksLoading": "Reading shared links…",
-      "exportButton": "Export"
+      "exportButton": "Export",
+      "archivedThreads": "Archived threads",
+      "archivedManage": "View",
+      "noTraining": "Mikka doesn’t train models on your content"
     },
     "tokens": {
       "noExpiry": "Never expires",
@@ -2032,7 +2109,7 @@
       "copyFailed": "Could not copy. Select the token and copy it by hand",
       "shownOnce": "Shown this once only.",
       "revokeTitle": "Revoke “{name}”?",
-      "empty": "No tokens yet.",
+      "empty": "No tokens yet",
       "createdTitle": "Created “{name}”",
       "name": "Name",
       "expiryLabel": "Expires",
@@ -2176,13 +2253,13 @@
       "unknownBot": "Unknown bot",
       "usageError": "Usage could not be read.",
       "newPassword": "New password",
-      "usageEmpty": "No usage yet.",
+      "usageEmpty": "No usage yet",
       "deleteTitle": "Delete the sign-in for {site}?",
       "addTitle": "Add website login",
       "save": "Save",
       "cancel": "Cancel",
       "never": "Never used",
-      "empty": "No saved site sign-ins yet.",
+      "empty": "No saved site sign-ins yet",
       "actions": "Actions for {site}",
       "usage": "Usage",
       "usageTitle": "Usage for {site}",
@@ -2327,6 +2404,8 @@
       "add": "Add"
     },
     "apiKeys": {
+      "webSearch": "Mikka Web Search",
+      "webSearchBilling": "Adds search to third-party models without native Web Search. When a model uses Mikka-hosted search, Web Search appears separately on your bill.",
       "noResponsesApi": "{protocol} protocol · No Responses API · Codex can't use it",
       "refetchLabel": "Fetch models for {name} again",
       "modelsInvalid": "Couldn't fetch models · Key invalid or revoked",
@@ -2390,11 +2469,17 @@
       "baseUrlPlaceholder": "https://api.example.com/v1"
     },
     "environments": {
+      "snapshotBuild": "Build snapshot",
+      "snapshotBuilding": "Building",
+      "snapshotReady": "Ready",
+      "snapshotFailed": "Build failed",
+      "snapshotOutdated": "Outdated",
+      "snapshotMaintenance": "Maintenance command",
       "machineSize": "Default machine size",
       "version": "Version {revision}",
       "title": "Cloud environments",
       "setupImpact": "This changes setup for {count, plural, one {# project} other {# projects}} using this environment. Review and approve the restored setup before it can run.",
-      "edit": "Edit environment",
+      "edit": "Edit",
       "copyFiles": "Files to copy into the worktree, one per line",
       "historyFor": "Setup history for {name}",
       "archiveNamed": "Archive {name}?",
@@ -2411,7 +2496,7 @@
       "projectDefaults": "Project defaults",
       "restoreSetup": "Restore setup",
       "setup": "Setup command",
-      "empty": "No cloud environments.",
+      "empty": "No cloud environments",
       "history": "Setup history",
       "archived": "Archived environment",
       "machineSizeOption": "{vcpu} vCPU · {gib} GiB",
@@ -2433,7 +2518,7 @@
       "backToEnvironments": "Cloud environments",
       "secretsCrossLink": "Encrypted credentials",
       "openSecretsAction": "Open Secrets",
-      "repositories": "Repositories",
+      "repositories": "Cloned at start",
       "repositoriesEmpty": "All workspace repositories",
       "repositoriesPlaceholder": "Select repositories",
       "installScript": "Install / setup script",
@@ -2478,7 +2563,26 @@
       "summaryScripts": "{count, plural, one {# script} other {# scripts}}",
       "summarySecrets": "{count, plural, one {# secret} other {# secrets}}",
       "summaryMcp": "{count} MCP",
-      "summaryVars": "{count, plural, one {# var} other {# vars}}"
+      "summaryVars": "{count, plural, one {# var} other {# vars}}",
+      "columnEnvironment": "Environment",
+      "columnSetup": "Setup",
+      "setupConfigured": "Configured",
+      "setupNone": "Not set up",
+      "scopeDefault": "Default",
+      "scopePersonal": "Only me",
+      "scopeWorkspace": "Workspace",
+      "anyRepository": "Any repository",
+      "onDemandCount": "{count} on demand",
+      "actionsNamed": "{name} actions",
+      "computeHeading": "Compute",
+      "computeRow": "Cloud machines",
+      "computeMikka": "Not set",
+      "computeOwn": "Your E2B account",
+      "computeUseOwn": "Use your E2B account",
+      "lazyRepositories": "Cloned on demand",
+      "lazyRepositoriesEmpty": "Cloned when a thread needs one",
+      "scopeLabel": "Who can use it",
+      "pendingTag": "Coming soon"
     },
     "workspaceUnavailable": "Couldn't load the workspace. Refresh and try again.",
     "teamSkills": {
@@ -2548,7 +2652,8 @@
       "block": "Block {name}",
       "decisionDeny": "Deny",
       "decisionAsk": "Ask",
-      "decisionAllow": "Allow"
+      "decisionAllow": "Allow",
+      "membersHeading": "Members"
     },
     "security": {
       "saving": "Saving…",
@@ -2740,14 +2845,15 @@
       "yourTeams": "Your teams",
       "administration": "Administration",
       "review": "Review",
-      "agent": "Agent & Compute",
+      "agent": "Agent",
       "workspace": "Workspace",
-      "personal": "Personal"
+      "personal": "Personal",
+      "compute": "Connections & compute"
     },
     "loadingPage": "Loading settings",
     "creditShare": {
       "sharers": "Members sharing credits",
-      "mine": "My credits also pay for this team"
+      "mine": "My credits also work for this team"
     },
     "appPolicy": {
       "access": {
@@ -2787,7 +2893,7 @@
     "title": "Settings",
     "workspaceLoading": "Loading the workspace…",
     "sharedLinks": {
-      "revokeConfirmTitle": "Revoke shared link?",
+      "revokeConfirmTitle": "Stop sharing “{title}”?",
       "revokeConfirmBody": "Anyone with this link will immediately lose access.",
       "revokeConfirmAction": "Revoke link",
       "cancel": "Cancel",
@@ -2797,6 +2903,14 @@
     },
     "preferences": {
       "languageHeading": "Language"
+    },
+    "phoneDesktopOnly": "View only · edit on a computer",
+    "identityPage": {
+      "title": "Identity & access",
+      "ssoTitle": "Single sign-on and domains",
+      "unboundTitle": "Bind this workspace to an organization first",
+      "unboundNote": "Single sign-on, domain verification and SCIM are set on the organization.",
+      "openOrganization": "Open organization"
     }
   },
   "Organization": {
@@ -2884,7 +2998,7 @@
         "done": "Saved it",
         "empty": "No SCIM connections",
         "active": "Syncing",
-        "revokeTitle": "Revoke this SCIM connection?",
+        "revokeTitle": "Revoke the SCIM connection created {date}?",
         "revoked": "SCIM connection revoked.",
         "token": "Bearer credential",
         "revoke": "Revoke"
@@ -2918,7 +3032,7 @@
       "needsEnterprise": "Single sign-on and SCIM need Enterprise"
     },
     "audit": {
-      "recentEmpty": "No Organization events yet.",
+      "recentEmpty": "No Organization events yet",
       "actions": {
         "sso": {
           "signed_in": "SSO sign-in",
@@ -3067,8 +3181,8 @@
       },
       "tightenNote": "When you tighten it, shares that no longer fit are withdrawn and their runs stop.",
       "mcpSharing": {
-        "note": "Members sharing personal MCP servers.",
-        "label": "MCP servers"
+        "note": "Members sharing personal skills. Personal MCP servers serve their owner only.",
+        "label": "Skills"
       },
       "revision": "Policy revision {revision}",
       "retention": {
@@ -3495,9 +3609,9 @@
     "stepsTools": "{count, plural, one {Called # tool} other {Called # tools}}",
     "sendFailed": "Send outcome unconfirmed. Draft kept",
     "acceptanceTab": "Acceptance",
-    "composer": "Tell {agent} what to do next…",
+    "composer": "Ask for follow-up changes",
     "changesTab": "Changes",
-    "pullTab": "Pull request",
+    "pullTab": "PR",
     "filesTab": "Files",
     "setupTab": "Setup",
     "filesThisThread": "This thread",
@@ -3527,9 +3641,9 @@
     "crewPulls": "Pull requests",
     "crewSide": "Side threads",
     "crewPullsEmpty": "No pull requests yet",
-    "crewPullsError": "Pull requests unavailable",
+    "crewPullsError": "Couldn't load pull requests",
     "crewSideEmpty": "No side threads yet",
-    "crewSideError": "Side threads unavailable",
+    "crewSideError": "Couldn't load side threads",
     "untitledThread": "Untitled thread",
     "deliveryQueued": "Queued",
     "fullInstructions": "View full instructions",
@@ -3700,7 +3814,27 @@
     "tool": {
       "exitCode": "exit {code}",
       "search": "\"{target}\"",
-      "searchIn": "\"{target}\" in {scope}"
+      "searchIn": "\"{target}\" in {scope}",
+      "read": "Read {target}",
+      "reading": "Reading {target}",
+      "searched": "Searched for {query}",
+      "searchedIn": "Searched for {query} in {path}",
+      "searching": "Searching for {query}",
+      "searchingIn": "Searching for {query} in {path}",
+      "ran": "Ran {command}",
+      "running": "Running {command}",
+      "ranGeneric": "Ran command",
+      "runningGeneric": "Running command",
+      "commandFailed": "Command failed ({command})",
+      "commandStopped": "Stopped {command}",
+      "edited": "Edited {target}",
+      "editing": "Editing {target}",
+      "webSearched": "Searched the web",
+      "webSearching": "Searching the web",
+      "webSearchedDetail": "Searched the web: {target}",
+      "webSearchingDetail": "Searching the web: {target}",
+      "called": "Called {tool}",
+      "calling": "Calling {tool}"
     },
     "lifecycle": {
       "fork": "Fork",
@@ -3718,6 +3852,13 @@
       "undo": "Undo",
       "deleteFailed": "Thread not deleted",
       "restoreFailed": "Couldn't restore the thread"
+    },
+    "diff": {
+      "editedFiles": "{count, plural, one {Edited a file} other {Edited # files}}",
+      "editedFile": "Edited {file}",
+      "review": "Review changes",
+      "more": "{count, plural, one {Show # more file} other {Show # more files}}",
+      "less": "Collapse files"
     }
   },
   "FactoryFlow": {
@@ -3959,20 +4100,20 @@
       "save": "Save",
       "cancel": "Cancel"
     },
-    "allowScheduling": "Scheduling",
+    "allowScheduling": "Threads can run here",
     "menu": "More for {name}",
     "title": "Devices",
     "scheduledOffline": "Scheduled · runs when back online",
     "notScheduling": "Not taking part",
-    "allowSchedulingTo": "Schedule runs on {name}",
+    "allowSchedulingTo": "Let threads run on {name}",
     "description": "Connected devices and cloud environments.",
     "actions": {
       "editDescription": "Edit description",
       "rename": "Rename",
       "remove": "Remove device",
       "redetect": "Re-detect agents",
-      "restart": "Restart daemon",
-      "update": "Update daemon"
+      "restart": "Restart background service",
+      "update": "Update background service"
     },
     "computers": "Computers",
     "remove": {
@@ -4027,7 +4168,8 @@
     "online": "Online",
     "noAgentYet": "No agent yet",
     "lastHeartbeat": "Last heartbeat {time}",
-    "namePlaceholder": "e.g. MacBook Pro"
+    "namePlaceholder": "e.g. MacBook Pro",
+    "yourDevices": "Your devices"
   },
   "Coordinator": {
     "modelRequired": "No task started: no model selected.",
@@ -4049,7 +4191,7 @@
       "shared": "Shared by teammates",
       "noModelConnections": "No usable model connections",
       "metered": "Pay as you go",
-      "useMyPoints": "Use my points for this team",
+      "useMyPoints": "Use my credits for this team",
       "creditsGroup": "Mikka credits",
       "search": "Search models",
       "setUpModel": "Set up a model",
@@ -4073,7 +4215,7 @@
       "label": "Model: {name}",
       "noCreditsOrConnections": "No Mikka credits or usable model connections",
       "route": {
-        "via": "Runs through {label}",
+        "via": "Runs on {label}",
         "favorites": "Favorites",
         "free": "Free",
         "usedUntil": "Used up until {time}",
@@ -4335,7 +4477,7 @@
       "useKey": "Continue with API key",
       "retryAfterReset": "Retry after reset",
       "continueQueued": "Continuation queued",
-      "pointsSwitched": "Out of points, switched to {model}",
+      "pointsSwitched": "Out of credits, switched to {model}",
       "next": "Next message uses your {key} API key, billed per token",
       "resets": "Resets {time}",
       "used": "{name} quota used up",
@@ -4384,7 +4526,8 @@
     "input": "Message the Coordinator",
     "sendOffline": "No connection. Not sent",
     "suggestionHandedTo": "Handed to {name}",
-    "commandNew": "Start a new thread"
+    "commandNew": "Start a new thread",
+    "emptyHint": "{name} opens tasks, sends Agents to do them and calls you when a pull request is ready"
   },
   "Errors": {
     "issueScopeInLinear": "Confirm how to handle the Linear issue before moving this task to personal.",
@@ -4475,6 +4618,7 @@
     "e2bKeyRateLimited": "E2B is rate limiting this key right now. Wait a few minutes and try again.",
     "agentDuplicateName": "This name is already in use. Choose another name.",
     "projectResourceConflict": "These resource settings changed. Refresh and try again.",
+    "projectBindingsRetired": "Projects no longer choose repositories or environments. Set the task’s environment instead.",
     "teamLifecycleConflict": "The team changed. Refresh and review its current impact.",
     "teamIdentifierInvalid": "Use 2–12 uppercase letters or digits, starting with a letter.",
     "executionModelUnknown": "This model is unavailable.",
@@ -4568,6 +4712,7 @@
     "artifactNotFound": "This artifact does not exist.",
     "billingNoSubscription": "This workspace has no subscription yet.",
     "apiKeyNotFound": "This API key no longer exists.",
+    "apiKeySharingRetired": "Personal and workspace connections are added separately; a key can’t move between them. Add it under Workspace connections.",
     "botShareUnavailable": "A personal workspace has no one to share with.",
     "emailDeliveryFailed": "The email wasn’t sent.",
     "scheduleUserSourceRequired": "You need to make this change yourself.",
@@ -4600,7 +4745,7 @@
     "scheduleBotUnavailable": "The Bot it hands work to no longer exists or is no longer yours.",
     "projectIssuesInvalid": "The task link information is invalid.",
     "workspaceMembershipSuspended": "Your membership is suspended. Contact an admin to restore it.",
-    "usageCreditsExhausted": "Credits have run out. New tasks are paused; running tasks will finish.",
+    "usageCreditsExhausted": "Credits are used up: new tasks are paused, running ones finish.",
     "issueNotFound": "This task does not exist or you do not have access.",
     "authRequired": "Sign in required",
     "issueTitleInvalid": "Please check the new task title.",
@@ -4640,19 +4785,20 @@
     "scheduleEnvironmentUnavailable": "The selected environment is no longer available.",
     "agentRepoMissing": "This repository is not available on the device.",
     "avatarTooLarge": "The avatar image must be 200 KB or smaller.",
-    "billingResourcePlanUnavailable": "Resource plans are not available yet. Your existing subscription and credits are unchanged.",
+    "billingResourcePlanUnavailable": "Resource plans aren't available yet. Your subscription and credits are unchanged.",
     "botEnvironmentUnavailable": "This environment is unavailable. Choose another one.",
     "emailUnavailable": "Email isn’t available right now.",
     "memberInvalidEmail": "Enter a valid email address",
     "passwordNotSet": "This account has no password yet. Set one first.",
     "secretLimitReached": "This workspace has reached the limit of 500 secrets and variables.",
-    "inviteInvalid": "This invitation is invalid, expired, or the signed-in email does not match.",
+    "inviteInvalid": "Check that the invitation is still valid and switch to the account that received it.",
     "secretImportTooLarge": "The .env file is over 2 MB.",
     "usageLimitReached": "The usage limit has been reached. New tasks are paused; running tasks will finish.",
     "invalidCron": "The cron expression is invalid; it needs five fields.",
     "savedLoginNotFound": "This login does not exist or was already deleted.",
     "botNameTooLong": "A bot name can be at most 60 characters.",
-    "billingAutoRechargeUnavailable": "Automatic top-ups are unavailable with the current payment provider. Use Add points to authorize each purchase.",
+    "billingAutoRechargeUnavailable": "This payment channel doesn't support auto top-up. Use Top up to buy credits each time.",
+    "billingOverageCapRequired": "Set a monthly cap before enabling overage.",
     "taskWorkspaceTransferDenied": "A task cannot be moved between workspaces. Its workspace is fixed when it is created.",
     "teamIssueOutcomeUnknown": "It’s unclear whether this finished. Retry this same request; don’t submit a new one.",
     "issueCreateFailed": "Could not create the task. Please try again shortly.",
@@ -4663,7 +4809,7 @@
     "botNotFound": "This bot does not exist in this workspace.",
     "issueTargetUnavailable": "The related task is no longer available.",
     "issueOutdated": "This task was updated. Please refresh and try again.",
-    "billingOrganizationAccountRequired": "This organization uses its designated billing account. Manage its credits in organization billing.",
+    "billingOrganizationAccountRequired": "This organization uses a designated billing account; manage credits in organization billing.",
     "apiKeyInvalid": "The key is invalid or has been revoked.",
     "scheduleSlackUnavailable": "Mikka's Slack app cannot see a channel this Slack trigger uses, or you are not in this workspace's Slack.",
     "threadDeliveryUnavailable": "This thread cannot use that delivery mode right now.",
@@ -4705,38 +4851,61 @@
     "mcpCatalogUnavailable": "The MCP catalog is unavailable.",
     "mcpCatalogRemoteUnavailable": "The MCP catalog source could not be reached.",
     "mcpCatalogMismatch": "This catalog entry no longer matches the server.",
+    "mcpServerKeyTaken": "Another server in this workspace already uses this key. Choose another key.",
+    "mcpConnectionModeUnavailable": "Only a server that signs in with OAuth can ask each member to connect their own account.",
     "restoreExpired": "The restore window has passed.",
     "chatRevisionUnavailable": "This message can no longer be edited or regenerated.",
     "chatRevisionBusy": "Wait for the reply to finish, then try again.",
     "threadWorking": "The thread is still working. Stop it first.",
-    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again."
+    "referenceBroken": "A reference in this message was deleted or you no longer have access to it. Remove it and send again.",
+    "taskCommentNotFound": "This comment no longer exists.",
+    "taskCommentInvalid": "This comment can't be saved. Check its text and files.",
+    "taskInlineFilesEditorRequired": "Open this task in an updated editor to change its inline files.",
+    "taskInlineFilesDuplicateUnavailable": "Tasks with inline files in the description can't be duplicated yet.",
+    "taskCommentAuthorOnly": "Only the comment's author can edit it.",
+    "taskCommentDeleteForbidden": "Only the comment's author or a workspace admin can delete it.",
+    "taskCommentDeleted": "This comment was deleted.",
+    "taskCommentReadOnly": "You can read this task but not comment on it.",
+    "taskCommentReactionInvalid": "Choose one emoji.",
+    "taskCommentReactionLimit": "This comment has the most reactions it can hold.",
+    "skillReviewRequired": "Submit this skill for review.",
+    "skillPublishingDisabled": "Skill publishing is turned off in this workspace."
   },
   "DeviceAuthorization": {
     "failed": "Connection failed",
     "loading": "Loading…",
     "access": "Access",
-    "code": "Terminal verification code",
+    "code": "Pairing code",
     "rateLimited": "Too many lookups. Try again in 30 minutes",
     "invalid": "This code is invalid or expired",
     "clientVersion": "Daemon {version}",
     "enterAgain": "Enter another code",
     "deny": "Deny",
-    "allow": "Allow",
-    "returnToTerminal": "Return to your terminal to start the daemon",
+    "allow": "Approve",
+    "returnToTerminal": "Return to your terminal to continue",
     "deviceUnreported": "Name not reported",
     "approving": "Approving…",
     "denied": "Denied",
     "done": "Done",
     "expired": "This code has expired. Start device login again in your terminal.",
     "continue": "Continue",
-    "codeMatches": "The terminal shows this same code",
+    "codeMatches": "This code is on a machine I am setting up right now",
     "expires": "Expires",
     "device": "Device",
     "scope": "Run your threads",
-    "title": "Connect this device",
+    "title": "Pair a device",
     "approved": "Approved",
     "retry": "Retry",
-    "back": "Back to Devices"
+    "back": "Back to Devices",
+    "expiresIn": "{time}",
+    "entryHint": "Approve a machine asking to join your Mikka account",
+    "codeHint": "The eight characters shown on the machine you are pairing",
+    "unverified": "Reported by the requesting machine, not verified",
+    "warningTitle": "Never approve a code someone sent you",
+    "target": "Joins",
+    "targetAccount": "Your Mikka account",
+    "useDifferentCode": "Use a different code",
+    "deniedHint": "The machine stops asking, pairing it later needs a fresh code"
   },
   "Shell": {
     "searchEmptyFor": "Nothing matches “{query}”",
@@ -4834,7 +5003,7 @@
       "preview": {
         "untitled": "Untitled task",
         "agent": "Agent {name}",
-        "pullRequest": "Pull request",
+        "pullRequest": "PR",
         "unavailable": "Preview unavailable"
       },
       "prs": "PRs",
@@ -5046,31 +5215,35 @@
       "groupChats": "Group chats",
       "threads": "Threads",
       "tasks": "Tasks",
-      "actions": "Quick actions",
+      "actions": "Actions",
       "bots": "Bots",
       "conversations": "Threads",
-      "projects": "Projects"
+      "projects": "Projects",
+      "recent": "Recent threads",
+      "goTo": "Go to"
     },
     "newBot": {
       "loading": "Loading…",
       "noEnvironment": "No environment",
       "shapes": {
-        "fantome": "Ghost",
-        "ecran": "Screen",
-        "capsule": "Capsule",
-        "coeur": "Heart",
-        "etoile": "Star",
-        "squircle": "Squircle",
-        "galet": "Pebble",
-        "cercle": "Circle",
-        "feuille": "Leaf",
-        "hexagone": "Hexagon",
-        "goutte": "Drop",
-        "champignon": "Mushroom",
-        "chat": "Cat",
-        "fleur": "Flower",
+        "clover": "Clover",
+        "flower": "Flower",
         "triangle": "Triangle",
-        "nuage": "Cloud"
+        "square": "Square",
+        "blob": "Blob",
+        "ghost": "Ghost",
+        "circle": "Circle",
+        "drop": "Drop",
+        "star": "Star",
+        "droid": "Droid",
+        "mech": "Mech",
+        "alien": "Alien",
+        "hexagon": "Hexagon",
+        "cat": "Cat",
+        "cloud": "Cloud",
+        "pill": "Pill",
+        "pebble": "Pebble",
+        "puddle": "Puddle"
       },
       "efforts": {
         "xhigh": "Extra high",
@@ -5113,8 +5286,43 @@
       "accessShared": "Workspace",
       "effort": "Effort",
       "noRepository": "No repository",
-      "namePlaceholder": "Name",
-      "color": "Colour"
+      "namePlaceholder": "Name your bot",
+      "color": "Colour",
+      "looks": {
+        "colors": {
+          "none": "Own colour",
+          "red": "Red",
+          "orange": "Orange",
+          "amber": "Amber",
+          "green": "Green",
+          "teal": "Teal",
+          "sky": "Sky",
+          "blue": "Blue",
+          "violet": "Violet",
+          "pink": "Pink",
+          "custom": "Custom colour"
+        },
+        "hat": "Hat",
+        "hats": {
+          "none": "None",
+          "beret": "Beret",
+          "beanie": "Beanie",
+          "party": "Party hat",
+          "crown": "Crown"
+        },
+        "glasses": "Glasses",
+        "glassesKinds": {
+          "none": "None",
+          "round": "Round",
+          "square": "Square",
+          "shades": "Shades"
+        },
+        "details": "Details",
+        "mouth": "Mouth",
+        "headphones": "Headphones",
+        "bowTie": "Bow tie",
+        "reset": "Reset to default"
+      }
     },
     "newGroup": {
       "reviewGroups": "View group chats",
@@ -5138,7 +5346,7 @@
       "prompt": "Create a task for me: {text}",
       "details": "Details",
       "sending": "Sending…",
-      "createOnly": "Create only",
+      "createOnly": "Create without dispatching",
       "label": "Task description",
       "titleLabel": "Title",
       "removeFile": "Remove {name}",
@@ -5413,17 +5621,17 @@
     "close": "Close",
     "stage": {
       "review": "Review",
-      "verify": "Verify",
+      "verify": "Check",
       "execute": "Execute"
     },
-    "verifyThread": "Independent verify",
+    "verifyThread": "Check",
     "sourceExecution": "View execution",
     "inProgress": "In progress",
     "environmentLabel": "Environment",
     "publicationUnavailable": "Publication is unavailable: no publication target is configured.",
     "rejectSubmit": "Send back",
     "previewLabel": "Preview",
-    "accept": "Accept and merge",
+    "accept": "Merge",
     "revoke": "Revoke approval",
     "envChip": {
       "production": "Production",
@@ -5432,7 +5640,7 @@
       "preview": "Preview"
     },
     "passed": "Passed",
-    "retryVerify": "Retry verification",
+    "retryVerify": "Retry check",
     "checkRetryFailed": "Retry did not complete",
     "production": "Production",
     "copySha": "Copy full sha {sha}",
@@ -5443,11 +5651,11 @@
     },
     "rejectNote": "Note for changes",
     "blocked": "Blocked",
-    "verify": "Verify",
+    "verify": "Check",
     "previous": "Previous evidence",
     "cannotMerge": "Can't merge",
     "review": "Review",
-    "reviewThread": "Independent review",
+    "reviewThread": "Review",
     "approve": "Approve and publish",
     "shaCopied": "Full sha copied",
     "notPassed": "Not passed",
@@ -5457,7 +5665,7 @@
     "publish": "Publish",
     "superseded": "{sha} · Invalidated",
     "rejectFailed": "Couldn't submit. Try again.",
-    "results": "Independent results",
+    "results": "Check results",
     "error": "That did not finish.",
     "closeEvidence": "Close evidence",
     "otherEvidence": "Other evidence",
@@ -6216,6 +6424,8 @@
       "default": "The provider's usage limit or credit balance has been reached. Check your usage."
     },
     "run_failed": {
+      "claim_requeue_limit": "The task kept changing while a computer was taking it and stopped after several tries. Start it again.",
+      "claim_receipt_bound": "The task changed while a computer was taking it, and its assigned skill was already recorded for that attempt. Start it again.",
       "default": "The task could not be completed. Check the error details or try again."
     },
     "desktop_rpc_action_unknown": {
@@ -6291,7 +6501,7 @@
         "labelsError": "Could not load your Linear labels",
         "noTeams": "Your Linear has no teams",
         "add": "Add a Linear event",
-        "notConnected": "Connect Linear in Settings first",
+        "notConnected": "Linear is not connected",
         "event": "Event",
         "runWhen": "Condition",
         "labels": "Labels (optional, comma-separated)",
@@ -6323,7 +6533,7 @@
       "triggers": "Runs when any of these happens",
       "misfireSkip": "Skip it",
       "content": "Content",
-      "deleteBody": "Past runs and their tasks stay.",
+      "deleteBody": "It stops running; past runs and their threads stay readable.",
       "notify": "Post runs to Slack",
       "batches": {
         "confirmTitle": "Cancel this batch?",
@@ -6415,7 +6625,7 @@
       "environmentDefault": "Default environment",
       "devicesError": "Devices could not load",
       "description": "Description",
-      "descriptionPlaceholder": "What it’s for (optional)",
+      "descriptionPlaceholder": "Purpose",
       "machineSizeQuotaGated": "pending provider quota",
       "history": "History",
       "expression": "Expression",
@@ -6462,18 +6672,18 @@
       "runsInExisting": "An existing thread",
       "resume": "Resume",
       "agentNone": "Choose an Agent",
-      "runsAsCreator": "Creator ({name})",
+      "runsAsCreator": "{name}",
       "tookOver": "Taken over",
       "modelDefault": "Agent default",
       "you": "You",
       "agent": "Agent",
-      "deleteTitle": "Delete this automation?",
+      "deleteTitle": "Delete “{name}”?",
       "runsInNew": "A new thread each run",
       "loadSavedVersion": "Discard edits and load saved version",
       "machineSizeDefault": "Environment default",
       "effort": "Effort",
       "name": "Name",
-      "taskTitlePlaceholder": "Optional; the Bot writes one",
+      "taskTitlePlaceholder": "Optional",
       "timezone": "Time zone",
       "runUnconfirmed": "Mikka couldn’t confirm this run. Choose Run now to retry.",
       "fold": "{time} happens twice on the day daylight saving time ends. Run at:",
@@ -6955,7 +7165,7 @@
       "two": "{a} and {b} are working…"
     },
     "loadingOlder": "Loading…",
-    "notFound": "This group chat doesn't exist, or you're no longer in it.",
+    "notFound": "This group chat doesn't exist, or you're no longer in it",
     "answering": "Replying",
     "leaveError": "Couldn’t leave the group. Try again.",
     "leaveDenied": "You can’t leave this group with your current membership.",
@@ -6972,7 +7182,8 @@
     "composer": "Message {name}",
     "untitled": "Untitled group chat",
     "you": "You",
-    "emptyHint": "Mention a member with @ to hand it to them, or write to the whole group."
+    "emptyHint": "Mention a member with @ to hand it to them, or write to the whole group.",
+    "backToThreads": "Back to threads"
   },
   "Members": {
     "noMatchTitle": "No matching members",
@@ -7058,7 +7269,7 @@
     "remove": "Remove",
     "defaultWorkspaceName": "{name}'s Workspace",
     "unmute": "Follow",
-    "removeDialogTitle": "Remove this member?",
+    "removeDialogTitle": "Remove {name} from this task?",
     "removeFailedTitle": "Could not remove",
     "status": {
       "invited": "Invited",
@@ -7350,7 +7561,7 @@
       "memberEmail": "Member email",
       "project": "Project",
       "accessChangeBody": "This moves {tasks} task(s) and changes who can read them.",
-      "noLabelsYet": "No labels yet.",
+      "noLabelsYet": "No labels yet",
       "estimate": "Estimate",
       "taskProperties": "Task properties",
       "labelColor": "Label color",
@@ -7603,7 +7814,13 @@
     "untitledConversation": "Untitled thread",
     "newBot": "New bot",
     "workspaceAll": "{name} — all tasks",
-    "search": "Search tasks"
+    "search": "Search tasks",
+    "switchWorkspace": "Switch workspace",
+    "joinOrCreateWorkspace": "Join or create workspace",
+    "help": "Help",
+    "helpDocs": "Documentation",
+    "helpShortcuts": "Keyboard shortcuts",
+    "helpFeedback": "Send feedback"
   },
   "Governance": {
     "plan": {
@@ -7669,7 +7886,7 @@
         "ask": "Ask when needed",
         "unset": "Not set"
       },
-      "empty": "No approval templates yet.",
+      "empty": "No approval templates yet",
       "permissions": "Permissions",
       "namePlaceholder": "For example: contractor repos read-only",
       "cancel": "Cancel",
@@ -7741,7 +7958,7 @@
       "confirm": {
         "action": "Make personal",
         "checking": "Checking Linear sync records…",
-        "archiveIsNotErasure": "Archiving in Linear is not a privacy erase. The title, description and comments may still be seen.",
+        "archiveIsNotErasure": "The existing issue and its comments stay visible in Linear.",
         "alreadyPersonal": "This task is already personal.",
         "linearCopy": "A copy already synced to Linear may still be visible to the team. No sync record does not prove no earlier copy exists.",
         "description": "Once it is personal, teammates will no longer see this task in Mikka.",
@@ -7757,9 +7974,9 @@
       "judgedByAgent": "Set automatically",
       "workspace": "Workspace",
       "disableLinear": "Turn off Linear sync",
-      "disableLinkedLinear": "Turn off sync and archive the linked Linear issue",
+      "disableLinkedLinear": "Detach the linked Linear issue",
       "label": "Scope",
-      "movedToWorkspace": "Now a workspace task; it will sync to Linear.",
+      "movedToWorkspace": "Moved to the workspace.",
       "personal": "Personal"
     },
     "status": {
@@ -8027,10 +8244,10 @@
     "cancel": "Cancel",
     "refresh": "Refresh",
     "updated": "Updated",
-    "noMatches": "No pull requests match these filters.",
+    "noMatches": "No pull requests match these filters",
     "branch": "Branch",
     "openReview": "Open review",
-    "empty": "No pull requests yet.",
+    "empty": "No pull requests yet",
     "reviewers": "Reviewers",
     "savedViews": "Saved views",
     "label": "Label",
@@ -8048,7 +8265,7 @@
       "CONFLICTING": "Conflicts",
       "UNKNOWN": "Unknown"
     },
-    "detailFailed": "Pull request details unavailable",
+    "detailFailed": "Couldn't load pull request details",
     "requestChanges": "Request changes",
     "requestChangesTitle": "Request changes on {repo} #{number}",
     "requestChangesBody": "What needs to change…",
@@ -8073,7 +8290,9 @@
     "diffPatchUnavailable": "{count} file(s) have no patch (binary or truncated)",
     "reviewSelf": "You cannot request changes on your own pull request",
     "noneSelected": "Select a pull request to see it here",
-    "changesTab": "Changes"
+    "changesTab": "Changes",
+    "emptyHint": "Pull requests your Agents open show up here",
+    "emptyAction": "New thread"
   },
   "HostedConnections": {
     "state": {
@@ -8099,9 +8318,9 @@
   "Billing": {
     "balance": {
       "paid": "Payment complete",
-      "pointsColumn": "Points",
+      "pointsColumn": "Credits",
       "fee": "Fee",
-      "points": "{points} points",
+      "points": "{points} credits",
       "status": "Status",
       "types": {
         "verification": "Card verification",
@@ -8117,12 +8336,17 @@
       "unavailable": "Top-up unavailable",
       "topUp": "Top up",
       "history": "Billing history",
-      "amount": "{amount} · {points} points",
+      "amount": "{amount} · {points} credits",
       "date": "Date",
       "amountColumn": "Amount",
       "section": "Balance",
       "type": "Type",
-      "receipt": "Receipt"
+      "receipt": "Receipt",
+      "topUpTitle": "Add Mikka credits",
+      "topUpHint": "Pick an amount. Stripe confirms the payment method in the next step.",
+      "topUpAmount": "Amount",
+      "topUpTotal": "Due today",
+      "topUpBuy": "Buy {amount}"
     },
     "management": {
       "budgetExhausted": "Limit reached",
@@ -8144,7 +8368,7 @@
       },
       "budgetSave": "Save budget",
       "actualCost": "Confirmed cost",
-      "budgetLimit": "Point limit",
+      "budgetLimit": "Credit limit",
       "hideDays": "Hide days",
       "unknown": "Unknown",
       "budgetWorkspace": "Budget workspace",
@@ -8162,7 +8386,7 @@
       "noMemberUsage": "No platform usage in this month.",
       "budgetEdit": "Edit budget",
       "rechargeSave": "Save limits",
-      "rechargeAmount": "Points per top-up",
+      "rechargeAmount": "Top-up amount",
       "activePlan": "Active resource plan",
       "budgetWarning": "Warning threshold (%)",
       "budgetNew": "New budget",
@@ -8176,7 +8400,7 @@
       "budgetRemove": "Remove limit",
       "removeLimitHelp": "Remove this scope’s spending cap. Existing usage and audit history remain.",
       "resourceId": "Resource ID",
-      "rechargeThreshold": "Balance threshold (points)",
+      "rechargeThreshold": "Balance threshold (credits)",
       "platformActual": "Platform cost confirmed",
       "noMemberModels": "No settled model usage for this member this month.",
       "showDays": "Show days",
@@ -8187,7 +8411,7 @@
       "budgets": "Budgets and thresholds",
       "platformReserved": "Reserved for pending or unknown usage",
       "budgetThreshold": "Warning threshold reached",
-      "historyEmpty": "No transactions yet.",
+      "historyEmpty": "No transactions yet",
       "accountNone": "No payment account selected",
       "budgetPeriod": "Period",
       "billingEntry": "Billing and budgets",
@@ -8197,8 +8421,8 @@
       "newSubscriptionUnavailable": "Resource subscriptions are not configured. Existing balances and subscriptions remain available.",
       "organizationScope": "Organization",
       "rechargeOwnerOnly": "Only the payment account owner can save these limits.",
-      "noAccount": "Choose an Organization payment account to use platform credits.",
-      "rechargeCap": "Monthly cap (points)",
+      "noAccount": "Designate the organization's billing account before using platform credits.",
+      "rechargeCap": "Monthly cap (credits)",
       "differentPayer": "Platform execution uses a different Organization payment account. This page shows this Workspace’s retained balance and history. Open the Organization scope to manage platform purchases.",
       "invalid": "Enter valid whole-number limits and choose a resource.",
       "dailyUsage": "Daily platform cost (UTC)",
@@ -8206,7 +8430,7 @@
       "externalUnknown": "External runs with unknown cost",
       "saved": "Saved",
       "memberModels": "Model usage · {name}",
-      "inactiveCreditShare": "Your earlier personal credit share is inactive while the Organization account pays. Turn it off to revoke that consent.",
+      "inactiveCreditShare": "While the organization account pays, earlier personal credit sharing is inactive. Turn this off to revoke it.",
       "resourceUnavailable": "Resource metadata is not available yet. Workspace and member budgets remain available.",
       "accountHelp": "Choose an attached Shared Workspace account. Existing balances and receipts stay with that account. No funds are transferred.",
       "rechargeHelp": "Automatic charging is unavailable with this payment provider. You can save limits; each purchase still requires authorization in Stripe Checkout.",
@@ -8224,7 +8448,7 @@
       "platform_paused": "Mikka credits are unavailable right now",
       "billing_authorization_revoked": "The payment authorization has changed. Select an authorized billing account before continuing.",
       "teamNoPoints": "This team is out of Mikka credits",
-      "useMyPoints": "Use my points for this team",
+      "useMyPoints": "Use my credits for this team",
       "openBilling": "Open billing",
       "free_allowance_used": "Out of Mikka credits",
       "choosePlan": "Choose a plan",
@@ -8258,7 +8482,12 @@
       "caption": "Plans include monthly usage, switch anytime",
       "subscribe": "Subscribe",
       "plan": "Mikka Pro",
-      "title": "Choose a plan"
+      "title": "Choose a plan",
+      "tag": "Credits",
+      "outTitle": "Mikka credits are used up",
+      "outHint": "Switch to a model on your own subscription, or top up to continue",
+      "freeModel": "Change model",
+      "ownSubscription": "Use my subscription"
     }
   },
   "SettingsRegistry": {
@@ -8509,6 +8738,34 @@
     "newWorkVisibility": {
       "label": "Default visibility for new threads and Bots",
       "keywords": "new work|creation|visibility|private|shared|thread|bot"
+    },
+    "chatFont": {
+      "label": "Chat font",
+      "keywords": "chat|font|reading|dyslexia"
+    },
+    "requireTwoFactor": {
+      "label": "Require two-factor authentication",
+      "keywords": "Require two-factor authentication"
+    },
+    "skillPublishingPolicy": {
+      "label": "Skill publishing policy",
+      "keywords": "Skill publishing policy"
+    },
+    "prAutoOpen": {
+      "label": "Automatically open pull requests",
+      "keywords": "Automatically open pull requests"
+    },
+    "prWakeOnReview": {
+      "label": "Wake Agent on review comments",
+      "keywords": "Wake Agent on review comments"
+    },
+    "prWakeOnCiFailure": {
+      "label": "Wake Agent when CI fails",
+      "keywords": "Wake Agent when CI fails"
+    },
+    "prWakeOnConflict": {
+      "label": "Wake Agent on merge conflicts",
+      "keywords": "Wake Agent on merge conflicts"
     }
   },
   "MobilePush": {
@@ -8701,7 +8958,7 @@
     "dependencies": {
       "unavailable": "The complete dependency list cannot be edited with your current access.",
       "title": "Dependency repositories",
-      "empty": "No repositories to show."
+      "empty": "No repositories to show"
     },
     "milestones": {
       "name": "Milestone {index} name",
@@ -8905,7 +9162,8 @@
       "progress": "{completed} of {total} to-dos done",
       "pending": "Pending",
       "inProgress": "In progress",
-      "completed": "Done"
+      "completed": "Done",
+      "step": "Step {step} / {total}"
     },
     "turnFold": {
       "working": "Working for {duration}",
@@ -8913,10 +9171,29 @@
       "worked": "Worked for {duration}",
       "workedNoTime": "Worked",
       "stopped": "stopped",
-      "failed": "failed"
+      "failed": "failed",
+      "stoppedAfter": "You stopped after {duration}",
+      "stoppedNoTime": "You stopped"
     },
     "olderFailed": "Couldn't load. Retry",
-    "readFullOptions": "Read full options"
+    "readFullOptions": "Read full options",
+    "toolSummary": {
+      "read": "read files",
+      "readLead": "Read files",
+      "command": "{count, plural, one {ran a command} other {ran commands}}",
+      "commandLead": "{count, plural, one {Ran a command} other {Ran commands}}",
+      "edit": "{count, plural, one {edited a file} other {edited files}}",
+      "editLead": "{count, plural, one {Edited a file} other {Edited files}}",
+      "web": "searched the web",
+      "webLead": "Searched the web",
+      "other": "{count, plural, one {called a tool} other {called tools}}",
+      "otherLead": "{count, plural, one {Called a tool} other {Called tools}}",
+      "todo": "updated the plan",
+      "todoLead": "Updated the plan",
+      "delegate": "started subagents",
+      "delegateLead": "Started subagents"
+    },
+    "retryingIn": "Retrying in {n}s"
   },
   "Board": {
     "scrollRight": "Scroll board right",
@@ -8982,7 +9259,7 @@
       "saveFailed": "Save failed",
       "editorCrashedDescription": "The rest of the page is still available. Reload to keep working.",
       "membersTitle": "Members",
-      "activityFailed": "Could not load activity. Click to retry",
+      "activityFailed": "Couldn't load activity",
       "manageMembers": "Manage members",
       "advancedTools": "Advanced document tools",
       "emptyDocument": "Empty document",
@@ -9019,7 +9296,7 @@
       "aTask": "a task",
       "estimateChanged": "set the estimate to {estimate}",
       "resolve": "Resolve",
-      "timelinePullFailed": "Could not load linked pull request activity. Retry",
+      "timelinePullFailed": "Couldn't load linked pull request activity",
       "markedBlockedBy": "marked {code} as blocked by {other}",
       "moved": "moved {code} to {status}",
       "replyPlaceholder": "Leave a reply…",
@@ -9073,7 +9350,18 @@
       "createdTask": "created the task",
       "estimateRemoved": "removed the estimate",
       "merged": "Merged {pull} {title}",
-      "subtitle": "Updates and discussion"
+      "subtitle": "Updates and discussion",
+      "commentEdited": "Edited",
+      "commentDeleted": "Comment deleted",
+      "editComment": "Edit",
+      "deleteComment": "Delete",
+      "deleteCommentConfirm": "Delete this comment?",
+      "saveComment": "Save",
+      "cancelEdit": "Cancel",
+      "addReaction": "Add reaction",
+      "reactedBy": "{names} reacted with {emoji}",
+      "attachFile": "Attach file",
+      "dropFiles": "Drop files to attach"
     },
     "projectLinkFailed": "The task was created, but linking it to the project failed. Link it manually from the project.",
     "listView": "List view",
@@ -9191,7 +9479,9 @@
       "title": "Connect {name}",
       "submit": "Connect",
       "connected": "Connected {name}",
-      "fieldPlaceholder": "Enter {label}"
+      "fieldPlaceholder": "Enter {label}",
+      "formsFailed": "Couldn't load how to connect {name}",
+      "noKeyForm": "{name} can't be connected with a key"
     },
     "appsTab": "Apps",
     "state": {
@@ -9269,7 +9559,7 @@
       "restoring": "Restoring…",
       "description": "Preview the description and changes on the left, and pick a version on the right. Restoring only replaces the description; the title, properties, and comments stay.",
       "confirmTitle": "Restore this description?",
-      "empty": "No description history yet.",
+      "empty": "No description history yet",
       "reload": "Reload",
       "confirmAction": "Restore description",
       "restoreFailed": "Could not restore the description.",
@@ -9639,7 +9929,7 @@
       "askLabel": "Ask about or update memory",
       "askPlaceholder": "Ask or update",
       "sending": "Sending",
-      "empty": "Nothing remembered yet."
+      "empty": "Nothing remembered yet"
     },
     "profile": {
       "nameRequired": "Enter a name",
@@ -9919,7 +10209,8 @@
     "fileActions": "Actions for {name}",
     "tooLarge": "This file is too large.",
     "deleteFileTitle": "Delete {name}?",
-    "overviewEmpty": "No files yet.",
+    "overviewEmpty": "No files yet",
+    "archivedEmpty": "No archived folders",
     "overviewSub": "Files you keep and results from your tasks.",
     "unarchiveFolder": "Restore folder",
     "accessUnavailable": "These files are no longer available to this account.",
@@ -9998,7 +10289,7 @@
       "tooMany": "Too many attempts. Try again in a moment.",
       "notFound": "No company sign-in was found for that email or domain. Check that your organization has verified its domain, or use another way to sign in.",
       "cancel": "Back",
-      "open": "Sign in with company SSO",
+      "open": "Use single sign-on",
       "invalid": "Enter a work email or a domain, such as acme.com.",
       "continue": "Continue",
       "returnedFailed": "Company SSO sign-in didn't finish. Try again, or contact your organization's admin.",
@@ -10008,7 +10299,7 @@
     "namePlaceholder": "What should we call you?",
     "appleRevocationBody": "After deleting your account, open Sign-In & Security → Sign in with Apple in your Apple Account, select Mikka, then stop using Sign in with Apple.",
     "requestProcessed": "Request processed. If the account qualifies, check your inbox. This does not confirm that an email was delivered.",
-    "submitReset": "Save new password",
+    "submitReset": "Update password",
     "forgotTitle": "Reset your password",
     "browserOpened": "Sign-in is open in your browser. You'll return to Mikka automatically.",
     "passwordLength": "Use 8 to 128 characters.",
@@ -10056,7 +10347,7 @@
     "returnToCurrentAccount": "Cancel and return to current account",
     "continueNotice": "Click the provider button to finish OAuth authorization in this tab.",
     "confirmPassword": "Confirm new password",
-    "createTitle": "Create your work account",
+    "createTitle": "Create your Mikka account",
     "continueAs": "Continue as {name}",
     "orEmail": "or",
     "passwordRequired": "Password is required",
@@ -10086,14 +10377,14 @@
     "webOpenUnconfirmed": "Page opening is unconfirmed.",
     "mobileSignInFailed": "Sign-in failed.",
     "email": "Email",
-    "submitCreate": "Create account and continue",
-    "welcome": "Sign in to Mikka",
+    "submitCreate": "Create account",
+    "welcome": "Sign in or sign up to Mikka",
     "testWorkspaceCta": "Skip sign-in and open the test workspace",
     "tabBlocked": "The browser blocked the new tab. Allow pop-ups and try again.",
     "signUpLabel": "Create account",
     "googleStartFailed": "Could not start Google sign-in.",
     "verifyLinkInvalid": "This verification link is invalid, expired or already used. If your email is not verified yet, send a new link.",
-    "submitSignIn": "Sign in to the workspace",
+    "submitSignIn": "Continue",
     "testIssueSwitchTitle": "[Test] Task switching and session reuse",
     "googleAccountNotLinked": "This Google account is not linked to Mikka. Sign in with your existing method, then link Google in Settings → Account.",
     "passwordTooShort": "Password must be at least 8 characters",
@@ -10105,7 +10396,38 @@
     "continuePasskey": "Continue with passkey",
     "passkeyFailed": "Passkey sign-in did not finish. Try again.",
     "showPassword": "Show password",
-    "hidePassword": "Hide password"
+    "hidePassword": "Hide password",
+    "passwordTitle": "Enter your password",
+    "noAccountOrWrongPassword": "The password is wrong, or this email doesn't have a Mikka account yet",
+    "createWithEmail": "Create an account with this email",
+    "lastUsed": "Last used",
+    "legal": "By continuing, you agree to the <terms>Terms of Service</terms> and <privacy>Privacy Policy</privacy>",
+    "accountLine": "Signed in as {email}",
+    "notYou": "Not you?",
+    "switchAccountLink": "Switch account",
+    "switchAccountFailed": "Signing out did not finish. Try again.",
+    "submitPassword": "Sign in",
+    "welcomeBack": "Welcome back",
+    "ssoTitle": "Sign in with single sign-on",
+    "ssoBody": "{email} signs in through your organization",
+    "ssoContinue": "Continue with single sign-on",
+    "usePasswordInstead": "Use a password instead",
+    "useAnotherEmail": "Use another email",
+    "passwordCreatePlaceholder": "Create a password",
+    "passwordEnterPlaceholder": "Enter your password",
+    "newPasswordPlaceholder": "Enter new password",
+    "confirmPasswordPlaceholder": "Confirm new password",
+    "passwordRule": "8 to 128 characters",
+    "resetSignsOut": "Signs out your other sessions",
+    "checkEmailTitle": "Check your email",
+    "verifyDescription": "Enter the email you signed up with and we'll send a new verification link",
+    "verifySent": "If {email} is registered and not yet verified, a verification link is on its way. Open it on the same device and browser you started from",
+    "verifyExpiredTitle": "Link expired",
+    "verifyExpiredBody": "The verification link has expired, request a new one",
+    "verifyFailedTitle": "Verification failed",
+    "verifyFailedBody": "The link is invalid or was already used, request a new one",
+    "forgotDescription": "We'll email you a reset link",
+    "resetSent": "If {email} has an account, a reset link is on its way. It works for 15 minutes"
   },
   "DesktopServer": {
     "cancel": "Cancel",
@@ -10133,7 +10455,8 @@
     "selfHosted": "Self-hosted server",
     "disconnect": "Disconnect",
     "connecting": "Connecting…",
-    "change": "Change"
+    "change": "Change",
+    "connectionTitle": "Mikka server"
   },
   "TeamSettings": {
     "createHeading": "Create a new team",
@@ -10233,13 +10556,26 @@
     "createAccount": "Create account",
     "backToWorkspace": "Open workspace",
     "invalidToken": "This invite link is malformed. Ask an admin for the complete link.",
-    "signInToAccept": "Sign in and accept",
+    "signInToAccept": "Sign in to join",
     "joined": "You joined the workspace.",
     "joinTitle": "Join workspace",
     "linksCreated": "{count, plural, =1 {1 invite link created} other {# invite links created}}",
     "invitedToWorkspace": "Join {workspace}",
     "invitedBy": "Invited by {inviter}",
-    "invitedRole": "Role: {role}"
+    "invitedRole": "Role: {role}",
+    "loading": "Reading the invitation…",
+    "joinNamed": "Join {name}",
+    "joinOrganizationTitle": "Join organization",
+    "kindWorkspace": "workspace",
+    "kindOrganization": "organization",
+    "invitedLine": "{inviter} invited you to this {kind} as {role}",
+    "invitedLineAnonymous": "You're invited to this {kind} as {role}",
+    "sentTo": "Sent to {email}",
+    "notNow": "Not now",
+    "join": "Join",
+    "backHome": "Back to Mikka",
+    "unavailableTitle": "Invitation unavailable",
+    "unavailableBody": "It may have expired, been used or been revoked. Ask the person who invited you to send a new one"
   },
   "Common": {
     "undo": "Undo",
@@ -10275,7 +10611,22 @@
     "selected": "Selected",
     "refresh": "Refresh",
     "retry": "Retry",
-    "later": "Later"
+    "later": "Later",
+    "newVersion": "New version available",
+    "optional": "Optional",
+    "clear": "Clear",
+    "copy": "Copy",
+    "copied": "Copied",
+    "confirm": "Confirm",
+    "addItem": "Add…",
+    "removeItem": "Remove {name}",
+    "itemAdded": "{name} added",
+    "itemsAdded": "{count} added",
+    "itemRemoved": "{name} removed",
+    "atMost": "Up to {max} at a time",
+    "all": "All",
+    "back": "Back",
+    "noResults": "No matching results"
   },
   "Overview": {
     "viewsTitle": "Workspace views",
@@ -10340,13 +10691,23 @@
     "deny": "Deny",
     "unknownClient": "An unnamed app",
     "label": "Authorize app",
-    "title": "Allow {name} to use Mikka?",
+    "title": "{name} wants to access your Mikka account",
     "scopeRead": "See your tasks and thread history",
     "scopeCoordinator": "Send messages to your Coordinator and read its replies",
     "failed": "Authorization did not finish. Go back to the app and connect again.",
     "scopesHeading": "Requested permissions",
-    "scopeOfflineAccess": "Keep access active while you are away",
-    "scopeFallback": "Access scope: {scope}"
+    "scopeOfflineAccess": "Keep access after you close the browser",
+    "scopeFallback": "Access scope: {scope}",
+    "publisherFrom": "From {host}",
+    "publisherUnknown": "An app with no website",
+    "unverifiedPublisher": "The app registered its own name; Mikka has not verified who publishes it",
+    "redirectsTo": "Authorizing will redirect to {host}",
+    "allowNamed": "Authorize {name}",
+    "writeMark": "Write",
+    "detailRead": "Read only",
+    "detailWrite": "Sends messages as you",
+    "detailOffline": "No need to authorize again each time",
+    "detailIdentity": "Read only"
   },
   "Artifact": {
     "roles": {
@@ -10520,8 +10881,13 @@
     "nextTaskText": "Write what needs doing; Mikka hands it to an Agent.",
     "skip": "Skip for now",
     "roleAdmin": "Admin",
-    "sub": "About two minutes.",
-    "computer": "Cloud computer"
+    "sub": "Two steps, then your first thread",
+    "computer": "Cloud computer",
+    "code": {
+      "title": "Code",
+      "heading": "Connect your code",
+      "text": "Mikka works in the repositories you pick and sends changes as pull requests. You can change this in Settings anytime"
+    }
   },
   "GroupTask": {
     "notStarted": "Execution has not started. {remedy}",
@@ -10668,19 +11034,6 @@
     },
     "openScreen": "Open {name}'s screen full window",
     "loading": "Connecting to the computer",
-    "approval": {
-      "allowRun": "Allow for this task",
-      "action": {
-        "key": "Press a key",
-        "click": "Click the screen",
-        "scroll": "Scroll",
-        "screenshot": "View the screen",
-        "type": "Type text"
-      },
-      "allow": "Allow",
-      "deny": "Deny",
-      "failed": "Not delivered. Try again."
-    },
     "addE2BKey": "Add E2B API Key",
     "wakeFailed": "Could not wake it. Try again.",
     "waking": "Waking",
@@ -10696,8 +11049,14 @@
   },
   "HostedSettings": {
     "account": {
-      "pictureHint": "PNG, JPEG or WebP",
-      "note": "Your account details apply to every workspace you are in."
+      "pictureHint": "Shown across your account",
+      "note": "Your account details apply to every workspace you are in.",
+      "nameHint": "Shown to teammates",
+      "userId": "User ID",
+      "userIdHint": "For support and API requests",
+      "copyId": "Copy",
+      "copiedId": "Copied",
+      "emailHint": "Shown to teammates and used to sign in"
     },
     "models": {
       "readOnly": "Models can’t be turned off one by one yet",
@@ -10727,10 +11086,10 @@
       "noApiKeys": "No API keys added",
       "defaultAgent": "Default Agent",
       "defaultAgentHint": "Pre-selected for new tasks and threads",
-      "defaultHarness": "Default harness",
-      "defaultHarnessHint": "Execution harness for new tasks and threads",
+      "defaultHarness": "Default agent",
+      "defaultHarnessHint": "Agent for new tasks and threads",
       "defaultModel": "Default model",
-      "defaultModelHint": "Default model and reasoning for the selected harness",
+      "defaultModelHint": "Default model and reasoning for the selected agent",
       "allProviders": "Favorites",
       "otherProvider": "Other",
       "speedFast": "Fast mode",
@@ -10775,6 +11134,8 @@
       "emptyPersonal": "No personal connections yet",
       "emptyWorkspace": "No shared workspace connections yet",
       "effortLabel": "Effort",
+      "faster": "Faster",
+      "smarter": "Smarter",
       "effortFaster": "Faster",
       "effortSmarter": "Smarter",
       "effort": {
@@ -10796,7 +11157,7 @@
       "apiCrossLink": "Mikka API tokens",
       "openApiAction": "Open API",
       "routingOrderLabel": "Routing & billing order",
-      "routingOrderValue": "Official CLI subscription → Your API keys (BYOK) → Mikka Credits"
+      "routingOrderValue": "Subscription → API key → Mikka credits"
     },
     "memory": {
       "learned": "Learnt from your connected apps",
@@ -10957,7 +11318,7 @@
     "networkUnavailable": "No network",
     "openBrowser": "Open in browser",
     "serverUnavailable": "Can't reach Mikka",
-    "renderHint": "Retry to reopen the view.",
+    "renderHint": "This part of the page ran into an error. Retry opens it again; nothing else is affected.",
     "updateHint": "This version can no longer connect to Mikka. Check for an app update.",
     "reconnecting": "Reconnecting…",
     "browserOpened": "The page is open in your browser. You can return to Mikka when finished.",
@@ -10988,9 +11349,40 @@
     "tabMemory": "Memory",
     "tabDevices": "Devices",
     "tabTeams": "Teams",
-    "tabMembers": "Members"
+    "tabMembers": "Members",
+    "tabMenuLabel": "Tab menu for {title}",
+    "closeTabItem": "Close Tab",
+    "closeOtherTabs": "Close Other Tabs",
+    "closeTabsToLeft": "Close Tabs to the Left",
+    "closeTabsToRight": "Close Tabs to the Right",
+    "duplicateTab": "Duplicate Tab",
+    "copyUrl": "Copy URL",
+    "moveToNewWindow": "Move to New Window",
+    "currentVersion": "Current version v{version}",
+    "offlineKept": "Unsent text stays here until you are back online"
   },
   "ConversationDirectory": {
+    "groupChat": "Group chat",
+    "viewMine": "My threads",
+    "viewAllThreads": "All threads",
+    "viewArchived": "Archived",
+    "groupStatus": "Status",
+    "groupNone": "None",
+    "grouping": "Grouping",
+    "status": "Status",
+    "pinned": "Pinned",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "archive": "Archive",
+    "unarchive": "Unarchive",
+    "selectThread": "Select {title}",
+    "deselectThread": "Deselect {title}",
+    "selected": "{count} selected",
+    "clearSelection": "Clear selection",
+    "saveView": "Save view",
+    "viewName": "View name",
+    "deleteView": "Delete view {name}",
+    "bulkError": "Some threads couldn’t be updated. Try again.",
     "loading": "Loading threads…",
     "waiting": "Waiting",
     "search": "Search threads",
@@ -11018,7 +11410,7 @@
     "archived": "Archived",
     "clearFilters": "Clear filters",
     "automationUnknown": "this automation",
-    "emptyTitle": "No threads yet.",
+    "emptyTitle": "No threads yet",
     "archiveOff": "Off",
     "activeGroup": "Active & waiting",
     "recentGroup": "Recent threads"
@@ -11075,6 +11467,7 @@
     "threadEntry": "Artifact · {count}",
     "retry": "Retry",
     "empty": "No artifacts yet",
+    "emptyHint": "Documents, pages, pull requests and screenshots created in tasks will appear here.",
     "title": "Artifacts",
     "loading": "Loading artifacts"
   },
@@ -11089,7 +11482,7 @@
     "unavailableProject": "Previously granted Project",
     "failed": "The request failed. Refresh to see the current settings.",
     "disable": "Disable",
-    "empty": "No service identities yet.",
+    "empty": "No service identities yet",
     "credential": "Service key",
     "expires": "Key expires {date}",
     "organizationScope": "Organization · {name}",
@@ -11102,7 +11495,7 @@
     "name": "Identity name",
     "keyScope": "Key scope",
     "back": "Back to service identities",
-    "confirmRevoke": "Revoke the service key?",
+    "confirmRevoke": "Revoke the service key for “{scope}”?",
     "confirm": "Confirm",
     "copyNow": "Copy this key now. It is shown once.",
     "unconfigured": "No key issued",
@@ -11110,7 +11503,7 @@
     "manage": "Manage {name}",
     "confirmProjects": "Grant this identity read access to the selected Projects?",
     "rename": "Rename",
-    "noProjects": "No Projects are available.",
+    "noProjects": "No Projects are available",
     "revoke": "Revoke key",
     "confirmRotate": "Issue a new key and invalidate any existing key?",
     "active": "Active",
@@ -11140,7 +11533,7 @@
     "relatedThreads": "Related threads",
     "closeOtherTabs": "Close other tabs",
     "sidebarNavigation": "Sidebar navigation",
-    "searchTabs": "Search tabs",
+    "searchTabs": "Search panels",
     "noTabsFound": "No tabs found.",
     "nothingHere": "Nothing here yet",
     "search": "Search",
@@ -11152,7 +11545,9 @@
     "mainMenu": "Main menu",
     "dismiss": "Dismiss",
     "resizeSidebar": "Resize sidebar",
-    "resizeWorkArea": "Resize the right column"
+    "resizeWorkArea": "Resize the right column",
+    "phoneBack": "Back",
+    "phoneColumnMenu": "Right column contents"
   },
   "DeviceSetup": {
     "path": "Local repository path",
@@ -11189,7 +11584,7 @@
     },
     "left": "{count, plural, one {# left} other {# left}}",
     "hide": "Hide setup checklist",
-    "title": "Setup checklist",
+    "title": "Get started with Mikka",
     "show": "Show checklist",
     "items": {
       "task": "Give the first task",
@@ -11197,7 +11592,9 @@
       "app": "Connect an app",
       "device": "Connect this computer",
       "invite": "Invite teammates"
-    }
+    },
+    "skip": "Skip",
+    "skipItem": "Skip {item}"
   },
   "ServerStatus": {
     "database": "Database",
@@ -11274,7 +11671,11 @@
     "activate": "Activate approved Skill",
     "positive": "Helpful",
     "feedback": "Feedback",
-    "saved": "Feedback saved"
+    "saved": "Feedback saved",
+    "good": "Good response",
+    "bad": "Bad response",
+    "undo": "Undo feedback",
+    "send": "Send"
   },
   "Reactions": {
     "mine": "{emoji}: {others, plural, =0 {just you} one {you and # other} other {you and # others}}",
@@ -11285,8 +11686,12 @@
     "workspaceUnconfirmed": "Couldn't confirm workspace"
   },
   "NotFound": {
-    "title": "Page not found",
-    "backHome": "Back to workspace"
+    "title": "404 Page not found",
+    "backHome": "Back to Mikka",
+    "body": "This page doesn't exist, or you need to sign in to see it",
+    "bodySignedIn": "This page doesn't exist, or {email} can't open it. If someone sent you this link, ask them to share it with you",
+    "signIn": "Sign in",
+    "switchAccount": "Switch account"
   },
   "PullRequestsBadge": {
     "label": "{count, plural, one {# pull request} other {# pull requests}}"
@@ -11486,6 +11891,7 @@
   "AgentMessageRow": {
     "dispatched": "{name} dispatched the task",
     "sent": "Message from {name}",
+    "sentBy": "Sent by {name}",
     "reply": "Reply from {name}",
     "message": "Message from {name}",
     "question": "Question from {name}",
@@ -11530,11 +11936,11 @@
     "draftStatus": "Draft PR",
     "mergedStatus": "Pull request merged",
     "closedStatus": "Pull request closed",
-    "noIssues": "No unresolved review issues.",
+    "noIssues": "No unresolved review issues",
     "resolved": "Resolved",
     "unresolved": "Open",
     "addReviewComment": "Add review comment",
-    "noCommits": "No commits reported.",
+    "noCommits": "No commits reported",
     "summaryHeading": "Summary",
     "openBrowser": "Open in browser",
     "quoteRef": "Copy PR reference"
@@ -11713,6 +12119,125 @@
     "notFoundTitle": "Shared thread unavailable",
     "notFoundBody": "This share link was revoked or the thread is no longer available.",
     "backHome": "Open Mikka",
-    "emptyMessages": "No messages in this thread."
+    "emptyMessages": "No messages in this thread.",
+    "snapshotAt": "Snapshot from {time}",
+    "messagesLabel": "Thread messages",
+    "snapshotNotice": "This is a snapshot from {time}; later messages are not shown",
+    "snapshotNoticeUndated": "This is a snapshot; later messages are not shown"
+  },
+  "DesktopNotificationAccess": {
+    "title": "Notifications for Mikka are off",
+    "description": "Turn them on to hear back when a thread needs you or fails, someone mentions you, or a pull request merges",
+    "open": "Open System Settings",
+    "notNow": "Not now"
+  },
+  "DesktopLocalRuns": {
+    "title": "Let Mikka run threads on this computer?",
+    "description": "Your threads can run here until you remove this computer in Settings › Devices.",
+    "allow": "Allow",
+    "cancel": "Cancel"
+  },
+  "PublicPage": {
+    "copyLink": "Copy link",
+    "copied": "Copied",
+    "openInMikka": "Open in Mikka",
+    "signIn": "Sign in",
+    "signUp": "Sign up"
+  },
+  "CreateWorkspace": {
+    "title": "Create a shared workspace",
+    "subtitle": "Invite people to share threads, tasks and Bots",
+    "submit": "Create workspace",
+    "joinableTitle": "You can join",
+    "joinableHint": "Your email domain is verified by these organizations",
+    "joinableMeta": "Through your email domain",
+    "join": "Join",
+    "joined": "Joined"
+  },
+  "PullRequestWake": {
+    "prWakeOnReview": "A reviewer commented on this pull request.",
+    "prWakeOnCiFailure": "A CI check failed on this pull request.",
+    "prWakeOnConflict": "This pull request has a merge conflict."
+  },
+  "ComposerCommands": {
+    "placeholderHint": "/ for commands",
+    "discovering": "Discovering commands…",
+    "sectionMikka": "Mikka",
+    "sectionClaudeCode": "Claude Code",
+    "sectionCodex": "Codex",
+    "sectionEve": "Bot",
+    "sectionSkills": "Skills",
+    "sectionMcp": "MCP",
+    "sectionRecents": "Recent",
+    "sectionSlack": "Slack",
+    "sectionDevices": "Devices",
+    "sectionSubagents": "Subagents",
+    "sectionPlugins": "Plugins",
+    "helpTitle": "Commands",
+    "helpEmpty": "No commands available",
+    "blockedTitle": "/{command} cannot run here",
+    "blockedValid": "Available: {commands}",
+    "sendAsText": "Send as text",
+    "compacting": "Compacting context…",
+    "compacted": "Context compacted",
+    "compactFailed": "Compaction failed",
+    "sideNote": "Side note",
+    "sidePending": "Answering in side thread…",
+    "openSideThread": "Open side thread",
+    "branchFromHere": "Branch from here",
+    "folderTitle": "Move to folder",
+    "folderPlaceholder": "Folder name",
+    "folderNone": "No folder",
+    "folderSave": "Save",
+    "folderClear": "Remove folder",
+    "machineTitle": "Machine size",
+    "machineNextRun": "Applies to next run",
+    "formatBold": "Bold",
+    "formatItalic": "Italic",
+    "formatCode": "Inline code",
+    "formatLink": "Link",
+    "formatBulletList": "Bulleted list",
+    "formatOrderedList": "Numbered list",
+    "formatToggle": "Formatting",
+    "voiceStart": "Dictate",
+    "voiceStop": "Stop dictation",
+    "voiceTranscribing": "Transcribing…",
+    "cmdHint": {
+      "question": "<question>",
+      "instructions": "[instructions]",
+      "query": "<query>",
+      "task": "<task>"
+    },
+    "cmdDesc": {
+      "new": "Start a new thread",
+      "fork": "Fork full history",
+      "fork-summary": "Fork with summary",
+      "side": "Ask a side question",
+      "stop": "Stop active run",
+      "model": "Switch model",
+      "reasoning": "Adjust reasoning effort",
+      "fast": "Toggle Fast mode",
+      "ultrafast": "Toggle Ultrafast mode",
+      "pro": "Toggle Pro mode",
+      "machine": "Choose machine size",
+      "tags": "Manage tags",
+      "folder": "Move to folder",
+      "changes": "Open changed files",
+      "task": "Open linked task",
+      "help": "Show available commands",
+      "compact": "Compact context",
+      "clear": "Clear history",
+      "review": "Review code changes",
+      "init": "Update AGENTS.md",
+      "schedules": "Manage automations",
+      "subagents": "View subagents",
+      "web-search": "Search the web",
+      "dispatch": "Dispatch task"
+    }
+  },
+  "DesktopTelemetry": {
+    "heading": "Privacy",
+    "share": "Share usage and error reports",
+    "failed": "That didn't work"
   }
 }

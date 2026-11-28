@@ -32,10 +32,9 @@ import ts from 'typescript'
  * constant itself. Keep in step with `FlagKey` in lib/feature-flags.ts.
  */
 export const FLAG_REGISTRIES = {
-  'lib/feature-flags.ts': { upcomingFeatures: 'key', gatedFeatures: 'key', releaseFlags: 'names', proactiveFeatures: 'values', killSwitches: 'values' },
+  'lib/feature-flags.ts': { upcomingFeatures: 'key', gatedFeatures: 'key', releaseFlags: 'names', taskProviderFlag: 'value', ownerClickAnalyticsFlag: 'value', proactiveFeatures: 'values', killSwitches: 'values' },
   'lib/deployment-switches.ts': { DEPLOYMENT_SWITCHES: 'flag', PERSON_SWITCHES: 'flag' },
   'lib/runtime-config/schema.ts': { RUNTIME_CONFIG_DEFINITIONS: 'flag' },
-  'lib/linear-sync/flags.ts': { LINEAR_SYNC_FLAG: 'value' },
   'lib/subscription-routes.ts': { SUBSCRIPTION_ROUTE_FLAGS: 'values' },
 }
 

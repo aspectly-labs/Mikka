@@ -24,7 +24,7 @@ test('activity document versions follow the actual submitting run and pinned pla
     CREATE TABLE agent_runs(id uuid PRIMARY KEY,"userId" text NOT NULL,"issueId" uuid,"botId" uuid);
     CREATE TABLE computer_run_bindings("runId" uuid PRIMARY KEY,"workspaceId" uuid NOT NULL);
     CREATE TABLE mikka_team_issues("issueId" uuid PRIMARY KEY,"workspaceId" uuid NOT NULL);
-    CREATE TABLE mikka_workspaces(id uuid PRIMARY KEY,"userId" text NOT NULL,kind text NOT NULL);
+    CREATE TABLE mikka_workspaces(id uuid PRIMARY KEY,"userId" text NOT NULL,kind text NOT NULL, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
     CREATE TABLE factory_attempts(id uuid PRIMARY KEY,"taskId" uuid NOT NULL,"runId" uuid UNIQUE,"candidateId" uuid,stage text NOT NULL,output jsonb NOT NULL DEFAULT '{}');
     CREATE TABLE artifacts(id uuid PRIMARY KEY,"userId" text NOT NULL,"workspaceId" uuid,"runId" uuid,"issueId" uuid,kind text NOT NULL,title text NOT NULL,"latestVersion" integer NOT NULL DEFAULT 1);
     CREATE TABLE artifact_versions("artifactId" uuid REFERENCES artifacts ON DELETE CASCADE,version integer NOT NULL,size integer NOT NULL,sha256 text NOT NULL,

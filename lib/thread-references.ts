@@ -1,7 +1,13 @@
 import { splitCitations } from './coordinator/citation-parts'
 import { siteSearchQuery } from './site-search'
 
-export type ThreadReference = { kind: 'task' | 'thread' | 'pr' | 'bot'; id: string; title: string; conversationKind?: 'chat' }
+export type ThreadReference = {
+  kind: 'task' | 'thread' | 'pr' | 'bot' | 'device' | 'subagent' | 'plugin' | 'slack_channel'
+  id: string
+  title: string
+  conversationKind?: 'chat'
+  detail?: string
+}
 const pullRequest = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d*\/?$/
 
 /** Source mentions belong to the repository-scoped file picker. */
@@ -11,14 +17,28 @@ export function sourceMentionAt(text: string, caret: number): boolean {
 
 export function mentionAt(text: string, caret: number) {
   if (sourceMentionAt(text, caret)) return null
-  const match = /(?:^|\s)@(?:(task|thread|pr|bot):)?([^\s@:]{0,120})$/u.exec(text.slice(0, caret))
+  const match = /(?:^|\s)@(?:(task|thread|pr|bot|device|subagent|plugin):)?([^\s@:]{0,120})$/u.exec(text.slice(0, caret))
   if (!match) return null
   return { from: match.index + match[0].indexOf('@'), end: caret, kind: match[1] as ThreadReference['kind'] | undefined, query: match[2] }
 }
 
+/** `#channel` Slack channel mention trigger when Slack is connected (#3333). */
+export function channelMentionAt(text: string, caret: number) {
+  const match = /(?:^|\s)#([^\s#]{0,80})$/u.exec(text.slice(0, caret))
+  if (!match) return null
+  return { from: match.index + match[0].indexOf('#'), end: caret, query: match[1] }
+}
+
 export function referenceMarker(item: ThreadReference) {
   if (item.kind === 'pr') return item.id
-  const kind = item.kind === 'task' ? 'issue' : item.kind === 'bot' ? 'bot' : item.conversationKind === 'chat' ? 'chat' : 'run'
+  if (item.kind === 'slack_channel') return `#${item.title.replace(/^#/, '')}`
+  const kind =
+    item.kind === 'task' ? 'issue'
+      : item.kind === 'bot' ? 'bot'
+      : item.kind === 'device' ? 'device'
+      : item.kind === 'subagent' ? 'subagent'
+      : item.kind === 'plugin' ? 'plugin'
+      : item.conversationKind === 'chat' ? 'chat' : 'run'
   return `[[${kind}:${item.id}]]`
 }
 

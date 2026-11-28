@@ -12,7 +12,7 @@ import type { Pool, PoolClient } from 'pg'
 type Harness = Record<string, unknown>
 
 export async function fakeThreadMachines(pool: Pool, harnesses: Harness[]) {
-  const catalogue = templateModelsFixture()
+  const catalogue = templateModelsFixture(undefined, { hostedSizes: true })
   const saved = { url: process.env.MIKKA_CLOUD_WORKER_URL, sha: process.env.MIKKA_CLOUD_WORKER_SHA, claude: process.env.E2B_CLAUDE_TEMPLATE, codex: process.env.E2B_CODEX_TEMPLATE }
   process.env.MIKKA_CLOUD_WORKER_URL = 'https://worker.invalid/mikka'
   process.env.MIKKA_CLOUD_WORKER_SHA = catalogue.sha

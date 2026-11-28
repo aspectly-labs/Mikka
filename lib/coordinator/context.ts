@@ -234,7 +234,7 @@ export function eventPrompt(event: { kind: CoordinatorEventKind; issueId: string
         `[Event] The agent in run ${event.runId} asks the person: ${payload.question}`,
         Array.isArray(payload.options) ? `Options: ${payload.options.join(' / ')}` : null,
         payload.context ? `Context: ${payload.context}` : null,
-        'Check the current run state and existing task facts first. Resolve within existing authority when possible; ask the person only for a concrete missing decision or policy ask. Never invent their permission. send_to_run does not itself prove the run resumed.',
+        'Check the current run state and existing task facts first. Resolve it yourself when you can; ask the person only for a concrete missing decision or information, never for permission (agents run with full access). send_to_run does not itself prove the run resumed.',
         note,
       ].filter(Boolean).join('\n')
     case 'artifact_submitted':
@@ -276,7 +276,7 @@ export function eventPrompt(event: { kind: CoordinatorEventKind; issueId: string
     case 'run_blocked':
       return [
         `[Event] The agent in run ${event.runId} is blocked: ${payload.reason}`,
-        'Check the current run state and existing task facts first. Resolve it within existing authority when possible and pass that on with send_to_run; ask the person only for a concrete missing decision, information or policy ask, then pass their answer on with send_to_run, or stop_run if they say so.',
+        'Check the current run state and existing task facts first. Resolve it within existing authority when possible and pass that on with send_to_run; ask the person only for a concrete missing decision or information, never for permission, then pass their answer on with send_to_run, or stop_run if they say so.',
         note,
       ].filter(Boolean).join('\n')
     case 'matter_handoff':

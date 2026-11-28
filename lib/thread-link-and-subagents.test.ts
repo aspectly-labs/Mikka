@@ -216,6 +216,7 @@ before(async () => {
   mock.module('@/lib/live/lists', {
     namedExports: {
       runListChanged: async (_pool: unknown, id: string) => { state.liveEvents.push(`runList:${id}`) },
+      botListChanged: async () => { throw new Error('Unexpected bot list change') },
       groupListChanged: async () => {},
     },
   })

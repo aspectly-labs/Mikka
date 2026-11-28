@@ -59,7 +59,6 @@ test('actual action writer matrix records acting member/agent/system, ignores fo
   const { deriveIssueActivity } = await import('../lib/issue-activity')
   const { createLinkedIssue, updateIssueRelation } = await import('../app/actions/issue-operations')
   const { removeMember } = await import('../app/actions/collaboration')
-  const { createAppIssueFromLinear, applyLinearIssueToApp } = await import('../lib/linear-sync/issue-sync')
   const { handleTelegramDirectMessage } = await import('../lib/telegram/handler')
   const owner = `actor-owner-${randomUUID()}`
   const member = `actor-member-${randomUUID()}`
@@ -154,16 +153,6 @@ test('actual action writer matrix records acting member/agent/system, ignores fo
     await history(agent.id, 'agent', agentId)
     expectIssue(await actInWorkspace(owner, () => saveIssue({ ...input, id: agent.id, revision: 1, title: 'Agent edit' }), agentActor(agentId)))
     await history(agent.id, 'agent', agentId)
-    // Linear import/update exercise the actual local synchronization writers;
-    // no remote API, token or customer data is involved.
-    const [team] = await db.insert(linearTeamSyncs).values({ id: randomUUID(), ownerId: owner, workspaceId: workspace, linearTeamId: randomUUID(), linearTeamKey: 'ACT', linearTeamName: 'Actor fixture' }).returning()
-    const remote = { id: randomUUID(), identifier: 'ACT-1', title: 'Remote fixture', description: '', dueDate: null, priority: 0, url: 'https://example.invalid/fixture', updatedAt: new Date().toISOString(), state: null, team: { id: team.linearTeamId, key: 'ACT', name: team.linearTeamName }, assignee: null, labels: [] }
-    const imported = await createAppIssueFromLinear(team, remote)
-    assert.ok(imported)
-    await history(imported.id, 'system', 'linear')
-    await applyLinearIssueToApp(team, { ...remote, title: 'Remote changed', updatedAt: new Date(Date.now() + 10000).toISOString() }, true)
-    await history(imported.id, 'system', 'linear')
-    assert.equal((await latest(imported.id)).revision, 2)
     await db.insert(telegramLinks).values({ userId: owner, telegramUserId: telegramId })
     await db.insert(telegramConversations).values({ threadId, userId: owner, draftTitle: 'Telegram fixture' })
     const posts: unknown[] = []
