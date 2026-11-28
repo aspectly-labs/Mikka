@@ -1115,6 +1115,7 @@
           "limits_changed": "修改了用量上限",
           "auto_recharge_changed": "修改了自动充值",
           "overage_changed": "修改了超额设置",
+          "seats_synced": "同步了订阅席位",
           "checkout_started": "打开了结账",
           "credits_purchased": "购买了额度"
         },

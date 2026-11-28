@@ -39,17 +39,18 @@ export class ScimStore {
    * serializer in WS, release every APP checkout before callbacks, and ACK
    * only after the WS commit. A lost ACK safely reuses the stable audit ID. */
   async drain(connection: ScimConnection, force = true) {
-    const [{ drainOrganizationLiveRevocations }, { workspaceDb }, { sql }] = await Promise.all([
-      import('./live-authority'), import('../workspace-db'), import('drizzle-orm'),
+    const [{ drainOrganizationLiveRevocations }, { workspaceDb }, { eq, sql }, { organizationWorkspaces }] = await Promise.all([
+      import('./live-authority'), import('../workspace-db'), import('drizzle-orm'), import('../db/governance-schema'),
     ])
     await drainOrganizationLiveRevocations(connection.organizationId)
-    const delivered = await workspaceDb.transaction(async workspace => {
+    const { completed: delivered, syncedUsers, affectedWorkspaceIds } = await workspaceDb.transaction(async workspace => {
       const lock = await workspace.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${`enterprise-scim:${connection.id}`},0)) as acquired`)
-      if (lock.rows[0]?.acquired !== true) return []
+      if (lock.rows[0]?.acquired !== true) return { completed: [] as string[], syncedUsers: false, affectedWorkspaceIds: [] as string[] }
       const { rows } = await this.pool.query<{ id: string; kind: 'Users' | 'Groups'; resourceId: string; action: DirectoryChange['action'] }>(`select id,kind,"resourceId",action from enterprise_scim_outbox
         where "connectionId"=$1 and "deliveredAt" is null and ($2 or "lastAttemptAt" is null or "lastAttemptAt"<=now()-interval '30 seconds')
         order by "createdAt",id limit 100`, [connection.id, force])
       const completed: string[] = []
+      let syncedUsers = false
       for (const event of rows) {
         const claim = await this.pool.query('update enterprise_scim_outbox set "lastAttemptAt"=now() where id=$1 and "deliveredAt" is null', [event.id])
         if (!claim.rowCount) continue
@@ -60,12 +61,21 @@ export class ScimStore {
           // Never replay request bodies. The serialized delivery observes the
           // newest committed directory state, including a later disable.
           await this.afterUserChange({ connection, user, action: event.action, eventId: event.id })
+          if (user.userId) syncedUsers = true
         }
         completed.push(event.id)
       }
-      return completed
+      const affectedWorkspaceIds = syncedUsers
+        ? (await workspace.select({ id: organizationWorkspaces.workspaceId }).from(organizationWorkspaces)
+          .where(eq(organizationWorkspaces.organizationId, connection.organizationId))).map(row => row.id)
+        : []
+      return { completed, syncedUsers, affectedWorkspaceIds }
     })
     if (delivered.length) await this.pool.query('update enterprise_scim_outbox set "deliveredAt"=now() where id=any($1::uuid[]) and "deliveredAt" is null', [delivered])
+    if (syncedUsers) {
+      const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+      await syncPerSeatSubscriptionForOrganization(connection.organizationId, { affectedWorkspaceIds })
+    }
   }
 
   private async transaction<T>(connection: ScimConnection, work: (tx: PoolClient) => Promise<T>): Promise<T> {

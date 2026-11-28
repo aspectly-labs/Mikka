@@ -187,17 +187,13 @@ async function historicalRelease(api, runId, runAttempt) {
 export async function priorDeployment(api, currentRun, selectedRun, target = 'staging') {
   const runs = selectedRun ? [await api(`${repository}/actions/runs/${selectedRun}`)]
     : await pages(api, 'actions/workflows/cloudflare-app-deploy.yml/runs?branch=main', 'workflow_runs')
-  // The listing is in run creation order, but a re-run attempt of an older run can write after a
-  // later-created run (for example a rollback). The concurrency group serializes every attempt, so
-  // the latest writer is the writing attempt that started last: after finding one, keep scanning
-  // for an attempt that started later.
-  let found, foundAt
+  // Run creation/start timestamps include time waiting for the concurrency group. Only the
+  // actual Deploy-step intervals prove writer order; equal or overlapping intervals are ambiguous.
+  let found, foundInterval
   for (const latest of runs) {
     const isCurrent = String(latest.id) === String(currentRun)
     if (!isCurrent && latest.status !== 'completed') continue
     assert.ok(Number.isSafeInteger(latest.run_attempt) && latest.run_attempt > 0, 'pipeline_deployment_attempt_required')
-    // The listing's run_started_at is its latest attempt's start; no earlier attempt started later.
-    if (found !== undefined && !(attemptStart(latest) > foundAt)) continue
     // Re-running only failed jobs does not erase an earlier writer. Search
     // every earlier completed attempt, including this run's previous attempt.
     // A fresh selection failure must never hide a partial deployment.
@@ -207,8 +203,7 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       checkedRun(run, deployment, { successful: false, automaticDeployment: true })
       assert.equal(run.run_attempt, attempt, 'pipeline_deployment_attempt_mismatch')
       assert.ok(['workflow_run', 'workflow_dispatch'].includes(run.event), 'pipeline_deployment_event_invalid')
-      const startedAt = attemptStart(run)
-      if (found !== undefined && !(startedAt > foundAt)) break
+      attemptStart(run)
       const jobs = await pages(api, `actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, 'jobs')
       // A completed stage-all re-bootstraps staging onto a new reviewed
       // hosted-api-staging.json release with fresh unmarked Workers, so older
@@ -229,8 +224,11 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
           if (phases.length === 1 && phases[0].version === 1 && phases[0].phase === 'stage-all'
               && phases[0].status === 'completed' && phases[0].operator?.runId === String(run.id)
               && phases[0].operator?.runAttempt === String(run.run_attempt)) {
+            const interval = deploymentInterval(stageAll.steps.find(step => step.name === 'Deploy the reviewed public artifacts and verify the selected phase'))
+            if (found !== undefined && interval.end < foundInterval.start) break
+            assert.ok(found === undefined || interval.start > foundInterval.end, 'pipeline_deployment_order_ambiguous')
             found = null
-            foundAt = startedAt
+            foundInterval = interval
             break
           }
         }
@@ -244,6 +242,10 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       // A failed checkout/selection never acquired a deployment writer. Do not
       // confuse it with a partially applied release that requires rollback.
       if (!applied || applied.conclusion === 'skipped') continue
+      const interval = deploymentInterval(applied)
+      // Earlier attempts of this same run also precede this completed attempt. Only a strictly
+      // earlier Deploy interval can avoid reading its archive; run/list order is not evidence.
+      if (found !== undefined && interval.end < foundInterval.start) break
       let packet
       try {
         packet = await members(api, run, target === 'production' ? 'deploy-production' : 'deploy-pipeline')
@@ -284,8 +286,9 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       // so it neither blocks nor sets the baseline: the baseline is what the writer before it left.
       // Its own previousOrigin is only what its selection believed, which can be stale.
       if (summary.status === 'failed' && preWriteSteps.includes(summary.failedStep) && summary.rollback === undefined) continue
+      assert.ok(found === undefined || interval.start > foundInterval.end, 'pipeline_deployment_order_ambiguous')
       found = { run, summary, files: packet.files }
-      foundAt = startedAt
+      foundInterval = interval
       break
     }
   }
@@ -298,6 +301,13 @@ const attemptStart = run => {
   const at = Date.parse(run.run_started_at ?? '')
   assert.ok(Number.isFinite(at), 'pipeline_deployment_start_required')
   return at
+}
+
+const deploymentInterval = step => {
+  const start = typeof step.started_at === 'string' ? Date.parse(step.started_at) : NaN
+  const end = typeof step.completed_at === 'string' ? Date.parse(step.completed_at) : NaN
+  assert.ok(Number.isFinite(start) && Number.isFinite(end) && end >= start, 'pipeline_deployment_interval_required')
+  return { start, end }
 }
 
 async function qualificationOrigin(api) {

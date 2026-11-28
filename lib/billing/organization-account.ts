@@ -54,6 +54,19 @@ export async function setOrganizationBillingAccount(actorId: string, organizatio
       .onConflictDoUpdate({ target: organizationEntitlements.organizationId, set: values })
     await enqueueOrganizationAudit(tx, { organizationId, actorId, action: 'organization.billing_account_changed',
       targetId: workspaceId ?? current?.workspaceId, metadata: { workspaceId, reason: workspaceId ? 'designated_existing_account' : 'released_account' } })
-    return { organizationId, accountWorkspaceId: workspaceId }
+    return { organizationId, accountWorkspaceId: workspaceId, previousWorkspaceId: current?.workspaceId ?? null }
+  }).then(async ({ previousWorkspaceId, ...result }) => {
+    const affected = [...new Set([result.accountWorkspaceId, previousWorkspaceId].filter((id): id is string => Boolean(id)))]
+    if (affected.length) {
+      const { syncPerSeatSubscriptionQuantity } = await import('./seat-sync')
+      for (const id of affected) {
+        await syncPerSeatSubscriptionQuantity(id).catch(error => {
+          console.error('[billing] billing account designation seat sync failed', {
+            name: error instanceof Error ? error.name : 'UnknownError',
+          })
+        })
+      }
+    }
+    return result
   })
 }

@@ -1,7 +1,7 @@
 # 云端 first, then a server, then a computer
 
 - Date: 2026-11-02
-- **Status:** Accepted
+- **Status:** Superseded in part by [2026-11-25-2130](2026-11-25-2130-mikka-cloud-on-mikka-e2b.md) (Mikka Cloud machines on Mikka's own E2B; a person's own E2B key only on self-hosted). Earlier status: Accepted
 - Source: Alex, relayed by the coordinator session: 有 E2B key 时优先在 E2B 云端跑；没有 key（或云端不可用）时派到这个人参与调度的服务器；两者都没有，才派到本机电脑. Then: 选「云端」就云端优先，选「本地」就服务器优先，电脑不管怎样都排最后; the settings page writes the order out (「依次用：云端 → 服务器 → 电脑」 / 「依次用：服务器 → 电脑」), then where a run goes now.
 - Rule: —
 - Replaces: [2026-11-02-1400](2026-11-02-1400-model-order-dispatch.md) on 运行位置 (云端 or 本地 as two exclusive places, 本地 the default)

@@ -1366,8 +1366,151 @@ test('catalog surfaces per_seat pricing and at-cost default unit_amount credits'
   })
   const team = catalog.plans.find((plan) => plan.plan === 'pro')
   assert.ok(team)
+  assert.equal(team.id, 'team')
   assert.equal(team.active, true)
   assert.equal(team.seatModel, 'per_seat')
   assert.equal(team.includedPoints, 3000)
   assert.equal(team.amountCents, 3000)
+})
+
+test('catalog resolves Pro, Team, and Enterprise resource prices concurrently and scopes offers by plan id', async () => {
+  const multiFetch = (async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.endsWith('/v1/prices/price_pro_multi')) {
+      return Response.json({
+        id: 'price_pro_multi',
+        active: true,
+        currency: 'usd',
+        type: 'recurring',
+        billing_scheme: 'per_unit',
+        unit_amount: 2000,
+        recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+        metadata: { mikka_billing_model: 'resource_v1', mikka_plan: 'pro', mikka_pricing_model: 'at_cost_v1', mikka_seat_model: 'per_workspace' },
+      })
+    }
+    if (url.endsWith('/v1/prices/price_team_multi')) {
+      return Response.json({
+        id: 'price_team_multi',
+        active: true,
+        currency: 'usd',
+        type: 'recurring',
+        billing_scheme: 'per_unit',
+        unit_amount: 2500,
+        recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+        metadata: { mikka_billing_model: 'resource_v1', mikka_plan: 'pro', mikka_pricing_model: 'at_cost_v1', mikka_seat_model: 'per_seat' },
+      })
+    }
+    if (url.endsWith('/v1/prices/price_ent_multi')) {
+      return Response.json({
+        id: 'price_ent_multi',
+        active: true,
+        currency: 'usd',
+        type: 'recurring',
+        billing_scheme: 'per_unit',
+        unit_amount: 6000,
+        recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+        metadata: { mikka_billing_model: 'resource_v1', mikka_plan: 'enterprise', mikka_pricing_model: 'at_cost_v1', mikka_seat_model: 'per_seat' },
+      })
+    }
+    if (new URL(url).pathname === '/v1/coupons/coupon_pro_50') {
+      return Response.json({
+        id: 'coupon_pro_50',
+        valid: true,
+        duration: 'once',
+        percent_off: 50,
+      })
+    }
+    return new Response('{}', { status: 404 })
+  }) as typeof fetch
+
+  const catalog = await resolveBillingCatalog({
+    workspaceId: WORKSPACE_ID,
+    env: {
+      MIKKA_EDITION: 'cloud',
+      STRIPE_SECRET_KEY: 'sk_test_catalog',
+      STRIPE_PRO_RESOURCE_PRICE_ID: 'price_pro_multi',
+      STRIPE_TEAM_RESOURCE_PRICE_ID: 'price_team_multi',
+      STRIPE_ENTERPRISE_RESOURCE_PRICE_ID: 'price_ent_multi',
+    },
+    fetchImpl: multiFetch,
+    now: Date.parse('2026-11-28T00:00:00.000Z'),
+    activeOfferOverride: {
+      id: 'pro-launch-50',
+      kind: 'intro_period',
+      planId: 'pro',
+      introAmountCents: 1000,
+      introInterval: 'month',
+      regularAmountCents: 2000,
+      regularInterval: 'month',
+      introCreditCents: 1000,
+      stripeCouponId: 'coupon_pro_50',
+      endAt: '2026-12-05T00:00:00.000Z',
+    },
+    checkOfferEligibility: () => true,
+    bypassCache: true,
+  })
+
+  assert.deepEqual(
+    catalog.plans.map(p => ({ id: p.id, plan: p.plan, stripePriceId: p.stripePriceId, seatModel: p.seatModel, amountCents: p.amountCents })),
+    [
+      { id: 'pro', plan: 'pro', stripePriceId: 'price_pro_multi', seatModel: 'per_workspace', amountCents: 2000 },
+      { id: 'team', plan: 'pro', stripePriceId: 'price_team_multi', seatModel: 'per_seat', amountCents: 2500 },
+      { id: 'enterprise', plan: 'enterprise', stripePriceId: 'price_ent_multi', seatModel: 'per_seat', amountCents: 6000 },
+    ],
+  )
+  assert.equal(catalog.activeOffer?.planId, 'pro')
+  assert.equal(catalog.activeOffer?.introAmountCents, 1000)
+})
+
+test('intro offers match plan.id strictly and never apply to per_seat plans', async () => {
+  const teamOnlyFetch = (async (input: RequestInfo | URL) => {
+    const pathname = new URL(String(input)).pathname
+    if (pathname === '/v1/prices/price_team_only') {
+      return Response.json({
+        id: 'price_team_only',
+        active: true,
+        currency: 'usd',
+        type: 'recurring',
+        billing_scheme: 'per_unit',
+        unit_amount: 2000,
+        recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+        metadata: { mikka_billing_model: 'resource_v1', mikka_plan: 'pro', mikka_pricing_model: 'at_cost_v1', mikka_seat_model: 'per_seat' },
+      })
+    }
+    if (pathname === '/v1/coupons/coupon_50') {
+      return Response.json({ id: 'coupon_50', valid: true, duration: 'once', percent_off: 50 })
+    }
+    return new Response('{}', { status: 404 })
+  }) as typeof fetch
+
+  for (const offerPlanId of ['pro', 'team']) {
+    const catalog = await resolveBillingCatalog({
+      workspaceId: WORKSPACE_ID,
+      env: {
+        MIKKA_EDITION: 'cloud',
+        STRIPE_SECRET_KEY: 'sk_test_catalog',
+        STRIPE_TEAM_RESOURCE_PRICE_ID: 'price_team_only',
+      },
+      fetchImpl: teamOnlyFetch,
+      now: Date.parse('2026-11-28T00:00:00.000Z'),
+      activeOfferOverride: {
+        id: `offer-${offerPlanId}-50`,
+        kind: 'intro_period',
+        planId: offerPlanId,
+        introAmountCents: 1000,
+        introInterval: 'month',
+        regularAmountCents: 2000,
+        regularInterval: 'month',
+        introCreditCents: 1000,
+        stripeCouponId: 'coupon_50',
+        endAt: '2026-12-05T00:00:00.000Z',
+      },
+      checkOfferEligibility: () => true,
+      bypassCache: true,
+    })
+    assert.equal(catalog.plans.length, 1)
+    assert.equal(catalog.plans[0].id, 'team')
+    assert.equal(catalog.plans[0].seatModel, 'per_seat')
+    assert.equal(catalog.activeOffer, null, `offer for ${offerPlanId} must never apply to a per_seat team plan`)
+  }
 })

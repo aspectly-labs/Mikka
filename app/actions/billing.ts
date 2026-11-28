@@ -37,11 +37,11 @@ async function openBillingPortalBody(returnUrl: string, workspaceId?: string): P
   })
 }
 
-/** Stripe Checkout for the Team plan. */
-async function startPlanCheckoutBody(returnUrl: string, workspaceId?: string): Promise<ActionResult<{ url: string }>> {
+/** Stripe Checkout for a configured capacity plan (Pro, Team, or Enterprise). */
+async function startPlanCheckoutBody(returnUrl: string, workspaceId?: string, priceId?: string): Promise<ActionResult<{ url: string }>> {
   return workspaceAction(async () => {
     const actor = await currentWorkspaceActor(workspaceId)
-    return planCheckoutUrl(actor.userId, actor.workspaceId, returnUrl)
+    return planCheckoutUrl(actor.userId, actor.workspaceId, returnUrl, undefined, undefined, priceId)
   })
 }
 

@@ -1,5 +1,6 @@
 import 'server-only'
 import { runtimeEnv } from '@/lib/env/server'
+import type { FlagKey } from '@/lib/feature-flags'
 
 /**
  * Which subscription routes run for a subscription's owner, decided per person
@@ -22,7 +23,7 @@ export async function subscriptionRouteReady(
   route: string,
   ownerId: string,
   env: Record<string, string | undefined> = runtimeEnv(),
-  flag: (key: string, userId: string) => Promise<boolean> = async (key, userId) => (await import('./posthog-server')).serverFlagEnabled(key, userId),
+  flag: (key: FlagKey, userId: string) => Promise<boolean> = async (key, userId) => (await import('./posthog-server')).serverFlagEnabled(key, userId),
 ): Promise<boolean> {
   const chat = CHAT_ROUTES.includes(route)
   if (!chat && !NATIVE_ROUTES.includes(route)) return false

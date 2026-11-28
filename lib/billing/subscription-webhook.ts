@@ -8,7 +8,7 @@ import { hostedBillingChanged } from '@/lib/live/billing'
 import { BILLING_LIVE_STATUSES } from '@/lib/workspace-admin/general'
 import { resourcePrice, subscriptionEntitlement, RESOURCE_BILLING_VERSION } from './resource-plan'
 import { POINTS_PER_USD, pointsToCreditCents } from './hosted-usage'
-import { stripeConfig, stripeGet } from './stripe'
+import { configuredResourcePriceIds, stripeConfig, stripeGet } from './stripe'
 import type { PointsWebhookOptions } from './points-webhook'
 import { invoiceFullyRefunded, invoicePaymentAllocations, reconcilePlanRefunds } from './plan-refunds'
 
@@ -117,7 +117,7 @@ export async function applySubscriptionEvent(tx: Transaction, event: { id: strin
   let approved: ReturnType<typeof resourcePrice> | null = null
   let plan: 'pro' | 'enterprise' | null = null
   let billingModel: 'legacy_seat' | 'resource_v1' = 'legacy_seat'
-  if (priceId && priceId === config.resourcePriceId) {
+  if (priceId && configuredResourcePriceIds(config).includes(priceId)) {
     approved = resourcePrice(await get(`prices/${priceId}`), priceId, { requireActive: false })
     const validQty = approved.seatModel === 'per_seat'
       ? Number.isSafeInteger(item?.quantity) && (item?.quantity ?? 0) >= 1

@@ -1,6 +1,8 @@
 # Feature flags
 
-Flag keys, production defaults and issue dependencies are generated from `lib/feature-flags.ts`. Edit the source, then run `pnpm docs:generate`.
+Flag keys, release flags, production defaults and issue dependencies are generated from `lib/feature-flags.ts`. Edit the source, then run `pnpm docs:generate`.
+
+A release flag stages a risky change (internal, a small percentage, then 100%) and is deleted by its `removeBy` date (at most 60 days after `added`, 14 days after `fullAt`); `pnpm docs:check` warns 7 days before, fails after that date, and fails on a flag read whose key no registry declares (decision `mikka-hosted-ui/docs/design/decisions/2026-11-27-0330-staged-rollout-release-flags.md`, `scripts/feature-flags-policy.mjs`).
 
 <!-- generated:feature-flags -->
 Source: `lib/feature-flags.ts`.
@@ -11,6 +13,8 @@ Source: `lib/feature-flags.ts`.
 | `environmentSnapshots` | `mikka-environment-snapshots` | — |
 | `computerBilling` | `mikka-computer-billing` | — |
 | `memory` | `mikka-memory` | — |
+
+No release flags.
 
 | Production default key | Default when PostHog is absent |
 | --- | --- |

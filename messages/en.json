@@ -1115,6 +1115,7 @@
           "limits_changed": "changed usage limits",
           "auto_recharge_changed": "changed auto recharge",
           "overage_changed": "changed overage settings",
+          "seats_synced": "synced subscription seats",
           "checkout_started": "opened checkout",
           "credits_purchased": "Purchased credits"
         },
