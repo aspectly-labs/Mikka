@@ -273,6 +273,19 @@ function normalizeShareVisibility(value: unknown): 'private' | 'workspace' | 'li
 }
 
 /**
+ * A `deleted` catalog sync applies only to the generation it names.
+ * Exact version match refuses undo-then-edit (delete v3 vs live v5) and a
+ * delayed delete of v3 after the same `externalId` was recreated at v1.
+ * Unversioned deletes still apply, matching hosts that omit `version`.
+ */
+export function shouldApplyOpenArtifactDeletedSync(
+  latestVersion: number,
+  inputVersion: number | undefined,
+): boolean {
+  return inputVersion === undefined || inputVersion === latestVersion
+}
+
+/**
  * Enforces workspace artifact sharing defaults fail-closed.
  * When workspace policy is `private`, external/workspace links are denied;
  * when workspace policy is `workspace`, anonymous public/link shares are denied.
@@ -721,21 +734,46 @@ export async function syncOpenArtifactCatalog(
       return { ok: false, status: 403, error: 'workspaceAccessDenied' }
     }
     const workspaceId = existing.workspaceId
-    await withTaskWorkspace({ id: subject }, workspaceId, () =>
+    const deleted = await withTaskWorkspace({ id: subject }, workspaceId, () =>
       db.transaction(async tx => {
         await tx.execute(sql`select mikka_account_assert_writable(${subject})`)
+        // Re-read and row-lock so a concurrent update cannot be wiped by a stale delete.
+        const [locked] = await tx
+          .select({
+            id: artifacts.id,
+            userId: artifacts.userId,
+            workspaceId: artifacts.workspaceId,
+            latestVersion: artifacts.latestVersion,
+          })
+          .from(artifacts)
+          .where(and(eq(artifacts.engine, 'open_artifact'), eq(artifacts.externalId, input.externalId)))
+          .for('update')
+          .limit(1)
+        if (!locked) {
+          return { applied: false as const, artifactId: null, version: null }
+        }
+        if (locked.userId !== subject || locked.workspaceId !== workspaceId) {
+          return { applied: false as const, mismatch: true as const, artifactId: locked.id, version: locked.latestVersion }
+        }
+        if (!shouldApplyOpenArtifactDeletedSync(locked.latestVersion, input.version)) {
+          return { applied: false as const, artifactId: locked.id, version: locked.latestVersion }
+        }
         await tx
           .delete(artifacts)
-          .where(and(eq(artifacts.id, existing.id), eq(artifacts.userId, subject)))
-        await artifactChanged(tx, subject, existing.id, workspaceId)
+          .where(and(eq(artifacts.id, locked.id), eq(artifacts.userId, subject)))
+        await artifactChanged(tx, subject, locked.id, workspaceId)
+        return { applied: true as const, artifactId: locked.id, version: locked.latestVersion }
       }),
     )
+    if ('mismatch' in deleted && deleted.mismatch) {
+      return { ok: false, status: 403, error: 'artifactOwnershipMismatch' }
+    }
     return {
       ok: true,
       event: 'deleted',
-      artifactId: existing.id,
-      workspaceId,
-      version: existing.latestVersion,
+      artifactId: deleted.artifactId,
+      workspaceId: deleted.artifactId ? workspaceId : null,
+      version: deleted.version,
     }
   }
 
