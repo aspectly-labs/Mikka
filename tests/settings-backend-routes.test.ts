@@ -234,6 +234,11 @@ test('workspace-bots and bots GET honor validated ?workspace=, ignore caller use
     assert.equal(crossTenant.status, 403)
     assert.deepEqual(await crossTenant.json(), { error: 'workspaceAccessDenied' })
     assert.equal(ownerBotCalls.length, 3)
+    // Omitted ?workspace= still pins the PAT; it must not fall through to the cookie home.
+    const omitted = await settingsRoute.GET(new Request('https://mikka.example/api/settings/bots'),
+      { params: Promise.resolve({ read: 'bots' }) })
+    assert.equal(omitted.status, 200)
+    assert.deepEqual(ownerBotCalls.at(-1), [tokenWorkspaceId])
   } finally { tokenWorkspaceId = undefined }
 
   // Missing session is refused before calling any settings action.
