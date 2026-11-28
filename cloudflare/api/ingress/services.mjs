@@ -2,6 +2,7 @@ import { isLiteLlmRoute } from '../../litellm/request.mjs'
 import { decodeHostedCallId } from '../../../lib/model-gateway/hosted-call-id.mjs'
 import { timingSafeEqual } from 'node:crypto'
 import { apiRequest } from './request.mjs'
+import { GITHUB_REDELIVERY_ORIGIN } from '../../../lib/env/hosts-constants.mjs'
 
 const no = status => new Response(null, { status, headers: { 'cache-control': 'no-store' } })
 const eveProductHeaders = new Set([
@@ -12,6 +13,17 @@ const worldMethods = new Map([
   ['/world/rpc', ['POST']], ['/world/run-terminal', ['GET']], ['/world/stream', ['GET', 'DELETE']],
   ['/world/queue/publish', ['POST']], ['/world/queue/claim', ['POST']], ['/world/queue/release', ['POST']],
 ])
+
+/** App-wide maintenance has one private operation and no caller-selected authority. */
+export function githubRedeliveryRequest(request, binding) {
+  const url = new URL(request.url)
+  if (url.origin !== GITHUB_REDELIVERY_ORIGIN || url.username || url.password || url.search || url.hash
+    || url.pathname !== '/redeliver' || request.method !== 'POST' || request.body !== null) return no(404)
+  if (!binding) return no(503)
+  return binding.fetch(new Request(GITHUB_REDELIVERY_ORIGIN + '/redeliver', {
+    method: 'POST', redirect: 'error', cache: 'no-store', signal: request.signal,
+  }))
+}
 
 export function businessWorldRequest(request, binding, capability) {
   const url = new URL(request.url)

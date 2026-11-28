@@ -4,9 +4,10 @@ import { internalOnlyPath } from './internal-only.mjs'
 import { apiRequest, subscriptionChatToApi } from './request.mjs'
 import { applicationEnvironment } from './environment.mjs'
 import { configureTaskBridge, taskMachine } from './task-machine.mjs'
-import { businessWorkflowDelivery, businessWorldRequest, eveServiceRequest, liteLlmRequest, publicWorkflowDispatch } from './services.mjs'
+import { businessWorkflowDelivery, businessWorldRequest, eveServiceRequest, githubRedeliveryRequest, liteLlmRequest, publicWorkflowDispatch } from './services.mjs'
 import { brokerRequest, identityRequest } from '../../credential-identity/transport.mjs'
 import { legacyDaemonEdgeResponse } from '../../../lib/daemon-edge-cutoff.mjs'
+import { GITHUB_REDELIVERY_HOSTNAME } from '../../../lib/env/hosts-constants.mjs'
 export { ContainerProxy } from '@cloudflare/containers'
 
 export class BusinessApi extends Container {
@@ -17,7 +18,7 @@ export class BusinessApi extends Container {
   constructor(ctx, env) {
     super(ctx, env)
     this.envVars = applicationEnvironment(env)
-    if (env.EVE_SERVICE || env.BUSINESS_WORLD || env.CREDENTIAL_IDENTITY || env.LITELLM) this.envVars.NODE_EXTRA_CA_CERTS = '/etc/cloudflare/certs/cloudflare-containers-ca.crt'
+    if (env.EVE_SERVICE || env.BUSINESS_WORLD || env.CREDENTIAL_IDENTITY || env.LITELLM || env.GITHUB_REDELIVERY) this.envVars.NODE_EXTRA_CA_CERTS = '/etc/cloudflare/certs/cloudflare-containers-ca.crt'
     if (env.CREDENTIAL_IDENTITY || env.CREDENTIAL_BROKER) {
       if (!env.CREDENTIAL_IDENTITY || !env.CREDENTIAL_BROKER) throw new Error('CREDENTIAL_API_CONFIGURATION_INVALID')
       this.envVars.CREDENTIAL_RUNTIME = 'cloudflare'
@@ -46,6 +47,7 @@ export class BusinessApi extends Container {
     if (this.env.CREDENTIAL_BROKER) await this.ctx.container.interceptOutboundHttps('broker.internal', this.ctx.exports.CredentialBrokerOutbound)
     if (this.env.EVE_SERVICE) await this.ctx.container.interceptOutboundHttps('eve.internal', this.ctx.exports.EveOutbound)
     if (this.env.LITELLM) await this.ctx.container.interceptOutboundHttps('litellm.internal', this.ctx.exports.LiteLlmOutbound)
+    if (this.env.GITHUB_REDELIVERY) await this.ctx.container.interceptOutboundHttps(GITHUB_REDELIVERY_HOSTNAME, this.ctx.exports.GitHubRedeliveryOutbound)
     if (this.env.BUSINESS_WORLD) await this.ctx.container.interceptOutboundHttps('world.internal',
       this.ctx.exports.BusinessWorldOutbound({ props: { capability: this.envVars.MIKKA_BUSINESS_WORLD_TOKEN } }))
   }
@@ -77,6 +79,10 @@ export class EveOutbound extends WorkerEntrypoint {
 
 export class LiteLlmOutbound extends WorkerEntrypoint {
   fetch(request) { return liteLlmRequest(request, this.env.LITELLM) }
+}
+
+export class GitHubRedeliveryOutbound extends WorkerEntrypoint {
+  fetch(request) { return githubRedeliveryRequest(request, this.env.GITHUB_REDELIVERY) }
 }
 
 export class BusinessWorldOutbound extends WorkerEntrypoint {

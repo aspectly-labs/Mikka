@@ -14,6 +14,22 @@ const env = {
   MIKKA_DATABASE_URL: 'postgres://mikka', WORKFLOW_TARGET_WORLD: '@test/durable-world',
 }
 
+async function ingressModule() {
+  const { registerHooks } = await import('node:module')
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const modules = {
+        'cloudflare:workers': 'export class WorkerEntrypoint { constructor(ctx, env) { this.ctx = ctx; this.env = env } }',
+        '@cloudflare/containers': 'export class Container { constructor(ctx, env) { this.ctx = ctx; this.env = env } } export class ContainerProxy {}',
+      }
+      if (modules[specifier]) return { url: 'data:text/javascript,' + encodeURIComponent(modules[specifier]), shortCircuit: true }
+      return nextResolve(specifier, context)
+    },
+  })
+  try { return await import('../../../cloudflare/api/ingress/worker.mjs') }
+  finally { hooks.deregister() }
+}
+
 test('the hosted API uses the exact official node-server build, overlay and deployment', () => {
   const args = { MIKKA_BUILD_REVISION: build, MIKKA_UI_OVERLAY_SHA: overlay, MIKKA_DEPLOYMENT_ID: id }
   const evidence = { preset: 'node-server', revision: build, overlaySha: overlay, deploymentId: id }
@@ -418,23 +434,7 @@ test('the shared converter reshapes only the currently serving API’s legacy BY
 })
 
 test('ApiIngress rejects retired legacy daemon traffic and removed heartbeats at the Worker edge with zero BusinessApi container wake', async () => {
-  const { registerHooks } = await import('node:module')
-  const hooks = registerHooks({
-    resolve(specifier, context, nextResolve) {
-      const modules = {
-        'cloudflare:workers': 'export class WorkerEntrypoint { constructor(ctx, env) { this.ctx = ctx; this.env = env } }',
-        '@cloudflare/containers': 'export class Container { constructor(ctx, env) { this.ctx = ctx; this.env = env } } export class ContainerProxy {}',
-      }
-      if (modules[specifier]) return { url: 'data:text/javascript,' + encodeURIComponent(modules[specifier]), shortCircuit: true }
-      return nextResolve(specifier, context)
-    },
-  })
-  let ApiIngress
-  try {
-    ({ default: ApiIngress } = await import('../../../cloudflare/api/ingress/worker.mjs'))
-  } finally {
-    hooks.deregister()
-  }
+  const { default: ApiIngress } = await ingressModule()
 
   const origin = 'https://app.example'
   const deviceId = '00000000-0000-4000-8000-000000000001'
@@ -529,4 +529,60 @@ test('ApiIngress rejects retired legacy daemon traffic and removed heartbeats at
   assert.equal(eveRes.status, 200)
   assert.equal(getByNameCalls, passthrough.length + 1)
   assert.equal(forwardedCalls.length, passthrough.length + 1)
+})
+
+test('GitHub redelivery outbound permits one bodyless private operation and forwards cancellation without caller authority', async () => {
+  const { githubRedeliveryRequest } = await import('../../../cloudflare/api/ingress/services.mjs')
+  const origin = 'https://github-redelivery.internal'
+  const forwarded = []
+  const response = Response.json({ configured: true, scanned: 2, failed: 1, redelivered: 0, errors: 1 }, { status: 502 })
+  const binding = { fetch: async request => { forwarded.push(request); return response } }
+  for (const [url, options] of [
+    [origin + '/ready', { method: 'GET' }], [origin + '/redeliver', { method: 'GET' }],
+    [origin + '/redeliver', { method: 'PUT' }], [origin + '/redeliver', { method: 'POST', body: '{}' }],
+    [origin + '/redeliver', { method: 'POST', body: '' }],
+    [origin + '/redeliver?app=other', { method: 'POST' }], [origin + '/redeliver#other', { method: 'POST' }],
+    [origin + '/redeliver/', { method: 'POST' }], ['https://other.example/redeliver', { method: 'POST' }],
+  ]) assert.equal((await githubRedeliveryRequest(new Request(url, options), binding)).status, 404)
+  assert.equal(forwarded.length, 0)
+  assert.equal((await githubRedeliveryRequest(new Request(origin + '/redeliver', { method: 'POST' }), undefined)).status, 503)
+  const abort = new AbortController()
+  const request = new Request(origin + '/redeliver', { method: 'POST', signal: abort.signal,
+    headers: { authorization: 'Bearer synthetic-credential', cookie: 'session=synthetic',
+      'x-mikka-internal': 'caller-marker', 'x-github-event': 'push', 'x-hub-signature-256': 'caller-signature' } })
+  assert.equal(await githubRedeliveryRequest(request, binding), response)
+  assert.equal(forwarded.length, 1)
+  assert.equal(forwarded[0].url, origin + '/redeliver')
+  assert.equal(forwarded[0].method, 'POST')
+  assert.equal(forwarded[0].body, null)
+  assert.deepEqual([...forwarded[0].headers], [])
+  abort.abort()
+  assert.equal(forwarded[0].signal.aborted, true)
+})
+
+test('the existing API Container installs private redelivery interception without exporting signing keys or a public route', async () => {
+  const { BusinessApi, GitHubRedeliveryOutbound, default: ApiIngress } = await ingressModule()
+  const calls = [], interceptions = [], target = {}
+  const binding = { fetch: async request => { calls.push(request); return new Response(null, { status: 204 }) } }
+  const context = { exports: { GitHubRedeliveryOutbound: target },
+    container: { interceptOutboundHttps: async (...args) => { interceptions.push(args) } } }
+  const environment = { PUBLIC_ORIGIN: 'https://app.example', GITHUB_REDELIVERY: binding,
+    GITHUB_APP_PRIVATE_KEY: 'synthetic-signing-key-must-stay-private',
+    BUSINESS_API: { getByName() { throw new Error('public ingress must not wake the container for this private host') } } }
+  const host = new BusinessApi(context, environment)
+  await host.configurePrivateHttps()
+  assert.deepEqual(interceptions, [['github-redelivery.internal', target]])
+  assert.equal(host.envVars.NODE_EXTRA_CA_CERTS, '/etc/cloudflare/certs/cloudflare-containers-ca.crt')
+  assert.equal(host.envVars.GITHUB_APP_PRIVATE_KEY, undefined)
+  assert.equal(host.envVars.GITHUB_REDELIVERY, undefined)
+  const request = new Request('https://github-redelivery.internal/redeliver', { method: 'POST', headers: { 'x-mikka-internal': 'forged' } })
+  assert.equal((await new ApiIngress({}, environment).fetch(request)).status, 400)
+  assert.equal(calls.length, 0)
+  assert.equal((await new GitHubRedeliveryOutbound({}, environment).fetch(request)).status, 204)
+  assert.equal(calls.length, 1)
+  interceptions.length = 0
+  const unbound = new BusinessApi(context, { PUBLIC_ORIGIN: environment.PUBLIC_ORIGIN })
+  await unbound.configurePrivateHttps()
+  assert.deepEqual(interceptions, [])
+  assert.equal(unbound.envVars.NODE_EXTRA_CA_CERTS, undefined)
 })
