@@ -44,6 +44,23 @@ Every span has `service.name=mikka-web` and `deployment.environment`
 | `mikka.rpc.action` | A key confirmed present in the shared browser/desktop RPC registry. No arguments or unknown action strings are exported |
 | `error.type`, `mikka.error.code`, `mikka.error.detail` | On a failed request or job: the error's class name, and the code and detail of the first coded error in its cause chain (`@mikka/protocol/tracing`). Never the message |
 
+HTTP response timing separates readiness from connection lifetime.
+`mikka.http.response_headers_ms` measures entry to the response headers being
+ready; `mikka.http.response_kind` is `regular`, `event_stream` or `ndjson`.
+For the two stream kinds, `mikka.http.ttfb_ms` records the first nonempty body
+chunk observed by the server, while the request span still ends at disposal.
+This is server-side first-byte timing, not browser receipt or model first-token
+timing. Empty streams omit it. The observer preserves backpressure and forwards
+body cancellation without collecting content.
+
+`mikka.http.outcome` is `completed`, `client_cancelled` or `error`. Only a
+successful stream with an aborted incoming request signal and a matching client
+disconnect reason is `client_cancelled`. An observed upstream body error takes
+precedence, and HTTP 5xx remains an error. Eve proxy spans additionally carry
+`mikka.eve.route`, a closed route template without session IDs or query strings;
+unknown paths use a catch-all template. Connection failures keep the existing
+503 response and record safe cause names/codes on the span and its failure log.
+
 Mikka-managed model calls use the AI request span described below, with
 `mikka.ai.route = litellm` and the requested alias in the model field. The
 LiteLLM call ID and response cost connect that request to the proxy's spend
