@@ -2,14 +2,14 @@
 
 -- Workspace (organization) MCP servers, as Capy's organization servers
 -- (decision 2026-11-27-1705-workspace-mcp-servers-like-capy). Any active member
--- adds, edits, connects or removes one. Additive and replayable: roll back
--- application code and keep these tables; never discard saved credentials.
+-- adds, edits, connects or removes one. Additive: roll back application code
+-- and keep these tables; never discard saved credentials. migrate.mjs runs it
+-- once; the plain CREATE TABLE fails rather than index an existing table.
 -- Membership lives in the workspace database and is checked there on every use,
 -- so workspace_id carries no foreign key.
-BEGIN;
 SET LOCAL lock_timeout = '5s';
 
-CREATE TABLE IF NOT EXISTS workspace_mcp_servers (
+CREATE TABLE workspace_mcp_servers (
   id uuid PRIMARY KEY,
   workspace_id uuid NOT NULL,
   server_key text NOT NULL CHECK (server_key ~ '^[a-z0-9][a-z0-9_-]{0,39}$'),
@@ -48,7 +48,7 @@ CREATE INDEX IF NOT EXISTS workspace_mcp_servers_workspace_idx
 -- OAuth accounts: user_id NULL is the workspace's one shared account; a row per
 -- member is that member's own account for a "member" server. Encrypted with the
 -- existing workspace-secret crypto; no bearer or code is stored in clear.
-CREATE TABLE IF NOT EXISTS workspace_mcp_oauth (
+CREATE TABLE workspace_mcp_oauth (
   id uuid PRIMARY KEY,
   server_id uuid NOT NULL REFERENCES workspace_mcp_servers(id) ON DELETE CASCADE,
   user_id text REFERENCES "user"(id) ON DELETE CASCADE,
@@ -69,7 +69,7 @@ CREATE INDEX IF NOT EXISTS workspace_mcp_oauth_user_idx
   ON workspace_mcp_oauth(user_id) WHERE user_id IS NOT NULL;
 
 -- Per-server tool switches. One switch for every member's threads, as Capy's.
-CREATE TABLE IF NOT EXISTS workspace_mcp_server_tools (
+CREATE TABLE workspace_mcp_server_tools (
   server_id uuid NOT NULL REFERENCES workspace_mcp_servers(id) ON DELETE CASCADE,
   tool_name text NOT NULL CHECK (length(tool_name) BETWEEN 1 AND 128),
   enabled boolean NOT NULL DEFAULT true,
@@ -78,5 +78,3 @@ CREATE TABLE IF NOT EXISTS workspace_mcp_server_tools (
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(server_id, tool_name)
 );
-
-COMMIT;
