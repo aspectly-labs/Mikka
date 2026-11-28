@@ -2,6 +2,7 @@ import { after, before, beforeEach, mock, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ExternalNotification } from '@/lib/suggestions/notification'
 import { clearFlagCache as clearRealFlagCache, serverFlagEnabled as readRealFlag } from '../posthog-server'
+import type { FlagKey } from '../feature-flags'
 
 // Every switch in proactive.md § 3 stops the model call: the deployment
 // switch, the PostHog flag (off or unavailable), 记忆 and the daily cap.
@@ -31,7 +32,7 @@ mock.module('ai', { namedExports: { generateText } })
 const posthog = { getFeatureFlag: async () => flag(), capture(message: unknown) { captured.push(message) }, flush: async () => {} }
 mock.module(new URL('../posthog-server.ts', import.meta.url).href, { namedExports: {
   clearFlagCache: clearRealFlagCache,
-  serverFlagEnabled: (key: string, userId: string) => readRealFlag(key, userId, { posthog }),
+  serverFlagEnabled: (key: FlagKey, userId: string) => readRealFlag(key, userId, { posthog }),
   serverPostHog: () => posthog,
 } })
 mock.module(new URL('./store.ts', import.meta.url).href, { namedExports: store })

@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CLIENT_FLAG_KEYS, gatedFeatures, killSwitches, upcomingFeatures } from '@/lib/feature-flags'
+import { CLIENT_FLAG_KEYS, gatedFeatures, killSwitches, upcomingFeatures, type FlagKey } from '@/lib/feature-flags'
 import { desktopFeatures } from './features'
 
 test('desktop flags use only the client flag keys and the verified user identity', async () => {
   const calls: [string, string][] = []
   const evaluate = async (key: string, userId: string) => {
     calls.push([key, userId])
-    return userId === 'owner' && [gatedFeatures.cloudComputer.key, upcomingFeatures.product.key, killSwitches.computerTab].includes(key)
+    return userId === 'owner' && ([gatedFeatures.cloudComputer.key, upcomingFeatures.product.key, killSwitches.computerTab] as readonly string[]).includes(key)
   }
   const owner = await desktopFeatures('owner', { evaluate, env: {} })
   assert.equal(owner.cloudComputer, true)
@@ -64,7 +64,7 @@ test('a remote PostHog flag reaches the desktop renderer through postHogFlag, as
     setClientConfiguration({ features })
     assert.equal(postHogFlag(killSwitches.computerTab), true)
     assert.equal(postHogFlag(gatedFeatures.memory.key), false)
-    assert.equal(postHogFlag('mikka-not-a-client-flag'), undefined, 'only client flags are sent')
+    assert.equal(postHogFlag('mikka-not-a-client-flag' as FlagKey), undefined, 'only client flags are sent')
     assert.equal(notified, 1)
     // Signing out drops the snapshot: flags read as not loaded again.
     setClientConfiguration(null)

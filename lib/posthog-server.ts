@@ -1,6 +1,6 @@
 import 'server-only'
 import { PostHog } from 'posthog-node'
-import { gatedFeatureEnabled, isTaskProviderFlagVariant, localFlagOverride, productionFlagDefault, taskProviderFlag, type TaskProviderFlagVariant } from '@/lib/feature-flags'
+import { gatedFeatureEnabled, isTaskProviderFlagVariant, localFlagOverride, productionFlagDefault, taskProviderFlag, type FlagKey, type TaskProviderFlagVariant } from '@/lib/feature-flags'
 import { posthogConfig } from '@/lib/posthog-config'
 import { registerTelemetryFlush } from '@/lib/tracing/flush'
 import { safeErrorAttributes } from '@mikka/protocol/tracing'
@@ -49,7 +49,7 @@ const flagCache = new Map<string, { enabled: boolean; at: number }>()
  * without a project uses the explicit production defaults. Invalid local
  * override configuration throws before contacting PostHog; remote failures do not.
  */
-export async function serverFlagEnabled(key: string, userId: string, { posthog, now = Date.now(), timeoutMs = FLAG_TIMEOUT_MS }: { posthog?: ServerPostHog | null; now?: number; timeoutMs?: number } = {}): Promise<boolean> {
+export async function serverFlagEnabled(key: FlagKey, userId: string, { posthog, now = Date.now(), timeoutMs = FLAG_TIMEOUT_MS }: { posthog?: ServerPostHog | null; now?: number; timeoutMs?: number } = {}): Promise<boolean> {
   const local = localFlagOverride(key)
   if (typeof local === 'boolean') return local
   const cacheKey = `${key}|${userId}`

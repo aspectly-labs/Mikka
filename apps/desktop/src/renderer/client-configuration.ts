@@ -37,8 +37,10 @@ export function subscribeClientConfiguration(listener: () => void) {
  * CLIENT_FLAG_KEYS, or any flag before the first bootstrap, reads undefined so
  * the caller keeps its default.
  */
+const CLIENT_FLAG_SET: ReadonlySet<string> = new Set(CLIENT_FLAG_KEYS)
+
 export function snapshotFlag(key: string): boolean | undefined {
-  return loaded && CLIENT_FLAG_KEYS.includes(key) ? configuration.features.flags[key] : undefined
+  return loaded && CLIENT_FLAG_SET.has(key) ? configuration.features.flags[key] : undefined
 }
 
 // The official UI's app shell imports this module on the web too; only the bundled desktop window uses the snapshot.
