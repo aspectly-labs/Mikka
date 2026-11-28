@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
-import { afterEach, test } from 'node:test'
-import { getReviewChecks, getReviewDiff, getReviewFile, getReviewPreview, getReviewSummary, mergeReview, openReviewTerminal, REVIEW_ENDPOINTS, ReviewRequestError, sendReviewTerminalInput, sendToAgent, terminalEvent } from './client' 
-import type { ReviewSummary } from './contract'
+import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
+import { afterEach, test, type TestContext } from 'node:test'
+import { getReviewChecks, getReviewDiff, getReviewFile, getReviewPreview, getReviewSummary, mergeNativeReview, mergeReview, openReviewTerminal, REVIEW_ENDPOINTS, ReviewRequestError, sendReviewTerminalInput, sendToAgent, terminalEvent } from './client'
+import type { NativeMergeSubmission, ReviewSummary } from './contract'
 
 const TASK = '6f1c8a52-1b0e-4c3a-9d2f-0a1b2c3d4e5f'
 const realFetch = globalThis.fetch
@@ -114,6 +116,100 @@ test('批准合并 maps 200, 409 and 403 to the merge result', async () => {
   await assert.rejects(mergeReview(TASK, { confirm: false }), ReviewRequestError)
   answer(200, { merged: false })
   await assert.rejects(mergeReview(TASK, { confirm: true }), ReviewRequestError)
+})
+
+const nativeIntent = (): NativeMergeSubmission => ({
+  pullRef: { runId: randomUUID(), repoId: randomUUID(), repositoryId: '1234', number: 7,
+    baseSha: 'a'.repeat(40), producerRunId: randomUUID() },
+  binding: { taskId: randomUUID(), issueId: TASK, candidateId: randomUUID(), attemptId: randomUUID(), revision: 7 },
+  expectedHeadSha: 'b'.repeat(40), idempotencyKey: randomUUID(), confirmFailedChecks: false,
+})
+const receiptFor = (intent: NativeMergeSubmission) => ({ state: 'merged', mergeId: randomUUID(), pullRef: intent.pullRef,
+  expectedHeadSha: intent.expectedHeadSha, actualHeadSha: intent.expectedHeadSha, mergeCommitSha: 'c'.repeat(40),
+  pullRequestUrl: 'https://github.com/fixture/review/pull/7', merged: true, reviewedHeadMerged: true })
+
+/** The adapter crosses a real HTTP socket; only its remote response is controlled. */
+async function nativeHttp(t: TestContext, status: number, body: unknown) {
+  let reply = { status, body }
+  const errors: unknown[] = []
+  const server = createServer(async (incoming, outgoing) => {
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of incoming) chunks.push(Buffer.from(chunk))
+      calls.push({ url: incoming.url!, method: incoming.method!, body: JSON.parse(Buffer.concat(chunks).toString()) })
+      outgoing.writeHead(reply.status, { 'content-type': 'application/json' })
+      outgoing.end(JSON.stringify(reply.body))
+    } catch (error) { errors.push(error); outgoing.writeHead(500); outgoing.end() }
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(async () => { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); assert.deepEqual(errors, []) })
+  const address = server.address(); assert.ok(address && typeof address !== 'string')
+  globalThis.fetch = (input, init) => realFetch(new URL(String(input), 'http://127.0.0.1:' + address.port), init)
+  return { answer: (status: number, body: unknown) => { reply = { status, body } } }
+}
+
+test('native approval sends the complete target unchanged and an explicit retry preserves its key and receipt', async t => {
+  const intent = nativeIntent(), receipt = receiptFor(intent), before = structuredClone(intent)
+  await nativeHttp(t, 200, receipt)
+  const first = await mergeNativeReview(TASK, intent)
+  assert.deepEqual(first, { kind: 'merged', receipt })
+  assert.deepEqual(await mergeNativeReview(TASK, intent), first)
+  assert.deepEqual(calls, [0, 1].map(() => ({ url: REVIEW_ENDPOINTS.merge(TASK), method: 'POST', body: intent })))
+  assert.deepEqual(intent, before)
+  await assert.rejects(mergeNativeReview(randomUUID(), intent), TypeError)
+  await assert.rejects(mergeNativeReview(TASK, { ...intent, confirmFailedChecks: true } as NativeMergeSubmission))
+  await assert.rejects(mergeNativeReview(TASK, { ...intent, reviewRef: { snapshotId: TASK, sourceVersion: 'a'.repeat(64) } } as NativeMergeSubmission))
+  assert.equal(calls.length, 2, 'invalid or mixed intents never reach HTTP')
+})
+
+test('native receipt states preserve pending, rejected, merged elsewhere and a permission refusal with its receipt', async t => {
+  const intent = nativeIntent(), original = receiptFor(intent), http = await nativeHttp(t, 202, {})
+  for (const [state, status, actualHeadSha] of [['pending', 202, null], ['rejected', 409, null], ['merged_elsewhere', 409, 'd'.repeat(40)]] as const) {
+    const receipt = { ...original, state, actualHeadSha, merged: state === 'merged_elsewhere', reviewedHeadMerged: false }
+    http.answer(status, receipt)
+    assert.deepEqual(await mergeNativeReview(TASK, intent), { kind: state, receipt })
+  }
+  const receipt = { ...original, state: 'rejected', merged: false, reviewedHeadMerged: false, error: 'github_permission' }
+  http.answer(403, { ...receipt, reason: 'github_permission' })
+  assert.deepEqual(await mergeNativeReview(TASK, intent), { kind: 'denied', reason: 'github_permission', message: null, receipt })
+  http.answer(403, { error: 'not_owner_merge', reason: 'not_owner_merge' })
+  assert.deepEqual(await mergeNativeReview(TASK, intent), { kind: 'denied', reason: 'not_owner_merge', message: null })
+  assert.equal(calls.length, 5, 'the adapter never retries automatically')
+})
+
+test('native check gates retain target, fingerprint and new-intent instruction without manufacturing confirmation', async t => {
+  const intent = nativeIntent(), { pullRef, binding, expectedHeadSha } = intent, checksFingerprint = 'f'.repeat(64)
+  const challenge = { pullRef, binding, expectedHeadSha, failing: 2, checksFingerprint, newIntentRequired: true }
+  const http = await nativeHttp(t, 409, { ...challenge, state: 'needs_confirm', error: 'needs_confirm' })
+  assert.deepEqual(await mergeNativeReview(TASK, intent), { kind: 'needs_confirm', ...challenge })
+  const confirmed: NativeMergeSubmission = { ...intent, idempotencyKey: randomUUID(), confirmFailedChecks: true, confirmedChecksFingerprint: checksFingerprint }
+  http.answer(200, receiptFor(intent))
+  assert.equal((await mergeNativeReview(TASK, confirmed)).kind, 'merged')
+  assert.deepEqual(calls[1]!.body, confirmed)
+  const pending = { pullRef, expectedHeadSha, checksFingerprint, checks: { failed: 0, passed: 1, pending: 2, neutral: 0, total: 3 }, newIntentRequired: true }
+  http.answer(409, { ...pending, state: 'checks_pending', error: 'workspace_review_unavailable' })
+  assert.deepEqual(await mergeNativeReview(TASK, intent), { kind: 'checks_pending', ...pending })
+  http.answer(409, { pullRef, state: 'checks_changed', error: 'workspace_snapshot_outdated', newIntentRequired: true })
+  assert.deepEqual(await mergeNativeReview(TASK, intent), { kind: 'checks_changed', pullRef, newIntentRequired: true })
+  assert.equal(calls.length, 4)
+})
+
+test('native HTTP success cannot accept a legacy, inconsistent, wrong-HEAD or wrong-PR receipt', async t => {
+  const intent = nativeIntent(), receipt = receiptFor(intent), http = await nativeHttp(t, 200, {})
+  for (const [status, body] of [
+    [200, { merged: true }], [200, { ...receipt, state: 'pending', merged: false, reviewedHeadMerged: false }],
+    [202, receipt], [200, { ...receipt, reviewedHeadMerged: false }],
+    [200, { ...receipt, actualHeadSha: 'd'.repeat(40) }],
+    [200, { ...receipt, expectedHeadSha: 'd'.repeat(40), actualHeadSha: 'd'.repeat(40) }],
+    [200, { ...receipt, pullRef: { ...intent.pullRef, number: 8 } }],
+    [409, { state: 'needs_confirm', error: 'needs_confirm', ...intent, binding: { ...intent.binding, candidateId: randomUUID() }, failing: 1, checksFingerprint: 'e'.repeat(64) }],
+    [403, { state: 'rejected', error: 'github_permission' }],
+    [409, { error: 'workspace_snapshot_outdated' }], [503, { error: 'workspace_review_github_unavailable' }],
+  ] as const) {
+    http.answer(status, body)
+    await assert.rejects(mergeNativeReview(TASK, intent), (error: unknown) => error instanceof ReviewRequestError && error.status === status)
+  }
+  assert.equal(calls.length, 11)
 })
 
 test('a terminal event block is read from its event and data lines; anything else is skipped', () => {

@@ -222,6 +222,23 @@ reads the original ledger and never makes another PUT. Only HTTP 200 with
 `state=merged` and `reviewedHeadMerged=true` proves the reviewed commit merged.
 An external merge of a different HEAD is `merged_elsewhere` with HTTP 409.
 
+The additive `mergeNativeReview(taskId, submission)` client sends the complete
+`nativeMergeTarget`, caller-owned idempotency key, confirmation flag and, when
+confirmed, check fingerprint. It rejects a mixed archive/native intent and a
+target belonging to another Task before HTTP. It neither generates a key nor
+refreshes the target, confirms checks, or retries a write automatically.
+Transport retries pass the same submission unchanged; a newly approved target
+or failed-check confirmation is a new explicit intent with a new key.
+
+Its result preserves `merged`, `pending`, `rejected` and `merged_elsewhere`
+receipts, including merge ID, PR reference and expected/actual commit. Check
+gates preserve the fingerprint and `newIntentRequired`; a known permission
+denial preserves a supplied rejected receipt. Only a matching HTTP status and
+internally consistent receipt can become a completion result. A different PR,
+approved HEAD or confirmation binding, malformed receipt, or unrecognized
+error throws `ReviewRequestError` with its status and original body. The legacy
+`mergeReview` adapter remains unchanged for the separate hosted-client cutover.
+
 ## Invalidation and lifecycle
 
 Use the existing Task-scoped live keys `issue_threads`, `pull_request_status`
