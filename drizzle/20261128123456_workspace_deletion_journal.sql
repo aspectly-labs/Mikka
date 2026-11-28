@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3444 Create an empty workspace deletion journal and indexes; preserve historical data and create no deletion requests.
 -- target: MIKKA_DATABASE_URL
 
 -- #3439 expansion only: no producer, recovery sweep or historical backfill.
