@@ -231,7 +231,16 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       // A failed checkout/selection never acquired a deployment writer. Do not
       // confuse it with a partially applied release that requires rollback.
       if (!applied || applied.conclusion === 'skipped') continue
-      const packet = await members(api, run, target === 'production' ? 'deploy-production' : 'deploy-pipeline')
+      let packet
+      try {
+        packet = await members(api, run, target === 'production' ? 'deploy-production' : 'deploy-pipeline')
+      } catch (error) {
+        // GitHub deletes a job's artifacts when that job is re-run, so a re-run of a
+        // deployment whose Deploy step ran erases the receipt this gate requires.
+        // Still fail closed; only name the cause and the recovery.
+        if (selectionError(error) !== 'pipeline_original_artifact_required' || attempt >= latest.run_attempt) throw error
+        throw new Error(isCurrent ? 'pipeline_rerun_after_deploy_refused' : 'pipeline_rerun_erased_receipt_requires_recovery')
+      }
       const summary = packet.files['pipeline-summary.json']
       if (summary === undefined) {
         // The publisher writes its first receipt and summary after reading every input and resource
