@@ -38,8 +38,12 @@ const queriesChart = hourlyChart('estimated_queries_weighted', '估算查询数�
 const bytesChart = hourlyChart('estimated_json_bytes_weighted', '估算 JSON 字节（按采样率加权）', { style: 'short', suffix: ' B', decimalPlaces: 1 })
 const single = { chartSettings: { showNullsAsZero: false } }
 const combinedErrors = `WITH error_spike AS (${sql('alert-error-spike')}), decision_errors AS (${sql('alert-decision-error-rate')})
-SELECT max(value) AS value, arrayStringConcat(groupArrayIf(source, value > 0), ' || ') AS source
-FROM (SELECT value, source FROM error_spike UNION ALL SELECT value, source FROM decision_errors)`
+SELECT
+    multiIf(coalesce(spike.value, 0) = 1 OR coalesce(decision.value, 0) = 1, 1,
+        isNull(spike.value) AND isNull(decision.value), NULL, 0) AS value,
+    concat(spike.source, ' || ', decision.source) AS source
+FROM error_spike AS spike CROSS JOIN decision_errors AS decision
+LIMIT 1`
 
 /** Every insight, in dashboard order. `shortId` is the production object; `tile` is its dashboard layout. */
 export const INSIGHTS = [
@@ -87,10 +91,7 @@ export const INSIGHTS = [
     description: 'UTC today bytes / elapsed hours through reported bucket ×24×month days vs 500GB. ≥3h; same UTC day; healthy snapshot≤60m/provider≤180m. Assumes complete provider day cumulative. Daily pace equivalent, not billing-period forecast; monthly 50% retained.',
     query: hogql(sql('alert-daily-pace'), { display: 'ActionsTable' }) },
   { key: 'alert-error-spike', shortId: 'STBizeTe', name: '[1324] Mikka 错误码小时突增', tags: ['mikka', 'issue-1324', 'observability', 'source-alerts'],
-    description: 'Weighted errors >max(3×7d hourly median,50). Excludes closed Workflow 404/409/410 only with own successful wake/cron/step ancestry or invocation→2xx delivery (direct/one vqs.process parent or unique link). Missing proof stays counted. Weight=1/sample_rate (legacy 0.1); warmup 24 covered hours; zero-fill observed service hours only; no current telemetry→NULL. Spans≠failed requests.',
-    query: hogql(sql('alert-error-spike'), { display: 'ActionsTable' }) },
-  { key: 'alert-combined-errors', name: 'Mikka error spikes and LiteLLM decision failures', tags: ['mikka', 'observability'],
-    description: 'Existing error-spike conditions OR >20% of at least 3 LiteLLM decision generations failing in the last hour. Decision traffic below 3 calls returns NULL, without warmup. Reuses the existing error-spike alert and subscribers within the five-alert plan.',
+    description: 'Weighted errors >max(3×7d hourly median,50), excluding proven handled Workflow attempts. OR >20% non-success among at least 3 unique, fully weighted production LiteLLM decision spans over the last hour. Low volume or incomplete decision coverage is reported. Spans are observations.',
     query: hogql(combinedErrors, { display: 'ActionsTable' }) },
 ]
 
@@ -112,7 +113,7 @@ export const ALERTS = [
     ...hourly, enabled: true, schedule_start_time: '00:15', threshold: { type: 'absolute', bounds: { upper: 0.5 } }, config: { type: 'HogQLAlertConfig', column: 'value', evaluation: 'first_row', label_column: 'source' } },
   { key: 'daily-pace', id: '01a1a144-b4dc-0000-fbbe-edbede0dfdb5', insight: 'alert-daily-pace', name: '[1324] Mikka 日速率外推超过500GB月额度',
     ...hourly, enabled: true, schedule_start_time: '00:15', threshold: { type: 'absolute', bounds: { upper: 1 } }, config: { type: 'HogQLAlertConfig', column: 'value', evaluation: 'first_row', label_column: 'source' } },
-  { key: 'error-spike', id: '01a1a144-b9d6-0000-6229-896dc85243ec', insight: 'alert-combined-errors', name: '[1324] Mikka 错误码小时突增',
+  { key: 'error-spike', id: '01a1a144-b9d6-0000-6229-896dc85243ec', insight: 'alert-error-spike', name: '[1324] Mikka 错误码小时突增',
     ...hourly, enabled: true, schedule_start_time: '00:15', threshold: { type: 'absolute', bounds: { upper: 0.5 } }, config: { type: 'HogQLAlertConfig', column: 'value', evaluation: 'first_row', label_column: 'source' } },
 ]
 
