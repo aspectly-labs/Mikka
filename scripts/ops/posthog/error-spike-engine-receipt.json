@@ -6,7 +6,7 @@
   "ci_executes_remote_query": false,
   "recorded_at_utc": "2026-11-12T09:46:24.388Z",
   "mcp_roundtrip_ms": 5787,
-  "sql_sha256": "166eaa4a75a92f3fcc16fdffb38b32ccb7cdc84111b58428911ade8f786120a0",
+  "sql_sha256": "b7168155aa8507f9af5178778616efb1ec8da3105a9e64919aceae7aca8b2e8f",
   "fixtures_sha256": "249c6924547ce9658ebf3d12cc06711bd6370f69ac19c1988de697a8e7a977f2",
   "synthetic_query_sha256": "369848ba90281791502bb353b9c1c08f895d083e8b44ea064474049b810d4c66",
   "baseline_sha256": "7abab6631e0c1cd33c0cde46a15d369533f153d20b1f7f5ef8598f7ef29c5f8d",

@@ -91,7 +91,7 @@ export const INSIGHTS = [
     description: 'UTC today bytes / elapsed hours through reported bucket ×24×month days vs 500GB. ≥3h; same UTC day; healthy snapshot≤60m/provider≤180m. Assumes complete provider day cumulative. Daily pace equivalent, not billing-period forecast; monthly 50% retained.',
     query: hogql(sql('alert-daily-pace'), { display: 'ActionsTable' }) },
   { key: 'alert-error-spike', shortId: 'STBizeTe', name: '[1324] Mikka 错误码小时突增', tags: ['mikka', 'issue-1324', 'observability', 'source-alerts'],
-    description: 'Weighted errors >max(3×7d hourly median,50), excluding proven handled Workflow attempts. OR >20% non-success among at least 3 unique, fully weighted production LiteLLM decision spans over the last hour. Low volume or incomplete decision coverage is reported. Spans are observations.',
+    description: 'Mixed error score >max(3×7d hourly median,50), excluding proven handled Workflow attempts. Uses valid inverse weights and counts unknown-weight rows once. OR >20% non-success among at least 3 unique, fully weighted production LiteLLM decision spans over the last hour. Low volume or incomplete decision coverage is reported. Spans are observations.',
     query: hogql(combinedErrors, { display: 'ActionsTable' }) },
 ]
 
