@@ -119,15 +119,16 @@ test('every alert reads one row: no any_row, and each SQL alert query aggregates
 test('the existing error alert also covers low-volume LiteLLM decision failures', () => {
   const alert = ALERTS.find(item => item.key === 'error-spike')
   const query = INSIGHTS.find(item => item.key === alert.insight).query.source.query
-  assert.match(query, /event = '\$ai_generation'/)
-  assert.match(query, /mikka.ai.operation` = 'decision'/)
-  assert.match(query, /mikka.ai.route` = 'litellm'/)
-  assert.match(query, /count\(\) < 3, NULL/)
-  assert.match(query, /countIf\(properties.\$ai_is_error = true\) \/ count\(\) > 0.2/)
+  assert.doesNotMatch(query, /FROM events/)
+  assert.match(query, /FROM posthog\.trace_spans/)
+  assert.match(query, /attributes\['mikka\.ai\.operation'\] = 'decision'/)
+  assert.match(query, /attributes\['mikka\.ai\.route'\] = 'litellm'/)
+  assert.match(query, /calls < 3 OR calls != unique_calls OR calls != known_calls, NULL/)
+  assert.match(query, /failed_calls \/ nullIf\(calls, 0\) > 0.2/)
   assert.match(query, /INTERVAL 1 HOUR/)
   assert.equal(alert.enabled, true)
   assert.equal(ALERTS.length, 5)
-  assert.match(query, /UNION ALL SELECT value, source FROM decision_errors/)
+  assert.match(query, /CROSS JOIN decision_errors/)
 })
 
 test('the API key is required and never appears in errors', async () => {
