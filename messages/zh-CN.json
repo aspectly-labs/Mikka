@@ -10427,7 +10427,13 @@
     "verifyFailedTitle": "验证失败",
     "verifyFailedBody": "链接无效或已被使用，请重新获取",
     "forgotDescription": "我们会把重置链接发到你的邮箱",
-    "resetSent": "如果 {email} 已注册，重置链接已发送，15 分钟内有效"
+    "resetSent": "如果 {email} 已注册，重置链接已发送，15 分钟内有效",
+    "codeLabel": "验证码",
+    "codeSent": "已向 {email} 发送 6 位验证码",
+    "codeInvalid": "验证码无效或已过期",
+    "resendCode": "重新发送验证码",
+    "useCodeInstead": "改用验证码登录",
+    "createRefused": "无法使用该邮箱创建账号，请尝试登录或重置密码。"
   },
   "DesktopServer": {
     "cancel": "取消",

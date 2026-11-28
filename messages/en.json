@@ -10427,7 +10427,13 @@
     "verifyFailedTitle": "Verification failed",
     "verifyFailedBody": "The link is invalid or was already used, request a new one",
     "forgotDescription": "We'll email you a reset link",
-    "resetSent": "If {email} has an account, a reset link is on its way. It works for 15 minutes"
+    "resetSent": "If {email} has an account, a reset link is on its way. It works for 15 minutes",
+    "codeLabel": "Verification code",
+    "codeSent": "We sent a 6-digit code to {email}",
+    "codeInvalid": "That code is invalid or expired",
+    "resendCode": "Send a new code",
+    "useCodeInstead": "Use a code instead",
+    "createRefused": "Couldn't create an account with this email. Try signing in or resetting your password."
   },
   "DesktopServer": {
     "cancel": "Cancel",
