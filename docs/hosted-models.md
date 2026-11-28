@@ -26,4 +26,6 @@ The approved Managed Model search routes are GPT-6 Luna over Responses and Claud
 
 Firecrawl remains available on the remaining existing Coordinator search path until migration and acceptance finish.
 
+Deploy the Business API before Eve so the API can accept Eve's frozen model descriptor. The new API returns `searchUnavailable` without contacting a provider or charging credits for older interactive Eve product Web Search calls that omit the descriptor, including in-flight retries. Native model search and authorized scheduled reads continue on their existing paths. Roll back the API and Eve as a matched pair. If the rollback is sequential, restore Eve first.
+
 The protocol fixtures verify native search, citation sources, ordinary tool declarations, and image inputs on the applicable path. The provider image generation and edit endpoints require an authorized route, artifact handling, and their own usage receipt. Code Interpreter requires its own provider tool and container result handling. Their existing product eligibility stays in effect.

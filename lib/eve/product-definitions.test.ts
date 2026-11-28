@@ -190,15 +190,15 @@ test('a mid-turn model change leaves the Eve action allocation and metered Web S
   await productTools(scope, saved as never, undefined, null, undefined, entryOrigin, route)
   assert.deepEqual((toolOptions.at(-1) as { webSearchRuntime: HostedRuntimeSnapshot }).webSearchRuntime, byokRuntime)
   const scheduled = { occurrenceId: 'scheduled', leaseToken: 'lease', allowedActions: ['web_search'], prompt: 'Read only' }
-  await productTools(scope, saved as never, undefined, scheduled, undefined, entryOrigin, route)
-  assert.deepEqual((toolOptions.at(-1) as { webSearchRuntime: HostedRuntimeSnapshot }).webSearchRuntime, { harness: 'ai_sdk', model: null })
   const savedByok = { ...saved, snapshot: { runtime: byokRuntime } } as never
-  await productTools(scope, savedByok, undefined, null, undefined, entryOrigin)
-  assert.equal((toolOptions.at(-1) as { webSearchRuntime: null }).webSearchRuntime, null)
   await productTools(scope, savedByok, undefined, null, undefined, entryOrigin, null)
   assert.deepEqual((toolOptions.at(-1) as { webSearchRuntime: HostedRuntimeSnapshot }).webSearchRuntime, { harness: 'ai_sdk', model: null })
-  await productTools(scope, saved as never, undefined, null, undefined, entryOrigin)
-  assert.deepEqual((toolOptions.at(-1) as { webSearchRuntime: HostedRuntimeSnapshot }).webSearchRuntime, { harness: 'ai_sdk', model: null })
+  for (const legacyExecution of [null, saved as never, savedByok]) {
+    await productTools(scope, legacyExecution, undefined, null, undefined, entryOrigin)
+    assert.equal((toolOptions.at(-1) as { webSearchRuntime: null }).webSearchRuntime, null)
+    await productTools(scope, legacyExecution, undefined, scheduled, undefined, entryOrigin)
+    assert.deepEqual((toolOptions.at(-1) as { webSearchRuntime: HostedRuntimeSnapshot }).webSearchRuntime, { harness: 'ai_sdk', model: null })
+  }
 })
 
 test('existing action bindings retain current execution and scheduled authority', async () => {
