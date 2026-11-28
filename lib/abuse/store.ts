@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import { isUsageTurnRef } from '../usage-turn-ref'
 import { hostedBillingScope } from './context'
+import { queryMonthlyOverageMicroUsd } from '../billing/overage-window'
 import { resourceBudgetAdmission } from '../billing/resource-budgets'
 import { connectForCommitEffects } from '../db/commit-effects'
 import { jsonbSafeBigIntExprSql } from '../primitives/jsonb-predicates'
@@ -243,12 +244,7 @@ export class HostedUsageStore {
     }
     if (billing.overageMonthlyCapPoints !== null) {
       const capMicroUsd = billing.overageMonthlyCapPoints * MICRO_USD_PER_POINT
-      const spent = Number((await tx.query<{ n: string }>(
-        `SELECT COALESCE(sum("purchasedMicroUsd"+CASE WHEN state IN ('pending','unknown') THEN "reservedPurchased" ELSE 0 END),0)::text AS n
-         FROM hosted_usage WHERE "workspaceId"=$1 AND state<>'failed' AND COALESCE("billingSource",'credits')='credits'
-           AND "createdAt">=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
-        [workspaceId],
-      )).rows[0].n)
+      const spent = await queryMonthlyOverageMicroUsd(tx, workspaceId, { includeReservedPurchased: true })
       const inFlightOverage = Math.max(0, flightHeld - Math.max(0, planBudget))
       const neededOverage = Math.max(0, estimate - Math.max(0, planHeadroom))
       if (capMicroUsd - spent - inFlightOverage <= 0 || capMicroUsd - spent - inFlightOverage < neededOverage) {
@@ -521,12 +517,7 @@ export class HostedUsageStore {
         maxOverage = 0
       } else if (overagePolicy.overageMonthlyCapPoints !== null) {
         const capMicroUsd = overagePolicy.overageMonthlyCapPoints * MICRO_USD_PER_POINT
-        const confirmedSpent = Number((await tx.query<{ n: string }>(
-          `SELECT COALESCE(sum("purchasedMicroUsd"),0)::text AS n
-           FROM hosted_usage WHERE "workspaceId"=$1 AND state<>'failed' AND COALESCE("billingSource",'credits')='credits'
-             AND "createdAt">=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
-          [row.workspaceId],
-        )).rows[0].n)
+        const confirmedSpent = await queryMonthlyOverageMicroUsd(tx, row.workspaceId)
         maxOverage = Math.max(0, capMicroUsd - confirmedSpent)
       }
     }

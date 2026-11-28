@@ -9,20 +9,14 @@ import { recordAudit } from '@/lib/audit/write'
 import { withAccountOwnerLock } from './authority'
 import type { OveragePolicyView } from './contract'
 import { overageInputSchema } from './overage-schema'
+import { queryMonthlyOverageMicroUsd } from './overage-window'
 
 export type { OveragePolicyView } from './contract'
 export { overageInputSchema, type OverageInput } from './overage-schema'
 
-/** Reads confirmed current-UTC-month overage spend from purchased credits. */
+/** Reads confirmed current-UTC-month overage spend from purchased credits during active paid plan periods. */
 export async function readMonthlyOverageMicroUsd(accountWorkspaceId: string): Promise<number> {
-  const { rows } = await pool.query<{ spent: string }>(
-    `SELECT COALESCE(sum("purchasedMicroUsd"), 0)::text AS spent
-     FROM hosted_usage
-     WHERE "workspaceId"=$1 AND state<>'failed' AND COALESCE("billingSource",'credits')='credits'
-       AND "createdAt">=date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
-    [accountWorkspaceId],
-  )
-  return Number(rows[0]?.spent ?? 0)
+  return queryMonthlyOverageMicroUsd(pool, accountWorkspaceId)
 }
 
 /** Projects the persisted overage settings and current-month spend into a client DTO. */

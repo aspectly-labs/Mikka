@@ -605,4 +605,82 @@ test('workspace and organization resource billing', { skip: !dbUrl }, async t =>
     assert.equal((await store.balance(teamWs.id)).purchased, 45_000_000)
     await assert.rejects(store.reserve(teamWs.id, 'fixture/model', `ovg-cap-${randomUUID()}`, {}, 100_000), { code: 'usage_budget_exhausted' })
   })
+
+  await t.test('mid-month Free-to-Pro upgrade excludes pre-upgrade Free top-up spend and refunded grants from overage cap', async () => {
+    const owner = await seedUser(pool, 'ovg-win-owner')
+    const ws = await seedWorkspace(pool, owner, [{ userId: owner, role: 'admin' }])
+    const { readMonthlyOverageMicroUsd, saveOveragePolicy } = await import('../lib/billing/overage')
+    const store = new HostedUsageStore(pool)
+
+    // 1. User spends $10 (10,000,000 micro-USD) of top-ups on Free earlier in the same UTC month.
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",bucket,points,reason,"externalId","expiresAt")
+       VALUES ($1,$2,'purchased',3000,'purchase',$3,now()+interval '365 days')`,
+      [randomUUID(), ws.id, `topup:${randomUUID()}`],
+    )
+    const freeCall = `free-before-upgrade-${randomUUID()}`
+    await pool.query(
+      `INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","purchasedMicroUsd","billingSource","createdAt","settledAt")
+       VALUES ($1,$2,'fixture/model','settled',10000000,10000000,'credits',
+         GREATEST(date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', now() - interval '2 minutes'),
+         now())`,
+      [freeCall, ws.id],
+    )
+
+    // 2. Also insert an earlier plan grant that was 100% refunded covering that pre-upgrade time — must not leak Free spend.
+    const refundedGrantId = randomUUID()
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",bucket,points,reason,"externalId","periodStart","expiresAt")
+       VALUES ($1,$2,'plan','2000','subscription',$3,now()-interval '10 days',now()+interval '20 days'),
+              ($4,$2,'plan','-2000','refund',$5,now()-interval '10 days',now()+interval '20 days')`,
+      [refundedGrantId, ws.id, `inv-ref:${randomUUID()}`, randomUUID(), `ref:${randomUUID()}`],
+    )
+    await pool.query(
+      `UPDATE workspace_credit_grants SET "parentGrantId"=$1 WHERE "workspaceId"=$2 AND reason='refund'`,
+      [refundedGrantId, ws.id],
+    )
+
+    // 3. Mid-month upgrade to Pro (periodStart = now() - 10s, after freeCall), plan credits fully spent, overage cap = $10 (1000 credits).
+    const proGrantId = randomUUID()
+    await pool.query(
+      `INSERT INTO workspace_billing ("workspaceId","billingModel","billingPlan","billingExpiresAt",status,"overageEnabled","overageMonthlyCapPoints","overageRevision")
+       VALUES ($1,'resource_v1','pro',now()+interval '30 days','active',false,NULL,0)`,
+      [ws.id],
+    )
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",bucket,points,reason,"externalId","periodStart","expiresAt")
+       VALUES ($1,$2,'plan',100,'subscription',$3,now()-interval '10 seconds',now()+interval '30 days')`,
+      [proGrantId, ws.id, `inv-pro:${randomUUID()}`],
+    )
+    const consumePlan = `consume-plan-${randomUUID()}`
+    await store.reserve(ws.id, 'fixture/model', consumePlan, {}, 1_000_000)
+    await store.settle(consumePlan, 1_000_000, 10, 10)
+
+    const saved = await saveOveragePolicy(owner, ws.id, { enabled: true, monthlyCapPoints: 1000, expectedRevision: 0 })
+    assert.equal(saved.spentOveragePoints, 0, 'pre-upgrade Free top-up spend must not consume Pro overage cap')
+    assert.equal(saved.remainingOveragePoints, 1000)
+    assert.equal(await readMonthlyOverageMicroUsd(ws.id), 0)
+
+    // 4. Paid-period overage spend IS counted and enforced up to the $10 cap.
+    const paidOverage = `paid-ovg-${randomUUID()}`
+    await store.reserve(ws.id, 'fixture/model', paidOverage, {}, 6_000_000)
+    await store.settle(paidOverage, 6_000_000, 10, 10)
+    assert.equal(await readMonthlyOverageMicroUsd(ws.id), 6_000_000)
+
+    // 5. Mid-month renewal (new plan grant starting later) must NOT reset earlier paid-period overage in the same UTC month.
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",bucket,points,reason,"externalId","periodStart","expiresAt")
+       VALUES ($1,$2,'plan',100,'subscription',$3,now()+interval '1 second',now()+interval '31 days')`,
+      [randomUUID(), ws.id, `inv-renew:${randomUUID()}`],
+    )
+    assert.equal(await readMonthlyOverageMicroUsd(ws.id), 6_000_000)
+
+    // Remaining overage cap is $4; settling $5 clamps purchased to $4 and puts $1 into unpaidMicroUsd.
+    const finalOverage = `paid-ovg-clamp-${randomUUID()}`
+    await store.reserve(ws.id, 'fixture/model', finalOverage, {}, 100_000)
+    await store.settle(finalOverage, 5_000_000, 10, 10)
+    const clamped = (await pool.query('SELECT "purchasedMicroUsd"::int AS p,"unpaidMicroUsd"::int AS u FROM hosted_usage WHERE id=$1', [finalOverage])).rows[0]
+    assert.deepEqual(clamped, { p: 4_000_000, u: 1_000_000 })
+    await assert.rejects(store.reserve(ws.id, 'fixture/model', `paid-ovg-blocked-${randomUUID()}`, {}, 100_000), { code: 'usage_budget_exhausted' })
+  })
 })
