@@ -9,9 +9,7 @@ import { nextTaskListCursor, taskListPageInput } from '@/lib/task-list-page'
 import { countAssignedWorkspaceTasks, pollIssues, listWorkspaceIssues, listWorkspaceTaskPage } from '@/app/actions/issues'
 import { getTaskPresentations } from '@/app/actions/task-domain'
 import { json } from '@/lib/mobile-api'
-import { boardBlocks } from '@/lib/kanban-board-data'
 import { newestTaskRuns, taskScheduleLabels } from '@/lib/task-block-runs'
-import { taskStateOf } from '@/lib/task-state'
 import { taskReviewSummaries } from '@/lib/coding-workspace/task-review/summaries'
 import { readTaskRefreshFailure, TASK_PRESENTATION_PARAM, TASK_PRESENTATION_VERSION, TASK_REFRESH_FAILURE_HEADER } from '@/lib/mobile-task-refresh'
 import { defineRoute } from '@/lib/primitives/define-route'
@@ -33,7 +31,7 @@ function recordMobileRefreshFailure(request: Request) {
   span.end()
 }
 
-/** `GET /api/mobile/tasks`: the 任务 list: the person's tasks in this workspace, newest change first, each with its 受阻 (lib/task-blocked.ts). No board on mobile. */
+/** `GET /api/mobile/tasks`: the 任务 list: the person's tasks in this workspace, newest change first, each with its canonical TaskPresentation. No board on mobile. */
 async function handleGET(request: Request, user: ApiSession['user']) {
   const span = trace.getActiveSpan()
   span?.setAttribute('mikka.task_refresh.server_stage', 'authentication')
@@ -70,29 +68,27 @@ async function handleGET(request: Request, user: ApiSession['user']) {
         span?.setAttribute('mikka.task_refresh.server_stage', 'decoration')
         const snapshots = await newestTaskRuns(user.id, issues.map(issue => issue.id), workspaceId, await taskScheduleLabels())
         const reviews = await taskReviewSummaries(user, snapshots.filter(row => row.codingReview).map(row => row.issueId), workspaceId)
-        const runs = snapshots.flatMap(row => row.runId && row.status ? [{ ...row, runId: row.runId, status: row.status }] : [])
         const byIssue = new Map(snapshots.map(row => [row.issueId, row]))
-        const runByIssue = new Map(runs.map(row => [row.issueId, row]))
-        const blocks = boardBlocks(issues, runs)
-        // Use the same bounded, authorized projection as the older POST. Do
-        // this last so its fresh visibility check controls the returned rows.
-        if (projected) span?.setAttribute('mikka.task_refresh.server_stage', 'presentation')
-        const presentations = projected && issues.length
-          ? (await getTaskPresentations({ workspaceId, issueIds: issues.map(issue => issue.id) })).items : null
+        // Always project through the single canonical TaskPresentation reader
+        // (includes Factory context and rechecks fresh task visibility).
+        span?.setAttribute('mikka.task_refresh.server_stage', 'presentation')
+        const presentations = issues.length
+          ? (await getTaskPresentations({ workspaceId, issueIds: issues.map(issue => issue.id) })).items : {}
         return json({
           ...(projected ? { presentationVersion: TASK_PRESENTATION_VERSION } : {}),
           workspaceId, next: nextTaskListCursor(issues),
           tasks: issues.flatMap(issue => {
-            const view = presentations?.[issue.id]
-            if (presentations && !view) return []
-            const block = blocks.get(issue.id)
+            const view = presentations[issue.id]
+            if (!view) return []
+            const blocked = view.blockedReason
+              ? { reason: view.blockedReason, blocker: view.blockedBy ?? null } : null
             return [{
               // The short title the small model wrote, while the task keeps the title it was written from (lib/short-title.ts).
-              ...(dispatchedBy ? { dispatchedBy } : {}), id: issue.id, identifier: issue.identifier, title: issue.title, status: view?.primaryStatus ?? issue.status, priority: issue.priority,
+              ...(dispatchedBy ? { dispatchedBy } : {}), id: issue.id, identifier: issue.identifier, title: issue.title, status: view.primaryStatus, priority: issue.priority,
               owner: issue.ownerName, updatedAt: issue.updatedAt,
-              createdAt: issue.createdAt, ...(view ?? taskStateOf(issue, runByIssue.get(issue.id), { block, schedule: byIssue.get(issue.id)?.schedule })),
+              createdAt: issue.createdAt, ...view,
               bot: byIssue.get(issue.id)?.bot ?? null, schedule: byIssue.get(issue.id)?.schedule ?? null,
-              blocked: block ? { reason: block.reason, blocker: block.blockerIdentifier ?? null } : null,
+              blocked,
               review: reviews.get(issue.id) ?? null,
             }]
           }),

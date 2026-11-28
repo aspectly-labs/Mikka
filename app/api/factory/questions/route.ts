@@ -14,8 +14,24 @@ async function unguardedGET(request: Request) {
   if (!session?.user) return RouteResponse.json({error:'authRequired'},{status:401});
   return factoryHumanWorkspaceResponse(session?.user, async () => {
     // The selected workspace bounds the human question collection.
-    const result=await handleFactoryQuestionList(factoryRuntimeForBot(null).questions,{actor:{userId:session.user.id},authorization:null,method:'GET',url:request.url});
-    return RouteResponse.json(result.body,{status:result.status,headers:{'Cache-Control':'private, no-store'}});
+    const result = await handleFactoryQuestionList(factoryRuntimeForBot(null).questions, {
+      actor: { userId: session.user.id },
+      authorization: null,
+      method: 'GET',
+      url: request.url,
+    });
+    if (result.status === 200 && 'questions' in result.body && Array.isArray(result.body.questions)) {
+      const hasBoundIssue = result.body.questions.some(q => {
+        const ref = (q as { reference?: { binding?: { issueId?: unknown } } })?.reference;
+        return typeof ref?.binding?.issueId === 'string' && ref.binding.issueId.length > 0;
+      });
+      if (hasBoundIssue) {
+        const { attachFactoryQuestionTaskLabels } = await import('@/lib/factory/questions/issue-labels');
+        const questions = await attachFactoryQuestionTaskLabels(result.body.questions);
+        return RouteResponse.json({ questions }, { status: 200, headers: { 'Cache-Control': 'private, no-store' } });
+      }
+    }
+    return RouteResponse.json(result.body, { status: result.status, headers: { 'Cache-Control': 'private, no-store' } });
   });
 
 }
