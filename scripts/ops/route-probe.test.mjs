@@ -85,6 +85,9 @@ test('a route the public edge keeps internal must answer 404 there; anything els
   assert.ok(generated.routes.some(item => item.path === subscriptionChat))
   const [probe] = routeProbePlan(manifest([route(subscriptionChat, ['POST'])]))
   assert.deepEqual(probe, { route: subscriptionChat, path: subscriptionChat, method: 'OPTIONS', expectedStatus: 404, internal: true })
+  // Probing the API dispatcher directly (no edge), the internal route keeps the normal registration contract.
+  const [direct] = routeProbePlan(manifest([route(subscriptionChat, ['POST'])]), { publicEdge: false })
+  assert.deepEqual(direct, { route: subscriptionChat, path: subscriptionChat, method: 'OPTIONS', expectedStatus: 204, allowed: ['OPTIONS', 'POST'] })
   const closed = await runRouteProbe({ baseUrl: 'https://stage.example.test', manifest: manifest([route(subscriptionChat, ['POST'])]),
     fetchImpl: async () => new Response(null, { status: 404 }) })
   assert.deepEqual([closed.status, closed.passed, closed.results[0].status], ['pass', 1, 404])
