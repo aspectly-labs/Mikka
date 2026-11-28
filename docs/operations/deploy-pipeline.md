@@ -70,14 +70,32 @@ has GitHub deployment/issue write permission and no runtime credential. It
 records the completed result and reports failures under the deployment issue.
 
 Never re-run a deployment run whose Deploy step ran, whether through "Re-run
-all jobs" or "Re-run failed jobs": GitHub deletes a re-run job's earlier
-artifacts, so the re-run erases the `deploy-pipeline-<runId>-<attempt>` receipt
-the next selection must read. Push a new main commit instead. The gate still
-fails closed without that receipt, and never reads a log in its place: the re-run
-itself stops with `pipeline_rerun_after_deploy_refused`, and every later
-selection with `pipeline_rerun_erased_receipt_requires_recovery` until the
-reviewed `stage-all` bootstrap resets the staging baseline, as for an expired
-receipt.
+all jobs" or "Re-run failed jobs". Full workflow reruns can make earlier original
+artifacts unreadable; retention periods and attempt-specific names don't
+guarantee preservation. The exact rerun mode and deletion cause of
+[run #709](https://github.com/aspectly-labs/Mikka/actions/runs/46150675123)'s
+missing archive remain unconfirmed. When a rerun's earlier Deploy receipt is
+missing, the current run fails closed with `pipeline_rerun_after_deploy_refused`;
+later selections report `pipeline_rerun_erased_receipt_requires_recovery`.
+Logs or cached copies cannot replace the original artifact.
+
+Follow the [reviewed private receipt and resource recovery contract](https://github.com/aspectly-labs/mikka-cloud/blob/4fb3c85ab635bd3c137bb372771c512647eb0e6c/docs/operations/deploy-pipeline.md#回执保留与预发恢复2026-11-28).
+Authenticate the original manifests, qualification, execution source and actual
+resource ancestry before using the existing protected `pipeline-rollback`
+path. Keep its preflight and probes, and verify that the recovery run's own
+original artifact can be downloaded. Stop when any required evidence is
+missing. `stage-all` requires a reviewed plan matching the actual resources;
+it isn't a general or sole receipt-recovery path.
+
+After verified recovery, use a new successful main producer's fresh
+`workflow_run` staging run. Do not establish that baseline by retrying an
+earlier-created run. Manual `pipeline-stage` is not promotion evidence.
+[Recovery #712](https://github.com/aspectly-labs/Mikka/actions/runs/46153661413/attempts/1)
+demonstrated the protected rollback path. The later execution of
+[#711 attempt 2](https://github.com/aspectly-labs/Mikka/actions/runs/46153558280/attempts/2)
+and the refusal in [#714](https://github.com/aspectly-labs/Mikka/actions/runs/46154833179/attempts/1)
+expose the separate baseline-ordering defect tracked in [#3453](https://github.com/aspectly-labs/Mikka/issues/3453).
+Keep the actual deployment failures and recovery results in [#3133](https://github.com/aspectly-labs/Mikka/issues/3133).
 
 ## Production activation
 
