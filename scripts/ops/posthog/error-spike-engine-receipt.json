@@ -43,5 +43,5 @@
     "Elapsed time is the roundtrip from submitting this exact literal query to receiving its last row. The unchanged baseline still reproduces the two historical attribution failures.",
     "The source digest covers the complete SQL file, including its final LF. The generated literal query and provider result are unchanged by this file terminator."
   ],
-  "acceptance_script_sha256": "247c48826ef331afc02bad3564d83fb863f6c98bd45825804d459c478e767bbc"
+  "acceptance_script_sha256": "99f1b0fe2b5d3533bd7814951398347439b41959873c11c8e58d39ddec6ff05b"
 }
