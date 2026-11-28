@@ -62,6 +62,16 @@ Database spans also have:
 | `db.response.returned_rows` | Rows returned or affected |
 | `mikka.db.response_bytes_approx` | Result JSON size, estimated from the first 50 rows (not wire bytes) |
 
+An audit receipt that cannot reach the main store marks its current maintenance
+job as an error with `mikka.audit.delivery_failed=true`. The job's trace and
+structured failure log retain only `error.type`, `mikka.audit.error_code`
+(PostgreSQL SQLSTATE or a bounded driver code), and `mikka.audit.constraint`
+when available, using the existing `auditFailureSummary` identifier checks.
+Audit payloads, tenant and actor identifiers, SQL parameters, error messages and
+stacks are excluded. The job still returns its original delivery counts and
+leaves the receipt pending for the existing idempotent retry; diagnostic status
+does not acknowledge, delete or modify the receipt.
+
 ## Runtime initialization
 
 `apps/api/scripts/finalize-build.mjs` compiles

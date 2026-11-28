@@ -4,6 +4,9 @@ import { readFile } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import test, { mock } from 'node:test'
+import { context, propagation, SpanStatusCode, trace } from '@opentelemetry/api'
+import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
+import { InMemoryLogRecordExporter } from '@opentelemetry/sdk-logs'
 import { Pool } from 'pg'
 import { SQL, is, sql } from 'drizzle-orm'
 import { PgDialect, PgTable, getTableConfig } from 'drizzle-orm/pg-core'
@@ -11,6 +14,8 @@ import * as workspaceSchema from '../lib/db/workspace-schema'
 import * as teamSchema from '../lib/db/team-schema'
 import * as projectSchema from '../lib/db/project-schema'
 import { createTestDatabase, dropTestDatabase, endPoolsAndWait } from './support/drop-test-database'
+import { createTracerProvider, SafeExporter } from '../lib/tracing/node'
+import { createLogProvider } from '../lib/tracing/logs'
 
 const mainURL = process.env.E2E_DATABASE_URL
 function isolated(value: string) {
@@ -62,6 +67,10 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
   assert.notEqual(new URL(workspaceURL).pathname, new URL(mainURL!).pathname)
   process.env.DATABASE_URL = workspaceURL
   const workspace = new Pool({ connectionString: workspaceURL, max: 4 }), targets = { main, workspace }
+  const spans = new InMemorySpanExporter(), records = new InMemoryLogRecordExporter()
+  const logs = createLogProvider({ endpoint: 'https://unused.test/i/v1/traces', token: 'unused', environment: 'dev', exporter: records })
+  const provider = createTracerProvider({ exporter: new SafeExporter(spans), sampleRate: 1, environment: 'dev', logger: logs.getLogger('audit-test'), serverless: false })
+  provider.register()
   const actor = { id: `audit-owner-${randomUUID()}`, name: 'Audit Owner', email: 'owner@example.invalid' }
   let user = actor
   const translate = Object.assign((key: string) => key, { has: () => true })
@@ -73,6 +82,8 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
     import('../lib/audit/delivery'), import('../app/actions/workspace'), import('../lib/workspace-admin/general'), import('../lib/workspace-admin/members'), import('../lib/workspace-db'), import('../lib/db'),
   ])
   t.after(async () => {
+    await provider.shutdown(); await logs.shutdown()
+    trace.disable(); context.disable(); propagation.disable()
     process.env.DATABASE_URL = previousWorkspace
     await endPoolsAndWait(workspace, workspacePool, pool)
     if (allocated) await dropTestDatabase(main, databaseName)
@@ -107,7 +118,26 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
       assert.equal((await workspace.query('SELECT role FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2', [ws.id, ws.peer])).rows[0].role, 'admin')
       const receipts = await pending(ws.id); assert.equal(receipts.length, 1); receiptId = receipts[0].id
       assert.deepEqual(receipts[0].payload.metadata, { oldRole: 'member', newRole: 'admin' })
-      assert.equal((await deliverWorkspaceAudits(targets)).failed, 1)
+      const result = await provider.getTracer('audit-test').startActiveSpan('cron:reconcile', async span => {
+        try { return await deliverWorkspaceAudits(targets) } finally { span.end() }
+      })
+      assert.deepEqual(result, { delivered: 0, failed: 1 })
+      await provider.forceFlush(); await logs.forceFlush()
+      const [failure] = spans.getFinishedSpans(), [record] = records.getFinishedLogRecords()
+      assert.equal(failure.status.code, SpanStatusCode.ERROR, 'a retained receipt failure must remain visible on its job')
+      for (const attributes of [failure.attributes, record.attributes]) {
+        assert.equal(attributes['error.type'], 'DrizzleQueryError')
+        assert.equal(attributes['mikka.audit.delivery_failed'], true)
+        assert.equal(attributes['mikka.audit.error_code'], '23514', 'the real PostgreSQL CHECK violation survives the Drizzle cause')
+        assert.equal(attributes['mikka.audit.constraint'], constraint)
+      }
+      assert.equal(record.body, 'mikka.stage.failed')
+      assert.equal(record.spanContext?.traceId, failure.spanContext().traceId)
+      assert.equal(record.spanContext?.spanId, failure.spanContext().spanId)
+      const exported = JSON.stringify({ span: failure.attributes, events: failure.events, log: record.attributes })
+      for (const privateValue of [ws.id, actor.id, ws.peer, receiptId, 'owner@example.invalid', 'oldRole', 'member.role_changed', 'insert into']) {
+        assert.equal(exported.includes(privateValue), false, 'audit payload, SQL and tenant identity must not enter failure diagnostics')
+      }
       assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE id=$1', [receiptId])).rows[0].n, 0)
       assert.equal((await pending(ws.id)).length, 1)
     } finally { await main.query(`ALTER TABLE workspace_audit_events DROP CONSTRAINT ${constraint}`) }

@@ -1,5 +1,6 @@
 import 'server-only'
 import { randomUUID } from 'node:crypto'
+import { SpanStatusCode, trace } from '@opentelemetry/api'
 import type { Pool, PoolClient } from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { pool } from '@/lib/db'
@@ -66,7 +67,17 @@ export async function deliverWorkspaceAudits(database: Targets = { main: pool, w
           // Commit only the attempt time. The business change/receipt already committed;
           // the same stable event ID will retry after a main-store outage/restart.
           await source.query('COMMIT'); failed++
-          console.error('[audit] delivery pending', { workspaceId: receipt.workspaceId, ...auditFailureSummary(error) })
+          const failure = auditFailureSummary(error)
+          // The failed receipt stays durable. Mark its current job so PostHog
+          // can distinguish SQLSTATE/constraint failures without audit content.
+          try {
+            const span = trace.getActiveSpan()
+            span?.setAttributes({ 'error.type': failure.name, 'mikka.audit.delivery_failed': true,
+              ...(failure.code ? { 'mikka.audit.error_code': failure.code } : {}),
+              ...(failure.constraint ? { 'mikka.audit.constraint': failure.constraint } : {}) })
+            span?.setStatus({ code: SpanStatusCode.ERROR })
+          } catch { /* diagnostics never change the durable retry outcome */ }
+          console.error('[audit] delivery pending', { workspaceId: receipt.workspaceId, ...failure })
           break
         }
         await source.query('UPDATE workspace_audit_outbox SET "deliveredAt"=now(),payload=NULL WHERE id=$1 AND "deliveredAt" IS NULL', [receipt.id])
