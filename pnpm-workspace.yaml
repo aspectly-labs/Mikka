@@ -9,6 +9,11 @@ minimumReleaseAge: 0
 
 pmOnFail: ignore
 
+overrides:
+  # The serving LiteLLM compatibility date must run in local/CI workerd too.
+  # Keep Wrangler/Miniflare fixed; only their older runtime pin is replaced.
+  workerd@1.20261019.1: 1.20261128.1
+
 
 # pnpm 11 stops an install while any dependency's build script has no decision (ERR_PNPM_IGNORED_BUILDS), so every
 # package that ships one needs a value here — a placeholder reads as a string and fails the install just as loudly.
