@@ -53,7 +53,7 @@ function fakePosthog() {
   }
 }
 
-test('a fresh project gets the dashboard, every insight, the note and all alerts; a second run writes nothing', async () => {
+test('a fresh project gets the dashboard, every insight, the notes and all alerts; a second run writes nothing', async () => {
   const posthog = fakePosthog()
   const first = await sync(posthog, { apply: true })
   assert.equal(posthog.store.dashboards.length, 1)
@@ -62,7 +62,8 @@ test('a fresh project gets the dashboard, every insight, the note and all alerts
   const [dashboard] = posthog.store.dashboards
   assert.equal(dashboard.name, DASHBOARD.name)
   assert.equal(dashboard.tiles.filter(tile => tile.insight).length, INSIGHTS.filter(item => item.tile).length)
-  assert.equal(dashboard.tiles.find(tile => tile.text)?.text.body, DASHBOARD.note.body)
+  assert.deepEqual(dashboard.tiles.filter(tile => tile.text).map(tile => ({ body: tile.text.body, layout: tile.layouts.sm })),
+    DASHBOARD.notes.map(({ body, layout }) => ({ body, layout })))
   for (const definition of INSIGHTS.filter(item => item.tile)) {
     const insight = posthog.store.insights.find(item => item.name === definition.name)
     assert.ok(insight.tags.includes(MANAGED_TAG) && insight.tags.includes(`key:${definition.key}`))
@@ -75,6 +76,33 @@ test('a fresh project gets the dashboard, every insight, the note and all alerts
   const second = await sync(posthog, { apply: true })
   assert.deepEqual(second.actions, [])
   assert.deepEqual(posthog.writes, [])
+})
+
+test('production notes are updated by tile ID and an unrelated text tile is preserved', async () => {
+  const posthog = fakePosthog()
+  await sync(posthog, { apply: true })
+  const [dashboard] = posthog.store.dashboards
+  const previousId = dashboard.id
+  dashboard.id = DASHBOARD.id
+  for (const insight of posthog.store.insights) {
+    insight.dashboards = insight.dashboards.map(id => id === previousId ? dashboard.id : id)
+  }
+  const notes = dashboard.tiles.filter(tile => tile.text)
+  for (const [index, note] of notes.entries()) note.id = DASHBOARD.notes[index].id
+  notes[1].text.body = 'Edited heading'
+  notes[1].text.agent_context = 'Existing context'
+  const unrelated = { id: 999999, text: { body: 'Unrelated note' }, layouts: { sm: { h: 1, w: 1, x: 0, y: 73 } } }
+  dashboard.tiles.unshift(structuredClone(unrelated))
+  posthog.writes.length = 0
+
+  assert.deepEqual((await sync(posthog)).actions, [`update dashboard ${dashboard.id} tiles (1)`])
+  assert.deepEqual(posthog.writes, [])
+  await sync(posthog, { apply: true })
+  assert.deepEqual(dashboard.tiles.filter(tile => tile.text).map(tile => tile.id), [unrelated.id, ...DASHBOARD.notes.map(note => note.id)])
+  assert.deepEqual(dashboard.tiles[0], unrelated)
+  assert.equal(notes[1].text.body, DASHBOARD.notes[1].body)
+  assert.equal(notes[1].text.agent_context, 'Existing context')
+  assert.deepEqual((await sync(posthog)).actions, [])
 })
 
 test('the plan is read-only and names only what differs', async () => {
