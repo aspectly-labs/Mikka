@@ -2,7 +2,11 @@ WITH
     toStartOfHour(now()) - INTERVAL 1 HOUR AS evaluated_hour,
     spans AS (
         SELECT timestamp, service_name, status_code, trace_id, span_id,
-            1 / coalesce(toFloatOrNull(attributes['mikka.trace.sample_rate']), 0.1) AS sample_weight,
+            toFloatOrNull(attributes['mikka.trace.sample_rate']) AS sample_rate,
+            1 / nullIf(sample_rate, 0) AS inverse_rate,
+            sample_rate > 0 AND sample_rate <= 1 AND isFinite(inverse_rate) AS weight_known,
+            if(weight_known, inverse_rate, 1) AS sample_weight,
+            if(weight_known, 0, 1) AS weight_unknown,
             coalesce(nullIf(attributes['mikka.route'], ''), 'unknown') AS route,
             coalesce(nullIf(attributes['mikka.error.code'], ''), nullIf(attributes['error.type'], ''), 'unknown_error') AS error_code
         FROM posthog.trace_spans
@@ -169,46 +173,49 @@ WITH
         FROM service_start
     ),
     hourly AS (
-        SELECT service_name, error_code, toStartOfHour(timestamp) AS hour, sum(sample_weight) AS estimated_errors,
+        SELECT service_name, error_code, toStartOfHour(timestamp) AS hour, sum(sample_weight) AS error_score,
+            sum(weight_unknown) AS unknown_weights,
             arrayStringConcat(arraySlice(groupUniqArray(route), 1, 5), ', ') AS example_routes
         FROM spans WHERE status_code = 2 AND timestamp >= evaluated_hour - INTERVAL 7 DAY
           AND (service_name, trace_id, span_id) NOT IN (SELECT service_name, trace_id, span_id FROM handled_spans)
         GROUP BY service_name, error_code, hour
     ),
     per_code AS (
-        SELECT service_name, error_code, groupArray((hour, estimated_errors)) AS hour_counts,
-            sumIf(estimated_errors, hour = evaluated_hour) AS current_errors,
+        SELECT service_name, error_code, groupArray((hour, error_score)) AS hour_counts,
+            sumIf(error_score, hour = evaluated_hour) AS current_score,
+            sumIf(unknown_weights, hour = evaluated_hour) AS current_unknown_weights,
             anyIf(example_routes, hour = evaluated_hour) AS example_routes
         FROM hourly GROUP BY service_name, error_code
     ),
     metrics AS (
         SELECT p.service_name AS service_name, p.error_code AS error_code,
             length(s.covered_hours) AS covered_hours, s.current_service_observed AS current_service_observed,
-            p.current_errors AS current_errors, p.example_routes AS example_routes,
+            p.current_score AS current_score, p.current_unknown_weights AS current_unknown_weights, p.example_routes AS example_routes,
             if(length(s.covered_hours) = 0, 0,
-                arrayReduce('median', arrayMap(h -> tupleElement(arrayFirst(c -> c.1 = h, p.hour_counts), 2), s.covered_hours))) AS median_errors,
-            greatest(3 * median_errors, 50) AS threshold_errors
+                arrayReduce('median', arrayMap(h -> tupleElement(arrayFirst(c -> c.1 = h, p.hour_counts), 2), s.covered_hours))) AS median_score,
+            greatest(3 * median_score, 50) AS threshold_score
         FROM per_code p JOIN service_coverage s ON p.service_name = s.service_name
     ),
     per_source AS (
 SELECT
-    if(NOT current_service_observed, NULL, if(covered_hours >= 24 AND current_errors > threshold_errors, 1, 0)) AS row_value,
+    if(NOT current_service_observed, NULL, if(covered_hours >= 24 AND current_score > threshold_score, 1, 0)) AS row_value,
     concat(service_name, ' code=', error_code, ' | UTC hour=', toString(toTimeZone(evaluated_hour, 'UTC')),
-        ' | estimated error spans=', if(current_service_observed, toString(current_errors), 'unknown'),
-        ' median=', if(covered_hours > 0, toString(round(median_errors, 1)), 'unavailable'),
-        ' threshold=', toString(round(threshold_errors, 1)),
+        ' | mixed error score=', if(current_service_observed, toString(current_score), 'unknown'),
+        ' median=', if(covered_hours > 0, toString(round(median_score, 1)), 'unavailable'),
+        ' threshold=', toString(round(threshold_score, 1)),
         ' | history=', toString(covered_hours), '/168h ', if(NOT current_service_observed, 'NO CURRENT TELEMETRY; evaluation suppressed', if(covered_hours >= 24, 'ready', 'WARMUP no error evaluation')),
         ' | routes (up to 5)=', example_routes,
-        ' | fallback error.type/unknown_error; per-span 1/sample_rate weighting; legacy missing rate=0.1') AS row_source,
-    service_name, error_code, current_errors, median_errors, threshold_errors, covered_hours, current_service_observed, example_routes, evaluated_hour AS hour_start
+        ' | unknown weight rows=', toString(current_unknown_weights), ' | fallback error.type/unknown_error; valid weights only; unknown counted as observed, not extrapolated') AS row_source,
+    service_name, error_code, current_score, current_unknown_weights, median_score, threshold_score, covered_hours, current_service_observed, example_routes, evaluated_hour AS hour_start
 FROM metrics
     )
 SELECT
     max(row_value) AS value,
-    if(countIf(row_value = 1) > 0,
-        concat(toString(countIf(row_value = 1)), ' breaching: ', arrayStringConcat(arraySlice(groupArrayIf(row_source, row_value = 1), 1, 5), ' || ')),
-        concat('no breach | top: ', argMax(row_source, current_errors))) AS source,
+    concat('unknown weight rows across sources=', toString(sum(current_unknown_weights)), ' | ',
+        if(countIf(row_value = 1) > 0,
+            concat(toString(countIf(row_value = 1)), ' breaching: ', arrayStringConcat(arraySlice(groupArrayIf(row_source, row_value = 1), 1, 5), ' || ')),
+            concat('no score breach | top: ', argMax(row_source, current_score)))) AS source,
     countIf(row_value = 1) AS breaching_sources,
     count() AS evaluated_sources,
     any(hour_start) AS hour_start
-FROM (SELECT * FROM per_source ORDER BY row_value DESC, current_errors DESC, service_name, error_code)
+FROM (SELECT * FROM per_source ORDER BY row_value DESC, current_score DESC, service_name, error_code)
