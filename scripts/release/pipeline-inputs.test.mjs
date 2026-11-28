@@ -17,6 +17,8 @@ const run = () => ({ id: 101, run_attempt: 2, path: producer, event: 'push', sta
   conclusion: 'success', head_sha: source, head_branch: 'main', actor: { id: 183887963 },
   triggering_actor: { id: 183887963 }, repository: repo, head_repository: repo })
 const event = original => ({ action: 'completed', repository: repo, workflow_run: structuredClone(original) })
+const execution = (minute = 1, hour = 12) => ({ started_at: `2026-11-28T${hour}:${String(minute).padStart(2, '0')}:00Z`,
+  completed_at: `2026-11-28T${hour}:${String(minute).padStart(2, '0')}:30Z` })
 
 function manifestFixture(commit = source, legacy = false) {
   const digest = 'sha256:' + 'b'.repeat(64)
@@ -153,7 +155,7 @@ test('a rerun that fails before its writer cannot hide an earlier partial deploy
           { name: 'Deploy and verify staged service manifest', conclusion: 'skipped' },
         ] }] }
       if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 401, name: 'pipeline',
-        status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
+        status: 'completed', conclusion: 'failure', steps: [{ ...execution(), name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
       if (path.includes('/runs/101/artifacts?')) return { total_count: 1, artifacts: [artifact] }
       if (path.endsWith('/artifacts/301/zip')) return bytes
       if (path.endsWith('/jobs/401/logs')) return Buffer.from('Artifact deploy-pipeline-101-1.zip successfully finalized.\nArtifact ID 301')
@@ -180,7 +182,7 @@ test('a re-run that erased an earlier attempt\'s deployment receipt fails closed
       if (path.includes('/attempts/2/jobs?')) return { total_count: 1, jobs: [{ id: 402, name: 'pipeline',
         status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'skipped' }] }] }
       if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 401, name: 'pipeline',
-        status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
+        status: 'completed', conclusion: 'failure', steps: [{ ...execution(), name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
       // GitHub deletes the re-run job's earlier artifacts; the run lists none.
       if (path.includes('/runs/101/artifacts?')) return { total_count: 0, artifacts: [] }
       assert.fail('Unexpected metadata request: ' + path)
@@ -191,7 +193,7 @@ test('a re-run that erased an earlier attempt\'s deployment receipt fails closed
   const single = async path => {
     if (path.includes('actions/workflows/')) return { total_count: 1, workflow_runs: [original] }
     if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 401, name: 'pipeline',
-      status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
+      status: 'completed', conclusion: 'failure', steps: [{ ...execution(), name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
     if (path.includes('/runs/101/artifacts?')) return { total_count: 0, artifacts: [] }
     assert.fail('Unexpected metadata request: ' + path)
   }
@@ -216,7 +218,7 @@ test('a Deploy step that failed before its first receipt is skipped, but a print
       if (path.includes('actions/workflows/')) return { total_count: 2, workflow_runs: [failed, older] }
       const id = path.includes('/runs/202/') ? 202 : 201
       if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: id + 300, name: 'pipeline', status: 'completed',
-        conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'failure' }] }] }
+        conclusion: 'failure', steps: [{ ...execution(id === 202 ? 2 : 1), name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'failure' }] }] }
       if (path.includes('/runs/202/artifacts?')) return { total_count: 1, artifacts: [artifactOf(402, 202, empty)] }
       if (path.includes('/runs/201/artifacts?')) return { total_count: 1, artifacts: [artifactOf(401, 201, full)] }
       if (path.endsWith('/artifacts/402/zip')) return empty
@@ -258,7 +260,7 @@ test('an executed deployment cannot use a forged admission report to hide a part
       if (path.includes('actions/workflows/')) return { total_count: 2, workflow_runs: [original, { ...original, id: 199 }] }
       if (path.includes('/runs/201/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 402,
         name: target === 'production' ? 'pipeline-production' : 'pipeline', status: 'completed', conclusion: 'failure',
-        steps: [{ name: target === 'production' ? 'Promote and verify the staged service manifest' : 'Deploy and verify staged service manifest',
+        steps: [{ ...execution(), name: target === 'production' ? 'Promote and verify the staged service manifest' : 'Deploy and verify staged service manifest',
           status: 'completed', conclusion: 'failure' }] }] }
       if (path.includes('/runs/201/artifacts?')) return { total_count: 1, artifacts: [artifact] }
       if (path.endsWith('/artifacts/401/zip')) return bytes
@@ -474,7 +476,7 @@ test('canonical GitHub reads keep the Actions and private operations token scope
 test('a completed stage-all resets the staging baseline to bootstrap without affecting production or other phases', async () => {
   const stageAllRun = { ...run(), id: 250, run_attempt: 1, path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_dispatch' }
   const olderStage = { ...run(), id: 240, run_attempt: 1, path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_run' }
-  const applyStep = { name: 'Deploy the reviewed public artifacts and verify the selected phase', conclusion: 'success' }
+  const applyStep = { ...execution(2), name: 'Deploy the reviewed public artifacts and verify the selected phase', conclusion: 'success' }
   const receiptLine = phase => Buffer.from(
     `2026-11-24T18:00:00Z MIKKA_PUBLIC_DEPLOYMENT_PHASE=${JSON.stringify({ version: 1, phase, status: 'completed', operator: { runId: '250', runAttempt: '1' } })}\n`,
   )
@@ -539,7 +541,8 @@ test('a re-run attempt that deployed after a later-created rollback is the lates
       const artifact = { id: 500 + index, name: `${target === 'production' ? 'deploy-production' : 'deploy-pipeline'}-${item.id}-${item.run_attempt}`, expired: false, size_in_bytes: bytes.length,
         digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
         workflow_run: { id: item.id, head_sha: source, head_branch: 'main', repository_id: repo.id, head_repository_id: repo.id } }
-      return [String(item.id), { item, body, bytes, artifact, job: 700 + index }]
+      const timing = { failed: execution(32, 14), rollback: execution(15, 14), rerun: execution(23, 14) }[key]
+      return [String(item.id), { item, body, bytes, artifact, job: 700 + index, timing }]
     }))
     return async path => {
       calls.push(path)
@@ -548,7 +551,7 @@ test('a re-run attempt that deployed after a later-created rollback is the lates
       for (const [id, fixture] of Object.entries(fixtures)) {
         if (path.includes(`/runs/${id}/attempts/${fixture.item.run_attempt}/jobs?`)) return { total_count: 1, jobs: [{ id: fixture.job,
           name: target === 'production' ? 'pipeline-production' : 'pipeline', status: 'completed', conclusion: fixture.body.status === 'passed' ? 'success' : 'failure',
-          steps: [{ name: target === 'production' ? 'Promote and verify the staged service manifest' : 'Deploy and verify staged service manifest', status: 'completed',
+          steps: [{ ...fixture.timing, name: target === 'production' ? 'Promote and verify the staged service manifest' : 'Deploy and verify staged service manifest', status: 'completed',
             conclusion: fixture.body.status === 'passed' ? 'success' : 'failure' }] }] }
         if (path.includes(`/runs/${id}/artifacts?`)) return { total_count: 1, artifacts: [fixture.artifact] }
         if (path.endsWith(`/artifacts/${fixture.artifact.id}/zip`)) return fixture.bytes
@@ -661,7 +664,7 @@ async function manualPromotion(t, change = {}) {
     version: 1, target: 'staging', status: 'passed', verification: { status: 'pass' }, deployment: { runId: '200', runAttempt: '1' },
     rollback: { status: 'passed' }, origin: summary.origin, previousOrigin: summary.origin } })
   const stageJobs = change.stageJobs ?? [{ id: 7199, name: 'pipeline', status: 'completed', conclusion: 'success', steps: [
-    { name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'success' },
+    { ...execution(2), name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'success' },
     { name: 'Upload pipeline receipts', status: 'completed', conclusion: 'success' }] },
     { name: 'pipeline-production', status: 'completed', conclusion: 'skipped' }]
   const calls = []
@@ -690,10 +693,10 @@ async function manualPromotion(t, change = {}) {
     }
     if (path.endsWith('/jobs/7199/logs')) return Buffer.from('Artifact deploy-pipeline-199-1.zip successfully finalized.\nArtifact ID 401\n')
     if (path.includes('/runs/200/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 7200, name: 'pipeline', status: 'completed', conclusion: 'success',
-      steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'success' }] }] }
+      steps: [{ ...execution(3), name: 'Deploy and verify staged service manifest', conclusion: 'success' }] }] }
     if (path.endsWith('/jobs/7200/logs')) return Buffer.from('Artifact deploy-pipeline-200-1.zip successfully finalized.\nArtifact ID 402\n')
     if (path.includes('/runs/150/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 7150, name: 'pipeline-production', status: 'completed',
-      conclusion: 'success', steps: [{ name: 'Promote and verify the staged service manifest', conclusion: 'success' }] }] }
+      conclusion: 'success', steps: [{ ...execution(), name: 'Promote and verify the staged service manifest', conclusion: 'success' }] }] }
     if (path.endsWith('/jobs/7150/logs')) return Buffer.from('Artifact deploy-production-150-1.zip successfully finalized.\nArtifact ID 450\n')
     if (path.endsWith(`/compare/${older}...${source}`)) return { status: change.compare ?? 'ahead' }
     if (path.includes('workflows/cloud-services-ci.yml/runs?')) return { total_count: 1, workflow_runs: [qualified] }
@@ -812,7 +815,7 @@ test('a staging run whose automatic promotion was held back for a pending check 
   // 2. The production job succeeds with every writer step skipped, so the run concludes successfully,
   //    and the production record job (which files failure issues) does not run for it.
   const heldJobs = [{ id: 7199, name: 'pipeline', status: 'completed', conclusion: 'success', steps: [
-    { name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'success' },
+    { ...execution(2), name: 'Deploy and verify staged service manifest', status: 'completed', conclusion: 'success' },
     { name: 'Upload pipeline receipts', status: 'completed', conclusion: 'success' }] },
     { id: 7201, name: 'pipeline-production', status: 'completed', conclusion: 'success', steps: [
       { name: 'Select the verified staging result and production baseline', status: 'completed', conclusion: 'success' },
@@ -865,4 +868,101 @@ test('a held-back automatic promotion writes a step summary with the reason and 
   const selected = await automaticPromotion(t)
   assert.equal((await selectPromotion({ env: selected.env, api: selected.api, npmLatest: selected.npmLatest })).status, 'selected')
   assert.equal(await selected.summary(), '')
+})
+
+// Authenticated archive boundary, with independent run and actual Deploy-step clocks.
+// The older-created run executes last, as a rerun may after a later-created rollback.
+function history({ target = 'staging', enqueue = 'equal', laterStep = {}, laterSummary = {}, missingArchive = false,
+  missingRunStart = false, reverseListing = false, bootstrap = false } = {}) {
+  const source = 'a'.repeat(40)
+  const repo = { id: 1427517699, full_name: 'alexj11324/Mikka', fork: false, private: false }
+  const common = { path: '.github/workflows/cloudflare-app-deploy.yml', status: 'completed', conclusion: 'success',
+    head_sha: source, head_branch: 'main', actor: { id: 183887963 }, triggering_actor: { id: 183887963 },
+    repository: repo, head_repository: repo }
+  const earlier = { ...common, id: 203, run_attempt: 1, event: 'workflow_dispatch', run_started_at: '2026-11-28T14:14:47Z' }
+  const later = { ...common, id: 202, run_attempt: 2, event: 'workflow_run', run_started_at:
+    missingRunStart ? undefined : enqueue === 'inverted' ? '2026-11-28T14:14:40Z' : earlier.run_started_at }
+  const origin = runId => ({ runId, runAttempt: '1', artifactId: '401' })
+  const prefix = target === 'production' ? 'deploy-production' : 'deploy-pipeline'
+  const fixtures = [earlier, later].map((run, index) => {
+    const summary = { version: 1, target, status: 'passed', verification: { status: 'pass' },
+      deployment: { runId: String(run.id), runAttempt: String(run.run_attempt) }, origin: origin(String(100 + index)),
+      ...(index ? laterSummary : { rollback: { status: 'passed' }, previousOrigin: origin('100') }) }
+    const bytes = execFileSync('python3', ['-c',
+      'import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z: z.writestr("pipeline-summary.json",sys.argv[1])\nsys.stdout.buffer.write(b.getvalue())', JSON.stringify(summary)])
+    const artifact = { id: 500 + index, name: `${prefix}-${run.id}-${run.run_attempt}`, expired: false,
+      size_in_bytes: bytes.length, digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
+      workflow_run: { id: run.id, head_sha: source, head_branch: 'main', repository_id: repo.id, head_repository_id: repo.id } }
+    const step = { name: target === 'production' ? 'Promote and verify the staged service manifest' : 'Deploy and verify staged service manifest',
+      status: 'completed', conclusion: 'success', started_at: index ? '2026-11-28T14:23:00Z' : '2026-11-28T14:15:00Z',
+      completed_at: index ? '2026-11-28T14:29:00Z' : '2026-11-28T14:18:00Z', ...(index ? laterStep : {}) }
+    if (bootstrap && !index) step.name = 'Deploy the reviewed public artifacts and verify the selected phase'
+    return { run, summary, bytes, artifact, step, job: { id: 700 + index, name: bootstrap && !index ? 'deploy-application'
+      : target === 'production' ? 'pipeline-production' : 'pipeline', status: 'completed', conclusion: 'success', steps: [step] } }
+  })
+  const calls = []
+  const api = async path => {
+    calls.push(path)
+    if (path.includes('workflows/cloudflare-app-deploy.yml/runs?'))
+      return { total_count: 2, workflow_runs: reverseListing ? [later, earlier] : [earlier, later] }
+    for (const f of fixtures) {
+      if (path.includes(`/runs/${f.run.id}/attempts/${f.run.run_attempt}/jobs?`)) return { total_count: 1, jobs: [f.job] }
+      if (path.includes(`/runs/${f.run.id}/artifacts?`))
+        return { total_count: missingArchive && f.run === later ? 0 : 1, artifacts: missingArchive && f.run === later ? [] : [f.artifact] }
+      if (path.endsWith(`/artifacts/${f.artifact.id}/zip`)) return f.bytes
+      if (path.endsWith(`/jobs/${f.job.id}/logs`)) return Buffer.from(bootstrap && f.run === earlier
+        ? `MIKKA_PUBLIC_DEPLOYMENT_PHASE=${JSON.stringify({ version: 1, phase: 'stage-all', status: 'completed', operator: { runId: '203', runAttempt: '1' } })}`
+        : `Artifact ${f.artifact.name}.zip successfully finalized.\nArtifact ID ${f.artifact.id}\nMIKKA_DEPLOYMENT_PIPELINE={}`)
+    }
+    assert.fail('Unexpected original-evidence request: ' + path)
+  }
+  return { api, calls, later, earlier, read: () => priorDeployment(api, '204', undefined, target) }
+}
+
+for (const target of ['staging', 'production']) {
+  test(`${target}: enqueue clocks and listing order cannot conceal the latest nonoverlapping writer`, async () => {
+    for (const enqueue of ['equal', 'inverted']) for (const reverseListing of [false, true]) {
+      const f = history({ target, enqueue, reverseListing })
+      const prior = await f.read()
+      assert.equal(prior.run.id, f.later.id)
+      assert.equal(prior.run.run_attempt, 2)
+      assert.equal(baselineOrigin(prior.summary, target).runId, '101')
+    }
+  })
+
+  test(`${target}: the later writer's absent original archive or partial write cannot select an older baseline`, async () => {
+    await assert.rejects(history({ target, missingArchive: true }).read(), /pipeline_original_artifact_required/)
+    await assert.rejects(history({ target, missingArchive: true,
+      laterStep: { started_at: '2026-11-28T14:17:00Z' } }).read(), /pipeline_original_artifact_required/)
+    const f = history({ target, laterSummary: { status: 'failed', failedStep: 'api', verification: undefined } })
+    const prior = await f.read()
+    assert.equal(prior.run.id, f.later.id)
+    assert.throws(() => baselineOrigin(prior.summary, target), /pipeline_previous_release_requires_recovery/)
+  })
+
+  test(`${target}: a missing attempt start remains invalid even when the step interval is present`, async () => {
+    await assert.rejects(history({ target, missingRunStart: true }).read(), /pipeline_deployment_start_required/)
+  })
+
+  test(`${target}: missing, malformed or reversed Deploy intervals fail closed`, async () => {
+    for (const laterStep of [
+      { started_at: undefined }, { completed_at: undefined }, { started_at: null }, { completed_at: 'invalid' },
+      { started_at: 0 }, { completed_at: '2026-11-28T14:22:00Z' },
+    ]) await assert.rejects(history({ target, laterStep }).read(), /pipeline_deployment_interval_required/)
+  })
+
+  test(`${target}: equal or overlapping Deploy intervals cannot be ordered by the run clock`, async () => {
+    for (const reverseListing of [false, true]) for (const laterStep of [
+      { started_at: '2026-11-28T14:18:00Z' },
+      { started_at: '2026-11-28T14:17:00Z' },
+      { started_at: '2026-11-28T14:15:00Z', completed_at: '2026-11-28T14:18:00Z' },
+    ]) await assert.rejects(history({ target, laterStep, reverseListing }).read(), /pipeline_deployment_order_ambiguous/)
+  })
+}
+
+test('an earlier completed stage-all cannot hide a later ordinary staging writer with the same run clock', async () => {
+  for (const reverseListing of [false, true]) {
+    const f = history({ bootstrap: true, reverseListing })
+    assert.equal((await f.read()).run.id, f.later.id)
+  }
 })
