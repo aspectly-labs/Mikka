@@ -85,6 +85,32 @@ test('spawnThread honors idempotencyKey replays without duplicating history and 
   )
 })
 
+test('spawnThread reuses an idempotencyKey after the previous child is soft-deleted', async () => {
+  const { rootId } = await fixture()
+  await pool.query(`INSERT INTO run_messages (id,"runId","userId",text) VALUES ($1,$2,$3,'seed message')`, [randomUUID(), rootId, owner.id])
+  const key = `fork-deleted-${randomUUID()}`
+  const first = await spawnThread(owner, rootId, { relation: 'fork', mode: 'full', idempotencyKey: key })
+  assert.ok(first)
+  kept.push(first.id)
+  assert.equal(await deleteThread(owner, first.id), true)
+  const { rows: [tombstone] } = await pool.query(
+    `SELECT "deletedAt","dispatchKey" FROM agent_runs WHERE id=$1`, [first.id])
+  assert.ok(tombstone.deletedAt)
+  assert.equal(tombstone.dispatchKey, null)
+
+  const again = await spawnThread(owner, rootId, { relation: 'fork', mode: 'full', idempotencyKey: key })
+  assert.ok(again)
+  kept.push(again.id)
+  assert.notEqual(again.id, first.id)
+  assert.equal(again.deletedAt, null)
+  assert.equal(again.dispatchKey, `thread_spawn:fork:${key}`)
+  assert.equal((await pool.query(`SELECT count(*)::int AS n FROM run_messages WHERE "runId"=$1`, [again.id])).rows[0].n, 1)
+
+  const replay = await spawnThread(owner, rootId, { relation: 'fork', mode: 'full', idempotencyKey: key })
+  assert.ok(replay)
+  assert.equal(replay.id, again.id)
+})
+
 test('share links read only the transcript and revoking ends access', async () => {
   const { rootId } = await fixture()
   await pool.query(`INSERT INTO run_messages (id,"runId","userId",text) VALUES ($1,$2,$3,'hello thread')`, [randomUUID(), rootId, owner.id])
