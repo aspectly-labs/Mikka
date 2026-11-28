@@ -14,6 +14,7 @@ import {
   classifyOpenArtifactWake,
   deliverOpenArtifactWake,
   evaluateShareGuardPolicy,
+  shouldApplyOpenArtifactDeletedSync,
   guardOpenArtifact,
   signOpenArtifactBridgePayload,
   verifyOpenArtifactBridgeHttpRequest,
@@ -415,6 +416,14 @@ test('authorizeOpenArtifact enforces workspace membership, share visibility, and
     { ok: true, role: 'viewer', artifactId: ARTIFACT_ID, workspaceId: WORKSPACE_ID },
   )
   assert.equal(queriedPseudoUser, false)
+})
+
+test('deleted catalog sync applies only to the named generation', () => {
+  assert.equal(shouldApplyOpenArtifactDeletedSync(3, undefined), true)
+  assert.equal(shouldApplyOpenArtifactDeletedSync(3, 3), true)
+  assert.equal(shouldApplyOpenArtifactDeletedSync(3, 2), false)
+  assert.equal(shouldApplyOpenArtifactDeletedSync(1, 3), false)
+  assert.equal(shouldApplyOpenArtifactDeletedSync(5, 3), false)
 })
 
 test('guardOpenArtifact enforces workspace sharing defaults and fails closed on unknown actions', async () => {

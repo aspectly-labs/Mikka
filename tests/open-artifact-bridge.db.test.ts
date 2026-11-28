@@ -227,6 +227,25 @@ test('Open Artifact signed bridge and wake routes round-trip against PostgreSQL 
   const afterStaleV2 = await store.readArtifact(owner, artifactId)
   assert.equal(afterStaleV2?.title, 'Q4 Deck Final')
 
+  // 7b. Stale deleted sync for an older version must not hard-delete the live row
+  const staleDeleteV2 = await (
+    await bridgeRoute.POST(
+      signedJsonRequest(bridgeUrl, {
+        action: 'sync',
+        event: 'deleted',
+        subject: owner,
+        externalId,
+        version: 2,
+      }),
+    )
+  ).json()
+  assert.equal(staleDeleteV2.ok, true)
+  assert.equal(staleDeleteV2.artifactId, artifactId)
+  assert.equal(staleDeleteV2.version, 3)
+  const afterStaleDeleteV2 = await store.readArtifact(owner, artifactId)
+  assert.ok(afterStaleDeleteV2)
+  assert.equal(afterStaleDeleteV2.title, 'Q4 Deck Final')
+
   // 8. Signed wake persists owner_turn as user_message and collaborator as fenced run_report
   const ownerWake = await (
     await wakeRoute.POST(
@@ -264,9 +283,16 @@ test('Open Artifact signed bridge and wake routes round-trip against PostgreSQL 
   assert.equal(events[1].kind, 'run_report')
   assert.equal(events[1].payload.source, 'open_artifact_fenced_notice')
 
-  // 9. Signed delete removes catalog row; subsequent update returns 404 without resurrecting and authorize fails closed
+  // 9. Signed delete at the current version removes the catalog row; subsequent
+  // update returns 404 without resurrecting and authorize fails closed.
   const deleteRes = await bridgeRoute.POST(
-    signedJsonRequest(bridgeUrl, { action: 'sync', event: 'deleted', subject: owner, externalId }),
+    signedJsonRequest(bridgeUrl, {
+      action: 'sync',
+      event: 'deleted',
+      subject: owner,
+      externalId,
+      version: 3,
+    }),
   )
   assert.equal(deleteRes.status, 200)
   const updateAfterDelete = await bridgeRoute.POST(
@@ -286,6 +312,42 @@ test('Open Artifact signed bridge and wake routes round-trip against PostgreSQL 
     )
   ).json()
   assert.equal(afterDelete.role, null)
+
+  // 9b. Recreate at v1, then a delayed delete of the previous generation (v3)
+  // must leave the new catalog row in place.
+  const recreateRes = await bridgeRoute.POST(
+    signedJsonRequest(bridgeUrl, {
+      action: 'sync',
+      event: 'created',
+      subject: owner,
+      workspaceId: workspace.id,
+      externalId,
+      title: 'Restored Deck',
+      artifactType: 'slides',
+      version: 1,
+    }),
+  )
+  assert.equal(recreateRes.status, 200)
+  const recreated = await recreateRes.json()
+  assert.equal(recreated.ok, true)
+  const delayedDeleteV3 = await (
+    await bridgeRoute.POST(
+      signedJsonRequest(bridgeUrl, {
+        action: 'sync',
+        event: 'deleted',
+        subject: owner,
+        externalId,
+        version: 3,
+      }),
+    )
+  ).json()
+  assert.equal(delayedDeleteV3.ok, true)
+  assert.equal(delayedDeleteV3.artifactId, recreated.artifactId)
+  assert.equal(delayedDeleteV3.version, 1)
+  const afterDelayedDelete = await store.readArtifact(owner, recreated.artifactId)
+  assert.ok(afterDelayedDelete)
+  assert.equal(afterDelayedDelete.title, 'Restored Deck')
+  assert.equal(afterDelayedDelete.latestVersion, 1)
 
   // 10. Signed create with runId only resolves the run's issueId; conflicting issueId fails closed (403)
   const linkedIssueId = randomUUID()

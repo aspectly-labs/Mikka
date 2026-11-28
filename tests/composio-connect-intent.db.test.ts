@@ -31,6 +31,8 @@ test('a Composio connect intent is single use, short lived and names its link', 
     // While fresh, the twin re-reads the recorded provider redirect.
     const again = await intents.linkedComposioConnectIntent(pool, claimed!.tokenHash)
     assert.equal(again?.providerUrl, 'https://connect.composio.dev/link/ca_1')
+    // The replay window closes a minute after the claim: a spent token answers failed again.
+    assert.equal(await intents.linkedComposioConnectIntent(pool, claimed!.tokenHash, new Date(Date.now() + 61_000)), null)
     // The callback resolves the intent by the connected account Composio completed, while it lives.
     assert.equal((await intents.composioConnectIntentByLink(pool, 'ca_1'))?.tokenHash, claimed!.tokenHash)
     assert.equal(await intents.composioConnectIntentByLink(pool, 'ca_1', new Date(Date.now() + 11 * 60_000)), null)

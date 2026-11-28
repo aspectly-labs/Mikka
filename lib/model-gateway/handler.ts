@@ -257,15 +257,14 @@ export async function resolveGatewayUpstream(grant: GatewayGrant, protocol: Gate
   const opened = await openGatewayApiKey(pool, grant.source.keyId, env).catch((error: unknown) => {
     throw new GatewayRefusal(401, 'model_gateway_key_unavailable', { cause: error })
   })
-  const { apiKeyChatBaseUrl, apiKeyEndpoint } = await import('@/lib/model-api-key-providers')
-  const anthropic = opened.key.provider === 'anthropic' || (opened.key.provider === 'custom' && opened.key.protocol === 'anthropic')
-  const apiBase = anthropic ? apiKeyEndpoint(opened.key, 'claude_code')?.baseUrl : apiKeyChatBaseUrl(opened.key)
-  if (!apiBase) throw new GatewayRefusal(400, 'model_gateway_protocol_unsupported')
+  const { liteLlmByokRoute } = await import('@/lib/model-api-key-providers')
+  const route = liteLlmByokRoute(opened.key, grant.harness)
+  if (!route) throw new GatewayRefusal(400, 'model_gateway_protocol_unsupported')
   let daybreakAllowed = false
   if (grant.cyberAccessProgram && opened.key.provider === 'openai') {
     const { cyberAccessProgram, daybreakTierFor } = await import('@/lib/model-capabilities')
     const tier = daybreakTierFor(opened.key.daybreak, grant.model)
     daybreakAllowed = tier !== undefined && cyberAccessProgram(tier) === grant.cyberAccessProgram
   }
-  return { upstream: { ...litellm, credential: { key: opened.apiKey, provider: anthropic ? 'anthropic' : 'openai', apiBase, chatCompletionsOnly: !anthropic && opened.key.provider !== 'openai' } }, features: opened.features, daybreakAllowed }
+  return { upstream: { ...litellm, credential: { key: opened.apiKey, ...route } }, features: opened.features, daybreakAllowed }
 }

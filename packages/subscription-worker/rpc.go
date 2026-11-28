@@ -6,9 +6,72 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
+	"regexp"
+	"runtime/debug"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+type metadataBuild struct {
+	Revision string `json:"revision"`
+	Dirty    string `json:"dirty"`
+}
+
+type metadataDiagnostic struct {
+	Phase    string        `json:"phase"`
+	SQLState string        `json:"sqlState"`
+	Build    metadataBuild `json:"build"`
+}
+
+var metadataSQLState = regexp.MustCompile(`^[A-Z0-9]{5}$`)
+var metadataRevision = regexp.MustCompile(`^[a-f0-9]{40}$`)
+
+// Only the running Go executable's embedded VCS settings identify this build.
+// Missing, partial or malformed settings stay unknown; no parent API env is used.
+func metadataBuildIdentity(info *debug.BuildInfo) metadataBuild {
+	unknown := metadataBuild{Revision: "unknown", Dirty: "unknown"}
+	if info == nil {
+		return unknown
+	}
+	settings := map[string]string{}
+	for _, setting := range info.Settings {
+		if setting.Key != "vcs" && setting.Key != "vcs.revision" && setting.Key != "vcs.modified" {
+			continue
+		}
+		if _, duplicate := settings[setting.Key]; duplicate {
+			return unknown
+		}
+		settings[setting.Key] = setting.Value
+	}
+	if settings["vcs"] != "git" || !metadataRevision.MatchString(settings["vcs.revision"]) {
+		return unknown
+	}
+	switch settings["vcs.modified"] {
+	case "true":
+		return metadataBuild{Revision: settings["vcs.revision"], Dirty: "dirty"}
+	case "false":
+		return metadataBuild{Revision: settings["vcs.revision"], Dirty: "clean"}
+	default:
+		return unknown
+	}
+}
+
+func metadataDiagnosticFor(err error) *metadataDiagnostic {
+	var failure *metadataFailure
+	if !errors.As(err, &failure) || failure == nil || (failure.phase != "record_scan" && failure.phase != "disconnect") {
+		return nil
+	}
+	state := "unknown"
+	var database *pgconn.PgError
+	if errors.As(failure.cause, &database) && database != nil && metadataSQLState.MatchString(database.Code) && database.Code != "00000" {
+		state = database.Code
+	}
+	info, _ := debug.ReadBuildInfo()
+	return &metadataDiagnostic{Phase: failure.phase, SQLState: state, Build: metadataBuildIdentity(info)}
+}
 
 // Private parent/worker IPC. Owner scope and dependencies are bound before
 // Serve starts; requests cannot replace them or import credentials/endpoints.
@@ -179,6 +242,9 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 		message := map[string]any{"id": request.ID}
 		if err != nil {
 			message["error"] = safeCode(err)
+			if diagnostic := metadataDiagnosticFor(err); diagnostic != nil {
+				message["metadataFailure"] = diagnostic
+			}
 			if diagnostic := failureDiagnostic(err); diagnostic != nil {
 				message["providerFailure"] = diagnostic
 			}

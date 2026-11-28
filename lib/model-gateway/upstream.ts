@@ -39,8 +39,13 @@ export function upstreamRequest(input: {
   }
   if (input.protocol === 'anthropic' && !headers['anthropic-version']) headers['anthropic-version'] = '2023-06-01'
   const body = modelGatewayProtocolBody(input.protocol, input.body)
-  // Speed mode is server-owned (frozen on the run after capability verification);
-  // strip client-injected Anthropic fast-mode beta flags unless server-approved.
+  // Speed mode is server-owned (frozen on the run after capability verification).
+  // The CLI is not a trusted boundary: drop client service_tier/speed the same
+  // way subscription-service.ts deletes payload.service_tier, then re-apply only
+  // the grant. Leaving a client value when grant.serviceTier is unset let a
+  // credits run request OpenAI priority while Mikka settled at catalogue rates.
+  delete body.service_tier
+  delete body.speed
   const openaiTarget = input.protocol === 'openai' || input.upstream.credential?.provider === 'openai'
   const allowAnthropicFast = input.serviceTier === 'fast' && !openaiTarget && input.operation !== 'count_tokens'
   if (headers['anthropic-beta'] && !allowAnthropicFast) {
@@ -59,7 +64,7 @@ export function upstreamRequest(input: {
     delete body.service_tier
   } else if (input.serviceTier && input.operation !== 'count_tokens') {
     if (openaiTarget) {
-      if (body.service_tier === undefined) body.service_tier = input.serviceTier === 'ultrafast' ? 'ultrafast' : 'priority'
+      body.service_tier = input.serviceTier === 'ultrafast' ? 'ultrafast' : 'priority'
     } else if (allowAnthropicFast) {
       body.speed = 'fast'
       const beta = headers['anthropic-beta']

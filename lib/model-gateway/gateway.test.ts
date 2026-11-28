@@ -5,6 +5,7 @@ import { upstreamRequest } from './upstream'
 import { parseGatewayFeatures, withoutDisabledFeatures } from './features'
 import { gatewayLiteLlm, SELF_HOSTED_DEFAULT_CATALOG_ID } from './config'
 import { parseCreditsOption, creditsOptionId } from '../bot-model-menu-view'
+import { liteLlmByokRoute } from '../model-api-key-providers'
 import { WorkerRefusal } from '../../packages/daemon/src/subscription-worker-client'
 import { forwardNativeSubscription, GatewayRefusal, handleModelGateway, type GatewayDependencies } from './handler'
 import type { GatewayGrant } from './token'
@@ -68,6 +69,18 @@ test('credits and BYOK reach only LiteLLM; credentials and routing come from the
   assert.equal(codex.body.stream, true)
   assert.equal(codex.body.previous_response_id, 'previous')
   assert.throws(() => upstreamRequest({ protocol: 'openai', operation: 'messages', model: 'm', body: {}, clientHeaders, upstream }))
+  const deepseekClaude = liteLlmByokRoute({ provider: 'deepseek', protocol: 'openai', baseUrl: null, responsesApi: true }, 'claude_code')
+  assert.ok(deepseekClaude)
+  const dual = upstreamRequest({ protocol: 'anthropic', operation: 'messages', model: 'deepseek-chat', body, clientHeaders,
+    upstream: { ...upstream, credential: { key: 'person-key', ...deepseekClaude } } })
+  assert.deepEqual([dual.body.model, dual.body.custom_llm_provider, dual.body.api_base],
+    ['anthropic/deepseek-chat', 'anthropic', 'https://api.deepseek.com/anthropic'])
+  const openaiClaude = liteLlmByokRoute({ provider: 'openai', protocol: 'openai', baseUrl: null, responsesApi: true }, 'claude_code')
+  assert.ok(openaiClaude)
+  const converted = upstreamRequest({ protocol: 'anthropic', operation: 'messages', model: 'gpt-4o', body, clientHeaders,
+    upstream: { ...upstream, credential: { key: 'person-key', ...openaiClaude } } })
+  assert.deepEqual([converted.body.model, converted.body.custom_llm_provider, converted.body.api_base],
+    ['openai/gpt-4o', 'openai', 'https://api.openai.com/v1'])
 })
 
 test('turned-off features are removed before the request leaves', () => {
@@ -247,9 +260,18 @@ test('frozen run serviceTier injects OpenAI priority/ultrafast and Anthropic fas
 
   // SEC: an unapproved Claude run cannot spoof speed: 'fast' or fast-mode-2026-02-01 header.
   const spoofed = harness({ verify: async () => grant({ harness: 'claude_code' }), answer: () => Response.json({ ok: true }) })
-  await handleModelGateway(post({ messages: [], speed: 'fast' }, { 'x-api-key': 'mkg_valid', 'anthropic-beta': 'fast-mode-2026-02-01,interleaved-thinking-2025-05-14' }), 'anthropic', 'messages', spoofed.dependencies)
+  await handleModelGateway(post({ messages: [], speed: 'fast', service_tier: 'auto' }, { 'x-api-key': 'mkg_valid', 'anthropic-beta': 'fast-mode-2026-02-01,interleaved-thinking-2025-05-14' }), 'anthropic', 'messages', spoofed.dependencies)
   assert.equal(JSON.parse(String(spoofed.calls.fetched[0].init.body)).speed, undefined)
+  assert.equal(JSON.parse(String(spoofed.calls.fetched[0].init.body)).service_tier, undefined)
   assert.equal((spoofed.calls.fetched[0].init.headers as Record<string, string>)['anthropic-beta'], 'interleaved-thinking-2025-05-14')
+
+  // SEC: an unapproved Codex credits run cannot spoof OpenAI priority/flex; a frozen ultrafast grant overwrites a client value.
+  const spoofedCodex = harness({ verify: async () => grant({ harness: 'codex' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ input: 'hi', service_tier: 'priority' }), 'openai', 'responses', spoofedCodex.dependencies)
+  assert.equal(JSON.parse(String(spoofedCodex.calls.fetched[0].init.body)).service_tier, undefined)
+  const overrideUltra = harness({ verify: async () => grant({ harness: 'codex', serviceTier: 'ultrafast' }), answer: () => Response.json({ ok: true }) })
+  await handleModelGateway(post({ input: 'hi', service_tier: 'flex' }), 'openai', 'responses', overrideUltra.dependencies)
+  assert.equal(JSON.parse(String(overrideUltra.calls.fetched[0].init.body)).service_tier, 'ultrafast')
 
   // Claude Code running an OpenAI-compatible BYOK key with verified Ultrafast encodes service_tier: 'ultrafast' without Anthropic fast beta.
   const claudeOnOpenAi = harness({

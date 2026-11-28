@@ -97,11 +97,18 @@ async function queueCloudThreadChild(client: PoolClient, ownerId: string, source
   if (!binding) throw new ComputerError(409, 'Cloud thread authority unavailable')
   if (input.dispatchKey) {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`cloud-thread-child:${ownerId}:${input.dispatchKey}`])
-    const { rows: [existing] } = await client.query('SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2',
+    const { rows: [existing] } = await client.query(
+      'SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2 LIMIT 1 FOR UPDATE',
       [ownerId, input.dispatchKey])
     if (existing) {
-      if (existing.dispatchFingerprint !== input.dispatchFingerprint) throw new ThreadSpawnConflictError()
-      return { run: existing, replayed: true }
+      if (!existing.deletedAt) {
+        if (existing.dispatchFingerprint !== input.dispatchFingerprint) throw new ThreadSpawnConflictError()
+        return { run: existing, replayed: true }
+      }
+      await client.query(
+        `UPDATE agent_runs SET "dispatchKey"=NULL,"dispatchFingerprint"=NULL
+         WHERE id=$1 AND "userId"=$2 AND "dispatchKey"=$3 AND "deletedAt" IS NOT NULL`,
+        [existing.id, ownerId, input.dispatchKey])
     }
   }
   const [{ ensureRecordedBotHarnessRuntime }, { threadRunModel }, { queueCloudRun }] = await Promise.all([
@@ -177,25 +184,35 @@ export async function spawnThread(user: ApiUser, runId: string, input: {
       if (cloudChild) {
         ({ run, replayed } = await queueCloudThreadChild(client, user.id, source, { root, prompt, relation, fromMessageId: input.fromMessageId, dispatchKey, dispatchFingerprint }))
       } else if (dispatchKey) {
-        const { rows: [inserted] } = await client.query(
-          `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin,"dispatchKey","dispatchFingerprint")
+        const insertSql = `INSERT INTO agent_runs (id,${RUN_COPY_COLUMNS},status,prompt,"parentRunId","threadRelation","sourceMessageId","startedAt","leaseExpiresAt",origin,"dispatchKey","dispatchFingerprint")
            SELECT $1,${RUN_COPY_COLUMNS},'queued',$3,$4,$5,$6,now(),now()+interval '60 seconds','web',$7,$8 FROM agent_runs WHERE id=$2
            ON CONFLICT ("userId", "dispatchKey") WHERE "dispatchKey" IS NOT NULL DO NOTHING
-           RETURNING *`,
-          [id, root, prompt, root, relation, input.fromMessageId ?? null, dispatchKey, dispatchFingerprint])
-        if (inserted) {
-          run = inserted
-        } else {
+           RETURNING *`
+        const insertParams = [id, root, prompt, root, relation, input.fromMessageId ?? null, dispatchKey, dispatchFingerprint]
+        // A soft-deleted child still occupies (userId, dispatchKey). Two attempts
+        // are enough: free the tombstone, then insert (or replay a concurrent live row).
+        for (let attempt = 0; attempt < 2 && !run; attempt++) {
+          const { rows: [inserted] } = await client.query(insertSql, insertParams)
+          if (inserted) {
+            run = inserted
+            break
+          }
           const { rows: [existing] } = await client.query(
-            `SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2 LIMIT 1`,
+            `SELECT * FROM agent_runs WHERE "userId"=$1 AND "dispatchKey"=$2 LIMIT 1 FOR UPDATE`,
             [user.id, dispatchKey])
-          if (existing) {
+          if (!existing) break
+          if (!existing.deletedAt) {
             if (existing.dispatchFingerprint !== dispatchFingerprint) {
               throw new ThreadSpawnConflictError()
             }
             run = existing
             replayed = true
+            break
           }
+          await client.query(
+            `UPDATE agent_runs SET "dispatchKey"=NULL,"dispatchFingerprint"=NULL
+             WHERE id=$1 AND "userId"=$2 AND "dispatchKey"=$3 AND "deletedAt" IS NOT NULL`,
+            [existing.id, user.id, dispatchKey])
         }
       } else {
         const { rows: [inserted] } = await client.query(
@@ -443,8 +460,10 @@ export async function deleteThread(user: ApiUser, runId: string): Promise<boolea
   const root = await rootRunId(user, runId)
   if (!root) return null
   // Deleting marks the whole chain, so no continuation stays dispatchable.
+  // Drop the dispatch key so an idempotent retry can mint a new live child
+  // instead of replaying this tombstone (unique index is live+deleted).
   const { rowCount } = await pool.query(
-    `${CHAIN_SQL} UPDATE agent_runs SET "deletedAt"=now(),"deletedBy"=$2 WHERE id IN (SELECT id FROM chain) AND "deletedAt" IS NULL`, [root, user.id])
+    `${CHAIN_SQL} UPDATE agent_runs SET "deletedAt"=now(),"deletedBy"=$2,"dispatchKey"=NULL,"dispatchFingerprint"=NULL WHERE id IN (SELECT id FROM chain) AND "deletedAt" IS NULL`, [root, user.id])
   await runListChanged(pool, root); await runChanged(pool, root)
   return Boolean(rowCount)
 }

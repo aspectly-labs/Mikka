@@ -506,7 +506,7 @@ test('a completed stage-all resets the staging baseline to bootstrap without aff
   assert.equal(scannedOlder, true)
 })
 
-test('a re-run attempt that deployed after a later-created rollback is the latest writer, and a pre-write failure keeps it', async () => {
+test('a re-run attempt that deployed after a later-created rollback is the latest writer, and a pre-write failure keeps it', async t => {
   // 2026-11-28: run 46153558280 attempt 1 failed selection, rollback 46153661413 was created and passed,
   // then attempt 2 of 46153558280 deployed staging. The next run failed at existing-resources
   // because selection followed creation order and took the rollback's baseline.
@@ -531,13 +531,14 @@ test('a re-run attempt that deployed after a later-created rollback is the lates
       origin: staged, previousOrigin: stale }),
     rerun: () => ({ version: 1, target: 'staging', status: 'passed', verification: { status: 'pass' }, origin: staged, previousOrigin: stale }),
   }
-  const makeApi = ({ postWrite = false, calls = [] } = {}) => {
+  const makeApi = ({ postWrite = false, calls = [], target = 'staging', failedSummary = {} } = {}) => {
     const fixtures = Object.fromEntries(Object.entries(summaries).map(([key, summary], index) => {
       const item = runs[key]
-      const body = { ...summary(postWrite), deployment: { runId: String(item.id), runAttempt: String(item.run_attempt) } }
+      const body = { ...summary(postWrite), target, ...(key === 'failed' ? failedSummary : {}),
+        deployment: { runId: String(item.id), runAttempt: String(item.run_attempt) } }
       const bytes = execFileSync('python3', ['-c',
         'import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z: z.writestr("pipeline-summary.json",sys.argv[1])\nsys.stdout.buffer.write(b.getvalue())', JSON.stringify(body)])
-      const artifact = { id: 500 + index, name: `deploy-pipeline-${item.id}-${item.run_attempt}`, expired: false, size_in_bytes: bytes.length,
+      const artifact = { id: 500 + index, name: `${target === 'production' ? 'deploy-production' : 'deploy-pipeline'}-${item.id}-${item.run_attempt}`, expired: false, size_in_bytes: bytes.length,
         digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
         workflow_run: { id: item.id, head_sha: source, head_branch: 'main', repository_id: repo.id, head_repository_id: repo.id } }
       const timing = { failed: execution(32, 14), rollback: execution(15, 14), rerun: execution(23, 14) }[key]
@@ -549,8 +550,8 @@ test('a re-run attempt that deployed after a later-created rollback is the lates
         workflow_runs: [runs.next, runs.failed, runs.rollback, runs.rerun] }
       for (const [id, fixture] of Object.entries(fixtures)) {
         if (path.includes(`/runs/${id}/attempts/${fixture.item.run_attempt}/jobs?`)) return { total_count: 1, jobs: [{ id: fixture.job,
-          name: 'pipeline', status: 'completed', conclusion: fixture.body.status === 'passed' ? 'success' : 'failure',
-          steps: [{ ...fixture.timing, name: 'Deploy and verify staged service manifest', status: 'completed',
+          name: target === 'production' ? 'pipeline-production' : 'pipeline', status: 'completed', conclusion: fixture.body.status === 'passed' ? 'success' : 'failure',
+          steps: [{ ...fixture.timing, name: target === 'production' ? 'Promote and verify the staged service manifest' : 'Deploy and verify staged service manifest', status: 'completed',
             conclusion: fixture.body.status === 'passed' ? 'success' : 'failure' }] }] }
         if (path.includes(`/runs/${id}/artifacts?`)) return { total_count: 1, artifacts: [fixture.artifact] }
         if (path.endsWith(`/artifacts/${fixture.artifact.id}/zip`)) return fixture.bytes
@@ -574,6 +575,28 @@ test('a re-run attempt that deployed after a later-created rollback is the lates
   const blocked = await priorDeployment(makeApi({ postWrite: true }), String(runs.next.id))
   assert.equal(blocked.run.id, runs.failed.id)
   assert.throws(() => baselineOrigin(blocked.summary), /requires_recovery/)
+
+  // A safe pre-write label only has meaning inside the known summary contract.
+  // Keep the archive, digest, run/attempt identity and upload evidence valid.
+  for (const target of ['staging', 'production']) for (const failedStep of ['artifacts', 'existing-resources']) {
+    await t.test(`${target} ${failedStep}: a valid pre-write failure keeps the latest writer`, async () => {
+      const prior = await priorDeployment(makeApi({ target, failedSummary: { failedStep } }), String(runs.next.id), undefined, target)
+      assert.equal(prior.run.id, runs.rerun.id)
+      assert.deepEqual(baselineOrigin(prior.summary, target), staged)
+    })
+    for (const [label, change, code] of [
+      ['unknown version', { version: 2 }, /pipeline_summary_version_required/],
+      ['missing version', { version: undefined }, /pipeline_summary_version_required/],
+      ['null version', { version: null }, /pipeline_summary_version_required/],
+      ['string version', { version: '1' }, /pipeline_summary_version_required/],
+      ['wrong target', { target: target === 'staging' ? 'production' : 'staging' }, /pipeline_summary_target_mismatch/],
+      ['missing target', { target: undefined }, /pipeline_summary_target_mismatch/],
+      ['null target', { target: null }, /pipeline_summary_target_mismatch/],
+    ]) await t.test(`${target} ${failedStep}: reject ${label} before selecting an older writer`, async () => {
+      await assert.rejects(priorDeployment(makeApi({ target, failedSummary: { failedStep, ...change } }),
+        String(runs.next.id), undefined, target), code)
+    })
+  }
 })
 
 test('selection failures report their pipeline code even when assert appends a diff', () => {
