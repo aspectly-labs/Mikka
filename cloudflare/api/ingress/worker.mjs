@@ -1,7 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers'
 import { Container } from '@cloudflare/containers'
-import { subscriptionChatPath } from '../../litellm/subscription-chat.mjs'
-import { releaseRoutePath } from '../../web/route-path.mjs'
+import { internalOnlyPath } from './internal-only.mjs'
 import { apiRequest, subscriptionChatToApi } from './request.mjs'
 import { applicationEnvironment } from './environment.mjs'
 import { configureTaskBridge, taskMachine } from './task-machine.mjs'
@@ -96,9 +95,7 @@ BusinessApi.outboundHandlers = { taskMachine }
 export default class ApiIngress extends WorkerEntrypoint {
   fetch(request) {
     const env = this.env
-    const pathname = releaseRoutePath(new URL(request.url).pathname)
-    if (pathname === subscriptionChatPath || pathname === subscriptionChatPath + '/')
-      return new Response(null, { status: 404 })
+    if (internalOnlyPath(new URL(request.url).pathname)) return new Response(null, { status: 404 })
     if (env.BUSINESS_WORLD && publicWorkflowDispatch(request.url)) return new Response(null, { status: 404 })
     const forwarded = apiRequest(request, env.PUBLIC_ORIGIN)
     if (!forwarded) return new Response(null, { status: 400, headers: { 'cache-control': 'no-store' } })

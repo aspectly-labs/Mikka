@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { verifyBusinessWorld, verifyConfiguration, verifyImage } from '../../../cloudflare/api/start.mjs'
+import { internalOnlyPath, internalOnlyRoutes } from '../../../cloudflare/api/ingress/internal-only.mjs'
+import { runRouteProbe } from '../../../scripts/ops/route-probe.mjs'
 
 const build = 'a'.repeat(40), overlay = 'b'.repeat(40), id = 'aaaaaaaaaaaa-1949-1'
 const env = {
@@ -457,6 +460,14 @@ test('ApiIngress rejects retired legacy daemon traffic and removed heartbeats at
   for (const path of ['/mikka/api/internal/subscription/chat', '/mikka/api/internal/%73ubscription/chat', '/mikka/api/internal/subscription/chat/']) {
     assert.equal((await ingress.fetch(new Request(origin + path, { method: 'POST', body: '{}' }))).status, 404)
   }
+  assert.equal(getByNameCalls, 0)
+  // The staging route probe uses the edge's own predicate: every internal-only route in the generated inventory
+  // is closed at this worker, and the probe passes only on that 404 (scripts/ops/route-probe.mjs).
+  const inventory = JSON.parse(await readFile(new URL('../generated/routes.json', import.meta.url), 'utf8'))
+  const internal = { ...inventory, routes: inventory.routes.filter(route => internalOnlyPath(route.path)) }
+  assert.deepEqual(internal.routes.map(route => route.path), internalOnlyRoutes)
+  const probe = await runRouteProbe({ baseUrl: origin, manifest: internal, fetchImpl: (url, init) => ingress.fetch(new Request(url, init)) })
+  assert.deepEqual([probe.status, probe.results.map(result => [result.route, result.status])], ['pass', internalOnlyRoutes.map(path => [path, 404])])
   assert.equal(getByNameCalls, 0)
 
   // 1. Legacy daemon requests (missing/invalid x-mikka-device-session or outdated semver) return 426 with 0 container wakes.
