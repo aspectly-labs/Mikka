@@ -1087,6 +1087,92 @@ test('mobile task endpoints with real task ACL, current workspace membership and
     }
   })
 
+  await t.test('task detail projects canonical TaskPresentation on work=0 and work=1 while keeping side/subagent runs out of replyRunId', async () => {
+    const { POST: readPresentations } = await import('../app/api/mobile/task-presentations/route')
+    const zeroThreadTask = await workspaceTask()
+    const workTask = await workspaceTask()
+    await pool.query(`update issues set status='doing' where id=$1`, [workTask])
+    const mainRun = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: teamWorkspace.id, botId: bot, issueId: workTask, status: 'succeeded' })
+    const sideRun = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: teamWorkspace.id, botId: bot, issueId: workTask, status: 'running' })
+    const subagentRun = await seedRun(pool, { userId: owner, agentId: agent, workspaceId: teamWorkspace.id, botId: bot, issueId: workTask, status: 'running' })
+    await pool.query(`update agent_runs set "createdAt"='2026-01-03T00:00:00Z',"threadRelation"=null where id=$1`, [mainRun])
+    await pool.query(`update agent_runs set "createdAt"='2026-01-04T00:00:00Z',"threadRelation"='side' where id=$1`, [sideRun])
+    await pool.query(`update agent_runs set "createdAt"='2026-01-05T00:00:00Z',"threadRelation"='subagent' where id=$1`, [subagentRun])
+    const factoryId = randomUUID(), attemptId = randomUUID(), sourceId = randomUUID()
+    const tx = await pool.connect()
+    try {
+      await tx.query('BEGIN')
+      await tx.query(`INSERT INTO coordinator_events(id,"userId","botId","issueId",kind,"dedupeKey",payload)
+        VALUES($1::uuid,$2,$3,$4,'user_message',$1::text,'{"text":"Presentation parity fixture"}')`, [sourceId, owner, bot, workTask])
+      await tx.query(`INSERT INTO factory_tasks(id,"userId","botId","issueId","sourceEventId","scopeVersion",route,stage,status,"attemptId",reason)
+        SELECT $1,$2,$3,$4,$5,"scopeVersion",'{}','execute','passed',$6,'Presentation parity fixture' FROM issues WHERE id=$4`, [factoryId, owner, bot, workTask, sourceId, attemptId])
+      await tx.query(`INSERT INTO factory_attempts(id,"taskId",stage,ordinal,position,status,"runId",reason)
+        VALUES($1,$2,'execute',1,1,'passed',$3,'Presentation parity fixture')`, [attemptId, factoryId, mainRun])
+      await tx.query('COMMIT')
+    } catch (error) { await tx.query('ROLLBACK'); throw error } finally { tx.release() }
+    try {
+      const readDetail = (id: string, work: boolean) => run(
+        `/api/mobile/tasks/${id}${work ? '?work=1' : ''}`,
+        req => GET(req, { params: Promise.resolve({ id }) }),
+        teamSelection,
+      )
+      const [listRes, batchRes] = await Promise.all([
+        listRequest(teamSelection),
+        run('/api/mobile/task-presentations', readPresentations, {
+          ...teamSelection, method: 'POST', body: { workspaceId: teamWorkspace.id, issueIds: [zeroThreadTask, workTask] },
+        }),
+      ])
+      assert.equal(listRes.status, 200)
+      assert.equal(batchRes.status, 200)
+      const listed = await listRes.json()
+      const batch = await batchRes.json()
+      const fields = ['primaryStatus', 'group', 'state', 'reason', 'blockedBy', 'factoryStage', 'runStatus', 'needsAction', 'blockedReason', 'completion'] as const
+
+      for (const taskId of [zeroThreadTask, workTask]) {
+        const [d0Res, d1Res] = await Promise.all([readDetail(taskId, false), readDetail(taskId, true)])
+        assert.equal(d0Res.status, 200)
+        assert.equal(d1Res.status, 200)
+        const d0 = await d0Res.json()
+        const d1 = await d1Res.json()
+        const listRow = listed.tasks.find((item: { id: string }) => item.id === taskId)
+        const batchItem = batch.items[taskId]
+        assert.ok(listRow, `list must include ${taskId}`)
+        assert.ok(batchItem, `batch must include ${taskId}`)
+        assert.equal(d0.task.presentationVersion, 1)
+        assert.equal(d1.task.presentationVersion, 1)
+        assert.equal(d0.task.status, batchItem.primaryStatus)
+        assert.equal(d1.task.status, batchItem.primaryStatus)
+        for (const field of fields) {
+          assert.equal(d0.task[field], batchItem[field], `work=0 ${field} matches canonical presentation`)
+          assert.equal(d1.task[field], batchItem[field], `work=1 ${field} matches canonical presentation`)
+          assert.equal(listRow[field], batchItem[field], `list ${field} matches canonical presentation`)
+        }
+      }
+
+      const zeroDetail0 = await (await readDetail(zeroThreadTask, false)).json()
+      assert.equal(zeroDetail0.task.primaryStatus, 'todo')
+      assert.equal(zeroDetail0.task.factoryStage, null)
+      assert.equal(zeroDetail0.task.runStatus, null)
+      assert.equal(zeroDetail0.task.replyRunId, null)
+
+      const workDetail0 = await (await readDetail(workTask, false)).json()
+      const workDetail1 = await (await readDetail(workTask, true)).json()
+      assert.equal(workDetail0.task.primaryStatus, 'doing', 'a finished run never closes business status')
+      assert.equal(workDetail0.task.factoryStage, 'implement', 'work=0 includes Factory stage from canonical TaskPresentation')
+      assert.equal(workDetail1.task.factoryStage, 'implement')
+      assert.equal(workDetail0.task.replyRunId, mainRun, 'work=0 skips newer side/subagent runs when selecting replyRunId')
+      assert.equal(workDetail1.task.replyRunId, mainRun, 'work=1 skips newer side/subagent runs when selecting replyRunId')
+      const convIds = workDetail1.work.conversations.map((row: { id: string }) => row.id)
+      assert.ok(convIds.includes(mainRun))
+      assert.ok(!convIds.includes(sideRun) && !convIds.includes(subagentRun), 'work.conversations excludes side and subagent child runs')
+    } finally {
+      await pool.query('DELETE FROM factory_tasks WHERE id=$1 AND "userId"=$2', [factoryId, owner])
+      await pool.query('DELETE FROM coordinator_events WHERE id=$1 AND "userId"=$2', [sourceId, owner])
+      await pool.query('DELETE FROM agent_runs WHERE id=ANY($1::uuid[])', [[mainRun, sideRun, subagentRun]])
+      await pool.query('DELETE FROM issues WHERE id=ANY($1::uuid[])', [[zeroThreadTask, workTask]])
+    }
+  })
+
   await t.test('invalid/missing IDs are 404; unauthenticated and expired native requests are 401', async () => {
     assert.equal((await request('invalid')).status, 404)
     assert.equal((await request(randomUUID())).status, 404)

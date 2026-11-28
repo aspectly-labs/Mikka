@@ -30,6 +30,25 @@ import { taskBlock } from '@/lib/task-blocked'
 import { taskReviewSummaries } from '@/lib/coding-workspace/task-review/summaries'
 import { taskReviewSourceHint } from '@/lib/coding-workspace/task-review/summary-selection'
 
+import type { TaskPresentation } from './task-presentation'
+
+function taskPresentationFields(presentation: TaskPresentation) {
+  return {
+    status: presentation.primaryStatus,
+    primaryStatus: presentation.primaryStatus,
+    group: presentation.group,
+    state: presentation.state,
+    reason: presentation.reason,
+    blockedBy: presentation.blockedBy,
+    factoryStage: presentation.factoryStage,
+    runStatus: presentation.runStatus,
+    needsAction: presentation.needsAction,
+    blockedReason: presentation.blockedReason,
+    completion: presentation.completion,
+    presentationVersion: presentation.version,
+  }
+}
+
 /** Locate the persisted tenant through the full reader, then hold fresh
  * membership and re-read every projection. Cookie/default choices are not pins. */
 export async function mobileTask(user: Exclude<IssueReader, string>, id: string, explicitWorkspaceId?: string, includeWork = false) {
@@ -37,8 +56,18 @@ export async function mobileTask(user: Exclude<IssueReader, string>, id: string,
   if (!located) return null
   const { workspaceId, reader } = located
   const read = () => withIssueWorkspace(reader, workspaceId, { issueId: id, action: 'canReadContent' }, () => readMobileTask(reader, workspaceId, id))
-  if (!includeWork) return read()
   const { withTaskWorkspace } = await import('./task-workspace')
+  if (!includeWork) {
+    const { readTaskPresentations } = await import('./task-presentation-read')
+    return withTaskWorkspace(reader, workspaceId, async () => {
+      const batch = await readTaskPresentations(reader, { workspaceId, issueIds: [id] })
+      const presentation = batch.items[id] ?? null
+      if (!presentation) return null
+      const detail = await read()
+      if (!detail) return null
+      return { ...detail, task: { ...detail.task, ...taskPresentationFields(presentation) } }
+    })
+  }
   const { readTaskWork } = await import('./task-work-read')
   // Hold the tenant across both canonical reads. Recheck the task ACL on the
   // final document read before returning shared web/mobile work to the caller.
@@ -69,11 +98,16 @@ export async function mobileTask(user: Exclude<IssueReader, string>, id: string,
     })
     const detail = await read()
     if (!detail) return null
-    return { ...detail, task: { ...detail.task, status: presentation.primaryStatus, group: presentation.group,
-      state: presentation.state, reason: presentation.reason, blockedBy: presentation.blockedBy,
-      ...(factory ? { factoryTaskId: factory.task.id } : {}) },
+    return {
+      ...detail,
+      task: {
+        ...detail.task,
+        ...taskPresentationFields(presentation),
+        ...(factory ? { factoryTaskId: factory.task.id } : {}),
+      },
       work: { version: 1 as const, connections, conversations, linkedChats: presentation.linkedChats ?? [], pullRequests },
-      ...(factory ? { factoryEvents: factory.events } : {}) }
+      ...(factory ? { factoryEvents: factory.events } : {}),
+    }
   })
 }
 
