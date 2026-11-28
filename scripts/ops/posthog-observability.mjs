@@ -97,7 +97,10 @@ export const INSIGHTS = [
 export const DASHBOARD = {
   id: 2306506, name: 'Mikka 数据库与错误', pinned: true, tags: ['operations', 'issue-1324', 'tracing'],
   description: '按路由、来源、SQL 与错误原因检查生产链路。关键路径全量、普通流量采样；数量和 JSON 近似字节按每条 sample_rate 加权；预算沿用供应商数据，UTC 口径。',
-  note: { body: readFileSync(new URL('dashboard-note.md', here), 'utf8').trimEnd(), layout: { h: 6, w: 12, x: 0, y: 0 } },
+  notes: [
+    { id: 14851052, body: readFileSync(new URL('dashboard-note.md', here), 'utf8').trimEnd(), layout: { h: 6, w: 12, x: 0, y: 0 } },
+    { id: 16419477, body: readFileSync(new URL('dashboard-sli-note.md', here), 'utf8').trimEnd(), layout: { h: 8, w: 12, x: 0, y: 64 } },
+  ],
   monitoringDashboard: MONITORING_DASHBOARD,
 }
 
@@ -244,10 +247,15 @@ export async function sync(api, { apply = false, log = () => {} } = {}) {
       const tile = tiles.find(item => item.insight && (item.insight.id === ids[definition.key] || item.insight.short_id === definition.shortId))
       if (tile && !same(tile.layouts?.sm, definition.tile)) updates.push({ id: tile.id, layouts: { ...tile.layouts, sm: definition.tile } })
     }
-    const note = tiles.find(tile => tile.text)
-    if (!note) updates.push({ text: { body: DASHBOARD.note.body }, layouts: { sm: DASHBOARD.note.layout } })
-    else if (note.text.body !== DASHBOARD.note.body || !same(note.layouts?.sm, DASHBOARD.note.layout))
-      updates.push({ id: note.id, text: { ...note.text, body: DASHBOARD.note.body }, layouts: { ...note.layouts, sm: DASHBOARD.note.layout } })
+    const textTiles = tiles.filter(tile => tile.text)
+    for (const definition of DASHBOARD.notes) {
+      const heading = definition.body.split('\n', 1)[0]
+      const note = textTiles.find(tile => current.id === DASHBOARD.id && tile.id === definition.id)
+        ?? textTiles.find(tile => tile.text.body?.split('\n', 1)[0] === heading)
+      if (!note) updates.push({ text: { body: definition.body }, layouts: { sm: definition.layout } })
+      else if (note.text.body !== definition.body || !same(note.layouts?.sm, definition.layout))
+        updates.push({ id: note.id, text: { ...note.text, body: definition.body }, layouts: { ...note.layouts, sm: definition.layout } })
+    }
     if (updates.length) await act(`update dashboard ${dashboard.id} tiles (${updates.length})`, () => api.updateDashboard(dashboard.id, { tiles: updates }))
   }
 
