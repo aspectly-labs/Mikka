@@ -248,7 +248,9 @@ export async function sync(api, { apply = false, log = () => {} } = {}) {
   // Layout and the reading note, once every tile exists.
   if (dashboard?.id) {
     const current = apply ? await api.dashboard(dashboard.id) : dashboard
-    const tiles = (current?.tiles ?? []).filter(tile => !tile.deleted)
+    if (current?.id !== dashboard.id || !Array.isArray(current.tiles))
+      throw new Error(`PostHog dashboard ${dashboard.id} tile state unavailable`)
+    const tiles = current.tiles.filter(tile => !tile.deleted)
     const updates = []
     for (const definition of INSIGHTS.filter(item => item.tile)) {
       const tile = tiles.find(item => item.insight && (item.insight.id === ids[definition.key] || item.insight.short_id === definition.shortId))
