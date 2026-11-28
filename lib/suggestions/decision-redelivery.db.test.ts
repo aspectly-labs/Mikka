@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import test from 'node:test'
+import type { PoolClient } from 'pg'
 import { disposableDatabase } from '../../tests/helpers/e2e-target.mjs'
 import { seedUser } from '../../tests/support/workspace-admin-db'
 import { seedCoordinator } from '../../tests/support/coordinator-bot'
@@ -100,7 +101,7 @@ test('a transient missing decision must remain recoverable through the same auth
   const serverId = randomUUID(), secret = 'mcs_' + randomBytes(32).toString('base64url')
   const deliveries = Array.from({ length: 7 }, () => randomUUID())
   const commitChannel = 'decision_commit_' + randomUUID().replaceAll('-', '')
-  let commitListener: Awaited<ReturnType<typeof pool.connect>> | undefined
+  let commitListener: PoolClient | undefined
   t.after(async () => {
     await Promise.all([close(app), close(provider)])
     if (commitListener) {
