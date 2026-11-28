@@ -333,7 +333,7 @@
         "POST"
       ],
       "maxDuration": 300,
-      "sourceHash": "8c63c9625fc1b3c5671bde529b97947aec03c48e688aba5203788ec4f9580fde"
+      "sourceHash": "0d54ae4d62e7db8bc740a95cf20642dd147fde18f19d14bd0c886287f92cb0e9"
     },
     {
       "path": "/mikka/api/bots/[botId]/follow",
