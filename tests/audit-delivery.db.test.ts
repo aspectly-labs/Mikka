@@ -271,6 +271,33 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
     assert.equal((await restart()).failed, 0)
     assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE "workspaceId"=$1', [ws.id])).rows[0].n, 4, 'subject removal cannot cascade away undelivered audit intent')
   })
+  await t.test('a committed main deletion cannot expire policy while the workspace transaction rolled back and can create more audit', async () => {
+    const { applyAuditRetention } = await import('../lib/audit/retention')
+    const ws = await seed(), day = 86_400_000, deletedAt = new Date(Date.now() - 100 * day)
+    await main.query('INSERT INTO workspace_audit_retention("workspaceId","retentionDays","legalHold","configuredBy") VALUES($1,200,false,\'fixture-admin\')', [ws.id])
+    await main.query('INSERT INTO workspace_deletions(id,"deletedAt") VALUES($1,$2)', [ws.id, deletedAt])
+    // The actual deletion order commits APP first. A failed WS transaction can
+    // leave its workspace and membership present after that independent commit.
+    const client = await workspace.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1', [ws.id])
+      await client.query('DELETE FROM mikka_workspaces WHERE id=$1', [ws.id])
+      await client.query('ROLLBACK')
+    } finally { client.release() }
+    assert.equal((await pending(ws.id)).length, 0)
+    const at = (days: number) => new Date(deletedAt.getTime() + days * day)
+    assert.deepEqual(await applyAuditRetention(ws.id, at(100), targets), { deleted: 0, skipped: 'workspace_present' })
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_retention WHERE "workspaceId"=$1', [ws.id])).rows[0].n, 1)
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_deletions WHERE id=$1', [ws.id])).rows[0].n, 1)
+    const id = await workspaceDb.transaction(tx => enqueueWorkspaceAudit(tx, { workspaceId: ws.id, actor: { type: 'system' }, action: 'auth.sign_in_failed', metadata: { method: 'password', reason: 'invalid' } }))
+    await workspace.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1', [ws.id])
+    await workspace.query('DELETE FROM mikka_workspaces WHERE id=$1', [ws.id])
+    assert.deepEqual(await applyAuditRetention(ws.id, at(100), targets), { deleted: 0, skipped: 'pending_delivery' })
+    assert.equal((await restart()).failed, 0)
+    assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE id=$1', [id])).rows[0].n, 1)
+    assert.deepEqual(await applyAuditRetention(ws.id, at(301), targets), { deleted: 1, skipped: null })
+  })
   await t.test('pending cross-store audit intent retains the deleted workspace policy until delivery and normal expiry', async () => {
     const { applyAuditRetention } = await import('../lib/audit/retention')
     const ws = await seed(), day = 86_400_000, deletedAt = new Date(Date.now() - 100 * day)
@@ -298,6 +325,8 @@ test('workspace mutations retain and idempotently deliver audit intent across tw
     const ws = await seed(), deletedAt = new Date(Date.now() - 100 * 86_400_000)
     const id = await workspaceDb.transaction(tx => enqueueWorkspaceAudit(tx, { workspaceId: ws.id, actor: { type: 'system' }, action: 'auth.sign_in_failed', metadata: { method: 'password', reason: 'invalid' } }))
     await main.query('INSERT INTO workspace_deletions(id,"deletedAt") VALUES($1,$2)', [ws.id, deletedAt])
+    await workspace.query('DELETE FROM mikka_workspace_members WHERE "workspaceId"=$1', [ws.id])
+    await workspace.query('DELETE FROM mikka_workspaces WHERE id=$1', [ws.id])
     const name = `audit_ack_gate_${randomUUID().replaceAll('-', '')}`, holder = await workspace.connect()
     const holderPid = (await holder.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0].pid
     await holder.query('BEGIN')

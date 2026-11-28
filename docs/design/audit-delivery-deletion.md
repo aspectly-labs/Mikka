@@ -26,7 +26,9 @@
 
 第一份正式上线并核验后，第二份独立 PR 才改审计表的 guard 为 BEFORE UPDATE，保留其它表、函数、账号与工作区 tombstone。后续主库/工作区两份条件式迁移分别覆盖 legacy guard 和 fresh shared-target 顺序，未知 trigger 形态拒绝。这些迁移与对应正向 guard 测试已准备，但不包含在第一份 PR 中。
 
-投递沿用现有 `mikka-audit-retention:<workspace>` advisory lock 的共享模式，持有到主库提交、读回以及源 acknowledgment 完成。保留任务沿用独占模式；删除工作区到期时，先以普通 SELECT 检查 pending outbox，有 pending 则保留策略及 deletion record。这里不能锁 outbox 行，否则会与投递的行锁顺序反转。
+投递沿用现有 `mikka-audit-retention:<workspace>` advisory lock 的共享模式，持有到主库提交、读回以及源 acknowledgment 完成。保留任务沿用独占模式；删除工作区到期时，在确认源工作区已删除后，以普通 SELECT 检查 pending outbox，有 pending 则保留策略及 deletion record。这里不能锁 outbox 行，否则会与投递的行锁顺序反转。
+
+在检查 pending 之前，先确认源 `mikka_workspaces` 行已经消失；若仍存在，返回 `workspace_present` 并保留策略。真实删除顺序是 APP 先提交、WS 后提交，后一步回滚可能保留 membership。普通 SELECT 在 WS 删除未提交时仍看到该行并跳过；看到行消失时，同一事务的 membership 删除已提交，先前持 `FOR SHARE` 的认证审计也已提交，随后 READ COMMITTED 的 pending 查询可看到它。这里不增加行锁，也不把主库 tombstone 当作工作区删除完成的证明。
 
 原批次上限、失败 receipt 保留、重启重放和错误诊断不变。每个实际待投递 receipt 增加一次共享锁语句；空队列不增加查询。
 
@@ -46,6 +48,7 @@
 
 - `pnpm test:audit-db`：真实 PG17、完整现有迁移、真实 Better Auth 请求，包含 pending 策略保留、原 ID 幂等投递、双库重启与保留期。
 - 真实 `pg_blocking_pids` 证明主库提交到源 ack 之间保留任务等待；最终会员删除等待 in-flight auth，删除后没有新 tenant intent。
+- 双库中主库 tombstone 已过 90 天、WS 删除事务回滚且 pending 为零时，策略仍保留；其后新增的真实 outbox、最终 WS 删除、进程重启投递仍受原保留期约束。
 - audit DB 文件组共用 fixture 数据库，串行运行各文件，防止 Better Auth 全库 schema introspection 与另一文件 DROP SCHEMA 交错；每个测试内部的真实并发连接/锁等待保持。首轮这类 fixture 失败日志保留，不冒称产品失败。
 - 第二份将补入已准备的 guarded-auth 和迁移升级回归，覆盖旧 `55000`、fresh shared target 顺序、legacy main guard、重复执行、未知 guard 拒绝和共享函数逐字不变。
 - `pnpm test:audit`、typecheck、lint、local-first 与完整生产构建；第二份另外执行 migration gates。

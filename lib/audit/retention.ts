@@ -79,6 +79,9 @@ async function expireDeletedWorkspace(app: PoolClient, ws: PoolClient, workspace
   if (policy.legalHold) return { deleted: 0, skipped: 'legal_hold' as const }
   if (now.getTime() < deletedAt.getTime() + DELETED_WORKSPACE_RETENTION_DAYS * 86_400_000) return { deleted: 0, skipped: 'deleted_workspace_grace' as const }
   if ((await ws.query('SELECT 1 FROM workspace_audit_exports WHERE "workspaceId"=$1 AND "expiresAt">$2 LIMIT 1', [workspaceId, now])).rowCount) return { deleted: 0, skipped: 'active_export' as const }
+  // APP deletion commits before WS deletion. Check the source first: while it
+  // exists, membership can still create audit intent after the pending read.
+  if ((await ws.query('SELECT 1 FROM mikka_workspaces WHERE id=$1 LIMIT 1', [workspaceId])).rowCount) return { deleted: 0, skipped: 'workspace_present' as const }
   // The committed intent lives in the other store. Keep its deletion/retention
   // context until delivery acknowledges it; otherwise a late event can outlive
   // its policy. Never lock outbox rows here: delivery already owns its row
