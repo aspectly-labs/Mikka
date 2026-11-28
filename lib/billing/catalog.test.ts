@@ -1461,3 +1461,56 @@ test('catalog resolves Pro, Team, and Enterprise resource prices concurrently an
   assert.equal(catalog.activeOffer?.planId, 'pro')
   assert.equal(catalog.activeOffer?.introAmountCents, 1000)
 })
+
+test('intro offers match plan.id strictly and never apply to per_seat plans', async () => {
+  const teamOnlyFetch = (async (input: RequestInfo | URL) => {
+    const pathname = new URL(String(input)).pathname
+    if (pathname === '/v1/prices/price_team_only') {
+      return Response.json({
+        id: 'price_team_only',
+        active: true,
+        currency: 'usd',
+        type: 'recurring',
+        billing_scheme: 'per_unit',
+        unit_amount: 2000,
+        recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' },
+        metadata: { mikka_billing_model: 'resource_v1', mikka_plan: 'pro', mikka_pricing_model: 'at_cost_v1', mikka_seat_model: 'per_seat' },
+      })
+    }
+    if (pathname === '/v1/coupons/coupon_50') {
+      return Response.json({ id: 'coupon_50', valid: true, duration: 'once', percent_off: 50 })
+    }
+    return new Response('{}', { status: 404 })
+  }) as typeof fetch
+
+  for (const offerPlanId of ['pro', 'team']) {
+    const catalog = await resolveBillingCatalog({
+      workspaceId: WORKSPACE_ID,
+      env: {
+        MIKKA_EDITION: 'cloud',
+        STRIPE_SECRET_KEY: 'sk_test_catalog',
+        STRIPE_TEAM_RESOURCE_PRICE_ID: 'price_team_only',
+      },
+      fetchImpl: teamOnlyFetch,
+      now: Date.parse('2026-11-28T00:00:00.000Z'),
+      activeOfferOverride: {
+        id: `offer-${offerPlanId}-50`,
+        kind: 'intro_period',
+        planId: offerPlanId,
+        introAmountCents: 1000,
+        introInterval: 'month',
+        regularAmountCents: 2000,
+        regularInterval: 'month',
+        introCreditCents: 1000,
+        stripeCouponId: 'coupon_50',
+        endAt: '2026-12-05T00:00:00.000Z',
+      },
+      checkOfferEligibility: () => true,
+      bypassCache: true,
+    })
+    assert.equal(catalog.plans.length, 1)
+    assert.equal(catalog.plans[0].id, 'team')
+    assert.equal(catalog.plans[0].seatModel, 'per_seat')
+    assert.equal(catalog.activeOffer, null, `offer for ${offerPlanId} must never apply to a per_seat team plan`)
+  }
+})

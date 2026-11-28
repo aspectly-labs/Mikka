@@ -3,7 +3,7 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import { pool } from '@/lib/db'
 import { organizationMembers, organizations, organizationWorkspaces } from '@/lib/db/governance-schema'
 import { workspaceMembers, workspaces } from '@/lib/db/workspace-schema'
-import { workspaceDb } from '@/lib/workspace-db'
+import { workspaceDb, workspaceTransactionKey } from '@/lib/workspace-db'
 import { enqueueOrganizationAudit } from '@/lib/governance/audit'
 import { ScimStore, type DirectoryChange, type ScimConnection } from './scim-store'
 import { enqueueMemberLifecycle, drainMemberLifecycleOutbox } from '@/lib/governance/member-outbox'
@@ -29,7 +29,7 @@ export async function synchronizeEnterpriseLogin(proof: EnterpriseLoginProof, au
       actor: { type: 'user', id: proof.userId, name: rows[0].name }, action: 'auth.signed_in', target: { type: 'session', id: audit.sessionId }, metadata: { method: 'sso' } })
     return Boolean(insertedMember)
   }).then(async added => {
-    if (added) {
+    if (added && workspaceTransactionKey() === null) {
       const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
       await syncPerSeatSubscriptionForOrganization(proof.organizationId)
     }
@@ -78,8 +78,11 @@ export async function synchronizeDirectoryUser({ connection, user, action, event
     }
     await pool.query('update enterprise_revocation set "deliveredAt"=now() where "directoryUserId"=$1 and "deliveredAt" is null', [user.id])
   }
-  const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
-  await syncPerSeatSubscriptionForOrganization(connection.organizationId)
+  // When invoked inside ScimStore.drain's enclosing workspaceDb transaction, drain() syncs once after commit.
+  if (workspaceTransactionKey() === null) {
+    const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+    await syncPerSeatSubscriptionForOrganization(connection.organizationId, { affectedWorkspaceIds: workspaceIds })
+  }
 }
 
 export async function auditDirectoryGroup(connection: ScimConnection, groupId: string, eventId?: string) {

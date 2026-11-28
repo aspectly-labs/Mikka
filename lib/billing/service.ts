@@ -148,6 +148,9 @@ export async function planCheckoutUrl(
   const config = requireConfig(env)
   return withBillingAuthority(actorId, workspaceId, async () => {
     if (!config.webhookSecret) throw new WorkspaceError('billingNotConfigured')
+    if (requestedPriceId != null && typeof requestedPriceId !== 'string') {
+      throw new WorkspaceError('billingResourcePlanUnavailable')
+    }
     const allowedPriceIds = configuredResourcePriceIds(config)
     const targetPriceId = requestedPriceId == null ? defaultResourcePriceId(config) : requestedPriceId.trim()
     if (!targetPriceId || !allowedPriceIds.includes(targetPriceId)) {

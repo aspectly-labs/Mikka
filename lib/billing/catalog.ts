@@ -451,8 +451,10 @@ function matchActivePlanForOffer(
   plans: readonly BillingPlanCatalogEntry[],
 ): BillingPlanCatalogEntry | null {
   const matchedPlan = plans.find(plan => plan.active && plan.id === offer.planId)
-    ?? plans.find(plan => plan.active && plan.plan === offer.planId)
   if (!matchedPlan) return null
+  // Intro-period/discount offers and mikka_intro_credit_cents are validated for a
+  // single-unit per_workspace subscription; never apply them to per_seat checkouts.
+  if (matchedPlan.seatModel !== 'per_workspace') return null
   // Coupon-only Checkout on a recurring resourcePriceId can only fulfill
   // intro_period / discount offers whose billing cadence matches the plan's
   // recurring interval (no separate intro price or trial_period_days yet).

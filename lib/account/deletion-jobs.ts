@@ -246,9 +246,11 @@ export async function resumeAccountDeletion(id: string, options: AccountDeletion
       })
       await lease.query('UPDATE account_deletion_jobs SET stage=\'workspace_deleted\',"updatedAt"=now() WHERE id=$1', [id])
       job = await load(lease, id)
-      const { syncPerSeatSubscriptionForOrganization, syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
-      for (const workspaceId of job.plan?.shared ?? []) await syncPerSeatSubscriptionForWorkspace(workspaceId)
-      for (const organizationId of removedOrgIds) await syncPerSeatSubscriptionForOrganization(organizationId)
+      if (!options.replayPlan && !options.mainPool && !options.workspacePool) {
+        const { syncPerSeatSubscriptionForOrganization, syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
+        for (const workspaceId of job.plan?.shared ?? []) await syncPerSeatSubscriptionForWorkspace(workspaceId)
+        for (const organizationId of removedOrgIds) await syncPerSeatSubscriptionForOrganization(organizationId)
+      }
     }
     if (job.stage === 'main_deleted') {
       assertHeld()
@@ -263,9 +265,11 @@ export async function resumeAccountDeletion(id: string, options: AccountDeletion
       })
       await lease.query('UPDATE account_deletion_jobs SET stage=\'workspace_deleted\',plan=$2,"updatedAt"=now() WHERE id=$1', [id, JSON.stringify(retained)])
       job = await load(lease, id)
-      const { syncPerSeatSubscriptionForOrganization, syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
-      for (const workspaceId of retained.shared) await syncPerSeatSubscriptionForWorkspace(workspaceId)
-      for (const organizationId of removedOrganizationIds) await syncPerSeatSubscriptionForOrganization(organizationId)
+      if (!options.replayPlan && !options.mainPool && !options.workspacePool) {
+        const { syncPerSeatSubscriptionForOrganization, syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
+        for (const workspaceId of retained.shared) await syncPerSeatSubscriptionForWorkspace(workspaceId)
+        for (const organizationId of removedOrganizationIds) await syncPerSeatSubscriptionForOrganization(organizationId)
+      }
     }
     if (job.stage === 'workspace_deleted' || job.stage === 'storage_pending') {
       const notBefore = job.storageNotBefore?.getTime() ?? 0

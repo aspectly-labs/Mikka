@@ -306,11 +306,12 @@ export async function acceptOrganizationInvitation(input: unknown, user: { id: s
       organizationId: candidate.organizationId, actorId: user.id, action: 'organization.invitation_accepted',
       targetId: invitation.id, metadata: { role: invitation.role, status: 'accepted', count: scopes.length },
     })
-    return { organizationId: candidate.organizationId, joined: true, role: invitation.role,
+    const scopedWorkspaceIds = [...new Set(scopes.map(scope => scope.workspaceId))]
+    return { organizationId: candidate.organizationId, joined: true, role: invitation.role, scopedWorkspaceIds,
       ...(scopes.length ? { teamIds: scopes.map(scope => scope.teamId) } : {}) }
-  }).then(async accepted => {
+  }).then(async ({ scopedWorkspaceIds, ...accepted }) => {
     const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
-    await syncPerSeatSubscriptionForOrganization(accepted.organizationId)
+    await syncPerSeatSubscriptionForOrganization(accepted.organizationId, { affectedWorkspaceIds: scopedWorkspaceIds })
     return accepted
   })
 }

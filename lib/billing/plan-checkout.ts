@@ -6,7 +6,7 @@ import { db } from '@/lib/db'
 import { billingCheckoutRequests, workspaceBilling } from '@/lib/db/schema'
 import { recordAudit } from '@/lib/audit/write'
 import { WorkspaceError } from '@/lib/workspace-access'
-import { stripeGet, stripePost, type StripeConfig } from './stripe'
+import { stripeGet, stripePost, StripeRequestError, type StripeConfig } from './stripe'
 import { MIN_OFFER_CHECKOUT_WINDOW_MS } from './catalog'
 import { ensureBillingCustomer } from './customer'
 import type { resourcePrice } from './resource-plan'
@@ -40,10 +40,16 @@ async function requireNoSubscription(customer: string, get: (path: string) => Pr
 
 function validateSession(raw: unknown, request: Request) {
   const session = sessionSchema.parse(raw)
+  const expectedExpiresAt = Math.floor(request.expiresAt.getTime() / 1000)
+  // Expiring a Checkout Session early via POST /checkout/sessions/:id/expire
+  // overwrites Stripe's expires_at with the current timestamp (<= original).
+  const expiresMatches = session.status === 'expired'
+    ? session.expires_at <= expectedExpiresAt
+    : session.expires_at === expectedExpiresAt
   if (session.mode !== 'subscription' || session.customer !== request.customerId
     || session.client_reference_id !== request.workspaceId || session.metadata?.checkoutRequestId !== request.id
     || session.metadata?.workspaceId !== request.workspaceId || session.metadata?.billingModel !== 'resource_v1'
-    || session.expires_at !== Math.floor(request.expiresAt.getTime() / 1000)
+    || !expiresMatches
     || (request.sessionId && session.id !== request.sessionId)) throw new Error('billing_checkout_scope_mismatch')
   if (session.url && new URL(session.url).origin !== 'https://checkout.stripe.com') throw new WorkspaceError('billingProviderFailed')
   return session
@@ -79,6 +85,14 @@ async function recoverSession(request: Request, get: (path: string) => Promise<u
     cursor = next
   }
   throw pending()
+}
+
+function priorSessionQuantity(params: unknown): number | null {
+  if (!params || typeof params !== 'object') return null
+  const items = (params as { line_items?: unknown }).line_items
+  if (!Array.isArray(items) || !items.length) return null
+  const qty = (items[0] as { quantity?: unknown } | null)?.quantity
+  return typeof qty === 'number' && Number.isSafeInteger(qty) && qty >= 1 ? qty : null
 }
 
 /**
@@ -153,15 +167,37 @@ export async function resourcePlanCheckout(actorId: string, workspaceId: string,
     if (request.customerId !== customerId) throw new Error('billing_customer_scope_mismatch')
     await requireNoSubscription(customerId, get)
     let session = request.sessionId ? validateSession(await get(`checkout/sessions/${request.sessionId}`), request) : null
-    if (!session && request.priceId === price.id && request.expiresAt.getTime() - Date.now() >= 31 * 60_000) {
+    const requestMatches = request.priceId === price.id
+      && (price.seatModel !== 'per_seat' || priorSessionQuantity(request.params) === seatCount)
+    if (!session && requestMatches && request.expiresAt.getTime() - Date.now() >= 31 * 60_000) {
       // expires_at must still be at least 30 minutes away. Its fixed value also
       // prevents a pruned Stripe idempotency key from ever creating a late Session.
       session = await rememberSession(request, await stripePost<unknown>(config, 'checkout/sessions', request.params,
         fetchImpl, `resource-checkout:${request.id}`))
     } else if (!session) session = await recoverSession(request, get)
     if (session?.status === 'open') {
-      if (request.priceId !== price.id || !session.url || session.expires_at * 1000 <= Date.now()) throw pending()
-      return { url: session.url }
+      if (requestMatches) {
+        if (!session.url || session.expires_at * 1000 <= Date.now()) throw pending()
+        return { url: session.url }
+      }
+      // Customer switched plans or seat count changed while an earlier Checkout Session
+      // remained open: expire the prior Stripe Session so a new one cannot double-bill.
+      try {
+        session = validateSession(
+          await stripePost<unknown>(
+            config,
+            `checkout/sessions/${encodeURIComponent(session.id)}/expire`,
+            {},
+            fetchImpl,
+            `resource-checkout-expire:${request.id}:${session.id}`,
+          ),
+          request,
+        )
+      } catch (error) {
+        if (!(error instanceof StripeRequestError)) throw error
+        session = validateSession(await get(`checkout/sessions/${encodeURIComponent(session.id)}`), request)
+      }
+      if (session.status === 'open') throw pending()
     }
     if (!session && request.expiresAt.getTime() + 60_000 > Date.now()) throw pending()
     // An expired Session is closed by Stripe. A completed one is reusable only
