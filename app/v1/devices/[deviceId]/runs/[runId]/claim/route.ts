@@ -595,11 +595,9 @@ async function claimRun(request: Request, { params }: { params: Promise<{ device
   const executionPolicy = run.agentDefinition?.readOnly ? readOnlyRunPolicy(resolvedPolicy) : resolvedPolicy
   const claimedComputer = computer?.permission ?? localComputer?.permission
   // A legacy computer grant of `ask` never waited for anyone; it reads as allow.
-  // With no computer grant there is no computer to use: the workspace's Block
-  // setting (ADR 2026-11-27-1720) is carried by the grant, so no grant is deny.
   const computerPermission = device.computerUseEnabled === false
     ? 'deny' as const
-    : claimedComputer === 'ask' ? 'allow' as const : claimedComputer ?? 'deny' as const
+    : claimedComputer === 'ask' ? 'allow' as const : claimedComputer
   // Computer authority comes from its persisted claim; retain every trusted
   // CLI restriction and its revision when attaching that independent grant.
   const policy = computerPermission

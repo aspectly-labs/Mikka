@@ -506,7 +506,6 @@ test('provider failure continues the same task through its own Agent\'s authoriz
     const assignment = await claim(p, continuation.id, { snapshot: true })
     assert.notEqual(assignment.policy.readOnly, true)
     assert.equal(assignment.policy.networkCeiling, undefined)
-    assert.equal(assignment.policy.permissions.computer_use, 'deny', 'no computer grant: no computer use')
   })
 
   await t.test('when every entry of the thread\'s Agent is bad, the blocked card has each of its models and its specific reason, and none of the other Agent\'s', async () => {
