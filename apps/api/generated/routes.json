@@ -794,7 +794,7 @@
         "GET"
       ],
       "maxDuration": 300,
-      "sourceHash": "3aac6dbd38ce5413de81d3f2568f9972536068329902d3f6ccff9710b186515a"
+      "sourceHash": "3a8642e8a810a84f7c81dcdc332c6d5cb8cd3a408069a1680f900a6d12fe41b2"
     },
     {
       "path": "/mikka/api/cron/run-recovery",
