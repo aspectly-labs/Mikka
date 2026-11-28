@@ -552,17 +552,34 @@ test('a task reopened during provider inspection is not recorded as stopped afte
   assert.equal(f.machine.lifecycle.reconcileId, undefined)
 })
 
-test('a missing provider is recorded truthfully, reconfirmed once, and preserves native identity for reconciliation', async () => {
+test('a missing provider is recorded truthfully, settles awake billing with error fence, reconfirmed once, and preserves native identity for reconciliation', async () => {
   const f = fixture(row({ status: 'succeeded' }))
+  const settleCalls: Array<{ ownerId: string; sandboxId: string; endedAt?: Date; fence?: unknown }> = []
+  const deps = {
+    ...f.deps,
+    settleAwake: async (ownerId: string, sandboxId: string, endedAt?: Date, _tx?: unknown, fence?: unknown) => {
+      settleCalls.push({ ownerId, sandboxId, endedAt, fence })
+      return { settled: true, refundedMicroUsd: 0 }
+    },
+  }
   f.setProvider('missing')
-  assert.equal(await reconcileThreadMachine(f.pool, actor, 'run', f.deps), now + 30_000)
+  assert.equal(await reconcileThreadMachine(f.pool, actor, 'run', deps), now + 30_000)
   assert.equal(f.machine.state, 'error')
   assert.equal(f.machine.sandboxId, 'vm')
+  assert.equal(settleCalls.length, 1)
+  assert.deepEqual(settleCalls[0], {
+    ownerId: actor.userId,
+    sandboxId: 'vm',
+    endedAt: new Date(now),
+    fence: { runId: 'run', expectedEpoch: 3, expectedStates: ['error'] },
+  })
   f.advance(30_000)
-  assert.equal(await reconcileThreadMachine(f.pool, actor, 'run', f.deps), false)
+  assert.equal(await reconcileThreadMachine(f.pool, actor, 'run', deps), false)
   assert.equal(f.machine.lifecycle.phase, 'needs_reconciliation')
   assert.equal(f.machine.lifecycle.reason, 'provider_missing')
   assert.equal(f.counts().endCalls, 0)
+  assert.equal(settleCalls.length, 2)
+  assert.equal(settleCalls[1].endedAt?.getTime(), now, 'reconfirmation preserves first providerMissingAt observation timestamp')
 })
 
 test('a provider miss during the bootstrap lease is deferred until the creation deadline', () => {
