@@ -44,6 +44,26 @@ Every span has `service.name=mikka-web` and `deployment.environment`
 | `mikka.rpc.action` | A key confirmed present in the shared browser/desktop RPC registry. No arguments or unknown action strings are exported |
 | `error.type`, `mikka.error.code`, `mikka.error.detail` | On a failed request or job: the error's class name, and the code and detail of the first coded error in its cause chain (`@mikka/protocol/tracing`). Never the message |
 
+Subscription catalogue reads record `mikka.catalogue.cache` (`hit`, `miss` or
+`optional_metadata`), `mikka.catalogue.refresh_candidates`, and
+`mikka.catalogue.deferred` on their request span. A valid current-revision
+catalogue is immediately usable; menu/settings reads defer missing optional
+capabilities to the existing owned `after:subscription-catalogue` job. A cold or
+stale credential revision still waits for bounded discovery. The single
+persisted catalogue remains authoritative and unreported capabilities stay
+unknown. Concurrent discovery is shared only within the same database, owner,
+workspace, connection and credential revision; each caller then reads its own
+authorized view. There is no result cache or polling loop.
+
+The `subscription.models` client span records the closed provider name in
+`mikka.catalogue.provider`, one `mikka.catalogue.refresh_count`, and safe error
+names/codes. Automatic catalogue reads and budgeted menu refreshes now pass
+their existing deadline to actual discovery; late replies cannot update the
+catalogue after timeout or credential revocation. Direct manual refreshes add
+no menu deadline and retain the native worker's existing bounded lifetime,
+shutdown and credential-persistence behavior. No account labels, model lists,
+URLs or provider response contents are exported.
+
 HTTP response timing separates readiness from connection lifetime.
 `mikka.http.response_headers_ms` measures entry to the response headers being
 ready; `mikka.http.response_kind` is `regular`, `event_stream` or `ndjson`.
