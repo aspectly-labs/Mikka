@@ -12,6 +12,8 @@ const peopleRows = () => Object.assign(Promise.resolve(people.map(userId => ({ u
   limit: async (count: number) => { limits.push(count); return people.map(userId => ({ userId })) },
 })
 let failure: (userId: string) => string | null = () => null
+let githubSweep: (options: { deadline?: number }) => Promise<unknown> = async () => null
+let composioLookups = 0
 const ingested: unknown[][] = []
 const marked: unknown[][] = []
 const cleared: unknown[][] = []
@@ -24,7 +26,7 @@ const page = (id: string) => ({ object: 'page', id, url: `https://www.notion.so/
 
 let reconcile: typeof import('./reconcile')
 before(async () => {
-  mock.module('./github-redelivery', { namedExports: { redeliverFailedGitHubWebhooks: async () => null } })
+  mock.module('./github-redelivery', { namedExports: { redeliverFailedGitHubWebhooks: (options: { deadline?: number }) => githubSweep(options) } })
   mock.module('./sources', { namedExports: { ensureComposioTriggers: async () => undefined, linearWebhookNotifications: async () => [] } })
   mock.module('./store', { namedExports: { ingestNotifications: async (notifications: unknown[]) => { ingested.push(notifications) } } })
   mock.module('@/lib/composio-account-store', { namedExports: {
@@ -40,7 +42,10 @@ before(async () => {
     update: () => ({ set: (value: unknown) => { stamps.push(value as { reconciledAt: unknown }); return { where: async () => [] } } }),
   }, pool: null } })
   mock.module('@/lib/composio', { namedExports: {
-    getComposio: () => ({ connectedAccounts: { list: async ({ userIds }: { userIds: string[] }) => stalled.has(userIds[0]) ? new Promise(() => {}) : ({ items: [{ id: `acct-${userIds[0]}`, status: 'ACTIVE', isDisabled: false, toolkit: { slug: 'notion' } }], nextCursor: null }) } }),
+    getComposio: () => {
+      composioLookups++
+      return { connectedAccounts: { list: async ({ userIds }: { userIds: string[] }) => stalled.has(userIds[0]) ? new Promise(() => {}) : ({ items: [{ id: `acct-${userIds[0]}`, status: 'ACTIVE', isDisabled: false, toolkit: { slug: 'notion' } }], nextCursor: null }) } }
+    },
     runComposioAction: async (userId: string, action?: string, input?: { page_size?: number; start_cursor?: string }) => {
       const error = failure(userId)
       if (action === 'list_recent_notion_pages') {
@@ -64,6 +69,46 @@ beforeEach(() => {
   for (const key of Object.keys(notionPages)) delete notionPages[key]
   for (const key of Object.keys(failAfter)) delete failAfter[key]
   failure = () => null
+  githubSweep = async () => null
+  composioLookups = 0
+})
+
+test('GitHub failure preserves its deadline and does not skip remaining provider work within budget', async () => {
+  const deadline = Date.now() + 5000
+  let observedDeadline: number | undefined
+  githubSweep = async options => {
+    observedDeadline = options.deadline
+    throw new Error('synthetic-private-provider-detail')
+  }
+  const errors = mock.method(console, 'error', () => {})
+  try {
+    const result = await reconcile.reconcileSuggestions({ deadline })
+    assert.equal(observedDeadline, deadline)
+    assert.deepEqual(result.failed, { github: 1 })
+    assert.equal(result.people, 2)
+    assert.equal(result.read.notion, 4)
+    assert.equal(stamps.length, 2)
+    assert.ok(errors.mock.calls.every(call => !JSON.stringify(call.arguments).includes('synthetic-private-provider-detail')))
+  } finally { errors.mock.restore() }
+})
+
+test('an exhausted GitHub deadline starts no new Composio lookup or people query', async () => {
+  const deadline = Date.now() - 1
+  let observedDeadline: number | undefined
+  githubSweep = async options => {
+    observedDeadline = options.deadline
+    throw new DOMException('Request deadline exceeded', 'TimeoutError')
+  }
+  const errors = mock.method(console, 'error', () => {})
+  try {
+    const result = await reconcile.reconcileSuggestions({ deadline })
+    assert.equal(observedDeadline, deadline)
+    assert.deepEqual(result.failed, { github: 1 })
+    assert.equal(composioLookups, 0)
+    assert.deepEqual(limits, [])
+    assert.deepEqual(notionCalls, [])
+    assert.deepEqual(stamps, [])
+  } finally { errors.mock.restore() }
 })
 
 test('a revoked provider token skips that person as needing reconnecting; the run goes on and does not fail', async () => {

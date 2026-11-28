@@ -159,11 +159,12 @@ async function reconcilePerson(userId: string, toolkits: readonly string[], sinc
 export async function reconcileSuggestions({ now = new Date(), deadline = Infinity }: { now?: Date; deadline?: number } = {}): Promise<ReconcileResult> {
   const since = new Date(now.getTime() - RECONCILE_WINDOW_MS)
   const result: ReconcileResult = { people: 0, read: {}, failed: {}, reconnect: {}, deferred: 0, linear: { deliveries: 0, notifications: 0 }, github: null }
-  try { result.github = await redeliverFailedGitHubWebhooks({ now }) }
+  try { result.github = await redeliverFailedGitHubWebhooks({ now, deadline }) }
   catch (error) {
     result.failed.github = 1
-    console.error('Suggestions backfill could not redeliver GitHub webhooks', error instanceof Error ? error.message : error)
+    console.error('Suggestions backfill could not redeliver GitHub webhooks', error instanceof Error ? error.name : 'unknown')
   }
+  if (Date.now() >= deadline) return result
   const composio = getComposio()
   if (!composio) return result
   // Least recently checked first, so a run cut short by the deadline moves on to others next time.
