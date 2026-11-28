@@ -29,7 +29,13 @@ const handleGET = defineRoute(
       const { workspacePool } = await import('@/lib/workspace-db')
       const due = await reconcileDue(pool, { factoryLifecycle: factoryLifecycleEnabled(), workspace: workspacePool })
       const counts: Record<string, unknown> = { ...due }
-      if (due.wakes) counts.wakeCounts = await (await import('@/lib/coordinator/wake')).retryCoordinatorWakes()
+      // Every due wake triages its events through the Decisions API. One sweep shares their
+      // read-only admission and payer reads per workspace (decisionBatchCache), as a webhook
+      // batch does, instead of repeating the same billing reads for each event.
+      if (due.wakes) {
+        const [{ retryCoordinatorWakes }, { decisionBatchCache }] = await Promise.all([import('@/lib/coordinator/wake'), import('@/lib/abuse/context')])
+        counts.wakeCounts = await decisionBatchCache.run(new Map(), () => retryCoordinatorWakes())
+      }
       if (due.schedules) {
         counts.scheduleCounts = await (await import('@/lib/schedules/runtime')).sweepSchedules()
         await armDueTimer('schedules')

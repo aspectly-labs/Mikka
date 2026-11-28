@@ -33,7 +33,7 @@ export async function cleanupAccountConnections(ownerId: string, database: Pool,
   }
   const subscription = await cleanupAccountSubscriptions(ownerId, database, undefined, job)
   blocked.push(...subscription.blockedReasons); warnings.push(...subscription.warnings)
-  const blockerErrors = { ...subscription.blockerErrors }
+  const blockerErrors = { ...billing.blockerErrors, ...subscription.blockerErrors }
   if (isCloudEdition()) {
     const external = await database.query("SELECT 1 FROM e2b_resource_accounts WHERE \"ownerId\"=$1 AND scope='personal' LIMIT 1", [ownerId])
     if (external.rowCount) warnings.push('e2b_external_resources_managed_at_provider')

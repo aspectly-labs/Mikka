@@ -333,7 +333,7 @@
         "POST"
       ],
       "maxDuration": 300,
-      "sourceHash": "8c63c9625fc1b3c5671bde529b97947aec03c48e688aba5203788ec4f9580fde"
+      "sourceHash": "0d54ae4d62e7db8bc740a95cf20642dd147fde18f19d14bd0c886287f92cb0e9"
     },
     {
       "path": "/mikka/api/bots/[botId]/follow",
@@ -794,7 +794,7 @@
         "GET"
       ],
       "maxDuration": 300,
-      "sourceHash": "3aac6dbd38ce5413de81d3f2568f9972536068329902d3f6ccff9710b186515a"
+      "sourceHash": "3a8642e8a810a84f7c81dcdc332c6d5cb8cd3a408069a1680f900a6d12fe41b2"
     },
     {
       "path": "/mikka/api/cron/run-recovery",

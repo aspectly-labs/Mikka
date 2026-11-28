@@ -34,8 +34,8 @@ async function chatScope(chatBot: string | null, workspaceId?: string) {
 export async function getBotModelMenu(chatBot: string | null, workspaceId?: string) {
   const { botId, scope } = await chatScope(chatBot, workspaceId);
   const settings = new ExecutionSettings(pool);
-  // The chat menu also upgrades optional Codex Fast metadata; ordinary dispatch keeps valid legacy catalogues.
-  await settings.ensureCatalogues(scope, undefined, undefined, { codexPriority: true });
+  // A valid catalogue is immediately usable; optional Fast metadata refreshes in the owned after queue.
+  await settings.ensureCatalogues(scope, undefined, undefined, { codexPriority: true, deferOptional: true });
   return botModelMenu(pool, settings, scope, botId);
 }
 /** 刷新模型列表: re-reads what this person can use here, after asking each subscription for its models. */

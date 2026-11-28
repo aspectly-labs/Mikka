@@ -187,10 +187,17 @@ async function historicalRelease(api, runId, runAttempt) {
 export async function priorDeployment(api, currentRun, selectedRun, target = 'staging') {
   const runs = selectedRun ? [await api(`${repository}/actions/runs/${selectedRun}`)]
     : await pages(api, 'actions/workflows/cloudflare-app-deploy.yml/runs?branch=main', 'workflow_runs')
+  // The listing is in run creation order, but a re-run attempt of an older run can write after a
+  // later-created run (for example a rollback). The concurrency group serializes every attempt, so
+  // the latest writer is the writing attempt that started last: after finding one, keep scanning
+  // for an attempt that started later.
+  let found, foundAt
   for (const latest of runs) {
     const isCurrent = String(latest.id) === String(currentRun)
     if (!isCurrent && latest.status !== 'completed') continue
     assert.ok(Number.isSafeInteger(latest.run_attempt) && latest.run_attempt > 0, 'pipeline_deployment_attempt_required')
+    // The listing's run_started_at is its latest attempt's start; no earlier attempt started later.
+    if (found !== undefined && !(attemptStart(latest) > foundAt)) continue
     // Re-running only failed jobs does not erase an earlier writer. Search
     // every earlier completed attempt, including this run's previous attempt.
     // A fresh selection failure must never hide a partial deployment.
@@ -200,6 +207,8 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       checkedRun(run, deployment, { successful: false, automaticDeployment: true })
       assert.equal(run.run_attempt, attempt, 'pipeline_deployment_attempt_mismatch')
       assert.ok(['workflow_run', 'workflow_dispatch'].includes(run.event), 'pipeline_deployment_event_invalid')
+      const startedAt = attemptStart(run)
+      if (found !== undefined && !(startedAt > foundAt)) break
       const jobs = await pages(api, `actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`, 'jobs')
       // A completed stage-all re-bootstraps staging onto a new reviewed
       // hosted-api-staging.json release with fresh unmarked Workers, so older
@@ -219,7 +228,11 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
           })
           if (phases.length === 1 && phases[0].version === 1 && phases[0].phase === 'stage-all'
               && phases[0].status === 'completed' && phases[0].operator?.runId === String(run.id)
-              && phases[0].operator?.runAttempt === String(run.run_attempt)) return null
+              && phases[0].operator?.runAttempt === String(run.run_attempt)) {
+            found = null
+            foundAt = startedAt
+            break
+          }
         }
       }
       const jobName = target === 'production' ? 'pipeline-production' : 'pipeline'
@@ -231,7 +244,16 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       // A failed checkout/selection never acquired a deployment writer. Do not
       // confuse it with a partially applied release that requires rollback.
       if (!applied || applied.conclusion === 'skipped') continue
-      const packet = await members(api, run, target === 'production' ? 'deploy-production' : 'deploy-pipeline')
+      let packet
+      try {
+        packet = await members(api, run, target === 'production' ? 'deploy-production' : 'deploy-pipeline')
+      } catch (error) {
+        // GitHub deletes a job's artifacts when that job is re-run, so a re-run of a
+        // deployment whose Deploy step ran erases the receipt this gate requires.
+        // Still fail closed; only name the cause and the recovery.
+        if (selectionError(error) !== 'pipeline_original_artifact_required' || attempt >= latest.run_attempt) throw error
+        throw new Error(isCurrent ? 'pipeline_rerun_after_deploy_refused' : 'pipeline_rerun_erased_receipt_requires_recovery')
+      }
       const summary = packet.files['pipeline-summary.json']
       if (summary === undefined) {
         // The publisher writes its first receipt and summary after reading every input and resource
@@ -256,11 +278,24 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
       // step ran, an admission label cannot hide a possibly partial deployment.
       assert.equal(summary.admission, undefined, 'pipeline_previous_release_requires_recovery')
       assert.notEqual(summary.failedStep, 'migration-identity', 'pipeline_previous_release_requires_recovery')
-      return { run, summary, files: packet.files }
+      // A run that failed before its first migration or service write changed nothing (baselineOrigin),
+      // so it neither blocks nor sets the baseline: the baseline is what the writer before it left.
+      // Its own previousOrigin is only what its selection believed, which can be stale.
+      if (summary.status === 'failed' && preWriteSteps.includes(summary.failedStep) && summary.rollback === undefined) continue
+      found = { run, summary, files: packet.files }
+      foundAt = startedAt
+      break
     }
   }
+  if (found !== undefined) return found
   assert.ok(!selectedRun, 'pipeline_requested_release_missing')
   return null
+}
+
+const attemptStart = run => {
+  const at = Date.parse(run.run_started_at ?? '')
+  assert.ok(Number.isFinite(at), 'pipeline_deployment_start_required')
+  return at
 }
 
 async function qualificationOrigin(api) {

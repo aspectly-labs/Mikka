@@ -307,7 +307,7 @@ export async function refreshBotModelMenu(
         // A catalogue read alone cannot confirm a stale allowance. The same
         // refresh checks usage, whose safe snapshot is persisted by the service.
         Promise.allSettled([
-          settings.refreshBotModels(scope, connectionId),
+          settings.refreshBotModels(scope, connectionId, undefined, AbortSignal.timeout(timeoutMs)),
           refreshQuota(scope.ownerId, connectionId, AbortSignal.timeout(timeoutMs)),
         ]),
         new Promise((resolve) => setTimeout(resolve, timeoutMs).unref?.()),

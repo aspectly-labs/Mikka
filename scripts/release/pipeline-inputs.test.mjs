@@ -13,6 +13,7 @@ const source = 'a'.repeat(40)
 const repo = { id: 1427517699, full_name: 'alexj11324/Mikka', fork: false, private: false }
 const producer = '.github/workflows/cloudflare-api-image.yml'
 const run = () => ({ id: 101, run_attempt: 2, path: producer, event: 'push', status: 'completed',
+  run_started_at: '2026-11-28T12:00:00Z',
   conclusion: 'success', head_sha: source, head_branch: 'main', actor: { id: 183887963 },
   triggering_actor: { id: 183887963 }, repository: repo, head_repository: repo })
 const event = original => ({ action: 'completed', repository: repo, workflow_run: structuredClone(original) })
@@ -164,6 +165,37 @@ test('a rerun that fails before its writer cannot hide an earlier partial deploy
     assert.throws(() => baselineOrigin(prior.summary), /requires_recovery/)
     assert.equal(calls.some(path => path.includes('/attempts/2/jobs?')), currentRun !== '101')
   }
+})
+
+test('a re-run that erased an earlier attempt\'s deployment receipt fails closed and names the recovery', async () => {
+  const original = { ...run(), path: '.github/workflows/cloudflare-app-deploy.yml', event: 'workflow_run',
+    conclusion: 'failure', run_attempt: 1 }
+  const latest = { ...original, run_attempt: 2 }
+  const expected = { '101': /pipeline_rerun_after_deploy_refused/, '200': /pipeline_rerun_erased_receipt_requires_recovery/ }
+  for (const currentRun of ['200', '101']) {
+    const api = async path => {
+      if (path.includes('actions/workflows/')) return { total_count: 1,
+        workflow_runs: [{ ...latest, ...(currentRun === '101' ? { status: 'in_progress', conclusion: null } : {}) }] }
+      if (path.endsWith('/attempts/1')) return original
+      if (path.includes('/attempts/2/jobs?')) return { total_count: 1, jobs: [{ id: 402, name: 'pipeline',
+        status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'skipped' }] }] }
+      if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 401, name: 'pipeline',
+        status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
+      // GitHub deletes the re-run job's earlier artifacts; the run lists none.
+      if (path.includes('/runs/101/artifacts?')) return { total_count: 0, artifacts: [] }
+      assert.fail('Unexpected metadata request: ' + path)
+    }
+    await assert.rejects(priorDeployment(api, currentRun), expected[currentRun])
+  }
+  // A single-attempt run whose receipt is missing keeps the original error.
+  const single = async path => {
+    if (path.includes('actions/workflows/')) return { total_count: 1, workflow_runs: [original] }
+    if (path.includes('/attempts/1/jobs?')) return { total_count: 1, jobs: [{ id: 401, name: 'pipeline',
+      status: 'completed', conclusion: 'failure', steps: [{ name: 'Deploy and verify staged service manifest', conclusion: 'failure' }] }] }
+    if (path.includes('/runs/101/artifacts?')) return { total_count: 0, artifacts: [] }
+    assert.fail('Unexpected metadata request: ' + path)
+  }
+  await assert.rejects(priorDeployment(single, '200'), /pipeline_original_artifact_required/)
 })
 
 test('a Deploy step that failed before its first receipt is skipped, but a printed summary still blocks', async () => {
@@ -470,6 +502,75 @@ test('a completed stage-all resets the staging baseline to bootstrap without aff
   }
   assert.equal(await priorDeployment(otherPhaseApi, '260', undefined, 'staging'), null)
   assert.equal(scannedOlder, true)
+})
+
+test('a re-run attempt that deployed after a later-created rollback is the latest writer, and a pre-write failure keeps it', async () => {
+  // 2026-11-28: run 46153558280 attempt 1 failed selection, rollback 46153661413 was created and passed,
+  // then attempt 2 of 46153558280 deployed staging. The next run failed at existing-resources
+  // because selection followed creation order and took the rollback's baseline.
+  const deploy = '.github/workflows/cloudflare-app-deploy.yml'
+  const origin = (runId, artifactId) => ({ runId, runAttempt: '1', artifactId, event: 'push' })
+  const stale = origin('46137585197', '15259644661')
+  const staged = origin('46153271386', '15267020550')
+  const runs = {
+    next: { ...run(), id: 46154900000, run_attempt: 1, path: deploy, event: 'workflow_run', status: 'in_progress', conclusion: null,
+      run_started_at: '2026-11-28T14:40:00Z' },
+    failed: { ...run(), id: 46154833179, run_attempt: 1, path: deploy, event: 'workflow_run', conclusion: 'failure',
+      run_started_at: '2026-11-28T14:31:00Z' },
+    rollback: { ...run(), id: 46153661413, run_attempt: 1, path: deploy, event: 'workflow_dispatch',
+      run_started_at: '2026-11-28T14:14:47Z' },
+    rerun: { ...run(), id: 46153558280, run_attempt: 2, path: deploy, event: 'workflow_run',
+      run_started_at: '2026-11-28T14:22:55Z' },
+  }
+  const summaries = {
+    failed: postWrite => ({ version: 1, target: 'staging', status: 'failed', failedStep: postWrite ? 'api' : 'existing-resources',
+      origin: origin('46154553751', '15267206916'), previousOrigin: stale }),
+    rollback: () => ({ version: 1, target: 'staging', status: 'passed', verification: { status: 'pass' }, rollback: { status: 'passed' },
+      origin: staged, previousOrigin: stale }),
+    rerun: () => ({ version: 1, target: 'staging', status: 'passed', verification: { status: 'pass' }, origin: staged, previousOrigin: stale }),
+  }
+  const makeApi = ({ postWrite = false, calls = [] } = {}) => {
+    const fixtures = Object.fromEntries(Object.entries(summaries).map(([key, summary], index) => {
+      const item = runs[key]
+      const body = { ...summary(postWrite), deployment: { runId: String(item.id), runAttempt: String(item.run_attempt) } }
+      const bytes = execFileSync('python3', ['-c',
+        'import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,"w") as z: z.writestr("pipeline-summary.json",sys.argv[1])\nsys.stdout.buffer.write(b.getvalue())', JSON.stringify(body)])
+      const artifact = { id: 500 + index, name: `deploy-pipeline-${item.id}-${item.run_attempt}`, expired: false, size_in_bytes: bytes.length,
+        digest: 'sha256:' + createHash('sha256').update(bytes).digest('hex'),
+        workflow_run: { id: item.id, head_sha: source, head_branch: 'main', repository_id: repo.id, head_repository_id: repo.id } }
+      return [String(item.id), { item, body, bytes, artifact, job: 700 + index }]
+    }))
+    return async path => {
+      calls.push(path)
+      if (path.includes('workflows/cloudflare-app-deploy.yml/runs?')) return { total_count: 4,
+        workflow_runs: [runs.next, runs.failed, runs.rollback, runs.rerun] }
+      for (const [id, fixture] of Object.entries(fixtures)) {
+        if (path.includes(`/runs/${id}/attempts/${fixture.item.run_attempt}/jobs?`)) return { total_count: 1, jobs: [{ id: fixture.job,
+          name: 'pipeline', status: 'completed', conclusion: fixture.body.status === 'passed' ? 'success' : 'failure',
+          steps: [{ name: 'Deploy and verify staged service manifest', status: 'completed',
+            conclusion: fixture.body.status === 'passed' ? 'success' : 'failure' }] }] }
+        if (path.includes(`/runs/${id}/artifacts?`)) return { total_count: 1, artifacts: [fixture.artifact] }
+        if (path.endsWith(`/artifacts/${fixture.artifact.id}/zip`)) return fixture.bytes
+        if (path.endsWith(`/jobs/${fixture.job}/logs`))
+          return Buffer.from(`Artifact ${fixture.artifact.name}.zip successfully finalized.\nArtifact ID ${fixture.artifact.id}\nMIKKA_DEPLOYMENT_PIPELINE={}`)
+      }
+      assert.fail('Unexpected request: ' + path)
+    }
+  }
+  const calls = []
+  const prior = await priorDeployment(makeApi({ calls }), String(runs.next.id))
+  assert.equal(prior.run.id, runs.rerun.id)
+  assert.equal(prior.run.run_attempt, 2)
+  assert.deepEqual(baselineOrigin(prior.summary), staged)
+  // Attempt 1 started before the rollback, so it is never read once attempt 2 is the writer.
+  assert.equal(calls.some(path => path.includes(`/runs/${runs.rerun.id}/attempts/1`)), false)
+  // A promotion of the re-run sees it as what staging serves.
+  const promoted = await priorDeployment(makeApi(), '46154999999', undefined, 'staging')
+  assert.equal(promoted.run.id, runs.rerun.id)
+  // A failure after its first write still blocks, whatever ran before it.
+  const blocked = await priorDeployment(makeApi({ postWrite: true }), String(runs.next.id))
+  assert.equal(blocked.run.id, runs.failed.id)
+  assert.throws(() => baselineOrigin(blocked.summary), /requires_recovery/)
 })
 
 test('selection failures report their pipeline code even when assert appends a diff', () => {

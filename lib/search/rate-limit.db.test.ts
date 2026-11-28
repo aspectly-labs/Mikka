@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
+import { setTimeout as delay } from 'node:timers/promises'
 import test from 'node:test'
 import { Pool } from 'pg'
 import { assertE2eTarget } from '../../tests/helpers/e2e-target.mjs'
@@ -72,6 +73,69 @@ test('cold web services share the existing 10/user/min gate before actual Firecr
     await pool.query('UPDATE "rateLimit" SET "lastRequest"=$1', [Date.now()-60_001])
     assert.equal((await createWebService().search('after window / worker restart', caller)).ok, true)
     assert.equal(hits.length, 12)
+    const { consumeWebRate } = await import('./rate-limit')
+    const prefix = (id: string) => `web-rate:${createHash('sha256').update(id).digest('hex')}:`
+    await t.test('admission and refusal each need only four real database round trips', async () => {
+      const statements: string[] = [], measuredUser = randomUUID()
+      const measured = { connect: async () => {
+        const client = await pool.connect()
+        return new Proxy(client, { get(target, key) {
+          if (key === 'query') return (...args: unknown[]) => {
+            statements.push(String(args[0]))
+            return Reflect.apply(target.query, target, args)
+          }
+          const value = Reflect.get(target, key, target)
+          return typeof value === 'function' ? value.bind(target) : value
+        } })
+      } }
+      assert.equal(await consumeWebRate(measured, measuredUser, 100_000, 1), true)
+      assert.equal(statements.length, 4, 'BEGIN, per-user lock, admission, COMMIT')
+      statements.length = 0
+      assert.equal(await consumeWebRate(measured, measuredUser, 100_001, 1), false)
+      assert.equal(statements.length, 4, 'denied admission keeps the same bounded database path')
+    })
+    await t.test('the exact sliding boundary expires only this user and leaves auth counters intact', async () => {
+      const slidingUser = randomUUID(), other = randomUUID(), authKey = `auth-fixture:${randomUUID()}`
+      await pool.query('INSERT INTO "rateLimit" (id,key,count,"lastRequest") VALUES ($1,$2,7,1)', [randomUUID(),authKey])
+      assert.equal(await consumeWebRate(pool, slidingUser, 200_000, 2), true)
+      assert.equal(await consumeWebRate(pool, slidingUser, 200_001, 2), true)
+      assert.equal(await consumeWebRate(pool, other, 200_000, 1), true)
+      assert.equal(await consumeWebRate(pool, slidingUser, 259_999, 2), false)
+      assert.equal(await consumeWebRate(pool, slidingUser, 260_000, 2), true)
+      assert.equal(await consumeWebRate(pool, slidingUser, 260_000, 2), false)
+      assert.equal(await consumeWebRate(pool, slidingUser, 260_001, 2), true)
+      assert.deepEqual((await pool.query('SELECT count,"lastRequest"::int AS last FROM "rateLimit" WHERE key=$1', [authKey])).rows,
+        [{ count: 7, last: 1 }])
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM "rateLimit" WHERE key LIKE $1', [`${prefix(other)}%`])).rows[0].n, 1)
+      assert.equal((await pool.query('SELECT count(*)::int AS n FROM "rateLimit" WHERE key LIKE $1', [`${prefix(slidingUser)}%`])).rows[0].n, 2)
+    })
+    await t.test('a lock waiter reads a fresh snapshot after a competing worker commits the last slot', async () => {
+      const lockedUser = randomUUID(), held = await pool.connect(), observer = await pool.connect()
+      let waiting: Promise<boolean> | undefined
+      try {
+        const { rows: [{ pid }] } = await observer.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+        await held.query('BEGIN')
+        await held.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [prefix(lockedUser)])
+        waiting = consumeWebRate({ connect: async () => observer }, lockedUser, 300_000, 1)
+        const deadline = Date.now() + 5000
+        for (;;) {
+          const { rows: [row] } = await admin.query(`SELECT EXISTS(SELECT 1 FROM pg_locks
+            WHERE pid=$1 AND locktype='advisory' AND NOT granted) AS waiting`, [pid])
+          if (row.waiting) break
+          assert.ok(Date.now() < deadline, 'the real PostgreSQL contender must reach the advisory lock')
+          await delay(2)
+        }
+        const id = randomUUID()
+        await held.query('INSERT INTO "rateLimit" (id,key,count,"lastRequest") VALUES ($1,$2,1,$3)', [id,`${prefix(lockedUser)}${id}`,300_000])
+        await held.query('COMMIT')
+        assert.equal(await waiting, false)
+      } finally {
+        await held.query('ROLLBACK')
+        held.release()
+        if (!waiting) observer.release()
+        else await waiting
+      }
+    })
     await pool.query('ALTER TABLE "rateLimit" RENAME TO unavailable_rate_fixture')
     const denied = await createWebService().search('database unavailable', {userId:`new-${randomUUID()}`,caller:'bot'})
     assert.equal(denied.ok, false)

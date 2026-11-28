@@ -10,7 +10,11 @@ const stub = (path: string, namedExports: Record<string, unknown>) => mock.modul
 stub('../../../../lib/db/index.ts', { pool: {} })
 stub('../../../../lib/factory/runtime.ts', { factoryLifecycleEnabled: () => true })
 stub('../../../../lib/reconcile-due.ts', { reconcileDue: async () => { ran.push('check'); return due } })
-stub('../../../../lib/coordinator/wake.ts', { retryCoordinatorWakes: async () => { ran.push('wakes'); if (wakesThrow) throw new Error('private database text'); return { due: 1 } } })
+let wakeBatch: unknown = 'unset'
+stub('../../../../lib/coordinator/wake.ts', { retryCoordinatorWakes: async () => {
+  ran.push('wakes'); wakeBatch = (await import('../../../../lib/abuse/context.ts')).decisionBatchCache.getStore()
+  if (wakesThrow) throw new Error('private database text'); return { due: 1 }
+} })
 stub('../../../../lib/schedules/runtime.ts', { sweepSchedules: async () => { ran.push('schedules'); return { executed: 1 } } })
 stub('../../../../lib/run-recovery.ts', { recoverRuns: async (groupTurns: (work: () => Promise<unknown>) => unknown) => { ran.push('recovery'); groupTurns(async () => {}); return { owners: 1 } } })
 stub('../../../../lib/account/deletion-jobs.ts', { sweepAccountDeletions: async () => { ran.push('deletions'); return { scanned: 1, completed: 1, pending: 0 } } })
@@ -67,6 +71,12 @@ test('each job with lost work runs, and its due timer is re-armed', async () => 
   due = { wakes: false, schedules: false, recovery: false, deletions: false, audit: false, pushReceipts: false, workspaceEphemera: false, writeReceipts: true }
   await call()
   assert.deepEqual(ran, ['check', 'writeReceipts'])
+})
+
+test('due wakes share one decision batch, so their admission and payer reads are not repeated per event', async () => {
+  due = { wakes: true, schedules: false, recovery: false, deletions: false, audit: false, pushReceipts: false, workspaceEphemera: false, writeReceipts: false }
+  assert.equal((await call()).status, 200)
+  assert.ok(wakeBatch instanceof Map, 'retryCoordinatorWakes runs inside decisionBatchCache')
 })
 
 test('a failure answers a bounded error without its text', async () => {

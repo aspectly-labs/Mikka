@@ -409,6 +409,16 @@ it (`pipeline_daemon_latest_behind`); promote the daemon to `latest` first. This
 or manual (the selector reads the declaration at the start of a line in the
 candidate commit and ignores comments).
 
+### Cloud Services staging and promotion
+
+Dispatch `cloud-services-stage` with the reviewed `cloud_source_sha` and the
+original qualification run, attempt, and artifact. Once staging passes, any
+listed promoter can dispatch `cloud-services-promote` with the same inputs,
+the successful stage's run ID in `pipeline_run`, and its attempt in
+`cloud_stage_attempt`. Promotion checks the staging receipt against the active
+staging deployment and requires the candidate to contain the production
+baseline. Use `cloud-services-production` only during a production incident.
+
 ### Break-glass phases that bypass the staging evidence
 
 These `cloudflare-app-deploy.yml` `deploy-application` phases still write
@@ -420,8 +430,7 @@ so they stay **owner-only** (Alex, 2026-11-27), and so do `eve-retire` (stops
 production Eve hosts) and `gateway-observe` (runs funded model acceptance and
 chains the E2B runtime release): the job `if` and the private operator require
 `alexj11324` as both actor and re-run actor (`BREAK_GLASS_PHASES` in
-`scripts/release/release-policy.mjs`). Agents promote only through
-`pipeline-promote`. The remaining manual phases (`stage-*`, `gateway-prepare`,
+`scripts/release/release-policy.mjs`). Agents promote through `pipeline-promote` or `cloud-services-promote`. The remaining manual phases (`stage-*`, `gateway-prepare`,
 `service-stage`, `cloud-services-stage`, `pipeline-stage`, `pipeline-rollback`)
 need any promoter, on a reviewed operations commit.
 `gateway-observe` and `service-production` still chain the E2B runtime release

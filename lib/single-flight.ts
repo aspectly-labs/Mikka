@@ -19,16 +19,21 @@ import { inDatabaseTransaction } from './db/request-scope'
  * The shared value is the same object for every joiner: callers must not mutate it.
  */
 const flights = new Map<string, Promise<unknown>>()
+const scopedFlights = new WeakMap<object, Map<string, Promise<unknown>>>()
 let joined = 0
 let measuringWithout = false
 
-export function singleFlight<T>(parts: readonly (string | number | boolean | null | undefined)[], read: () => Promise<T>): Promise<T> {
+export function singleFlight<T>(parts: readonly (string | number | boolean | null | undefined)[], read: () => Promise<T>, scope?: object): Promise<T> {
   if (measuringWithout || inDatabaseTransaction()) return read()
+  // A request-routed database must supply its physical identity, never the
+  // shared proxy. An in-flight read cannot cross database boundaries.
+  let pending = scope ? scopedFlights.get(scope) : flights
+  if (!pending) { pending = new Map(); scopedFlights.set(scope!, pending) }
   const key = JSON.stringify(parts)
-  const current = flights.get(key)
+  const current = pending.get(key)
   if (current) { joined++; return current as Promise<T> }
-  const flight = read().finally(() => { if (flights.get(key) === flight) flights.delete(key) })
-  flights.set(key, flight)
+  const flight = read().finally(() => { if (pending.get(key) === flight) pending.delete(key) })
+  pending.set(key, flight)
   return flight
 }
 

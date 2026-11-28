@@ -15,6 +15,7 @@ import { RunContextPropagator } from './context'
 import { RetainingSpanProcessor, RunSampler } from './sampling'
 import { createLogProvider, StageLogProcessor } from './logs'
 import { flushTelemetry, registerTelemetryFlush } from './flush'
+import { HttpClientTracing } from './http-client'
 import type { Logger } from '@opentelemetry/api-logs'
 
 // Node-runtime tracing, started by instrumentation.ts (docs/operations/tracing.md).
@@ -70,9 +71,9 @@ class FlushOnRootEnd implements SpanProcessor {
   shutdown(): Promise<void> { return Promise.resolve() }
 }
 
-export type ProviderOptions = { exporter: SpanExporter; sampleRate: number; environment: TraceEnvironment; version?: string; logger?: Logger; serverless?: boolean; batch?: { scheduledDelayMillis?: number } }
+export type ProviderOptions = { exporter: SpanExporter; sampleRate: number; environment: TraceEnvironment; version?: string; logger?: Logger; serverless?: boolean; httpClientTracing?: boolean; batch?: { scheduledDelayMillis?: number } }
 
-export function createTracerProvider({ exporter, sampleRate, environment, version, logger, serverless = envExact('VERCEL', '1'), batch }: ProviderOptions): NodeTracerProvider {
+export function createTracerProvider({ exporter, sampleRate, environment, version, logger, serverless = envExact('VERCEL', '1'), httpClientTracing = false, batch }: ProviderOptions): NodeTracerProvider {
   const batcher = new BatchSpanProcessor(exporter, { maxQueueSize: 2048, maxExportBatchSize: 512, scheduledDelayMillis: batch?.scheduledDelayMillis ?? 5_000, exportTimeoutMillis: 10_000 })
   return new NodeTracerProvider({
     resource: resourceFromAttributes({
@@ -86,7 +87,7 @@ export function createTracerProvider({ exporter, sampleRate, environment, versio
     // promotion, so APM and native Logs describe the same sampling decision.
     // The SDK batch flush drains queued spans, but not an export its timer
     // already started. Keep that transport in waitUntil as well.
-    spanProcessors: [new RouteAttributesProcessor(), new RetainingSpanProcessor(logger ? new StageLogProcessor(logger, batcher) : batcher), new FlushOnRootEnd(async () => { await Promise.allSettled([batcher.forceFlush().finally(() => exporter.forceFlush?.()), flushTelemetry()]) }, serverless)],
+    spanProcessors: [...(httpClientTracing ? [new HttpClientTracing()] : []), new RouteAttributesProcessor(), new RetainingSpanProcessor(logger ? new StageLogProcessor(logger, batcher) : batcher), new FlushOnRootEnd(async () => { await Promise.allSettled([batcher.forceFlush().finally(() => exporter.forceFlush?.()), flushTelemetry()]) }, serverless)],
   })
 }
 
@@ -118,7 +119,7 @@ export function startTracing(env: Readonly<Record<string, string | undefined>> =
   const exporter = new SafeExporter(new OTLPTraceExporter({ url: settings.endpoint, headers: { Authorization: `Bearer ${settings.token}` }, timeoutMillis: 5_000 }))
   const logs = createLogProvider(settings)
   registerTelemetryFlush(() => logs.forceFlush({ timeoutMillis: 10_000 }))
-  const provider = createTracerProvider({ exporter, sampleRate: settings.sampleRate, environment: settings.environment, version: settings.version, logger: logs.getLogger('mikka.run'), serverless: env.VERCEL === '1' })
+  const provider = createTracerProvider({ exporter, sampleRate: settings.sampleRate, environment: settings.environment, version: settings.version, logger: logs.getLogger('mikka.run'), serverless: env.VERCEL === '1', httpClientTracing: true })
   provider.register({ propagator: new CompositePropagator({ propagators: [new W3CTraceContextPropagator(), new RunContextPropagator()] }) })
   registerInstrumentations({ tracerProvider: provider, instrumentations: [createPgInstrumentation()] })
   return (global[started] = provider)
