@@ -79,9 +79,13 @@ selection with `pipeline_rerun_erased_receipt_requires_recovery` until the
 reviewed `stage-all` bootstrap resets the staging baseline, as for an expired
 receipt.
 
-Selection takes the baseline from the writing attempt that started last, not the
-run created last, so a re-run that deployed after a later rollback is the
-baseline; a run that failed before its first write sets no baseline.
+Selection compares the actual Deploy-step start and completion times. Run
+creation and start timestamps include concurrency waiting and do not establish
+writer order. A completed step is older only when it ended strictly before the
+selected writer began; equal, overlapping, missing or invalid intervals stop
+selection. Every remaining completed run stays eligible, including reruns of
+older runs. A proven pre-write failure sets no baseline. The original archive,
+provenance and provider readback requirements still apply independently.
 
 ## Production activation
 
