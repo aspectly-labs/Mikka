@@ -88,6 +88,9 @@ export const INSIGHTS = [
   { key: 'http-status-weight-coverage', shortId: 'qGzT7dJq', name: '24h HTTP 状态与权重覆盖 · 版本/路由诊断', tags: ['operations', 'tracing', 'issue-3427'], tile: { h: 6, w: 12, x: 0, y: 53 },
     description: '按方法、路由和版本显示实际 HTTP 5xx 与采样估计。未知状态、无效权重或重复 span 时不计算估计比例；仅诊断，非正式 SLO。',
     query: { ...hogql(sql('http-status-weight-coverage'), { dateFrom: '-24h', display: 'ActionsTable' }), tableSettings: { pinnedColumns: ['method', 'route'] } } },
+  { key: 'decision-diagnostic', shortId: 'Y6cS92ek', name: 'LiteLLM Decision · 小流量错误与覆盖诊断', tags: ['operations', 'tracing', 'issue-3427'], tile: { h: 5, w: 12, x: 0, y: 59 },
+    description: '按 UTC 自然小时展示生产 Decision span。至少 3 个唯一、全量且终态已知的 span 才评估候选异常，非成功比例须超过 20%。provider_errors 统计 error 终态，具体原因从 APM 核对。生产告警按滚动一小时评估。',
+    query: { ...hogql(sql('decision-diagnostic'), { dateFrom: '-7d', display: 'ActionsTable' }), tableSettings: { pinnedColumns: ['hour_utc'] } } },
   // Alert-only insights: not on this dashboard (the heartbeat sits on the monitoring dashboard).
   { key: 'heartbeat', shortId: 'r8wuvlUx', name: 'Mikka monitoring heartbeat', tags: ['database-egress', 'operations'],
     description: 'Latest snapshot within one hour must be healthy and contain supplier hour/day fields. Missing or failed collection returns unhealthy.',
