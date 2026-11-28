@@ -145,8 +145,8 @@ export class ExecutionSettings {
     // own authorized view after this barrier in its own request context.
     return results.some(Boolean);
   }
-  async refreshBotModels(scope: ExecutionSettingsScope, connectionId: string, discover?: DiscoverModels, signal = AbortSignal.timeout(8000)) {
-    signal.throwIfAborted();
+  async refreshBotModels(scope: ExecutionSettingsScope, connectionId: string, discover?: DiscoverModels, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     if (!z.uuid().safeParse(connectionId).success) throw new ActionFailureError("executionAccountUnavailable");
     const connection = (await this.pool.query(
       `SELECT id,epoch,provider,"workspaceId" FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND state='connected' AND paused=false AND "removedAt" IS NULL`,
@@ -158,7 +158,8 @@ export class ExecutionSettings {
         kind: SpanKind.CLIENT, attributes: { 'mikka.catalogue.provider': connection.provider === 'codex' ? 'codex' : 'claude', 'mikka.catalogue.refresh_count': 1 },
       }, async span => {
         try {
-          return await abortable(() => (discover ?? (async (ownerId, id, signal) => (await import("./subscription-runtime")).subscriptionRuntime().models(ownerId, id, signal)))(scope.ownerId, connectionId, signal), signal);
+          const readModels = () => (discover ?? (async (ownerId, id, signal) => (await import("./subscription-runtime")).subscriptionRuntime().models(ownerId, id, signal)))(scope.ownerId, connectionId, signal);
+          return signal ? await abortable(readModels, signal) : await readModels();
         } catch (error) {
           span.setAttributes(safeErrorAttributes(error));
           span.setStatus({ code: SpanStatusCode.ERROR });
@@ -166,17 +167,17 @@ export class ExecutionSettings {
         } finally { span.end(); }
       });
     } catch (error) { throw Object.assign(new ActionFailureError("executionAccountUnavailable"), { cause: error }); }
-    signal.throwIfAborted();
+    signal?.throwIfAborted();
     const unique = [...new Map(models.map(model => [model.id, model])).values()];
     const route = connection.provider === 'codex' ? 'codex_cpa' : 'claude_cpa';
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      signal.throwIfAborted();
+      signal?.throwIfAborted();
       const current = await client.query(`SELECT id,"modelSettings" FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND epoch=$3 AND state='connected' AND paused=false AND "removedAt" IS NULL FOR UPDATE`, [connectionId,scope.ownerId,connection.epoch]);
       if (!current.rowCount) throw new ActionFailureError("executionAccountUnavailable");
       for (const model of unique) {
-        signal.throwIfAborted();
+        signal?.throwIfAborted();
         if (!z.string().trim().min(1).max(128).safeParse(model.id).success) throw new ActionFailureError("executionModelUnknown");
         // Account-level catalogue: the id leaves out the workspace, and the row keeps the connection's own workspace.
         const hash = createHash('sha256').update(JSON.stringify([scope.ownerId,connectionId,connection.epoch,model.id])).digest('hex');
@@ -207,9 +208,9 @@ export class ExecutionSettings {
         // The seat's Daybreak access: each model's tiers its catalogue offers (Capy's per-seat `DaybreakAccess`).
         ...(unique.some(model => model.daybreak?.length) ? { daybreakSupport: Object.fromEntries(unique.filter(model => model.daybreak?.length).map(model => [model.id, model.daybreak])) } : {}),
       };
-      signal.throwIfAborted();
+      signal?.throwIfAborted();
       await client.query(`UPDATE byos_connections SET "modelCatalog"=$2::jsonb,"modelSettings"=$3::jsonb WHERE id=$1`, [connectionId, JSON.stringify(catalogPayload), JSON.stringify({ ...reconcileSubscriptionModels(unique.map(model => model.id), current.rows[0].modelSettings as ModelSettings | null), refreshedAt: new Date().toISOString() })]);
-      signal.throwIfAborted();
+      signal?.throwIfAborted();
       await client.query('COMMIT');
     } catch(error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
     const options = (await this.botModels(scope)).filter(row => row.connectionId === connectionId && unique.some(model => model.id === row.modelId));

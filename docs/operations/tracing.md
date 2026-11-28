@@ -57,11 +57,12 @@ authorized view. There is no result cache or polling loop.
 
 The `subscription.models` client span records the closed provider name in
 `mikka.catalogue.provider`, one `mikka.catalogue.refresh_count`, and safe error
-names/codes. The existing eight-second budget now cancels actual discovery;
-late replies cannot update the catalogue after timeout or credential revocation.
-The native worker retains its existing bounded shutdown/credential-persistence
-behavior. No account labels, model lists, URLs or provider response contents are
-exported.
+names/codes. Automatic catalogue reads and budgeted menu refreshes now pass
+their existing deadline to actual discovery; late replies cannot update the
+catalogue after timeout or credential revocation. Direct manual refreshes add
+no menu deadline and retain the native worker's existing bounded lifetime,
+shutdown and credential-persistence behavior. No account labels, model lists,
+URLs or provider response contents are exported.
 
 HTTP response timing separates readiness from connection lifetime.
 `mikka.http.response_headers_ms` measures entry to the response headers being

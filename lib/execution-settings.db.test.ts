@@ -329,6 +329,20 @@ test(
           assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog, legacyCatalogue);
         } finally { await provider.close(); await pending; }
       });
+      await t.test("direct manual refresh keeps the worker deadline instead of adding a menu deadline", async () => {
+        const provider = await catalogueProvider();
+        const pending = settings.refreshBotModels(alice, connection, provider.discover);
+        try {
+          await beforeDeadline(provider.received, "manual refresh never reached the provider");
+          assert.equal(provider.calls[0].signal, undefined, "only an explicit caller budget may add the menu deadline");
+          provider.reply([{ id: "provider-model" }, { id: "second-provider-model" }]);
+          assert.deepEqual((await pending).map(row => row.modelId).sort(), legacyCatalogue.models);
+          assert.equal((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1', [connection])).rows[0].modelCatalog.priorityVersion, 1);
+        } finally {
+          await provider.close(); await Promise.allSettled([pending]);
+          await pool.query('UPDATE byos_connections SET "modelCatalog"=$2::jsonb WHERE id=$1', [connection, JSON.stringify(legacyCatalogue)]);
+        }
+      });
       await t.test("concurrent catalogue reads share one discovery and reread their authorized view", async () => {
         const provider = await catalogueProvider();
         const reads = Array.from({ length: 3 }, () => new ExecutionSettings(pool).ensureCatalogues(alice, 8000, provider.discover, { codexPriority: true }));
