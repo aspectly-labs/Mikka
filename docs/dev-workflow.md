@@ -14,6 +14,8 @@ in the session's own cloud Linux container. A pull request can be opened at
 any time, and opening one never waits for, or stops, local building and
 verification.
 
+Prefer an existing authorized cloud Linux environment. If using Docker Cloud Sandbox for engineering, **start at Medium** and move to Large only on demonstrated need; do not start at Small. Follow the [cross-repo sizing and cleanup standard](engineering/HANDBOOK.md#local-first-development-discipline).
+
 CI is the final gate, not the place to find out whether something works.
 **Development loop:** reproduce the failure on the actual local API, CLI,
 daemon or UI, run focused checks red→green, then build and verify the affected

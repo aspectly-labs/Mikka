@@ -145,6 +145,7 @@ Enforce quality mechanically on every pull request so defects never depend on re
 ### Local-first development discipline
 
 - Develop, build, typecheck, and run isolated PostgreSQL 17 / API / daemon tests inside cloud Linux (`pnpm local:plan`, `pnpm local:check --test=SCRIPT`, `pnpm local:ready`).
+- **Engineering Docker Cloud Sandbox sizing** ([decision](../design/decisions/2026-11-28-2021-docker-engineering-medium-default.md)): Across all three repositories, prefer an existing authorized cloud Linux environment that meets the task's requirements. When Docker Cloud Sandbox (Docker Agentic Platform) is needed, reuse an available released **Medium** sandbox as the default starting tier; do not start on Small or require a Small failure first. Use **Large** only when measured resource or capability limitations of Medium prevent the required work. Prefer reuse, stop the sandbox when work finishes, and verify its stopped state. Keep existing authorization, budget, isolation and local-first acceptance rules. This is an engineering environment rule, not a change to product task-machine sizes, customer cloud computers, or Cloudflare CI/production instance profiles.
 - **Do not run dev servers, databases, `pnpm build`, or `pnpm typecheck` on the developer's Mac.** Small source-only `node --test` unit and policy checks may run locally without a server.
 - Keep shell commands non-interactive (`-y`, `--force`, `DEBIAN_FRONTEND=noninteractive`). Never commit or print secret values in terminal logs, screenshots, or PR bodies.
 
