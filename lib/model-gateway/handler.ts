@@ -15,6 +15,7 @@ import { readRunChain } from '@/lib/run-chain'
 import { claimSubscriptionUsage, finishSubscriptionUsage, recordExternalModelUsage, type ModelReceipt } from './ledger'
 import { modelGatewayProtocolBody } from './protocol-fields.mjs'
 import { liteLLMResponseCost } from './litellm-client'
+import { observeUsageStream, usageTap } from './usage-tap'
 import { WorkerRefusal } from '../../packages/daemon/src/subscription-worker-client'
 
 /** The same input-size boundary the hosted model applies to one call. */
@@ -48,42 +49,6 @@ function errorResponse(protocol: GatewayProtocol, status: number, code: string):
     ? { type: 'error', error: { type: status === 401 ? 'authentication_error' : status === 402 ? 'billing_error' : status === 403 ? 'permission_error' : status === 413 ? 'request_too_large' : status === 429 ? 'rate_limit_error' : status === 400 ? 'invalid_request_error' : 'api_error', message: code } }
     : { error: { message: code, type: status === 402 ? 'insufficient_quota' : status === 401 ? 'invalid_api_key' : status === 429 ? 'rate_limit_error' : status >= 500 ? 'server_error' : 'invalid_request_error', code } }
   return Response.json(body, { status, headers: { 'cache-control': 'no-store' } })
-}
-
-/**
- * Collects the lines that report usage as the response streams through, so the
- * whole body is never held in memory.
- */
-function usageTap(streaming: boolean, onDone: (text: string, complete: boolean) => Promise<void>, nativeProtocol?: GatewayProtocol) {
-  const decoder = new TextDecoder()
-  let partial = '', kept = '', closed = false, terminal = false
-  const keep = (line: string) => {
-    if (kept.length < MAX_BODY_BYTES && (!streaming || line.includes('usage') || line.includes('message_start') || line.includes('response.created'))) kept += line + '\n'
-    if (nativeProtocol && line.startsWith('data:') && /"(?:message_stop|response\.completed|response\.incomplete)"/.test(line)) {
-      try {
-        const { type } = JSON.parse(line.slice(5))
-        terminal ||= nativeProtocol === 'anthropic' ? type === 'message_stop' : type === 'response.completed' || type === 'response.incomplete'
-      } catch { /* An incomplete event cannot attest completion. */ }
-    }
-  }
-  const finish = async (flushed = false) => {
-    if (closed) return
-    closed = true
-    keep(partial)
-    await onDone(kept, flushed && (!streaming || terminal))
-  }
-  return {
-    finish,
-    stream: new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        controller.enqueue(chunk)
-        const lines = (partial + decoder.decode(chunk, { stream: true })).split('\n')
-        partial = lines.pop() ?? ''
-        for (const line of lines) keep(line)
-      },
-      async flush() { await finish(true) },
-    }),
-  }
 }
 
 /**
@@ -188,6 +153,7 @@ export async function handleModelGateway(request: Request, protocol: GatewayProt
       await dependencies.recordExternal?.(grant, holdId, { ...receipt, cost, generationId })
     }
   }, nativeReceipt ? protocol : undefined)
+  if (nativeReceipt) return new Response(observeUsageStream(response.body, tap, request.signal), { status: response.status, headers })
   // A client that stops reading still owes what the provider already produced.
   request.signal.addEventListener('abort', () => { void tap.finish() }, { once: true })
   return new Response(response.body.pipeThrough(tap.stream), { status: response.status, headers })

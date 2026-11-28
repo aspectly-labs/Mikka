@@ -11,6 +11,7 @@ Cloud execution authority stays on the task's machine ([2026-11-06-1800](../desi
 - **One task per E2B VM:** Official Claude Code and Codex CLIs keep their ordinary `HOME`, environment, and Git configuration. Deliver the short-lived Mikka model gateway token and any authorized GitHub credential needed by the run.
 - **No control-plane execution proxies:** Do not reintroduce shadow Git, isolated CLI `HOME` directories, or per-tool control-plane authorization proxies.
 - **Model egress** uses LiteLLM for BYOK and Managed Model requests. Official Claude Code and Codex subscriptions use the independent CPA worker. Native Threads authenticate with the run-bound gateway token. [Subscription inference decision](../design/decisions/2026-11-27-2304-official-subscription-cpa-egress.md)
+- API and Eve releases bundle the compatible CPA executable. Roll back the application and its worker as one release. Install the matching executable before selecting a custom worker path.
 - **Protected third-party Secrets:** Do not inject unrelated user, workspace, or repository third-party API Secrets into Agent-readable environment variables or files. Protected Secrets use run-scoped sealed grants and non-readable egress/tool handling where supported; explicit direct delivery stays compatibility-only for existing env-dependent SDKs.
 - **Revocation and local daemon boundaries:** Revocation pushes stop and reclaim affected VMs while natural token renewal runs in the background. Local daemon safeguards preserve unrelated files on the host machine.
 

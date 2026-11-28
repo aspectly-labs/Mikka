@@ -142,6 +142,37 @@ test('native subscription reserves one correlated usage receipt and settles only
   }
 })
 
+for (const interruption of ['cancel', 'upstream error'] as const) test(`native subscription keeps partial usage on ${interruption}`, async () => {
+  const selected = grant({ source: { kind: 'subscription', deviceId: 'fixture-device' } })
+  let upstream!: ReadableStreamDefaultController<Uint8Array>
+  let cancelled = false
+  const frames = new TextEncoder().encode(sse([{ type: 'message_start', message: { id: 'fixture-message', usage: { input_tokens: 7, output_tokens: 0 } } }]))
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { upstream = controller; controller.enqueue(frames) },
+    cancel() { cancelled = true },
+  })
+  const receipts: unknown[] = []
+  const { dependencies } = harness({
+    verify: async () => selected,
+    subscription: async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
+    beginSubscriptionReceipt: async () => async (receipt, complete) => { receipts.push({ receipt, complete }) },
+  })
+  const response = await handleModelGateway(post({ model: 'untrusted', stream: true }), 'anthropic', 'messages', dependencies)
+  const reader = response.body!.getReader()
+  await reader.read()
+  if (interruption === 'cancel') {
+    await reader.cancel()
+    assert.equal(cancelled, true)
+  } else {
+    upstream.error(new Error('fixture stream interrupted'))
+    await assert.rejects(reader.read(), /fixture stream interrupted/)
+  }
+  reader.releaseLock()
+  assert.deepEqual(receipts, [{ receipt: { messageId: 'fixture-message', cost: null, usage: {
+    inputTokens: 7, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+  } }, complete: false }])
+})
+
 test('Mikka 额度: the gateway holds credit, streams the answer through, then settles at list price', async () => {
   const { calls, dependencies } = harness()
   const response = await handleModelGateway(post({ model: 'whatever', stream: true, messages: [] }), 'anthropic', 'messages', dependencies)
