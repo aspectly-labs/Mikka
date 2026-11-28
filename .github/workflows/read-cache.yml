@@ -1,31 +1,7 @@
 name: Read cache API acceptance
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-    paths:
-      - 'apps/api/**'
-      - 'apps/frontend/**'
-      - 'lib/browser-rpc/**'
-      - 'scripts/start-app*'
-      - 'scripts/acceptance/read-action-transport.mjs'
-      - '.github/workflows/read-cache.yml'
-      - 'scripts/acceptance/read-cache*.mjs'
-      - 'scripts/acceptance/run-read-cache*.mjs'
-      - 'scripts/test-accounts/**'
-      - 'lib/swr/**'
-      - 'lib/coordinator/chat-read-client*'
-      - 'lib/settings-read.ts'
-      - 'app/actions/coordinator.ts'
-      - 'app/actions/issues.ts'
-      - 'app/actions/task-runs.ts'
-      - 'app/api/settings/**'
-      - 'components/authenticated-read-cache.tsx'
-      - 'components/swr-defaults.tsx'
-      - 'components/workspace/task-detail.tsx'
-      - 'hooks/use-live-lists.ts'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
+  workflow_call:
 
 permissions:
   contents: read
@@ -36,8 +12,6 @@ concurrency:
 
 jobs:
   read-cache:
-    # Draft-only work is exercised locally; ready_for_review runs CI.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: Read cache API and CLI
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -63,7 +37,7 @@ jobs:
       MIKKA_DATABASE_URL: postgresql://e2e:e2e-local-only@127.0.0.1:5432/mikka_e2e
       DATABASE_URL: postgresql://e2e:e2e-local-only@127.0.0.1:5432/mikka_e2e
       MIKKA_TEST_DB_PORT: '5432'
-      # NextRequest canonicalizes loopback IPs to localhost; bind that exact origin.
+      # The routes check this exact origin (scripts/acceptance/run-read-cache.test.mjs); bind localhost.
       BETTER_AUTH_URL: http://localhost:3137
       E2E_BASE_URL: http://localhost:3137
       MIKKA_TEST_DEPLOYMENT_SHA: ${{ github.sha }}
@@ -93,7 +67,7 @@ jobs:
       - name: Bind the isolated database and application to this checkout
         run: node scripts/test-accounts/bootstrap.mjs --output .cache/e2e/environment.json
       - name: Build this isolated application for production-mode acceptance
-        run: pnpm build:app --public-test-fixture
+        run: pnpm build:app
       - name: Accept real incremental Server Actions and Settings GET
         run: node scripts/acceptance/run-read-cache.mjs
       - name: Check the public evidence for authentication material

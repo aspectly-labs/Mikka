@@ -9,8 +9,10 @@ import { samplePoolTransport } from './transport-sample'
 import { manageDatabasePool } from './pool-lifecycle'
 import { COMMIT_EXECUTOR, observePoolCommits } from './commit-effects'
 import { withIndependentTransactionBoundary } from './transaction-boundary'
+import { isProductionEnv } from '@/lib/env/public'
+import { readEnv, runtimeEnv } from '@/lib/env/server'
 
-const defaultConnectionString = mikkaDatabaseURL(process.env)
+const defaultConnectionString = mikkaDatabaseURL(runtimeEnv())
 
 function createPool(connectionString = defaultConnectionString, scope: 'default' | 'request' = 'default') {
   const pool = manageDatabasePool(new Pool({ connectionString, max: 5, connectionTimeoutMillis: 10000, idleTimeoutMillis: 20000 }))
@@ -25,9 +27,9 @@ function createDatabase(client: Pool) {
 }
 
 const globalDb = globalThis as unknown as { mikkaPool?: Pool }
-const defaultPool = process.env.VERCEL_ENV === 'preview' ? createPool() : globalDb.mikkaPool ?? createPool()
+const defaultPool = readEnv('VERCEL_ENV') === 'preview' ? createPool() : globalDb.mikkaPool ?? createPool()
 observePoolCommits(defaultPool)
-if (process.env.NODE_ENV !== 'production' && process.env.VERCEL_ENV !== 'preview') globalDb.mikkaPool = defaultPool
+if (!isProductionEnv() && readEnv('VERCEL_ENV') !== 'preview') globalDb.mikkaPool = defaultPool
 const defaultDatabase = createDatabase(defaultPool)
 const requestDatabase = new AsyncLocalStorage<{ pool: Pool; db: typeof defaultDatabase }>()
 type Transaction = Parameters<Parameters<typeof defaultDatabase.transaction>[0]>[0]

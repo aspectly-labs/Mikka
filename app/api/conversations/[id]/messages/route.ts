@@ -1,5 +1,22 @@
 import { respondGroup } from '@/lib/group-conversations-route'
+import { defineRoute } from '@/lib/primitives/define-route'
 export const maxDuration = 300
-type Context = { params: Promise<{ id: string }> }
-export async function GET(request: Request, { params }: Context) { return respondGroup(request, 'messages', (await params).id) }
-export async function POST(request: Request, { params }: Context) { return respondGroup(request, 'messages', (await params).id) }
+
+export const GET = defineRoute<'session', 'pat-scoped', { id: string }>(
+  {
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  ({ request, params }) => respondGroup(request, 'messages', params.id),
+)
+
+export const POST = defineRoute<'session', 'pat-scoped', { id: string }>(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    write: true,
+  },
+  ({ request, params }) => respondGroup(request, 'messages', params.id),
+)

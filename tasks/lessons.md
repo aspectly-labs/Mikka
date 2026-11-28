@@ -212,7 +212,7 @@ cp -R "$SRC/Default/Local Storage" "$DST/Default/"
   1. 一个 server action / 一列字段 / 只读聚合 → 直接实现，设计里画成可用。
   2. 不可逆或级联（删账户、删工作区、删团队、移除成员）、需要新子系统（计费、导出+邮件、文件存储） → 「即将推出」，并写清缺什么。
   3. 拿不准 → 先查表结构和调用方，再归档，不凭名字猜。
-- 同时：中文文案的「请」不能机械删除，要看旁边有没有按钮承担动作（见 docs/design/copy.md C-04）。
+- 同时：中文文案的「请」不能机械删除，要看旁边有没有按钮承担动作（见 mikka-hosted-ui/docs/design/copy.md C-04）。
 
 ## 2026-10-31 产品自身的运行依赖不能甩给用户
 
@@ -582,3 +582,27 @@ cp -R "$SRC/Default/Local Storage" "$DST/Default/"
   3. 拦 AI 爬虫要区分训练 UA 和检索 UA：OpenAI（GPTBot / OAI-SearchBot）、
      Anthropic（ClaudeBot / Claude-SearchBot / Claude-User）都有两套，拦前者无损；
      **Perplexity 只有一个索引爬虫 PerplexityBot**，拦掉等于退出它的检索面。
+
+## 2026-11-19 设计稿里的引用 / chip 不能凭印象画
+- 错误：inline chip 画成灰底药丸，把 Claude Code 当成可 @ 的对象，还编了一个 Skill chip（snapshot-update）。用户连续纠正三次。
+- 根因：没先看对标产品里这个控件的实际做法就动手；也没核对 Mikka 的名词——Bot 是用户建的派发者，Claude Code / Codex 是 Agent（见 messages/en.json "agentRequired"）。
+- 规则：
+  1. 画任何对标控件前，先找到对标产品里对应的组件（做法见 mikka-hosted-ui `docs/tasks/lessons-capy.md`），读清类型、样式、交互，再画。
+  2. 例句里只出现 Mikka 真实存在的对象：文件 / 任务 / PR / thread / Bot。Agent 不可提及。
+  3. 新增的状态不要放在会被相邻 section 盖住的位置；画完截整节确认可见。
+
+## 2026-11-20 模型调用只许走 LiteLLM；对用户的选项也要用中文
+
+- 规则（Alex）：LiteLLM 建好之后，所有模型调用都必须经后台的 LiteLLM，任何绕开它的方式都不允许。换模型时不要在代码里写死模型 ID，也不要直连 Vercel AI Gateway 或厂商，哪怕仓库里已经有同样写死的先例（`WRITE_PLANNING_MODEL`）。先例不等于合规，要先查规则。迁移由 alexj11324/Mikka#2869 跟进。
+- 用户说"走 Vercel 网关"时，先确认这条路是不是经过 LiteLLM，再动手；不确定就先问，不要按字面直连。
+- AskUserQuestion 的问题和选项也算"对话"，必须用简体中文。
+
+## 2026-11-19 · Figma 对照稿
+- 画 Mikka 设计稿前，先去「Mikka 三栏布局草图 v0」（zPe5LKycb2XuT1ivCLRw07）找现有约定和已接入的 shadcn 库，不要新建文件、自建组件。`get_libraries` 显示为空不代表没有库：直接 `search_design_system` 搜 "Button - Nova"，就能命中 Obra shadcn/ui kit 与 ReUI shadcn。
+- 抓竞品页面只用内置浏览器，不要切到 chrome-devtools 或别的浏览器。内置浏览器截图的分辨率受面板宽度限制，要高清图就请用户把面板拉宽，不要往页面里注入外部脚本。
+
+## 2026-11-19 · Figma 对照稿要画交互，并以 main 的实际界面为准
+- 用户纠正：只画了一张静态页面，没画右键菜单、筛选、显示设置、状态选择器、新建弹窗等交互状态；sidebar 入口也还是旧稿。
+- 规则：对照 Capy 画任何页面时，先在内置浏览器里把这一页的每个弹出层点一遍、截图（右键、⋯、筛选、显示、新建、二级菜单），再一页一页画 Mikka 版。
+- 规则：画之前先读 main 上的实际实现。侧栏的真实实现在私有层 `.hosted-ui`（capy-sidebar / app-frame），公开仓库的 `components/app-sidebar.tsx` 和 `nav-main.tsx` 已是死代码。文案取 `messages/en.json`。
+- 规则：Figma 里用 `resize()` 改过尺寸的 auto-layout 容器，主轴会被锁成 FIXED，要再设 `primaryAxisSizingMode="AUTO"`，否则内容会被裁掉。

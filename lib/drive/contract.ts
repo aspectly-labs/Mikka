@@ -34,7 +34,7 @@ export function isUlidBody(value: unknown): value is string {
 }
 
 /**
- * The three upper bounds, taken from Capy's Drive as shipped: a tree holds at
+ * The three upper bounds, matching Capy's Drive: a tree holds at
  * most 100 000 entries, a single file is at most 100 MiB, and a file's mode is
  * one of exactly two values. The file limit is the one the sandbox and the
  * upload path both enforce, so keep the two in step by importing this constant.
@@ -271,11 +271,27 @@ export function conflictedDrivePaths(
  * selected team Workspace, independently of each member and Project.
  *
  * The name is `driveScope` and not `scope`: it is the layer a volume sits in,
- * not a Capy "scope" and not Mikka's tenant. `workspace` is deliberately absent
+ * not another product's scope and not Mikka's tenant. `workspace` is deliberately absent
  * for the same reason — that word already means the tenant, and reusing it here
  * would make every later reader guess which one a column holds.
  */
-export const DRIVE_SCOPES = ['user', 'project', 'project-user', 'team-workspace'] as const
+const UUID_SCOPE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+export const DRIVE_SCOPES = ['user', 'project', 'project-user', 'team-workspace', 'bot', 'thread', 'environment'] as const
+/**
+ * The scopes an Agent or a Bot shares through (decision 2026-11-19-2200).
+ * Each one names a uuid (a Bot, a thread's root run, an Environment), has no
+ * person, and stores its bytes in its own `drive-scope:` namespace.
+ */
+export const AGENT_DRIVE_SCOPES = ['bot', 'thread', 'environment'] as const
+export type AgentDriveScope = (typeof AGENT_DRIVE_SCOPES)[number]
+export function isAgentDriveScope(value: unknown): value is AgentDriveScope {
+  return typeof value === 'string' && (AGENT_DRIVE_SCOPES as readonly string[]).includes(value)
+}
+/** The storage owner of an agent-scope volume: never a login, one per scope. */
+export function agentDriveOwner(workspaceId: string, driveScope: AgentDriveScope, scopeId: string): string {
+  return `drive-scope:${workspaceId}:${driveScope}:${scopeId}`
+}
 export type DriveScope = (typeof DRIVE_SCOPES)[number]
 
 export function isDriveScope(value: unknown): value is DriveScope {
@@ -295,6 +311,7 @@ export function driveScopeProblem(driveScope: unknown, scopeId: unknown, scopeUs
   // unique key below collide with the project-wide volume.
   const hasUser = typeof scopeUserId === 'string' && scopeUserId.length > 0
   if (driveScope === 'project-user') return hasUser && scopeUserId.length <= 200 ? null : 'scope_user_required'
+  if (isAgentDriveScope(driveScope) && !UUID_SCOPE_ID.test(scopeId)) return 'scope_id_empty'
   return scopeUserId === null || scopeUserId === undefined ? null : 'scope_user_unexpected'
 }
 

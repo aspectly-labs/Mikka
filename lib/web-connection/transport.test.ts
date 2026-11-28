@@ -44,6 +44,15 @@ test('public discovery never receives ambient authority, and disabling blocks an
   const create = (env = {}) => createWebTransport({ env, authenticate: async () => { throw new Error('must not authenticate') }, scope: (_, work) => work() })
   const prepared = await create()(request('/api/desktop/discovery', { headers: { authorization: bearer, cookie: 'cloud=secret' } }), '/api/desktop/discovery')
   assert.ok(prepared && !(prepared instanceof Response)); assert.equal(prepared.request.headers.has('authorization'), false); assert.equal(prepared.request.headers.has('cookie'), false)
+  for (const [sample, template] of [
+    [`/api/invitations/${'a'.repeat(64)}`, '/api/invitations/[token]'],
+    [`/api/organization-invitations/${'b'.repeat(64)}`, '/api/organization-invitations/[token]'],
+  ] as const) {
+    const preview = await create()(request(sample, { headers: { authorization: bearer, cookie: 'cloud=secret' } }), template)
+    assert.ok(preview && !(preview instanceof Response), template)
+    assert.equal(preview.request.headers.has('authorization'), false)
+    assert.equal(preview.request.headers.has('cookie'), false)
+  }
   const disabled = await create({ MIKKA_OFFICIAL_WEB_ENABLED: '0' })(request('/api/desktop/rpc', { headers: { authorization: bearer } }), '/api/desktop/rpc')
   assert.ok(disabled instanceof Response); assert.equal(disabled.status, 403)
   for (const path of ['/api/auth/sign-out', '/api/cron/reconcile', '/api/web/return', '/api/desktop/exchange', '/api/rpc']) {

@@ -1,6 +1,7 @@
 # Follow official documentation when instructions conflict
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex, this task: “请严格按照官方的文档行事，如果我的指令和官方文档有冲突，依照官方文档进行处理”.
 - Rule: —
 - Replaces: conflicting interpretations of earlier instructions, where an actual official requirement is established.

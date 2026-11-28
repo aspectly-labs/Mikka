@@ -1,7 +1,8 @@
 name: Mikka cloud core compatibility
 
 on:
-  pull_request:
+  push:
+    branches: [main]
     paths:
       - '.github/workflows/self-hosted-production.yml'
       - 'scripts/acceptance/self-hosted-production*.mjs'
@@ -37,7 +38,7 @@ jobs:
     name: Core production API and gateway acceptance
     needs: guards
     if: >-
-      github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' &&
+      (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 15

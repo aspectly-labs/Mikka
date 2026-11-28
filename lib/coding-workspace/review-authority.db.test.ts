@@ -85,6 +85,7 @@ test('task review: current owner, session, tenant and immutable physical checkou
       await client.query('BEGIN')
       await client.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`)
       await client.query(query, values)
+      if (table === 'issues') await client.query('SET CONSTRAINTS issue_label_refs_issue_id_workspace_id_fkey IMMEDIATE')
       await client.query(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`)
       await client.query('COMMIT')
     } finally { await client.query('ROLLBACK'); client.release() }
@@ -732,6 +733,7 @@ test('task review: current owner, session, tenant and immutable physical checkou
   }
   await leaseTest('review resumes only its same parked VM without renewing an execution credential', async () => {
     const f = await parkedFixture(), current = await grant(f)
+    const providerDeadline = Date.now() + 35_000
     let resumed = 0
     await resumeReviewMachine(current.authority, current.lease, undefined, { database: pool, resume: async (target, remaining) => {
       resumed++
@@ -741,6 +743,7 @@ test('task review: current owner, session, tenant and immutable physical checkou
       const intent = (await pool.query('SELECT lifecycle,state FROM thread_machines WHERE "runId"=$1', [f.runId])).rows[0]
       assert.equal(intent.state, 'paused')
       assert.equal(intent.lifecycle.phase, 'review_resume_requested')
+      return providerDeadline
     } })
     assert.equal(resumed, 1)
     const machine = (await pool.query('SELECT * FROM thread_machines WHERE "runId"=$1', [f.runId])).rows[0]
@@ -748,7 +751,7 @@ test('task review: current owner, session, tenant and immutable physical checkou
     assert.equal(machine.lifecycle.phase, 'review_resumed')
     assert.equal(machine.sandboxId, f.sandboxId)
     assert.equal(machine.epoch, current.authority.machineEpoch)
-    assert.equal(machine.lifecycleAt.toISOString(), current.lease.expiresAt)
+    assert.ok(machine.lifecycleAt.getTime() < providerDeadline, 'the next sweep precedes the shortened provider deadline')
     assert.equal((await pool.query('SELECT status,"leaseExpiresAt" FROM agent_runs WHERE id=$1', [f.runId])).rows[0].status, 'succeeded')
     assert.ok((await pool.query('SELECT "revokedAt" FROM device_tokens WHERE id=$1', [f.deviceTokenId])).rows[0].revokedAt)
   })

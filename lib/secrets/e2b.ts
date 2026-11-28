@@ -5,6 +5,7 @@ import 'server-only'
 import { and, desc, eq, inArray } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { userE2bKeys, workspaceE2bKeys, type E2B_KEY_ERROR_CODES } from '@/lib/db/secrets-schema'
+import { runtimeEnv } from '@/lib/env/server'
 import { WorkspaceError } from '@/lib/workspace-access'
 import { e2bKeyAad, openSecret, sealSecret, SecretsKeyMissingError, userE2bKeyAad } from './crypto'
 import { e2bKeyInput } from './format'
@@ -31,7 +32,7 @@ export async function verifyE2BKey(apiKey: string, fetchImpl: typeof fetch = fet
 
 const sealKey = (apiKey: string, userId: string) => {
   try { return sealSecret(apiKey, userE2bKeyAad(userId)) } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable')
+    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     throw error
   }
 }
@@ -41,7 +42,7 @@ const sealKey = (apiKey: string, userId: string) => {
  * workspace, so SQL cannot move it: the person who saved it adopts it here on first use, re-sealed
  * to them, and the workspace row goes. Nobody else ever reads it again.
  */
-async function adoptWorkspaceKey(userId: string, env: Record<string, string | undefined> = process.env) {
+async function adoptWorkspaceKey(userId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()) {
   const [own] = await guardSecretsDb(() => db.select({ userId: userE2bKeys.userId }).from(userE2bKeys).where(eq(userE2bKeys.userId, userId)))
   if (own) return
   const [legacy] = await guardSecretsDb(() => db.select().from(workspaceE2bKeys).where(eq(workspaceE2bKeys.createdBy, userId)).orderBy(desc(workspaceE2bKeys.updatedAt)).limit(1))
@@ -63,6 +64,7 @@ async function adoptWorkspaceKey(userId: string, env: Record<string, string | un
 /** The caller's own key. `workspaceId` is the workspace the page shows; any member may hold a key of their own. */
 export async function getE2BKeyStatus(userId: string, workspaceId: string): Promise<E2BKeyStatus> {
   await requireSecretPermission(userId, workspaceId, 'e2b.status')
+  if (!byoE2BKeyEnabled()) return { configured: false, byoEnabled: false, lastErrorCode: null, lastErrorAt: null }
   await adoptWorkspaceKey(userId)
   return readE2BKeyStatus(userId)
 }
@@ -75,7 +77,7 @@ async function readE2BKeyStatus(userId: string): Promise<E2BKeyStatus> {
 
 /** Everyone edits only their own key. */
 export async function getE2BKeyCapabilityForUser(userId: string, workspaceId: string) {
-  return { canEdit: true, ...await getE2BKeyStatus(userId, workspaceId) }
+  return { canEdit: byoE2BKeyEnabled(), ...await getE2BKeyStatus(userId, workspaceId) }
 }
 
 /**
@@ -85,6 +87,7 @@ export async function getE2BKeyCapabilityForUser(userId: string, workspaceId: st
  */
 export async function setE2BKey(userId: string, workspaceId: string, input: unknown, options: { audit?: SecretAuditHook; verify?: (apiKey: string) => Promise<E2BVerifyResult>; now?: Date } = {}): Promise<E2BKeyStatus> {
   await requireSecretPermission(userId, workspaceId, 'e2b.status')
+  if (!byoE2BKeyEnabled()) throw new WorkspaceError('workspaceAccessDenied')
   const { apiKey } = e2bKeyInput.parse(input)
   const now = options.now ?? new Date()
   const sealed = sealKey(apiKey, userId) // fail closed before calling E2B
@@ -123,14 +126,16 @@ export async function recordE2BKeyError(userId: string, code: (typeof E2B_KEY_ER
  * The E2B API key for sandboxes this person owns: always their own key, or
  * E2BKeyError('e2b_key_missing'). Never another member's, never the platform key.
  */
-export async function getUserE2BApiKey(userId: string, env: Record<string, string | undefined> = process.env): Promise<string> {
+export async function getUserE2BApiKey(userId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Promise<string> {
+  if (!byoE2BKeyEnabled(env)) throw new E2BKeyError('e2b_unavailable', 'Personal E2B keys are disabled on Cloud')
   await adoptWorkspaceKey(userId, env)
   const [row] = await guardSecretsDb(() => db.select().from(userE2bKeys).where(eq(userE2bKeys.userId, userId)))
   if (!row) throw new E2BKeyError('e2b_key_missing')
   try { return openSecret(row, userE2bKeyAad(userId), env) } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new E2BKeyError('e2b_unavailable', 'secrets key missing')
+    if (error instanceof SecretsKeyMissingError) throw Object.assign(new E2BKeyError('e2b_unavailable', 'secrets key missing'), { cause: error })
     // Moved/tampered row or rotated key: never surface the raw crypto Error.
     logSecretFailure('e2b_unavailable', userId)
+    // error-cause: the raw crypto error is never surfaced past the seal boundary
     throw new E2BKeyError('e2b_unavailable', 'decrypt failed')
   }
 }
@@ -147,7 +152,8 @@ export function e2bErrorCode(status: number): E2BKeyErrorCode {
  * Every E2B key a run in this workspace could hold, for masking output only: the own keys of
  * its active members and a key saved here before keys were personal. Reads only; adopts nothing.
  */
-export async function maskableE2BKeys(workspaceId: string, env: Record<string, string | undefined> = process.env): Promise<string[]> {
+export async function maskableE2BKeys(workspaceId: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()): Promise<string[]> {
+  if (!byoE2BKeyEnabled(env)) return env.E2B_API_KEY?.trim() ? [env.E2B_API_KEY.trim()] : []
   const { workspaceDb } = await import('@/lib/workspace-db')
   const { workspaceMembers } = await import('@/lib/db/workspace-schema')
   const members = (await workspaceDb.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
@@ -156,7 +162,7 @@ export async function maskableE2BKeys(workspaceId: string, env: Record<string, s
     members.length ? db.select().from(userE2bKeys).where(inArray(userE2bKeys.userId, members)) : Promise.resolve([]),
     db.select().from(workspaceE2bKeys).where(eq(workspaceE2bKeys.workspaceId, workspaceId)),
   ]))
-  const keys: string[] = []
+  const keys: string[] = env.E2B_API_KEY?.trim() ? [env.E2B_API_KEY.trim()] : []
   for (const row of own) { try { keys.push(openSecret(row, userE2bKeyAad(row.userId), env)) } catch { logSecretFailure('e2b_unavailable', row.userId) } }
   for (const row of legacy) { try { keys.push(openSecret(row, e2bKeyAad(row.workspaceId), env)) } catch { logSecretFailure('e2b_unavailable', row.workspaceId) } }
   return keys

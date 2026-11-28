@@ -1,13 +1,14 @@
 import { meetsMinimumVersion } from '@mikka/protocol/version'
 import { withBasePath } from '@/lib/base-path'
+import { getPublicBuild } from './env/public.ts'
 
 // Which deployment this page was built by. A page left open across a deploy
 // (a desktop window, a long-lived tab) keeps calling the old deployment's
 // server actions; once the new one has removed them they fail. The page
 // compares its build with the server's and offers a reload instead.
 
-/** Inlined at build time (apps/frontend/vite.config.mjs); empty without one. */
-export const APP_BUILD = process.env.NEXT_PUBLIC_MIKKA_BUILD ?? ''
+/** Inlined at build time (apps/frontend/vite.config.mjs, apps/api/nitro.config.ts); empty without one. */
+export const APP_BUILD = getPublicBuild()
 
 const refreshAbort = new AbortController()
 export const pageRefreshSignal = () => refreshAbort.signal
@@ -63,8 +64,8 @@ export async function checkPageBuildBeforeAction(): Promise<boolean> {
   return !pageNeedsRefresh()
 }
 
-/** Next answers a server action it does not have with this response header. */
-export const ACTION_NOT_FOUND_HEADER = 'x-nextjs-action-not-found'
+/** The RPC endpoint answers an action this server no longer has with this response header (lib/desktop-rpc/handler.ts). */
+export const ACTION_NOT_FOUND_HEADER = 'x-mikka-action-not-found'
 
 /** Raised when an action targets an obsolete build; VersionGuard offers an explicit 刷新. */
 export const STALE_BUILD_EVENT = 'mikka:stale-build'

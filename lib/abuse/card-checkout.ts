@@ -6,6 +6,7 @@ import { pool } from '@/lib/db'
 import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
 import { workspaceDb } from '@/lib/workspace-db'
 import { stripeConfig, stripePost, StripeRequestError } from '@/lib/billing/stripe'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -22,7 +23,7 @@ export async function personalBillingWorkspace(actorId: string, locale = 'zh-CN'
   return ensurePersonalWorkspace(user, locale === 'en' ? 'en' : 'zh-CN')
 }
 
-export async function createCardSetup(actorId: string, currentWorkspaceId: string, fetchImpl: typeof fetch = fetch, locale = 'zh-CN', env: Env = process.env): Promise<{ url: string }> {
+export async function createCardSetup(actorId: string, currentWorkspaceId: string, fetchImpl: typeof fetch = fetch, locale = 'zh-CN', env: Env = runtimeEnv()): Promise<{ url: string }> {
   await workspaceDb.transaction(tx => requireWorkspace(tx, currentWorkspaceId, actorId))
   const config = stripeConfig(env)
   const origin = resolveAppOrigin(env)
@@ -57,7 +58,7 @@ export async function createCardSetup(actorId: string, currentWorkspaceId: strin
     await pool.query('INSERT INTO hosted_setup_intents (id,"workspaceId","customerId") VALUES ($1,$2,$3)', [session.id, workspaceId, binding.id])
     return { url: session.url }
   } catch (error) {
-    if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed')
+    if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed', { cause: error })
     throw error
   }
 }

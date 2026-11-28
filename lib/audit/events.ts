@@ -2,6 +2,7 @@
 // No DB or server-only imports so it can be shared with UI code and unit tests.
 import { isIP } from 'node:net'
 import { z } from 'zod'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 
 import { AUDIT_CATEGORIES, type AuditCategory } from './categories'
 export { AUDIT_CATEGORIES, type AuditCategory }
@@ -20,6 +21,9 @@ export const AUDIT_ACTIONS = {
   'member.reactivated': 'member',
   'member.role_changed': 'member',
   'bot.taken_over': 'member',
+  'bot.transferred': 'member',
+  // An admin deleting another member's task comment (app/actions/task-comments.ts).
+  'task.comment_deleted': 'member',
   // 权限
   'team.access_changed': 'permission',
   'bot.permissions_changed': 'permission',
@@ -28,6 +32,7 @@ export const AUDIT_ACTIONS = {
   'agent.policy_changed': 'permission',
   'model.admitted': 'security',
   'model.denied': 'security',
+  'thread.bulk_deleted': 'security',
   'skill.registered': 'permission',
   'skill.reviewed': 'permission',
   'skill.withdrawn': 'permission',
@@ -67,6 +72,7 @@ export const AUDIT_ACTIONS = {
   'billing.checkout_started': 'billing',
   'billing.credits_purchased': 'billing',
   'billing.auto_recharge_changed': 'billing',
+  'billing.overage_changed': 'billing',
   'billing.limits_changed': 'billing',
   'billing.payment_method_changed': 'billing',
   'billing.credit_share_changed': 'billing',
@@ -93,6 +99,8 @@ export const AUDIT_METADATA = {
   'member.reactivated': none,
   'member.role_changed': z.object({ oldRole: role, newRole: role }).strict(),
   'bot.taken_over': none,
+  'bot.transferred': none,
+  'task.comment_deleted': none,
   'team.access_changed': z.object({ team: label, from: access, to: access }).partial().strict(),
   'bot.permissions_changed': z.object({ capability: label, from: access, to: access }).partial().strict(),
   'integration.permission_changed': z.object({ integration: label, capability: label, from: access, to: access }).strict(),
@@ -105,6 +113,7 @@ export const AUDIT_METADATA = {
     dataRegion: z.literal('unknown') }).strict(),
   'model.denied': z.object({ revision: z.string().regex(/^[a-f0-9]{64}$/),
     reason: z.enum(['modelRouteDenied', 'modelPolicyRevoked', 'modelRegionUnverified', 'modelPrincipalUnavailable', 'modelPolicyInvalid']) }).strict(),
+  'thread.bulk_deleted': z.object({ count: z.number().int().nonnegative(), runs: z.number().int().positive() }).strict(),
   'skill.registered': z.object({ versionId: z.uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/), format: z.literal('single-skill-md-v1') }).strict(),
   'skill.reviewed': z.object({ versionId: z.uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/), format: z.literal('single-skill-md-v1') }).strict(),
   'skill.withdrawn': z.object({ versionId: z.uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/), format: z.literal('single-skill-md-v1') }).strict(),
@@ -123,12 +132,14 @@ export const AUDIT_METADATA = {
   'token.created': z.object({
     tokenName: label,
     expiresAt: z.string().datetime({ offset: true }).nullable(),
-    scopes: z.array(z.enum(['tasks:read', 'tasks:write', 'runs:read', 'runs:write', 'legacy:full'])).min(1).max(5),
+    // lib/tokens/format.ts TOKEN_SCOPES; inlined because this file is shared with UI code.
+    scopes: z.array(z.enum(['tasks:read', 'tasks:write', 'runs:read', 'runs:write', 'threads:read', 'threads:write', 'artifacts:read',
+      'drive:read', 'drive:write', 'bots:read', 'bots:write', 'grants:read', 'grants:write', 'legacy:full'])).min(1).max(14),
   }).partial().strict(),
   'token.revoked': none,
   'token.rotated': none,
-  'auth.signed_in': z.object({ newDevice: z.boolean().optional(), method: z.enum(['password', 'oauth', 'magic_link', 'passkey', 'sso']) }).strict(),
-  'auth.sign_in_failed': z.object({ method: z.enum(['password', 'oauth', 'magic_link', 'passkey', 'sso']), reason: z.enum(['invalid', 'locked', 'expired', 'denied']) }).partial().strict(),
+  'auth.signed_in': z.object({ newDevice: z.boolean().optional(), method: z.enum(['password', 'email_otp', 'oauth', 'magic_link', 'passkey', 'sso', 'totp', 'recovery_code']) }).strict(),
+  'auth.sign_in_failed': z.object({ method: z.enum(['password', 'email_otp', 'oauth', 'magic_link', 'passkey', 'sso', 'totp', 'recovery_code']), reason: z.enum(['invalid', 'locked', 'expired', 'denied']) }).partial().strict(),
   'credential.created': none,
   'credential.replaced': none,
   'credential.revoked': none,
@@ -142,9 +153,10 @@ export const AUDIT_METADATA = {
   'workspace.ownership_transferred': none,
   'workspace.entitlements_changed': z.object({ fromPlan: z.enum(['free', 'pro', 'enterprise']), toPlan: z.enum(['free', 'pro', 'enterprise']), source: z.enum(['cloud', 'license']), seatLimit: z.number().int().min(1).max(100_000).nullable(), expiresAt: z.iso.datetime({ offset: true }).nullable(), reason: z.enum(['evaluation', 'licensed', 'downgrade', 'correction']) }).strict(),
   'billing.card_verified': z.object({ allowanceGranted:z.boolean() }).strict(),
-  'billing.checkout_started': z.object({ amountCents: cents, currency }).partial().strict(),
+  'billing.checkout_started': z.object({ amountCents: cents, currency, offerId: label }).partial().strict(),
   'billing.credits_purchased': z.object({ amountCents: cents, currency, credits: z.number().int().min(0) }).partial().strict(),
   'billing.auto_recharge_changed': z.object({ enabled: z.boolean(), thresholdCents: cents.nullable(), amountCents: cents.nullable(), monthlyCapCents: cents.nullable(), revision: z.number().int().nonnegative() }).partial().strict(),
+  'billing.overage_changed': z.object({ enabled: z.boolean(), monthlyCapCents: cents.nullable(), revision: z.number().int().nonnegative() }).strict(),
   'billing.limits_changed': z.object({ fromCents: cents.nullable(), toCents: cents.nullable() }).partial().strict(),
   // 由我的卡支付这个团队: a member's card designated, or released (they stopped it or left) with a grace period.
   'billing.payment_method_changed': z.object({ change: z.enum(['designated', 'released']), graceDays: z.number().int().min(0).max(30).optional() }).strict(),
@@ -298,7 +310,7 @@ const regionCode = (value: string | null | undefined) => { const v = value?.trim
  * them, so ip AND geo are both null there rather than recording attacker-chosen values.
  * x-real-ip is deliberately not read.
  */
-export function auditRequestContext(headers: Pick<Headers, 'get'>, env: Readonly<Record<string, string | undefined>> = process.env as Readonly<Record<string, string | undefined>>): { ip: string | null; geoCity: string | null; geoCountry: string | null; geoRegion: string | null } {
+export function auditRequestContext(headers: Pick<Headers, 'get'>, env: EnvMap = runtimeEnv()): { ip: string | null; geoCity: string | null; geoCountry: string | null; geoRegion: string | null } {
   if (env.MIKKA_API_INGRESS === 'cloudflare') {
     // Only the private release ingress sets this header; it first removes any
     // caller-supplied value. A non-IP or missing edge observation stays unknown.

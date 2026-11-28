@@ -1,8 +1,9 @@
-import { withRequestLog } from '@/lib/request-log'
 import { auth, authBaseURL } from '@/lib/auth'
 import { BASE_PATH } from '@/lib/base-path'
 import { verificationNavigationResponse } from '@/lib/auth-verification-response'
 import { handleGitHubConnectCallback } from '@/lib/github/connect-callback'
+import { defineRoute } from '@/lib/primitives/define-route'
+import { DEFAULT_LOCAL_DEV_ORIGIN } from '@/lib/env/hosts'
 
 /** Better Auth answers a Fetch Request; the framework wrapper only forwarded to
  * this same handler under five method names. */
@@ -19,7 +20,16 @@ function withBasePathURL(route: (request: Request) => Promise<Response>) {
   }
 }
 
-export const GET = withRequestLog('/api/auth/[...all]', withBasePathURL(async request => await handleGitHubConnectCallback(request) ?? verificationNavigationResponse(
-  request, await handler(request), authBaseURL ?? 'http://localhost:3000',
-)))
-export const POST = withRequestLog('/api/auth/[...all]', withBasePathURL(handler))
+const handleGET = withBasePathURL(async request => await handleGitHubConnectCallback(request) ?? verificationNavigationResponse(
+  request, await handler(request), authBaseURL ?? DEFAULT_LOCAL_DEV_ORIGIN,
+))
+const handlePOST = withBasePathURL(handler)
+
+export const GET = defineRoute(
+  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/auth/[...all]' },
+  ({ request }) => handleGET(request),
+)
+export const POST = defineRoute(
+  { auth: 'public', origin: 'any', workspace: 'none', route: '/api/auth/[...all]' },
+  ({ request }) => handlePOST(request),
+)

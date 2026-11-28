@@ -9,6 +9,7 @@
  */
 import snapshot from './model-catalog-snapshot.json'
 import { cleanModelId, modelVendor, type ModelVendor } from './model-display-name'
+import { extractProviderSpeedModes, type ModelSpeedMode } from './model-routing'
 
 export interface CatalogModel {
   /** `vendor/model`, as the Gateway names it. */
@@ -24,6 +25,8 @@ export interface CatalogModel {
   tags: string[]
   /** Reasoning efforts the model takes, empty when it has none. */
   reasoning: string[]
+  /** Server-advertised speed modes (`fast`, `ultrafast`) from the Gateway catalogue. */
+  speedModes?: readonly ModelSpeedMode[]
 }
 
 /** Which CLI a thread runs a model with: Codex for OpenAI's models, Claude Code for every other one. */
@@ -105,11 +108,26 @@ export function parseGatewayModel(raw: unknown): CatalogModel | null {
       ? ((option as { values: unknown[] }).values).filter((value): value is string => typeof value === 'string') : [])
     : []
   const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+  const speedModes = extractProviderSpeedModes(entry)
   return {
     id, vendor: typeof entry.owned_by === 'string' ? entry.owned_by : id.split('/')[0],
     name: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : cleanModelId(id),
     contextWindow: count(entry.context_window), maxTokens: count(entry.max_tokens),
     pricing: input === undefined || output === undefined ? null : { input, output, ...(cacheRead === undefined ? {} : { cacheRead }) },
     tags, reasoning,
+    ...(speedModes && speedModes.length ? { speedModes } : {}),
   }
 }
+
+export {
+  CATALOG_EFFORT_MODELS,
+  CATALOG_MODEL_TIERS,
+  EVE_FACTORY_PROVIDER_DEFAULT_MODELS,
+  LEGACY_DECISION_MODEL,
+  LEGACY_WRITE_PLANNING_SNAPSHOT,
+  catalogModelTier,
+  catalogSupportedModelEfforts,
+  defaultEveFactoryModelForProvider,
+  type EveFactoryProviderId,
+} from './model-catalog-metadata'
+

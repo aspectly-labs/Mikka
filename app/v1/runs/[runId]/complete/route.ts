@@ -1,5 +1,5 @@
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { and, eq } from 'drizzle-orm'
 import { runCompleteRequest } from '@mikka/protocol/run'
@@ -8,11 +8,9 @@ import { authenticateDevice } from '@/lib/device-link'
 import { persistRunCompletion } from '@/lib/run-publications'
 import { startRunPublication } from '@/lib/run-publication-workflow'
 import { wakeCoordinator } from '@/lib/coordinator/wake'
-import { dispatchLinearIssueSync } from '@/lib/linear-sync/dispatch'
 import { stopRecordingsAfter } from '@/lib/captures/run-end'
 import { db } from '@/lib/db'
 import { agentRuns, devices } from '@/lib/db/schema'
-import { dispatchCompletedIssue } from '@/lib/run-completion'
 import { UNFINISHED_RUN_STATUSES } from '@/lib/agent-run-statuses'
 import { ImprovementError } from '@/lib/self-improvement/contract'
 import { secretMaskerFor } from '@/lib/secrets/runtime'
@@ -25,7 +23,7 @@ export const maxDuration = 120
 /** The first completion is immutable; retries also recover a failed enqueue. */
 async function handlePOST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { runId } = await params
   const parsed = runCompleteRequest.safeParse(await request.json().catch(() => null))
   if (!parsed.success) {
@@ -33,8 +31,8 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ runI
     // idempotent acknowledgement without skipping valid publication retries.
     const [ended] = await db.select({ status: agentRuns.status }).from(agentRuns).innerJoin(devices, eq(devices.id, agentRuns.deviceId))
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, caller.userId), eq(devices.ownerId, caller.userId), ...(caller.scopeDeviceId ? [eq(devices.id, caller.scopeDeviceId)] : []))).limit(1)
-    if (ended && !(UNFINISHED_RUN_STATUSES as readonly string[]).includes(ended.status)) return new NextResponse(null, { status: 204 })
-    return NextResponse.json({ error: 'Invalid completion.' }, { status: 400 })
+    if (ended && !(UNFINISHED_RUN_STATUSES as readonly string[]).includes(ended.status)) return new RouteResponse(null, { status: 204 })
+    return RouteResponse.json({ error: 'Invalid completion.' }, { status: 400 })
   }
   let result: Awaited<ReturnType<typeof persistRunCompletion>>
   // 4e2 ②: report / error text from a cloud worker is masked before it is stored.
@@ -43,21 +41,20 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ runI
   const completion = maskDeep({ ...body, ...(failureDetails ? { failureDetails } : {}) }, await secretMaskerFor({ workspaceId: caller.scopeWorkspaceId, ownerId: caller.userId }))
   try { result = await persistRunCompletion(caller.userId, runId, completion, caller.scopeDeviceId) }
   catch (error) {
-    if (error instanceof ImprovementError) return NextResponse.json({ error: error.code }, { status: 409 })
+    if (error instanceof ImprovementError) return RouteResponse.json({ error: error.code }, { status: 409 })
     throw error
   }
-  if (!result) return NextResponse.json({ error: 'Unknown run.' }, { status: 404 })
+  if (!result) return RouteResponse.json({ error: 'Unknown run.' }, { status: 404 })
   stopRecordingsAfter([runId])
   if (result.publicationPending) {
     try { await startRunPublication(runId) }
-    catch { return NextResponse.json({ error: 'Result publication is temporarily unavailable.' }, { status: 503, headers: { 'Retry-After': '15' } }) }
+    catch { return RouteResponse.json({ error: 'Result publication is temporarily unavailable.' }, { status: 503, headers: { 'Retry-After': '15' } }) }
   } else {
-    await dispatchCompletedIssue(result, dispatchLinearIssueSync)
     afterJob('after:coordinator-wake', () => wakeCoordinator(result.userId))
     // How it came out, for the right column (R-52); a run still publishing is judged by the minute sweep.
     afterJob('after:run-outcome-judge', () => judgeRunOutcome(runId).catch(() => null))
   }
-  return new NextResponse(null, { status: 204 })
+  return new RouteResponse(null, { status: 204 })
 }
 
 export const POST = withDeviceRoute(handlePOST)

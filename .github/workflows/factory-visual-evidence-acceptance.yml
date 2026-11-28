@@ -27,11 +27,13 @@ permissions:
 jobs:
   authorize:
     if: >-
-      github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' &&
+      (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' &&
-        github.event.workflow_run.repository.full_name == 'alexj11324/Mikka' &&
-        github.event.workflow_run.head_repository.full_name == 'alexj11324/Mikka'))
+        github.event.workflow_run.repository.id == 1427517699 &&
+        github.event.workflow_run.head_repository.id == 1427517699 &&
+        (github.event.workflow_run.repository.full_name == 'alexj11324/Mikka' || github.event.workflow_run.repository.full_name == 'aspectly-labs/Mikka') &&
+        (github.event.workflow_run.head_repository.full_name == 'alexj11324/Mikka' || github.event.workflow_run.head_repository.full_name == 'aspectly-labs/Mikka')))
     runs-on: ubuntu-latest
     timeout-minutes: 8
     permissions:

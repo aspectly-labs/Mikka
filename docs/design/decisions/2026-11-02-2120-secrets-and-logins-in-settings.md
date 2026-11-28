@@ -1,6 +1,7 @@
 # Secrets and website logins live in settings, on one page
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session (three messages, 2026-11-02) after reviewing the plan, the Devin research and the Figma file: 「同名按你的建议：新建时提示重名，确认后个人覆盖工作区」「所有密钥（包括网站登录）都不需要『使用前问我』，直接用」「个人密钥 Bot 自己的工具和 Agent run 都可以用」「一个页面加顶部切换，同意」
 - Rule: —
 - Replaces: the sidebar name 登录与密钥 (decisions.md, 2026-10-30 Settings v4 row); saved logins added only from chat

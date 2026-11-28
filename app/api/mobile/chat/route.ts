@@ -1,5 +1,3 @@
-import { ChatFileError } from '@/lib/chat-attachments/extract'
-import { afterJob } from '@/lib/background'
 import { and, eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { bots } from '@/lib/db/schema'
@@ -8,15 +6,14 @@ import { CHAT_FIRST_PAGE, chatUpdate, chatView } from '@/lib/coordinator/store'
 import { openChatBotId } from '@/lib/coordinator/coordinator-bot'
 import { reactionsFor } from '@/lib/reactions'
 import { chatFailure } from '@/lib/chat-failure'
-import { coordinatorEnabled, wakeCoordinator } from '@/lib/coordinator/wake'
-import { recordPersonalSubmission, SubmissionConflictError } from '@/lib/coordinator-submission'
+import { coordinatorEnabled } from '@/lib/coordinator/wake'
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { coordinatorHistory, pollCoordinatorChat, sendCoordinatorMessage } from '@/app/actions/coordinator'
+import { coordinatorHistory, pollCoordinatorChat } from '@/app/actions/coordinator'
 import { ActionFailureError } from '@/lib/action-error'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
-import { MESSAGE_MAX } from '@/lib/message-limits'
-import { userImageInputsSchema } from '@/lib/coordinator/user-attachments'
+import { json } from '@/lib/mobile-api'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
+import { enrichMobileChatItems } from '@/lib/coordinator/mobile-tool-projection'
 
 
 const botParam = z.uuid().nullable()
@@ -55,10 +52,7 @@ function readKind(params: URLSearchParams) {
  * - `&after=&cursor=&prefix=` (the last read's `continuation`): what is new since it, with `after`; the app keeps the
  *   messages it has up to `after`. If the chat changed before that point, the latest page as a full read.
  */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const params = new URL(request.url).searchParams
   const bot = botParam.safeParse(params.get('bot'))
   if (!bot.success) return json({ error: 'invalidBot' }, 400)
@@ -72,7 +66,7 @@ async function handleGET(request: Request) {
       const enabled = await coordinatorEnabled(user.id, botId)
       const view = await chatUpdate(user.id, botId, read.kind === 'update' ? read.continuation : undefined)
       // The app shows a failed welcome through `failure`; the empty Bot item is no message (nor unread, nor reactable).
-      const chat = { ...view, items: view.items.filter(item => !item.welcome) }
+      const chat = { ...view, items: enrichMobileChatItems(view.items.filter(item => !item.welcome)) }
       const working = enabled && chat.working
       return json({ ...chat, submissionIds: true, enabled, working, failure: enabled ? chatFailure({ working, error: chat.error, cause: chat.cause, failureDetails: chat.failureDetails, items: chat.items }) : null, reactions: await reactionsOf(user.id, chat.items) })
     }
@@ -80,7 +74,7 @@ async function handleGET(request: Request) {
     const polled = await pollCoordinatorChat(bot.data, undefined, read.kind === 'update' ? read.continuation : undefined)
     // Without a known version the poll always returns the chat itself.
     if ('unchanged' in polled) throw new Error('chatUnchangedWithoutVersion')
-    const chat = { ...polled, items: polled.items.filter(item => !item.welcome) }
+    const chat = { ...polled, items: enrichMobileChatItems(polled.items.filter(item => !item.welcome)) }
     return json({ ...chat, submissionIds: true, failure: chat.enabled ? chatFailure(chat) : null, reactions: await reactionsOf(user.id, chat.items) })
   } catch (error) {
     if (error instanceof ActionFailureError) return json({ error: error.code }, 404)
@@ -90,36 +84,26 @@ async function handleGET(request: Request) {
 
 /** An older page: its messages and what they cite, and whether there are older ones still. */
 async function history(userId: string, page: Awaited<ReturnType<typeof chatView>>) {
-  const items = page.items.filter(item => !item.welcome)
+  const items = enrichMobileChatItems(page.items.filter(item => !item.welcome))
   return json({ items, sources: page.sources, artifacts: page.artifacts, historyBefore: page.historyBefore ?? null, reactions: await reactionsOf(userId, items) })
 }
 
-/** `submissionId` identifies one immutable send across mobile retries; older clients may omit it. */
-async function handlePOST(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
-  const parsed = z.object({ text: z.string().trim().max(MESSAGE_MAX), botId: z.uuid().nullable().optional(), images: userImageInputsSchema.optional(), submissionId: z.uuid().optional() })
-    .refine(value => Boolean(value.text || value.images?.length)).safeParse(await request.json().catch(() => null))
-  if (!parsed.success) return json({ error: 'messageRequired' }, 400)
-  const images = parsed.data.images?.length ? parsed.data.images : undefined
-  if (typeof user[tokenWorkspace] === 'string') {
-    if (!await tokenBotAllowed(user, parsed.data.botId ?? null)) return json({ error: 'botNotFound' }, 404)
-    // No bot named: the Coordinator of the token's workspace, resolved here where the message enters.
-    const botId = await openChatBotId(user, parsed.data.botId)
-    try { await recordPersonalSubmission(db, user.id, parsed.data.text, { botId, images, submissionId: parsed.data.submissionId }) }
-    catch (error) {
-      if (error instanceof ChatFileError) return Response.json({ error: error.code }, { status: error.code === 'notFound' ? 404 : 400 })
-      if (error instanceof SubmissionConflictError) return json({ error: 'submissionConflict' }, 409)
-      throw error
-    }
-    afterJob('after:coordinator-wake', () => wakeCoordinator(user.id))
-    return json({ queued: true }, 202)
-  }
-  const result = await sendCoordinatorMessage(parsed.data.text, null, parsed.data.botId ?? null, parsed.data.submissionId, undefined, null, images)
-  return result.error ? json(result, 400) : json(result, 202)
-}
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/mobile/chat',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  () => Response.json({ error: 'coordinatorSendRetired' }, { status: 410, headers: { 'Cache-Control': 'no-store' } }),
+)
 
-export const GET = withRequestLog('/api/mobile/chat', handleGET)
-export const POST = withRequestLog('/api/mobile/chat', handlePOST)
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/chat',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)

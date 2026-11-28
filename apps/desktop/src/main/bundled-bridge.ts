@@ -4,10 +4,11 @@ import type { BundledAuth } from './bundled-auth'
 import type { BundledLive } from './bundled-live'
 import type { BundledViewer } from './bundled-viewer'
 import type { BundledServers } from './bundled-servers'
+import { rendererEventWithinLimit, type DesktopTelemetry } from './telemetry'
 import { RENDERER_URL } from './bundled-policy'
 import { trustedIpcSender } from './security'
 
-export function registerBundledBridge(auth: BundledAuth, live: BundledLive, viewer: BundledViewer, servers?: BundledServers): void {
+export function registerBundledBridge(auth: BundledAuth, live: BundledLive, viewer: BundledViewer, servers?: BundledServers, telemetry?: DesktopTelemetry): void {
   const observed = new Set<number>()
   function handle(channel: string, run: (owner: number, ...input: unknown[]) => unknown) {
     ipcMain.handle(channel, (event: IpcMainInvokeEvent, ...input: unknown[]) => {
@@ -43,6 +44,15 @@ export function registerBundledBridge(auth: BundledAuth, live: BundledLive, view
   handle(BUNDLED_IPC.viewerConnect, (owner, id) => viewer.connect(owner, id))
   handle(BUNDLED_IPC.viewerSend, (owner, id, data) => viewer.send(owner, id, data))
   handle(BUNDLED_IPC.viewerClose, (owner, id) => viewer.close(owner, id))
+  if (telemetry) {
+    handle(BUNDLED_IPC.telemetryState, () => telemetry.state())
+    handle(BUNDLED_IPC.telemetrySet, (_owner, enabled) => telemetry.setEnabled(enabled as boolean))
+    // One-way: nothing about the send comes back to the page.
+    ipcMain.on(BUNDLED_IPC.telemetryCapture, (event, name: unknown, properties: unknown) => {
+      // The size is checked before anything reads the event (telemetry.ts).
+      if (trustedIpcSender(event.senderFrame, RENDERER_URL) && rendererEventWithinLimit(name, properties)) telemetry.capture(name, properties)
+    })
+  }
   if (!servers) return
   handle(BUNDLED_IPC.serverState, () => servers.state())
   handle(BUNDLED_IPC.serverProbe, (_owner, address) => servers.probe(address))

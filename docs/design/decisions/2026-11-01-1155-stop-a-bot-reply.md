@@ -1,12 +1,13 @@
 # A bot's reply can be stopped from its chat
 
 - Date: 2026-11-01
+- **Status:** Accepted (extended to every chat by [2026-11-22-1600](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-1600-stop-in-the-send-button.md))
 - Source: Alex, on a production screenshot of the Coordinator chat showing
   「Coordinator is working…」 with only a grey send button:
   「为什么没有办法终止？按照道理来说，聊天过程中我可以直接终止掉。」
 - Rule: —
 - Replaces: —
-- Superseded in part by: [2026-11-02-0301](2026-11-02-0301-esc-in-a-thread-composer.md) (Esc in a thread composer does not stop the thread)
+- Superseded in part by: [2026-11-02-0301](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-02-0301-esc-in-a-thread-composer.md) (Esc in a thread composer does not stop the thread), itself superseded by [2026-11-22-1600](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-22-1600-stop-in-the-send-button.md): this decision now holds for every chat
 
 While a bot (the Coordinator included) is answering, the composer's send
 button is the stop button, in the same place, as threads already have it

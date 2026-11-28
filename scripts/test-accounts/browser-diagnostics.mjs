@@ -35,8 +35,9 @@ export function browserRouteClass(value, origin) {
     if (url.origin !== origin) return 'other-origin'
     const path = url.pathname.replace(/\/$/, '')
     if (ROUTES.has(path)) return ROUTES.get(path)
-    if (/^\/mikka\/_next\/static\/chunks\/[^/]+\.js$/.test(path)) return 'next-chunk'
-    if (path.startsWith('/mikka/_next/static/')) return 'next-static'
+    if (path === '/mikka/api/rpc') return 'rpc'
+    if (/^\/mikka\/assets\/[^/]+\.js$/.test(path)) return 'asset-script'
+    if (path.startsWith('/mikka/assets/')) return 'asset'
     if (/^\/mikka\/api\/conversations\/[^/]+\/read$/.test(path)) return 'conversation-read'
     return 'same-origin-other'
   } catch { return 'unknown-location' }

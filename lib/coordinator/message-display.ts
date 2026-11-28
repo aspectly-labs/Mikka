@@ -2,8 +2,10 @@ import { z } from 'zod'
 import { eventLine, type EventLine } from './event-line'
 
 const lineSchema = z.object({
-  kind: z.enum(['runFinished', 'runRetried', 'runSwitched', 'runPaused', 'runWaitingDevice', 'runDeviceBack', 'issueStatus', 'issueSnapshot', 'runReport', 'runQuestion', 'runBlocked', 'artifact', 'action', 'scheduleRan', 'scheduleDue', 'other']),
+  kind: z.enum(['runFinished', 'runRetried', 'runSwitched', 'runPaused', 'runWaitingDevice', 'runDeviceBack', 'issueStatus', 'issueSnapshot', 'issueAssigned', 'issueCommented', 'issueMentioned', 'runReport', 'runQuestion', 'runBlocked', 'artifact', 'action', 'scheduleRan', 'scheduleDue', 'other']),
   runId: z.string().nullable(), issueId: z.string().nullable(), status: z.string().nullable(), title: z.string().nullable(),
+  /** An Agent's own words (a report, a question) for the chat's collapsed row (Alex, 2026-11-23). */
+  message: z.string().max(32000).optional(),
 })
 /** Host-owned presentation, separate from the execution/model body. */
 export const messageDisplaySchema = z.discriminatedUnion('kind', [

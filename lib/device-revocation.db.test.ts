@@ -204,7 +204,7 @@ test('a device request is fenced by its first statement, with no check up front,
   // A daemon's report: two harnesses with 500 models each, as large as the protocol allows.
   const models = Array.from({ length: 500 }, (_, index) => ({ id: `model-${index}`, name: `Model ${index} with a long display name` }))
   await raw.query('UPDATE devices SET harnesses=$2 WHERE id=$1', [f.device, JSON.stringify(['codex', 'claude_code'].map(harness => ({ harness, installed: true, models })))])
-  const get = () => scope.run(() => queuedRuns(new Request(`http://127.0.0.1/mikka/v1/devices/${f.device}/runs?state=queued`, { headers: { 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.456', authorization: `Bearer ${f.token}` } }), { params: Promise.resolve({ deviceId: f.device }) }))
+  const get = (skip?: string) => scope.run(() => queuedRuns(new Request(`http://127.0.0.1/mikka/v1/devices/${f.device}/runs?state=queued${skip ? '&skip=' + skip : ''}`, { headers: { 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.456', authorization: `Bearer ${f.token}` } }), { params: Promise.resolve({ deviceId: f.device }) }))
   await get()
   const before = received()
   const response = await get()
@@ -213,6 +213,15 @@ test('a device request is fenced by its first statement, with no check up front,
   assert.deepEqual(await response.json(), { runIds: [] })
   t.diagnostic(JSON.stringify({ queuedRunsRequestDbBytes: bytes }))
   assert.ok(bytes < 8000, `a queued-runs poll read ${bytes} B`)
+
+  const oldest = randomUUID(), newest = randomUUID()
+  await raw.query(`INSERT INTO agent_runs(id,"userId","agentId","deviceId",status,"createdAt")
+    VALUES($1,$3,$4,$5,'queued',now()-interval '1 minute'),($2,$3,$4,$5,'queued',now())`, [oldest, newest, f.owner, f.agent, f.device])
+  await raw.query('UPDATE devices SET "maxConcurrentRuns"=1 WHERE id=$1', [f.device])
+  assert.deepEqual(await (await get()).json(), { runIds: [] })
+  await raw.query('UPDATE devices SET "maxConcurrentRuns"=2 WHERE id=$1', [f.device])
+  assert.deepEqual(await (await get()).json(), { runIds: [oldest] })
+  assert.deepEqual(await (await get(oldest)).json(), { runIds: [newest] })
 
   // Revoked after authentication, before the handler's first statement: that statement refuses, the route answers 401.
   const fenced = withDeviceRoute(async () => {

@@ -4,7 +4,13 @@ on:
   schedule:
     - cron: '17 14 * * *'
     - cron: '*/15 * * * *'
-  deployment_status:
+  # After a deployment run, not on every deployment_status event: those fired
+  # about 740 times a day for every environment job and nearly all skipped.
+  # production-promotion below keeps the smoke to runs that promoted production.
+  workflow_run:
+    workflows: [Cloudflare application deployment]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       audit_auth_sha:
@@ -51,7 +57,7 @@ env:
 
 jobs:
   domain-model:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.domain_model_sha != '' || inputs.domain_model_scope != '' || (inputs.domain_model_mode != '' && inputs.domain_model_mode != 'preflight'))
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.domain_model_sha != '' || inputs.domain_model_scope != '' || (inputs.domain_model_mode != '' && inputs.domain_model_mode != 'preflight'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -112,7 +118,7 @@ jobs:
           if-no-files-found: ignore
 
   lease-audit:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight') && inputs.audit_auth_sha != '' && inputs.audit_lease == true
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight') && inputs.audit_auth_sha != '' && inputs.audit_lease == true
     runs-on: ubuntu-latest
     timeout-minutes: 35
     concurrency:
@@ -167,7 +173,7 @@ jobs:
           retention-days: 14
 
   auth-audit:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight') && inputs.audit_auth_sha != ''
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight') && inputs.audit_auth_sha != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -219,9 +225,40 @@ jobs:
           path: production-auth-audit-report/report.json
           retention-days: 14
 
+  production-promotion:
+    # A deployment run that promoted production: its pipeline-production job ran
+    # "Promote and verify the staged service manifest" and uploaded production
+    # receipts (pipeline-production-record then writes the Production deployment).
+    # A green `not-ready` run, which promotes nothing, does not count
+    # (scripts/release/production-promotion.mjs, shared with the Desktop release).
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.id == github.event.repository.id
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      promoted: ${{ steps.check.outputs.promoted }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Did this deployment run promote production?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: node scripts/release/production-promotion.mjs
+
   smoke:
-    # Only finished production deployments, plus the schedule and manual runs.
-    if: github.repository == 'alexj11324/Mikka' && (github.event_name != 'workflow_dispatch' || (inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight'))) && (github.event_name != 'schedule' || github.event.schedule == '17 14 * * *') && (github.event_name != 'deployment_status' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production'))
+    # Only deployment runs that promoted production, plus the schedule and manual runs.
+    needs: production-promotion
+    if: ${{ !cancelled() && (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && (github.event_name != 'workflow_dispatch' || (inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight'))) && (github.event_name != 'schedule' || github.event.schedule == '17 14 * * *') && (github.event_name != 'workflow_run' || needs.production-promotion.outputs.promoted == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -229,10 +266,23 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
       - run: node --test scripts/ops/production-smoke.test.mjs
+      - name: Resolve the serving API route inventory
+        run: node scripts/ops/deployed-route-inventory.mjs
+        env:
+          ROUTE_PROBE_BASE_URL: https://app.aspectlylabs.com
+          ROUTE_PROBE_MANIFEST: .cache/deployed-routes.json
+      - name: Probe every declared API route without credentials or business handlers
+        run: node scripts/ops/route-probe.mjs
+        env:
+          ROUTE_PROBE_BASE_URL: https://app.aspectlylabs.com
+          ROUTE_PROBE_MANIFEST: .cache/deployed-routes.json
       - name: Read the smoke account through Infisical workload identity
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
@@ -258,7 +308,8 @@ jobs:
 
   deployment-comparison:
     # No browser/install/wait loop: quarter-hour follow-ups read the same fixed windows.
-    if: github.repository == 'alexj11324/Mikka' && (github.event_name != 'workflow_dispatch' || (inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight'))) && (github.event_name != 'deployment_status' || (github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production')) && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    needs: production-promotion
+    if: ${{ !cancelled() && (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && (github.event_name != 'workflow_dispatch' || (inputs.domain_model_sha == '' && inputs.domain_model_scope == '' && (inputs.domain_model_mode == '' || inputs.domain_model_mode == 'preflight'))) && (github.event_name != 'workflow_run' || needs.production-promotion.outputs.promoted == 'true') && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -284,25 +335,6 @@ jobs:
       - name: Record the Cloudflare runtime owner
         if: steps.runtime.outputs.runtime == 'cloudflare'
         run: echo 'Production is served by Cloudflare; Cloudflare runtime attribution applies.'
-      - name: Read the existing Vercel token through Infisical workload identity
-        if: steps.runtime.outputs.runtime != 'cloudflare'
-        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
-        with:
-          method: oidc
-          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
-          oidc-audience: mikka-infisical
-          project-id: 89850d6a-f020-4936-863e-df77380dfe40
-          env-slug: prod
-          secret-path: /platform
-          secret-name: VERCEL_TEAM_TOKEN
-          recursive: false
-          include-imports: false
-      - name: Compare fixed production deployment windows
-        if: steps.runtime.outputs.runtime != 'cloudflare'
-        run: DEPLOYMENT_COMPARISON_CHECKER_SHA="$(git rev-parse HEAD)" node scripts/ops/deployment-regression.mjs
-      - name: Collect production request outcomes
-        if: always() && steps.runtime.outputs.runtime != 'cloudflare'
-        run: node scripts/ops/runtime-outcomes.mjs
       - name: Read only the Neon usage key for the egress collector
         if: always()
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
@@ -331,14 +363,7 @@ jobs:
           include-imports: false
       - name: Collect database egress and publish aggregate health
         if: always()
-        env:
-          RUNTIME_OWNER: ${{ steps.runtime.outputs.runtime }}
-        run: |
-          if [[ "$RUNTIME_OWNER" == cloudflare ]]; then
-            node scripts/ops/egress-monitor.mjs --provider-only
-          else
-            node scripts/ops/egress-monitor.mjs
-          fi
+        run: node scripts/ops/egress-monitor.mjs --provider-only
       - if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

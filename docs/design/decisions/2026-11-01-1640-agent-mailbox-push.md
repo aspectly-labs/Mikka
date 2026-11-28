@@ -1,6 +1,7 @@
 # Push incoming Agent mailbox notifications
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex's handoff follow-up, relayed by the coordinator: incoming Agent mailbox messages must notify the recipient without depending on the Agent polling its inbox.
 - Rule: —
 - Replaces: the implementation's explicit-inbox-only delivery behavior; personal message authority and read/ACK rules remain in force.

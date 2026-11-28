@@ -1,4 +1,9 @@
 import type { SubscriptionRefusalCode } from '@mikka/protocol/subscription'
+import {
+  normalizeLegacyRefusal,
+  type MikkaErrorContract,
+  type MikkaErrorContractOptions,
+} from './primitives/error-contract'
 
 /** Every subscription refusal code, grouped by what the person can do about it. */
 const REFUSALS = {
@@ -15,6 +20,8 @@ const REFUSALS = {
   subscription_generation_failed: 'retry',
   // A cloud computer's own CLI did not report the run's model (packages/daemon/src/subscription-hosted-runner.ts).
   subscription_model_not_reported: 'modelNotReported',
+  // No usable model for the session — the person skipped or lost their model setup (lib/eve/runtime.ts).
+  subscription_model_unavailable: 'modelRequired', executionModelUnknown: 'modelRequired',
 } as const satisfies Record<SubscriptionRefusalCode, string> & Record<string, string>
 
 export type SubscriptionRefusalNotice = (typeof REFUSALS)[keyof typeof REFUSALS]
@@ -22,7 +29,7 @@ export type SubscriptionRefusalNotice = (typeof REFUSALS)[keyof typeof REFUSALS]
 /** One recovery action shared by the live notice and a failed message's footer. */
 export function subscriptionRecovery(notice: SubscriptionRefusalNotice): 'retry' | 'settings' | 'model' {
   if (notice === 'retry' || notice === 'rateLimited' || notice === 'quotaChecking') return 'retry'
-  if (notice === 'reconnect' || notice === 'unavailable' || notice === 'modelNotReported') return 'settings'
+  if (notice === 'reconnect' || notice === 'unavailable' || notice === 'modelNotReported' || notice === 'modelRequired') return 'settings'
   return 'model'
 }
 
@@ -37,4 +44,14 @@ const pattern = new RegExp(`^(?:[^]*: )?(${Object.keys(REFUSALS).join('|')})(?: 
 export function subscriptionRefusal(message: string | null | undefined): SubscriptionRefusalNotice | null {
   const match = message ? pattern.exec(message.trim()) : null
   return match ? REFUSALS[match[1] as keyof typeof REFUSALS] : null
+}
+
+/** Additive canonical error contract for a recognized subscription refusal, or null. */
+export function subscriptionRefusalErrorContract(
+  message: string | null | undefined,
+  options?: MikkaErrorContractOptions,
+): MikkaErrorContract | null {
+  const match = message ? pattern.exec(message.trim()) : null
+  if (!match) return null
+  return normalizeLegacyRefusal(match[1], options)
 }

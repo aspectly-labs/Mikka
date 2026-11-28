@@ -14,6 +14,9 @@ export async function runSmoke({ env = process.env, fetchImpl = fetch } = {}) {
   const target = new URL(env.SMOKE_BASE_URL ?? 'https://app.aspectlylabs.com')
   if (target.protocol !== 'https:' && !(target.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname))) throw new Error('smoke_origin_invalid')
   if (target.username || target.password || target.search || target.hash || !['/', '/mikka', '/mikka/'].includes(target.pathname)) throw new Error('smoke_origin_invalid')
+  // Staging verifies with its own team admin; production keeps the policy identity.
+  const policyAdminEmailSha256 = env.SMOKE_POLICY_ADMIN_EMAIL_SHA256 || undefined
+  if (policyAdminEmailSha256 !== undefined && !/^[a-f0-9]{64}$/.test(policyAdminEmailSha256)) throw new Error('smoke_policy_admin_invalid')
   const expected = new Set((env.SMOKE_EXPECT_ON ?? '').split(',').map(value => value.trim()).filter(Boolean))
   if ([...expected].some(feature => !features.has(feature))) throw new Error('smoke_feature_invalid')
   const results = []
@@ -45,7 +48,7 @@ export async function runSmoke({ env = process.env, fetchImpl = fetch } = {}) {
   await probe('credentialVault', '/api/credentials', body => Array.isArray(body?.logins))
   await probe('approvedWrites', '/api/approved-writes', body => body?.enabled === true)
   let workspaceId
-  const team = await selectTeamWorkspace({ ownerId: identity.user.id,
+  const team = await selectTeamWorkspace({ ownerId: identity.user.id, policyAdminEmailSha256,
     onSelected: selection => { workspaceId = selection.workspaceId },
     json: (path, body) => client.json(path.slice('/mikka'.length), body ? {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-mikka-rpc': '1' }, body: JSON.stringify(body),

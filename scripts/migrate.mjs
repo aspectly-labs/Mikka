@@ -13,7 +13,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { Pool } from 'pg'
 import { sessionDatabaseURL } from './postgres-connection.mjs'
 import { alreadyApplied, orderMigrations } from './migration-order.mjs'
-import { applyMigration, planMigration } from './migration-steps.mjs'
+import { applyMigration, ENVIRONMENT_SCOPE_LIMITS, planMigration, setLocalLimits } from './migration-steps.mjs'
 import { migrationTargets } from './migration-targets.mjs'
 import { migrationGuard, migrationRequested } from './migration-guard.mjs'
 import { scopeMigrationBeforeCommit, validateScopeMigrationHistory, validateScopeMigrationSources } from './scope-migration-history.mjs'
@@ -80,7 +80,26 @@ try {
       try {
         // The existing main executor keeps its concurrent-index validation.
         // Only the nine audited scope bodies defer COMMIT until its ledger insert.
-        await applyMigration(client, name, beforeCommit === null ? plan : { ...plan, sql: beforeCommit })
+        if (name === '20261125223723_environment_scope_and_task_environments.sql') {
+          // Workspace metadata and Project ACLs can live on different databases.
+          // Hold shared ACLs steady until the workspace migration commits.
+          const acl = await states.find(state => state.target === 'MIKKA_DATABASE_URL').pool.connect()
+          try {
+            await acl.query('BEGIN')
+            await setLocalLimits(acl, ENVIRONMENT_SCOPE_LIMITS.acl)
+            const shared = await acl.query(`SELECT id,"workspaceId" FROM resource_access_policies
+              WHERE kind='project' AND visibility='shared' AND "parentId" IS NULL FOR SHARE`)
+            await client.query('BEGIN')
+            await setLocalLimits(client, ENVIRONMENT_SCOPE_LIMITS.migration)
+            await client.query("SELECT set_config('mikka.shared_project_backfill',$1,true)", [JSON.stringify(shared.rows)])
+            await applyMigration(client, name, plan)
+            await client.query('COMMIT')
+            await acl.query('COMMIT')
+          } catch (error) {
+            await Promise.allSettled([client.query('ROLLBACK'), acl.query('ROLLBACK')])
+            throw error
+          } finally { acl.release() }
+        } else await applyMigration(client, name, beforeCommit === null ? plan : { ...plan, sql: beforeCommit })
         if (beforeCommit !== null) await client.query('COMMIT')
         console.log(`migrate: applied ${name} to ${target}`)
       } catch (error) {
@@ -112,5 +131,10 @@ try {
     const { backfillProjectResourceAccess } = await import('./resource-acl-backfill.mjs')
     const access = await backfillProjectResourceAccess(application, workspace)
     console.log(`migrate: project ACL registered=${access.registered} quarantined=${access.quarantined} tasksBound=${access.tasksBound}`)
+  }
+  if (application && workspace && files.includes('20261120044916_bot_settings.sql')) {
+    const { backfillBotEnvironments } = await import('./bot-environment-backfill.mjs')
+    const moved = await backfillBotEnvironments(application, workspace)
+    console.log(`migrate: bot environments bound=${moved.bound} created=${moved.created} skipped=${moved.skipped}`)
   }
 } finally { await Promise.all(states.map(({ pool }) => pool.end())) }

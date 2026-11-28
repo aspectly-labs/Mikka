@@ -40,10 +40,18 @@ type ComposioAccountLike = {
 /** A Composio toolkit slug as the catalog lists them (lower case, digits, `_`). */
 export const TOOLKIT_SLUG = /^[a-z][a-z0-9_]{0,63}$/
 export const isToolkitSlug = (value: unknown): value is string => typeof value === 'string' && TOOLKIT_SLUG.test(value)
-/** Mikka's own integrations. The store and account lists show ours, never a Composio copy of them. */
+/** Mikka's own integrations whose accounts and tools never go through Composio. */
 export const OWN_INTEGRATIONS: ReadonlySet<string> = new Set(['github', 'linear', 'telegram'])
+/**
+ * Integrations with a dedicated primary row on Settings › Integrations.
+ * Includes `slack`, which pairs Mikka's native workspace Slack bot with optional
+ * Composio Slack OAuth accounts shown inside the Slack sub-view.
+ */
+export const NATIVE_INTEGRATION_ROWS: ReadonlySet<string> = new Set([...OWN_INTEGRATIONS, 'slack'])
 /** Any Composio toolkit Mikka reaches through Composio: a well-formed slug that is not one of Mikka's own integrations. */
 export const isComposioToolkitSlug = (value: unknown): value is string => isToolkitSlug(value) && !OWN_INTEGRATIONS.has(value)
+/** Connected Composio apps shown in secondary connected-app lists (excludes primary native rows including Slack). */
+export const isSecondaryConnectedApp = (value: unknown): value is string => isToolkitSlug(value) && !NATIVE_INTEGRATION_ROWS.has(value)
 
 /**
  * The account as the page shows it, or null when its toolkit is malformed or

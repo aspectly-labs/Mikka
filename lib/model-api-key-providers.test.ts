@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { API_KEY_PRESETS, apiKeyEndpoint, apiKeyHarnesses, apiKeyProtocols, liteLlmByokRoute } from './model-api-key-providers'
+import { API_KEY_PRESETS, apiKeyEndpoint, apiKeyHarnesses, apiKeyProtocols, gatewayKeyHarnesses, liteLlmByokRoute } from './model-api-key-providers'
 
 const preset = (provider: (typeof API_KEY_PRESETS)[number]) => ({ provider, protocol: 'anthropic' as const, baseUrl: null, responsesApi: true })
 
@@ -68,4 +68,14 @@ test('Codex runs on the Responses API: an OpenAI-protocol provider without it se
   assert.deepEqual(apiKeyProtocols(chatOnly), ['openai'])
   // Claude Code does not need it.
   assert.deepEqual(apiKeyHarnesses({ ...chatOnly, protocol: 'anthropic' }), ['claude_code'])
+})
+
+test('through LiteLLM, any OpenAI-compatible key serves both Claude Code and Codex; Anthropic-protocol keys serve Claude Code', () => {
+  assert.deepEqual(gatewayKeyHarnesses(preset('anthropic')), ['claude_code'])
+  assert.deepEqual(gatewayKeyHarnesses(preset('openai')), ['claude_code', 'codex'])
+  assert.deepEqual(gatewayKeyHarnesses(preset('deepseek')), ['claude_code', 'codex'])
+  assert.deepEqual(gatewayKeyHarnesses(preset('kimi')), ['claude_code', 'codex'])
+  assert.deepEqual(gatewayKeyHarnesses({ provider: 'custom', protocol: 'openai', baseUrl: 'https://openrouter.ai/api/v1', responsesApi: true }), ['claude_code', 'codex'])
+  assert.deepEqual(gatewayKeyHarnesses({ provider: 'custom', protocol: 'openai', baseUrl: 'https://openrouter.ai/api/v1', responsesApi: false }), ['claude_code'])
+  assert.deepEqual(gatewayKeyHarnesses({ provider: 'custom', protocol: 'anthropic', baseUrl: 'https://anthropic-proxy.example.com', responsesApi: false }), ['claude_code'])
 })

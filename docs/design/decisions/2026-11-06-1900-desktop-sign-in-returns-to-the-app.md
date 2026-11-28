@@ -1,6 +1,7 @@
 # Desktop sign-in returns to the app
 
 - Date: 2026-11-06
+- **Status:** Accepted
 - Source: Alex's report relayed by the coordinator: signing in with Google from the macOS app bounced between the app and the browser and ended in the browser. Production logs for 18:59–19:02 UTC showed both exchanges succeeded; the app never came to the front, the browser handed over its web session without showing it, and the sign-in page waited for a second Google click.
 - Rule: —
 - Partly replaces: [2026-11-03-0300](2026-11-03-0300-github-link-loopback.md) (a) "no custom URL scheme", for the sign-in return only

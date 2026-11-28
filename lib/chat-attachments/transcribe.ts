@@ -15,7 +15,7 @@ export async function transcribeChatAudio(
 ): Promise<string> {
   const keys = await usableApiKeys(database, userId, workspaceId)
   const choice = keys
-    .filter((item) => item.provider === 'openai')
+    .filter((item) => item.provider === 'openai' && item.modelsError !== 'invalid')
     .flatMap((key) =>
       key.models.filter((model) => /transcribe|^whisper/i.test(model)).map((model) => ({ key, model })),
     )
@@ -34,6 +34,6 @@ export async function transcribeChatAudio(
     return result.text
   } catch (error) {
     if (error instanceof ChatFileError) throw error
-    throw new ChatFileError('unavailable')
+    throw Object.assign(new ChatFileError('unavailable'), { cause: error })
   }
 }

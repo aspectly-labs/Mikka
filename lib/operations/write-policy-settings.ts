@@ -6,10 +6,15 @@ import type { MailboxTransactionGuard } from '@/lib/mailbox-transaction-guard'
 import type { PoolClient } from 'pg'
 import { writeTransaction } from './write-transaction'
 
-export const writePolicySettingsSchema = z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), z.enum(['allow', 'ask', 'deny']))
+const settingKey = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
+/** An admin's workspace boundary: which app/write actions the workspace's Bots
+ * may not use at all. Allow or deny only; there is no "ask" and no approval
+ * (ADR 2026-11-27-1615). */
+export const writePolicySettingsSchema = z.record(settingKey, z.enum(['allow', 'deny']))
   .refine(value => Object.keys(value).length <= 100)
-  // Browser actions have no "ask": bots operate their browsers without asking (Alex, 2026-10-30 and 2026-11-01).
-  .refine(value => Object.entries(value).every(([key, decision]) => !key.startsWith('browser_') || decision !== 'ask'), { message: 'browserAskUnavailable' })
+/** Rows written before that decision may still hold "ask"; it reads as allow. */
+const storedSettingsSchema = z.record(settingKey, z.enum(['allow', 'ask', 'deny']))
+  .transform(value => Object.fromEntries(Object.entries(value).map(([key, decision]) => [key, decision === 'deny' ? 'deny' as const : 'allow' as const])))
 const versionSchema = z.string().regex(/^(0|[1-9]\d*)$/)
 
 /** Host supplies workspace membership lease; model input cannot select identity. */
@@ -36,7 +41,7 @@ export function createWritePolicySettings(pool: Pool, membershipGuard: (scope: A
   return {
     readWorkspace: (scope:AgentScope) => workspace(scope, async tx => {
       const row=await workspaceRow(tx,scope.workspaceId!)
-      return { permissions:writePolicySettingsSchema.parse(row.permissions),version:versionSchema.parse(String(row.version)) }
+      return { permissions:storedSettingsSchema.parse(row.permissions),version:versionSchema.parse(String(row.version)) }
     }),
     setWorkspace: (scope:AgentScope,raw:unknown,expected:string) => {
       const permissions=writePolicySettingsSchema.parse(raw), version=versionSchema.parse(expected)
@@ -49,7 +54,7 @@ export function createWritePolicySettings(pool: Pool, membershipGuard: (scope: A
           values ($1,'allow',$2,case when $2::jsonb='{}'::jsonb then 0 else 1 end)
           on conflict ("workspaceId") do update set external_write_permissions=$2
           returning external_write_permissions as permissions,external_write_policy_version as version`,[scope.workspaceId,value.permissions])
-        return {permissions:writePolicySettingsSchema.parse(result.rows[0].permissions),version:versionSchema.parse(String(result.rows[0].version))}
+        return {permissions:storedSettingsSchema.parse(result.rows[0].permissions),version:versionSchema.parse(String(result.rows[0].version))}
       })
     },
   }

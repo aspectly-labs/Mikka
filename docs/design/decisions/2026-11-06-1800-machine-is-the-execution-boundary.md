@@ -1,6 +1,7 @@
 # One task, one machine; execution authority stays on the machine
 
 - Date: 2026-11-06 18:00 UTC
+- **Status:** Accepted
 - Source: Alex's [decision on #1505](https://github.com/alexj11324/Mikka/issues/1505#issuecomment-6691833153) and [the explicit replacement of the old credential rules](https://github.com/alexj11324/Mikka/issues/1505#issuecomment-6691871552).
 - Rule: Cloud execution, local daemon execution, credential delivery and startup acceptance.
 - Superseded by (only for non-CLI third-party Secret exposure): [2026-11-08-0240](2026-11-08-0240-credential-exposure-boundary.md). All other execution and performance rules here remain in force.

@@ -1,6 +1,7 @@
 import { boundedJson } from '../../cloudflare/bounded-json.mjs'
+import { runtimeEnv, type EnvMap } from '../env/runtime.mjs'
 
-export function credentialRuntimeEnvironment(env: Record<string, string | undefined> = process.env) {
+export function credentialRuntimeEnvironment(env: EnvMap = runtimeEnv()) {
   if (env.CREDENTIAL_RUNTIME === undefined) return null
   const environment = env.CREDENTIAL_ENVIRONMENT
   if (env.CREDENTIAL_RUNTIME !== 'cloudflare' || typeof environment !== 'string' || !environment) {

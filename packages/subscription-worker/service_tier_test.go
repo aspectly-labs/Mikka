@@ -82,7 +82,8 @@ func TestCodexServiceTierOnlyPriorityPassesWithoutChangingOtherRequestFields(t *
 		{"priority", "priority", true, "priority", "priority"},
 		{"official fast alias", "fast", true, "priority", "priority"},
 		{"normalized official alias", " FAST ", true, "priority", "priority"},
-		{"ultrafast", "ultrafast", true, "omitted", "omitted"},
+		{"ultrafast", "ultrafast", true, "ultrafast", "ultrafast"},
+		{"normalized ultrafast", " ULTRAFAST ", true, "ultrafast", "ultrafast"},
 		{"default", "default", true, "omitted", "omitted"},
 		{"unknown", "fixture-private-tier", true, "omitted", "omitted"},
 		{"object", map[string]any{"secret": "fixture-private-tier"}, true, "omitted", "omitted"},
@@ -93,9 +94,9 @@ func TestCodexServiceTierOnlyPriorityPassesWithoutChangingOtherRequestFields(t *
 			if err != nil || calls != 1 {
 				t.Fatalf("request failure/retry: %v %d", err, calls)
 			}
-			if tc.sent == "priority" {
-				if sent["service_tier"] != "priority" {
-					t.Fatal("priority was lost")
+			if tc.sent == "priority" || tc.sent == "ultrafast" {
+				if sent["service_tier"] != tc.sent {
+					t.Fatalf("service_tier = %v, want %s", sent["service_tier"], tc.sent)
 				}
 			} else if _, ok := sent["service_tier"]; ok {
 				t.Fatal("unsupported tier reached upstream")

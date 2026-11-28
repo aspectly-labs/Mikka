@@ -8,8 +8,8 @@ let failure: Error | null = null
 const stored = new Map<string, string | null>()
 const calls: unknown[][] = []
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports })
-stub('../../../../../../lib/auth.ts', { auth: { api: { getSession: async () => owner ? { user: { id: owner } } : null } } })
-stub('../../../../../../lib/request-log.ts', { noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
+stub('../../../../../../lib/auth.ts', { auth: { api: { getSession: async () => owner ? { user: { id: owner }, session: { id: 'owner-session' } } : null } } })
+stub('../../../../../../lib/request-log.ts', { noteLogUser: () => {}, noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
 class GitHubAccessError extends Error {
   constructor(readonly code: string, readonly status: number) { super(code) }
 }

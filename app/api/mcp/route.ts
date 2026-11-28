@@ -22,6 +22,8 @@ import { ARTIFACT_KINDS } from '@/lib/db/schema'
 import { ARTIFACT_TITLE_MAX } from '@/lib/artifacts/limits'
 import { ProjectMapError } from '@/lib/project-map/contracts'
 import { RECORD_DECISION_TOOL } from '@/lib/project-map/mcp-tool'
+import { INTEROP_TOOLS, INTEROP_TOOL_IDS, WORKER_RUN_TOOLS } from '@/lib/interop/tool-schemas'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 // Leaves room for read_coordinator_messages to wait for a reply.
 export const maxDuration = 120
@@ -308,6 +310,41 @@ function createWorkerHandler(mailbox: readonly MailboxToolName[]) { return creat
     }
   })
 
+  // A run's credential fixes both the task and the tenant; callers cannot choose
+  // a run, workspace, delegate, project, membership or access change.
+  server.registerTool('update_issue', {
+    title: 'Update this run’s issue',
+    description: 'Update the title, status or priority of this run’s own issue.',
+    inputSchema: z.object({ issueId: id, title: z.string().trim().min(1).max(200).optional(), status: z.enum(ISSUE_STATUS_CODES).optional(), priority: z.enum(ISSUE_PRIORITY_CODES).optional() }).strict()
+      .refine(value => value.title !== undefined || value.status !== undefined || value.priority !== undefined),
+    annotations: { idempotentHint: true },
+  }, async (input, ctx) => outcome(await worker.updateOwnIssue(ctx.http?.authInfo, input)))
+
+  // The daemon's `mikka` server proxies this tool into the run; the server's
+  // publication record is the only authority for branch/PR/check state.
+  server.registerTool('pr_status', {
+    description: 'Read the delivery state Mikka recorded for this run’s task: the assigned issue branch and base, the bound pull request URL, number and state, its head SHA, and the latest synchronized check rollup (counts and per-check states). The server’s publication record is the authority: an absent pull request or check means unknown, never passing.',
+    inputSchema: z.object({}).strict(),
+    annotations: { readOnlyHint: true },
+  }, async (_input, ctx) => {
+    const { runPrStatus } = await import('@/lib/mcp/run-pr-status')
+    return json(await runPrStatus(worker.workerRun(ctx.http?.authInfo)))
+  })
+
+  // A run delegates bounded work to a sub-agent (docs/factory/3089-run-delegation.md).
+  // The authenticated run is the parent; scope, credentials and the one-live
+  // child rule are enforced by the ordinary local admission, never by the call.
+  server.registerTool('delegate_subagent', {
+    description: 'Queue one bounded sub-agent run on this task. It runs on your own Agent, computer and repository with your `task` text appended after the task brief, is claimed through the normal device path, and reports on this task’s thread. Only one delegated run may be live at a time and retries must reuse `requestKey`. Returns the child run id; track it with list_runs/get_run. It never names a different account, repository, credential or device.',
+    inputSchema: z.object({
+      task: z.string().trim().min(1).max(4000).describe('The bounded work for the sub-agent.'),
+      requestKey: z.string().trim().min(1).max(140).describe('Idempotency key; a retry of this same call must reuse it.'),
+    }).strict(),
+  }, async (input, ctx) => {
+    const { delegateSubagent } = await import('@/lib/mcp/run-delegation')
+    return json(await delegateSubagent(worker.workerRun(ctx.http?.authInfo), input))
+  })
+
   server.registerTool('report', {
     title: 'Report progress',
     description: 'Tell the person\'s Coordinator about progress on this run. Use it sparingly, at milestones (a plan settled, a hard part solved, ready for review), not after every step.',
@@ -325,6 +362,37 @@ function createWorkerHandler(mailbox: readonly MailboxToolName[]) { return creat
   }, async (input, ctx) => message(await worker.ask(worker.workerRun(ctx.http?.authInfo), input)))
 
   server.registerTool('submit_artifact', SUBMIT_ARTIFACT, async (input, ctx) => outcome(await artifacts.submit(await artifacts.runSubmitter(worker.workerRun(ctx.http?.authInfo)), input)))
+
+  // Reads, sends and shared Drive across threads and Bots (decision 2026-11-19-2200).
+  // The run acts with its owner's identity and its own grants, pinned to the run's Workspace.
+  for (const name of INTEROP_TOOL_IDS) {
+    const { description, inputSchema } = INTEROP_TOOLS[name]
+    server.registerTool(name, { description, inputSchema: inputSchema as z.ZodObject<z.ZodRawShape> }, async (input: Record<string, unknown>, ctx) => {
+      const run = worker.workerRun(ctx.http?.authInfo)
+      const [{ runPrincipal }, { interopFailure, runInteropTool }] = await Promise.all([import('@/lib/interop/principal'), import('@/lib/interop/tools')])
+      let result
+      try { result = await runInteropTool(await runPrincipal(run.userId, run.id), name, input, ctx.mcpReq.signal) }
+      catch (error) { result = interopFailure(error) }
+      return outcome(result)
+    })
+  }
+
+  // The machine's Drive mirror asks which folders this run syncs; the server decides.
+  server.registerTool('drive_sync_scopes', { description: 'The shared Drive folders this run mirrors to ~/.mikka/drive, and whether each is writable.',
+    inputSchema: z.object({}).strict(), annotations: { readOnlyHint: true } }, async (_input, ctx) => {
+    const run = worker.workerRun(ctx.http?.authInfo)
+    const [{ runPrincipal }, { driveSyncScopes }, { interopFailure }] = await Promise.all([import('@/lib/interop/principal'), import('@/lib/interop/drive'), import('@/lib/interop/tools')])
+    try { return json({ scopes: await driveSyncScopes(await runPrincipal(run.userId, run.id)) }) }
+    catch (error) { return outcome(interopFailure(error)) }
+  })
+
+  server.registerTool('list_runs', { ...WORKER_RUN_TOOLS.list_runs, annotations: { readOnlyHint: true } },
+    async (input, ctx) => json(await withMcpWorkspace(ctx.http?.authInfo, undefined, userId => tools.listRuns(userId, input))))
+
+  server.registerTool('get_run', { ...WORKER_RUN_TOOLS.get_run, annotations: { readOnlyHint: true } }, async ({ runId }, ctx) => {
+    const run = await withMcpWorkspace(ctx.http?.authInfo, undefined, userId => tools.getRun(userId, runId))
+    return run ? json(run) : notFound('Run')
+  })
 
   server.registerTool('blocked', {
     title: 'Say you are blocked',
@@ -347,5 +415,8 @@ function route(request: Request) {
   const bearer = request.headers.get('authorization')?.match(/^Bearer\s+(\S+)/i)?.[1]
   return bearer?.startsWith(worker.RUN_TOKEN_PREFIX) ? workerAuthed(request) : authed(request)
 }
+const mcpSpec = { route: '/api/mcp', auth: 'public', origin: 'any', workspace: 'none' } as const
 
-export { route as GET, route as POST, route as DELETE }
+export const GET = defineRoute(mcpSpec, ({ request }) => route(request))
+export const POST = defineRoute(mcpSpec, ({ request }) => route(request))
+export const DELETE = defineRoute(mcpSpec, ({ request }) => route(request))

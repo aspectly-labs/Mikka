@@ -2,20 +2,20 @@ import { factoryWorkspaceReader } from '@/lib/factory/workspace-reader';
 import { taskReaderScope } from '@/lib/task-workspace';
 import { factoryMembershipResponse, factoryWorkspaceResponse } from '@/lib/factory/workspace-http';
 import { actAs } from "@/lib/acting-user";
-import { NextResponse } from "@/lib/server-runtime/server";
+import { RouteResponse } from "@/lib/server-runtime/server";
 import { z } from "zod";
 import { issueForUser } from "@/lib/issue-access";
 import { singleFlight } from "@/lib/single-flight";
-import { auth } from "@/lib/api-auth";
+import { type ApiSession } from "@/lib/api-auth";
 import { handleFactoryList } from "@/lib/factory/http";
 import { factoryHumanStore } from "@/lib/factory/server";
 import { factoryDispatchEnabled, handleFactoryDispatch } from "@/lib/factory/dispatch-http";
 import { issueMutationsEnabled } from "@/lib/coordinator/issue-tools-enabled";
 import { factoryDispatchSchema } from '@/lib/factory/dispatch';
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /** GET /api/factory/tasks?issueId=...: session-owned task discovery, no writes. */
-export async function GET(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
+async function unguardedGET(request: Request, session: ApiSession) {
   const scoped = () => factoryMembershipResponse(session?.user?.id, async () => {
     const issueId = new URL(request.url).searchParams.get("issueId");
     const userId = session?.user?.id ?? null;
@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     // A successful store read reauthorized the bound issue inside this exact
     // Workspace lease. Its live channel uses that same immutable tenant.
     const liveWorkspaceId = result.status === 200 ? workspaceId ?? null : null;
-    return NextResponse.json(result.status === 200 ? { ...(result.body as Record<string, unknown>), liveWorkspaceId } : result.body, {
+    return RouteResponse.json(result.status === 200 ? { ...(result.body as Record<string, unknown>), liveWorkspaceId } : result.body, {
       status: result.status,
       headers: { "Cache-Control": "private, no-store" },
     });
@@ -42,8 +42,7 @@ export async function GET(request: Request) {
  * 201 new run, 200 idempotent replay of the same attempt (keyed on the binding;
  * same binding + different body/note -> 409 factoryReplayMismatch).
  */
-export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
+async function unguardedPOST(request: Request, session: ApiSession) {
   const scoped = () => factoryWorkspaceResponse(session?.user?.id, async () => {
     const result = await handleFactoryDispatch(
       async () => {
@@ -64,10 +63,30 @@ export async function POST(request: Request) {
         enabled: factoryDispatchEnabled(issueMutationsEnabled()),
       },
     );
-    return NextResponse.json(result.body, {
+    return RouteResponse.json(result.body, {
       status: result.status,
       headers: { "Cache-Control": "private, no-store" },
     });
   });
   return session?.user ? actAs(session.user, scoped) : scoped();
 }
+export const GET = defineRoute(
+  {
+    route: '/api/factory/tasks',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request, session }) => unguardedGET(request, session),
+)
+
+export const POST = defineRoute(
+  {
+    route: '/api/factory/tasks',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    onOriginFailure: () => RouteResponse.json({ error: 'originRejected' }, { status: 403, headers: { 'Cache-Control': 'private, no-store' } }),
+  },
+  ({ request, session }) => unguardedPOST(request, session),
+)

@@ -5,6 +5,8 @@ import { getEdition } from './edition'
 import { isLoopbackHost } from './loopback'
 import { mailConfigured } from './mail-delivery'
 import { webConnectionEnabled, webConnectionURL } from './web-connection/policy'
+import { DESKTOP_RELEASES_URL } from './platform/desktop-releases'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Environment = Record<string, string | undefined>
 type Query = (sql: string) => Promise<{ rows: Array<{ hasUsers?: unknown }> }>
@@ -34,7 +36,7 @@ function configuredOrigin(env: Environment): string | null {
 /** One bounded public-state query. It returns no account identity or count and
  * grants no installation-wide authority to the first person who signs up. */
 export async function readServerInfo(options: { env?: Environment; query?: Query; signIn?: () => Promise<SignIn> } = {}): Promise<ServerInfo | null> {
-  const env = options.env ?? process.env
+  const env = options.env ?? runtimeEnv()
   if (getEdition(env) !== 'community') return null
   const origin = configuredOrigin(env), basePath = BASE_PATH || '/mikka'
   const address = origin ? `${origin}${basePath}` : null
@@ -57,13 +59,13 @@ export async function readServerInfo(options: { env?: Environment; query?: Query
   return {
     kind: 'mikka-server', schemaVersion: 1, edition: 'community',
     name: env.MIKKA_SERVER_NAME?.trim().slice(0, 120) || 'Mikka', address,
-    version: APP_BUILD || env.MIKKA_BUILD_REVISION || env.VERCEL_GIT_COMMIT_SHA || 'development',
+    version: APP_BUILD || env.MIKKA_BUILD_REVISION || 'development',
     status: { configuration: origin ? 'ready' : 'unavailable', database: databaseReady ? 'ready' : 'unavailable', authentication: authReady ? 'ready' : 'unavailable' },
     // Retain the v1 discovery field for installed clients.
     communityUI: { enabled: false, frozen: true },
     clients: {
       web: { url: webConnectionURL(env), enabled: webConnectionEnabled(env), requiresHttps: true, serverAddressSupported: Boolean(origin?.startsWith('https://')) },
-      desktop: { url: 'https://github.com/alexj11324/Mikka/releases/latest' },
+      desktop: { url: DESKTOP_RELEASES_URL },
       // No verified App Store/TestFlight link is present in this release's
       // official metadata. Do not invent a download destination.
       ios: { url: null, availability: 'link_unavailable', serverReady: mobileReady },

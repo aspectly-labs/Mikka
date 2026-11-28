@@ -1,6 +1,7 @@
-import { withRequestLog } from '@/lib/request-log'
 import { projectMapHttp } from '@/lib/project-map/read-http'
-export const GET = withRequestLog('/api/projects/[projectId]/map', async (request: Request, context: { params: Promise<{ projectId: string }> }) => {
-  const params = await context.params
-  return projectMapHttp(request, params.projectId, 'page')
-})
+import { defineRoute } from '@/lib/primitives/define-route'
+
+export const GET = defineRoute(
+  { route: '/api/projects/[projectId]/map', auth: 'public', origin: 'any', workspace: 'none' },
+  ({ request, params }) => projectMapHttp(request, params.projectId, 'page'),
+)

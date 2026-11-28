@@ -15,6 +15,7 @@ Every agent, from laptop to cloud, working as one team.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-Community-FFB003)](https://linux.do)
+[![SPONSORED BY E2B FOR STARTUPS](https://img.shields.io/badge/SPONSORED%20BY-E2B%20FOR%20STARTUPS-ff3001?style=for-the-badge&labelColor=black)](https://e2b.dev/startups)
 
 **English** · [简体中文](README.zh-CN.md)
 
@@ -28,7 +29,7 @@ Describe a task to a bot. Mikka dispatches coding work to agents on your Mac, Li
 
 **Mikka Cloud.** [Open the app](https://app.aspectlylabs.com/mikka), create an account and start using Mikka. Follow the [Quickstart](https://aspectlylabs.com/mikka/docs/quickstart) to get set up.
 
-**Self-hosted server.** Mikka runs on your own Linux host with Docker, PostgreSQL and LiteLLM. Use the bundled PostgreSQL server, or choose managed PostgreSQL (**[Neon recommended](docs/self-hosting.md#managed-postgresql-neon-recommended)**; other compatible providers also work). Follow the [self-hosting guide](docs/self-hosting.md) and download the matching Compose file and LiteLLM files. Configure its model aliases, upstream credentials and `MIKKA_LITELLM_MASTER_KEY` before starting.
+**Community self-hosting.** The community maintains self-hosting. Mikka runs on your own Linux host with Docker, PostgreSQL and LiteLLM. Use the bundled PostgreSQL server, or choose managed PostgreSQL (**[Neon recommended](docs/self-hosting.md#managed-postgresql-neon-recommended)**; other compatible providers also work). Follow the [self-hosting guide](docs/self-hosting.md) and download the matching Compose file and LiteLLM files. Configure its model aliases, upstream credentials and `MIKKA_LITELLM_MASTER_KEY` before starting.
 
 With bundled PostgreSQL:
 
@@ -128,6 +129,18 @@ Mikka is proudly developed with support from the [Codex for Open Source](https:/
 
 Thanks to [Neon](https://neon.com) for supporting Mikka through the Neon Open
 Source Program.
+
+<a href="https://e2b.dev/startups">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/e2b-for-startups-dark.svg">
+    <img src="docs/assets/e2b-for-startups-light.svg" alt="E2B for Startups" width="151" height="32">
+  </picture>
+</a>
+
+Thanks to [E2B](https://e2b.dev) for supporting Mikka through
+[E2B for Startups](https://e2b.dev/startups). E2B's sandboxes let Mikka run many
+agents side by side on isolated cloud machines, so we can focus on the product
+instead of the infrastructure.
 
 ## License
 

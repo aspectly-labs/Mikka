@@ -12,16 +12,18 @@ import { GovernanceError } from './errors'
 import { csvCell } from './policy'
 import { writeTransaction } from '@/lib/operations/write-transaction'
 import { enterprisePrincipal, type EnterpriseReader } from '@/lib/enterprise/principal'
+import { threadCostsPending } from '@/lib/settings/device-activity-contract'
+import { BYOK_WEB_SEARCH_USAGE_LABEL } from '@/lib/search/types'
 
 /**
  * Every dimension this report can answer by. `day` and `model` are always
- * present in a row; `member` and `repository` subdivide on top of them, which
- * keeps each row a dated point a chart can plot.
+ * present in a row; `member`, `repository` and `environment` subdivide on top
+ * of them, which keeps each row a dated point a chart can plot.
  */
-export const USAGE_GROUP_BY = ['day', 'model', 'member', 'repository'] as const
+export const USAGE_GROUP_BY = ['day', 'model', 'member', 'repository', 'environment'] as const
 export type UsageGroupBy = (typeof USAGE_GROUP_BY)[number]
 /** The optional subdivisions. Anything else in USAGE_GROUP_BY is always there. */
-export const USAGE_SUBDIVISIONS = ['member', 'repository'] as const
+export const USAGE_SUBDIVISIONS = ['member', 'repository', 'environment'] as const
 export type UsageSubdivision = (typeof USAGE_SUBDIVISIONS)[number]
 
 export type UsageRow = {
@@ -31,6 +33,10 @@ export type UsageRow = {
   memberId: string | null
   /** The repository key when grouped by repository and the run recorded one. */
   repository: string | null
+  /** The Environment id (`workspace_environments.id`) when grouped by environment. */
+  environmentId: string | null
+  /** Display name of the Environment in the workspace DB when grouped by environment. */
+  environmentName: string | null
   requests: number
   /** Settled rows whose cost the provider never reported. They count as requests and cost 0 here. */
   unknownRequests: number
@@ -88,11 +94,17 @@ export async function readWorkspaceUsage(workspaceId: string, reader: string | E
     // Joining only when asked keeps the unsubdivided report on its existing plan:
     // hosted_usage (workspaceId, createdAt) alone.
     const repositoryColumn = subdivision === 'repository' ? 'd."repoPath"' : 'null::text'
+    const environmentColumn = subdivision === 'environment'
+      ? `coalesce(case when r."agentDefinition"->'projectExecution'->'environment'->>'id' ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' then (r."agentDefinition"->'projectExecution'->'environment'->>'id')::uuid end, b."environmentId")::text`
+      : 'null::text'
     const joins = subdivision === 'repository'
       ? 'left join agent_runs r on r.id = u."usageRunId" left join device_repos d on d.id = r."deviceRepoId"'
-      : ''
-    const { rows } = await tx.query<UsageRow>(`select to_char(u."createdAt" at time zone 'UTC','YYYY-MM-DD') as day,u.model as model,
-      ${memberColumn} as "memberId",${repositoryColumn} as repository,
+      : subdivision === 'environment'
+        ? 'left join agent_runs r on r.id = u."usageRunId" left join bots b on b.id = r."botId" and b."workspaceId" = u."workspaceId"'
+        : ''
+    const { rows: rawRows } = await tx.query<UsageRow>(`select to_char(u."createdAt" at time zone 'UTC','YYYY-MM-DD') as day,
+      case when to_jsonb(u)->>'byokWebSearch'='true' then $4::text else u.model end as model,
+      ${memberColumn} as "memberId",${repositoryColumn} as repository,${environmentColumn} as "environmentId",null::text as "environmentName",
       count(*)::int as requests,
       count(*) filter (where u."costMicroUsd" is null)::int as "unknownRequests",
       coalesce(sum(u."inputTokens"),0)::text as "inputTokens",coalesce(sum(u."outputTokens"),0)::text as "outputTokens",
@@ -102,27 +114,50 @@ export async function readWorkspaceUsage(workspaceId: string, reader: string | E
       coalesce(sum(u."purchasedMicroUsd"),0)::text as "purchasedMicroUsd"
       from hosted_usage u ${joins}
       where u."workspaceId"=$1 and u."createdAt">=$2 and u."createdAt"<$3 and u.state='settled'
-      group by 1,2,3,4 order by 1,2,3,4 limit 50001`, [workspaceId, from, to])
-    if (rows.length > 50000) throw new GovernanceError('invalid_request')
+        and COALESCE(u."billingSource",'credits')='credits'
+      group by 1,2,3,4,5 order by 1,2,3,4,5 limit 50001`, [workspaceId, from, to, BYOK_WEB_SEARCH_USAGE_LABEL])
+    if (rawRows.length > 50000) throw new GovernanceError('invalid_request')
+    let rows = rawRows
+    if (subdivision === 'environment') {
+      const envIds = [...new Set(rawRows.flatMap(row => row.environmentId ? [row.environmentId] : []))]
+      const names = envIds.length
+        ? new Map((await workspacePool.query<{ id: string; name: string }>(
+            `select id::text as id, name from workspace_environments where "workspaceId"=$1 and id=any($2::uuid[])
+              and (scope='workspace' or "ownerId"=$3)`,
+            [workspaceId, envIds, userId],
+          )).rows.map(row => [row.id, row.name] as const))
+        : new Map<string, string>()
+      rows = rawRows.map(row => ({ ...row, environmentName: row.environmentId ? names.get(row.environmentId) ?? null : null }))
+    }
     const { rows: runs } = await tx.query<{ status: string; count: number }>('select status,count(*)::int as count from agent_runs where "workspaceId"=$1 and "createdAt">=$2 and "createdAt"<$3 group by status order by status', [workspaceId, from, to])
     // availableGroupBy tells a new client what this report can be asked for without
     // reading the source, so the dimensions added here are discoverable rather than
     // sitting unused because nobody knew to pass a parameter.
     return { from: from.toISOString(), toExclusive: to.toISOString(), currency: 'USD', costUnit: 'microUSD',
-      groupBy: subdivision, availableGroupBy: [...USAGE_GROUP_BY], hosted: rows, runs }
+      groupBy: subdivision, availableGroupBy: [...USAGE_GROUP_BY], hosted: rows, runs, threadCosts: threadCostsPending }
   }))
 }
 
-const USAGE_COLUMNS: (keyof UsageRow)[] = ['day', 'model', 'memberId', 'repository', 'requests', 'unknownRequests',
+const USAGE_COLUMNS: (keyof UsageRow)[] = ['day', 'model', 'memberId', 'repository', 'environmentId', 'environmentName', 'requests', 'unknownRequests',
   'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'cacheCollectedRequests',
   'costMicroUsd', 'freeMicroUsd', 'purchasedMicroUsd']
+
+const SUBDIVISION_COLUMN_OWNER: Partial<Record<keyof UsageRow, UsageSubdivision>> = {
+  memberId: 'member',
+  repository: 'repository',
+  environmentId: 'environment',
+  environmentName: 'environment',
+}
 
 export async function exportWorkspaceUsage(workspaceId: string, reader: string | EnterpriseReader,
   range: { from?: string | null; to?: string | null }, groupBy: string | null | undefined = null) {
   const userId = typeof reader === 'string' ? reader : reader.id
   const usage = await readWorkspaceUsage(workspaceId, reader, range, groupBy)
   // An unrequested subdivision stays out of the CSV rather than as a column of nulls.
-  const columns = USAGE_COLUMNS.filter(key => (key !== 'memberId' && key !== 'repository') || usage.groupBy === (key === 'memberId' ? 'member' : 'repository'))
+  const columns = USAGE_COLUMNS.filter(key => {
+    const owner = SUBDIVISION_COLUMN_OWNER[key]
+    return !owner || usage.groupBy === owner
+  })
   const csv = [columns.map(csvCell).join(','), ...usage.hosted.map(row => columns.map(key => csvCell(row[key])).join(','))].join('\r\n') + '\r\n'
   await workspaceDb.transaction(async tx => {
     const { membership } = await requireWorkspace(tx, workspaceId, userId, true, typeof reader === 'string' ? undefined : reader[enterprisePrincipal])

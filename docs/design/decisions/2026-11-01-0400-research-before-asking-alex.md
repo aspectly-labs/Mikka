@@ -1,6 +1,7 @@
 # Research how leading products do it before asking Alex
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex: 「所有的问题，在问我之前，必须去调研其他大厂产品。如果有这个答案，就不要再问我了」
 - Rule: —
 

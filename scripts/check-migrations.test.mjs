@@ -4,7 +4,8 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkMigrations, parseTimestamp, hash, slotCollisions, liveCollisions } from './check-migrations.mjs'
+import { APPROVED_REWRITES, checkMigrations, parseTimestamp, hash, slotCollisions, liveCollisions } from './check-migrations.mjs'
+import { createHash } from 'node:crypto'
 
 const legacy = { '0004_a.sql': hash('a'), '0004_b.sql': hash('b'), '0014_c.sql': hash('c') }
 const base = [{ name: '0004_a.sql', content: 'a' }, { name: '0004_b.sql', content: 'b' }, { name: '0014_c.sql', content: 'c' }]
@@ -27,6 +28,34 @@ test('未执行的新迁移早于 main 最新时间戳仍可合并', () => asser
 test('晚于 main 最新迁移通过', () => assert.deepEqual(run([{ name: '20261023010001_new.sql', content: '' }]), []))
 test('时间戳重复被拒绝', () => assert.match(run([{ name: '20261024000000_a.sql', content: '' }, { name: '20261024000000_b.sql', content: '' }]).join(), /相同/))
 test('拿不到 main 时保留文件名和冻结旧迁移检查', () => assert.deepEqual(run([{ name: '20261023005959_old.sql', content: '' }], null), []))
+
+test('扩展迁移通过，新的删列必须独立说明已退役旧读写方', () => {
+  const name = '20261120130000_retire_old_column.sql'
+  assert.deepEqual(run([{ name, content: 'ALTER TABLE items ADD COLUMN new_title text;' }]), [])
+  for (const sql of [
+    'ALTER TABLE items DROP COLUMN old_title;',
+    'ALTER TABLE items DROP old_title;',
+    'ALTER TABLE items DROP identity;',
+    'ALTER TABLE items DROP expression;',
+    'ALTER TABLE "items" ADD COLUMN "title" text, DROP COLUMN IF EXISTS "oldTitle";',
+    'DO $$ BEGIN ALTER TABLE items DROP COLUMN old_title; END $$;',
+    "INSERT INTO notes(body) VALUES ('-- not a comment'); ALTER TABLE items DROP COLUMN old_title;",
+  ]) {
+    assert.match(run([{ name, content: sql }]).join(), /新增迁移删除列/)
+    assert.deepEqual(run([{ name, content: `-- migrate: contract #2896 all released readers use title; see issue receipts\n${sql}` }]), [])
+  }
+  assert.match(run([{ name, content: '-- migrate: contract\nALTER TABLE items DROP COLUMN old_title;' }]).join(), /新增迁移删除列/)
+  assert.match(run([{ name, content: "SELECT '-- migrate: contract #2896 not a header';\nALTER TABLE items DROP COLUMN old_title;" }]).join(), /新增迁移删除列/)
+  assert.deepEqual(run([{ name, content: '-- DROP COLUMN is documentation\nALTER TABLE items DROP CONSTRAINT old_constraint;' }]), [])
+  for (const action of ['IDENTITY', 'EXPRESSION', 'DEFAULT', 'NOT NULL']) {
+    assert.deepEqual(run([{ name, content: `ALTER TABLE items ALTER COLUMN id DROP ${action};` }]), [])
+    assert.match(run([{ name, content: `ALTER TABLE items ALTER COLUMN id DROP ${action}, DROP identity;` }]).join(), /新增迁移删除列/)
+  }
+  assert.deepEqual(run([{ name, content: "INSERT INTO notes(body) VALUES ('ALTER TABLE items DROP COLUMN old_title');" }]), [])
+  assert.deepEqual(run([{ name, content: 'ALTER TABLE "DROP COLUMN old_title" ADD COLUMN "new--title" text;' }]), [])
+  const old = { name, content: 'ALTER TABLE items DROP COLUMN old_title;' }
+  assert.deepEqual(run([old], [...main, old]), [], 'already merged SQL remains immutable history')
+})
 
 // --all-refs: the main-only check cannot see a race that is still in flight, so a
 // slot check has to ask what every ref claimed, not only what main already merged.
@@ -88,6 +117,7 @@ test('the actual CLI accepts a stale branch with an older pending file and freez
   const scripts = join(root, 'scripts'), directory = join(root, 'drizzle')
   mkdirSync(scripts); mkdirSync(directory)
   writeFileSync(join(scripts, 'check-migrations.mjs'), readFileSync(new URL('./check-migrations.mjs', import.meta.url)))
+  writeFileSync(join(scripts, 'migration-steps.mjs'), readFileSync(new URL('./migration-steps.mjs', import.meta.url)))
   const actual = new URL('../drizzle/', import.meta.url)
   const names = readdirSync(actual).filter(name => name.endsWith('.sql'))
   for (const name of names) writeFileSync(join(directory, name), readFileSync(new URL(name, actual)))
@@ -118,4 +148,24 @@ test('the actual CLI accepts a stale branch with an older pending file and freez
   assert.match(check().stderr, /main.*不能修改/)
   unlinkSync(join(directory, inherited))
   assert.match(check().stderr, /main.*不能删除或改名/)
+})
+
+test('the one approved rewrite passes only for its exact old and new bytes', () => {
+  const sha = text => createHash('sha256').update(text).digest('hex')
+  const name = '20261127170716_workspace_mcp_servers.sql'
+  const published = 'BEGIN;\nCREATE TABLE IF NOT EXISTS t (id int);\nCOMMIT;\n', replacement = 'CREATE TABLE t (id int);\n'
+  const rewrites = { [name]: { from: sha(published), to: sha(replacement) } }
+  const check = (content, mainContent = published, file = name) =>
+    checkMigrations([...base, mainBody, { name: file, content }], [...base, mainBody, { name: file, content: mainContent }], legacy, rewrites)
+  assert.deepEqual(check(replacement), [])
+  assert.deepEqual(check(published), [])
+  assert.match(check(replacement + '\n').join(), /main.*不能修改/)
+  assert.match(check(replacement, published + '-- other\n').join(), /main.*不能修改/)
+  assert.match(check(replacement, published, '20261127170717_other.sql').join(), /main.*不能修改/)
+  assert.match(checkMigrations([...base, { ...mainBody, content: replacement }], [...base, mainBody], legacy, rewrites).join(), /main.*不能修改/)
+  // The shipped entry is the real file only, bound to full SHA-256 digests.
+  assert.deepEqual(Object.keys(APPROVED_REWRITES), [name])
+  assert.match(APPROVED_REWRITES[name].from, /^[0-9a-f]{64}$/)
+  assert.match(APPROVED_REWRITES[name].to, /^[0-9a-f]{64}$/)
+  assert.equal(sha(readFileSync(new URL(`../drizzle/${name}`, import.meta.url), 'utf8')), APPROVED_REWRITES[name].to)
 })

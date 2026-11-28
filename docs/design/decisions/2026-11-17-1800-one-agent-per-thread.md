@@ -1,6 +1,7 @@
 # 一个线程只用一个 Agent；每次派发都要点名 Agent
 
 - Date: 2026-11-17
+- **Status:** Accepted
 - Source: Alex, 2026-11-17, 「要改」: approving no cross-Agent fallback and a required Agent on every dispatch.
 - Rule: —
 - Replaces:

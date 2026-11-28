@@ -58,10 +58,9 @@ export function nativeOfflineView() {
   }
 }
 
-/** OpenUI's icon catalogue has ~2,000 dynamic entry points, although it uses
- * the same Lucide modules the application already imports. Keep its exact
- * names and Promise/module contract while sharing one local icon catalogue;
- * thousands of tiny scheme requests would otherwise dominate a cold launch. */
+/** Lucide's dynamic icon catalogue has ~2,000 entry points; keep its exact
+ * names and Promise/module contract while sharing one local icon catalogue so
+ * thousands of tiny scheme requests never dominate a cold launch. */
 export function bundledIconCatalogue() {
   return {
     name: 'mikka-bundled-icon-catalogue',

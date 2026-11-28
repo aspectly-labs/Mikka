@@ -400,7 +400,7 @@ dbTest('deleting an account removes what the person owns, keeps what their team 
     assert.equal((await pool.query('select 1 from workspace_deletions where id = $1', [shared])).rowCount, 0)
     assert.equal((await pool.query('select 1 from bots where id = $1', [formerBot])).rowCount, 0)
     // The shared workspace keeps its own rows, and her team bot stays there without an owner (「待接管」).
-    assert.deepEqual(await keyedBy(shared), ['agent_runs', 'artifacts', 'bots', 'conversations', 'hosted_allowances', 'issues', 'mikka_task_identifier_aliases', 'resource_access_policies', 'task_identifier_aliases', 'workspace_e2b_keys', 'workspace_secrets', 'workspace_settings', 'workspace_task_identifier_counters'])
+    assert.deepEqual(await keyedBy(shared), ['agent_runs', 'artifacts', 'bots', 'conversations', 'hosted_allowances', 'issues', 'mikka_task_identifier_aliases', 'resource_access_policies', 'task_identifier_aliases', 'workspace_e2b_keys', 'workspace_issue_states', 'workspace_secrets', 'workspace_settings', 'workspace_task_identifier_counters'])
     // Bob's own things are untouched.
     assert.equal((await pool.query('select 1 from issues where id = $1', [bobIssue])).rowCount, 1)
     assert.equal((await pool.query('select 1 from "user" where id = $1', [bob])).rowCount, 1)
@@ -769,7 +769,7 @@ dbTest('account deletion preserves task run and Factory history through DELETE u
     let providerCalls = 0
     const unavailableProvider = async () => { providerCalls++; throw new Error('deleted account reached the provider') }
     const writes = createApprovedWrites(pool, { name: 'fixture', prepare: unavailableProvider, execute: unavailableProvider, lookup: unavailableProvider }, 'send_slack_message')
-    for (const id of operationIds) await assert.rejects(writes.decide(actor, id, true), /operationSessionUnavailable/)
+    for (const id of operationIds) await assert.rejects(writes.view(actor, id), /operationSessionUnavailable/)
     assert.equal(providerCalls, 0)
     assert.deepEqual(await rows('operation_ledger', 'operationId', operationIds), retainedOperations, 'failed claim and replay attempts leave every retained ledger row unchanged')
     assert.deepEqual((await pool.query('SELECT "botId","wakeLeaseUntil" FROM coordinator_events WHERE id=$1', [completedFactory.eventId])).rows, [{ botId: null, wakeLeaseUntil: null }])

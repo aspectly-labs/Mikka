@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { assertIndexValid, dropInvalidIndex, headerLines, planMigration } from './migration-steps.mjs'
+import { readFileSync } from 'node:fs'
+import { assertIndexValid, dropInvalidIndex, ENVIRONMENT_SCOPE_LIMITS, headerLines, planMigration, setLocalLimits } from './migration-steps.mjs'
 
 const NOTX = '-- migrate: no-transaction\n'
 const plan = (sql) => planMigration('x.sql', sql)
@@ -131,4 +132,16 @@ test('dropInvalidIndex drops only an INVALID index on the expected table, concur
   assert.match(calls.at(-2).text, /r\.relname = \$2/)
   assert.match(calls.at(-2).text, /n\.nspname = coalesce\(\$3, current_schema\(\)\)/)
   assert.equal(calls.at(-1).text, 'DROP INDEX CONCURRENTLY IF EXISTS "public"."i"')
+})
+
+test('the environment-scope migration bounds lock waits, statements and the idle ACL hold on both connections', async () => {
+  const sent = []
+  await setLocalLimits({ query: async text => { sent.push(text) } }, ENVIRONMENT_SCOPE_LIMITS.migration)
+  await setLocalLimits({ query: async text => { sent.push(text) } }, ENVIRONMENT_SCOPE_LIMITS.acl)
+  assert.deepEqual(sent, ["SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '60s'",
+    "SET LOCAL lock_timeout = '5s'; SET LOCAL idle_in_transaction_session_timeout = '15min'"])
+  // Each connection's first statement after BEGIN sets its limits, before any lock is taken.
+  const runner = readFileSync(new URL('./migrate.mjs', import.meta.url), 'utf8')
+  assert.match(runner, /await acl\.query\('BEGIN'\)\n\s*await setLocalLimits\(acl, ENVIRONMENT_SCOPE_LIMITS\.acl\)\n\s*const shared = await acl\.query/)
+  assert.match(runner, /await client\.query\('BEGIN'\)\n\s*await setLocalLimits\(client, ENVIRONMENT_SCOPE_LIMITS\.migration\)\n\s*await client\.query\("SELECT set_config/)
 })

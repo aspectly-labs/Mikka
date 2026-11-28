@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, mock, test } from 'node:test'
+import { GatewayInternalServerError } from '@ai-sdk/gateway'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import { hostedBillingScope } from './context'
 const tracer = new NodeTracerProvider()
@@ -22,6 +23,12 @@ const admissions: unknown[][] = []
 let denyAt: 'prepare' | 'send' | null = null
 let beforeSettlement: ((cost: number | null) => Promise<void>) | undefined, generationFailure: Error | undefined
 const modelOptions: unknown[] = []
+const factories: Array<{ callId?: string }> = []
+let workflowIdentity: { workflowRunId: string; stepId: string; attempt: number } | undefined
+mock.module('workflow', { namedExports: {
+  getStepMetadata: () => { if (!workflowIdentity) throw Error('not_in_step'); return workflowIdentity },
+  getWorkflowMetadata: () => { if (!workflowIdentity) throw Error('not_in_workflow'); return workflowIdentity },
+} })
 type Generation = { distinctId: string; event: string; properties?: Record<string, unknown> }
 const captured: Generation[] = []
 let selectedModel: unknown
@@ -65,7 +72,7 @@ mock.module(new URL('../posthog-server.ts', import.meta.url).href, {
   namedExports: { serverPostHog: () => ({ capture: (event: Generation) => captured.push(event) }) },
 })
 mock.module(new URL('../model-gateway/litellm-client.ts', import.meta.url).href, { namedExports: {
-  createLiteLLMModel: () => selectedModel ?? model,
+  createLiteLLMModel: (_model: string, options: { callId?: string }) => { factories.push(options); return selectedModel ?? model },
   liteLLMBaseUrl: () => 'https://litellm.fixture.invalid/v1',
   liteLLMCost: (value: { litellm?: { cost?: unknown } }) => {
     const cost = value?.litellm?.cost
@@ -121,6 +128,21 @@ beforeEach(() => {
   denyAt = null
   beforeSettlement = undefined
   generationFailure = undefined
+  factories.length = 0
+  workflowIdentity = undefined
+})
+
+test('each actual reservation reaches its own LiteLLM call with the trusted native step identity', async () => {
+  workflowIdentity = { workflowRunId: 'wrun_native', stepId: 'step_model', attempt: 2 }
+  const wrapped = await hostedModel('workspace', 'fixture-model')
+  const [generated, streamed] = await Promise.all([wrapped.doGenerate({ prompt: [] }), wrapped.doStream({ prompt: [] })])
+  await streamed.stream.pipeTo(new WritableStream())
+  assert.ok(generated.content.length)
+  const bound = factories.flatMap(options => options.callId ? [options.callId] : [])
+  assert.equal(bound.length, 2)
+  assert.equal(new Set(bound).size, 2)
+  assert.deepEqual(bound.sort(), reservations.map(id => `mikka-hosted:${id}:wrun_native:step_model:2`).sort())
+  assert.deepEqual(settlements.map(row => row.cost), [2000, 2000])
 })
 
 test('verification and zero balance prevent provider I/O, including another tool step', async () => {
@@ -211,6 +233,32 @@ test('an unverified injected transport cannot impersonate the LiteLLM endpoint',
   assert.equal(reservations.length, 0)
   assert.equal(generated, 0)
 })
+
+const providerGenerationId = 'gen_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+for (const operation of ['doGenerate', 'doStream', 'streamRead'] as const) test(`the hosted ledger keeps the Gateway ID when ${operation} throws before content`, async () => {
+  const failure = new GatewayInternalServerError({ message: 'fixture provider failure', generationId: providerGenerationId })
+  const fail = async () => { throw failure }
+  selectedModel = { ...model, doGenerate: fail, doStream: operation === 'streamRead'
+    ? async () => ({ stream: new ReadableStream({ pull(controller) { controller.error(failure) } }) })
+    : fail }
+  const wrapped = await hostedModel('workspace', 'fixture-model')
+  if (operation === 'streamRead') {
+    const { stream } = await wrapped.doStream({ prompt: [] })
+    await assert.rejects(stream.getReader().read(), failure)
+  } else {
+    await assert.rejects(async () => wrapped[operation]({ prompt: [] }), failure)
+  }
+  assert.deepEqual(settlements, [{ id: reservations[0], cost: null, generationId: providerGenerationId }])
+})
+
+test('the hosted ledger requires a canonical Gateway ID on a provider failure', async () => {
+  const failure = new GatewayInternalServerError({ message: 'fixture provider failure', generationId: providerGenerationId + '&query=unexpected' })
+  selectedModel = { ...model, doGenerate: async () => { throw failure } }
+  const wrapped = await hostedModel('workspace', 'fixture-model')
+  await assert.rejects(async () => wrapped.doGenerate({ prompt: [] }), failure)
+  assert.deepEqual(settlements, [{ id: reservations[0], cost: null }])
+})
+
 for (const ending of ['error', 'cancel', 'finish'] as const) test(`early LiteLLM identity survives ${ending} without invented cost`, async () => {
   let controller!: ReadableStreamDefaultController
   let cancelled = false
@@ -343,4 +391,28 @@ test('server-owned billing adapter reuses the full route and settles in its own 
   assert.deepEqual(costs, [2000])
   assert.equal(reservations.length, 0)
   assert.equal(settlements.length, 0)
+})
+
+test('one hosted deadline covers cold readiness plus provider time while caller cancellation remains immediate', async t => {
+  const deadlines: Array<{ milliseconds: number; controller: AbortController }> = []
+  t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
+    const controller = new AbortController()
+    deadlines.push({ milliseconds, controller })
+    return controller.signal
+  })
+  const wrapped = await hostedModel('workspace', 'fixture-model')
+  for (const method of ['doGenerate', 'doStream'] as const) {
+    const caller = new AbortController()
+    const result = await wrapped[method]({ prompt: [], abortSignal: caller.signal })
+    assert.equal(deadlines.at(-1)?.milliseconds, 120_000)
+    const received = (modelOptions.at(-1) as { abortSignal: AbortSignal }).abortSignal
+    assert.equal(received.aborted, false)
+    const reason = new Error('Synthetic request stopped')
+    const stop = method === 'doGenerate' ? deadlines.at(-1)!.controller : caller
+    stop.abort(reason)
+    assert.equal(received.aborted, true)
+    assert.equal(received.reason, reason)
+    if (method === 'doStream') await (result as Awaited<ReturnType<typeof model.doStream>>).stream.cancel()
+  }
+  assert.deepEqual([generated, streamed, deadlines.length], [1, 1, 2], 'the larger budget does not retry or add a model request')
 })

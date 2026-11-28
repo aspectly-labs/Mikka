@@ -3,7 +3,7 @@
 > **Historical design; implementation retired by #1918.** Eve now owns Bot/Coordinator execution. The native turn relay, daemon Coordinator model executors and hosted compaction model have been removed; only the authenticated device compatibility endpoint, persisted rows, tool-scope checks and wake token remain for older installed devices. Active native CLI task runners and Factory/E2B machine workflows are separate product services. See [current Bot architecture](coordinator-streaming.md).
 >
 > **Deprecated (Alex, 2026-10-27).** The Coordinator and every bot run their
-> chats only on Mikka's own harness ([R-05](../design/rules.md)). Claude Code
+> chats only on Mikka's own harness ([R-05](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md)). Claude Code
 > and Codex only execute threads. The server always
 > refuses this runtime; its `MIKKA_NATIVE_COORDINATOR` switch and dead model
 > executors are removed. The historical design below does not describe active

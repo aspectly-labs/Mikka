@@ -12,7 +12,7 @@ import { createApiHandler } from './application'
 import { createRequestScope, currentRequestScope, requestCache, runRequestScope } from './context'
 import { cookies, headers } from '@/lib/server-runtime/headers'
 // oxlint-disable-next-line no-restricted-imports -- this spec exercises the request lifetime itself
-import { after, NextRequest, NextResponse, NextURL } from '@/lib/server-runtime/server'
+import { after, RouteRequest, RouteResponse, RouteURL } from '@/lib/server-runtime/server'
 import { getLocale, getTranslations } from '../../../lib/intl/i18n-server'
 import { getPathname } from '../../../lib/server-runtime/localized-navigation'
 import type { ApiRoute } from './routes'
@@ -20,6 +20,19 @@ import { createWebTransport } from '../../../lib/web-connection/transport'
 
 const fixture = (path: string, module: Record<string, unknown>, methods = Object.keys(module)): ApiRoute => ({ path: `/mikka/api/${path}`, template: `/api/${path}`, source: 'fixture', methods, load: async () => module })
 const request = (path = 'one', init?: RequestInit) => new Request(`https://example.test/mikka/api/${path}`, init)
+
+test('installed-client compatibility refusals reach the caller before a business handler runs', async () => {
+  let writes = 0
+  const app = createApiHandler([fixture('write', { POST: () => { writes++; return Response.json({ written: true }) } })])
+  const refused = await app.fetch(request('write', { method: 'POST', headers: { 'x-mikka-client': 'mobile', 'x-mikka-api-version': 'invalid' } }))
+  assert.equal(refused.status, 426)
+  assert.equal((await refused.json()).cause.code, 'api_version_invalid')
+  assert.equal(writes, 0)
+  for (const headers of [{ 'x-mikka-api-version': '1' }, { 'x-mikka-client': 'mobile' }]) {
+    assert.equal((await app.fetch(request('write', { method: 'POST', headers }))).status, 200)
+  }
+  assert.equal(writes, 2, 'phase one keeps previously released clients compatible')
+})
 
 test('official web bearer adaptation is installed before the API scope and strips handler cookies afterward', async () => {
   let calls = 0, revoked = false
@@ -50,10 +63,10 @@ test('request cookies match the installed SDK for duplicates and malformed encod
   // a later duplicate name replaces the earlier one, an undecodable pair is
   // dropped, a bare name is `true`, and surrounding spaces stay in the name.
   const frozen = new Map([
-    ['NEXT_LOCALE=en; NEXT_LOCALE=zh-CN; mikka-workspace=old; mikka-workspace=new',
-      [{ name: 'NEXT_LOCALE', value: 'zh-CN' }, { name: 'mikka-workspace', value: 'new' }]],
-    ['NEXT_LOCALE=en; NEXT_LOCALE=%E0%A4%A; bad=%; invalid=%FF; valid=%E4%B8%AD',
-      [{ name: 'NEXT_LOCALE', value: 'en' }, { name: 'valid', value: '中' }]],
+    ['mikka-locale=en; mikka-locale=zh-CN; mikka-workspace=old; mikka-workspace=new',
+      [{ name: 'mikka-locale', value: 'zh-CN' }, { name: 'mikka-workspace', value: 'new' }]],
+    ['mikka-locale=en; mikka-locale=%E0%A4%A; bad=%; invalid=%FF; valid=%E4%B8%AD',
+      [{ name: 'mikka-locale', value: 'en' }, { name: 'valid', value: '中' }]],
     ['bad=%; bad=okay; empty=; flag; quoted="value"; plus=a+b; equals=a=b; encoded=%3D',
       [{ name: 'bad', value: 'okay' }, { name: 'empty', value: '' }, { name: 'flag', value: 'true' },
         { name: 'quoted', value: '"value"' }, { name: 'plus', value: 'a+b' }, { name: 'equals', value: 'a=b' },
@@ -64,7 +77,7 @@ test('request cookies match the installed SDK for duplicates and malformed encod
   ])
   for (const [cookie, expected] of frozen) {
     const input = request('one', { headers: { cookie } })
-    const adapted = new NextRequest(input)
+    const adapted = new RouteRequest(input)
     assert.deepEqual(adapted.cookies.getAll(), expected)
     assert.equal(adapted.headers.get('cookie'), input.headers.get('cookie'))
     await runRequestScope(createRequestScope(input), async () => {
@@ -146,7 +159,7 @@ test('multiple raw Set-Cookie fields retain Expires, chunks and deletion attribu
     const jar = await cookies()
     jar.set('proof.1', 'second', { httpOnly: true, secure: true, sameSite: 'none', path: '/mikka' })
     jar.delete({ name: 'old', path: '/mikka' })
-    const response = new NextResponse('okay')
+    const response = new RouteResponse('okay')
     response.headers.append('set-cookie', existing)
     response.cookies.set('selector', 'new', { maxAge: 10, path: '/mikka' })
     return response
@@ -179,13 +192,13 @@ for (const outcome of ['complete', 'cancel', 'error'] as const) test(`real Web s
 test('native Request facade retains URL, query, clone, body and cancellation without global patch', async () => {
   const controller = new AbortController()
   const original = new Request('https://example.test/mikka/api/check?q=1', { method: 'POST', body: 'payload', signal: controller.signal, headers: { cookie: 'a=1' } })
-  const adapted = new NextRequest(original)
+  const adapted = new RouteRequest(original)
   assert.equal(adapted.method, 'POST'); assert.equal(await adapted.clone().text(), 'payload')
-  assert.equal(adapted.nextUrl.pathname, '/api/check'); assert.equal(adapted.nextUrl.basePath, '/mikka')
-  assert.equal(adapted.nextUrl.clone().href, original.url)
+  assert.equal(adapted.routeUrl.pathname, '/api/check'); assert.equal(adapted.routeUrl.basePath, '/mikka')
+  assert.equal(adapted.routeUrl.clone().href, original.url)
   adapted.cookies.set('b', '2'); assert.equal(adapted.headers.get('cookie'), 'a=1; b=2')
   controller.abort(); assert.equal(adapted.signal.aborted, true)
-  const url = new NextURL('https://example.test/mikka?x=1'); url.pathname = '/settings'
+  const url = new RouteURL('https://example.test/mikka?x=1'); url.pathname = '/settings'
   assert.equal(url.href, 'https://example.test/mikka/settings?x=1')
 })
 
@@ -197,11 +210,11 @@ test('actual srvx NodeRequest backing preserves POST and rejects stale canonical
   const response = new ServerResponse(incoming)
   const original = new NodeRequest({ req: incoming, res: response, trustProxy: false })
   original._url = new URL('https://example.test/mikka/api/check?q=1')
-  const adapted = new NextRequest(original)
+  const adapted = new RouteRequest(original)
   assert.equal(adapted.url, original.url); assert.equal(adapted.method, 'POST'); assert.equal(await adapted.text(), 'body')
   assert.equal(original.runtime?.node?.req, incoming)
   original._url = new URL('https://other.test/mikka/api/check?q=1')
-  assert.throws(() => new NextRequest(original), /API_REQUEST_BODY_USED|API_REQUEST_URL_MISMATCH/)
+  assert.throws(() => new RouteRequest(original), /API_REQUEST_BODY_USED|API_REQUEST_URL_MISMATCH/)
   socket.destroy()
 })
 
@@ -215,7 +228,7 @@ test('locale and translations use actual ICU formatter; localized URL keeps quer
   })
   assert.equal(getPathname({ locale: 'en', href: { pathname: '/settings', query: { tab: 'a b' }, hash: 'details' } }), '/en/settings?tab=a+b#details')
   assert.equal(getPathname({ locale: 'zh-CN', href: '/settings?tab=x#details' }), '/settings?tab=x#details')
-  assert.equal(NextResponse.redirect('https://example.test/a', { status: 303, headers: { 'cache-control': 'no-store' } }).status, 303)
+  assert.equal(RouteResponse.redirect('https://example.test/a', { status: 303, headers: { 'cache-control': 'no-store' } }).status, 303)
 })
 
 for (const outcome of ['accepted', 'expired', 'unavailable', 'disabled', 'preflight'] as const) test(`web transport ${outcome} belongs to the original request trace before any business scope`, async () => {

@@ -33,7 +33,7 @@ export async function ensureBotRuntime(pool: Pool, actor: { userId: string; work
 /** Register execution identities and the declarative private workspace path.
  * This records no worker heartbeat, installed capability or credential. */
 export async function recordBotRuntime(client: PoolClient, actor: { userId: string; workspaceId: string }, botId: string, deviceId: string, path: string, harnesses: readonly { harness: string }[]) {
-  const repo = (await client.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath","baseBranch") VALUES ($1,$2,$3,$4,'main')
+  const repo = (await client.query(`INSERT INTO device_repos (id,"deviceId","userId","repoPath") VALUES ($1,$2,$3,$4)
     ON CONFLICT ("deviceId","repoPath") DO UPDATE SET "repoPath"=EXCLUDED."repoPath" WHERE device_repos."userId"=EXCLUDED."userId" RETURNING id`, [randomUUID(), deviceId, actor.userId, path])).rows[0]
   if (!repo) throw new Error('Bot runtime unavailable')
   for (const info of harnesses) {

@@ -17,7 +17,8 @@ import { join } from 'node:path'
 import { mock, test } from 'node:test'
 import { promisify } from 'node:util'
 import { gzipSync } from 'node:zlib'
-import { DAEMON_PROTOCOL_VERSION } from '@mikka/protocol/daemon'
+import type { PoolClient } from 'pg'
+import { DAEMON_PROTOCOL_VERSION, DAEMON_RPC_ERRORS } from '@mikka/protocol/daemon'
 import { CLIENT_VERSION_HEADER } from '@mikka/protocol/version'
 import { DEVICE_SESSION_HEADER, DEVICE_SESSION_VERSION, MIN_DAEMON_VERSION, type DeviceRegistration, type RunAssignment, type RunCheckpoint, type RunCheckpointReceipt } from '@mikka/protocol/device'
 import type { RunCompletion } from '@mikka/protocol/run'
@@ -77,7 +78,7 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
   process.env.WORKSPACE_SECRETS_KEY = randomBytes(32).toString('hex')
   process.env.BETTER_AUTH_SECRET = randomBytes(32).toString('hex')
   const next = await import('@/lib/server-runtime/server')
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   // Use the same request adapters as the standalone API. Neither session nor
   // workspace/object authorization readers are replaced with fixture values.
   const requestHeaders = await import('../lib/server-runtime/headers')
@@ -372,11 +373,14 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
   // Every stage is a new normal admission and HTTP claim on the existing Bot's
   // workspace. No run identity, Secret grant or capability is patched by SQL.
   let taskNumber = 1
-  const freshClaim = async () => {
+  const freshQueuedRun = async () => {
     const taskId = await seedIssue(pool, owner, workspace.id)
     await pool.query('UPDATE issues SET content=$2 WHERE id=$1', [taskId, JSON.stringify({ type: 'doc', attrs: { mikka: { number: ++taskNumber } } })])
-    const next = await queueRun(owner, { issueId: taskId, agentId: b.agentId, repo: remote, model: 'fixture-model',
+    return queueRun(owner, { issueId: taskId, agentId: b.agentId, repo: remote, model: 'fixture-model',
       modelDispatch: { mode: 'preference', routing: { version: 1, difficulty: 'hard', model: 'fixture-model', harness: 'claude_code', tier: 'standard', effort: 'high', reason: 'difficulty_fit' } } }, botId)
+  }
+  const freshClaim = async () => {
+    const next = await freshQueuedRun()
     const claimed = await b.link.claimRun(b.id, next.runId)
     const row = (await pool.query<{ workspaceId: string; principal: string; repository: string }>(
       `SELECT r."agentDefinition"->'executionIdentity'->>'workspaceId' AS "workspaceId",
@@ -387,8 +391,212 @@ test('local task Secret claim, child egress, recovery and withdrawal use the rea
     assert.equal(row.repository, remote)
     return claimed
   }
+  await t.test('the final MCP lock error rolls back before the claim writes a terminal state', async t => {
+    const { freezeExecutionIdentity } = await import('../lib/execution-identity')
+    const serverId = randomUUID()
+    await pool.query('INSERT INTO personal_mcp_servers (id,user_id,name,url,transport) VALUES ($1,$2,\'Fixture MCP\',\'https://mcp.example.invalid/\',\'http\')', [serverId, owner])
+    const { runId } = await freshQueuedRun()
+    const { rows: [run] } = await pool.query<Parameters<typeof freezeExecutionIdentity>[1]>(
+      'SELECT "userId","botId","deviceId","agentDefinition" FROM agent_runs WHERE id=$1', [runId])
+    assert.ok(run?.agentDefinition)
+    run.agentDefinition.customMcp = { requester: owner, workspaceId: workspace.id,
+      servers: [{ id: serverId, name: 'Fixture MCP', ownerId: owner, revision: 1, grantId: null }] }
+    run.agentDefinition.executionIdentity = await freezeExecutionIdentity(pool, run, pool)
+    await pool.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [runId, JSON.stringify(run.agentDefinition)])
+
+    const blocker = await pool.connect()
+    const events: string[] = []
+    const wrapped = new WeakSet<PoolClient>()
+    let failedClient: PoolClient | undefined
+    const observe = (client: PoolClient) => {
+      if (wrapped.has(client)) return
+      wrapped.add(client)
+      t.mock.method(client, 'query', new Proxy(client.query, { apply(query, self, args) {
+        const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text
+        if (sql?.includes('FROM personal_mcp_servers') && sql.endsWith('FOR SHARE')) {
+          failedClient = client
+          return Promise.resolve(Reflect.apply(query, self, ["SET LOCAL lock_timeout = '100ms'"])).then(async () => {
+            try { return await Reflect.apply(query, self, args) }
+            catch (error) { assert.deepEqual((error as { code?: string }).code, '55P03'); events.push('lock_timeout'); throw error }
+          })
+        }
+        if (client === failedClient && sql?.toLowerCase() === 'rollback') {
+          return Promise.resolve(Reflect.apply(query, self, args)).then(result => { events.push('rollback'); return result })
+        }
+        if (sql?.startsWith('update "agent_runs"') && sql.includes('"failureDetails"') && args[1]?.includes(runId)) events.push('terminal_write')
+        return Reflect.apply(query, self, args)
+      } }))
+    }
+    appPool.on('acquire', observe)
+    try {
+      await blocker.query('BEGIN')
+      await blocker.query('SELECT id FROM personal_mcp_servers WHERE id=$1 FOR UPDATE', [serverId])
+      await assert.rejects(b.link.claimRun(b.id, runId), { code: DAEMON_RPC_ERRORS.runNotPinnedHere })
+      assert.deepEqual(events, ['lock_timeout', 'rollback', 'terminal_write'])
+      const { rows: [failed] } = await pool.query('SELECT status,"stopReason",error,"failureDetails","finishedAt" FROM agent_runs WHERE id=$1', [runId])
+      assert.equal(failed.status, 'failed')
+      assert.equal(failed.stopReason, 'error')
+      assert.equal(failed.error, 'mcpUnavailable')
+      assert.equal(failed.failureDetails.code, 'run_mcp_unavailable')
+      assert.ok(failed.finishedAt)
+    } finally {
+      appPool.off('acquire', observe)
+      try { await blocker.query('ROLLBACK') } finally { blocker.release() }
+    }
+  })
   const complete = (claimed: RunAssignment) => b.link.completeRun(claimed.runId, { stopReason: 'cancelled',
     report: { summary: 'Local Secret scope fixture', filesChanged: [], verify: { status: 'not_run' }, openQuestions: [], nextStep: null } })
+  await t.test('a tool switched during the claim reaches the same device on that claim, without a refusal or a stranded lease', async t => {
+    const { freezeExecutionIdentity } = await import('../lib/execution-identity')
+    const serverId = randomUUID()
+    await pool.query('INSERT INTO personal_mcp_servers (id,user_id,name,url,transport,connection_status) VALUES ($1,$2,\'Switch fixture MCP\',\'https://mcp.example.invalid/\',\'http\',\'connected\')', [serverId, owner])
+    await pool.query('INSERT INTO mcp_server_tools (server_id,tool_name) VALUES ($1,\'read_docs\'),($1,\'delete_docs\')', [serverId])
+    const { runId } = await freshQueuedRun()
+    const { rows: [run] } = await pool.query<Parameters<typeof freezeExecutionIdentity>[1]>(
+      'SELECT "userId","botId","deviceId","agentDefinition" FROM agent_runs WHERE id=$1', [runId])
+    assert.ok(run?.agentDefinition)
+    run.agentDefinition.customMcp = { requester: owner, workspaceId: workspace.id,
+      servers: [{ id: serverId, name: 'Switch fixture MCP', ownerId: owner, revision: 1, grantId: null }] }
+    run.agentDefinition.executionIdentity = await freezeExecutionIdentity(pool, run, pool)
+    await pool.query('UPDATE agent_runs SET "agentDefinition"=$2 WHERE id=$1', [runId, JSON.stringify(run.agentDefinition)])
+
+    // The owner turns delete_docs off after the claim exported the switches and just before the
+    // claim's fence reads them, the window a stale export used to fall into.
+    const events: string[] = []
+    const wrapped = new WeakSet<PoolClient>()
+    const observe = (client: PoolClient) => {
+      if (wrapped.has(client)) return
+      wrapped.add(client)
+      t.mock.method(client, 'query', new Proxy(client.query, { apply(query, self, args) {
+        const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text
+        if (sql?.includes('FROM mcp_server_tools') && sql.endsWith('FOR SHARE') && !events.includes('switched')) {
+          return pool.query('UPDATE mcp_server_tools SET enabled=false,updated_at=now() WHERE server_id=$1 AND tool_name=\'delete_docs\'', [serverId])
+            .then(() => { events.push('switched'); return Reflect.apply(query, self, args) })
+        }
+        return Reflect.apply(query, self, args)
+      } }))
+    }
+    appPool.on('acquire', observe)
+    let claimed: RunAssignment
+    try { claimed = await b.link.claimRun(b.id, runId) }
+    finally { appPool.off('acquire', observe) }
+    assert.deepEqual(events, ['switched'])
+    const servers = (claimed as RunAssignment & { mcp?: { servers?: { name: string; disabledTools?: string[] }[] } }).mcp?.servers
+    assert.deepEqual(servers?.map(server => [server.name, server.disabledTools]), [[`mcp_${serverId.replaceAll('-', '')}`, ['delete_docs']]])
+    const { rows: [after] } = await pool.query('SELECT status,"stopReason",error FROM agent_runs WHERE id=$1', [runId])
+    assert.equal(after.status, 'preparing')
+    assert.equal(after.stopReason, null)
+    assert.equal(after.error, null)
+    await complete(claimed)
+  })
+  // A claim refused by its final authorization must never stay `preparing`: the claim lookup only
+  // takes queued runs and an open device session keeps extending the lease. Drive the real claim
+  // route through B's real link, and change state right before the claim's response transaction.
+  const duringClaimResponse = (t: { mock: { method: typeof mock.method } }, runId: string, change: () => Promise<unknown>) => {
+    let changed = false
+    const wrapped = new WeakSet<PoolClient>()
+    const observe = (client: PoolClient) => {
+      if (wrapped.has(client)) return
+      wrapped.add(client)
+      t.mock.method(client, 'query', new Proxy(client.query, { apply(query, self, args) {
+        const sql = typeof args[0] === 'string' ? args[0] : args[0]?.text
+        // The response transaction locks the task first, after the claim leased the run.
+        if (!changed && sql?.includes('from "issues"') && sql.includes('for update')) {
+          return pool.query<{ status: string }>('SELECT status FROM agent_runs WHERE id=$1', [runId]).then(async ({ rows: [run] }) => {
+            if (run?.status === 'preparing' && !changed) { changed = true; await change() }
+            return Reflect.apply(query, self, args)
+          })
+        }
+        return Reflect.apply(query, self, args)
+      } }))
+    }
+    appPool.on('acquire', observe)
+    return { done: () => { appPool.off('acquire', observe); return changed } }
+  }
+  await t.test('a repository changed during the claim requeues the run, and the same device claims it again', async t => {
+    const { runId } = await freshQueuedRun()
+    const { rows: [bound] } = await pool.query<{ repoId: string; remoteUrl: string }>(
+      'SELECT d.id AS "repoId",d."remoteUrl" FROM agent_runs r JOIN device_repos d ON d.id=r."deviceRepoId" WHERE r.id=$1', [runId])
+    const watch = duringClaimResponse(t, runId, () => pool.query('UPDATE device_repos SET "remoteUrl"=$2 WHERE id=$1', [bound.repoId, 'https://github.com/synthetic-other/repository.git']))
+    try { await assert.rejects(b.link.claimRun(b.id, runId)) } finally { assert.equal(watch.done(), true) }
+    const { rows: [queued] } = await pool.query('SELECT status,"leaseExpiresAt","startedAt","deviceTokenId","stopReason",error FROM agent_runs WHERE id=$1', [runId])
+    assert.deepEqual(queued, { status: 'queued', leaseExpiresAt: null, startedAt: null, deviceTokenId: null, stopReason: null, error: null })
+    const { rows: [tokens] } = await pool.query<{ live: number }>('SELECT count(*)::int AS live FROM run_tokens WHERE "runId"=$1 AND "revokedAt" IS NULL', [runId])
+    assert.equal(tokens.live, 0, 'the refused claim\'s run token is revoked')
+    // The device's repository is back as it was; the same device claims the same run again.
+    await pool.query('UPDATE device_repos SET "remoteUrl"=$2 WHERE id=$1', [bound.repoId, bound.remoteUrl])
+    const again = await b.link.claimRun(b.id, runId)
+    assert.equal(again.runId, runId)
+    const { rows: [claimed] } = await pool.query('SELECT status,"deviceId" FROM agent_runs WHERE id=$1', [runId])
+    assert.deepEqual(claimed, { status: 'preparing', deviceId: b.id })
+    await complete(again)
+  })
+  const changeRepository = async (t: { mock: { method: typeof mock.method } }, runId: string) => {
+    const { rows: [bound] } = await pool.query<{ repoId: string; remoteUrl: string }>(
+      'SELECT d.id AS "repoId",d."remoteUrl" FROM agent_runs r JOIN device_repos d ON d.id=r."deviceRepoId" WHERE r.id=$1', [runId])
+    const watch = duringClaimResponse(t, runId, () => pool.query('UPDATE device_repos SET "remoteUrl"=$2 WHERE id=$1', [bound.repoId, 'https://github.com/synthetic-other/repository.git']))
+    try { await assert.rejects(b.link.claimRun(b.id, runId)) } finally {
+      assert.equal(watch.done(), true)
+      await pool.query('UPDATE device_repos SET "remoteUrl"=$2 WHERE id=$1', [bound.repoId, bound.remoteUrl])
+    }
+  }
+  await t.test('a skill-assigned run whose claim changed ends with a reason: its append-only receipt binds that claim', async t => {
+    const { runId } = await freshQueuedRun()
+    const { skillAssignments } = await import('../lib/self-improvement/server')
+    await skillAssignments.selectBaseline(owner, runId)
+    await changeRepository(t, runId)
+    const { rows: [ended] } = await pool.query('SELECT status,"stopReason","failureDetails"->>\'code\' AS code,error,"claimRequeues" FROM agent_runs WHERE id=$1', [runId])
+    assert.equal(ended.status, 'failed', 'never left preparing, never requeued into a receipt conflict')
+    assert.equal(ended.stopReason, 'blocked')
+    assert.equal(ended.code, 'run_failed')
+    assert.match(ended.error, /skill assignment is bound to that claim/)
+    assert.equal(ended.claimRequeues, 0)
+    assert.equal((await pool.query('SELECT 1 FROM improvement_skill_receipts WHERE "runId"=$1', [runId])).rowCount, 1, 'provenance is kept')
+  })
+  await t.test('a subscription-pinned claim is requeued without its pin, and the same device claims it again', async () => {
+    const { claimLocalRun, requeueLocalClaim } = await import('../lib/computer/claim')
+    const connection = randomUUID(), binding = randomUUID()
+    await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject","modelCatalog",quota)
+      VALUES ($1,$2,$3,'claude','connected',1,('synthetic-'||$1::uuid::text),$4,'synthetic-subject','{"revision":"1","models":[]}','{}')`, [connection, owner, workspace.id, 'a'.repeat(64)])
+    await pool.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId")
+      VALUES ($1,$2,$3,'catalogue',$4,1,'claude_cpa','fixture-model')`, [binding, owner, workspace.id, connection])
+    const { runId } = await freshQueuedRun()
+    const leases = [new Date(Date.now() + 60_000), new Date(Date.now() + 120_000)]
+    assert.equal(await claimLocalRun(appPool, runId, b.id, leases[0], binding), 'claimed')
+    assert.equal((await pool.query('SELECT 1 FROM byos_native_runs WHERE "runId"=$1', [runId])).rowCount, 1)
+    assert.equal(await requeueLocalClaim(appPool, { runId, userId: owner, deviceId: b.id, leaseExpiresAt: leases[0].toISOString() }), 'requeued')
+    assert.equal((await pool.query('SELECT 1 FROM byos_native_runs WHERE "runId"=$1', [runId])).rowCount, 0)
+    // The same device claims again with the same subscription: the pin is recorded afresh, not a duplicate key.
+    assert.equal(await claimLocalRun(appPool, runId, b.id, leases[1], binding), 'claimed')
+    assert.deepEqual((await pool.query('SELECT "bindingId" FROM byos_native_runs WHERE "runId"=$1', [runId])).rows, [{ bindingId: binding }])
+    await pool.query(`UPDATE agent_runs SET status='cancelled',"finishedAt"=now() WHERE id=$1`, [runId])
+  })
+  await t.test('a run whose claim keeps changing ends after the requeue limit instead of cycling', async t => {
+    const { CLAIM_REQUEUE_LIMIT } = await import('../lib/computer/claim')
+    const { runId } = await freshQueuedRun()
+    for (let requeue = 1; requeue <= CLAIM_REQUEUE_LIMIT; requeue++) {
+      await changeRepository(t, runId)
+      assert.deepEqual((await pool.query('SELECT status,"claimRequeues" FROM agent_runs WHERE id=$1', [runId])).rows[0], { status: 'queued', claimRequeues: requeue })
+    }
+    await changeRepository(t, runId)
+    const { rows: [ended] } = await pool.query('SELECT status,"stopReason",error,"failureDetails"->>\'code\' AS code,"claimRequeues" FROM agent_runs WHERE id=$1', [runId])
+    assert.equal(ended.status, 'failed')
+    assert.equal(ended.stopReason, 'blocked')
+    assert.equal(ended.code, 'run_failed')
+    assert.match(ended.error, /stopped after 3 tries/)
+    assert.equal(ended.claimRequeues, CLAIM_REQUEUE_LIMIT)
+  })
+  await t.test('a task deleted during the claim ends the claim\'s lease with a reason instead of stranding it', async t => {
+    const { runId } = await freshQueuedRun()
+    const { rows: [run] } = await pool.query<{ issueId: string }>('SELECT "issueId" FROM agent_runs WHERE id=$1', [runId])
+    const watch = duringClaimResponse(t, runId, () => pool.query(`UPDATE issues SET content=jsonb_set(content,'{attrs,mikka,deletedAt}',to_jsonb($2::text)) WHERE id=$1`, [run.issueId, new Date().toISOString()]))
+    try { await assert.rejects(b.link.claimRun(b.id, runId)) } finally { assert.equal(watch.done(), true) }
+    const { rows: [ended] } = await pool.query('SELECT status,"stopReason","failureDetails"->>\'code\' AS code,"finishedAt" FROM agent_runs WHERE id=$1', [runId])
+    assert.equal(ended.status, 'failed')
+    assert.equal(ended.stopReason, 'blocked')
+    assert.equal(ended.code, 'run_access_denied')
+    assert.ok(ended.finishedAt)
+  })
   const assertJournalWithheld = async (claimed: RunAssignment, values: string[]) => {
     const path = join(directory, `runs-${claimed.runId}.json`), journal = new RunJournal(path)
     journal.put({ assignment: claimed, state: 'running', sessionId: null, worktree: null, lastSeq: 0, error: null, updatedAt: new Date().toISOString() })

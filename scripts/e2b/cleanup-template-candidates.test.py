@@ -11,7 +11,8 @@ from urllib.error import HTTPError
 spec = importlib.util.spec_from_file_location('cleanup', Path(__file__).with_name('cleanup-template-candidates.py'))
 cleanup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cleanup)
-ENV = {'GITHUB_REPOSITORY': 'alexj11324/Mikka', 'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'}
+ENV = {'GITHUB_REPOSITORY': 'alexj11324/Mikka', 'GITHUB_REPOSITORY_ID': '1427517699',
+       'GITHUB_REPOSITORY_OWNER_ID': '183887963', 'GITHUB_SHA': 'a' * 40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'}
 CANDIDATE = {'kind': 'codex', 'name': 'mikka-fixture-codex', 'templateId': 'owned-id'}
 
 
@@ -72,11 +73,24 @@ class Cleanup(unittest.TestCase):
             metadata, candidates, errors = cleanup.cleanup_plan(ENV, identity_path=path, identities_required=True)
         self.assertEqual(errors, [])
         self.assertEqual([row['runAttempt'] for row in metadata], ['1', '2'])
-        self.assertEqual(len(candidates), 6)
+        self.assertEqual(len(candidates), len(cleanup.builder.KINDS) + len(cleanup.CANDIDATE_SUFFIXES))
         self.assertEqual({row['templateId'] for row in candidates if 'templateId' in row},
                          {'owned-claude', 'owned-codex', 'owned-desktop'})
         self.assertEqual({row['name'] for row in candidates},
-                         {f'mikka-aaaaaaaaaaaa-123-{attempt}-{kind}' for attempt in ('1', '2') for kind in cleanup.builder.KINDS})
+                         {f'mikka-aaaaaaaaaaaa-123-{attempt}-{kind}' for attempt, suffixes in [('1', cleanup.builder.KINDS), ('2', cleanup.CANDIDATE_SUFFIXES)] for kind in suffixes})
+
+    def test_receipt_and_partial_cleanup_include_exact_variant_aliases(self):
+        variant = {'baseTemplate': 'claude', 'name': 'mikka-aaaaaaaaaaaa-123-2-claude-large',
+                   'templateId': 'owned-claude-large'}
+        value = receipt()
+        value['templates']['claude-large'] = variant
+        parsed = cleanup.identity_receipt(json.dumps(value).encode(), ENV)
+        _, candidates = cleanup.identities(ENV, parsed)
+        self.assertIn({'kind': 'claude', 'name': variant['name'], 'templateId': variant['templateId']}, candidates)
+        self.assertIn({'kind': 'codex', 'name': 'mikka-aaaaaaaaaaaa-123-2-codex-ultra'}, candidates)
+        variant['name'] = variant['name'].replace('claude', 'codex')
+        with self.assertRaisesRegex(ValueError, 'cleanup_identity_receipt_invalid'):
+            cleanup.identity_receipt(json.dumps(value).encode(), ENV)
 
     def test_missing_optional_identity_uses_only_this_attempt_but_missing_required_identity_stays_failed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -107,7 +121,7 @@ class Cleanup(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'release_cleanup_incomplete'):
                         cleanup.main()
                 result = json.loads(output.read_text())
-                self.assertEqual(len(calls), 3)
+                self.assertEqual(len(calls), len(cleanup.CANDIDATE_SUFFIXES))
                 self.assertTrue(all(row['name'].startswith('mikka-aaaaaaaaaaaa-123-2-') and 'templateId' not in row for row in calls))
                 self.assertEqual(result['errors'][0]['phase'], 'candidate_identity')
                 self.assertNotIn('private-marker', output.read_text() + stdout.getvalue())

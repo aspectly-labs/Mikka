@@ -1,6 +1,6 @@
 import type { SuggestionSource, UserFactEvidence } from '@/lib/db/schema'
 import type { MemorySourceKind } from './kinds'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 import { withBasePath } from '@/lib/base-path'
 
 export type MemorySource = { kind: MemorySourceKind; id: string | null; url: string | null }

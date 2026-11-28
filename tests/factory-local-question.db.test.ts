@@ -95,7 +95,7 @@ test('a local Factory question preserves the original Profile, worker definition
   // Use the real null-Bot admission path, rather than rewriting a Bot run into
   // an incompatible historical identity. The original service supports it.
   const policyCeiling: RunPolicy = { permissions: { install_dependency: 'deny', write_outside_repo: 'deny',
-    git_push: 'deny', network: 'ask', computer_use: 'deny' }, networkAllow: ['github.com'], networkCeiling: ['github.com'] }
+    git_push: 'deny', network: 'allow', computer_use: 'deny' }, networkAllow: ['github.com'], networkCeiling: ['github.com'] }
   const initial = await queueTaskRun(owner, { issueId, agentId, repo: 'octo/repo',
     requestKey: `local-question:${randomUUID()}`, model, subscriptionBindingId: bindingId,
     modelDispatch: { mode: 'picked', location: 'local', entry: selection.target.entry }, agentProfile: selection.agentProfile, policyCeiling }, null)

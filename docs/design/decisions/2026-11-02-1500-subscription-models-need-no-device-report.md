@@ -1,6 +1,7 @@
 # A subscription's model runs on any computer that takes subscription runs
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session, after 「设置 › 模型与订阅」 showed 没有电脑能跑 Claude Code with two computers online and taking part: 「我明明连接了电脑，为什么说没有电脑能跑？」 The coordinator's rule: a Claude subscription's model can run when a computer is online, takes part and has Claude Code; the subscription's credential decides the model, not a model the computer reported; when nothing can run, the status says the specific reason.
 - Rule: —
 - Replaces: in [2026-11-02-1400](2026-11-02-1400-model-order-dispatch.md), "for a subscription model, the model among what its CLI reported" (Dispatch, 本地) and 这台电脑的 Codex 没有报告 <model>.

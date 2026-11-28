@@ -4,9 +4,10 @@ import { GitHubAccessError } from "@/lib/github/user-access";
 import { repositoryPullDirectory } from "@/lib/github/pull-directory";
 import { pullPageInput } from "@/lib/pull-directory";
 import { withRequestLog } from "@/lib/request-log";
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const headers = { "Cache-Control": "private, no-store" };
-export const GET = withRequestLog(
+const unguardedGET = withRequestLog(
   "/api/integrations/github/repositories/pulls",
   async (request: Request) => {
     const sessionHeaders = humanSessionHeaders(request);
@@ -19,7 +20,7 @@ export const GET = withRequestLog(
     if (!session?.user)
       return Response.json({ error: "authRequired" }, { status: 401, headers });
     const params = new URL(request.url).searchParams;
-    const allowed = new Set(["repo", "cursor", "view"]);
+    const allowed = new Set(["repo", "cursor", "view", "since"]);
     if (
       [...params.keys()].some((key) => !allowed.has(key)) ||
       [...allowed].some((key) => params.getAll(key).length > 1)
@@ -29,6 +30,7 @@ export const GET = withRequestLog(
       repo: params.get("repo"),
       cursor: params.get("cursor"),
       view: params.get("view") ?? "open",
+      since: params.get("since"),
     });
     if (!input.success)
       return Response.json({ error: "invalidInput" }, { status: 400, headers });
@@ -51,3 +53,12 @@ export const GET = withRequestLog(
     }
   },
 );
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedGET(request),
+)

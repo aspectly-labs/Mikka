@@ -1,9 +1,10 @@
 import { freshSessionRoute } from '@/lib/fresh-session'
 import { governanceResponse, governanceSession } from '@/lib/governance/http'
 import { exportWorkspaceUsage, readWorkspaceUsage } from '@/lib/governance/usage'
+import { defineRoute } from '@/lib/primitives/define-route'
 type Context = { params: Promise<{ workspaceId: string }> }
 
-export const GET = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
+const GETBody = freshSessionRoute(async (request: Request, context: Context) => governanceResponse(async () => {
   const { workspaceId } = await context.params
   const session = await governanceSession(request, workspaceId)
   const params = new URL(request.url).searchParams
@@ -15,3 +16,14 @@ export const GET = freshSessionRoute(async (request: Request, context: Context) 
   })
   return readWorkspaceUsage(workspaceId, session.user, range, groupBy)
 }))
+
+export const GET = defineRoute<'public', 'none', { workspaceId: string }>(
+  {
+    route: '/api/workspaces/[workspaceId]/governance/usage',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => GETBody(request, { params: Promise.resolve(params) }),
+)

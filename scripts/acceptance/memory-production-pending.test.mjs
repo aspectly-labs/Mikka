@@ -7,19 +7,19 @@ import { memoryNotificationDeclaration, verifyMemoryNotification, memoryFixtureI
 const id = n => '60000000-0000-4000-8000-' + String(n).padStart(12, '0')
 const OWNER = 'synthetic-test-owner', PERSONAL = id(1), TEAM = id(2), NONCE = id(3), FACT = id(4), NOTICE = id(5), OLD = id(6)
 const NOW = Date.parse('2026-11-09T22:00:30Z'), EVENT = '2026-11-09T22:00:00Z'
-const URL = 'https://github.com/alexj11324/Mikka/issues/1821#issuecomment-777'
+const URL = 'https://github.com/aspectly-labs/Mikka/issues/1821#issuecomment-777'
 const BODY = 'A normal self-owned notification. mikka-memory-1821:' + NONCE
 const hash = value => createHash('sha256').update(value).digest('hex')
 const windowOf = (patch = {}) => ({ phase: 'fixture', fixtureNonce: NONCE,
   startsAt: '2026-11-09T21:59:00Z', expiresAt: '2026-11-09T22:30:00Z',
   notification: { provider: 'github', url: URL, bodySha256: hash(BODY) }, ...patch })
-const commentOf = (patch = {}) => ({ id: 777, html_url: URL, issue_url: 'https://api.github.com/repos/alexj11324/Mikka/issues/1821',
+const commentOf = (patch = {}) => ({ id: 777, html_url: URL, issue_url: 'https://api.github.com/repos/aspectly-labs/Mikka/issues/1821',
   created_at: EVENT, updated_at: EVENT, body: BODY, ...patch })
 const proof = { provider: 'github', url: URL, bodySha256: hash(BODY), nonce: NONCE, createdAt: EVENT, eventFingerprint: hash('event') }
 
 test('a real public GitHub comment is bound to the exact URL, original body, nonce and whole-second event time', async () => {
-  for (const repository of ['alexj11324/Mikka', 'test-owner/fixture']) {
-    const url = URL.replace('alexj11324/Mikka', repository), calls = []
+  for (const repository of ['aspectly-labs/Mikka', 'test-owner/fixture']) {
+    const url = URL.replace('aspectly-labs/Mikka', repository), calls = []
     const value = await verifyMemoryNotification(windowOf({ startsAt: '2026-11-09T22:00:00.123Z',
       notification: { provider: 'github', url, bodySha256: hash(BODY) } }), {
       env: { GH_TOKEN: 'synthetic-read-token' }, now: () => NOW,
@@ -29,7 +29,7 @@ test('a real public GitHub comment is bound to the exact URL, original body, non
         assert.equal(init.method, 'GET'); assert.equal(init.redirect, 'error'); assert.equal(init.cache, 'no-store')
         const headers = new Headers(init.headers)
         assert.equal(headers.has('cookie'), false)
-        assert.equal(headers.get('authorization'), repository === 'alexj11324/Mikka' ? 'Bearer synthetic-read-token' : null)
+        assert.equal(headers.get('authorization'), repository === 'aspectly-labs/Mikka' ? 'Bearer synthetic-read-token' : null)
         return Response.json(commentOf({ html_url: url, issue_url: 'https://api.github.com/repos/' + repository + '/issues/1821' }))
       },
     })

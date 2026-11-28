@@ -1,11 +1,12 @@
 import { coordinatorWakeTransport } from '../coordinator/wake-after-commit';
+import { builtinGateway } from '../builtin-gateway/runtime';
 import { syncFactoryPresentation } from './stage-progress';
 import { readFactoryFlow } from './public-flow';
 import { createFactorySpecApproval } from './spec-approval';
 import { createFactoryHumanStore } from './human-store';
 import { handleFactoryFlow } from './flow-http';
 import { handleFactory } from './http';
-import { readIssueThreads, loadIssueDocument, encodedIssueDocument } from '../linear-sync/document';
+import { readIssueThreads, loadIssueDocument, encodedIssueDocument } from '../task-comments/issue-document';
 import { runArtifactSubmissions } from '../artifacts/run-submissions';
 // Real #192 migrations/store/dispatch/questions/claim and #193 consumers.
 // Run production code over isolated PG; queue, actor and terminal reports are fixtures.
@@ -21,7 +22,6 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import {
   defaultRunPolicy,
-  DEFAULT_NETWORK_ALLOW,
   type RunPolicy,
 } from "@mikka/protocol/agent-policy";
 import { Pool } from "pg";
@@ -1583,7 +1583,7 @@ test(
         assert.deepEqual(await state(pending.task.id),pending);
         assert.deepEqual((await db.query('SELECT id FROM agent_runs WHERE "issueId"=$1 ORDER BY id',[pending.task.issueId])).rows,beforeRuns);
       });
-      for (const decision of ["allow", "ask", "deny"] as const)
+      for (const decision of ["allow", "deny"] as const)
         await t.test(
           `claim retains host network ${decision} and its frozen domain list`,
           async () => {
@@ -1641,9 +1641,8 @@ test(
             );
             assert.equal(extras.baseBranch, sha);
             assert.equal(extras.verifyCommand, command);
-            assert.deepEqual((extras.policy as any).networkAllow, [
-              ...DEFAULT_NETWORK_ALLOW,
-            ]);
+            // No domain list: network access is open (ADR 2026-11-27-1615).
+            assert.deepEqual((extras.policy as any).networkAllow, []);
             await tx.query("ROLLBACK");
           } finally {
             await tx.query("ROLLBACK");
@@ -2028,9 +2027,15 @@ test(
             assert.equal(replay.replayed, true);
             assert.equal((await db.query('SELECT "questionContinuation" FROM agent_runs WHERE id=$1', [recoveryRun.id])).rows[0].questionContinuation.followUp,
               recoveryRun.questionContinuation.followUp);
-            // Evidence delivery is not acceptance. This test stops at the
-            // strict native claim and does not alter the existing recovery gate.
-            assert.equal((await state(pending.task.id)).task.status, 'running');
+            // #1451: the recovered continuation's own terminal clears the same
+            // independence gate via its receipted recovery chain, without
+            // rewriting the first answer's immutable result.
+            await terminal(recoveryRun.id, nativeSession, true);
+            await reconcile('owner');
+            const failed = await state(pending.task.id);
+            assert.equal(failed.task.status, 'failed');
+            assert.equal(failed.attempts.find(a => a.runId === recoveryRun.id)!.status, 'failed');
+            assert.equal((failed.attempts.find(a => a.runId === recoveryRun.id)!.output.completion as { trustedFailureProvenance: boolean }).trustedFailureProvenance, true);
             return;
           }
           await terminal(run.id, nativeSession);
@@ -3335,11 +3340,13 @@ test(
       );
       await t.test('first-use cloud single-review flow keeps its task VM without waking or installing a parent', async () => {
         const { beginFactoryTransaction, commitFactoryTransaction, rollbackFactoryTransaction } = await import('./transaction');
-        const names = ['WORKSPACE_SECRETS_KEY', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'NEXT_PUBLIC_POSTHOG_KEY'] as const;
+        const names = ['MIKKA_EDITION', 'WORKSPACE_SECRETS_KEY', 'MIKKA_CLOUD_COMPUTER_TASKS', 'MIKKA_BYOS_ENABLED', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const;
         const saved = new Map(names.map(name => [name, process.env[name]]));
+        process.env.MIKKA_EDITION = 'community';
         process.env.WORKSPACE_SECRETS_KEY = createHash('sha256').update(randomUUID()).digest('hex');
         process.env.MIKKA_CLOUD_COMPUTER_TASKS = '1';
         process.env.MIKKA_BYOS_ENABLED = '1';
+        delete process.env.MIKKA_PUBLIC_POSTHOG_KEY;
         delete process.env.NEXT_PUBLIC_POSTHOG_KEY;
         const { fakeThreadMachines } = await import('../../tests/support/thread-machine-fake');
         const machines = await fakeThreadMachines(db, [{ harness: 'codex', installed: true, toolApproval: true }]);
@@ -3522,7 +3529,9 @@ test(
           // This suite retains its isolated database, including the actual
           // computer bindings. Do not delete their owner as if Workspace rows
           // still lived alone in a second shared database.
+          const gateway = builtinGateway();
           for (const name of names) { const value = saved.get(name); if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+          await gateway?.stop();
         }
       });
       await t.test('the owner Artifact reader retains its report task hint and media without exposing them to another reader', async () => {

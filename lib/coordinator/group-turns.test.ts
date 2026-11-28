@@ -21,6 +21,16 @@ const a = randomUUID(), b = randomUUID(), outsider = randomUUID()
 const members: GroupAgent[] = [a,b].map((id,i) => ({ id, name: `Agent ${i}`, description: `role ${i}` }))
 const message = { text: 'everyone', mentions: [] }
 const receipt: DecisionExecution = {executionId:'synthetic-execution',modelId:DECISION_MODEL,providerGenerationId:'synthetic-generation',startedAt:'2026-01-01T00:00:00.000Z',completedAt:'2026-01-01T00:00:01.000Z',requestDigest:'a'.repeat(64),imageDigests:[],vision:'no-image-input'}
+test('group history reads do not start a worker; only a successful send schedules one', async () => {
+  const source = await readFile(new URL('../group-conversations-route.ts', import.meta.url), 'utf8')
+  const start = source.indexOf("if (resource === 'messages' && id")
+  assert.notEqual(start, -1)
+  const after = source.slice(start, source.indexOf('return RouteResponse.json(result.body', start))
+  assert.match(after, /request\.method === 'POST'/)
+  assert.match(after, /afterJob\('after:group-turn'/)
+  assert.doesNotMatch(after, /request\.method === 'GET'|hasPendingGroupTurn/)
+})
+
 test('group session uses the same database/role/TLS and only bypasses the documented Neon transaction pooler',()=>{
   const source=new URL('postgresql://ep-group-pooler.c-7.us-east-2.aws.neon.tech/app?sslmode=require')
   source.username=randomUUID();source.password=randomUUID()
@@ -397,7 +407,7 @@ test('PG17: API atomic queue, migration repeat/concurrency, group lock, FIFO, ro
     const [{ drizzle }, schema, { listActiveAgents, activeAgentsResponse }] = await Promise.all([import('drizzle-orm/node-postgres'), import('../db/schema'), import('../active-agents')])
     const db = drizzle(scoped, { schema })
     const request = new Request('http://local/api/agent/sessions/active')
-    const copy = { pleaseSignIn: 'sign in', unavailable: 'unavailable', noParameters: 'no params' }
+    const copy = { pleaseSignIn: 'sign in', unavailable: 'unavailable', noParameters: 'no params', groupNotFound: 'group 404' }
     const response = await activeAgentsResponse(request, 'owner', user => listActiveAgents(db, user), copy)
     assert.equal(response.status, 200)
     const body = await response.json() as { agents: { id: string; runId: string }[] }
@@ -1104,6 +1114,35 @@ test('group stop without a listener keeps the existing one-second fallback', asy
     assert.equal(checks, 0)
     t.mock.timers.tick(1); await setImmediate()
     assert.equal(checks, 1, 'reliability without a subscription cannot disable the fallback')
+  } finally { done.resolve(); await pending }
+})
+test('a missing stop listener is re-attached on a later read', async t => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const done = Promise.withResolvers<void>()
+  let checks = 0, attempts = 0, wake: (() => void) | undefined, signal!: AbortSignal
+  const pending = untilStopped(async () => {
+    checks++
+    if (checks === 2) throw new Error('catch-up read failed')
+    return checks === 3
+  }, {
+    resubscribe: async () => {
+      attempts++
+      if (attempts < 3) return undefined
+      return callback => { wake = callback; return () => {} }
+    },
+  }, current => { signal = current; return done.promise })
+  try {
+    await setImmediate()
+    assert.equal(attempts, 2, 'setup retries the listener before the first tick, and the read that follows retries once more')
+    assert.equal(checks, 1, 'one bounded read ran with it')
+    t.mock.timers.tick(1_000); await setImmediate()
+    assert.equal(attempts, 3, 'every one-second read retries the listener until it latches')
+    assert.equal(checks, 2, 'the read that re-latches doubles as the catch-up read')
+    assert.ok(wake, 'the third attempt latches the listener')
+    t.mock.timers.tick(1_000); await setImmediate()
+    assert.equal(attempts, 3, 'no further retries once the listener is back')
+    assert.equal(checks, 3, 'a failed catch-up keeps the one-second reads — the next one still cancels generation')
+    assert.equal(signal.aborted, true, 'the stop is honoured even when the catch-up read failed')
   } finally { done.resolve(); await pending }
 })
 test('expired execution budget cancels before generation/status publication', async () => {

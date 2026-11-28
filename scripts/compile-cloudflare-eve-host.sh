@@ -2,7 +2,6 @@
 set -euo pipefail
 
 # The trusted caller provides a frozen workspace and network-isolated Node 24.
-node --experimental-strip-types scripts/generate-agent-ui-prompt.mjs
 node scripts/build-eve.mjs
 case "${1:-}" in
   '')
@@ -10,6 +9,7 @@ case "${1:-}" in
     node apps/api/scripts/build.mjs
     ;;
   --prebuilt-api) ;;
+  --independent) node scripts/release/runtime-resources.mjs ;;
   *) echo 'Unknown Eve compiler mode' >&2; exit 1 ;;
 esac
 node scripts/package-eve.mjs

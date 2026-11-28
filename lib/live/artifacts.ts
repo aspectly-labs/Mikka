@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { LIVE_ID, type LiveInvalidation } from './events'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -21,7 +22,7 @@ export async function artifactTargets(database: Database, workspaceDatabase: Dat
 
 /** A new version, a title, a share link or deletion. Sent after COMMIT; a rollback sends nothing. */
 export async function artifactChanged(executor: object, ownerId: string, artifactId: string, deletedWorkspaceId?: string) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   await (await import('./project-map')).projectMapArtifactChanged(executor, artifactId)
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterDatabaseCommit(executor, `artifact:${artifactId}`, () => scheduleLive(async () => {

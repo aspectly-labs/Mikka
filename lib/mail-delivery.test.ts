@@ -38,7 +38,7 @@ test('SMTP sends verification and reset mail through the same configured sender 
   t.after(() => names.forEach((key, index) => { if (previous[index] === undefined) delete process.env[key]; else process.env[key] = previous[index] }))
   assert.equal(mailConfigured(), true)
   const context: AuthMailContext = { secret: 'synthetic-test-only', internalAdapter: {
-    reserveVerificationValue: async () => true, consumeVerificationValue: async () => null,
+    createVerificationValue: async () => ({}), reserveVerificationValue: async () => true, consumeVerificationValue: async () => null,
     findVerificationValue: async () => null, findUserById: async () => null, updateUser: async () => null,
   } }
   const origin = 'https://self-hosted.example.test'

@@ -7,8 +7,10 @@ import { createHash, randomUUID } from 'node:crypto'
 import { validatedAnswers, decisionRequestInput, DECISION_MODEL, DECISIONS_PATH, type DecisionReceiptModel, type DecisionInput, type DecisionQuestion, type DecisionAnswer } from './decision'
 import type { HostedModelBilling } from '@/lib/abuse/model'
 import { observeAiRequest, type AiMetadata } from '@/lib/tracing/ai'
+import { recordDecisionFailure, type DecisionFailureReason } from './decision-failure'
+import { decisionTimeoutMs } from './decision-timeout'
+import { safeErrorAttributes } from '@mikka/protocol/tracing'
 
-const DECISION_TIMEOUT_MS = 5000
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 /** Issued by this host after a successful, validated provider envelope. Never
  * construct one from model prose, a screenshot label, peer data or a tool arg.
@@ -27,29 +29,54 @@ export interface DecisionExecution {
 /** Submit only to the configured Decisions provider after the existing workspace admission check. */
 export async function invokeDecision(purpose: string, input: DecisionInput, questions: DecisionQuestion[], signal?: AbortSignal, diagnostics?: {retainInvalidReceipt:true}, billingAdapter?: HostedModelBilling) {
   'use step'
-  if (signal?.aborted) return null
-  const { hostedBillingScope } = await import('@/lib/abuse/context')
+  let preparation: DecisionFailureReason = 'preparation_failed'
+  try {
+  if (signal?.aborted) return recordDecisionFailure(purpose, 'cancelled')
+  const { hostedBillingScope, cachedDecisionGate, forgetDecisionGate } = await import('@/lib/abuse/context')
   const scope = hostedBillingScope.getStore()
-  if (!scope) return null
+  // Tests mock the context module without the batch helper; degrade to direct
+  // loads there while production batches share the read-only gates.
+  const gate: typeof cachedDecisionGate = typeof cachedDecisionGate === 'function'
+    ? cachedDecisionGate
+    : <T,>(_key: string, load: () => Promise<T>) => load()
+  const forget = typeof forgetDecisionGate === 'function' ? forgetDecisionGate : () => {}
+  if (!scope) return recordDecisionFailure(purpose, 'billing_scope_missing')
   const proxy = gatewayLiteLlm()
   const baseUrl = liteLLMBaseUrl(proxy?.url)
-  if (!proxy || !baseUrl) { console.error('Decision unavailable', { purpose: 'litellm-not-configured' }); return null }
+  if (!proxy || !baseUrl) return recordDecisionFailure(purpose, 'litellm_not_configured')
   const endpoint = baseUrl + DECISIONS_PATH.slice('/v1'.length)
   const { assertLiteLLMModelTransport } = await import('@/lib/model-admission/runtime')
-  await assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal)
+  preparation = 'admission_refused'
+  await gate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
+    () => assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal))
+  preparation = 'billing_refused'
   const usage = await import('@/lib/abuse/runtime')
   const store = billingAdapter?.usage ?? usage.hostedUsage
   const callId = randomUUID()
   // Like every hosted call (lib/abuse/model.ts): the workspace's own balance first, then shared credits.
   if (store && store.metered !== false) {
     const { withSharedCredits } = await import('@/lib/credit-shares')
-    const billingPrincipal = await withSharedCredits(scope.workspaceId, async payer => {
+    const principalKey = `principal:${scope.workspaceId}:${billingAdapter?.admit ? 'adapter' : 'usage'}`
+    const loadPrincipal = () => withSharedCredits(scope.workspaceId, async payer => {
       await (billingAdapter?.admit ?? usage.canUseMikkaPaid)(payer)
       return { payer, organizationId: hostedBillingScope.getStore()?.billingOrganizationId ?? null }
     })
-    await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), billingPrincipal)
+    const billingPrincipal = await gate(principalKey, loadPrincipal)
+    try {
+      await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), billingPrincipal)
+    } catch (firstFailure) {
+      // The cached principal can point at a payer that ran dry inside this
+      // batch; drop it once and let withSharedCredits pick a funded sharer.
+      // Same principal reselected — the refusal is real, not staleness. The
+      // organization is part of it: a payer under a new org still retries.
+      forget(principalKey)
+      const retryPrincipal = await gate(principalKey, loadPrincipal)
+      if (retryPrincipal.payer === billingPrincipal.payer && retryPrincipal.organizationId === billingPrincipal.organizationId) throw firstFailure
+      await withSharedCredits(scope.workspaceId, payer => store.reserve(payer, DECISION_MODEL, callId), retryPrincipal)
+    }
   }
   let requestStarted = false
+  preparation = 'preparation_failed'
   try {
     return await observeAiRequest({ modelId: DECISION_MODEL, userId: scope.ownerId, route: 'litellm', operation: 'decision' }, async report => {
       const requestInput = decisionRequestInput(input)
@@ -61,7 +88,10 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
         ? [createHash('sha256').update(Buffer.from(part.image_url.slice(part.image_url.indexOf(',') + 1), 'base64')).digest('hex')]
         : []))
       const executionId = randomUUID(), startedAt = new Date().toISOString()
-      await assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal)
+      preparation = 'admission_refused'
+      await gate(`admission:${scope.workspaceId}:${DECISION_MODEL}:${baseUrl}`,
+        () => assertLiteLLMModelTransport(scope, DECISION_MODEL, baseUrl, signal))
+      preparation = 'preparation_failed'
       if (signal?.aborted) throw new DOMException('Model request cancelled', 'AbortError')
       requestStarted = true
       const init: RequestInit = {
@@ -69,10 +99,15 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
         redirect: 'error',
         headers: { Authorization: 'Bearer ' + proxy.masterKey, 'Content-Type': 'application/json' },
         body: logicalBody,
-        signal: AbortSignal.any([AbortSignal.timeout(DECISION_TIMEOUT_MS), ...(signal ? [signal] : [])]),
+        signal: AbortSignal.any([AbortSignal.timeout(decisionTimeoutMs()), ...(signal ? [signal] : [])]),
       }
       const response = await fetch(endpoint, init)
-      if (!response.ok) { await response.body?.cancel(); throw Error('decisionProviderUnavailable') }
+      if (!response.ok) {
+        const error = new DecisionHttpError(response.status)
+        report({ upstreamStatus: error.status, errorMessage: error.message })
+        await response.body?.cancel().catch(() => {})
+        throw error
+      }
       const payload: unknown = await response.json()
       const receipt = decisionProviderReceipt(payload, response.headers)
       {
@@ -111,11 +146,24 @@ export async function invokeDecision(purpose: string, input: DecisionInput, ques
       // (including decide/callDecisionRequest) remains null for invalid answers.
       return { answers: answers ?? new Map<string,Exclude<DecisionAnswer,{type:'refusal'}>>(), execution, ...(answers ? {} : {validationFailure:'invalid_response' as const}) }
     }, signal)
-  } catch {
+  } catch (error) {
+    if (!requestStarted) recordDecisionFailure(purpose, signal?.aborted ? 'cancelled' : preparation)
     if (store) await store.settle(callId,requestStarted ? null : 0)
     // No upstream text, credentials, image bytes or untrusted purpose in logs.
-    console.error('Decision unavailable', { purpose: purpose.replace(/[^a-z0-9_-]/gi, '').slice(0, 80) })
+    console.error('Decision unavailable', { purpose: purpose.replace(/[^a-z0-9_-]/gi, '').slice(0, 80), ...safeErrorAttributes(error),
+      ...(error instanceof DecisionHttpError ? { status: error.status, message: error.message } : {}) })
     return null
+  }
+  } catch (error) {
+    recordDecisionFailure(purpose, preparation)
+    throw error
+  }
+}
+
+class DecisionHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Decision provider returned HTTP ${status}`)
+    this.name = 'DecisionHttpError'
   }
 }
 

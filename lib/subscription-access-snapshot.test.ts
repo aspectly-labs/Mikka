@@ -49,9 +49,9 @@ test('identity stage observation preserves the original authority and projection
   const call = new SubscriptionCallTiming(), worker = call.startWorker('executeStream')!
   const finish = worker.beginIdentity()
   await withSubscriptionTiming(call, () => withSubscriptionWorkerTiming(worker, async () => {
-    const database = { query: async () => { steps.push('authority'); return { rows: [{ accessSecretName: name, workspaceId: 'fixture-private-space', runOwner: 'fixture-private-member' }] } } }
+    const database = { query: async () => { steps.push('authority'); return { rows: [{ accessSecretName: name, workspaceId: 'fixture-private-space' }] } } }
     const scope = { connectionId: '00000000-0000-4000-8000-000000000001', ownerId: 'fixture-private-owner', workspaceId: 'fixture-private-space', provider: 'codex' as const }
-    const authorized = await authorizedAccessName(database as never, scope, { bindingId: 'fixture-private-binding', consumerId: 'fixture-private-consumer' }, 1, async user => { steps.push(user === scope.ownerId ? 'owner-member' : 'consumer-member') })
+    const authorized = await authorizedAccessName(database as never, scope, { bindingId: 'fixture-private-binding', consumerId: 'fixture-private-consumer' }, 1)
     const fetcher: typeof fetch = async (_url, init) => {
       steps.push(init?.method === 'POST' ? 'login' : 'projection')
       return Response.json(init?.method === 'POST' ? { accessToken: 'fixture-private-token' } : { secret: { secretKey: name, version: 1, secretValue: 'fixture-private-projection' } })
@@ -59,7 +59,7 @@ test('identity stage observation preserves the original authority and projection
     assert.deepEqual(await subscriptionAccessSnapshot({ ...config, name: authorized, fetcher }), { name, value: 'fixture-private-projection' })
   }))
   finish(); worker.settle('result')
-  assert.deepEqual(steps, ['authority', 'consumer-member', 'owner-member', 'login', 'projection'])
+  assert.deepEqual(steps, ['authority', 'login', 'projection'])
   const row = call.snapshot().workers[0]
   assert.deepEqual([row.parentAccessAuthorityCalls, row.identityLoginCalls, row.parentProjectionReadCalls], [1, 1, 1])
   assert.ok(row.parentAccessAuthorityMs !== null && row.identityLoginMs !== null && row.parentProjectionReadMs !== null)
@@ -79,20 +79,15 @@ test('only an authorized connected row without a projection is an explicit prepa
   const { AccessProjectionMissing } = await import('./subscription-access-snapshot')
   const scope = { ownerId: 'owner', workspaceId: 'space', connectionId: 'connection', provider: 'codex' as const }
   const use = { bindingId: 'binding', consumerId: 'consumer', runId: 'run' }
-  const members: string[] = []
   let queries = 0
-  const database = { query: async () => { queries++; return { rows: [{ state: 'connected', accessSecretName: null, workspaceId: 'space', runOwner: 'member' }] } } }
-  await assert.rejects(authorizedAccessName(database as never, scope, use, 2, async user => { members.push(user) }, true), AccessProjectionMissing)
+  const database = { query: async () => { queries++; return { rows: [{ state: 'connected', accessSecretName: null, workspaceId: 'space' }] } } }
+  await assert.rejects(authorizedAccessName(database as never, scope, use, 2, true), AccessProjectionMissing)
   assert.equal(queries, 1)
-  assert.deepEqual(members, ['member', 'owner'])
   for (const rows of [[], [{ state: 'refreshing', accessSecretName: null }], [{ state: 'connected', accessSecretName: 42 }]]) {
-    const failure = await authorizedAccessName({ query: async () => ({ rows }) } as never, scope, use, 2, undefined, true).then(() => null, error => error)
+    const failure = await authorizedAccessName({ query: async () => ({ rows }) } as never, scope, use, 2, true).then(() => null, error => error)
     assert.ok(failure instanceof Error)
     assert.equal(failure instanceof AccessProjectionMissing, false)
   }
-  const denied = await authorizedAccessName(database as never, scope, use, 2, async () => { throw new Error('member_inactive') }, true).then(() => null, error => error)
-  assert.equal(denied instanceof AccessProjectionMissing, false)
-  assert.equal(denied.detail, 'member_inactive')
   const network = new Error('database unavailable')
   await assert.rejects(authorizedAccessName({ query: async () => { throw network } } as never, scope, use, 2), error => error === network)
 })

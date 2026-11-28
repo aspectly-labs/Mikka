@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -21,12 +22,12 @@ func TestModelsReadsOnlyBoundOwnerCatalogue(t *testing.T) {
 				if r.Method != "GET" || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 					t.Fatal("missing read authorization")
 				}
-				body := `{"models":[{"slug":"account-model","display_name":" Account model ","visibility":"list","secret":"must-not-leak","service_tiers":[{"id":"priority","description":"tier-private"}],"additional_speed_tiers":["fast"]},{"slug":"account-model","display_name":"Duplicate"},{"slug":"hidden-model","visibility":"hide"},{"slug":"bad id"},{"slug":"legacy-model","display_name":"Legacy model","additional_speed_tiers":["fast"]},{"slug":"no-priority","display_name":"","service_tiers":[]}]}`
+				body := `{"models":[{"slug":"account-model","display_name":" Account model ","visibility":"list","supports_search_tool":true,"secret":"must-not-leak","service_tiers":[{"id":"priority","description":"tier-private"}],"additional_speed_tiers":["fast"],"available_access_programs":{"cyber":["standard","daybreak_blue"],"daybreak_availability":"available"}},{"slug":"account-model","display_name":"Duplicate"},{"slug":"hidden-model","visibility":"hide"},{"slug":"bad id"},{"slug":"legacy-model","display_name":"Legacy model","additional_speed_tiers":["fast"]},{"slug":"no-priority","display_name":"","service_tiers":[]}]}`
 				if provider == "claude" {
 					if r.URL.Host != "api.anthropic.com" || r.URL.Path != "/v1/models" || r.Header.Get("anthropic-beta") == "" {
 						t.Fatal("wrong Claude endpoint")
 					}
-					body = `{"data":[{"id":"account-model","display_name":"Account model","secret":"must-not-leak","service_tiers":[{"id":"priority"}],"additional_speed_tiers":["fast"]},{"id":"account-model","display_name":"Duplicate"},{"id":"bad id"}]}`
+					body = `{"data":[{"id":"account-model","display_name":"Account model","capabilities":{"server_tools":{"web_search":{"supported":true}}},"secret":"must-not-leak","service_tiers":[{"id":"priority"}],"additional_speed_tiers":["fast"]},{"id":"account-model","display_name":"Duplicate"},{"id":"bad id"}]}`
 				} else if r.URL.Host != "chatgpt.com" || r.URL.Path != "/backend-api/codex/models" || r.URL.Query().Get("client_version") != "0.167.0" {
 					t.Fatal("wrong Codex endpoint")
 				}
@@ -44,9 +45,15 @@ func TestModelsReadsOnlyBoundOwnerCatalogue(t *testing.T) {
 			if err != nil || len(models) != wantCount || models[0].ID != "account-model" || models[0].Name != "Account model" {
 				t.Fatalf("catalogue projection failed: %v %v", models, err)
 			}
+			if models[0].WebSearchSupported == nil || !*models[0].WebSearchSupported {
+				t.Fatal("the account did not retain its advertised search capability")
+			}
 			if provider == "codex" {
 				if models[0].PrioritySupported == nil || !*models[0].PrioritySupported {
 					t.Fatal("advertised Codex priority was not projected")
+				}
+				if !reflect.DeepEqual(models[0].Daybreak, []string{"blue"}) || models[1].Daybreak != nil {
+					t.Fatalf("Daybreak tiers were not projected from the catalogue: %v %v", models[0].Daybreak, models[1].Daybreak)
 				}
 				if models[1].ID != "legacy-model" || models[1].PrioritySupported != nil {
 					t.Fatal("legacy speed tiers became proof of priority")
@@ -54,7 +61,13 @@ func TestModelsReadsOnlyBoundOwnerCatalogue(t *testing.T) {
 				if models[2].ID != "no-priority" || models[2].Name != "no-priority" || models[2].PrioritySupported == nil || *models[2].PrioritySupported {
 					t.Fatal("name sanitization lost explicit priority absence")
 				}
-			} else if models[0].PrioritySupported != nil {
+				if models[0].UltrafastSupported == nil || *models[0].UltrafastSupported {
+					t.Fatal("unadvertised Codex ultrafast became true")
+				}
+				if models[1].UltrafastSupported != nil {
+					t.Fatal("missing service_tiers became known ultrafast capability")
+				}
+			} else if models[0].PrioritySupported != nil || models[0].UltrafastSupported != nil {
 				t.Fatal("Claude acquired a Codex priority capability")
 			}
 			raw, _ := json.Marshal(models)
@@ -202,5 +215,32 @@ func TestCodexPrioritySupportedRequiresAdvertisedTier(t *testing.T) {
 				t.Fatalf("priority capability = %v; want %s", supported, tc.want)
 			}
 		})
+	}
+}
+
+func TestCodexUltrafastAndClaudeFastCapabilities(t *testing.T) {
+	u := codexUltrafastSupported(json.RawMessage(`[{"id":"priority"},{"id":"ultrafast"}]`))
+	if u == nil || !*u {
+		t.Fatalf("advertised ultrafast capability = %v; want true", u)
+	}
+	uFalse := codexUltrafastSupported(json.RawMessage(`[{"id":"priority"}]`))
+	if uFalse == nil || *uFalse {
+		t.Fatalf("absent ultrafast capability = %v; want false", uFalse)
+	}
+	if codexUltrafastSupported(json.RawMessage(`null`)) != nil {
+		t.Fatal("null service_tiers must remain unknown for ultrafast")
+	}
+	yes, no := true, false
+	if got := claudeFastSupported(&yes, nil); got == nil || !*got {
+		t.Fatalf("explicit Claude supports_fast_mode = %v; want true", got)
+	}
+	if got := claudeFastSupported(&no, nil); got == nil || *got {
+		t.Fatalf("explicit Claude supports_fast_mode false = %v; want false", got)
+	}
+	if got := claudeFastSupported(nil, json.RawMessage(`{"fast_mode":{"supported":true}}`)); got == nil || !*got {
+		t.Fatalf("Claude capabilities.fast_mode.supported = %v; want true", got)
+	}
+	if got := claudeFastSupported(nil, nil); got != nil {
+		t.Fatalf("absent Claude fast capability = %v; want nil", got)
 	}
 }

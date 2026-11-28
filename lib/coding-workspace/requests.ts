@@ -102,7 +102,7 @@ export async function pendingWorkspaceReads(database: WorkspaceQuery, membership
       AND result IS NULL AND "expiresAt">clock_timestamp() AND NOT(id=ANY($4::uuid[]))
       AND ($5::boolean OR request->>'kind' NOT IN ('diff_snapshot','diff_file'))
       AND ($6::boolean OR request->>'kind' NOT IN ('git_status','git_history','git_revert_preview','git_revert_apply',
-        'git_undo','git_checkpoint_preview','git_checkpoint_restore'))
+        'git_undo','git_checkpoint_preview','git_checkpoint_restore','file_save','file_rename','file_delete'))
       ORDER BY "createdAt" LIMIT 4`, [deviceId, caller.userId, caller.tokenId, skip, capabilities.diff === true, capabilities.git === true])
   const result: WorkspaceReadCommand[] = []
   for (const row of rows) {
@@ -128,7 +128,8 @@ export async function finishWorkspaceRead(database: WorkspaceQuery, membership: 
   if (!response) return false
   // Write receipts carry a masked Undo capture outside the public result: the
   // operation row keeps it for the retention window, never the request row.
-  if (row.request.kind === 'git_revert_apply' || row.request.kind === 'git_checkpoint_restore')
+  if (row.request.kind === 'git_revert_apply' || row.request.kind === 'git_checkpoint_restore'
+    || row.request.kind === 'file_save' || row.request.kind === 'file_rename' || row.request.kind === 'file_delete')
     await retainGitUndo(database, row.request, receipt, mask, actor.userId)
   const saved = await database.query(`UPDATE coding_workspace_requests SET result=$5,"maskPolicy"=$6 WHERE id=$1 AND "ownerId"=$2 AND "deviceId"=$3 AND "tokenId"=$4
     AND result IS NULL AND "expiresAt">clock_timestamp() RETURNING id`, [id, caller.userId, deviceId, caller.tokenId, response, mask.sourcePolicy ?? null])

@@ -1,6 +1,7 @@
 # Project map uses only Mikka records
 
 - Date: 2026-11-04
+- **Status:** Accepted
 - Source: Alex's latest instructions and [#1243](https://github.com/alexj11324/Mikka/issues/1243), confirmed in [PR #1253](https://github.com/alexj11324/Mikka/pull/1253#issuecomment-6641080327): 「只用 Mikka 自己的数据」；「任何情况下都不把 AI 对话写进用户的代码仓库」；「改完自己合并，不需要再评审」。
 - Rule: —
 - Replaces: the collection scope and review gate in the earlier draft of project-map-rfc.md. The accepted vertical layout remains unchanged.

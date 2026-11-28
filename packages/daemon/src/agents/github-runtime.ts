@@ -14,7 +14,7 @@ const helper = GITHUB_CREDENTIAL_SCRIPT
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
 /** Use the claim's token directly for this daemon-owned HTTPS clone/fetch. */
-function preparedTokenEnvironment(token: string): Record<string, string> {
+export function preparedTokenEnvironment(token: string): Record<string, string> {
   const entries = [
     ['credential.helper', ''],
     // Standard Git credential protocol, with the same github.com scope as
@@ -182,9 +182,9 @@ export async function agentPublishedReceipt(input: {
       if (pr.value.headRefOid !== commit || typeof pr.value.body !== 'string' || !pr.value.body.trimEnd().endsWith(`<!-- mikka-issue:${input.github.issueId} -->`)) throw new Error('Unbound pull request')
       const checked = checks.value.data?.repository?.object
       if (checked?.oid !== commit || checked.statusCheckRollup?.state !== 'SUCCESS') throw new Error('Incomplete CI')
-    } catch {
+    } catch (error) {
       input.signal?.throwIfAborted()
-      throw new Error('The task pull request and successful CI must match the submitted commit')
+      throw Object.assign(new Error('The task pull request and successful CI must match the submitted commit'), { cause: error })
     }
     input.signal?.throwIfAborted()
     return { branch, commit, pushed: true, remote: 'origin' }

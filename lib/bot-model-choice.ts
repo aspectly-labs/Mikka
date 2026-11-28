@@ -1,8 +1,11 @@
+import { modesFromTier } from './model-capabilities'
+import { MODEL_ROUTING_EFFORTS, MODEL_SERVICE_TIERS } from './model-routing'
 import 'server-only'
 import { hostedModelEnabled } from './enabled-models'
 import { ActionFailureError } from './action-error'
 import type { Pool } from 'pg'
 import type { ExecutionSettings, ExecutionSettingsScope } from './execution-settings'
+import type { ModelCandidateSnapshot } from './model-order'
 import { creditsOptionId, parseCreditsOption, type BotModelQuota } from './bot-model-menu-view'
 import { apiKeyChatBaseUrl } from './model-api-key-providers'
 import { usableApiKeys, type UsableApiKey } from './model-api-keys'
@@ -32,19 +35,27 @@ export type BotModelChoice = ChoiceState & (
 )
 
 export function apiKeyServesBotModel(key: UsableApiKey, model: string) {
-  return Boolean(apiKeyChatBaseUrl(key) && key.models.includes(model))
+  return Boolean(key.modelsError !== 'invalid' && apiKeyChatBaseUrl(key) && key.models.includes(model))
 }
 
 /** Reads the saved preference without creating a default or cloning a binding. */
 export async function botModelPreference(pool: Pick<Pool, 'query'>, scope: ExecutionSettingsScope, botId: string | null) {
-  const { rows: [row] } = await pool.query<{ bindingId: string | null; apiKeyId: string | null; apiKeyModel: string | null; creditsModel: string | null }>(
-    'SELECT "bindingId","apiKeyId","apiKeyModel","creditsModel" FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3',
+  const { rows: [row] } = await pool.query<{ bindingId: string | null; apiKeyId: string | null; apiKeyModel: string | null; creditsModel: string | null; effort: string | null; serviceTier: string | null; pro: boolean; daybreak: boolean }>(
+    `SELECT "bindingId","apiKeyId","apiKeyModel","creditsModel",
+      to_jsonb(c)->>'effort' AS effort, to_jsonb(c)->>'serviceTier' AS "serviceTier",
+      (to_jsonb(c)->'pro' = 'true'::jsonb) AS pro, (to_jsonb(c)->'daybreak' = 'true'::jsonb) AS daybreak
+      FROM bot_model_choices c WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3`,
     [scope.ownerId, scope.workspaceId, botId ?? 'coordinator'],
   )
-  if (row?.apiKeyId != null && row.apiKeyModel != null) return { key: { keyId: row.apiKeyId, model: row.apiKeyModel } }
-  if (row?.creditsModel) return { selected: creditsOptionId(row.creditsModel) }
+  const chat = {
+    modes: { ...modesFromTier(row?.serviceTier), pro: row?.pro === true, daybreak: row?.daybreak === true },
+    effort: MODEL_ROUTING_EFFORTS.find(level => level === row?.effort) ?? null,
+    serviceTier: MODEL_SERVICE_TIERS.find(tier => tier === row?.serviceTier) ?? null,
+  }
+  if (row?.apiKeyId != null && row.apiKeyModel != null) return { chat, key: { keyId: row.apiKeyId, model: row.apiKeyModel } }
+  if (row?.creditsModel) return { chat, selected: creditsOptionId(row.creditsModel) }
   // A row with none of the three was 「Mikka 默认」, now gone: it reads as no choice.
-  return { selected: row?.bindingId ?? undefined }
+  return { chat, selected: row?.bindingId ?? undefined }
 }
 
 /**
@@ -58,7 +69,7 @@ export async function resolveBotModelChoice(
   scope: ExecutionSettingsScope,
   botId: string | null,
   preference: { selected?: string; key?: { keyId: string; model: string } },
-  cached: { rows?: BotSubscriptionChoice[]; keys?: UsableApiKey[]; now?: number } = {},
+  cached: { rows?: BotSubscriptionChoice[]; keys?: UsableApiKey[]; now?: number; fallback?: ModelCandidateSnapshot } = {},
 ): Promise<BotModelChoice> {
   const now = cached.now ?? Date.now()
   const keys = cached.keys ?? await usableApiKeys(pool, scope.ownerId, scope.workspaceId)
@@ -71,7 +82,7 @@ export async function resolveBotModelChoice(
   const hostedAllowed = () => hostedPolicy ??= hostedModelEnabled(pool, scope.ownerId)
   const hosted = async (state: ChoiceState, model: string): Promise<BotModelChoice> => {
     if (!await hostedAllowed()) {
-      const next = await (await import('./points-fallback')).pointsFallback(pool as Pool, scope)
+      const next = await (await import('./points-fallback')).pointsFallback(pool as Pool, scope, cached.fallback)
       if (next?.kind === 'api_key') {
         const key = keys.find(item => item.id === next.keyId && apiKeyServesBotModel(item, next.model))
         if (key) return { kind: 'apiKey', key, model: next.model, chosen: false, fallback: 'preference' }
@@ -86,7 +97,7 @@ export async function resolveBotModelChoice(
     // or their own provider. Local hosted balances never redirect that choice.
     if (!isCloudEdition()) return { kind: 'hosted', model, ...state }
     const { hostedPointsRefusal, pointsFallback } = await import('./points-fallback')
-    const next = await hostedPointsRefusal(scope.workspaceId) ? await pointsFallback(pool as Pool, scope) : null
+    const next = await hostedPointsRefusal(scope.workspaceId) ? await pointsFallback(pool as Pool, scope, cached.fallback) : null
     if (next?.kind === 'api_key') {
       const key = keys.find(item => item.id === next.keyId && apiKeyServesBotModel(item, next.model))
       if (key) return { kind: 'apiKey', key, model: next.model, chosen: false, fallback: 'points' }
@@ -122,7 +133,7 @@ export async function resolveBotModelChoice(
     return { kind: 'subscription', binding, ...state, quota }
   }
   if (!selected && (preference.key || preference.selected)) {
-    const next = await (await import('./points-fallback')).pointsFallback(pool as Pool, scope)
+    const next = await (await import('./points-fallback')).pointsFallback(pool as Pool, scope, cached.fallback)
     if (next?.kind === 'api_key') {
       const key = keys.find(item => item.id === next.keyId && apiKeyServesBotModel(item, next.model))
       if (key) return { kind: 'apiKey', key, model: next.model, chosen: false, fallback: 'preference' }
@@ -135,7 +146,7 @@ export async function resolveBotModelChoice(
   // A subscription serves its owner only (decision 2026-11-17): only their own is a default.
   if (binding) return withQuota(binding)
   // No silent default (decision 2026-11-15-1900): the person's own 优先使用的模型 may still name one; else they choose.
-  const next = await (await import('./points-fallback')).pointsFallback(pool as Pool, scope)
+  const next = await (await import('./points-fallback')).pointsFallback(pool as Pool, scope, cached.fallback)
   if (next?.kind === 'api_key') {
     const key = keys.find(item => item.id === next.keyId && apiKeyServesBotModel(item, next.model))
     if (key) return { kind: 'apiKey', key, model: next.model, chosen: false, fallback: 'preference' }

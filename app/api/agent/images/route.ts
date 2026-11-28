@@ -1,15 +1,11 @@
-import { noteLogUser, withRequestLog } from '@/lib/request-log'
 import { defaultAgentCopy as agentCopy } from '@/lib/agent-copy'
-import { auth } from '@/lib/api-auth'
 import { agentImageQuery } from '@/lib/agent-images'
 import { findCachedAgentImage } from '@/lib/agent-images-server'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-async function handleGET(request: Request) {
+async function handleAgentImagesGET(request: Request) {
   const headers = { 'Cache-Control': 'private, no-store' }
   if (request.headers.get('sec-fetch-site') === 'cross-site') return Response.json({ error: agentCopy.crosssiteRequestsAreNotAllowed }, { status: 403, headers })
-  const session = await auth.api.getSession({ headers: request.headers })
-  noteLogUser(session?.user?.id)
-  if (!session?.user) return Response.json({ error: agentCopy.pleaseSignInFirst }, { status: 401, headers })
   const query = agentImageQuery.safeParse(new URL(request.url).searchParams.get('q'))
   if (!query.success) return Response.json({ error: agentCopy.imageKeywordsMustBe2160CharactersAnd }, { status: 400, headers })
   try {
@@ -19,4 +15,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/agent/images', handleGET)
+export const GET = defineRoute<'session', 'none'>(
+  {
+    route: '/api/agent/images',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+  },
+  ({ request }) => handleAgentImagesGET(request),
+)

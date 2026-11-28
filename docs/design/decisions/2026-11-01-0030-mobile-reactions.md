@@ -1,6 +1,7 @@
 # The iOS app: 新建 Bot, group chats and reactions, in one go
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, in the mobile session: 「表情回应那里，你可以做，你排到后面去」
   (2026-10-31), then 「你不要就是说弄成这么小一个 PR…你一次性做完行不行」
   (the bot page, 新建 Bot, 新建群聊 and reactions ship together).

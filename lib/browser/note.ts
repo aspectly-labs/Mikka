@@ -10,6 +10,7 @@
 // origin): only the URL, the box in the frame's viewport and the note are known.
 
 import { MESSAGE_MAX } from '@/lib/message-limits'
+import { isLoopbackHost } from '@/lib/env/hosts'
 
 export interface BrowserNoteRect { x: number; y: number; width: number; height: number; viewportWidth: number; viewportHeight: number }
 
@@ -66,7 +67,7 @@ export function normalizeAddress(input: string, origin: string): string | null {
     else url = new URL(`https://${value}`)
   } catch { return null }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
-  if (!url.hostname || (!url.hostname.includes('.') && url.hostname !== 'localhost' && url.origin !== new URL(origin).origin)) return null
+  if (!url.hostname || (!url.hostname.includes('.') && !isLoopbackHost(url.hostname) && url.origin !== new URL(origin).origin)) return null
   return url.href
 }
 

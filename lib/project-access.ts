@@ -122,17 +122,28 @@ export async function accessibleProjects(reader: ProjectReader, tx: ProjectTrans
   }))
 }
 
-/** Display projection for tasks already authorized by their caller. Exact tenant
- * pairing protects split databases against malformed cross-tenant link rows. */
+/** Display projection for tasks already authorized by their caller: the task's Project and its
+ * 「环境」 (workspace_task_environments), in one read. Exact tenant pairing protects split databases
+ * against malformed cross-tenant link rows. */
 export async function projectViewsForTasks(tasks: readonly { id: string; workspaceId: string | null }[]) {
   const tenants = new Map(tasks.filter(task => task.workspaceId).map(task => [task.id, task.workspaceId]))
-  const result = new Map<string, { projectId: string; project: string }>()
+  const result = new Map<string, { projectId: string | null; project: string | null; environmentId: string | null }>()
   const ids = [...tenants.keys()]
   for (let offset = 0; offset < ids.length; offset += 200) {
-    const rows = await projectDb.select({ issueId: projectTasks.issueId, projectId: projects.id, project: projects.name, workspaceId: projectTasks.workspaceId })
-      .from(projectTasks).innerJoin(projects, and(eq(projects.id, projectTasks.projectId), eq(projects.workspaceId, projectTasks.workspaceId)))
-      .where(inArray(projectTasks.issueId, ids.slice(offset, offset + 200)))
-    for (const row of rows) if (tenants.get(row.issueId) === row.workspaceId) result.set(row.issueId, { projectId: row.projectId, project: row.project })
+    const { rows } = await projectDb.execute<{ issueId: string; projectId: string | null; project: string | null; projectWorkspaceId: string | null; environmentId: string | null; environmentWorkspaceId: string | null }>(sql`
+      select task.id as "issueId", p.id as "projectId", p.name as project, t."workspaceId" as "projectWorkspaceId",
+        e."environmentId", e."workspaceId" as "environmentWorkspaceId"
+      from unnest(${sql.param(ids.slice(offset, offset + 200))}::uuid[]) as task(id)
+      left join workspace_project_tasks t on t."issueId"=task.id
+      left join workspace_projects p on p.id=t."projectId" and p."workspaceId"=t."workspaceId"
+      left join workspace_task_environments e on e."issueId"=task.id
+      where p.id is not null or e."environmentId" is not null`)
+    for (const row of rows) {
+      const tenant = tenants.get(row.issueId)
+      const inProject = row.projectId !== null && row.projectWorkspaceId === tenant
+      const environmentId = row.environmentId !== null && row.environmentWorkspaceId === tenant ? row.environmentId : null
+      if (inProject || environmentId) result.set(row.issueId, { projectId: inProject ? row.projectId : null, project: inProject ? row.project : null, environmentId })
+    }
   }
   return result
 }

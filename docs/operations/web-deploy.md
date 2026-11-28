@@ -51,47 +51,66 @@ streaming and rollback on the same source pair.
 
 ## Official runtime configuration
 
-Changed template inputs require Cloudflare to serve the exact current main
-commit before the E2B release takes its lock or allocates builders. A push only
-reports changed inputs in its run summary and builds nothing; the paused Vercel
-publisher is never awaited. The release rechecks the live version after
-building and publishes template IDs that passed the build-time checks (the template
-builds, both CLIs start, the execution fence opens). E2B runs on the user's own
-key, so there is no subscription run before publication.
+Initial automatic E2B runtime selection requires the observed Cloudflare
+product to equal current main and the consumer run's recorded source. A push
+only reports changed inputs and builds no candidate. Publication rechecks the
+fixed serving receipt and publishes template IDs that passed the build-time
+checks: the template builds, both CLIs start and the execution fence opens.
+E2B uses the user's own key, so there is no subscription run before publication
+([#2789](https://github.com/alexj11324/Mikka/pull/2789)).
 
-The release starts by itself. When a run of the Cloudflare application
+The runtime release starts by itself. When a run of the Cloudflare application
 deployment workflow finishes with a serving-release observation
 (`gateway-observe` after a cutover, or a per-service Web `service-production`),
-the runtime workflow and Desktop release run on that
-`workflow_run` event. Each one goes ahead only when the observed product is
-current main. Otherwise it records why in its run summary and ends green.
-E2B also compares the worker inputs with the last release that made templates
-public and skips an unchanged worker. Desktop skips a commit whose installer is
-already the latest release. Both use `actions:RUN_ID:ATTEMPT` of that observation
-as their receipt, and every gate rechecks it as below.
+the runtime workflow receives that `workflow_run` event, applies the initial
+current-main selection above and its existing input checks, and uses
+`actions:RUN_ID:ATTEMPT` of that observation as its receipt; every gate
+rechecks it as below. Desktop does not start from these observations (see the
+Desktop paragraph below). The
+[workflow reference](../../.github/workflows/README.md#cloud-worker-template-release)
+owns runtime candidate checks and recovery.
 
 To retry by hand, dispatch the official runtime workflow on current main with
 its retry reason and `cloudflare_receipt`. A dispatch without a receipt fails
 before any builder starts. For a Cloudflare-to-Cloudflare
-promotion, run the existing Cloudflare application deployment workflow with phase
+promotion, the owner (`gateway-observe` is owner-only,
+[promotion switch](build-source-of-truth.md#break-glass-phases-that-bypass-the-staging-evidence))
+runs the existing Cloudflare application deployment workflow with phase
 `gateway-observe` on the reviewed operations commit containing the prepared
 checklist. The observer only reads the provider and canonical application.
 Use `actions:RUN_ID:ATTEMPT` from that successful observation in the consumer
 dispatch. Its original job identifies the 100% gateway version, product, overlay
 and Web client pin. Each signing or publication gate rechecks the live gateway
-fingerprint, product, overlay, pinned client and current product main.
+fingerprint, product, overlay, pinned client and the served commit's membership
+in main's history through the existing
+[serving-source verifier](../../scripts/release/cloudflare-promoted-web.mjs).
+Later merges do not replace the fixed source or invalidate publication. A manual
+dispatch on a later main therefore builds the still-served commit rather than
+the newer dispatch commit. Explicit release windows declared by the
+#1752/#1954 owner remain binding; an offline push does not itself open one.
 The first Vercel-to-Cloudflare transition keeps its historical issue #1954
 comment/body hash, approval window and DNS TXT verification.
 The same release produces the immutable template report for the private
 Cloudflare API deployment.
 
 Desktop uses its existing signed and notarized macOS workflow. A push records
-in its run summary that no installer was built. The serving-release observation
-starts it as described above; a manual dispatch on main with a fresh
-`cloudflare_receipt` still works.
+in its run summary that no installer was built. Only an automatic
+`pipeline-production` promotion (`pipeline:RUN_ID:ATTEMPT`, bound to its
+`deploy-production` receipt archive and funded model acceptance; it exists only
+while `autoProduction` is `true`) starts it by itself. A serving-release
+observation or a manual `pipeline-promote` never starts it; a promoter
+(`config/release-promoters.json`) dispatches it on main with either receipt
+([promotion switch](build-source-of-truth.md#production-promotion-switch)). Automatic pipeline triggers
+skip commits only when the latest release's `mikka-ui-overlay.json` matches
+the promoted overlay, its commit already covers the served Web/API builds, and
+no Desktop input path changed.
 It verifies the serving Web version and exact overlay before allocating the
 Mac, before loading credentials, and immediately before publishing the sealed
-installer. The approved backend must contain the installer commit.
+installer. For serving observations the approved backend must contain the
+installer commit; for automatic `pipeline-production` promotions the promoted
+manifest cryptographically binds the served Web/API builds (rebuilt or reused
+under identical `contextDigest`) to the installer commit and rejects any stale
+receipt behind `releases/latest`.
 
 See the [private runbook](https://github.com/alexj11324/mikka-cloud/blob/main/docs/operations/web-deploy.md).
 
@@ -121,7 +140,7 @@ A per-service release (private operations `service-release`) publishes no
 `Web deploy` run, and nothing waits for one. The production acceptance
 workflows that used to follow it (`read-cache-production`,
 `self-hosted-production`, `task-attachment-production`,
-`project-decisions-acceptance`, `model-provider-fallback-acceptance` and
+`project-decisions-acceptance` and
 `issue1415-deployed-production`) are dispatched on main after the release
 instead. Their only release check is that the live `/mikka/api/version` serves
 the expected build. `factory-visual-evidence-acceptance` still follows the E2B

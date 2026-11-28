@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { withBasePath } from './base-path'
 import { executionIdentityLabelsSchema } from './execution-identity-label-view'
-import { profileColorSchema, profileGlyphSchema } from './factory/agent-profile-mark'
+import { profileGlyphSchema, storedProfileColor } from './factory/agent-profile-mark'
 import { MODEL_ROUTING_DIFFICULTIES, MODEL_ROUTING_EFFORTS, MODEL_ROUTING_REASONS, MODEL_ROUTING_TIERS } from './model-routing'
 
 /** Shared allowlist for the server evidence projection and its client reader. */
@@ -21,7 +21,7 @@ export const modelRoutingEvidenceSchema = z.discriminatedUnion('version', [
 const reference = z.string().min(1).max(200)
 const resource = z.object({
   kind: z.enum(['device', 'api_key', 'subscription', 'e2b', 'cloudflare_sponsored', 'mcp']),
-  id: reference, ownerId: reference, access: z.enum(['owner', 'workspace_share']),
+  id: reference, ownerId: reference, access: z.enum(['owner', 'workspace_share', 'workspace']),
   revision: z.string().max(200).optional(),
 })
 const account = z.object({
@@ -72,7 +72,7 @@ const evidence = z.object({ run: z.object({
     profileId: z.string().min(1).max(200), name: z.string().max(80), version: z.number().int().positive(), digest: z.string().max(200),
     source: z.enum(['explicit', 'decision', 'default']), reason: z.string().max(4000),
     // Presentation only; an older server or an unknown id leaves the dialog to derive it.
-    icon: profileGlyphSchema.optional().catch(undefined), color: profileColorSchema.optional().catch(undefined),
+    icon: profileGlyphSchema.optional().catch(undefined), color: z.unknown().transform(storedProfileColor).optional(),
   }).nullable().optional(),
 }) })
 

@@ -16,7 +16,7 @@ stub("../../../../../../lib/auth.ts", {
     api: {
       getSession: async ({ headers }: { headers: Headers }) => {
         calls.push(["session", headers]);
-        return owner ? { user: { id: owner } } : null;
+        return owner ? { user: { id: owner }, session: { id: 'owner-session' } } : null;
       },
     },
   },
@@ -25,7 +25,7 @@ stub("../../../../../../lib/desktop-rpc/handler.ts", {
   humanSessionHeaders: (request: Request) => request.headers,
 });
 stub("../../../../../../lib/request-log.ts", {
-  withRequestLog: (_path: string, handler: unknown) => handler,
+  noteLogUser: () => {}, noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler,
 });
 stub("../../../../../../lib/github/user-access.ts", {
   GitHubAccessError: class GitHubAccessError extends Error {
@@ -75,8 +75,15 @@ test("reads only the authenticated owner’s selected repository and returns pri
   assert.deepEqual(calls[1], [
     "read",
     "owner",
-    { repo: "Owner/Repo", cursor: null, view: "open" },
+    { repo: "Owner/Repo", cursor: null, view: "open", since: null },
   ]);
+  await route.GET(request("?repo=Owner%2FRepo&view=all&since=2026-11-01T00%3A00%3A00Z"));
+  assert.deepEqual(calls.at(-1), [
+    "read",
+    "owner",
+    { repo: "Owner/Repo", cursor: null, view: "all", since: "2026-11-01T00:00:00Z" },
+  ]);
+  assert.equal((await route.GET(request("?repo=Owner%2FRepo&since=yesterday"))).status, 400);
 });
 
 test("requires a human session and rejects malformed or attacker-added request fields", async () => {

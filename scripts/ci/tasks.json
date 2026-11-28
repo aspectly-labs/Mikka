@@ -1,4 +1,9 @@
 {
+  "core-legacy-orvilo-redirect": {
+    "command": "pnpm test:legacy-orvilo-redirect",
+    "kind": "core",
+    "env": {}
+  },
   "core-2": {
     "command": "pnpm test:factory-check-independence",
     "kind": "core",
@@ -21,11 +26,6 @@
   },
   "core-7": {
     "command": "pnpm test:ui-policy",
-    "kind": "core",
-    "env": {}
-  },
-  "core-8": {
-    "command": "pnpm test:idle-budget",
     "kind": "core",
     "env": {}
   },
@@ -95,12 +95,12 @@
     "env": {}
   },
   "core-22": {
-    "command": "pnpm test:self-hosting",
+    "command": "pnpm test:runtime-config",
     "kind": "core",
     "env": {}
   },
   "core-23": {
-    "command": "pnpm test:self-hosted-byok",
+    "command": "pnpm test:service-config",
     "kind": "core",
     "env": {}
   },
@@ -229,11 +229,6 @@
     "kind": "core",
     "env": {}
   },
-  "core-49": {
-    "command": "pnpm test:user-message-text",
-    "kind": "core",
-    "env": {}
-  },
   "core-50": {
     "command": "pnpm test:run-info",
     "kind": "core",
@@ -241,11 +236,6 @@
   },
   "core-51": {
     "command": "pnpm test:thread-changes",
-    "kind": "core",
-    "env": {}
-  },
-  "core-52": {
-    "command": "pnpm check:agent-ui",
     "kind": "core",
     "env": {}
   },
@@ -266,11 +256,6 @@
   },
   "core-56": {
     "command": "pnpm test:unread",
-    "kind": "core",
-    "env": {}
-  },
-  "core-57": {
-    "command": "pnpm test:issue-readonly-dom",
     "kind": "core",
     "env": {}
   },
@@ -421,11 +406,6 @@
     "kind": "core",
     "env": {}
   },
-  "core-view-state": {
-    "command": "pnpm test:view-state",
-    "kind": "core",
-    "env": {}
-  },
   "core-governance": {
     "command": "pnpm test:governance",
     "kind": "core",
@@ -438,6 +418,11 @@
   },
   "core-drive": {
     "command": "pnpm test:drive",
+    "kind": "core",
+    "env": {}
+  },
+  "core-interop": {
+    "command": "pnpm test:interop",
     "kind": "core",
     "env": {}
   },
@@ -463,6 +448,21 @@
   },
   "integration-factory-activity": {
     "command": "pnpm test:factory-activity",
+    "kind": "integration",
+    "env": {}
+  },
+  "core-58": {
+    "command": "pnpm test:zero-residency",
+    "kind": "core",
+    "env": {}
+  },
+  "integration-http-fakes": {
+    "command": "pnpm test:http-fakes",
+    "kind": "integration",
+    "env": {}
+  },
+  "integration-ui-fixture-guards": {
+    "command": "pnpm test:ui-fixture-guards",
     "kind": "integration",
     "env": {}
   }

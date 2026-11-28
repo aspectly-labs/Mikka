@@ -2,7 +2,7 @@ import 'server-only'
 import { asSchema, type ToolSet } from 'ai'
 import type { AgentExecution } from '../agent-kit/store'
 import type { DefinitionSnapshot } from '../agent-kit/definition'
-import type { HostedRuntimeSnapshot } from '../subscription-model-snapshot'
+import type { HostedApiKeySnapshot, HostedRuntimeSnapshot } from '../hosted-model-selection'
 import type { ScheduledRead } from '../schedules/contract'
 import { productRpc } from './product-rpc'
 import { requiresEveProductApproval } from './approval-bridge'
@@ -53,7 +53,7 @@ export async function productCatalogue(scope: Scope, binding: Pick<ExecutionBind
 }
 
 /** Actual native actions allocate the existing business execution before calling the app. */
-export async function beginProductAction(scope: Scope, input: Pick<ExecutionBinding, 'sessionId' | 'turnId'>): Promise<string | undefined> {
+export async function beginProductAction(scope: Scope, input: Pick<ExecutionBinding, 'sessionId' | 'turnId'>, runtime?: HostedRuntimeSnapshot): Promise<string | undefined> {
   return asProductPrincipal(scope, async () => {
     const { agentKitEnabled } = await import('../agent-kit/service')
     if (!agentKitEnabled()) return undefined
@@ -64,7 +64,7 @@ export async function beginProductAction(scope: Scope, input: Pick<ExecutionBind
       const receipt = await client.query('SELECT 1 FROM eve_turn_settlements WHERE session_id=$1 AND turn_id=$2', [input.sessionId, input.turnId])
       if (receipt.rowCount) throw new Error('agentExecutionClosed')
       const { beginAgentExecution } = await import('../../workflows/coordinator/agent-kit-steps')
-      const execution = await beginAgentExecution(scope.ownerId, scope.botId, `${input.sessionId}:${input.turnId}`, 0, { harness: 'ai_sdk' })
+      const execution = await beginAgentExecution(scope.ownerId, scope.botId, `${input.sessionId}:${input.turnId}`, 0, { harness: 'ai_sdk' }, runtime)
       if (!execution) throw new Error('agentExecutionClosed')
       return execution.id
     })
@@ -95,12 +95,20 @@ export async function productContext(scope: Scope, binding: ExecutionBinding) {
   return { execution, sourceEventId, scheduledRead, taskEventId, entryOrigin }
 }
 
-export async function productTools(scope: Scope, execution: AgentExecution | null, sourceEventId: string | undefined, scheduledRead: import('../schedules/contract').ScheduledRead | null, taskEventId: string | undefined,entryOrigin:import('../run-origin').ResolvedRunOrigin): Promise<ToolSet> {
+export async function productTools(scope: Scope, execution: AgentExecution | null, sourceEventId: string | undefined, scheduledRead: import('../schedules/contract').ScheduledRead | null, taskEventId: string | undefined,entryOrigin:import('../run-origin').ResolvedRunOrigin,
+  webSearchModel?: HostedApiKeySnapshot | null): Promise<ToolSet> {
   const steps = await import('../../workflows/coordinator/steps')
   const { coordinatorTools, readCoordinatorSwitches } = await import('../../workflows/coordinator/tools')
   const mailboxEnabled = !scheduledRead && snapshotMailboxTools(execution?.snapshot).length > 0 && await steps.mailboxToolsEnabled()
+  const selection = scheduledRead ? null : webSearchModel
+  const webSearchRuntime = selection === undefined ? null : {
+    harness: 'ai_sdk', model: selection?.modelId ?? null, ...(selection && { modelSelection: selection }),
+  }
   const tools = coordinatorTools(scope.ownerId, scope.botId, scheduledRead ? { scheduledRead: { botId: scope.botId, occurrence: scheduledRead } } : undefined, {
     execution, sourceEventId, ...(taskEventId ? { taskEventId } : {}),...entryOrigin,
+    // The private Eve request binds the model actually used on this turn.
+    // An older interactive request has no trusted model. Scheduled actions retain their read-only route.
+    webSearchRuntime,
     switches: readCoordinatorSwitches(), coordinator: await steps.isCoordinatorChat(scope.ownerId, scope.botId),
     computerEnabled: !scheduledRead && await steps.computerToolsEnabled(), writeEnabled: !scheduledRead && await steps.personalWriteToolsEnabled(),
     mailboxEnabled, mailboxTools: mailboxEnabled ? await steps.mailboxCatalogue(scope.ownerId, scope.botId, execution?.id) : [],

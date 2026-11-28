@@ -7,6 +7,8 @@ import {assertEveScope,type EveScope} from './scope'
 import {eveInternalOrigin} from './server-client'
 import {loadEveRetrySource,type EveRetrySource} from './retry-source'
 import {eveProductContext} from './submission'
+import { DEFAULT_LOCAL_APP_ORIGIN } from '../env/hosts'
+import { readEnv } from '../env/server'
 
 type RetrySession=Pick<ClientSession,'id'|'snapshot'|'send'>
 export interface EveRetryServices {open(scope:EveScope,headers:Readonly<Record<string,string>>):Promise<RetrySession>}
@@ -15,7 +17,7 @@ const defaultServices:EveRetryServices={async open(scope,headers){
   return (await new Client({baseUrl:base.toString(),headers,redirect:'manual'}).sessions.create()).session
 }}
 
-export function eveRetryHeaders(requestHeaders:Headers,publicOrigin=process.env.BETTER_AUTH_URL) {
+export function eveRetryHeaders(requestHeaders:Headers,publicOrigin=readEnv('BETTER_AUTH_URL')) {
   const headers:Record<string,string>={}
   for(const key of ['cookie','authorization','origin','sec-fetch-site','x-mikka-workspace-id','x-mikka-locale']) {
     const value=requestHeaders.get(key);if(value!==null)headers[key]=value
@@ -24,7 +26,7 @@ export function eveRetryHeaders(requestHeaders:Headers,publicOrigin=process.env.
   // The product endpoint has authenticated this caller already. Native mobile
   // requests omit Origin; supply the configured app origin on this server hop.
   // Preserve an explicitly supplied value so the native CSRF guard can reject it.
-  if(!requestHeaders.has('origin'))headers.origin=new URL(publicOrigin??'http://127.0.0.1:3000').origin
+  if(!requestHeaders.has('origin'))headers.origin=new URL(publicOrigin??DEFAULT_LOCAL_APP_ORIGIN).origin
   return headers
 }
 
@@ -35,7 +37,7 @@ export function eveRetrySubmission(sessionId:string,turnId:string,source:EveRetr
   const text=typeof source.payload.text==='string'?source.payload.text:''
   const files=Array.isArray(source.payload.images)?source.payload.images.flatMap(value=>value&&typeof value==='object'&&'dataUrl' in value&&typeof value.dataUrl==='string'&&'mediaType' in value&&typeof value.mediaType==='string'?[{type:'file' as const,data:value.dataUrl,mediaType:value.mediaType}]:[]):[]
   const message:MessageContent=files.length?[...(text?[{type:'text' as const,text}]:[]),...files]:text
-  const clientContext=eveProductContext.parse({retryOf:source.position,...(source.payload.taskCommand ? {taskCommand:source.payload.taskCommand} : {}),taskDestination:source.payload.taskDestination,profileId:source.payload.profileId,taskTitle:source.payload.taskTitle})
+  const clientContext=eveProductContext.parse({retryOf:source.position,...(source.payload.taskCommand ? {taskCommand:source.payload.taskCommand} : {}),taskDestination:source.payload.taskDestination,profileId:source.payload.profileId,taskTitle:source.payload.taskTitle,...(Array.isArray(source.payload.mentions) && source.payload.mentions.length ? {mentions:source.payload.mentions} : {})})
   return {message,options:{clientContext,headers:{'x-mikka-submission-id':submissionId}}}
 }
 
@@ -45,6 +47,15 @@ export async function retryEveTurn(ownerId:string,botId:string,requestHeaders:He
   const {pool}=await import('../db')
   const bot=(await pool.query<{workspaceId:string}>('SELECT "workspaceId" FROM bots WHERE id=$1 AND "ownerId"=$2',[botId,ownerId])).rows[0]
   if(!bot)return {queued:false as const,reason:'nothingToRetry' as const}
+  // A resend frozen on another owner's binding would only refuse at
+  // turn.started (#3057): answer up front, like the thread send path does.
+  // Read the saved row — botModel would write a default before eligibility.
+  const saved=(await pool.query<{bindingId:string|null}>(
+    'SELECT "bindingId" FROM bot_model_choices WHERE "ownerId"=$1 AND "workspaceId"=$2 AND "botKey"=$3',
+    [ownerId,bot.workspaceId,botId])).rows[0]?.bindingId
+  if(saved&&await new (await import('../execution-settings')).ExecutionSettings(pool)
+    .bindingHeldElsewhere({ownerId,workspaceId:bot.workspaceId},saved))
+    return {queued:false as const,reason:'accountUnavailable' as const}
   const scope=await assertEveScope({ownerId,botId,workspaceId:bot.workspaceId,surface:'web'})
   const headers=eveRetryHeaders(requestHeaders)
   // Credentials are the current request's. A host service token would lose

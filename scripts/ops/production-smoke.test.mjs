@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createHash } from 'node:crypto'
 import { markdown, runSmoke } from './production-smoke.mjs'
 import { decode, encode } from '../../lib/desktop-rpc/wire.ts'
 
@@ -101,10 +102,29 @@ test('configuration cannot send credentials to insecure targets or silently igno
     { SMOKE_BASE_URL: 'https://app.example.com/unexpected' },
     { SMOKE_EXPECT_ON: 'cloudCompter' },
     { SMOKE_OWNER_EMAIL: 'ordinary@example.com' },
+    { SMOKE_POLICY_ADMIN_EMAIL_SHA256: 'not-a-digest' },
   ]) await assert.rejects(runSmoke({ env: { ...env, ...override }, fetchImpl: io.fetchImpl }), /smoke_/)
   assert.equal(io.calls.length, 0)
 })
 
 test('transport errors never expose cookies, URLs or provider error messages', async () => {
   await assert.rejects(runSmoke({ env, fetchImpl: async () => { throw new Error('SECRET_COOKIE https://private.example.com') } }), error => error.message === 'smoke_request_failed')
+})
+
+test('staging names its own team admin by digest; the production policy identity is not accepted there', async () => {
+  const stagingAdmin = 'delivered+mikka-smoke-staging-admin@example.com'
+  const digest = createHash('sha256').update(stagingAdmin).digest('hex')
+  const staging = (admin) => fixture({ '/api/workspace': (url, options) => {
+    const selected = url.searchParams.get('workspace') === teamId || options.headers.cookie?.includes('mikka-workspace=' + teamId)
+    return Response.json({ currentUserId: ownerId, role: 'member', workspace: { id: selected ? teamId : personalId, kind: selected ? 'team' : 'personal' },
+      choices: [{ id: teamId, kind: 'team' }, { id: personalId, kind: 'personal' }], members: selected ? [
+        { userId: ownerId, email: env.SMOKE_OWNER_EMAIL, role: 'member', status: 'active' },
+        { userId: 'admin', email: admin, role: 'admin', status: 'active' },
+      ] : [] })
+  } })
+  const passed = await runSmoke({ env: { ...env, SMOKE_POLICY_ADMIN_EMAIL_SHA256: digest }, fetchImpl: staging(stagingAdmin).fetchImpl })
+  assert.equal(passed.status, 'pass')
+  assert.equal(passed.team.teamOwnerAttribution, 'configured-policy-admin-digest')
+  await assert.rejects(runSmoke({ env, fetchImpl: staging(stagingAdmin).fetchImpl }), /team_workspace_failed/)
+  await assert.rejects(runSmoke({ env: { ...env, SMOKE_POLICY_ADMIN_EMAIL_SHA256: digest }, fetchImpl: staging('alex@acme.aspectlylabs.com').fetchImpl }), /team_workspace_failed/)
 })

@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { getCookies } from 'better-auth/cookies'
 import { recoverAcceptanceSession } from '../lib/acceptance-recovery.ts'
+import { officialUiSkip } from '../scripts/official-ui-requirement.mjs'
 
 test('预览分区 Cookie 保持 HttpOnly、Secure 和 SameSite=None', async () => {
   const source = await readFile(new URL('../lib/auth.ts', import.meta.url), 'utf8')
   // The partitioned cookie stays limited to an https development origin, inside advanced.
-  assert.match(source, /advanced: \{[\s\S]*\.\.\.\(process\.env\.NODE_ENV === 'development' && authBaseURL\?\.startsWith\('https:\/\/'\) \? \{\s*defaultCookieAttributes: \{ sameSite: 'none' as const, secure: true, partitioned: true \},?\s*\} : \{\}\)/)
+  assert.match(source, /advanced: \{[\s\S]*\.\.\.\(isDevelopmentEnv\(\) && authBaseURL\?\.startsWith\('https:\/\/'\) \? \{\s*defaultCookieAttributes: \{ sameSite: 'none' as const, secure: true, partitioned: true \},?\s*\} : \{\}\)/)
   const { sessionToken } = getCookies({
     baseURL: 'https://preview.example.com',
     advanced: { defaultCookieAttributes: { sameSite: 'none', secure: true, partitioned: true } },
@@ -20,8 +22,11 @@ test('预览分区 Cookie 保持 HttpOnly、Secure 和 SameSite=None', async () 
   assert.equal(getCookies({ baseURL: 'https://app.example.com' }).sessionToken.attributes.partitioned, undefined)
 })
 
-test('验收恢复需要用户授权，且不改用不安全的客户端会话', async () => {
-  const source = await readFile(new URL('../components/acceptance-entry.tsx', import.meta.url), 'utf8')
+test('验收恢复需要用户授权，且不改用不安全的客户端会话', async t => {
+  const path = new URL('../.hosted-ui/web/components/acceptance-entry.tsx', import.meta.url)
+  const missing = officialUiSkip(existsSync(path), '.hosted-ui')
+  if (missing) { t.skip(missing); return }
+  const source = await readFile(path, 'utf8')
   assert.match(source, /onClick=\{recoverSession\}/)
   assert.match(source, /\(\) => document\.requestStorageAccess\(\)/)
   assert.match(source, /target="_blank" rel="noopener noreferrer"/)

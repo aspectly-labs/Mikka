@@ -4,13 +4,14 @@ import { getVercelOidcToken } from '@vercel/oidc'
 import { CredentialError, type EncryptionContext, type Envelope } from './contracts'
 import { isCloudEdition } from '@/lib/edition'
 import { cloudflareCredentialToken, credentialRuntimeEnvironment } from './runtime-identity'
+import { envValue, runtimeEnv, type EnvMap } from '../env/runtime.mjs'
 
 export type Kms = { generate(context: EncryptionContext): Promise<{ plaintext: Buffer; wrapped: string }>; decrypt(wrapped: string, context: EncryptionContext): Promise<Buffer> }
 const aad = (context: EncryptionContext, kind = 'password') => Buffer.from(JSON.stringify({ userId: context.userId, credentialId: context.credentialId, origin: context.origin, v: 1, kind }))
 
 /** Community vaults keep the existing per-secret DEK and authenticated context.
  * Only the DEK is wrapped by the administrator's local master key. */
-export function localKms(role: 'app' | 'broker', env: Record<string, string | undefined> = process.env): Kms {
+export function localKms(role: 'app' | 'broker', env: EnvMap = runtimeEnv()): Kms {
   function master() {
     const raw = env.CREDENTIAL_MASTER_KEY ?? ''
     const key = Buffer.from(raw, 'base64')
@@ -40,7 +41,10 @@ export function localKms(role: 'app' | 'broker', env: Record<string, string | un
         decipher.setAAD(aad(context, 'dek')); decipher.setAuthTag(data.subarray(-16))
         return Buffer.concat([decipher.update(data.subarray(12, -16)), decipher.final()])
       // error-cause: ciphertext, owner context and master-key failures must be indistinguishable outside the credential boundary.
-      } catch { throw new CredentialError() } finally { key.fill(0) }
+      } catch {
+    // error-cause: a cipher or key failure's raw cause is never surfaced past the seal boundary
+    throw new CredentialError()
+  } finally { key.fill(0) }
     },
   }
 }
@@ -53,7 +57,7 @@ export function credentialKms(role: 'app' | 'broker'): Kms {
 
 /** Each platform uses its own runtime issuer; no fallback to another identity. */
 export async function assumeVercelRole(role: 'app' | 'broker') {
-  const arn = process.env[role === 'app' ? 'CREDENTIAL_APP_ROLE_ARN' : 'CREDENTIAL_BROKER_ROLE_ARN']
+  const arn = envValue(role === 'app' ? 'CREDENTIAL_APP_ROLE_ARN' : 'CREDENTIAL_BROKER_ROLE_ARN')
   if (!arn || !/^arn:aws:iam::\d{12}:role\//.test(arn)) throw new CredentialError()
   try {
     const token = credentialRuntimeEnvironment() ? await cloudflareCredentialToken() : await getVercelOidcToken()
@@ -67,23 +71,30 @@ export async function assumeVercelRole(role: 'app' | 'broker') {
     const field = (name: string) => new RegExp(`<${name}>([^<]+)</${name}>`).exec(xml)?.[1]
     const accessKeyId = field('AccessKeyId'), secretAccessKey = field('SecretAccessKey'), sessionToken = field('SessionToken')
     if (!accessKeyId || !secretAccessKey || !sessionToken) throw new Error()
-    return new AwsClient({ accessKeyId, secretAccessKey, sessionToken, region: process.env.AWS_REGION ?? 'us-east-1', service: 'kms', retries: 0 })
-  } catch { throw new CredentialError() }
+    return new AwsClient({ accessKeyId, secretAccessKey, sessionToken, region: envValue('AWS_REGION') ?? 'us-east-1', service: 'kms', retries: 0 })
+  } catch {
+    // error-cause: provider credential payloads and stack causes never leave this boundary
+    throw new CredentialError()
+  }
 }
 
 export function awsKms(role: 'app' | 'broker'): Kms {
   async function call(action: string, input: Record<string, unknown>) {
     try {
-      const region = process.env.AWS_REGION ?? 'us-east-1'
-      if (!/^[a-z]{2}-[a-z]+-\d$/.test(region) || !process.env.CREDENTIAL_KMS_KEY_ARN) throw new Error()
+      const region = envValue('AWS_REGION') ?? 'us-east-1'
+      const keyArn = envValue('CREDENTIAL_KMS_KEY_ARN')
+      if (!/^[a-z]{2}-[a-z]+-\d$/.test(region) || !keyArn) throw new Error()
       const client = await assumeVercelRole(role)
       const response = await client.fetch(`https://kms.${region}.amazonaws.com/`, {
         method: 'POST', headers: { 'Content-Type': 'application/x-amz-json-1.1', 'X-Amz-Target': `TrentService.${action}` },
-        body: JSON.stringify({ KeyId: process.env.CREDENTIAL_KMS_KEY_ARN, ...input }), signal: AbortSignal.timeout(10_000), redirect: 'error',
+        body: JSON.stringify({ KeyId: keyArn, ...input }), signal: AbortSignal.timeout(10_000), redirect: 'error',
       })
       if (!response.ok) { await response.body?.cancel(); throw new Error() }
       return await response.json()
-    } catch { throw new CredentialError() } // Provider bodies, stack causes and credentials never leave this boundary.
+    } catch {
+      // error-cause: provider bodies, stack causes and credentials never leave this boundary
+      throw new CredentialError()
+    }
   }
   return {
     async generate(context) {
@@ -125,7 +136,10 @@ export async function open(kms: Kms, context: EncryptionContext, envelope: Envel
     const decipher = createDecipheriv('aes-256-gcm', key, nonce)
     decipher.setAAD(aad(context, kind)); decipher.setAuthTag(data.subarray(-16))
     return Buffer.concat([decipher.update(data.subarray(0, -16)), decipher.final()])
-  } catch { throw new CredentialError() } finally { key.fill(0) }
+  } catch {
+    // error-cause: a cipher or key failure's raw cause is never surfaced past the seal boundary
+    throw new CredentialError()
+  } finally { key.fill(0) }
 }
 
 /** Session snapshots use the credential's wrapped DEK with a fresh GCM nonce and

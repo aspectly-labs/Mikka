@@ -1,14 +1,17 @@
 import 'server-only'
+import { connectRunningComputer, PolicySandboxUnavailable } from '@/lib/computer/e2b-provider'
+import { e2bResourceAccount } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Sandbox, SandboxNotFoundError } from 'e2b'
 import { TerminalError } from '@mikka/protocol/coding-terminal'
-import { e2bApiKey, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { cloudflareReview, reviewReply, reviewRequest } from '../cloudflare-review'
 import type { ReviewSessionLease } from '../review-sessions'
 import type { TaskReviewAuthority } from '../review-authority'
 import { terminalKey, signTerminalTicket, terminalResponseError, type TerminalPrepared, type TerminalTarget } from './wire'
+import { readEnv } from '@/lib/env/server'
 
 const PORT = 6084
 const ROOT = '/run/mikka-terminal'
@@ -16,30 +19,32 @@ const INSTALL = '/opt/mikka/terminal'
 const INGRESS = '/opt/mikka/runtime/ingress-v1/guard.py'
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
 
-async function options(ownerId: string, signal?: AbortSignal) {
-  return { apiKey: await e2bApiKey(ownerId, 'Task terminal is not configured'),
-    proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy, requestTimeoutMs: 15_000, retries: 0, signal }
+async function options(ownerId: string, sandboxId: string, signal?: AbortSignal) {
+  const account = await e2bResourceAccount(ownerId, 'sandbox', sandboxId)
+  return { apiKey: account.apiKey,
+    proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy'), requestTimeoutMs: 15_000, retries: 0, signal }
 }
 
-function cloud(scope: TaskReviewAuthority): asserts scope is TaskReviewAuthority & { sandboxId: string } {
+function cloud(scope: TaskReviewAuthority & { threadTerminal?: boolean }): asserts scope is TaskReviewAuthority & { sandboxId: string; threadTerminal?: boolean } {
   if (scope.machineKind !== 'cloud') throw new TerminalError('terminal_unsupported', { detail: 'local_device' })
   if (!scope.sandboxId) throw new TerminalError('terminal_binding_changed')
   // A DB pause flag is never a native-exit receipt. The gateway additionally
   // checks the exact idle daemon receipt while holding its execution flock.
-  if (!scope.nativeExitedProof) throw new TerminalError('terminal_already_controlled')
+  // Thread-owned terminals carry no review fence: the owner keeps the shell.
+  if (!scope.nativeExitedProof && !scope.threadTerminal) throw new TerminalError('terminal_already_controlled')
 }
 
 /** getInfo is read-only. Input and revocation never call Sandbox.connect,
  * which would silently resume a parked VM. */
 async function endpoint(target: TerminalTarget, signal?: AbortSignal) {
-  const config = await options(target.ownerId, signal)
+  const config = await options(target.ownerId, target.sandboxId, signal)
   const info = await withE2BErrors(target.ownerId, false, () => Sandbox.getInfo(target.sandboxId, config))
   if (info.state !== 'running') throw new TerminalError('terminal_binding_changed')
   // Use the SDK's routing primitive, without connecting/resuming its machine.
   const sandbox = new Sandbox({ ...config, sandboxId: target.sandboxId, sandboxDomain: info.sandboxDomain, envdVersion: info.envdVersion })
   const host = sandbox.getHost(PORT)
   if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:e2b\.app|e2b\.dev)$/i.test(host)) throw new TerminalError('terminal_unavailable', { detail: 'configuration' })
-  return { origin: `https://${host}`, config }
+  return { origin: `https://${host}` }
 }
 
 async function health(origin: string, key: Buffer, signal?: AbortSignal): Promise<{ boot: string; version: string } | null> {
@@ -96,7 +101,7 @@ async function verifyRuntime(sandbox: Sandbox, signal?: AbortSignal) {
 async function sponsoredTerminal(scope:TaskReviewAuthority & {sandboxId:string}, lease:ReviewSessionLease | null | undefined,
   action:'terminal-prepare'|'terminal-existing', signal?:AbortSignal):Promise<TerminalPrepared> {
   const review = cloudflareReview(scope,lease,'terminal')
-  const key = terminalKey(scope,process.env.BETTER_AUTH_SECRET)
+  const key = terminalKey(scope, readEnv('BETTER_AUTH_SECRET'))
   const current = await reviewReply(review,action,{key:key.toString('base64')},signal)
   if (typeof current.boot !== 'string' || !/^[a-f0-9-]{36}$/.test(current.boot) ||
       typeof current.version !== 'string' || !/^[a-f0-9]{64}$/.test(current.version))
@@ -110,16 +115,24 @@ export async function prepareTerminal(scope: TaskReviewAuthority, signal?: Abort
   try {
     if (scope.sponsoredPlacement) return await sponsoredTerminal(scope,lease,'terminal-prepare',signal)
     const target = { runId: scope.runId, ownerId: scope.ownerId, workspaceId: scope.workspaceId, sandboxId: scope.sandboxId }
-    const { origin, config } = await endpoint(target, signal)
+    const { origin } = await endpoint(target, signal)
     const source = await readFile(join(process.cwd(), 'scripts/e2b/terminal-gateway.py'), 'utf8')
     const version = createHash('sha256').update(source).digest('hex')
-    const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
+    const key = terminalKey(target, readEnv('BETTER_AUTH_SECRET'))
     let current = await health(origin, key, signal)
-    if (current && current.version !== version) throw new TerminalError('terminal_unsupported', { detail: 'runtime_version' })
     // Only opening/reconnecting performs this root check. Input/resize/close
     // keep the existing data plane and never issue a per-command SDK RPC.
-    const sandbox = await withE2BErrors(scope.ownerId, false, () => Sandbox.connect(scope.sandboxId, { ...config, timeoutMs: 5 * 60_000 }))
-    await verifyRuntime(sandbox, signal)
+    const sandbox = await connectRunningComputer(scope.ownerId, scope.sandboxId, undefined, signal)
+    // The review egress guard is a task-review runtime; thread machines are
+    // not required to carry it.
+    if (!scope.threadTerminal) await verifyRuntime(sandbox, signal)
+    if (current && current.version !== version) {
+      // A gateway from an older source hash keeps the socket and the service
+      // lock for the VM's life; ending it frees both so the install below
+      // takes over instead of refusing the terminal for good.
+      await sandbox.commands.run(`pkill -f '${INSTALL}/gateway-' ; sleep 1`, { user: 'root', timeoutMs: 10_000, signal }).catch(() => undefined)
+      current = null
+    }
     if (!current) {
       // resumeReviewMachine has already acquired the dedicated review lease.
       // The same running sandbox is the only target; never create a VM here.
@@ -138,7 +151,7 @@ export async function prepareTerminal(scope: TaskReviewAuthority, signal?: Abort
     return { origin, boot: current.boot, key, bindingId: scope.bindingId }
   } catch (cause) {
     if (cause instanceof TerminalError) throw cause
-    if (cause instanceof SandboxNotFoundError) throw new TerminalError('terminal_binding_changed', { cause })
+    if (cause instanceof SandboxNotFoundError || cause instanceof PolicySandboxUnavailable) throw new TerminalError('terminal_binding_changed', { cause })
     throw new TerminalError('terminal_unavailable', { detail: 'installation', cause })
   }
 }
@@ -150,7 +163,7 @@ export async function existingTerminal(scope: TaskReviewAuthority, signal?: Abor
     if (scope.sponsoredPlacement) return await sponsoredTerminal(scope,lease,'terminal-existing',signal)
     const target = { runId: scope.runId, ownerId: scope.ownerId, workspaceId: scope.workspaceId, sandboxId: scope.sandboxId }
     const { origin } = await endpoint(target, signal)
-    const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
+    const key = terminalKey(target, readEnv('BETTER_AUTH_SECRET'))
     const current = await health(origin, key, signal)
     if (!current) throw new TerminalError('terminal_ended')
     return { origin, boot: current.boot, key, bindingId: scope.bindingId }
@@ -184,7 +197,7 @@ export async function terminalRequest(prepared: TerminalPrepared, operation: 'st
 /** Called by the durable shared revocation adapter. A missing/parked VM is
  * left pending for the existing lifecycle; revocation never wakes execution. */
 export async function revokeRunTerminal(target: TerminalTarget, control: { leaseIds: string[]; expiresAt?: string } = { leaseIds: [] }): Promise<void> {
-  const config = await options(target.ownerId)
+  const config = await options(target.ownerId, target.sandboxId)
   const info = await withE2BErrors(target.ownerId, false, () => Sandbox.getInfo(target.sandboxId, config)).catch(cause => {
     if (cause instanceof SandboxNotFoundError) return null
     throw new TerminalError('terminal_unavailable', { detail: 'runtime', cause })
@@ -198,7 +211,7 @@ export async function revokeRunTerminal(target: TerminalTarget, control: { lease
     throw new TerminalError('terminal_binding_changed')
   }
   const { origin } = await endpoint(target)
-  const key = terminalKey(target, process.env.BETTER_AUTH_SECRET)
+  const key = terminalKey(target, readEnv('BETTER_AUTH_SECRET'))
   const current = await health(origin, key)
   if (!current) throw new TerminalError('terminal_unavailable', { detail: 'runtime' })
   const body = JSON.stringify({ leaseIds: control.leaseIds })

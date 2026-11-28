@@ -38,7 +38,7 @@ function workspaceSelect(columns: Record<string, unknown>) {
       assert.ok(workspaceProbe.depth > 0 && workspaceProbe.depth <= 2)
       assert.equal(mode, 'share')
       if (table === 'mikka_workspaces') {
-        assert.deepEqual(Object.keys(columns), ['id', 'kind', 'ownerId'])
+        assert.deepEqual(Object.keys(columns), ['id', 'kind', 'ownerId', 'factorAt'])
         assert.equal(compact(condition.sql), '"mikka_workspaces"."id" = $1')
         assert.deepEqual(condition.params, [workspaceId])
         assert.equal(workspaceProbe.locks.length, (workspaceProbe.depth - 1) * 2)

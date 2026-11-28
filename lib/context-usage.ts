@@ -24,8 +24,8 @@
  */
 
 /**
- * Capy's seven segment keys, reused as they are so a reader who knows one
- * product's breakdown reads the other's the same way.
+ * Seven segment keys that match Capy's context breakdown, so a reader who
+ * knows one product's breakdown reads the other's the same way.
  */
 export const CONTEXT_SEGMENT_KEYS = ['system', 'tools', 'rules', 'skills', 'mcp', 'environment', 'conversation'] as const
 export type ContextSegmentKey = typeof CONTEXT_SEGMENT_KEYS[number]

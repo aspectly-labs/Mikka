@@ -23,8 +23,8 @@ export async function organizationResourceAllowed(workspaceId: string, kind: Sha
   const query = membership ?? (await import('@/lib/workspace-db')).workspacePool
   const policy = await workspaceResourcePolicy(workspaceId, query)
   if (!policy.organizationId) return true
-  // Sharing a Skill is a sharing of the owner's integration content, so it
-  // follows the same organization switch as a shared MCP connection.
+  // Sharing a Skill shares the owner's integration content. The `mcpSharing` switch now governs
+  // Skills only: personal MCP servers are not shareable (decision 2026-11-27-1700).
   const rule = kind === 'mcp' || kind === 'skill' ? policy.mcpSharing : policy.modelCredentialSharing
   if (rule === 'deny') return false
   const { rows: [approval] } = await query.query<{ status: string }>(`select status from mikka_organization_resource_approvals

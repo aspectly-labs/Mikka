@@ -9,10 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_PATHS, WORKSPACE_MAX_RESPONSE_BYTES,
   matchesWorkspaceResponse, workspaceReadReceipt, workspaceReadRequest, workspaceReadResult,
-  type RunWorktreeIdentity, type WorkspaceReadCommand, type WorkspaceReadResult,
+  type RunWorktreeIdentity, type WorkspaceFileWriteResult, type WorkspaceReadCommand, type WorkspaceReadResult,
 } from '@mikka/protocol/coding-workspace'
 import { remoteKey } from '@mikka/protocol/repository'
 import { readWorkspace, readWorkspaceReceipt } from '../src/coding-workspace/files'
+import { handleWorkspaceGitRequest } from '../src/coding-workspace/git'
 import { RunJournal } from '../src/runs/journal'
 import { cleanupTempDirs, makeRepo, tempDir } from './helpers'
 
@@ -56,13 +57,25 @@ async function makeFixture() {
     mkdirSync(dirname(join(root, path)), { recursive: true })
     writeFileSync(join(root, path), value)
   }
-  return { repository, directory, root, identity, entry, headSha, command, read, write }
+  const send = async (request: unknown) => {
+    const input = command(request)
+    const receipt = workspaceReadReceipt.parse(await handleWorkspaceGitRequest(input, entry, repository))
+    expect(matchesWorkspaceResponse(input.request, identity, receipt.result)).toBe(true)
+    return receipt
+  }
+  return { repository, directory, root, identity, entry, headSha, command, read, write, send }
 }
 
 function success<K extends 'file' | 'tree' | 'search' | 'context'>(result: WorkspaceReadResult, kind: K) {
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, kind })
   if (!result.ok || result.kind !== kind) throw new Error(`Expected successful ${kind} response`)
   return result as Extract<WorkspaceReadResult, { kind: K }>
+}
+
+function successWrite(result: WorkspaceReadResult, kind: 'file_saved' | 'file_renamed' | 'file_deleted') {
+  expect(result, JSON.stringify(result)).toMatchObject({ ok: true, kind })
+  if (!result.ok || result.kind !== kind) throw new Error(`Expected successful ${kind} response`)
+  return result as WorkspaceFileWriteResult
 }
 
 afterEach(() => {
@@ -464,6 +477,90 @@ describe.skipIf(process.platform !== 'linux')('coding workspace files on a real 
     const tree = success(await fixture.read(treeCommand.request), 'tree')
     const escaped = workspaceReadResult.parse({ ...tree, entries: [{ path: 'nested/file.txt', name: 'file.txt', kind: 'file', size: 1 }] })
     expect(matchesWorkspaceResponse(treeCommand.request, fixture.identity, escaped)).toBe(false)
+  })
+
+  it('saves a new file through the CAS fence and produces a masked undo entry', async () => {
+    const content = 'export const created = true\n'
+    const operationId = randomUUID()
+    const receipt = await fixture.send({ kind: 'file_save', operationId, path: 'fresh/created.ts',
+      expected: { exists: false, contentSha256: null, mode: null }, encoding: 'utf8', content, executable: false })
+    const result = successWrite(receipt.result, 'file_saved')
+    expect(result).toMatchObject({ operationId, path: 'fresh/created.ts', newPath: null, idempotent: false,
+      after: { exists: true, mode: '100644', contentSha256: digest(content) } })
+    expect(receipt.gitUndo?.files).toHaveLength(1)
+    expect(receipt.gitUndo!.files[0]).toMatchObject({ path: 'fresh/created.ts', existed: false })
+    const file = success(await fixture.read({ kind: 'file', path: 'fresh/created.ts' }), 'file')
+    expect(file.content).toBe(content)
+    const replay = successWrite((await fixture.send({ kind: 'file_save', operationId, path: 'fresh/created.ts',
+      expected: { exists: false, contentSha256: null, mode: null }, encoding: 'utf8', content, executable: false })).result, 'file_saved')
+    expect(replay.idempotent).toBe(true)
+  })
+
+  it('overwrites through the CAS fence, preserves the executable bit and stores masked undo bytes', async () => {
+    fixture.write('run.sh', '#!/bin/sh\necho old\n')
+    execFileSync('chmod', ['+x', join(fixture.root, 'run.sh')])
+    const before = success(await fixture.read({ kind: 'file', path: 'run.sh' }), 'file')
+    const content = '#!/bin/sh\necho new\n'
+    const receipt = await fixture.send({ kind: 'file_save', operationId: randomUUID(), path: 'run.sh',
+      expected: { exists: true, contentSha256: before.contentSha256!, mode: '100755' },
+      encoding: 'utf8', content, executable: false })
+    const result = successWrite(receipt.result, 'file_saved')
+    expect(result.after).toMatchObject({ exists: true, mode: '100755', contentSha256: digest(content) })
+    expect(receipt.gitUndo!.files[0]).toMatchObject({ path: 'run.sh', existed: true, mode: '100755' })
+    expect(Buffer.from(receipt.gitUndo!.files[0]!.base64, 'base64').toString()).toBe('#!/bin/sh\necho old\n')
+  })
+
+  it.each(['sha', 'exists', 'mode'] as const)('conflicts instead of overwriting when the %s fence moved', async drift => {
+    fixture.write('drift.ts', 'stable\n')
+    const before = success(await fixture.read({ kind: 'file', path: 'drift.ts' }), 'file')
+    const expected: { exists: boolean; contentSha256: string; mode: '100644' | '100755' } = {
+      exists: true, contentSha256: before.contentSha256!, mode: '100644' }
+    if (drift === 'sha') expected.contentSha256 = digest('else')
+    if (drift === 'exists') expected.exists = false
+    if (drift === 'mode') expected.mode = '100755'
+    const receipt = await fixture.send({ kind: 'file_save', operationId: randomUUID(), path: 'drift.ts',
+      expected, encoding: 'utf8', content: 'clobber\n', executable: false })
+    expect(receipt.result).toEqual({ ok: false, code: 'workspace_version_conflict' })
+    const file = success(await fixture.read({ kind: 'file', path: 'drift.ts' }), 'file')
+    expect(file.content).toBe('stable\n')
+  })
+
+  it('renames with a two-entry undo and replays to the moved destination', async () => {
+    const content = 'renamed bytes\n'
+    fixture.write('old-name.ts', content)
+    const before = success(await fixture.read({ kind: 'file', path: 'old-name.ts' }), 'file')
+    const operationId = randomUUID()
+    const request = { kind: 'file_rename', operationId, path: 'old-name.ts', newPath: 'new-name.ts',
+      expected: { exists: true, contentSha256: before.contentSha256!, mode: '100644' } }
+    const receipt = await fixture.send(request)
+    const result = successWrite(receipt.result, 'file_renamed')
+    expect(result).toMatchObject({ path: 'old-name.ts', newPath: 'new-name.ts', idempotent: false,
+      after: { exists: true, contentSha256: digest(content) } })
+    expect(receipt.gitUndo?.files).toHaveLength(2)
+    expect(receipt.gitUndo!.files.map(file => file.path)).toEqual(['new-name.ts', 'old-name.ts'])
+    expect((await fixture.read({ kind: 'file', path: 'old-name.ts' })).ok).toBe(false)
+    const replay = successWrite((await fixture.send(request)).result, 'file_renamed')
+    expect(replay.idempotent).toBe(true)
+  })
+
+  it('deletes through the fence, replays idempotently and keeps the bytes for undo', async () => {
+    const content = 'disposable\n'
+    fixture.write('trash.ts', content)
+    const before = success(await fixture.read({ kind: 'file', path: 'trash.ts' }), 'file')
+    const request = { kind: 'file_delete', operationId: randomUUID(), path: 'trash.ts',
+      expected: { exists: true, contentSha256: before.contentSha256!, mode: '100644' } }
+    const receipt = await fixture.send(request)
+    const result = successWrite(receipt.result, 'file_deleted')
+    expect(result.after.exists).toBe(false)
+    expect(Buffer.from(receipt.gitUndo!.files[0]!.base64, 'base64').toString()).toBe(content)
+    const replay = successWrite((await fixture.send(request)).result, 'file_deleted')
+    expect(replay.idempotent).toBe(true)
+  })
+
+  it('refuses a hidden or escaping write path before touching the filesystem', async () => {
+    const receipt = await fixture.send({ kind: 'file_save', operationId: randomUUID(), path: '.env.local',
+      expected: { exists: false, contentSha256: null, mode: null }, encoding: 'utf8', content: 'x', executable: false })
+    expect(receipt.result).toEqual({ ok: false, code: 'workspace_path_unavailable' })
   })
 
   it('rejects a context receipt that swaps a nested file to another run or omits a selected member', async () => {

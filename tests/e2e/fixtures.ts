@@ -12,6 +12,24 @@ export function app(path: string) {
   return `${BASE_PATH}${path}`
 }
 
+export type BrowserRpcRequest = { version: number; action: string; args: unknown[] }
+
+/** True when a Playwright request is a Mikka browser RPC action (`POST .../api/rpc` with `x-mikka-rpc: 1`). */
+export function isBrowserRpc(request: { method(): string; headers(): Record<string, string>; url(): string }) {
+  if (request.method() !== 'POST' || request.headers()['x-mikka-rpc'] !== '1') return false
+  try { return new URL(request.url()).pathname.endsWith('/api/rpc') } catch { return false }
+}
+
+/** Parses a Mikka browser RPC request envelope (`{ version, action, args }`), or returns null. */
+export function parseBrowserRpc(request: { method(): string; headers(): Record<string, string>; url(): string; postData(): string | null }): BrowserRpcRequest | null {
+  if (!isBrowserRpc(request)) return null
+  try {
+    const body = JSON.parse(request.postData() ?? '') as Partial<BrowserRpcRequest>
+    if (typeof body?.version !== 'number' || typeof body.action !== 'string' || !Array.isArray(body.args)) return null
+    return { version: body.version, action: body.action, args: body.args }
+  } catch { return null }
+}
+
 /** Buttons on the left icon rail (主页 / 建议 / 看板 / 插件 / Artifact). Phones have no rail. */
 export function rail(page: Page, name: '主页' | '建议' | '任务' | '插件' | 'Artifact') {
   return page.getByRole('navigation', { name: '主导航', exact: true }).getByRole('button', { name, exact: true })
@@ -229,7 +247,11 @@ export function watchRuntime(context: BrowserContext, expectedConsoleErrors: Exp
       const matches = (error: ExpectedConsoleError) => message.text() === error.message && message.location().url === `${new URL(page.url()).origin}${error.path}`
       const index = expected.findIndex(matches)
       if (index >= 0) expected.splice(index, 1)
-      else if (!allowedConsoleErrors.some(matches)) failures.push(`console.error: ${message.text()}`)
+      else if (!allowedConsoleErrors.some(matches)) {
+        const source = message.location().url
+        const path = source && URL.canParse(source) ? new URL(source).pathname : undefined
+        failures.push(`console.error${path ? ` (${path})` : ''}: ${message.text()}`)
+      }
     })
     page.on('response', response => {
       if (response.status() >= 500 && new URL(response.url()).origin === new URL(page.url()).origin) {
@@ -290,15 +312,15 @@ export async function captureAuthenticationCookies(context: BrowserContext) {
 
 /**
  * A new account opens on the first-run guide, which only the workspace root
- * shows. Tests about other flows mark it done and skip it in place, without a
- * reload that would refetch the page's data; tests/e2e/onboarding.spec.ts
- * covers the guide.
+ * shows. Tests about other flows mark it done, then reload so the current web
+ * bootstrap reads that state whether or not the guide mounted before the write.
+ * tests/e2e/onboarding.spec.ts covers the guide.
  */
 export async function skipOnboarding(page: Page, email: string) {
   await database().query('insert into user_onboarding ("userId") select id from "user" where email = $1 on conflict do nothing', [email])
   if (new URL(page.url()).pathname.replace(/\/$/, '') !== app('/').replace(/\/$/, '')) return
+  await page.reload()
   const guide = page.getByRole('dialog', { name: '创建你的第一个 Bot', exact: true })
-  await guide.getByRole('button', { name: '跳过引导', exact: true }).click()
   await expect(guide).toHaveCount(0)
 }
 

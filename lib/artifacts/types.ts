@@ -1,4 +1,5 @@
 import type { ArtifactKind } from '@/lib/db/schema'
+import type { ArtifactEngine, RichArtifactType } from '@mikka/protocol/open-artifact'
 
 // What the app shows of an artifact; shared by the server and the reader.
 
@@ -7,6 +8,14 @@ export interface ArtifactSummary {
   kind: ArtifactKind
   title: string
   latestVersion: number
+  /** Rendering/storage engine (`'native'` for Neon/R2 markdown+html, `'open_artifact'` for Cloudflare-hosted rich artifacts). */
+  engine?: ArtifactEngine
+  /** External document ID in the Open Artifact host when `engine === 'open_artifact'`. */
+  externalId?: string | null
+  /** Specific rich artifact type (e.g. `docs`, `slides`, `design`, `whiteboard`, `sheets`, `data`, `motion`, `page`). */
+  artifactType?: RichArtifactType | null
+  /** Computed embedded viewer URL when `engine === 'open_artifact'` and host origin is configured. */
+  embedUrl?: string | null
   /** Set on a Factory acceptance report: the task whose PR it reviews, so its card can say the PR's state. */
   acceptanceTaskId?: string | null
 }

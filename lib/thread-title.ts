@@ -4,8 +4,8 @@
  *
  * - `created`: a new thread is named from what it was asked. A run that continues a thread takes that
  *   thread's title instead of asking the model again.
- * - `first_run_ended` and `pull_opened`: the thread is named again once its real content is known (Capy's
- *   `titleTriggers`), only while its title is still a generated one.
+ * - `first_run_ended` and `pull_opened`: the thread is named again once its real content is known (as Capy
+ *   rewrites a thread's title), only while its title is still a generated one.
  * - `regenerate`: the person asked for a new generated title; this is the one trigger that replaces a manual title.
  */
 import { cleanShortTitle, isCjk } from './short-title'
@@ -47,10 +47,10 @@ export type ThreadTitlePlan = { do: 'keep' } | { do: 'copy'; title: string; sour
  * What a trigger does, given the run's own stored title, the title its chain already carries (a manual one first)
  * and how many runs the chain has. Pure, so every trigger's rule is tested without a model or a database.
  */
-export function threadTitlePlan(trigger: ThreadTitleTrigger, run: Stored, chain: Stored, attempts: number): ThreadTitlePlan {
+export function threadTitlePlan(trigger: ThreadTitleTrigger, run: Stored, chain: Stored, attempts: number, protectManual = true): ThreadTitlePlan {
   if (trigger === 'regenerate') return { do: 'generate' }
   // A person's rename is the title: later runs of the thread take it, and nothing generated replaces it.
-  if (chain.titleSource === 'manual' && chain.title) return run.title === chain.title && run.titleSource === 'manual' ? { do: 'keep' } : { do: 'copy', title: chain.title, source: 'manual' }
+  if (chain.titleSource === 'manual' && chain.title && (protectManual || trigger === 'created')) return run.title === chain.title && run.titleSource === 'manual' ? { do: 'keep' } : { do: 'copy', title: chain.title, source: 'manual' }
   if (trigger === 'created') {
     if (run.title) return { do: 'keep' }
     return chain.title ? { do: 'copy', title: chain.title, source: 'generated' } : { do: 'generate' }

@@ -1,4 +1,4 @@
-import { copyFileSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, unlinkSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, unlinkSync } from 'node:fs'
 import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { auditSource, auditCss, isComponentLibrarySource, exemptAsShipped, splitUtilities, utilityBase } from './ui-policy.mjs'
-import { entityContracts } from './entity-ui-policy.mjs'
+import { entityContracts, isMovedWebFile } from './entity-ui-policy.mjs'
+import { needsOfficialUi, readUi, uiPath } from './official-ui-tree.mjs'
 
 const policy = JSON.parse(readFileSync(new URL('../ui-policy.json', import.meta.url), 'utf8'))
 const prefix = `import { cn } from '@/lib/utils'; import { Button } from '@/components/ui/button';`
@@ -87,11 +88,11 @@ test('a thread icon never borrows a task\'s circle (R-52)', () => {
   assert.ok(!auditSource('components/workspace/issue-properties.tsx', 'import { CircleCheck } from "lucide-react";', policy).some(item => item.rule === 'icons/thread-not-circle'))
 })
 
-test('local fonts are the registered files bound to their CSS variables', () => {
+test('local fonts are the registered files bound to their CSS variables', { skip: needsOfficialUi }, () => {
   // Next rendered the document with next/font/local; the application now owns
-  // the declarations in apps/desktop/src/renderer/styles.css. Keep the same
-  // files, weight range and display policy, and the ui-policy.json registry.
-  const styles = readFileSync(new URL('../apps/desktop/src/renderer/styles.css', import.meta.url), 'utf8')
+  // the declarations in the official checkout's core/renderer/styles.css. Keep the
+  // same files, weight range and display policy, and the ui-policy.json registry.
+  const styles = readUi('renderer/styles.css')
   for (const font of policy.typography.localFonts) {
     assert.ok(styles.includes(`app/${font.src.replace(/^app\//, '')}`), `${font.src} must be declared`)
   }
@@ -294,7 +295,9 @@ test('lint permits imported components but fails handwritten business UI without
     writeFileSync(path.join(cwd, '.git/info/exclude'), ignoredPaths.join('\n') + '\n')
     for (const file of contractFiles) {
       mkdirSync(path.join(cwd, path.dirname(file)), { recursive: true })
-      copyFileSync(new URL('../' + file, import.meta.url), path.join(cwd, file))
+      const sourceUrl = [new URL('../' + file, import.meta.url), new URL('../.hosted-ui/web/' + file, import.meta.url)]
+        .find(candidate => existsSync(candidate))
+      if (sourceUrl) copyFileSync(sourceUrl, path.join(cwd, file))
     }
     const composed = await execute()
     assert.equal(composed.status, 0, JSON.stringify(composed.report.diagnostics))
@@ -334,7 +337,8 @@ test('lint permits imported components but fails handwritten business UI without
     const missingFiles = missingContracts.report.diagnostics
       .filter(d => d.rule === 'entity/contract-export' || d.rule === 'entity/native-detail-route')
       .map(d => d.file)
-    assert.deepEqual(new Set(missingFiles), contractFiles)
+    const expectedMissing = new Set([...contractFiles].filter(file => !isMovedWebFile(file)))
+    assert.deepEqual(new Set(missingFiles), expectedMissing)
   } finally {
     console.error(`Retained UI policy fixture directory: ${cwd}`)
   }
@@ -421,21 +425,20 @@ test('one container per surface: a frame inside a frame is a double border', () 
   clean(`<FramePanel><Item /></FramePanel>`)
 })
 
-test('Chinese takes the system font, as in Comma: no self-hosted text font draws CJK and --font-sans names none before the system stack', async () => {
+test('Chinese takes the system font, as in Comma: no self-hosted text font draws CJK and --font-sans names none before the system stack', { skip: needsOfficialUi }, async () => {
   const { create } = await import('fontkit')
-  const root = new URL('../', import.meta.url)
   const cjk = cp => (cp >= 0x2E80 && cp <= 0x9FFF) || (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFE30 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFFEF)
   // A Latin font that drew CJK would win over the system font for those characters (mixed punctuation, wrong glyphs).
   for (const file of ['InterVariable.woff2', 'InterVariable-Italic.woff2']) {
-    const font = create(readFileSync(new URL(`app/fonts/${file}`, root)))
+    const font = create(readFileSync(uiPath(`app/fonts/${file}`)))
     assert.deepEqual(font.characterSet.filter(cjk).map(cp => `U+${cp.toString(16).toUpperCase()}`), [], file)
   }
-  const stack = readFileSync(new URL('app/globals.css', root), 'utf8').match(/--font-sans:\s*([^;]+);/)[1].split(',').map(family => family.trim().replaceAll('"', ''))
+  const stack = readUi('app/globals.css').match(/--font-sans:\s*([^;]+);/)[1].split(',').map(family => family.trim().replaceAll('"', ''))
   assert.deepEqual(stack, ['var(--font-inter)', 'SF Pro Display', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Open Sans', 'Helvetica Neue', 'sans-serif'])
 })
 
-test('the type scale is Comma\'s: size tokens in globals.css match the pinned values', () => {
-  const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8')
+test('the type scale is Comma\'s: size tokens in globals.css match the pinned values', { skip: needsOfficialUi }, () => {
+  const css = readUi('app/globals.css')
   const comma = { xs: ['0.75rem', '1.125rem'], sm: ['0.8125rem', '1.25rem'], md: ['0.9375rem', '1.5rem'], lg: ['1.125rem', '1.75rem', '-0.01em'], xl: ['1.25rem', '1.875rem', '-0.01em'], '2xl': ['1.5rem', '2rem'] }
   const token = name => css.match(new RegExp(`\\n${name}:\\s*([^;]+);`))?.[1].trim()
   for (const [step, [size, leading, tracking]] of Object.entries(comma)) {
@@ -454,6 +457,6 @@ test('paid blocks used as shipped skip only the colour and type rules (2026-11-0
   assert.equal(exemptAsShipped('app/one-use.tsx.bak', diagnostics, policy).length, 3)
   assert.equal(exemptAsShipped('components/workspace/x.tsx', diagnostics, policy).length, 3)
   const real = JSON.parse(readFileSync('ui-policy.json', 'utf8'))
-  assert.match(real.asShipped.$comment, /2026-11-09-0050-paid-blocks-as-shipped\.md/)
-  assert.ok(readFileSync('docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md', 'utf8').length > 0)
+  // The decision record is a UI decision, kept in the private hosted repository.
+  assert.match(real.asShipped.$comment, /mikka-hosted-ui\/docs\/design\/decisions\/2026-11-09-0050-paid-blocks-as-shipped\.md/)
 })

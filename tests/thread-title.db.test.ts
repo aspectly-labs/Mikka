@@ -37,6 +37,7 @@ test('a thread\'s stored title: bounded by the schema, generated per trigger, sh
     const { conversationDirectory, conversationSidebar } = await import('../lib/conversation-directory')
     const { conversationOrganization } = await import('../lib/conversation-organization')
     const { nameThread, renameThreadTitle } = await import('../lib/thread-title-server')
+    const { savePreferences } = await import('../lib/preferences')
     type GroupRequest = import('../lib/group-conversations-store').GroupRequest
     const dir = new URL('../drizzle/', import.meta.url)
     for (const f of orderMigrations((await readdir(dir)).filter(f => f.endsWith('.sql')))) await pool.query(await readFile(new URL(f, dir), 'utf8'))
@@ -175,10 +176,21 @@ test('a thread\'s stored title: bounded by the schema, generated per trigger, sh
     assert.equal((await conversationOrganization(pool,'owner',workspaceId,historical[49]))?.archived,true)
     await organize(historical[49],'archived',false)
     assert.ok((await filtered()).some(row=>row.id===historical[49]),'restore restarts the idle clock')
-    await pool.query(`INSERT INTO user_preferences ("userId","archiveIdleAfterDays") VALUES ('owner',0)
-      ON CONFLICT ("userId") DO UPDATE SET "archiveIdleAfterDays"=0`)
+    // The real preference writer mirrors the typed setting consumed by the directory.
+    await savePreferences('owner', { archiveIdleAfterDays: 0 })
     assert.equal((await filtered()).length,49,'off keeps all 49 manually unarchived rows')
     assert.equal((await conversationDirectory(pool,'owner',workspaceId,{botId:directoryOtherBot})).items.length,0)
+    // 查看运行: the directory narrows to the threads of tasks one automation's runs made.
+    const automation=randomUUID(), otherAutomation=randomUUID()
+    for (const id of [automation,otherAutomation]) await pool.query(`INSERT INTO user_schedules(id,owner_id,workspace_id,bot_id,visibility,source_event_id,request_id,request_origin,definition,request_definition,status)
+      VALUES($1,'owner',$2,$3::uuid,'workspace',gen_random_uuid(),gen_random_uuid()::text,'bot:'||$3::uuid::text,'{}'::jsonb,'{}'::jsonb,'paused')`,[id,workspaceId,botId])
+    await pool.query('UPDATE issues SET source_schedule_id=$2 WHERE id=$1',[issueId,automation])
+    const ofAutomation=async(id:string)=>(await conversationDirectory(pool,'owner',workspaceId,{automationId:id,archived:'any'})).items
+    const made=await ofAutomation(automation)
+    assert.ok(made.length>0 && made.every(row=>row.kind==='run' && row.issueId===issueId),'only the runs of the task the automation made')
+    assert.deepEqual(await ofAutomation(otherAutomation),[])
+    await pool.query('DELETE FROM user_schedules WHERE id=$1',[automation])
+    assert.equal((await pool.query('SELECT source_schedule_id FROM issues WHERE id=$1',[issueId])).rows[0].source_schedule_id,null,'a deleted automation leaves its task unlinked')
     assert.deepEqual(await conversationSidebar(pool,'other',workspaceId),{})
     const check = await run({ finished: true })
     await pool.query(`UPDATE agent_runs SET "botId"=$2, kind='acceptance' WHERE id=$1`, [check, directoryOtherBot])
@@ -188,9 +200,9 @@ test('a thread\'s stored title: bounded by the schema, generated per trigger, sh
     await pool.query(`UPDATE agent_runs SET "botId"=$2 WHERE id=$1`, [main, directoryOtherBot])
     assert.deepEqual(await nested(), [main])
     assert.ok((await conversationSidebar(pool, 'owner', workspaceId, directoryOtherBot))[directoryOtherBot].items.some(row => row.id === check))
-    await pool.query(`UPDATE user_preferences SET "archiveIdleAfterDays"=3 WHERE "userId"='owner'`)
+    await savePreferences('owner', { archiveIdleAfterDays: 3 })
     assert.equal((await sidebar()).more,false,'three days hides old idle work but preserves pinned/live/restored rows')
-    await pool.query(`UPDATE user_preferences SET "archiveIdleAfterDays"=30 WHERE "userId"='owner'`)
+    await savePreferences('owner', { archiveIdleAfterDays: 30 })
     const search = { search: 'needle' }
     const runUnread = async () => {
       const item = (await conversationDirectory(pool, 'owner', workspaceId, search)).items.find(row => row.id === unlinked)
@@ -316,7 +328,7 @@ test('a thread\'s stored title: bounded by the schema, generated per trigger, sh
     assert.deepEqual((await conversationDirectory(pool, 'owner', workspaceId, { ...mixedInput, cursor: legacyCursor })).items, [],
       'a cursor sent by a previous client preserves the old exclusive UUID boundary')
     // The sidebar, header and archive filter use the same idle clock for a named chat.
-    await pool.query(`UPDATE user_preferences SET "archiveIdleAfterDays"=3 WHERE "userId"='owner'`)
+    await savePreferences('owner', { archiveIdleAfterDays: 3 })
     await pool.query(`UPDATE conversations SET "createdAt"=now()-interval '10 days',"conversationRestoredAt"=NULL WHERE id=$1`, [id])
     await pool.query(`UPDATE conversation_messages SET "createdAt"=now()-interval '10 days' WHERE "conversationId"=$1`, [id])
     await pool.query(`UPDATE group_turns SET status='complete' WHERE "conversationId"=$1`, [id])
@@ -339,9 +351,21 @@ test('a thread\'s stored title: bounded by the schema, generated per trigger, sh
     assert.equal(published?.pulls[0].state, 'open')
     await pool.query(`UPDATE run_publications SET "pullRequest"="pullRequest" || '{"state":"merged","additions":12,"deletions":4}'::jsonb WHERE "runId"=$1`, [second])
     assert.deepEqual((await conversationDirectory(pool, 'owner', workspaceId, { pullState: 'open' })).items, [])
-    assert.deepEqual((await delivered()).items[0].pulls, [{
+    const [{ createdAt, ...pull }] = (await delivered()).items[0].pulls
+    assert.deepEqual([pull], [{
       title: 'Keep the workspace prefix after sign-in', url: 'https://github.com/o/r/pull/7', state: 'merged', additions: 12, deletions: 4,
     }])
+    // A record from before the author/createdAt fields falls back to when Mikka published it (the Since filter's floor).
+    assert.ok(createdAt && Math.abs(Date.parse(createdAt) - Date.now()) < 600_000)
+    // The PR directory's Project and Created conditions (S3): the caller's authorized project tasks, and PRs opened from an instant.
+    const linkedIn = async (extra: Record<string, unknown>, projectIssueIds?: string[]) =>
+      (await conversationDirectory(pool, 'owner', workspaceId, { archived: 'any', pullState: 'linked', ...extra }, projectIssueIds ? { projectIssueIds } : undefined)).items.length
+    const project = randomUUID()
+    assert.equal(await linkedIn({ projectId: project }, []), 0)
+    assert.ok(await linkedIn({ projectId: project }, [issueId]) > 0)
+    await assert.rejects(linkedIn({ projectId: project }), /conversationDirectoryProjectUnresolved/)
+    assert.ok(await linkedIn({ since: new Date(Date.now() - 3_600_000).toISOString() }) > 0)
+    assert.equal(await linkedIn({ since: new Date(Date.now() + 3_600_000).toISOString() }), 0)
     await organize(first, 'archived', true)
     assert.equal((await delivered()).items[0].id, first, 'the PR destination includes archived conversations')
     for (const [reader, space] of [['other', workspaceId], ['owner', foreignWorkspace]]) {

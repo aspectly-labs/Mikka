@@ -3,6 +3,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers'
 import { Container, getContainer } from '@cloudflare/containers'
 export { ContainerProxy } from '@cloudflare/containers'
 import { converterCompatibilityRequest, converterRequest } from './request.mjs'
+import { subscriptionChatHost, subscriptionChatRequest, subscriptionChatUrl } from './subscription-chat.mjs'
 
 export class LiteLlm extends Container {
   defaultPort = 4000
@@ -19,8 +20,22 @@ export class LiteLlm extends Container {
       AI_GATEWAY_API_KEY: env.AI_GATEWAY_API_KEY ?? '',
       NEON_AI_GATEWAY_BASE_URL: env.NEON_AI_GATEWAY_BASE_URL ?? '',
       NEON_AI_GATEWAY_TOKEN: env.NEON_AI_GATEWAY_TOKEN ?? '',
+      ...(env.SUBSCRIPTION_API && { MIKKA_SUBSCRIPTION_CPA_CHAT_URL: subscriptionChatUrl,
+        MIKKA_LITELLM_PRIVATE_CA_FILE: '/etc/cloudflare/certs/cloudflare-containers-ca.crt' }),
     }
   }
+
+  async startAndWaitForPorts(ports, cancellationOptions, startOptions) {
+    if (this.env?.SUBSCRIPTION_API)
+      await this.ctx.container.interceptOutboundHttps(subscriptionChatHost, this.ctx.exports.SubscriptionChatOutbound)
+
+    // LiteLLM can take longer than the SDK's 20-second port deadline on a cold instance.
+    return super.startAndWaitForPorts(ports, { portReadyTimeoutMS: 50_000, ...cancellationOptions }, startOptions)
+  }
+}
+
+export class SubscriptionChatOutbound extends WorkerEntrypoint {
+  fetch(request) { return subscriptionChatRequest(request, this.env.SUBSCRIPTION_API) }
 }
 
 export default class LiteLlmService extends WorkerEntrypoint {

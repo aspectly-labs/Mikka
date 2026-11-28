@@ -20,7 +20,7 @@ test('a message that is only a Markdown quote is the person’s own text, not a 
 })
 
 test('the phone app’s quoted messages read the same way', () => {
-  // apps/mobile/components/ui.tsx writes `> ${line}` for every line, blank ones included.
+  // the iOS app (mikka-hosted-ui/mobile-next) writes `> ${line}` for every line, blank ones included.
   assert.deepEqual(splitReplyQuote('> 关于你\n> 第二行\n\n好的'), { quote: '关于你\n第二行', text: '好的' })
 })
 
@@ -42,4 +42,18 @@ test('复制 on a card copies its prose and words, not the program that draws it
   assert.match(copied, /^我整理好了：/)
   assert.match(copied, /修好登录/)
   assert.doesNotMatch(copied, /root =|BeCard\(/)
+})
+
+test('复制 preserves all lines of a saved multiline code block and leaves fenced Python code unchanged', () => {
+  const savedCode = 'root = Stack([BeCodeBlock("const count = 1;\\nconsole.log(count);", "ts")])'
+  const copied = replyCopyText(savedCode)
+  assert.ok(copied.includes('const count = 1;'))
+  assert.ok(copied.includes('console.log(count);'))
+  assert.doesNotMatch(copied, /root =|BeCodeBlock\(/)
+
+  const pythonFence = '```python\nroot = Stack()\nroot.push(1)\n```'
+  assert.equal(replyCopyText(pythonFence), pythonFence)
+
+  const textFencedCard = '```text\nroot = Stack([TextContent("Your report is ready.")])\n```'
+  assert.equal(replyCopyText(textFencedCard), 'Your report is ready.')
 })

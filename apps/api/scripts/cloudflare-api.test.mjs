@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { verifyBusinessWorld, verifyConfiguration, verifyImage } from '../../../cloudflare/api/start.mjs'
+import { internalOnlyPath, internalOnlyRoutes } from '../../../cloudflare/api/ingress/internal-only.mjs'
+import { runRouteProbe } from '../../../scripts/ops/route-probe.mjs'
 
 const build = 'a'.repeat(40), overlay = 'b'.repeat(40), id = 'aaaaaaaaaaaa-1949-1'
 const env = {
@@ -9,6 +12,22 @@ const env = {
   BETTER_AUTH_URL: 'https://app.example', MIKKA_EVE_ORIGIN: 'https://eve.example',
   BETTER_AUTH_SECRET: 'test', DATABASE_URL: 'postgres://workspace',
   MIKKA_DATABASE_URL: 'postgres://mikka', WORKFLOW_TARGET_WORLD: '@test/durable-world',
+}
+
+async function ingressModule() {
+  const { registerHooks } = await import('node:module')
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const modules = {
+        'cloudflare:workers': 'export class WorkerEntrypoint { constructor(ctx, env) { this.ctx = ctx; this.env = env } }',
+        '@cloudflare/containers': 'export class Container { constructor(ctx, env) { this.ctx = ctx; this.env = env } } export class ContainerProxy {}',
+      }
+      if (modules[specifier]) return { url: 'data:text/javascript,' + encodeURIComponent(modules[specifier]), shortCircuit: true }
+      return nextResolve(specifier, context)
+    },
+  })
+  try { return await import('../../../cloudflare/api/ingress/worker.mjs') }
+  finally { hooks.deregister() }
 }
 
 test('the hosted API uses the exact official node-server build, overlay and deployment', () => {
@@ -29,7 +48,8 @@ test('the hosted API needs two trusted service origins, existing PostgreSQL conf
     assert.throws(() => verifyConfiguration({ ...env, WORKFLOW_TARGET_WORLD: choice }), /HOSTED_WORLD_REQUIRED/)
   }
   assert.throws(() => verifyConfiguration({ ...env, VERCEL_ENV: 'production' }), /EDITION_INVALID/)
-  for (const stage of [undefined, 'preview', 'development']) {
+  verifyConfiguration({ ...env, MIKKA_DEPLOYMENT_STAGE: 'preview' })
+  for (const stage of [undefined, 'development', 'prod']) {
     assert.throws(() => verifyConfiguration({ ...env, MIKKA_DEPLOYMENT_STAGE: stage }), /DEPLOYMENT_STAGE_INVALID/)
   }
 })
@@ -157,7 +177,7 @@ test('the private API receives its sign-in and product bindings without inheriti
   const origin = 'https://app.example'
   const preserved = Object.fromEntries([
     'MIKKA_CLOUD_WORKER_URL', 'GITHUB_APP_ID', 'GITHUB_APP_SLUG',
-    'NEXT_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY',
+    'MIKKA_PUBLIC_POSTHOG_KEY', 'MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY',
     'LINEAR_CLIENT_ID', 'LINEAR_CLIENT_SECRET', 'LINEAR_TOKEN_ENCRYPTION_KEY', 'LINEAR_WEBHOOK_SECRET', 'CRON_SECRET',
     'TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'TELEGRAM_WEBHOOK_SECRET_TOKEN', 'EXPO_ACCESS_TOKEN', 'NEON_API_KEY',
     'MIKKA_BYOS_INFISICAL_ORIGIN', 'MIKKA_BYOS_INFISICAL_PROJECT', 'MIKKA_BYOS_INFISICAL_ENVIRONMENT', 'MIKKA_BYOS_INFISICAL_PATH',
@@ -171,13 +191,16 @@ test('the private API receives its sign-in and product bindings without inheriti
   const allowed = {
     ...preserved,
     SLACK_APP_ID: 'AEXAMPLE', SLACK_CLIENT_ID: 'client-fixture', SLACK_CLIENT_SECRET: 'oauth-fixture',
+    E2B_API_KEY: 'platform-only', E2B_TEAM_ID: 'test-account',
+    MIKKA_CLOUDFLARE_TASK_WORKSPACES: 'legacy-cloudflare-workspace',
+    MIKKA_TASK_MACHINE_PLAN_LIMITS: '{"free":{"vcpu":1,"ramGib":4}}',
     E2B_BYO_COMPUTER_TEMPLATE: 'desktop-release', E2B_CLAUDE_TEMPLATE: 'claude-release', E2B_CODEX_TEMPLATE: 'codex-release',
     MIKKA_CLOUD_TEMPLATE_MODELS: 'verified-catalogue', MIKKA_CLOUD_WORKER_SHA: 'a'.repeat(40),
     MIKKA_CLOUD_WORKER_SOURCE_COMMIT: 'b'.repeat(40), MIKKA_CLOUD_RUNTIME_PREVIOUS: 'previous-verified-catalogue',
     GOOGLE_CLIENT_ID: 'google', GOOGLE_CLIENT_SECRET: 'google-credential',
     GITHUB_CLIENT_ID: 'github', GITHUB_CLIENT_SECRET: 'github-credential', GITHUB_WEBHOOK_SECRET: 'existing-hook',
     BETTER_AUTH_SECRET: 'auth', TURNSTILE_SECRET_KEY: 'signup-verification', MIKKA_CLOUDFLARE_TASKS_DISABLED: 'sponsor',
-    MIKKA_DEPLOYMENT_ID: id, MIKKA_WORKFLOW_QUEUE_PUBLIC_KEY: 'public-verification-key',
+    MIKKA_DEPLOYMENT_ID: id, MIKKA_DEPLOYMENT_STAGE: 'preview', MIKKA_WORKFLOW_QUEUE_PUBLIC_KEY: 'public-verification-key',
     MIKKA_LITELLM_URL: 'http://litellm.internal:4000', MIKKA_LITELLM_MASTER_KEY: 'converter-fixture',
     DEVICE_GATEWAY_URL: 'https://gateway.example', DEVICE_GATEWAY_PUSH_SECRET: 'device-signing',
     WORKSPACE_SECRETS_KEY: 'workspace-sealing',
@@ -190,7 +213,7 @@ test('the private API receives its sign-in and product bindings without inheriti
     GITHUB_APP_PRIVATE_KEY: 'app-signing', AWS_ACCESS_KEY_ID: 'aws', AWS_SECRET_ACCESS_KEY: 'aws-secret',
     CREDENTIAL_MASTER_KEY: 'self-hosted-vault', CREDENTIAL_BROKER_ROLE_ARN: 'broker', EVE_QUEUE_SIGNING_KEY: 'world-signing',
     INFISICAL_CLIENT_SECRET: 'deploy', CLOUDFLARE_API_TOKEN: 'deploy', VERCEL_OIDC_TOKEN: 'legacy',
-    E2B_API_KEY: 'platform-only', VERCEL_TEAM_TOKEN: 'release-only',
+    VERCEL_TEAM_TOKEN: 'release-only',
     NODE_OPTIONS: '--inspect', BETTER_AUTH_URL: 'https://incorrect.example', MIKKA_API_INGRESS: 'other',
     STRIPE_WEBHOOK_SECRET: {}, SMTP_URL: '', TASK_MACHINE: { destroy() {} },
   }
@@ -198,6 +221,23 @@ test('the private API receives its sign-in and product bindings without inheriti
     BETTER_AUTH_URL: origin, MIKKA_API_INGRESS: 'cloudflare', ...allowed,
   })
   for (const log of logs) assert.equal(log.mock.callCount(), 0)
+})
+
+test('an empty public binding is not forwarded, so the API falls back to the legacy name as publicEnv does', async () => {
+  const { applicationEnvironment } = await import('../../../cloudflare/api/ingress/environment.mjs')
+  const { LEGACY_PUBLIC_ENV, publicEnv } = await import('../../../lib/public-env.mjs')
+  for (const name of ['MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'MIKKA_PUBLIC_POSTHOG_KEY']) {
+    const legacy = LEGACY_PUBLIC_ENV[name]
+    const forwarded = applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', [name]: '', [legacy]: 'legacy-fixture' })
+    assert.equal(Object.hasOwn(forwarded, name), false)
+    assert.equal(forwarded[legacy], 'legacy-fixture')
+    assert.equal(publicEnv(name, forwarded), 'legacy-fixture')
+    // Unsetting both names turns the setting off at the edge and in the runtime.
+    const off = applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', [name]: '', [legacy]: '' })
+    assert.equal(publicEnv(name, off), undefined)
+    const current = applicationEnvironment({ PUBLIC_ORIGIN: 'https://app.example', [name]: 'current-fixture', [legacy]: 'legacy-fixture' })
+    assert.equal(publicEnv(name, current), 'current-fixture')
+  }
 })
 
 test('private World calls require the instance capability and forward only WDK payload and media headers', async () => {
@@ -347,6 +387,22 @@ test('the private LiteLLM bridge forwards only the model routes with their auth 
   assert.equal(seen.length, 7)
 })
 
+test('only a validated hosted correlation tag crosses the private LiteLLM transport and the original ACK is untouched', async () => {
+  const { liteLlmRequest } = await import('../../../cloudflare/api/ingress/services.mjs')
+  const callId = 'mikka-hosted:00000000-0000-4000-8000-000000000001:wrun_native:step_model:1'
+  let received
+  const response = new Response('paid stream', { headers: { 'x-litellm-call-id': callId, 'x-litellm-response-cost': '0' } })
+  const binding = { fetch: async request => { received = request; return response } }
+  const request = value => new Request('https://litellm.internal/v1/chat/completions', {
+    method: 'POST', body: '{}', headers: { authorization: 'Bearer internal', 'x-litellm-call-id': value },
+  })
+  assert.equal(await liteLlmRequest(request(callId), binding), response)
+  assert.equal(received.headers.get('x-litellm-call-id'), callId)
+  received = undefined
+  assert.equal((await liteLlmRequest(request('untrusted arbitrary value'), binding)).status, 400)
+  assert.equal(received, undefined)
+})
+
 test('the API binds the LiteLLM service only when a release names one, and the service exposes only model routes', async () => {
   const input = { release: id, origin: 'https://test.example', image: 'registry.cloudflare.com/' + '0'.repeat(32) + '/mikka-api@sha256:' + '2'.repeat(64) }
   assert.equal(ingressConfig(input).services, undefined)
@@ -375,4 +431,158 @@ test('the shared converter reshapes only the currently serving API’s legacy BY
   assert.equal(await converterCompatibilityRequest(modern), modern)
   const noCredential = request({ authorization: 'Bearer master' }, { model: 'mikka-decision' })
   assert.equal(await converterCompatibilityRequest(noCredential), noCredential)
+})
+
+test('ApiIngress rejects retired legacy daemon traffic and removed heartbeats at the Worker edge with zero BusinessApi container wake', async () => {
+  const { default: ApiIngress } = await ingressModule()
+
+  const origin = 'https://app.example'
+  const deviceId = '00000000-0000-4000-8000-000000000001'
+  const forwardedCalls = []
+  let getByNameCalls = 0
+  const env = {
+    PUBLIC_ORIGIN: origin,
+    BUSINESS_API: {
+      getByName(name) {
+        getByNameCalls++
+        assert.equal(name, 'shared-api')
+        return {
+          fetch(req) {
+            forwardedCalls.push({ method: req.method, path: new URL(req.url).pathname })
+            return Response.json({ forwarded: true })
+          },
+        }
+      },
+    },
+  }
+  const ingress = new ApiIngress({}, env)
+
+  for (const path of ['/mikka/api/internal/subscription/chat', '/mikka/api/internal/%73ubscription/chat', '/mikka/api/internal/subscription/chat/']) {
+    assert.equal((await ingress.fetch(new Request(origin + path, { method: 'POST', body: '{}' }))).status, 404)
+  }
+  assert.equal(getByNameCalls, 0)
+  // The staging route probe uses the edge's own predicate: every internal-only route in the generated inventory
+  // is closed at this worker, and the probe passes only on that 404 (scripts/ops/route-probe.mjs).
+  const inventory = JSON.parse(await readFile(new URL('../generated/routes.json', import.meta.url), 'utf8'))
+  const internal = { ...inventory, routes: inventory.routes.filter(route => internalOnlyPath(route.path)) }
+  assert.deepEqual(internal.routes.map(route => route.path), internalOnlyRoutes)
+  const probe = await runRouteProbe({ baseUrl: origin, manifest: internal, fetchImpl: (url, init) => ingress.fetch(new Request(url, init)) })
+  assert.deepEqual([probe.status, probe.results.map(result => [result.route, result.status])], ['pass', internalOnlyRoutes.map(path => [path, 404])])
+  assert.equal(getByNameCalls, 0)
+
+  // 1. Legacy daemon requests (missing/invalid x-mikka-device-session or outdated semver) return 426 with 0 container wakes.
+  for (const [method, path, headers] of [
+    ['GET', `/mikka/v1/devices/${deviceId}/commands`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.524' }],
+    ['GET', `/mikka/v1/devices/${deviceId}/runs`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.357' }],
+    ['GET', `/mikka/v1/devices/${deviceId}/gateway`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.701' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/heartbeat`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.524' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/heartbeat/`, { authorization: 'Bearer legacy', 'x-mikka-client-version': '0.0.701' }],
+    ['POST', '/mikka/v1/devices/register', { authorization: 'Bearer legacy', 'x-mikka-device-session': '0' }],
+    ['POST', `/mikka/v1/runs/${deviceId}/events`, { authorization: 'Bearer legacy' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/report`, { authorization: 'Bearer legacy', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.455' }],
+  ]) {
+    const res = await ingress.fetch(new Request(origin + path, { method, headers }))
+    assert.equal(res.status, 426, `${method} ${path}`)
+    assert.equal(res.headers.get('cache-control'), 'private, no-store')
+    const body = await res.json()
+    assert.equal(body.error, 'update_required')
+    assert.equal(body.code, 'daemonUpgradeRequired')
+    assert.equal(body.minVersion, '0.0.456')
+    assert.deepEqual(body.daemonVersions, { min: '0.0.456' })
+  }
+
+  // 2. Retired heartbeat endpoint even with a valid device session returns 410 with 0 container wakes.
+  const gone = await ingress.fetch(new Request(origin + `/mikka/v1/devices/${deviceId}/heartbeat`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer current', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.800' },
+  }))
+  assert.equal(gone.status, 410)
+  assert.equal((await gone.json()).code, 'heartbeatRetired')
+
+  // Wrong origin still fails closed with 400 before edge cutoff or container wake.
+  const wrongOrigin = await ingress.fetch(new Request(`https://other.example/mikka/v1/devices/${deviceId}/commands`))
+  assert.equal(wrongOrigin.status, 400)
+
+  assert.equal(getByNameCalls, 0, 'BusinessApi Durable Object must never be looked up for retired legacy daemons')
+  assert.equal(forwardedCalls.length, 0, 'BusinessApi.fetch must never be invoked for retired legacy daemons')
+
+  // 3. Updated/current daemon requests, enrollment, internal device-session reports, sandbox, OPTIONS, Web, Mobile, Auth, and Eve pass straight through.
+  const passthrough = [
+    ['POST', '/mikka/v1/devices/register', { authorization: 'Bearer current', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.456' }],
+    ['POST', `/mikka/v1/devices/${deviceId}/report`, { authorization: 'Bearer current', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.800' }],
+    ['GET', `/mikka/v1/devices/${deviceId}/commands`, { authorization: 'Bearer cloud', 'x-mikka-device-session': '1' }],
+    ['POST', `/mikka/v1/runs/${deviceId}/events`, { authorization: 'Bearer source', 'x-mikka-device-session': '1', 'x-mikka-client-version': '0.0.1' }],
+    ['POST', '/mikka/v1/devices/enroll', { authorization: 'Bearer orv_fixture' }],
+    ['POST', `/mikka/v1/internal/device-sessions/${deviceId}`, { authorization: 'Bearer push-secret' }],
+    ['POST', '/mikka/v1/mailbox', { authorization: 'Bearer run-token' }],
+    ['POST', `/mikka/v1/task-secrets/${deviceId}`, { authorization: 'Bearer cap-token' }],
+    ['OPTIONS', `/mikka/v1/devices/${deviceId}/commands`, {}],
+    ['GET', '/mikka/api/auth/get-session', { cookie: 'session=fixture' }],
+    ['POST', '/mikka/api/rpc', { cookie: 'session=fixture' }],
+    ['GET', '/mikka/api/mobile/threads', { authorization: 'Bearer mobile' }],
+  ]
+  for (const [method, path, headers] of passthrough) {
+    const res = await ingress.fetch(new Request(origin + path, { method, headers }))
+    assert.equal(res.status, 200, `${method} ${path} should pass through`)
+  }
+  const eveRes = await ingress.eveProduct(new Request(origin + '/mikka/api/internal/eve/tools', { method: 'POST', body: '{}' }), 'scope-1')
+  assert.equal(eveRes.status, 200)
+  assert.equal(getByNameCalls, passthrough.length + 1)
+  assert.equal(forwardedCalls.length, passthrough.length + 1)
+})
+
+test('GitHub redelivery outbound permits one bodyless private operation and forwards cancellation without caller authority', async () => {
+  const { githubRedeliveryRequest } = await import('../../../cloudflare/api/ingress/services.mjs')
+  const origin = 'https://github-redelivery.internal'
+  const forwarded = []
+  const response = Response.json({ configured: true, scanned: 2, failed: 1, redelivered: 0, errors: 1 }, { status: 502 })
+  const binding = { fetch: async request => { forwarded.push(request); return response } }
+  for (const [url, options] of [
+    [origin + '/ready', { method: 'GET' }], [origin + '/redeliver', { method: 'GET' }],
+    [origin + '/redeliver', { method: 'PUT' }], [origin + '/redeliver', { method: 'POST', body: '{}' }],
+    [origin + '/redeliver', { method: 'POST', body: '' }],
+    [origin + '/redeliver?app=other', { method: 'POST' }], [origin + '/redeliver#other', { method: 'POST' }],
+    [origin + '/redeliver/', { method: 'POST' }], ['https://other.example/redeliver', { method: 'POST' }],
+  ]) assert.equal((await githubRedeliveryRequest(new Request(url, options), binding)).status, 404)
+  assert.equal(forwarded.length, 0)
+  assert.equal((await githubRedeliveryRequest(new Request(origin + '/redeliver', { method: 'POST' }), undefined)).status, 503)
+  const abort = new AbortController()
+  const request = new Request(origin + '/redeliver', { method: 'POST', signal: abort.signal,
+    headers: { authorization: 'Bearer synthetic-credential', cookie: 'session=synthetic',
+      'x-mikka-internal': 'caller-marker', 'x-github-event': 'push', 'x-hub-signature-256': 'caller-signature' } })
+  assert.equal(await githubRedeliveryRequest(request, binding), response)
+  assert.equal(forwarded.length, 1)
+  assert.equal(forwarded[0].url, origin + '/redeliver')
+  assert.equal(forwarded[0].method, 'POST')
+  assert.equal(forwarded[0].body, null)
+  assert.deepEqual([...forwarded[0].headers], [])
+  abort.abort()
+  assert.equal(forwarded[0].signal.aborted, true)
+})
+
+test('the existing API Container installs private redelivery interception without exporting signing keys or a public route', async () => {
+  const { BusinessApi, GitHubRedeliveryOutbound, default: ApiIngress } = await ingressModule()
+  const calls = [], interceptions = [], target = {}
+  const binding = { fetch: async request => { calls.push(request); return new Response(null, { status: 204 }) } }
+  const context = { exports: { GitHubRedeliveryOutbound: target },
+    container: { interceptOutboundHttps: async (...args) => { interceptions.push(args) } } }
+  const environment = { PUBLIC_ORIGIN: 'https://app.example', GITHUB_REDELIVERY: binding,
+    GITHUB_APP_PRIVATE_KEY: 'synthetic-signing-key-must-stay-private',
+    BUSINESS_API: { getByName() { throw new Error('public ingress must not wake the container for this private host') } } }
+  const host = new BusinessApi(context, environment)
+  await host.configurePrivateHttps()
+  assert.deepEqual(interceptions, [['github-redelivery.internal', target]])
+  assert.equal(host.envVars.NODE_EXTRA_CA_CERTS, '/etc/cloudflare/certs/cloudflare-containers-ca.crt')
+  assert.equal(host.envVars.GITHUB_APP_PRIVATE_KEY, undefined)
+  assert.equal(host.envVars.GITHUB_REDELIVERY, undefined)
+  const request = new Request('https://github-redelivery.internal/redeliver', { method: 'POST', headers: { 'x-mikka-internal': 'forged' } })
+  assert.equal((await new ApiIngress({}, environment).fetch(request)).status, 400)
+  assert.equal(calls.length, 0)
+  assert.equal((await new GitHubRedeliveryOutbound({}, environment).fetch(request)).status, 204)
+  assert.equal(calls.length, 1)
+  interceptions.length = 0
+  const unbound = new BusinessApi(context, { PUBLIC_ORIGIN: environment.PUBLIC_ORIGIN })
+  await unbound.configurePrivateHttps()
+  assert.deepEqual(interceptions, [])
+  assert.equal(unbound.envVars.NODE_EXTRA_CA_CERTS, undefined)
 })

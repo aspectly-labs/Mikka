@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterCommit } from '../db/commit-effects'
 import { WRITE_ACTIONS } from '../operations/write-schema'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -29,7 +30,7 @@ export async function approvedWriteTargets(database: Database, workspaceDatabase
  * The existing observer follows writeTransaction's proxy to the real COMMIT;
  * rollback, aborted authorization and reads never publish. */
 export async function approvedWriteChanged(client: PoolClient, id: string, ownerId: string) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterCommit(client, `approved-write:${ownerId}:${id}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

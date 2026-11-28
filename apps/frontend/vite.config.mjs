@@ -1,24 +1,29 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { applicationPlugin, frontend, repository } from './scripts/application-plugin.mjs'
 import { deploymentPlugin, pinnedUrl } from './scripts/deployment-plugin.mjs'
+import { uiOverlay } from '../../lib/ui-overlay.mjs'
 import { configuredDeploymentId } from '../../lib/deployment-id.mjs'
 import { deploymentStage } from '../../lib/deployment-stage.mjs'
 import { installationBuild } from '../../scripts/build-installation.mjs'
 import { sharedStylePlugins } from './scripts/shared-styles.mjs'
+import { publicEnv, withLegacyPublicDefines } from '../../lib/public-env.mjs'
+import { envTrimmed, envValue, runtimeEnv } from '../../lib/env/runtime.mjs'
 
 // One process describes one revision. Resolving this per call means an
 // intermittent `git` spawn failure lands in the `catch` below and silently turns
 // a later build of the same process into a different application: every module
-// that reads NEXT_PUBLIC_MIKKA_BUILD is emitted with a different constant, which
+// that reads MIKKA_PUBLIC_BUILD is emitted with a different constant, which
 // renames and rewrites every chunk that transitively imports one.
 let resolvedApplicationBuild
 
 function applicationBuild() {
   if (resolvedApplicationBuild !== undefined) return resolvedApplicationBuild
-  const configured = process.env.NEXT_PUBLIC_MIKKA_BUILD ?? process.env.MIKKA_BUILD_REVISION ?? process.env.VERCEL_DEPLOYMENT_ID ?? process.env.VERCEL_GIT_COMMIT_SHA
+  const configured = publicEnv('MIKKA_PUBLIC_BUILD') ?? envValue('MIKKA_BUILD_REVISION')
   if (configured !== undefined) resolvedApplicationBuild = configured
   else {
     try { resolvedApplicationBuild = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repository, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { resolvedApplicationBuild = '' }
@@ -26,20 +31,31 @@ function applicationBuild() {
   return resolvedApplicationBuild
 }
 
-export async function frontendConfig({ target = 'web', command = 'build', outdir, clean = true, serverPages = false, publicTestFixture = false } = {}) {
+/** The UI checkout's data-track-owner plugin (its scripts/track-owner/vite-plugin.mjs). Only an explicit
+ * MIKKA_TRACK_OWNER=1 loads it: otherwise no code from the checkout is imported or run in this build process (the
+ * checkout's JSX is still compiled, never executed here). A build that holds signing or release credentials must not
+ * set it (scripts/ci/desktop-release-overlay-guard.test.mjs). */
+export async function trackOwnerPlugins(overlay, env = runtimeEnv()) {
+  if (envValue('MIKKA_TRACK_OWNER', env) !== '1') return []
+  const path = overlay.dir && resolve(overlay.dir, 'scripts/track-owner/vite-plugin.mjs')
+  if (!path || !existsSync(path)) return []
+  const { trackOwnerPlugin } = await import(pathToFileURL(path).href)
+  return [trackOwnerPlugin({ root: overlay.dir })]
+}
+
+export async function frontendConfig({ target = 'web', command = 'build', outdir, clean = true } = {}) {
   if (!['web', 'desktop'].includes(target)) throw new Error('FRONTEND_TARGET_INVALID')
   if (!['build', 'serve'].includes(command)) throw new Error('FRONTEND_COMMAND_INVALID')
   const stage = deploymentStage()
   const development = command === 'serve'
-  const directory = process.env.MIKKA_UI_OVERLAY_DIR?.trim()
-  const selected = directory || process.env.MIKKA_UI_OVERLAY_SHA?.trim()
-  if (serverPages && (target !== 'web' || selected || publicTestFixture)) throw new Error('SERVER_PAGES_REQUIRE_PUBLIC_WEB_BUILD')
-  if (publicTestFixture && (selected || process.env.VERCEL_ENV === 'production')) throw new Error('PUBLIC_FIXTURE_REQUIRES_NON_RELEASE_BUILD')
-  if (!publicTestFixture && !(development && directory && !process.env.MIKKA_UI_OVERLAY_SHA)) {
-    const mode = await installationBuild({ ...process.env, MIKKA_UI_OVERLAY_DIR: directory && resolve(repository, directory) })
-    if (target === 'desktop' && mode === 'build:server') throw new Error('OFFICIAL_DESKTOP_UI_CHECKOUT_REQUIRED')
-    serverPages = mode === 'build:server'
+  const env = runtimeEnv()
+  const directory = envTrimmed('MIKKA_UI_OVERLAY_DIR', env)
+  // A development server may run an unpinned checkout; every other build is
+  // either a declared official build (checkout and revision) or has no UI.
+  if (!(development && directory && !envValue('MIKKA_UI_OVERLAY_SHA', env))) {
+    await installationBuild({ ...env, MIKKA_UI_OVERLAY_DIR: directory && resolve(repository, directory) })
   }
+  const overlay = uiOverlay(repository)
   const deploymentId = target === 'web' && !development ? configuredDeploymentId() ?? '' : ''
   return {
     configFile: false,
@@ -50,30 +66,35 @@ export async function frontendConfig({ target = 'web', command = 'build', outdir
     envDir: false,
     envPrefix: [],
     logLevel: 'warn',
+    // Public settings take their new MIKKA_PUBLIC_* name first and their
+    // legacy NEXT_PUBLIC_* name second (lib/public-env.mjs); an empty value
+    // counts as unset. Each is also inlined under the legacy name until
+    // phase 2 of the rename.
     define: {
-      'process.env.NODE_ENV': JSON.stringify(development ? 'development' : 'production'),
-      'process.env.MIKKA_BASE_PATH': '"/mikka"',
-      'process.env.NEXT_PUBLIC_MIKKA_BUILD': JSON.stringify(target === 'web' && !development ? applicationBuild() : ''),
-      'process.env.MIKKA_DEPLOYMENT_ID': JSON.stringify(deploymentId),
-      // This is the existing explicitly public anti-bot widget key. Desktop
-      // never imports its browser auth forms or third-party script loader.
-      'process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? '' : ''),
-      'process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '' : ''),
-      'process.env.POSTHOG_HOST': JSON.stringify(target === 'web' ? process.env.POSTHOG_HOST ?? '' : ''),
-      'process.env.NEXT_PUBLIC_POSTHOG_HOST': JSON.stringify(target === 'web' ? process.env.POSTHOG_HOST ?? process.env.NEXT_PUBLIC_POSTHOG_HOST ?? '' : ''),
-      'process.env.NEXT_PUBLIC_POSTHOG_KEY': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_POSTHOG_KEY ?? '' : ''),
-      'process.env.NEXT_PUBLIC_COMPUTER_ACCEPTANCE': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_COMPUTER_ACCEPTANCE ?? '' : ''),
-      'process.env.NEXT_PUBLIC_COMPUTER_DEPLOYMENT': JSON.stringify(target === 'web' ? stage ?? '' : ''),
-      'process.env.NEXT_PUBLIC_COMPUTER_ENABLED': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_COMPUTER_ENABLED ?? '' : ''),
-      'process.env.NEXT_PUBLIC_COMPUTER_MOCK': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_COMPUTER_MOCK ?? '' : ''),
-      'process.env.NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME': JSON.stringify(target === 'web' ? process.env.NEXT_PUBLIC_MIKKA_DAEMON_PACKAGE_NAME ?? '@aspectlylabs/mikka' : ''),
+      ...withLegacyPublicDefines({
+        'process.env.NODE_ENV': JSON.stringify(development ? 'development' : 'production'),
+        'process.env.MIKKA_BASE_PATH': '"/mikka"',
+        'process.env.MIKKA_PUBLIC_BUILD': JSON.stringify(target === 'web' && !development ? applicationBuild() : ''),
+        'process.env.MIKKA_DEPLOYMENT_ID': JSON.stringify(deploymentId),
+        // This is the existing explicitly public anti-bot widget key. Desktop
+        // never imports its browser auth forms or third-party script loader.
+        'process.env.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY', env, '') : ''),
+        'process.env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_TURNSTILE_SITE_KEY', env, '') : ''),
+        'process.env.POSTHOG_HOST': JSON.stringify(target === 'web' ? publicEnv('POSTHOG_HOST', env, '') : ''),
+        'process.env.MIKKA_PUBLIC_POSTHOG_KEY': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_POSTHOG_KEY', env, '') : ''),
+        'process.env.MIKKA_PUBLIC_COMPUTER_ACCEPTANCE': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_COMPUTER_ACCEPTANCE', env, '') : ''),
+        'process.env.MIKKA_PUBLIC_COMPUTER_DEPLOYMENT': JSON.stringify(target === 'web' ? stage ?? '' : ''),
+        'process.env.MIKKA_PUBLIC_COMPUTER_ENABLED': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_COMPUTER_ENABLED', env, '') : ''),
+        'process.env.MIKKA_PUBLIC_COMPUTER_MOCK': JSON.stringify(target === 'web' ? publicEnv('MIKKA_PUBLIC_COMPUTER_MOCK', env, '') : ''),
+        'process.env.MIKKA_DAEMON_PACKAGE_NAME': JSON.stringify(target === 'web' ? publicEnv('MIKKA_DAEMON_PACKAGE_NAME', env, '@aspectlylabs/mikka') : ''),
+      }),
       'process.env': '{}',
     },
-    plugins: [await applicationPlugin(target, { deploymentId, serverPages, publicTestFixture }), react(), await deploymentPlugin({ repository, deploymentId })],
+    plugins: [...await trackOwnerPlugins(overlay, env), await applicationPlugin(target, { deploymentId, overlay }), react(), await deploymentPlugin({ repository, deploymentId })],
     experimental: deploymentId ? { renderBuiltUrl: filename => pinnedUrl(`/mikka/${filename}`, deploymentId) } : {},
-    // A hosted UI layer (docs/ui-overlay.md) may carry its own node_modules; React stays this repository's.
+    // The official UI checkout (docs/ui-overlay.md) carries its own node_modules; React stays this repository's.
     resolve: { dedupe: ['react', 'react-dom'] },
-    css: { postcss: { plugins: sharedStylePlugins(repository, { development }) } },
+    css: { postcss: { plugins: sharedStylePlugins(repository, { development, overlay }) } },
     build: {
       outDir: outdir ?? resolve(frontend, `dist/${target}`),
       emptyOutDir: clean,

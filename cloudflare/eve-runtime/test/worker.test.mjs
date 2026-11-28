@@ -107,6 +107,69 @@ test('the shared-service idle hook does not destroy sessions when a Task settles
   assert.equal(host.renewed, undefined)
 })
 
+const onDemandBindings = { ...env, MIKKA_EVE_HOST_RESIDENCY: 'on-demand', EVE_ENV_WORKFLOW_TARGET_WORLD: '@mikka/eve-cloudflare-world' }
+
+test('an on-demand host sleeps on idle and never restarts itself', async () => {
+  const { host } = fixture(new Map(), onDemandBindings)
+  assert.equal(host.renewed, 1) // the idle window was armed at construction
+  host.started = true
+  await host.onActivityExpired()
+  assert.equal(host.stops, 1)
+  assert.equal(host.started, false) // onStop did not self-restart
+})
+
+test('a stopped on-demand host wakes by the next request and owner stop still wins', async () => {
+  const { host, map } = fixture(new Map(), onDemandBindings)
+  host.respond = () => new Response('woken')
+  const response = await host.fetch(new Request('https://eve.example.test/eve/v1/health'))
+  assert.equal(await response.text(), 'woken')
+  await assert.rejects(host.stopForOwner('other-release'), /CF_EVE_RELEASE_MISMATCH/)
+  await host.stopForOwner('fixture-1')
+  assert.equal(map.get(stateKey).stopped, true)
+  assert.equal((await host.fetch(new Request('https://eve.example.test/eve/v1/health'))).status, 503)
+})
+
+test('the Postgres World refuses on-demand and keeps the resident keepalive', async () => {
+  const errors = []
+  mock.method(console, 'error', value => { errors.push(value) })
+  const { host } = fixture(new Map(), { ...env, MIKKA_EVE_HOST_RESIDENCY: 'on-demand' })
+  assert.ok(errors.includes('CF_EVE_RESIDENCY_REQUIRES_QUEUE_WORLD'))
+  host.started = true
+  await host.onActivityExpired()
+  assert.equal(host.stops, 0)
+  await host.stop()
+  assert.equal(host.started, true) // resident onStop restarted it
+})
+
+test('a bound World service mints the private capability and registers the world.internal intercept', async () => {
+  const intercepts = []
+  const storage = {
+    kv: { get: () => undefined, put: () => {} },
+    async get() { return undefined }, async put() {},
+  }
+  const host = new EveRuntime({ storage, container: {
+    async interceptOutboundHttps(host, _entrypoint) { intercepts.push(host) },
+  }, exports: { EveProductOutbound: x => x, EveWorldOutbound: x => x } }, { ...env, EVE_WORLD: { fetch: () => new Response('world') } })
+  assert.equal(typeof host.envVars.MIKKA_EVE_WORLD_TOKEN, 'string')
+  assert.equal(host.envVars.MIKKA_EVE_WORLD_TOKEN.length, 72)
+  await host.bindOutboundServices()
+  assert.deepEqual(intercepts, ['product.internal', 'world.internal'])
+})
+
+test('an unbound World service leaves no capability or intercept behind', async () => {
+  const intercepts = []
+  const storage = {
+    kv: { get: () => undefined, put: () => {} },
+    async get() { return undefined }, async put() {},
+  }
+  const host = new EveRuntime({ storage, container: {
+    async interceptOutboundHttps(host, _entrypoint) { intercepts.push(host) },
+  }, exports: { EveProductOutbound: x => x, EveWorldOutbound: x => x } }, env)
+  assert.equal(host.envVars.MIKKA_EVE_WORLD_TOKEN, undefined)
+  await host.bindOutboundServices()
+  assert.deepEqual(intercepts, ['product.internal'])
+})
+
 test('SDK error bodies and thrown messages never become public configuration disclosures', async () => {
   const errors = []
   mock.method(console, 'error', value => { errors.push(value) })

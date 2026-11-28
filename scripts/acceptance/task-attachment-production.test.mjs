@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { accept, scopeHashes, target } from './task-attachment-production.mjs'
 
-const env = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REF: 'refs/heads/main',
+const env = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REF: 'refs/heads/main',
   GITHUB_SHA: 'a'.repeat(40), ATTACHMENT_EXPECTED_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '42', GITHUB_RUN_ATTEMPT: '1',
   SMOKE_OWNER_EMAIL: 'qa+mikka-smoke@example.invalid', SMOKE_OWNER_PASSWORD: 'dummy password' }
 const owner = 'local-test-owner', workspace = 'local-test-team', original = 'local-original'
@@ -173,4 +173,8 @@ test('a rerun can finish after an initial pre-write failure', async () => {
   assert.equal(retry.status, 'passed')
   assert.deepEqual(productWrites(f).map(v => v.method), ['POST', 'DELETE'])
   assert.deepEqual([...f.rows.values()], [other])
+})
+
+test('the retired repository name is refused', () => {
+  assert.throws(() => target({ ...env, GITHUB_REPOSITORY: 'alexj11324/Mikka' }), /target_refused/)
 })

@@ -5,6 +5,7 @@ import { GitHubAccessError, listAuthorizedRepositories } from '@/lib/github/user
 import { readRepositorySettings, saveRepositoryVerifyCommand } from '@/lib/device-repositories'
 import { withRequestLog } from '@/lib/request-log'
 import { humanSessionHeaders } from '@/lib/desktop-rpc/handler'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const headers = { 'Cache-Control': 'private, no-store' }
 const updateSchema = z.object({ repository: repositorySchema, verifyCommand: z.string().trim().max(2000).nullable() }).strict()
@@ -43,5 +44,24 @@ async function handle(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/integrations/github/repositories/verification', handle)
-export const PATCH = withRequestLog('/api/integrations/github/repositories/verification', handle)
+const unguardedGET = withRequestLog('/api/integrations/github/repositories/verification', handle)
+const unguardedPATCH = withRequestLog('/api/integrations/github/repositories/verification', handle)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedGET(request),
+)
+
+export const PATCH = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPATCH(request),
+)

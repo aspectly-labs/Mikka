@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { enterpriseSignOutStep, parseLogoutTarget, readLogoutTarget, submitSignOutForm, type EnterpriseSignOutStep } from './logout-client'
-import { routeEnterpriseSignOut } from '../../hooks/use-enterprise-sign-out'
+import { enterpriseSignOutStep, parseLogoutTarget, readLogoutTarget, routeEnterpriseSignOut, submitSignOutForm, type EnterpriseSignOutStep } from './logout-client'
 
 const origin = 'https://app.example.test'
 type Call = { url: string; init?: RequestInit }

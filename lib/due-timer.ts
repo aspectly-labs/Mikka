@@ -1,5 +1,7 @@
 import { afterDatabaseCommit } from './db/commit-effects'
+import { configuredDeploymentId, releaseBuiltAfter } from './deployment-id.mjs'
 import { wakeTokens, wakeTransport, workflowWakesEnabled } from './workflow-wake'
+import { readEnv } from '@/lib/env/server'
 
 /**
  * Jobs whose work carries a persisted due time (#1212 D). Instead of a minute
@@ -67,6 +69,7 @@ export const dueTimerTransport: {
 } = {}
 
 const ENDED = new Set(['completed', 'failed', 'cancelled'])
+const productionDeployment = () => readEnv('MIKKA_DEPLOYMENT_STAGE') === 'production' || readEnv('MIKKA_DEPLOYMENT_ENVIRONMENT') === 'production'
 
 async function timerHolder(token: string): Promise<DueTimerHolder | null> {
   if (dueTimerTransport.holder) return dueTimerTransport.holder(token)
@@ -88,7 +91,7 @@ async function latestTimerDeployment() {
 async function startDueTimer(kind: DueKind) {
   if (dueTimerTransport.start) return dueTimerTransport.start(kind)
   const [{ start }, { dueTimer }] = await Promise.all([import('workflow/api'), import('@/workflows/due-timer/workflow')])
-  if (process.env.VERCEL_DEPLOYMENT_ID) return start(dueTimer, [kind], { deploymentId: 'latest' })
+  if (configuredDeploymentId()) return start(dueTimer, [kind], { deploymentId: 'latest' })
   return start(dueTimer, [kind])
 }
 
@@ -97,7 +100,7 @@ async function startDueTimer(kind: DueKind) {
  * handoff propagates so the Workflow step remains retryable. */
 export async function handoffRunRecoveryTimer(): Promise<void> {
   if (!workflowWakesEnabled()) return
-  if (process.env.VERCEL_ENV === 'production') {
+  if (productionDeployment()) {
     await (await import('./due-timer-owner')).armCurrentRecoveryTimer()
     return
   }
@@ -111,7 +114,7 @@ export async function handoffRunRecoveryTimer(): Promise<void> {
 }
 
 /** Production run recovery elects and hands over its own owner (lib/due-timer-owner.ts, #1403); it is never cancelled here. */
-const ownsItsDeployment = (kind: DueKind) => kind === 'run-recovery' && process.env.VERCEL_ENV === 'production'
+const ownsItsDeployment = (kind: DueKind) => kind === 'run-recovery' && productionDeployment()
 
 /** Kinds this process has seen held by a run on its own deployment; checked once per process. */
 const current = new Set<DueKind>()
@@ -124,7 +127,7 @@ const current = new Set<DueKind>()
  * replaced one. Workflow API calls only, no database.
  */
 export async function replaceStaleDueTimer(kind: DueKind): Promise<boolean> {
-  const deploymentId = process.env.VERCEL_DEPLOYMENT_ID
+  const deploymentId = configuredDeploymentId()
   if (!deploymentId || current.has(kind) || !workflowWakesEnabled() || ownsItsDeployment(kind)) return false
   const holder = await timerHolder(wakeTokens.dueTimer(kind))
   if (!holder) return false
@@ -134,7 +137,11 @@ export async function replaceStaleDueTimer(kind: DueKind): Promise<boolean> {
   }
   // An older instance can still receive a request after a rollout. Only the
   // latest deployment in this Workflow environment may replace another run.
-  if (await latestTimerDeployment() !== deploymentId) return false
+  // A World that cannot name its latest deployment (the Cloudflare World has
+  // no resolveLatestDeploymentId) falls back to release order: only a release
+  // built after the holder's may replace it, never an older one (#1410).
+  const latest = await latestTimerDeployment()
+  if (latest ? latest !== deploymentId : releaseBuiltAfter(deploymentId, holder.deploymentId) !== true) return false
   if (dueTimerTransport.cancel) await dueTimerTransport.cancel(holder.runId)
   else await (await import('workflow/api')).getRun(holder.runId).cancel({ cancelReason: `due timer replaced by deployment ${deploymentId}` })
   await startDueTimer(kind)
@@ -155,7 +162,7 @@ export function forgetCheckedDueTimers() { current.clear() }
 /** Wakes the job's running timer, or starts one. Best effort: the slow sweep re-arms a lost start. */
 export async function armDueTimer(kind: DueKind): Promise<void> {
   if (!workflowWakesEnabled()) return
-  if (kind === 'run-recovery' && process.env.VERCEL_ENV === 'production') {
+  if (kind === 'run-recovery' && productionDeployment()) {
     try { await (await import('./due-timer-owner')).armCurrentRecoveryTimer() }
     catch (error) {
       const { CodedError, logCodedError } = await import('@mikka/protocol/coded-error')

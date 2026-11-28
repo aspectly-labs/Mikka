@@ -1,0 +1,73 @@
+import { RouteResponse } from '@/lib/server-runtime/server'
+import { z } from 'zod'
+import { auth, authBaseURL } from '@/lib/auth'
+import { BASE_PATH } from '@/lib/base-path'
+import { pool } from '@/lib/db'
+import { getComposio } from '@/lib/composio'
+import { isComposioCallbackVerifierConfigured } from '@/lib/composio-config'
+import { isToolkitSlug, TOOLKIT_SLUG } from '@/lib/composio-accounts'
+import { composioLoopback, createComposioConnectIntent } from '@/lib/composio-connect-intent'
+import { listComposioPages } from '@/lib/composio-pagination'
+import { assertCatalogToolkit, composioToolkitLister } from '@/lib/plugins/catalog'
+import { PluginError } from '@/lib/plugins/contracts'
+import { noteLogUser, withRequestLog } from '@/lib/request-log'
+import { freshSessionRoute } from '@/lib/fresh-session'
+import { defineRoute } from '@/lib/primitives/define-route'
+
+/**
+ * A Composio link from the desktop app: a one-time token naming the app's own
+ * account and its loopback return (RFC 8252 §7.3), for the browser it opens.
+ * The browser then needs no session of its own: the link is this account's
+ * whatever it is signed in as.
+ */
+const intentSchema = z.union([
+  z.object({ toolkit: z.string().regex(TOOLKIT_SLUG), loopback: z.unknown() }).strict(),
+  z.object({ accountId: z.string().trim().min(1).max(255), loopback: z.unknown() }).strict(),
+])
+
+function sameOrigin(request: Request) {
+  return request.headers.get('origin') === new URL(request.url).origin
+}
+
+async function handlePOST(request: Request) {
+  const session = await auth.api.getSession({ headers: request.headers })
+  noteLogUser(session?.user?.id)
+  if (!session?.user) return RouteResponse.json({ error: 'authRequired' }, { status: 401 })
+  if (!sameOrigin(request)) return RouteResponse.json({ error: 'originNotAllowed' }, { status: 403 })
+  const parsed = intentSchema.safeParse(await request.json().catch(() => null))
+  if (!parsed.success) return RouteResponse.json({ error: 'invalidIntegration' }, { status: 400 })
+  const loopback = composioLoopback(parsed.data.loopback)
+  if (!loopback) return RouteResponse.json({ error: 'invalidIntegration' }, { status: 400 })
+  const composio = getComposio()
+  if (!composio) return RouteResponse.json({ error: 'composioNotConfigured' }, { status: 503 })
+  if (!isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)) return RouteResponse.json({ error: 'callbackVerifierNotConfigured' }, { status: 503 })
+  try {
+    // Reconnect names the account it replaces, verified as the person's own.
+    const data = parsed.data
+    const replacing = 'accountId' in data
+      ? (await listComposioPages(cursor => composio.connectedAccounts.list({ userIds: [session.user.id], cursor }))).find(item => item.id === data.accountId && isToolkitSlug(item.toolkit.slug))
+      : undefined
+    if ('accountId' in data && !replacing) return RouteResponse.json({ error: 'integrationNotFound' }, { status: 404 })
+    const toolkit = 'toolkit' in data ? data.toolkit : replacing!.toolkit.slug
+    if ('toolkit' in parsed.data) await assertCatalogToolkit(composioToolkitLister(composio), toolkit)
+    const intent = await createComposioConnectIntent(pool, {
+      userId: session.user.id, toolkit, replaceAccountId: replacing?.id ?? null, ...loopback,
+    })
+    return RouteResponse.json(intent, { headers: { 'Cache-Control': 'no-store' } })
+  } catch (error) {
+    if (error instanceof PluginError) return RouteResponse.json({ error: error.code }, { status: error.status })
+    return RouteResponse.json({ error: 'integrationStartFailed' }, { status: 502 })
+  }
+}
+
+// A credential flow: the session is read from the database, not the cookie cache.
+const unguardedPOST = freshSessionRoute(withRequestLog('/api/integrations/composio/connect/intent', handlePOST))
+export const POST = defineRoute(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request }) => unguardedPOST(request),
+)

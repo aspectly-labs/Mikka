@@ -228,7 +228,7 @@ async function authenticateHosted(hosted) {
       sameSite: cookie.sameSite === 'None' ? 'no_restriction' : cookie.sameSite?.toLowerCase(),
       ...(cookie.expires > 0 ? { expirationDate: cookie.expires } : {}),
     })
-    await partition.cookies.set({ url: origin, name: 'NEXT_LOCALE', value: 'en', path: '/' })
+    await partition.cookies.set({ url: origin, name: 'mikka-locale', value: 'en', path: '/' })
     await partition.cookies.flushStore()
   }, { cookies: state.cookies, origin: environment.origin })
   await selectFixtureWorkspace(hosted)
@@ -409,7 +409,8 @@ function screens(fixture) {
     // its real component states are captured by self-hosting-ui.yml instead.
     // 组织 (organization) is drawn only by a UI layer; the open-source package
     // under test has no such page (tests/settings-sections.test.mjs LAYER_ONLY).
-    ...Object.entries(messages.Settings.sections).filter(([id]) => id !== 'developer' && id !== 'cloud' && id !== 'organization').map(([id, section]) => ({
+    // 记忆 (memory) is behind the mikka-memory PostHog flag, off by default (lib/feature-flags.ts).
+    ...Object.entries(messages.Settings.sections).filter(([id]) => id !== 'developer' && id !== 'cloud' && id !== 'organization' && id !== 'memory').map(([id, section]) => ({
       name: `settings-${id}`,
       open: async target => {
         if (id === 'audit') {

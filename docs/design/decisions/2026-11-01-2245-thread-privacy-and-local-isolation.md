@@ -1,6 +1,7 @@
 # Threads are private; device threads run in a sandbox from the remote
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-01-2300-thread-visibility-follows-warp](2026-11-01-2300-thread-visibility-follows-warp.md)
 - Source: Alex, relayed by the coordinator session: 「永远只能自己看，必须从远端的 main 上开新分支走沙盒，不允许在本地上面改」
 - Rule: R-62
 - Superseded in part by: [2026-11-01-2300-thread-visibility-follows-warp](2026-11-01-2300-thread-visibility-follows-warp.md) (rule 1: thread visibility follows Warp Factories; rule 2: the base is the GitHub repository's own default branch, or the issue's branch an earlier thread pushed)

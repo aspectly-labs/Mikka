@@ -2,13 +2,12 @@ name: Device gateway
 on:
   push:
     branches: [main]
-    paths: &gateway_paths
+    paths:
       - 'cloudflare/device-gateway/**'
       - 'lib/device-gateway*.ts'
       - 'lib/device-presence*.ts'
       - 'lib/live/**'
       - 'lib/db/commit-effects*.ts'
-      - 'hooks/use-live-key.tsx'
       - 'app/api/live/**'
       - 'scripts/device-gateway/**'
       - 'scripts/release/cloudflare-promoted-web.mjs'
@@ -18,8 +17,6 @@ on:
       - 'packages/protocol/src/coded-error.ts'
       - 'packages/protocol/src/device.ts'
       - '.github/workflows/device-gateway.yml'
-  pull_request:
-    paths: *gateway_paths
   workflow_dispatch:
 permissions:
   contents: read
@@ -58,7 +55,7 @@ jobs:
         run: node scripts/device-gateway/select-release.mjs device
   deploy:
     needs: test
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && needs.test.outputs.publish == 'true'
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && needs.test.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

@@ -80,3 +80,28 @@ test('the 426 body names the latest release this instance already knows, and nev
   assert.equal(next.code, 'daemonUpgradeRequired')
   resetDaemonVersionCacheForTest()
 })
+
+test('edge cutoff helper stays byte-for-byte aligned with @mikka/protocol and daemonUpgradeResponse', async () => {
+  const edge = await import('./daemon-edge-cutoff.mjs')
+  const { CLIENT_VERSION_HEADER, UPDATE_REQUIRED_STATUS } = await import('@mikka/protocol/version')
+  assert.equal(edge.DEVICE_SESSION_HEADER, DEVICE_SESSION_HEADER)
+  assert.equal(edge.DEVICE_SESSION_VERSION, DEVICE_SESSION_VERSION)
+  assert.equal(edge.CLIENT_VERSION_HEADER, CLIENT_VERSION_HEADER)
+  assert.equal(edge.MIN_DAEMON_VERSION, MIN_DAEMON_VERSION)
+  assert.equal(edge.SOURCE_DAEMON_VERSION, SOURCE_DAEMON_VERSION)
+  assert.equal(edge.UPDATE_REQUIRED_STATUS, UPDATE_REQUIRED_STATUS)
+
+  resetDaemonVersionCacheForTest()
+  const server = daemonUpgradeResponse(0)
+  const worker = edge.daemonUpgradeEdgeResponse('GET')
+  assert.equal(worker.status, server.status)
+  assert.equal(worker.headers.get('cache-control'), server.headers.get('cache-control'))
+  assert.deepEqual(await worker.json(), await server.json())
+
+  for (const value of [undefined, '', '0', '1', ' 1 ', '2', 'yes', '1.5', '-1', '9999999']) {
+    const sample = new Request('https://app.example/mikka/v1/devices/fixture/commands', {
+      headers: value === undefined ? {} : { [DEVICE_SESSION_HEADER]: value },
+    })
+    assert.equal(edge.deviceSessionSupported(sample), deviceSessionSupported(sample), String(value))
+  }
+})

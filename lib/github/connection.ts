@@ -8,6 +8,7 @@ import { githubConnections } from '@/lib/db/schema'
 import { auth } from '@/lib/auth'
 import { resolveAppOrigin } from '@/lib/auth-config'
 import { withBasePath } from '@/lib/base-path'
+import { runtimeEnv } from '@/lib/env/server'
 import { readGitHubAppConfig } from './app-config'
 import { GitHubAccessError } from './user-access-error'
 import { exchangeGitHubOAuthToken, type GitHubOAuthToken } from './oauth-token'
@@ -28,7 +29,7 @@ type TokenResponse = GitHubOAuthToken
 // sign-in only, and a preview's link landing on the hub would reach production
 // with a state production does not hold (decision 2026-11-03-0315). An origin
 // the GitHub App has not registered gets GitHub's redirect_uri error.
-const callbackBase = () => resolveAppOrigin(process.env)
+const callbackBase = () => resolveAppOrigin(runtimeEnv())
 
 function callbackURL() {
   const base = callbackBase()

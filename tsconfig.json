@@ -3,6 +3,7 @@
     "lib": [
       "dom",
       "dom.iterable",
+      "dom.asynciterable",
       "esnext"
     ],
     "allowJs": true,
@@ -21,9 +22,6 @@
     "paths": {
       "@/*": [
         "./*"
-      ],
-      "@ui-slot/*": [
-        "./components/slots/*"
       ],
       "mikka-real-react": [
         "./node_modules/@types/react/index.d.ts"

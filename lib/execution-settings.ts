@@ -9,13 +9,20 @@ import { HOSTED_CHOICE, creditsOptionId, parseCreditsOption } from "./bot-model-
 import { creditsModelOffered } from "./credits-models";
 import { subscriptionRouteReady } from "./subscription-routes";
 import { executionBinding, executionModelOptions } from "./execution-model-options";
+import { afterJob } from "./background";
+import { databaseCommitScope } from "./db/commit-effects";
+import { singleFlight } from "./single-flight";
+import { abortable } from "@mikka/protocol/web-url-policy";
+import { safeErrorAttributes } from "@mikka/protocol/tracing";
+import { SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 
 export interface ExecutionSettingsScope {
   ownerId: string;
   workspaceId: string;
 }
 /** Callers obtain scope from the session and current workspace, never from input. */
-type CatalogueRequirements = { codexPriority?: true };
+type CatalogueRequirements = { codexPriority?: true; deferOptional?: true };
+type DiscoverModels = (ownerId: string, connectionId: string, signal?: AbortSignal) => Promise<SubscriptionCatalogueModel[]>;
 
 export class ExecutionSettings {
   constructor(readonly pool: Pool) {}
@@ -52,9 +59,20 @@ export class ExecutionSettings {
   async botBinding(scope: ExecutionSettingsScope, bindingId: string) {
     return (await this.connectedBindings(scope, bindingId))[0];
   }
+  /** The binding exists but under another owner — a stored borrow, not a
+   * missing model. A gone binding answers false so callers keep their fallback. */
+  async bindingHeldElsewhere(
+    scope: ExecutionSettingsScope,
+    bindingId: string,
+    query: Pick<PoolClient, "query"> = this.pool,
+  ): Promise<boolean> {
+    const { rows: [held] } = await query.query<{ ownerId: string }>(
+      'SELECT b."ownerId" FROM byos_bindings b WHERE b.id=$1', [bindingId]);
+    return Boolean(held && held.ownerId !== scope.ownerId);
+  }
   /** A bot chat's subscription options: `botModels` on a route that answers chats for its owner (`subscriptionRouteReady`). */
-  async chatModels(scope: ExecutionSettingsScope, query: Pick<PoolClient, "query"> = this.pool) {
-    return chatReady(await this.botModels(scope, query));
+  async chatModels(scope: ExecutionSettingsScope, query: Pick<PoolClient, "query"> = this.pool, rows?: Awaited<ReturnType<ExecutionSettings["botModels"]>>) {
+    return chatReady(rows ?? await this.botModels(scope, query));
   }
   /** A saved chat choice, while its route answers chats. */
   async chatBinding(scope: ExecutionSettingsScope, bindingId: string) {
@@ -76,55 +94,123 @@ export class ExecutionSettings {
       },
     );
   }
-  /** Missing models are refreshed for every consumer; optional Codex Fast metadata is requested only by the chat menu. */
+  /** Missing models are refreshed for every consumer; menu/settings reads may also request optional Fast metadata. */
   async connectedSubscriptions(ownerId: string, missingOnly = false, requirements: CatalogueRequirements = {}): Promise<string[]> {
-    return (await this.pool.query<{ id: string }>(
-      `SELECT id::text AS id FROM byos_connections WHERE "ownerId"=$1 AND state='connected' AND paused=false AND "removedAt" IS NULL
-       AND ($2::boolean=false OR "modelCatalog" IS NULL OR "modelCatalog"->>'revision'<>epoch::text
+    return (await this.catalogueCandidates(ownerId, missingOnly, requirements)).map(row => row.id);
+  }
+  private async catalogueCandidates(ownerId: string, missingOnly: boolean, requirements: CatalogueRequirements) {
+    return (await this.pool.query<{ id: string; epoch: string; missing: boolean }>(
+      `SELECT id::text AS id,epoch::text AS epoch,"modelCatalog"->>'revision' IS DISTINCT FROM epoch::text AS missing
+       FROM byos_connections WHERE "ownerId"=$1 AND state='connected' AND paused=false AND "removedAt" IS NULL
+       AND ($2::boolean=false OR "modelCatalog"->>'revision' IS DISTINCT FROM epoch::text
          OR ($3::boolean AND provider='codex' AND "modelCatalog"->>'priorityVersion' IS DISTINCT FROM '1')) ORDER BY id`,
-      [ownerId, missingOnly, requirements.codexPriority === true])).rows.map((row) => row.id);
+      [ownerId, missingOnly, requirements.codexPriority === true])).rows;
   }
   /**
    * A subscription's models reach the menu, 优先使用的模型 and dispatch only through its catalogue.
    * Each connected subscription with none for its current revision asks its account once; one that
-   * does not answer in time is asked again on the next read. Never throws.
+   * does not answer in time is cancelled and asked again on the next read. Valid
+   * models need not wait for optional metadata; the menu owns that bounded after job.
    */
-  async ensureCatalogues(scope: ExecutionSettingsScope, timeoutMs = 8000, discover?: (ownerId: string, connectionId: string) => Promise<SubscriptionCatalogueModel[]>, requirements: CatalogueRequirements = {}) {
-    const missing = await this.connectedSubscriptions(scope.ownerId, true, requirements);
-    await Promise.allSettled(missing.map((connectionId) => Promise.race([
-      // The reason only (a refusal code or error name), never what the provider answered.
-      this.refreshBotModels(scope, connectionId, discover).catch((error: unknown) => {
-        const code = error && typeof error === "object" && "code" in error ? String((error as { code: unknown }).code) : error instanceof Error ? error.name : "unknown";
-        console.warn(JSON.stringify({ level: "warn", msg: "subscription_catalogue_failed", connection: connectionId.slice(0, 8), code }));
-      }),
-      new Promise((resolve) => setTimeout(resolve, timeoutMs).unref?.()),
-    ])));
+  async ensureCatalogues(scope: ExecutionSettingsScope, timeoutMs = 8000, discover?: DiscoverModels, requirements: CatalogueRequirements = {}): Promise<boolean> {
+    const candidates = await this.catalogueCandidates(scope.ownerId, true, requirements);
+    const deferred = requirements.deferOptional ? candidates.filter(row => !row.missing) : [];
+    trace.getActiveSpan()?.setAttributes({
+      'mikka.catalogue.cache': candidates.some(row => row.missing) ? 'miss' : candidates.length ? 'optional_metadata' : 'hit',
+      'mikka.catalogue.refresh_candidates': candidates.length,
+      'mikka.catalogue.deferred': deferred.length,
+    });
+    if (deferred.length) {
+      afterJob('after:subscription-catalogue', async () => {
+        // Recheck current ownership/state/revision in the owned background
+        // context; another request may already have completed the upgrade.
+        if (await this.ensureCatalogues(scope, timeoutMs, discover, { codexPriority: true })) {
+          await (await import('./live/lists')).ownerSettingsChanged(this.pool, scope.ownerId);
+        }
+      });
+    }
+    const results = await Promise.all(candidates.filter(row => !requirements.deferOptional || row.missing).map(connection =>
+      singleFlight(['subscription-catalogue', scope.ownerId, scope.workspaceId, connection.id, connection.epoch, timeoutMs], async () => {
+        try {
+          await this.refreshBotModels(scope, connection.id, discover, AbortSignal.timeout(timeoutMs));
+          return true;
+        } catch (error: unknown) {
+          // The reason only, never the provider response or its credential.
+          const safe = safeErrorAttributes(error instanceof ActionFailureError && error.cause ? error.cause : error);
+          console.warn(JSON.stringify({ level: 'warn', msg: 'subscription_catalogue_failed', code: safe['mikka.error.code'] ?? safe['error.type'] ?? 'unknown' }));
+          return false;
+        }
+      }, databaseCommitScope(this.pool))));
+    // The flight shares no menu/credential projection. Each caller reads its
+    // own authorized view after this barrier in its own request context.
+    return results.some(Boolean);
   }
-  async refreshBotModels(scope: ExecutionSettingsScope, connectionId: string, discover?: (ownerId: string, connectionId: string) => Promise<SubscriptionCatalogueModel[]>) {
+  async refreshBotModels(scope: ExecutionSettingsScope, connectionId: string, discover?: DiscoverModels, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     if (!z.uuid().safeParse(connectionId).success) throw new ActionFailureError("executionAccountUnavailable");
     const connection = (await this.pool.query(
-      `SELECT id,epoch,provider,"workspaceId" FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND state='connected' AND paused=false`,
+      `SELECT id,epoch,provider,"workspaceId" FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND state='connected' AND paused=false AND "removedAt" IS NULL`,
       [connectionId, scope.ownerId])).rows[0];
     if (!connection) throw new ActionFailureError("executionAccountUnavailable");
     let models: SubscriptionCatalogueModel[];
     try {
-      models = await (discover ?? (async (ownerId, id) => (await import("./subscription-runtime")).subscriptionRuntime().models(ownerId,id)))(scope.ownerId, connectionId);
-    } catch { throw new ActionFailureError("executionAccountUnavailable"); }
+      models = await trace.getTracer('mikka.subscription').startActiveSpan('subscription.models', {
+        kind: SpanKind.CLIENT, attributes: { 'mikka.catalogue.provider': connection.provider === 'codex' ? 'codex' : 'claude', 'mikka.catalogue.refresh_count': 1 },
+      }, async span => {
+        try {
+          const readModels = () => (discover ?? (async (ownerId, id, signal) => (await import("./subscription-runtime")).subscriptionRuntime().models(ownerId, id, signal)))(scope.ownerId, connectionId, signal);
+          return signal ? await abortable(readModels, signal) : await readModels();
+        } catch (error) {
+          span.setAttributes(safeErrorAttributes(error));
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          throw error;
+        } finally { span.end(); }
+      });
+    } catch (error) { throw Object.assign(new ActionFailureError("executionAccountUnavailable"), { cause: error }); }
+    signal?.throwIfAborted();
     const unique = [...new Map(models.map(model => [model.id, model])).values()];
     const route = connection.provider === 'codex' ? 'codex_cpa' : 'claude_cpa';
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      const current = await client.query(`SELECT id,"modelSettings" FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND epoch=$3 AND state='connected' AND paused=false FOR UPDATE`, [connectionId,scope.ownerId,connection.epoch]);
+      signal?.throwIfAborted();
+      const current = await client.query(`SELECT id,"modelSettings" FROM byos_connections WHERE id=$1 AND "ownerId"=$2 AND epoch=$3 AND state='connected' AND paused=false AND "removedAt" IS NULL FOR UPDATE`, [connectionId,scope.ownerId,connection.epoch]);
       if (!current.rowCount) throw new ActionFailureError("executionAccountUnavailable");
       for (const model of unique) {
+        signal?.throwIfAborted();
         if (!z.string().trim().min(1).max(128).safeParse(model.id).success) throw new ActionFailureError("executionModelUnknown");
         // Account-level catalogue: the id leaves out the workspace, and the row keeps the connection's own workspace.
         const hash = createHash('sha256').update(JSON.stringify([scope.ownerId,connectionId,connection.epoch,model.id])).digest('hex');
         const id = `${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-8${hash.slice(17,20)}-${hash.slice(20,32)}`;
         await client.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId") VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`, [id,scope.ownerId,connection.workspaceId,id,connectionId,connection.epoch,route,model.id]);
       }
-      await client.query(`UPDATE byos_connections SET "modelCatalog"=$2::jsonb,"modelSettings"=$3::jsonb WHERE id=$1`, [connectionId,JSON.stringify({revision:String(connection.epoch),models:unique.map(model=>model.id),...(connection.provider === 'codex' ? {priorityVersion:1,prioritySupport:Object.fromEntries(unique.filter(model=>typeof model.prioritySupported === 'boolean').map(model=>[model.id,model.prioritySupported]))} : {})}), JSON.stringify({ ...reconcileSubscriptionModels(unique.map(model => model.id), current.rows[0].modelSettings as ModelSettings | null), refreshedAt: new Date().toISOString() })]);
+      const codexUltrafast = connection.provider === 'codex'
+        ? Object.fromEntries(unique.filter(model => typeof model.ultrafastSupported === 'boolean').map(model => [model.id, model.ultrafastSupported]))
+        : null;
+      const claudeFast = connection.provider === 'claude'
+        ? Object.fromEntries(unique.filter(model => typeof model.fastSupported === 'boolean').map(model => [model.id, model.fastSupported]))
+        : null;
+      const webSearchSupport = Object.fromEntries(unique.filter(model => typeof model.webSearchSupported === 'boolean').map(model => [model.id, model.webSearchSupported]));
+      const catalogPayload = {
+        revision: String(connection.epoch),
+        models: unique.map(model => model.id),
+        webSearchVersion: 1,
+        ...(connection.provider === 'codex' ? {
+          priorityVersion: 1,
+          prioritySupport: Object.fromEntries(unique.filter(model => typeof model.prioritySupported === 'boolean').map(model => [model.id, model.prioritySupported])),
+          ...(codexUltrafast && Object.keys(codexUltrafast).length ? { ultrafastSupport: codexUltrafast } : {}),
+        } : {}),
+        ...(claudeFast && Object.keys(claudeFast).length ? { fastSupport: claudeFast } : {}),
+        ...(Object.keys(webSearchSupport).length ? { webSearchSupport } : {}),
+        // Each model's reasoning levels as the account's catalogue lists them (lib/model-capabilities.ts reads them).
+        ...(unique.some(model => model.efforts) ? { effortSupport: Object.fromEntries(unique.filter(model => model.efforts).map(model => [model.id, model.efforts])) } : {}),
+        ...(unique.some(model => model.defaultEffort) ? { defaultEffort: Object.fromEntries(unique.filter(model => model.defaultEffort).map(model => [model.id, model.defaultEffort])) } : {}),
+        // The seat's Daybreak access: each model's tiers its catalogue offers (Capy's per-seat `DaybreakAccess`).
+        ...(unique.some(model => model.daybreak?.length) ? { daybreakSupport: Object.fromEntries(unique.filter(model => model.daybreak?.length).map(model => [model.id, model.daybreak])) } : {}),
+      };
+      signal?.throwIfAborted();
+      await client.query(`UPDATE byos_connections SET "modelCatalog"=$2::jsonb,"modelSettings"=$3::jsonb WHERE id=$1`, [connectionId, JSON.stringify(catalogPayload), JSON.stringify({ ...reconcileSubscriptionModels(unique.map(model => model.id), current.rows[0].modelSettings as ModelSettings | null), refreshedAt: new Date().toISOString() })]);
+      signal?.throwIfAborted();
       await client.query('COMMIT');
     } catch(error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
     const options = (await this.botModels(scope)).filter(row => row.connectionId === connectionId && unique.some(model => model.id === row.modelId));
@@ -221,7 +307,16 @@ export class ExecutionSettings {
     const source = (await this.connectedBindings(scope, bindingId, query)).find(
       (row) => row.bindingId === bindingId,
     );
-    if (!source) throw new ActionFailureError("executionModelUnknown");
+    if (!source) {
+      // A member re-sending an owner's subscription-bound run holds someone
+      // else's binding: refuse it as theirs-not-yours, not an unknown model
+      // (issue #3057 — turn.started must not report executionModelUnknown).
+      if (await this.bindingHeldElsewhere(scope, bindingId, query)) {
+        const { SubscriptionRefusal } = await import("@mikka/protocol/subscription");
+        throw new SubscriptionRefusal("account_unavailable");
+      }
+      throw new ActionFailureError("executionModelUnknown");
+    }
     if (source.workspaceId === scope.workspaceId && (botId === null || source.consumerId === botId)) return bindingId;
     const hash = createHash("sha256")
       .update(

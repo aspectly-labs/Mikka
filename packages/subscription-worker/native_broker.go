@@ -51,18 +51,38 @@ func (w *Worker) NativeContext(ctx context.Context, epoch int64) (NativeContext,
 	return NativeContext{AccountID: account, Plan: plan, ExpiresAt: expires}, nil
 }
 
-func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRequest, head func(string) error, emit func([]byte) error) error {
+func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRequest, head func(string, string) error, emit func([]byte) error) error {
 	if w.Use == nil || w.Use.RunID == "" {
 		return ErrUnavailable
 	}
+	return w.nativeStream(ctx, epoch, request, false, head, emit)
+}
+
+func (w *Worker) ModelSearchStream(ctx context.Context, epoch int64, request NativeRequest, head func(string, string) error, emit func([]byte) error) error {
+	if w.Use == nil || w.Use.RunID != "" {
+		return ErrUnavailable
+	}
+	return w.nativeStream(ctx, epoch, request, true, head, emit)
+}
+
+func (w *Worker) nativeStream(ctx context.Context, epoch int64, request NativeRequest, modelSearch bool, head func(string, string) error, emit func([]byte) error) error {
 	var body struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
 	}
-	if len(request.Body) > 262144 || json.Unmarshal(request.Body, &body) != nil || !modelPattern.MatchString(body.Model) || len(request.Headers) > 32 {
+	if len(request.Body) > nativeRequestMaxBytes {
+		return ErrPayloadTooLarge
+	}
+	if json.Unmarshal(request.Body, &body) != nil || !modelPattern.MatchString(body.Model) || len(request.Headers) > 32 {
 		return ErrUnsupported
 	}
-	if err := w.authorizeRuntime(ctx, epoch, "native", body.Model); err != nil {
+	ctx, stopAuthority, eventDriven := w.watchActiveAuthority(ctx)
+	defer stopAuthority()
+	execution, active := "native", "native_active"
+	if modelSearch {
+		execution, active = "model", "active"
+	}
+	if err := w.authorizeRuntime(ctx, epoch, execution, body.Model); err != nil {
 		return err
 	}
 	var canonical map[string]any
@@ -71,14 +91,35 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	if canonicalDecoder.Decode(&canonical) != nil {
 		return ErrUnsupported
 	}
-	request.Body, _ = json.Marshal(canonical)
+	if modelSearch {
+		if !body.Stream || !nativeSearchTools(w.Scope.Provider, canonical["tools"]) {
+			return ErrUnsupported
+		}
+		var supported bool
+		err := w.Repo.DB.QueryRowContext(ctx, `select coalesce(("modelCatalog"->'webSearchSupport'->($4::text))='true'::jsonb,false)
+			from byos_connections where id=$1 and "ownerId"=$2 and epoch=$3 and "modelCatalog"->>'revision'=epoch::text
+			and "modelCatalog"->'models' ? $4`, w.Scope.ConnectionID, w.Scope.OwnerID, epoch, body.Model).Scan(&supported)
+		if err != nil || !supported {
+			return ErrUnsupported
+		}
+	}
 	endpoint := ""
-	if w.Scope.Provider == "claude" && (request.Path == "/v1/messages" || request.Path == "/v1/messages?beta=true") {
-		endpoint = "https://api.anthropic.com" + request.Path
-	} else if w.Scope.Provider == "codex" && request.Path == "/responses" {
+	switch {
+	case w.Scope.Provider == "claude" && (request.Path == "/v1/messages" || request.Path == "/v1/messages?beta=true"):
+		endpoint = "https://api.anthropic.com/v1/messages?beta=true"
+		canonical["system"] = claudeSubscriptionSystem(canonical["system"])
+	case !modelSearch && w.Scope.Provider == "claude" && request.Path == "/v1/messages/count_tokens":
+		endpoint = "https://api.anthropic.com/v1/messages/count_tokens?beta=true"
+		canonical["system"] = claudeSubscriptionSystem(canonical["system"])
+	case w.Scope.Provider == "codex" && request.Path == "/responses":
 		endpoint = "https://chatgpt.com/backend-api/codex/responses"
-	} else {
+		canonical["store"] = false
+	default:
 		return ErrUnsupported
+	}
+	request.Body, _ = json.Marshal(canonical)
+	if len(request.Body) > nativeRequestMaxBytes {
+		return ErrPayloadTooLarge
 	}
 	r, auth, err := w.readyAuth(ctx, epoch)
 	if err != nil || core.IsCodexUseSIWC(auth) {
@@ -107,10 +148,29 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 		}
 	}
 	upstream.Header.Set("Authorization", "Bearer "+token)
+	if w.Scope.Provider == "claude" {
+		beta := upstream.Header.Get("anthropic-beta")
+		const oauth = "oauth-2025-04-20"
+		if beta == "" {
+			upstream.Header.Set("anthropic-beta", oauth)
+		} else if !strings.Contains(","+strings.ReplaceAll(beta, " ", "")+",", ","+oauth+",") {
+			upstream.Header.Set("anthropic-beta", beta+","+oauth)
+		}
+		if upstream.Header.Get("anthropic-version") == "" {
+			upstream.Header.Set("anthropic-version", "2023-06-01")
+		}
+	}
 	upstream.Header.Set("Content-Type", "application/json")
+	upstream.Header.Set("User-Agent", "Mikka/1.0")
 	if w.Scope.Provider == "codex" {
 		account, _ := auth.Metadata["account_id"].(string)
 		upstream.Header.Set("ChatGPT-Account-Id", account)
+		upstream.Header.Set("Originator", "Mikka")
+		if modelSearch {
+			if session, ok := withCodexSession(ctx, w.Scope, w.Use, r.Epoch).Value(codexSessionKey{}).(string); ok {
+				upstream.Header.Set("Session-Id", session)
+			}
+		}
 	}
 	client := http.Client{Timeout: 270 * time.Second}
 	if w.NativeClient != nil {
@@ -121,25 +181,30 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	// Check revocation even while upstream is silent; closing IPC also cancels.
 	done := make(chan struct{})
 	defer close(done)
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-callCtx.Done():
-				return
-			case <-ticker.C:
-				if w.authorizeRuntime(callCtx, epoch, "native_active", body.Model) != nil {
-					cancel()
+	if !eventDriven {
+		go func() {
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
 					return
+				case <-callCtx.Done():
+					return
+				case <-ticker.C:
+					if w.authorizeRuntime(callCtx, epoch, active, body.Model) != nil {
+						cancel()
+						return
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 	response, err := client.Do(upstream)
 	if err != nil {
+		if callCtx.Err() != nil {
+			return ErrUnavailable
+		}
 		kind := "network_error"
 		if callCtx.Err() == context.DeadlineExceeded {
 			kind = "timeout_error"
@@ -155,10 +220,13 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	if contentType == "" && w.Scope.Provider == "codex" && body.Stream {
 		contentType = "text/event-stream"
 	}
-	if contentType != "text/event-stream" && contentType != "application/json" {
+	if contentType != "text/event-stream" && (modelSearch || contentType != "application/json") {
 		return ErrProvider
 	}
-	if err = head(contentType); err != nil {
+	if callCtx.Err() != nil {
+		return ErrUnavailable
+	}
+	if err = head(contentType, ""); err != nil {
 		return ErrUnavailable
 	}
 	// Retain a token-sized tail so an upstream echo split across chunks cannot
@@ -171,7 +239,11 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 		if bytes.Contains(carry, []byte(token)) {
 			return ErrIntegrity
 		}
-		if w.authorizeRuntime(ctx, r.Epoch, "native_active", body.Model) != nil {
+		if eventDriven {
+			if callCtx.Err() != nil {
+				return ErrUnavailable
+			}
+		} else if w.authorizeRuntime(ctx, r.Epoch, active, body.Model) != nil {
 			return ErrUnavailable
 		}
 		flush := len(carry) - len(token) + 1
@@ -179,6 +251,9 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 			flush = len(carry)
 		}
 		if flush > 0 {
+			if callCtx.Err() != nil {
+				return ErrUnavailable
+			}
 			if emit(carry[:flush]) != nil {
 				return ErrUnavailable
 			}
@@ -191,4 +266,31 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 			return ErrProvider
 		}
 	}
+}
+
+func nativeSearchTools(provider string, value any) bool {
+	tools, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	searches := 0
+	for _, item := range tools {
+		tool, ok := item.(map[string]any)
+		if !ok {
+			return false
+		}
+		kind, _ := tool["type"].(string)
+		name, _ := tool["name"].(string)
+		switch {
+		case provider == "codex" && kind == "web_search":
+			searches++
+		case provider == "claude" && kind == "web_search_20250305" && name == "web_search":
+			searches++
+		case provider == "codex" && kind == "function" && name != "":
+		case provider == "claude" && (kind == "" || kind == "custom") && name != "":
+		default:
+			return false
+		}
+	}
+	return searches == 1
 }

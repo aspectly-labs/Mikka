@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { asyncPressBaseline, auditActionBindings, auditInteractions, staleBaselineEntries } from './interaction-policy.mjs'
+import { needsOfficialUi } from './official-ui-tree.mjs'
 
 const rules = source => auditInteractions('components/example.tsx', source).map(d => d.rule)
 
@@ -149,14 +150,18 @@ test('the baseline fails when it is slack, so the debt shrinks instead of freezi
   assert.match(busyRules('<Button onClick={save}>保存</Button>', { 'components/example.tsx': 2 })[0].message, /0 处就删掉这一行/)
 })
 
-test('the checked-in baseline still matches the tree', () => assert.deepEqual(staleBaselineEntries(), []))
+test('the checked-in baseline is permanently empty at 0 and still matches the tree', () => {
+  assert.deepEqual(asyncPressBaseline, {})
+  assert.deepEqual(staleBaselineEntries(), [])
+})
 
 test('a baseline row that no longer matches the tree is named', () => {
-  assert.deepEqual(staleBaselineEntries({ 'components/gone.tsx': 1 }), ['components/gone.tsx: 文件不在了；删掉这一行'])
+  assert.deepEqual(staleBaselineEntries({ 'lib/gone.tsx': 1 }), ['lib/gone.tsx: 文件不在了；删掉这一行'])
   assert.match(staleBaselineEntries({ 'components/ui/button.tsx': 1 })[0], /检查范围/)
   assert.match(staleBaselineEntries({ 'components/auth-form.tsx': 0 })[0], /大于 0 的整数/)
-  const counted = asyncPressBaseline['components/auth-form.tsx']
-  assert.match(staleBaselineEntries({ 'components/auth-form.tsx': counted + 3 })[0], new RegExp(`改成 ${counted}`))
+  // components/auth-form.tsx is in the official UI checkout; without it the row cannot be counted here.
+  if (needsOfficialUi) return
+  assert.match(staleBaselineEntries({ 'components/auth-form.tsx': 3 })[0], /一处都不剩了/)
 })
 
 const adapterRules = source => auditActionBindings('screen.tsx', source).map(diagnostic => diagnostic.rule)

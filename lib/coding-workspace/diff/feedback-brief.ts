@@ -6,6 +6,7 @@ import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { WorkspaceReviewError } from '@mikka/protocol/coding-workspace-review'
 import type { WorkerDefinitionSnapshot } from '../../agent-kit/worker'
 import type { FactoryTask } from '../../factory/store'
+import { jsonbSafeUuidSql } from '../../primitives/jsonb-predicates'
 import { secretMaskerFor } from '../../secrets/runtime'
 import { maskDeep } from '../../secrets/mask'
 import { frozenReviewBatch } from './batch-store'
@@ -20,7 +21,7 @@ export async function appendReviewBatchToRun(tx: PoolClient, task: FactoryTask, 
   const reference = reviewBatchReference.parse(raw)
   const { rows: [row] } = await tx.query(`SELECT b.input,b.fingerprint,b.state,board."workspaceId",source."issueId"
     FROM coding_workspace_review_batches b JOIN coding_workspace_review_boards board ON board.id=b."boardId"
-    JOIN agent_runs source ON source.id=(b.input->>'runId')::uuid AND source."userId"=b."userId"
+    JOIN agent_runs source ON source.id=${jsonbSafeUuidSql('b.input', 'runId')} AND source."userId"=b."userId"
     WHERE b.id=$1 AND b."userId"=$2 AND b.destination='agent' AND source."issueId"=$3 FOR SHARE OF b`,
   [reference.batchId, task.userId, task.issueId])
   if (!row || row.fingerprint !== reference.fingerprint || row.state !== 'prepared') throw conflict()

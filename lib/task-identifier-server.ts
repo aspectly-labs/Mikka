@@ -26,6 +26,48 @@ export async function personalPrefixes(ownerIds: string[], executor: Executor = 
   return result
 }
 
+/**
+ * Mirror the workspace's saved task prefix into the APP counter row. The
+ * workspace database stays the authority; `allocate_workspace_task_identifier`
+ * only reads this copy. Runs when settings save the prefix and before a
+ * workspace task is created, so a missing or stale mirror converges instead of
+ * silently issuing `W<uuid>` identifiers. Idempotent and tenant-scoped.
+ */
+export async function syncWorkspaceTaskPrefix(workspaceId: string, executor: Pick<typeof db, 'execute'> = db) {
+  const { workspacePool } = await import('@/lib/workspace-db')
+  const { rows } = await workspacePool.query<{ taskPrefix: string | null }>(
+    'SELECT "taskPrefix" FROM mikka_workspaces WHERE id=$1::uuid', [workspaceId])
+  const savedPrefix = rows[0]?.taskPrefix ?? null
+  // Same guarded prefix the allocator derives, including its full-hex fallback
+  // when the twelve-hex candidate is taken by another workspace.
+  try {
+    await executor.execute(sql`
+      INSERT INTO workspace_task_identifier_counters ("workspaceId", prefix, "savedPrefix")
+      VALUES (${workspaceId}::uuid, 'W' || upper(substring(replace(${workspaceId}::text, '-', ''), 1, 12)), ${savedPrefix})
+      ON CONFLICT ("workspaceId") DO UPDATE SET "savedPrefix" = EXCLUDED."savedPrefix"`)
+  } catch (error) {
+    if ((error as { code?: string }).code !== '23505') throw error
+    await executor.execute(sql`
+      INSERT INTO workspace_task_identifier_counters ("workspaceId", prefix, "savedPrefix")
+      VALUES (${workspaceId}::uuid, 'W' || upper(replace(${workspaceId}::text, '-', '')), ${savedPrefix})
+      ON CONFLICT ("workspaceId") DO UPDATE SET "savedPrefix" = EXCLUDED."savedPrefix"`)
+  }
+}
+
+/**
+ * True when this workspace already issued any `KEY-N` spelling — a retired
+ * task prefix or another owner once produced them. A Team reusing such a key
+ * would emit spellings that duplicate immutable identifiers and make alias
+ * resolution ambiguous, so `saveTeam` must refuse it.
+ */
+export async function taskIdentifierNamespaceInUse(workspaceId: string, key: string, executor: Pick<typeof db, 'execute'> = db) {
+  const { rows } = await executor.execute(sql`
+    SELECT 1 AS found FROM task_identifier_aliases
+    WHERE "workspaceId"=${workspaceId}::uuid AND position(${key || ''} || '-' IN identifier)=1
+    LIMIT 1`)
+  return rows.length > 0
+}
+
 /** Each workspace task's team key and number in that team (workspace database). */
 export async function teamNumbers(issueIds: string[]) {
   const result = new Map<string, { key: string; number: number }>()
@@ -92,5 +134,5 @@ export async function issueView<T extends { id: string; userId: string; workspac
   view.metadata.project = project?.project ?? null
   const [verified] = issue.linearSyncPolicy === 'explicit' ? await executor.select({ id: linearIssueLinks.id }).from(linearIssueLinks)
     .where(and(eq(linearIssueLinks.issueId, issue.id), eq(linearIssueLinks.ownerId, issue.userId), eq(linearIssueLinks.externalTargetVerified, true))).limit(1) : []
-  return { ...view, issuedIdentifier: identifier, identifier, projectId: project?.projectId ?? null, linearTargetVerified: Boolean(verified) }
+  return { ...view, issuedIdentifier: identifier, identifier, projectId: project?.projectId ?? null, ...(project?.environmentId ? { environmentId: project.environmentId } : {}), linearTargetVerified: Boolean(verified) }
 }

@@ -1,5 +1,7 @@
 # Local device daemons support Node.js 22
 
+- **Status:** Accepted
+
 The cloud Node 24 restriction below is superseded by [Node 22 everywhere](2026-11-18-0300-node22-everywhere.md) (#2817).
 
 Date: 2026-11-06

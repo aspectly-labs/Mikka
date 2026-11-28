@@ -7,7 +7,7 @@ import { Pool } from 'pg'
 import { disposableDatabase } from '../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-test-database'
 import { withBasePath } from '../base-path'
-import { workspaceLink } from '../../components/workspace/workspace-navigation'
+import { workspaceLink } from '../workspace-navigation'
 
 const base = process.env.E2E_DATABASE_URL
 if (base) assert.ok(disposableDatabase(), 'memory authority regression only uses loopback *_e2e databases')
@@ -55,7 +55,7 @@ test('memory uses authoritative membership across two real PostgreSQL databases'
     await assert.rejects(workspace.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role) VALUES ($1,$2,$2,$3,'admin')`, [foreign, owner, `${owner}@example.invalid`]), { code: '23514' })
     assert.equal((await workspace.query('SELECT 1 FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2', [foreign, owner])).rowCount, 0)
     // Deliberately disagreeing legacy app-side copies must never grant or deny admission.
-    await app.query(`CREATE TABLE IF NOT EXISTS mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL,name text NOT NULL,kind text NOT NULL DEFAULT 'team',"createdAt" timestamptz NOT NULL DEFAULT now())`)
+    await app.query(`CREATE TABLE IF NOT EXISTS mikka_workspaces (id uuid PRIMARY KEY,"userId" text NOT NULL,name text NOT NULL,kind text NOT NULL DEFAULT 'team',"createdAt" timestamptz NOT NULL DEFAULT now(), "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz)`)
     await app.query(`CREATE TABLE IF NOT EXISTS mikka_workspace_members ("workspaceId" uuid NOT NULL,"userId" text NOT NULL,name text NOT NULL,email text NOT NULL,role text NOT NULL,status text NOT NULL DEFAULT 'active',"createdAt" timestamptz NOT NULL DEFAULT now(),PRIMARY KEY("workspaceId","userId"))`)
     await app.query(`INSERT INTO mikka_workspaces (id,"userId",name) VALUES ($1,$4,'Stale A'),($2,$4,'Stale suspended'),($3,$4,'Stale foreign')`, [a, suspended, foreign, owner])
     await app.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role,status) VALUES ($1,$4,'Synthetic','synthetic@example.invalid','admin','suspended'),($2,$4,'Synthetic','synthetic@example.invalid','admin','active'),($3,$4,'Synthetic','synthetic@example.invalid','admin','active')`, [a, suspended, foreign, owner])

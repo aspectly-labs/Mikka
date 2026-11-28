@@ -24,8 +24,10 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
       INSERT INTO "user" VALUES ('owner'),('other');
       CREATE TABLE byos_connections (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" text NOT NULL,"modelCatalog" jsonb,"createdAt" timestamptz DEFAULT now(),"updatedAt" timestamptz DEFAULT now(),"removedAt" timestamptz,epoch bigint DEFAULT 1,state text DEFAULT 'connected',paused boolean DEFAULT false,provider text DEFAULT 'claude',"accountLabel" text,quota jsonb);
       CREATE TABLE byos_bindings (id uuid PRIMARY KEY,"ownerId" text,"consumerId" text,"workspaceId" text,"modelId" text,route text,"connectionId" uuid,"connectionRevision" bigint,"createdAt" timestamptz DEFAULT now());
-      CREATE TABLE model_api_keys (id uuid PRIMARY KEY,"ownerId" text,models jsonb,"modelsError" text,"createdAt" timestamptz DEFAULT now(),"updatedAt" timestamptz DEFAULT now());
-      CREATE TABLE model_order_entries (id uuid DEFAULT gen_random_uuid(),"ownerId" text,"workspaceId" text,"sourceKind" text,"sourceId" uuid,model text)`)
+      CREATE TABLE model_api_keys (id uuid PRIMARY KEY,"ownerId" text,"workspaceId" uuid,models jsonb,"modelsError" text,"createdAt" timestamptz DEFAULT now(),"updatedAt" timestamptz DEFAULT now());
+      CREATE TABLE model_order_entries (id uuid DEFAULT gen_random_uuid(),"ownerId" text,"workspaceId" text,"sourceKind" text,"sourceId" uuid,model text);
+      -- 团队权限 › 订阅与 API Key (decision 2026-11-27-1740): the catalogue reads it.
+      CREATE TABLE workspace_personal_policies ("workspaceId" text PRIMARY KEY,subscriptions boolean)`)
     await pool.query(`INSERT INTO byos_connections (id,"ownerId","modelCatalog","workspaceId") VALUES ($1,'owner',$2,$3)`, [source, { revision: '1', models: ['claude-opus-4-5', 'claude-opus-4-6'] }, workspaceId])
     await pool.query(`INSERT INTO byos_bindings (id,"ownerId","consumerId","workspaceId","modelId",route,"connectionId","connectionRevision") VALUES ($1,'owner','bot',$2,'claude-opus-4-5','claude_cpa',$3,1)`, [binding, workspaceId, source])
     await pool.query(`INSERT INTO model_api_keys (id,"ownerId",models) VALUES ($1,'owner','["old"]')`, [key])
@@ -37,6 +39,15 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
     ], 'raw model IDs and the existing family classification reach the settings API')
     assert.equal(await hostedModelEnabled(pool, scope.ownerId), true)
     await assert.rejects(changeEnabledModels(pool, { ...scope, ownerId: 'other' }, source, { kind: 'all', enabled: false }), /executionModelUnknown/)
+    // Decision 2026-11-27-1740: the workspace's own key is listed and changed by its admins only.
+    const workspaceKey = randomUUID()
+    await pool.query(`INSERT INTO model_api_keys (id,"workspaceId",models) VALUES ($1,$2,'["team-model"]')`, [workspaceKey, workspaceId])
+    assert.equal((await readEnabledModels(pool, scope)).sources.some(item => item.id === workspaceKey), false, 'a member does not manage the workspace key')
+    await assert.rejects(changeEnabledModels(pool, scope, workspaceKey, { kind: 'all', enabled: false }), /executionModelUnknown/)
+    assert.equal((await readEnabledModels(pool, { ...scope, manageWorkspaceKeys: true })).sources.find(item => item.id === workspaceKey)?.enabledCount, 1)
+    assert.equal((await changeEnabledModels(pool, { ...scope, manageWorkspaceKeys: true }, workspaceKey, { kind: 'all', enabled: false })).enabledCount, 0)
+    await assert.rejects(changeEnabledModels(pool, { ...scope, workspaceId: randomUUID(), manageWorkspaceKeys: true }, workspaceKey, { kind: 'all', enabled: true }), /executionModelUnknown/, 'another workspace\'s admin cannot')
+    await pool.query('DELETE FROM model_api_keys WHERE id=$1', [workspaceKey])
     await pool.query(`INSERT INTO model_order_entries ("ownerId","workspaceId","sourceKind","sourceId",model) VALUES ('owner',$1,'subscription',$2,'claude-opus-4-5'),('shared-member',$1,'subscription',$2,'claude-opus-4-5')`, [workspaceId, source])
     await changeEnabledModels(pool, scope, source, { kind: 'model', modelId: 'claude-opus-4-5', enabled: false })
     assert.equal((await pool.query('SELECT * FROM model_order_entries')).rowCount, 0, 'disabled source removed from all preferred lists')
@@ -46,7 +57,14 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
     assert.equal((await executionModelOptions(pool, scope)).length, 1)
     await pool.query(`UPDATE model_api_keys SET models='["old","new"]' WHERE id=$1`, [key])
     view = await readEnabledModels(pool, scope)
-    assert.deepEqual(view.sources.find(item => item.id === key)?.models, [{ id: 'old', family: null, enabled: true, fresh: false }, { id: 'new', family: null, enabled: false, fresh: true }])
+    assert.deepEqual(view.sources.find(item => item.id === key)?.models, [{ id: 'old', family: null, enabled: true, fresh: false, known: false }, { id: 'new', family: null, enabled: false, fresh: true, known: false }])
+    // Recognition (#2938): a listed model is known when Mikka's LiteLLM catalogue has it; one it lacks is added by its id.
+    const listing = randomUUID()
+    await pool.query(`INSERT INTO model_api_keys (id,"ownerId",models) VALUES ($1,'owner','["claude-opus-5-5","claude-embed-1"]')`, [listing])
+    assert.deepEqual((await readEnabledModels(pool, scope)).sources.find(item => item.id === listing)?.models.map(({ id, known }) => [id, known]),
+      [['claude-opus-5-5', true], ['claude-embed-1', false]])
+    assert.ok((await readEnabledModels(pool, scope)).sources.find(item => item.id === 'hosted')!.models.every(model => model.known), 'Mikka 额度 lists only catalogue models')
+    await pool.query('DELETE FROM model_api_keys WHERE id=$1', [listing])
     const refreshedAt = view.sources.find(item => item.id === key)!.refreshedAt
     assert.ok(refreshedAt && Number.isFinite(Date.parse(refreshedAt)))
     await pool.query(`UPDATE model_api_keys SET models=models,"modelsError"='unavailable',"updatedAt"=now()+interval '1 hour' WHERE id=$1`, [key])
@@ -64,13 +82,13 @@ test('migration, toggles, source ownership, fresh keys, dispatch filters and row
     await writer.query('COMMIT'); writer.release()
     await toggle
     const result = (await readEnabledModels(pool, scope)).sources.find(item => item.id === key)!
-    assert.deepEqual(result.models.find(item => item.id === 'new'), { id: 'new', family: null, enabled: false, fresh: false })
-    assert.deepEqual(result.models.find(item => item.id === 'newer'), { id: 'newer', family: null, enabled: false, fresh: true })
+    assert.deepEqual(result.models.find(item => item.id === 'new'), { id: 'new', family: null, enabled: false, fresh: false, known: false })
+    assert.deepEqual(result.models.find(item => item.id === 'newer'), { id: 'newer', family: null, enabled: false, fresh: true, known: false })
     await pool.query(`ALTER TABLE model_api_keys ADD COLUMN provider text DEFAULT 'deepseek', ADD COLUMN name text,
       ADD COLUMN "baseUrl" text, ADD COLUMN protocol text DEFAULT 'anthropic', ADD COLUMN last4 text DEFAULT 'test',
-      ADD COLUMN "responsesApi" boolean DEFAULT true, ADD COLUMN features jsonb;
-      CREATE TABLE workspace_personal_policies ("workspaceId" text,subscriptions boolean)`)
-    await pool.query('INSERT INTO workspace_personal_policies VALUES ($1,false)', [workspaceId])
+      ADD COLUMN "responsesApi" boolean DEFAULT true, ADD COLUMN features jsonb`)
+    // The team switch is on: the owner's own key serves here (decision 2026-11-27-1740).
+    await pool.query('INSERT INTO workspace_personal_policies VALUES ($1,true)', [workspaceId])
     // Use the canonical sharing schema for the real usable-key read below.
     await pool.query(await readFile(new URL('../drizzle/20261101021000_model_api_keys.sql', import.meta.url), 'utf8'))
     assert.deepEqual((await usableApiKeys(pool, scope.ownerId, workspaceId))[0].models, ['old'])

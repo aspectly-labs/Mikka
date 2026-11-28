@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { WRITE_ACTIONS } from './write-schema'
 import { APPROVAL_WRITE_ACTIONS, LEGACY_WRITE_ACTIONS, appCallAllowed, appCallSettingKeys, appPermissionKeys, appPermissionValue, withAppPermission, withAppPermissions } from './app-permission-keys'
 
-test('only an explicit deny withholds an app call; ask stays callable where no card exists', () => {
+test('only an explicit deny withholds an app call; an old stored ask is not an approval', () => {
   assert.equal(appCallAllowed('allow'), true)
   assert.equal(appCallAllowed('ask'), true)
   assert.equal(appCallAllowed(null), true)
@@ -14,21 +14,21 @@ test('only an explicit deny withholds an app call; ask stays callable where no c
 test('an app key and its legacy write action carry the same choice', () => {
   assert.deepEqual(appPermissionKeys('slack'), ['slack', 'send_slack_message'])
   assert.deepEqual(appPermissionKeys('hubspot'), ['hubspot'])
-  assert.equal(appPermissionValue({ slack: 'ask', send_slack_message: 'allow' }, 'slack'), 'ask')
+  assert.equal(appPermissionValue({ slack: 'ask', send_slack_message: 'deny' }, 'slack'), 'allow')
   assert.equal(appPermissionValue({ send_slack_message: 'deny' }, 'slack'), 'deny')
   assert.equal(appPermissionValue({ slack: 'maybe' }, 'slack'), undefined)
 })
 
 test('saving one app choice updates both keys and default removes both', () => {
-  const saved = withAppPermission({ slack: 'allow', hubspot: 'deny' }, 'slack', 'ask')
-  assert.deepEqual(saved, { slack: 'ask', send_slack_message: 'ask', hubspot: 'deny' })
+  const saved = withAppPermission({ slack: 'allow', hubspot: 'deny' }, 'slack', 'deny')
+  assert.deepEqual(saved, { slack: 'deny', send_slack_message: 'deny', hubspot: 'deny' })
   assert.deepEqual(withAppPermission(saved, 'slack', null), { hubspot: 'deny' })
   assert.deepEqual(withAppPermission({}, 'hubspot', 'deny'), { hubspot: 'deny' })
 })
 
 test('one save covers every selected app, and a page save carries both keys', () => {
-  assert.deepEqual(withAppPermissions({ gmail: 'ask' }, ['slack', 'notion'], 'deny'),
-    { gmail: 'ask', slack: 'deny', send_slack_message: 'deny', notion: 'deny', append_notion_paragraph: 'deny' })
+  assert.deepEqual(withAppPermissions({ gmail: 'allow' }, ['slack', 'notion'], 'deny'),
+    { gmail: 'allow', slack: 'deny', send_slack_message: 'deny', notion: 'deny', append_notion_paragraph: 'deny' })
   assert.deepEqual(withAppPermissions({ slack: 'deny', send_slack_message: 'deny' }, ['slack'], null), {})
 })
 

@@ -1,6 +1,7 @@
 # Device work is pushed, and idle devices do not query Neon
 
 - Date: 2026-11-03
+- **Status:** Superseded in part by [2026-11-17-2215](2026-11-17-2215-device-session-no-heartbeat.md)
 - Source: Alex, GitHub issue #1156, and the follow-up that the design has to fit 500 people and 400 devices online on the Cloudflare free plan, with no Neon Functions and no second paid membership
 - Rule: —
 - Replaces: —

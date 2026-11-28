@@ -3,11 +3,11 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { attachmentRelease } from './task-attachment-release.mjs'
 
-const repo = 'alexj11324/Mikka'
+const repo = 'aspectly-labs/Mikka'
 const api = 'https://api.github.com/repos/' + repo
 const sha = 'a'.repeat(40)
 const version = 'https://app.aspectlylabs.com/mikka/api/version'
-const owner = { full_name: repo, owner: { login: 'alexj11324' } }
+const owner = { full_name: repo, owner: { login: 'aspectly-labs' } }
 const env = {
   GITHUB_REPOSITORY: repo, GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
   GITHUB_WORKFLOW_REF: repo + '/.github/workflows/task-attachment-production.yml@refs/heads/main',
@@ -52,6 +52,8 @@ test('foreign, pull-request and stale targets never authorize a production write
     [{ ...env, GITHUB_WORKFLOW_REF: repo + '/.github/workflows/other.yml@refs/heads/main' }, event],
     [{ ...env, GITHUB_EVENT_NAME: 'workflow_run' }, event],
     [env, { repository: { full_name: 'other/fork' } }],
+    // The repository moved; the old name is not the canonical repository.
+    [{ ...env, GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_WORKFLOW_REF: 'alexj11324/Mikka/.github/workflows/task-attachment-production.yml@refs/heads/main' }, { repository: { full_name: 'alexj11324/Mikka' } }],
   ]) {
     const f = fixture()
     await assert.rejects(attachmentRelease(environment, trigger, f.fetch))
@@ -66,12 +68,13 @@ test('foreign, pull-request and stale targets never authorize a production write
   }
 })
 
-test('pull requests run only offline tests and every smoke lookup waits for the release proof', () => {
+test('main pushes run only offline tests and every smoke lookup waits for the release proof', () => {
   const workflow = readFileSync(new URL('../../.github/workflows/task-attachment-production.yml', import.meta.url), 'utf8')
-  const [pr, live] = workflow.split('\n  roundtrip:\n')
-  assert.match(pr, /if: github.event_name == 'pull_request'/)
-  assert.match(pr, /node --test scripts\/acceptance\/task-attachment-\*\.test\.mjs/)
-  assert.doesNotMatch(pr, /Infisical|id-token: write|\bsecrets\.|GH_TOKEN|pull_request_target|workflow_run/)
+  const [offline, live] = workflow.split('\n  roundtrip:\n')
+  assert.match(offline, /push:\n    branches: \[main\]/)
+  assert.match(offline, /if: github.event_name == 'push'/)
+  assert.match(offline, /node --test scripts\/acceptance\/task-attachment-\*\.test\.mjs/)
+  assert.doesNotMatch(offline, /Infisical|id-token: write|\bsecrets\.|GH_TOKEN|pull_request_target|workflow_run/)
   assert.match(live, /github.event_name == 'workflow_dispatch'/)
   const secretSteps = live.split('      - name: ').filter(step => step.includes('uses: Infisical/'))
   assert.deepEqual(secretSteps.map(step => step.match(/secret-name: (\w+)/)?.[1]), ['SMOKE_OWNER_EMAIL', 'SMOKE_OWNER_PASSWORD'])

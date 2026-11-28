@@ -69,6 +69,8 @@ yarn-error.log*
 
 # Private chat-attachment acceptance state and generated screenshots.
 /.cache/attachments/
+/.cache/screenshots/
+/.cache/fixtures/
 
 # hosted UI layer checkout (docs/ui-overlay.md)
 /.hosted-ui/
@@ -92,3 +94,4 @@ yarn-error.log*
 /.mikka-cloud/
 /.mikka-web/
 /.cloudflare-marketing/
+/data/

@@ -53,7 +53,7 @@ test('Coordinator 输入框的模型选择器：只列可用的凭据，按 Bot 
   await expect(menu.getByRole('menuitemradio')).toHaveCount(3)
   // A model picker only: no Agent (Claude Code / Codex) in the Coordinator's menu.
   await expect(menu.getByText(/Claude Code|Codex/)).toHaveCount(0)
-  await expect(menu.getByRole('menuitem', { name: /管理模型与订阅/ })).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: /管理模型和连接/ })).toBeVisible()
   // The menu opens right above the chip, left-aligned with it.
   const placement = async () => {
     const [chipBox, menuBox] = [await chip.boundingBox(), await menu.boundingBox()]
@@ -74,7 +74,7 @@ test('Coordinator 输入框的模型选择器：只列可用的凭据，按 Bot 
   await expect(menu.getByRole('menuitemradio', { name: /claude-fresh-e2e-model/ })).toBeVisible()
   await expect(menu).toBeVisible()
   // A refresh that fails says so inside the menu, and the row retries.
-  const isAction = (request: import('@playwright/test').Request) => request.method() === 'POST' && Boolean(request.headers()['next-action'])
+  const isAction = (request: import('@playwright/test').Request) => request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1'
   // The refresh gets an answer that is not the action's: it fails without a network error.
   await page.route('**/*', route => isAction(route.request()) ? route.fulfill({ status: 200, contentType: 'text/plain', body: 'unavailable' }) : route.fallback())
   await refresh.click()
@@ -110,9 +110,13 @@ test('Coordinator 输入框的模型选择器：只列可用的凭据，按 Bot 
   let saving = false
   await page.route('**/*', async route => {
     const request = route.request()
-    if (request.method() === 'POST' && request.headers()['next-action'] && /^\[null,"[0-9a-f-]{36}"\]$/.test(request.postData() ?? '')) {
-      saving = true
-      await held
+    if (request.method() === 'POST' && request.headers()['x-mikka-rpc'] === '1') {
+      let args = ''
+      try { args = JSON.stringify((JSON.parse(request.postData() ?? '') as { args?: unknown[] }).args ?? []) } catch {}
+      if (/^\[null,"[0-9a-f-]{36}"\]$/.test(args)) {
+        saving = true
+        await held
+      }
     }
     await route.fallback()
   })

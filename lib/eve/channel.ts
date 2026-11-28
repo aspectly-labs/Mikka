@@ -2,13 +2,31 @@ import { eveChannel, type EveAuthResult } from 'eve/channels/eve'
 import { POST, type RouteHandlerArgs, type HttpRouteDefinition } from 'eve/channels'
 import { z } from 'zod'
 import { ActionFailureError } from '../action-error'
+import { PersonalSubmissionBodyError, readPersonalSubmissionBody } from '../coordinator-submission'
 import { authenticateEveRequest, internalEveRequestScope } from './auth'
 import { assertSessionScope, conversationAddress, registerSession, scopeFromAuth, scopeAuth, type EveScope } from './scope'
 import { priorHistory } from './history'
 import { withSessionControlDelivery } from './session-control-delivery.mjs'
 import { forwardEveRequest } from './forward-request'
+import { eveFactoryAttemptsRoute } from './factory/channel'
 
 const body = z.object({ message: z.unknown().optional(), operationId: z.string().optional(), clientContext: z.unknown().optional() }).passthrough()
+
+const capturedScope = z.object({
+  expectedOwnerId: z.string().min(1).max(256).optional(),
+  expectedWorkspaceId: z.uuid().transform(value => value.toLowerCase()).optional(),
+})
+
+async function readSessionBody(request: Request, allowEmpty: boolean) {
+  try {
+    return body.parse(request.body ? await readPersonalSubmissionBody(request, allowEmpty) : {})
+  } catch (error) {
+    if (error instanceof PersonalSubmissionBodyError || error instanceof z.ZodError) {
+      return Response.json({ ok: false, error: 'messageRequired' }, { status: error instanceof PersonalSubmissionBodyError ? error.status : 400 })
+    }
+    throw error
+  }
+}
 
 async function sessionFor(args: RouteHandlerArgs, scope: EveScope) {
   const result = await args.from(conversationAddress(scope)).create({ auth: scopeAuth(scope), history: await priorHistory(scope) })
@@ -45,7 +63,11 @@ export function mikkaEveChannel() {
         if (error instanceof ActionFailureError && error.code === 'accessChangeConfirmationRequired' && error.confirmable) accessRefusals.add(ctx.eve.request)
         throw error
       })
-      return { auth: { ...scopeAuth(scope), attributes: { ...scopeAuth(scope).attributes, sourceEventId: accepted.eventId } }, context: accepted.context, clientContext: [] }
+      // The first message after an Edit or Regenerate cleared the Bot's history brings the chat's remaining history back
+      // (lib/eve/revise.ts): the Bot then knows what the chat shows, without the turn it replaced.
+      const restored = scope.surface === 'web' && await (await import('../coordinator/turn-revisions')).claimRevisionImport((await import('../db')).pool, { userId: scope.ownerId, botId: scope.botId })
+      return { auth: { ...scopeAuth(scope), attributes: { ...scopeAuth(scope).attributes, sourceEventId: accepted.eventId } }, context: accepted.context, clientContext: [],
+        ...(restored ? { history: await priorHistory(scope) } : {}) }
     },
   })
   const follow = base.routes.find(route => route.transport !== 'websocket' && route.method === 'POST' && route.path === '/eve/v1/session/:sessionId') as HttpRouteDefinition | undefined
@@ -54,11 +76,26 @@ export function mikkaEveChannel() {
     ...base.routes.map(route => route.transport === 'websocket' || !route.path.startsWith('/eve/v1/session') ? route : {
       ...route,
       async handler(request: Request, args: RouteHandlerArgs) {
-        const auth = await authenticateEveRequest(request)
+        const isCreate = route.method === 'POST' && route.path === '/eve/v1/session'
+        const isSubmit = isCreate || (route.method === 'POST' && route.path === '/eve/v1/session/:sessionId')
+        let input: z.infer<typeof body> = {}
+        let bodyRefusal: Response | undefined
+        const auth = await authenticateEveRequest(request, isSubmit ? async () => {
+          const parsed = await readSessionBody(request, isCreate)
+          if (parsed instanceof Response) { bodyRefusal = parsed; return null }
+          input = parsed
+          if (parsed.message === undefined) return {}
+          const expected = capturedScope.safeParse(parsed.clientContext ?? {})
+          if (!expected.success) {
+            bodyRefusal = Response.json({ ok: false, error: 'validationGeneric' }, { status: 400 })
+            return null
+          }
+          return expected.data
+        } : undefined)
+        if (bodyRefusal) return bodyRefusal
         if (!auth) return Response.json({ ok:false,error:'authRequired' }, { status:401 })
         const scope = scopeFromAuth(auth)
-        if (route.method === 'POST' && route.path === '/eve/v1/session') {
-          const input = body.parse(await request.clone().json().catch(() => ({})))
+        if (isCreate) {
           const session = await sessionFor(args,scope)
           await registerSession(scope,session.id)
           if (input.message === undefined) return Response.json({ ok:true, sessionId:session.id })
@@ -69,7 +106,7 @@ export function mikkaEveChannel() {
           const forwarded = forwardEveRequest(request,url,JSON.stringify(payload))
           if (payload.turnPolicy === 'steer') steeringRequests.add(forwarded)
           const response = await admit(forwarded, auth, () => follow.handler(forwarded, { ...args, params:{sessionId:session.id} }))
-          if (response.ok) await (await import('./submission')).commitEveIngress(forwarded)
+          if (response.ok) await (await import('./submission')).commitEveIngress(forwarded, session.id)
           return response
         }
         const sessionId = args.params.sessionId ?? args.params.parentSessionId
@@ -92,14 +129,14 @@ export function mikkaEveChannel() {
           url.searchParams.set('startIndex','0')
           forwarded=forwardEveRequest(request,url)
         }
-        if (request.method === 'POST' && route.path === '/eve/v1/session/:sessionId' && request.headers.has('x-mikka-submission-id')) {
-          const payload = await request.clone().json()
-          payload.idempotencyKey = z.uuid().parse(request.headers.get('x-mikka-submission-id'))
-          forwarded = forwardEveRequest(request,request.url,JSON.stringify(payload))
-          if (payload.turnPolicy === 'steer') steeringRequests.add(forwarded)
+        if (request.method === 'POST' && route.path === '/eve/v1/session/:sessionId') {
+          const submission = request.headers.get('x-mikka-submission-id')
+          if (submission) input.idempotencyKey = z.uuid().parse(submission)
+          forwarded = forwardEveRequest(request, request.url, JSON.stringify(input))
+          if (input.turnPolicy === 'steer') steeringRequests.add(forwarded)
         }
         const response = await admit(forwarded, auth, () => withSessionControlDelivery(route, sessionId, () => route.handler(forwarded,args)))
-        if (response.ok) await (await import('./submission')).commitEveIngress(forwarded)
+        if (response.ok) await (await import('./submission')).commitEveIngress(forwarded, sessionId)
         if (response.ok && response.body && request.method === 'GET' && route.path.endsWith('/stream')) {
           const [{credentialChatFingerprints},{maskEveStream}] = await Promise.all([import('../credentials/chat-guard'),import('./stream-mask')])
           const projection=maskEveStream(scope.ownerId,await credentialChatFingerprints(scope.ownerId),streamAfter)
@@ -126,5 +163,9 @@ export function mikkaEveChannel() {
       const delivery = await deliverEveEvent(scope,session,input.eventId)
       return Response.json({ok:true,sessionId:delivery.sessionId,deliveryId:delivery.deliveryId})
     }),
+    // #3082: the Eve Software Factory role-session entry. The app host drives
+    // it after a `cloud.eve_factory` run is frozen and bound; the route
+    // re-derives all authority from the persisted Factory rows.
+    eveFactoryAttemptsRoute(),
   ] }
 }

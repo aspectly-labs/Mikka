@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { before, beforeEach, mock, test } from 'node:test'
+import { after, before, beforeEach, mock, test } from 'node:test'
 import type { Pool } from 'pg'
 import type { UsableApiKey } from './model-api-keys'
 import { ActionFailureError } from './action-error'
@@ -16,9 +16,14 @@ const requireFixtureProjectLease = (userId: string, workspaceId: string) => {
   assert.deepEqual([userId, workspaceId], ['alice', id(2)])
   if (!projectLeaseActive) throw new ActionFailureError('projectEnvironmentUnavailable')
 }
+mock.module(new URL('./settings/work-creation.ts', import.meta.url).href, { namedExports: {
+  initializeWorkVisibility: async (_executor: unknown, actor: { userId: string; workspaceId: string }) => {
+    requireFixtureProjectLease(actor.userId, actor.workspaceId)
+  },
+} })
 mock.module(new URL('./project-resources/store.ts', import.meta.url).href, { namedExports: {
   withProjectExecution: async (input: ProjectExecutionInput, operation: (snapshot: ProjectExecutionSnapshot) => Promise<unknown>, requireExisting: boolean) => {
-    assert.deepEqual(input, { userId: 'alice', workspaceId: id(2), issueId: id(20), repositoryKey: repository.repoPath, baseBranch: repository.baseBranch, runtime: 'cloud', harness: 'claude_code' })
+    assert.deepEqual(input, { userId: 'alice', botId: id(1), workspaceId: id(2), issueId: id(20), repositoryKey: repository.repoPath, baseBranch: repository.baseBranch, runtime: 'cloud', harness: 'claude_code' })
     assert.equal(requireExisting, false)
     assert.equal(projectLeaseActive, false)
     if (projectDenied) throw new ActionFailureError('projectRepositoryDenied')
@@ -42,6 +47,8 @@ const catalogReads: unknown[][] = []
 const query = { query: async (sql: string, args: unknown[]) => {
   if (sql.startsWith('SELECT 1 FROM byos_connections')) { catalogReads.push(args); return { rowCount: (args[0] === 'bob' ? sharedCatalogOffers : catalogOffers) ? 1 : 0, rows: [] } }
   if (sql.startsWith('SELECT state,paused,epoch,quota')) return { rows: [{ state: 'connected', paused: false, epoch: '1', quota }] }
+  // 团队权限 › 订阅与 API Key: no row means members' own keys serve (decision 2026-11-27-1740).
+  if (sql.startsWith('SELECT subscriptions FROM workspace_personal_policies')) return { rows: [], rowCount: 0 }
   throw new Error(`unexpected fixture query: ${sql}`)
 } } as unknown as Pick<Pool, 'query'>
 mock.module(new URL('./model-api-keys.ts', import.meta.url).href, { namedExports: {
@@ -78,9 +85,19 @@ mock.module(new URL('./workspace-db.ts', import.meta.url).href, { namedExports: 
 let runCredentialSource: typeof import('./run-credential-source')['runCredentialSource']
 let quotaFallbackApiKey: typeof import('./run-credential-source')['quotaFallbackApiKey']
 let queueCloudRun: typeof import('./computer/queue-run')['queueCloudRun']
+const originalE2BKey = process.env.E2B_API_KEY
+const originalEdition = process.env.MIKKA_EDITION
 before(async () => {
-  ({ runCredentialSource, quotaFallbackApiKey } = await import('./run-credential-source'))
+  process.env.E2B_API_KEY = 'synthetic-credential-source-e2b-key'
+  process.env.MIKKA_EDITION = 'community'
+  ;({ runCredentialSource, quotaFallbackApiKey } = await import('./run-credential-source'))
   ;({ queueCloudRun } = await import('./computer/queue-run'))
+})
+after(() => {
+  if (originalE2BKey === undefined) delete process.env.E2B_API_KEY
+  else process.env.E2B_API_KEY = originalE2BKey
+  if (originalEdition === undefined) delete process.env.MIKKA_EDITION
+  else process.env.MIKKA_EDITION = originalEdition
 })
 const scope = { ownerId: 'alice', botId: id(1), harness: 'claude_code', botWorkspaceId: id(2), choiceWorkspaceId: id(2) }
 beforeEach(() => {
@@ -105,6 +122,13 @@ for (const localLogin of [true, false]) {
 }
 test('a missing explicit model cannot turn into a key’s first model', async () => {
   assert.deepEqual(await runCredentialSource(query, { ...scope, model: 'missing-fixture', subscription: null }), { subscription: null })
+})
+test('a run skips rejected keys before matching the model for quota fallback', async () => {
+  const model = 'claude-sonnet-fixture'
+  keys = [{ ...key(3, [model]), modelsError: 'invalid' }, key(4, [model])]
+  assert.deepEqual(await quotaFallbackApiKey(query, { ...scope, model }), { keyId: id(4), model })
+  keys[1] = { ...keys[1], modelsError: 'invalid' }
+  assert.equal(await quotaFallbackApiKey(query, { ...scope, model }), undefined)
 })
 // Decision 2026-11-15-2000: a catalogue model runs on the person's key for that same model, else on Mikka 额度.
 test('a catalogue model runs on Mikka 额度 unless a key of its vendor offers the same model', async () => {
@@ -188,10 +212,9 @@ function cloudQueueFixture() {
         assert.equal(args[0], id(23))
         return { rows: [{ ownerId: scope.ownerId, kind: 'cloud', enabled: true }], rowCount: 1 }
       }
-      if (sql.startsWith('SELECT k."ownerId"')) {
-        assert.equal(args[1], id(2))
+      if (sql.startsWith('SELECT "ownerId","workspaceId"::text AS "workspaceId" FROM model_api_keys WHERE id=$1')) {
         const selected = keys.find(key => key.id === args[0])
-        return { rows: selected ? [{ ownerId: selected.ownerId, shared: false }] : [], rowCount: Number(Boolean(selected)) }
+        return { rows: selected ? [{ ownerId: selected.workspace ? null : selected.ownerId, workspaceId: selected.workspace ? id(2) : null }] : [], rowCount: Number(Boolean(selected)) }
       }
       if (sql.startsWith('SELECT 1 FROM user_e2b_keys')) {
         assert.equal(args[0], scope.ownerId)
@@ -208,7 +231,7 @@ function cloudQueueFixture() {
         assert.equal(projectLeaseActive, false)
         assert.ok(sql.startsWith('SELECT repo."repoPath",repo."remoteUrl",a.harness,'))
         assert.ok(sql.includes('i."workspaceId"=$5') && sql.includes('i."ownershipState"=\'bound\'') && sql.includes('repo."userId"=$3'))
-        assert.deepEqual(args, [id(22), id(21), scope.ownerId, id(20), id(2), null])
+        assert.deepEqual(args, [id(22), id(21), scope.ownerId, id(20), id(2), null, false])
         return { rows: [{ ...repository, harness: 'claude_code' }], rowCount: 1 }
       } } as unknown as Pool,
       { userId: scope.ownerId, workspaceId: id(2) },

@@ -32,7 +32,7 @@ function gitStatus(error: WorkspaceGitError) {
   return error.code === 'workspace_git_revert_unsupported' || error.code === 'workspace_git_restore_unavailable' ? 422 : 409
 }
 
-export function gitHttp(work: (input: GitInput) => Promise<GitResult>) {
+export function gitHttp(work: (input: GitInput) => Promise<GitResult>, options: { bodyBytes?: number } = {}) {
   return async (request: Request, context: { params: Promise<{ runId: string }> }) => {
     const session = await auth.api.getSession({ headers: request.headers, query: { disableCookieCache: true, disableRefresh: true } })
     if (!session?.user) return Response.json({ ok: false, code: 'authRequired' }, { status: 401, headers })
@@ -43,7 +43,7 @@ export function gitHttp(work: (input: GitInput) => Promise<GitResult>) {
       const query = new URL(request.url).searchParams
       if (request.method === 'GET' && new Set(query.keys()).size !== [...query.keys()].length)
         throw new CodingWorkspaceError('workspace_invalid_request')
-      const input = gitEnvelope.parse(request.method === 'GET' ? Object.fromEntries(query) : await workspaceJSON(request, 32 * 1024))
+      const input = gitEnvelope.parse(request.method === 'GET' ? Object.fromEntries(query) : await workspaceJSON(request, options.bodyBytes ?? 32 * 1024))
       const workspace = await loadWorkspaceContext(input.workspaceId, session.user)
       const actor: ReviewActor = { userId: session.user.id, workspaceId: workspace.workspace.id, credential: session.tokenWorkspaceId
         ? { kind: 'pat', id: z.uuid().parse(session.session.id.slice(4)) } : { kind: 'session', id: session.session.id } }

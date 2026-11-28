@@ -1,10 +1,11 @@
 import 'server-only'
 import { pool } from '@/lib/db'
 import { deliverMail, mailConfigured } from '@/lib/mail-delivery'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 import { abuseLimits, abuseAlertKinds } from './policy'
 /** Shared SMTP/Resend delivery and server error logs; durable keys deduplicate alerts. */
 export async function checkAbuseAlerts(
-  env = process.env,
+  env: EnvMap = runtimeEnv(),
   fetchImpl: typeof fetch = fetch,
 ) {
   const limits = abuseLimits(env)

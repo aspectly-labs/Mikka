@@ -7,7 +7,7 @@ import { readPriorMemoryCases } from './memory-production-cases.mjs'
 
 export const MEMORY_PR = 1830
 export const MEMORY_BRANCH = 'feat/1821-memory-provenance-scope'
-const REPOSITORY = 'alexj11324/Mikka'
+const REPOSITORY = 'aspectly-labs/Mikka'
 const API = 'https://api.github.com/repos/' + REPOSITORY
 const SHA = /^[a-f0-9]{40}$/
 const positive = value => Number.isSafeInteger(value) && value > 0

@@ -1,19 +1,20 @@
 import { noteLogUser, withRequestLog } from '@/lib/request-log'
-import { NextRequest, NextResponse } from '@/lib/server-runtime/server'
+import { RouteRequest, RouteResponse } from '@/lib/server-runtime/server'
 import { getPathname } from '@/lib/server-runtime/localized-navigation'
 import { routing } from '@/i18n/routing'
 import { auth } from '@/lib/auth'
 import { withBasePath } from '@/lib/base-path'
 import { completeGoogleLink } from '@/lib/google-link'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-async function handleGET(request: NextRequest) {
-  const requestedLocale = request.nextUrl.searchParams.get('locale')
+async function handleGET(request: RouteRequest) {
+  const requestedLocale = request.routeUrl.searchParams.get('locale')
   const locale = routing.locales.includes(requestedLocale as typeof routing.locales[number])
     ? requestedLocale as typeof routing.locales[number]
     : routing.defaultLocale
   const redirectResult = (status: 'linked' | 'failed') => {
     const path = getPathname({ locale, href: '/' })
-    return NextResponse.redirect(new URL(withBasePath(`${path}?settings=integrations&google=${status}`), request.url), {
+    return RouteResponse.redirect(new URL(withBasePath(`${path}?settings=integrations&google=${status}`), request.url), {
       headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
     })
   }
@@ -34,4 +35,12 @@ async function handleGET(request: NextRequest) {
   }
 }
 
-export const GET = withRequestLog('/api/integrations/google/callback', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/google/callback', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request as RouteRequest),
+)

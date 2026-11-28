@@ -18,8 +18,8 @@ test('a browser that asks for Chinese first still gets Chinese', () => {
 })
 
 test('an explicit choice outranks the browser in both directions', () => {
-  assert.equal(localeFor({ 'accept-language': 'en-US,en;q=0.9', cookie: 'NEXT_LOCALE=zh-CN' }), 'zh-CN')
-  assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'NEXT_LOCALE=en' }), 'en')
+  assert.equal(localeFor({ 'accept-language': 'en-US,en;q=0.9', cookie: 'mikka-locale=zh-CN' }), 'zh-CN')
+  assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'mikka-locale=en' }), 'en')
   assert.equal(localeFor({ 'accept-language': 'zh-CN', 'x-mikka-locale': 'en' }), 'en')
   assert.equal(localeFor({ 'accept-language': 'en-US', 'x-mikka-locale': 'zh-CN' }), 'zh-CN')
 })
@@ -31,6 +31,20 @@ test('a browser that names neither language keeps the previous fallback', () => 
 })
 
 test('a stored value that is neither locale does not pin the visitor', () => {
-  assert.equal(localeFor({ 'accept-language': 'en-US,en;q=0.9', cookie: 'NEXT_LOCALE=fr' }), 'en')
-  assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'NEXT_LOCALE=fr' }), 'zh-CN')
+  assert.equal(localeFor({ 'accept-language': 'en-US,en;q=0.9', cookie: 'mikka-locale=fr' }), 'en')
+  assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'mikka-locale=fr' }), 'zh-CN')
+})
+
+test('a choice stored under the legacy cookie name still counts while the rename is in progress', () => {
+  assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'NEXT_LOCALE=en' }), 'en')
+  assert.equal(localeFor({ 'accept-language': 'en-US', cookie: 'NEXT_LOCALE=zh-CN' }), 'zh-CN')
+  assert.equal(localeFor({ 'accept-language': 'en-US', cookie: 'NEXT_LOCALE=fr' }), 'en')
+})
+
+test('the new cookie wins over the legacy one', () => {
+  assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'NEXT_LOCALE=zh-CN; mikka-locale=en' }), 'en')
+  assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'mikka-locale=en; NEXT_LOCALE=zh-CN' }), 'en')
+  assert.equal(localeFor({ 'accept-language': 'en-US', cookie: 'mikka-locale=zh-CN; NEXT_LOCALE=en' }), 'zh-CN')
+  // A new value that names neither locale falls back to the legacy choice.
+  assert.equal(localeFor({ 'accept-language': 'zh-CN', cookie: 'mikka-locale=fr; NEXT_LOCALE=en' }), 'en')
 })

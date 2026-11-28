@@ -1,5 +1,5 @@
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { and, eq, sql } from 'drizzle-orm'
 import { runEventBatchSchema } from '@mikka/protocol/device'
 import { db, pool } from '@/lib/db'
@@ -27,17 +27,17 @@ async function ownedRun(runId: string, userId: string): Promise<boolean> {
  */
 async function handlePOST(request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { runId } = await params
-  if (!await ownedRun(runId, caller.userId)) return NextResponse.json({ error: 'Unknown run.' }, { status: 404 })
+  if (!await ownedRun(runId, caller.userId)) return RouteResponse.json({ error: 'Unknown run.' }, { status: 404 })
   const parsed = runEventBatchSchema.safeParse(await request.json().catch(() => null))
-  if (!parsed.success) return NextResponse.json({ error: 'Invalid event batch.' }, { status: 400 })
+  if (!parsed.success) return RouteResponse.json({ error: 'Invalid event batch.' }, { status: 400 })
   if (parsed.data.chunks.some(chunk => chunk.type === 'data-computer')) {
     const binding = caller.scopeDeviceId && caller.scopeWorkspaceId
       ? (await pool.query(`SELECT b."botId" FROM computer_run_bindings b JOIN agent_runs r ON r.id=b."runId" AND r."userId"=b."ownerId"
         WHERE b."runId"=$1 AND b."ownerId"=$2 AND b."workspaceId"=$3 AND r."deviceId"=$4`, [runId, caller.userId, caller.scopeWorkspaceId, caller.scopeDeviceId])).rows[0]
       : undefined
-    if (!computerEventsMatch(parsed.data.chunks, runId, binding?.botId ?? null)) return NextResponse.json({ error: 'Invalid computer event.' }, { status: 400 })
+    if (!computerEventsMatch(parsed.data.chunks, runId, binding?.botId ?? null)) return RouteResponse.json({ error: 'Invalid computer event.' }, { status: 400 })
   }
   // 4e2 ②: chunks from a cloud worker (workspace-scoped token) are masked before they are stored.
   // Identity when the deployment has no workspace encryption key or the workspace has no secret of 8+ characters.
@@ -47,7 +47,7 @@ async function handlePOST(request: Request, { params }: { params: Promise<{ runI
     .select({ seq: sql<number | null>`max(${runChunks.seq})` })
     .from(runChunks)
     .where(eq(runChunks.runId, runId))
-  return NextResponse.json({ offset: String(tail?.seq ?? 0) })
+  return RouteResponse.json({ offset: String(tail?.seq ?? 0) })
 }
 
 export const POST = withDeviceRoute(handlePOST)

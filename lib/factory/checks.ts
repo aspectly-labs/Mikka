@@ -1,16 +1,13 @@
 import { factoryReviewCriteriaComplete, factoryReviewVerdict } from './validation';
-import { runChanged } from '../live/panels';
+import { codeReviewConfiguration } from '../code-review/settings-storage';
 import { factoryRunBotMatches } from './run-scope'
 import { cloudTaskTarget, ownedCloudTaskTarget } from '../computer/cloud-task-target'
-import { runListChanged } from '../live/lists'
-import { advanceTaskAfterRunStart } from '../task-status-run-start'
-import type { Pool, PoolClient } from "pg";
+import type { PoolClient } from "pg";
 import { isDeepStrictEqual } from 'node:util';
 import { orchestratorSettings } from '@mikka/protocol/orchestrator';
-import { z } from "zod";
 import { deviceIsOnline } from "../device-presence";
 import {
-  applyApprovalMode,
+  readOnlyRunPolicy,
   defaultRunPolicy,
   runPolicySchema,
   type RunPolicy,
@@ -388,12 +385,14 @@ export async function configureFactoryCheck(
     inferCommand: row.kind === 'repository' && !row.verifyCommand?.trim() && !(task.stage === 'review' && factoryFlowVersion(task) === 2),
     reportOnly: row.kind === 'deliverable' || row.kind === 'report' || (task.stage === 'review' && (factoryFlowVersion(task) === 2 || !row.verifyCommand?.trim())),
     deviceRepoId: row.deviceRepoId,
-    policy: applyApprovalMode(intersectRunPolicy(hostPolicy, row.policyCeiling ?? undefined), "read_only"),
+    policy: readOnlyRunPolicy(intersectRunPolicy(hostPolicy, row.policyCeiling ?? undefined)),
     ...(observations?.sources.length ? { questionCommandSources: observations.sources } : {}),
     ...(observations ? { questionExecutionObservation: { projectionVersion: 2, watermark: observations.execution.watermark, digest: observations.execution.digest } } : {}),
     ...(priorReview ? { priorReviewArtifactObservation: { digest: priorReview.digest } } : {}),
   };
   const currentRequest = await currentFactoryRequest(tx, task);
+  const reviewConfig = task.stage === 'review' && task.workspaceId
+    ? await (await import('../db')).withDatabaseClient(tx, () => codeReviewConfiguration(task.workspaceId!)) : null;
   const prompt = [
     ...(currentRequest ? [currentRequest] : []),
     `Factory stage: ${task.stage}. Independent read-only check of candidate ${row.id}, fixed worktree ${row.executionSha}.`,
@@ -450,6 +449,7 @@ export async function configureFactoryCheck(
     `UPDATE factory_attempts SET output=output || $2::jsonb WHERE id=$1`,
     [task.attemptId, JSON.stringify({ check })],
   );
+  return reviewConfig ? { reviewConfig } : undefined;
 }
 
 /** Frozen assignment for a bound check. Called before claiming; fails closed after a stop/repair. */
@@ -537,7 +537,7 @@ async function readFactoryCheckAssignment(
     ...(check.command ? { verifyCommand: check.command as string } : {}),
     factoryCheck: { stage: row.stage as 'review' | 'verify', inferCommand: check.inferCommand === true, reportOnly: check.reportOnly === true },
     // Reuse the canonical read-only policy; network allow/ask/deny remains the host's.
-    policy: applyApprovalMode(policy.data, "read_only"),
+    policy: readOnlyRunPolicy(policy.data),
   };
 }
 
@@ -797,36 +797,4 @@ function verifierMcpResultPassed(result: unknown): boolean {
   } catch {
     return false;
   }
-}
-
-/** Legacy callers share the current canonical claim, owner/Bot/source and cancellation fences. */
-export async function isFactoryCheckRun(pool: Pool,userId:string,runId:string) {
- const {rows}=await pool.query(`WITH RECURSIVE lineage AS (
- SELECT id,"retryOf","issueId" FROM agent_runs WHERE id=$1 AND "userId"=$2
- UNION SELECT r.id,r."retryOf",r."issueId" FROM agent_runs r JOIN lineage l ON r.id=l."retryOf" AND r."issueId"=l."issueId" WHERE r."userId"=$2
- ) SELECT EXISTS(SELECT 1 FROM lineage l JOIN factory_attempts a ON a."runId"=l.id JOIN factory_tasks t ON t.id=a."taskId" WHERE t."userId"=$2 AND t."issueId"=l."issueId" AND a.stage IN ('review','verify','monitor')) AS bound`,[runId,userId]);
- return rows[0]?.bound === true;
-}
-export function createFactoryCheckClaim(pool:Pool,authorize:import('./store').FactoryAuthorize) {
- return async(userId:string,deviceId:string,runId:string,leaseExpiresAt:string,onClaim?:(tx:PoolClient)=>Promise<void>)=>{
-  const tx=await pool.connect();
-  try {
-   await tx.query('BEGIN');
-   const {createFactoryStore}=await import('./store');
-   const {createFactoryClaim,factoryClaimTask}=await import('./claim');
-   const {factoryMonitorDispatchAssignment}=await import('./monitor-dispatch');
-   const identity=await factoryClaimTask(tx,runId);
-   if(!identity)throw new FactoryError('factoryCheckBindingMismatch');
-   const store=createFactoryStore(pool,authorize,identity.botId);
-   const result=await createFactoryClaim(store,{claimContinuation:async()=>{throw new FactoryError('factoryQuestionContinuationUnavailable')}},(tx,task,id)=>task.stage==='monitor'?factoryMonitorDispatchAssignment(tx,task.userId,id):factoryCheckAssignment(tx,task.userId,id))(tx,userId,deviceId,runId,leaseExpiresAt);
-   await onClaim?.(tx);
-   const updated=await tx.query('UPDATE agent_runs SET status=\'preparing\',"startedAt"=now(),"leaseExpiresAt"=$2,"updatedAt"=now() WHERE id=$1 AND status=\'queued\' AND "stopRequestedAt" IS NULL RETURNING id',[runId,leaseExpiresAt]);
-   if(updated.rowCount!==1)throw new FactoryError('factoryRunMismatch');
-    advanceTaskAfterRunStart(tx,runId);
-    await runListChanged(tx,runId);
-    await runChanged(tx,runId);
-   const policy = runPolicySchema.parse(result.policy);
-   await tx.query('COMMIT');return {...result,policy,baseBranch:z.string().parse(result.baseBranch)};
-  }catch(error){await tx.query('ROLLBACK');throw error}finally{tx.release()}
- };
 }

@@ -1,0 +1,12 @@
+{
+  "name": "@mikka/zero-residency",
+  "private": true,
+  "type": "module",
+  "description": "Zero-residency baseline manifest and container-declaration contract check (issue #3077, epic #3076)",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "5.0.5"
+  }
+}

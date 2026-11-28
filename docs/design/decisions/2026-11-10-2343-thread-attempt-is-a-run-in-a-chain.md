@@ -1,6 +1,7 @@
 # A thread attempt is a run in a chain, not a new entity
 
 - Date: 2026-11-10
+- **Status:** Accepted
 - Source: ALE-7 re-scoping in the ALE crew brief, after ALE-3/4/5/7 were found to rest on a wrong premise: "main 的容器是 `issues`，attempt 是 `agent_runs`，`run-chains` 的 `retryOf`/`continuesRunId` 已经把 attempt 建模成对 root 的 fold". The claim was re-verified against `08a08bec0` before writing; the citations below are the verification, not the brief.
 - Rule: —
 - Replaces: —

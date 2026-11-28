@@ -1,42 +1,28 @@
 import "../../tests/support/server-only.mjs";
 import assert from "node:assert/strict";
 import { after, before, beforeEach, mock, test } from "node:test";
-import { GitHubAccessError } from "./user-access-error";
-const credential = mock.fn(async (userId: string, key: string) => {
+import { startGitHubAccessHttp } from "../../tests/fakes/github-access-http.mjs";
+
+let repoAllowed = true;
+const credential = mock.fn(async (userId: string) => {
   assert.equal(userId, "owner");
-  assert.equal(key, "v2/github.com/owner/repo");
-  return {
-    token: "test-private-token",
-    repository: { id: "91", fullName: "Owner/Repo" },
-  };
+  return { token: "test-private-token", githubAccountId: "42", expiresAt: null };
 });
-mock.module(new URL("./user-access.ts", import.meta.url).href, {
-  namedExports: {
-    githubRepositoryReadCredential: credential,
-    GitHubAccessError,
-  },
+mock.module(new URL("../auth.ts", import.meta.url).href, {
+  namedExports: { auth: { api: {}, $context: Promise.resolve({ internalAdapter: { findAccounts: async () => [] } }) } },
+});
+mock.module(new URL("./app-config.ts", import.meta.url).href, {
+  namedExports: { readGitHubAppConfig: async () => ({ id: "4840908", source: "database" }) },
+});
+mock.module(new URL("./connection.ts", import.meta.url).href, {
+  namedExports: { githubConnectionToken: credential },
 });
 let response: () => Response;
 let variables: Record<string, unknown>;
-const request = mock.method(
-  globalThis,
-  "fetch",
-  async (url: RequestInfo | URL, init?: RequestInit) => {
-    assert.equal(url, "https://api.github.com/graphql");
-    assert.equal(init?.redirect, "error");
-    assert.equal(init?.cache, "no-store");
-    assert.equal(
-      new Headers(init?.headers).get("authorization"),
-      "Bearer test-private-token",
-    );
-    const body = JSON.parse(String(init?.body));
-    assert.ok(body.query.startsWith("query PullDirectory("));
-    assert.ok(body.query.includes("pullRequests(first: 20"));
-    assert.ok(!body.query.includes("mutation"));
-    variables = body.variables;
-    return response();
-  },
-);
+let graphqlCalls = 0;
+let githubHttp: Awaited<ReturnType<typeof startGitHubAccessHttp>>;
+const realFetch = globalThis.fetch;
+let request: ReturnType<typeof mock.method<typeof globalThis, "fetch">>;
 const sha = "a".repeat(40);
 const fixture = () => ({
   data: {
@@ -82,14 +68,42 @@ const fixture = () => ({
 });
 let read: (typeof import("./pull-directory"))["repositoryPullDirectory"];
 before(async () => {
+  githubHttp = await startGitHubAccessHttp({
+    getUser: () => ({ id: 42, login: "owner" }),
+    getRepositories: () => (repoAllowed ? [{ id: 91, full_name: "Owner/Repo", private: true }] : []),
+    onRequest: (url, req, bodyText) => {
+      if (url.pathname !== "/graphql" || req.method !== "POST") return undefined;
+      assert.equal(req.headers.authorization, "Bearer test-private-token");
+      const body = JSON.parse(bodyText);
+      assert.ok(body.query.startsWith("query PullDirectory("));
+      assert.ok(body.query.includes("pullRequests(first: 20"));
+      assert.ok(!body.query.includes("mutation"));
+      variables = body.variables;
+      graphqlCalls++;
+      return response();
+    },
+  });
+  const routed = githubHttp.routeFetch(realFetch);
+  request = mock.method(globalThis, "fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (String(url) === "https://api.github.com/graphql") {
+      assert.equal(init?.redirect, "error");
+      assert.equal(init?.cache, "no-store");
+    }
+    return routed(url, init);
+  });
   read = (await import("./pull-directory")).repositoryPullDirectory;
 });
 beforeEach(() => {
+  repoAllowed = true;
+  graphqlCalls = 0;
   credential.mock.resetCalls();
   request.mock.resetCalls();
   response = () => Response.json(fixture());
 });
-after(() => request.mock.restore());
+after(async () => {
+  request.mock.restore();
+  await githubHttp.close();
+});
 const run = (input: Parameters<typeof read>[1] = { repo: "Owner/Repo" }) =>
   read("owner", input, { deadline: Date.now() + 25000 });
 test("verifies repository ID and keeps provider cursor, head-bound status and actual author", async () => {
@@ -140,13 +154,30 @@ test("old-head checks are unknown, and closed drafts remain closed", async () =>
   assert.equal(page.items[0].state, "closed");
 });
 test("denied repository access never sends GraphQL, nor leaks provider errors", async () => {
-  credential.mock.mockImplementationOnce(async () => {
-    throw new GitHubAccessError("githubRepositoryForbidden", 403);
-  });
+  repoAllowed = false;
   await assert.rejects(run(), { message: "githubRepositoryForbidden" });
-  assert.equal(request.mock.callCount(), 0);
+  assert.equal(graphqlCalls, 0);
+  repoAllowed = true;
   response = () => new Response("private body", { status: 403 });
   await assert.rejects(run(), { message: "githubRepositoryForbidden" });
   response = () => new Response("private body", { status: 401 });
   await assert.rejects(run(), { message: "githubReconnectRequired" });
+});
+test("since keeps PRs opened from that instant and stops paging once updates fall before it", async () => {
+  response = () => {
+    const data = fixture();
+    const [row] = data.data.repository.pullRequests.nodes;
+    data.data.repository.pullRequests.nodes = [
+      row,
+      { ...row, number: 6, createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-11-17T00:00:00Z" },
+    ];
+    return Response.json(data);
+  };
+  const open = await run({ repo: "Owner/Repo", since: "2026-11-01T00:00:00Z" });
+  assert.deepEqual(open.items.map((item) => item.number), [7]);
+  assert.equal(open.cursor, "next-page", "every update on this page is after the cut-off, so older PRs may follow");
+  const stale = await run({ repo: "Owner/Repo", since: "2026-11-17T06:00:00Z" });
+  assert.deepEqual(stale.items.map((item) => item.number), [7]);
+  assert.equal(stale.cursor, null, "a page reaching updates before the cut-off is the last one that can match");
+  assert.equal("since" in variables, false, "GitHub is never asked to filter: the cut-off is applied to what it returns");
 });

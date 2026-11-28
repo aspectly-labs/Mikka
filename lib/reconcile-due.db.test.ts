@@ -15,10 +15,10 @@ const target = process.env.E2E_DATABASE_URL
 const valid = isE2eTarget(target) && target === process.env.MIKKA_DATABASE_URL && target === process.env.DATABASE_URL
 if (process.env.REQUIRE_DB === '1' && !valid) throw new Error('Reconcile tests require matching isolated loopback _e2e URLs')
 
-const TABLES = ['coordinator_events', 'coordinator_sessions', 'user_schedules', 'schedule_occurrences', 'inbox_snoozes', 'inbox_conversation_snoozes', 'agent_runs', 'devices', 'cloud_machines',
+const TABLES = ['coordinator_events', 'coordinator_sessions', 'user_schedules', 'schedule_occurrences', 'inbox_snoozes', 'inbox_conversation_snoozes', 'agent_runs', 'devices', 'cloud_machines', 'e2b_compute_leases', 'hosted_usage',
   'thread_machines', 'coding_review_sessions', 'issues', 'sandbox_kill_retries', 'group_turns', 'group_task_bindings', 'factory_tasks', 'factory_attempts', 'factory_events',
-  'factory_deliverable_acceptances', 'factory_candidates', 'factory_merges', 'account_deletion_jobs', 'account_deletion_guards', 'chat_attachments', 'chat_attachment_retirements',
-  'workspace_audit_retention', 'workspace_audit_events', 'workspace_deletions', 'workspace_audit_outbox', 'mobile_push_receipts', 'coding_workspace_requests', 'coding_workspace_mentions']
+  'factory_deliverable_acceptances', 'factory_candidates', 'factory_merges', 'account_deletion_jobs', 'account_deletion_guards', 'chat_attachments', 'chat_attachment_retirements', 'task_attachments',
+  'workspace_audit_retention', 'workspace_audit_events', 'workspace_deletions', 'workspace_audit_outbox', 'mobile_push_receipts', 'coding_workspace_requests', 'coding_workspace_mentions', 'pending_actions', 'agent_kit_executions']
 
 test('the safety-net check names exactly the jobs with work already due', { skip: !valid }, async t => {
   const schema = `reconcile_due_${randomUUID().replaceAll('-', '')}`
@@ -33,7 +33,7 @@ test('the safety-net check names exactly the jobs with work already due', { skip
   const pool = new Pool({ connectionString: target, options: `-c search_path=${schema}`, max: 2 })
   t.after(async () => { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end() })
   const due = (factoryLifecycle = true) => reconcileDue(pool, { factoryLifecycle, workspace: pool })
-  const none = { wakes: false, schedules: false, recovery: false, deletions: false, audit: false, pushReceipts: false, workspaceEphemera: false }
+  const none = { wakes: false, schedules: false, recovery: false, deletions: false, audit: false, pushReceipts: false, workspaceEphemera: false, writeReceipts: false }
   const clear = async () => { for (const table of TABLES) await pool.query(`DELETE FROM ${table}`) }
   const event = (values: string) => pool.query(`INSERT INTO coordinator_events (id,"userId","botId",kind,"dedupeKey",payload,"nextWakeAt","wakeLeaseUntil",tier,"deliveredAt") VALUES ($1,'owner',$2,'user_message',$3,'{}',${values})`, [randomUUID(), randomUUID(), randomUUID()])
 
@@ -185,5 +185,27 @@ test('the safety-net check names exactly the jobs with work already due', { skip
       assert.deepEqual((await pool.query(`SELECT id FROM ${table}`)).rows, [{ id: live }])
     assert.deepEqual(await due(), none)
     await clear()
+  })
+  await t.test('write receipts: a pending proposal, or a run-bound receipt still running after its run ended, is due', async () => {
+    const receipt = (status: string, binding: unknown = null, age = '0 seconds') => pool.query(`INSERT INTO pending_actions (id,"userId",action,input,status,"operationBinding","createdAt") VALUES ($1,'owner','append_notion_paragraph','{}',$2,$3,now()-$4::interval)`, [randomUUID(), status, binding, age])
+    const execution = async (status: string) => {
+      const id = randomUUID()
+      await pool.query(`INSERT INTO agent_kit_executions (id,owner_id,bot_key,execution_key,version_id,snapshot,status) VALUES ($1,'owner','coordinator',$2,$3,'{}',$4)`, [id, randomUUID(), randomUUID(), status])
+      return id
+    }
+    // Settled receipts, an unbound running write (no run to wait for) and a receipt of a running run are not due.
+    await receipt('done'); await receipt('declined'); await receipt('running')
+    await receipt('running', { run: { runId: await execution('running') } })
+    assert.deepEqual(await due(), none)
+    // Older than the 7-day readback window: left as it stands.
+    await receipt('running', { run: { runId: await execution('failed') } }, '8 days')
+    assert.deepEqual(await due(), none)
+    await receipt('running', { run: { runId: await execution('completed') } })
+    assert.deepEqual(await due(), { ...none, writeReceipts: true })
+    await clear()
+    await receipt('pending')
+    assert.deepEqual(await due(), { ...none, writeReceipts: true })
+    await clear()
+    assert.deepEqual(await due(), none)
   })
 })

@@ -6,6 +6,7 @@ import { repositoryBindingMatches } from '@mikka/protocol/repository'
 import { pool } from '../../db'
 import { workspacePool } from '../../workspace-db'
 import { actingContext } from '../../activity-actor'
+import { jsonbSafeIntSql } from '../../primitives/jsonb-predicates'
 import { issuesForUser } from '../../issues-for-user'
 import type { IssueReader } from '../../issue-visibility'
 import { enterprisePrincipal } from '../../enterprise/principal'
@@ -107,8 +108,8 @@ export async function taskReviewSummaries(reader: IssueReader, taskIds: readonly
           OR (x.active AND s.source='working') OR (NOT x.active AND cp.reason IS NULL AND s.id=cp."snapshotId"))
       ORDER BY (s.source='pull_request') DESC,s."createdAt" DESC,s.id DESC LIMIT 1
     ) s ON true LEFT JOIN LATERAL (SELECT count(f.path)::int AS files,
-      coalesce(sum(coalesce((f.patch->'file'->>'additions')::int,(f.metadata->>'additions')::int)),0)::int AS additions,
-      coalesce(sum(coalesce((f.patch->'file'->>'deletions')::int,(f.metadata->>'deletions')::int)),0)::int AS deletions,
+      coalesce(sum(coalesce(${jsonbSafeIntSql(`f.patch->'file'`, 'additions')},${jsonbSafeIntSql('f.metadata', 'additions')})),0)::int AS additions,
+      coalesce(sum(coalesce(${jsonbSafeIntSql(`f.patch->'file'`, 'deletions')},${jsonbSafeIntSql('f.metadata', 'deletions')})),0)::int AS deletions,
       coalesce(bool_and(f.patch IS NOT NULL AND f.patch->>'format' IN ('text','binary')),true) AS complete
       FROM coding_workspace_snapshot_files f WHERE f."snapshotId"=s.id
     ) counts ON true LEFT JOIN LATERAL (SELECT observation,"maskPolicy","viewerMaskPolicy" FROM coding_workspace_check_observations

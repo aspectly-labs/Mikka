@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readFileSync } from 'node:fs'
+import { readUi } from './official-ui-tree.mjs'
 import { auditBasePath } from './base-path-policy.mjs'
 import { navigationPolicyFiles } from './navigation-policy.mjs'
 const inspect = (source) => auditBasePath('components/example.tsx', source)
@@ -50,7 +50,7 @@ test('normal routes, native href/fetch, absolute URLs, comments and shadowed var
 })
 test('the whole application follows the prefix contract', () => {
   assert.deepEqual(
-    navigationPolicyFiles().flatMap((file) => auditBasePath(file, readFileSync(file, 'utf8'))),
+    navigationPolicyFiles().flatMap((file) => auditBasePath(file, readUi(file))),
     [],
   )
 })

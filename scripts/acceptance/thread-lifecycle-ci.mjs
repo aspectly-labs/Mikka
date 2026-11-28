@@ -1,11 +1,13 @@
-/** Main-only wiring for #1593. No artifact inputs, deployment mutation or URL overrides. */
+/** Main-only wiring for #1593. No untrusted artifact inputs, deployment mutation or URL overrides. */
 import { execFileSync } from 'node:child_process'
 import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { assertCurrentMain, waitForWebDeployment } from '../release/web-deploy.mjs'
+import { actionsMikkaRepository, officialMikkaRepository, publicRepositoryId } from '../cloudflare-source.mjs'
+import { assertReportIdentity, downloadReleaseReport, readReleaseArtifact, reportDigest, TEMPLATE_KINDS } from '../e2b/runtime-report.mjs'
 
-export const REPOSITORY = 'alexj11324/Mikka'
+export const REPOSITORY = 'aspectly-labs/Mikka'
 export const RELEASE_WORKFLOW = '.github/workflows/e2b-official-runtime.yml'
 export const RELEASE_NAME = 'E2B additive runtime release'
 const ROOT = resolve(import.meta.dirname, '../..')
@@ -34,7 +36,7 @@ const retirementReceipt = value => ({ scope: value.scope, clock: value.clock, ch
 const QUESTION_RESUME_SCOPE = 'real_owner_factory_question_pause_resume_with_native_report'
 const ISSUE_PENDING = ['external_wait_and_adjacent_stage_continuity', 'terminal_revoke_and_close_grace_retention',
   'provider_timeout_fault_injection', 'latency_and_cost_measurement']
-const FAILURES = new Set(['context', 'trigger', 'workflow', 'upstream', 'jobs', 'checkout', 'not_selected',
+const FAILURES = new Set(['context', 'trigger', 'workflow', 'upstream', 'jobs', 'report', 'checkout', 'not_selected',
   'github_unavailable', 'github_response', 'report_target', 'provider_report', 'incomplete', 'command'])
 class LifecycleCIError extends Error {
   constructor(code, cause) { super('thread_lifecycle_ci:' + code, cause === undefined ? undefined : { cause }); this.code = code }
@@ -43,30 +45,36 @@ const require = (ok, code) => { if (!ok) throw new LifecycleCIError(code) }
 
 /** The webhook is only a pointer. Every identity and attempt is checked against the API. */
 export function expectedRelease(env, event) {
-  require(env.GITHUB_EVENT_NAME === 'workflow_run' && env.GITHUB_REPOSITORY === REPOSITORY
+  const repository = actionsMikkaRepository(env)
+  require(env.GITHUB_EVENT_NAME === 'workflow_run' && repository
     && env.GITHUB_REF === 'refs/heads/main', 'context')
   const run = event?.workflow_run
   require(integer(run?.id) && integer(run?.run_attempt) && integer(run?.workflow_id)
     && SHA.test(run?.head_sha ?? '') && run.name === RELEASE_NAME
     && run.status === 'completed' && run.conclusion === 'success'
-    && ['push', 'workflow_dispatch'].includes(run.event) && run.head_branch === 'main'
-    && run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY, 'trigger')
+    && ['push', 'workflow_dispatch', 'workflow_run'].includes(run.event) && run.head_branch === 'main'
+    && officialMikkaRepository(run.repository?.full_name, String(run.repository?.id), String(run.repository?.owner?.id)) === repository
+    && officialMikkaRepository(run.head_repository?.full_name, String(run.head_repository?.id), String(run.head_repository?.owner?.id)) === repository, 'trigger')
   require(env.EXPECTED_SOURCE_SHA === run.head_sha
     && env.EXPECTED_UPSTREAM_RUN_ID === String(run.id)
     && env.EXPECTED_UPSTREAM_RUN_ATTEMPT === String(run.run_attempt), 'trigger')
   return { sourceCommit: run.head_sha, runId: run.id, runAttempt: run.run_attempt, workflowId: run.workflow_id,
-    event: run.event }
+    event: run.event, repositoryFullName: repository, repositoryId: Number(publicRepositoryId),
+    repositoryOwnerId: env.GITHUB_REPOSITORY_OWNER_ID }
 }
 
 export function assertReleaseIdentity(expected, workflow, run) {
   require(workflow?.id === expected.workflowId && workflow.path === RELEASE_WORKFLOW
     && workflow.name === RELEASE_NAME && workflow.state === 'active', 'workflow')
-  require(run?.id === expected.runId && run.run_attempt === expected.runAttempt
+  const repository = officialMikkaRepository(expected.repositoryFullName, String(expected.repositoryId), expected.repositoryOwnerId)
+  require(repository && typeof expected.repositoryOwnerId === 'string'
+    && run?.id === expected.runId && run.run_attempt === expected.runAttempt
     && run.workflow_id === expected.workflowId && run.path === RELEASE_WORKFLOW && run.name === RELEASE_NAME
     && run.status === 'completed' && run.conclusion === 'success' && run.event === expected.event
-    && ['push', 'workflow_dispatch'].includes(run.event) && run.head_branch === 'main'
-    && run.head_sha === expected.sourceCommit && run.repository?.full_name === REPOSITORY
-    && run.head_repository?.full_name === REPOSITORY, 'upstream')
+    && ['push', 'workflow_dispatch', 'workflow_run'].includes(run.event) && run.head_branch === 'main'
+    && run.head_sha === expected.sourceCommit
+    && officialMikkaRepository(run.repository?.full_name, String(run.repository?.id), String(run.repository?.owner?.id)) === repository
+    && officialMikkaRepository(run.head_repository?.full_name, String(run.head_repository?.id), String(run.head_repository?.owner?.id)) === repository, 'upstream')
 }
 
 /** Only lifecycle source/driver changes or an actually validated candidate spend money. */
@@ -91,12 +99,32 @@ export function selectRelease(expected, data, files) {
   const prefix = nested ? 'release / ' : ''
   if (nested) jobs.recheck = job('release / recheck', 'success')
   const validated = data.jobs.some(item => item.name === prefix + 'validate / build')
+  const buildTime = data.jobs.some(item => /^(?:release \/ )?templates$/.test(item.name))
+  require(!buildTime || nested && validated, 'jobs')
   if (validated) {
     require(!data.jobs.some(item => item.name === prefix + 'validate'), 'jobs')
     jobs.validate = job(prefix + 'validate / build', 'success')
     jobs.awaitWeb = job(prefix + 'await-web', 'success')
-    jobs.subscriptions = job(prefix + 'subscriptions', 'success')
-    jobs.publish = job(prefix + 'publish / deploy', 'success')
+    if (buildTime) {
+      // #2789 moved publication to templates after build-time checks. Do not
+      // reinterpret a partial or hybrid legacy shape as that newer contract.
+      require(!data.jobs.some(item => /^(?:release \/ )?(?:subscriptions|publish)(?: \/|$)/.test(item.name)), 'jobs')
+      jobs.webReady = job('web-ready', 'success')
+      jobs.templates = job(prefix + 'templates', 'success')
+      jobs.rememberFailure = job(prefix + 'remember-failure', 'skipped')
+      const steps = data.jobs.find(item => item.id === jobs.templates).steps
+      require(Array.isArray(steps) && steps.length <= 100, 'jobs')
+      const numbers = ['Make only fully accepted candidates public', 'Preserve the complete public release report'].map(name => {
+        const matches = steps.filter(step => step.name === name)
+        require(matches.length === 1 && integer(matches[0].number)
+          && matches[0].status === 'completed' && matches[0].conclusion === 'success', 'jobs')
+        return matches[0].number
+      })
+      require(numbers[0] < numbers[1], 'jobs')
+    } else {
+      jobs.subscriptions = job(prefix + 'subscriptions', 'success')
+      jobs.publish = job(prefix + 'publish / deploy', 'success')
+    }
     jobs.cleanup = job(prefix + 'cleanup', 'success')
   } else if (data.jobs.some(item => item.name === 'release')) {
     jobs.release = job('release', 'skipped')
@@ -110,14 +138,15 @@ export function selectRelease(expected, data, files) {
   }
   const relevant = lifecycleChanged(files)
   return { selected: relevant || validated, reason: validated ? 'validated_runtime' : relevant ? 'lifecycle_changes' : 'unrelated',
-    runtime: validated ? 'validated_and_published' : 'unchanged_worker', jobs }
+    runtime: validated ? 'validated_and_published' : 'unchanged_worker',
+    publication: validated ? buildTime ? 'build_time' : 'subscriptions' : null, jobs }
 }
 
 async function githubRead(path, { token, fetchImpl }) {
   require(typeof token === 'string' && token.length > 0, 'context')
   let response
   try {
-    response = await fetchImpl('https://api.github.com/repos/' + REPOSITORY + path, {
+    response = await fetchImpl('https://api.github.com/repositories/' + publicRepositoryId + path, {
       headers: { accept: 'application/vnd.github+json', authorization: 'Bearer ' + token,
         'x-github-api-version': '2022-11-28' }, redirect: 'error', signal: AbortSignal.timeout(20_000),
     })
@@ -134,11 +163,25 @@ export async function verifyRelease({ env, event, files, fetchImpl = fetch }) {
   await assertCurrentMain({ expectedBuild: expected.sourceCommit, ...options })
   const data = await githubRead(`/actions/runs/${expected.runId}/attempts/${expected.runAttempt}/jobs?per_page=100`, options)
   const selection = selectRelease(expected, data, files)
+  let publication = {}
+  if (selection.publication === 'build_time') {
+    try {
+      const artifact = await readReleaseArtifact(expected, run, { read: path => githubRead(path, options) })
+      const bytes = await downloadReleaseReport({ selected: true, artifact }, options)
+      const report = JSON.parse(bytes)
+      // Workflow head proves the executing source; the original artifact proves
+      // what was published. Automatic consumers require both to be exact main.
+      assertReportIdentity(report, { sourceCommit: expected.sourceCommit, workerSha: report?.workerSha,
+        runId: String(expected.runId), runAttempt: String(expected.runAttempt) })
+      require(TEMPLATE_KINDS.every(kind => report.templates[kind].public === true && report.templates[kind].buildStatus === 'ready'), 'report')
+      publication = { artifact, reportSha256: reportDigest(bytes), workerSha: report.workerSha, workerSourceCommit: report.sourceCommit }
+    } catch (cause) { throw new LifecycleCIError('report', cause) }
+  }
   // Reruns and a moving main invalidate the earlier response before credentials.
   assertReleaseIdentity(expected, workflow, await githubRead('/actions/runs/' + expected.runId, options))
   await assertCurrentMain({ expectedBuild: expected.sourceCommit, ...options })
   return { kind: 'thread-lifecycle-ci-attestation', sourceCommit: expected.sourceCommit,
-    upstream: { runId: expected.runId, runAttempt: expected.runAttempt, workflowId: expected.workflowId }, ...selection }
+    upstream: { runId: expected.runId, runAttempt: expected.runAttempt, workflowId: expected.workflowId }, ...selection, ...publication }
 }
 
 function checkoutFiles(sourceCommit) {
@@ -173,7 +216,12 @@ export function assertAttestation(expected, proof) {
     && proof.sourceCommit === expected.sourceCommit && proof.upstream?.runId === expected.runId
     && proof.upstream?.runAttempt === expected.runAttempt && proof.upstream?.workflowId === expected.workflowId
     && proof.web?.sourceCommit === expected.sourceCommit && proof.web.publicBuild === expected.sourceCommit
-    && integer(proof.web.webRunId) && integer(proof.web.webAttempt), 'upstream')
+    && proof.web.provider === 'cloudflare' && typeof proof.web.verifiedAt === 'string'
+      && Number.isFinite(Date.parse(proof.web.verifiedAt)) && new Date(proof.web.verifiedAt).toISOString() === proof.web.verifiedAt, 'upstream')
+  if (proof.publication === 'build_time') require(proof.workerSourceCommit === expected.sourceCommit
+    && SHA.test(proof.workerSha ?? '') && /^[a-f0-9]{64}$/.test(proof.reportSha256 ?? '')
+    && integer(proof.artifact?.id) && proof.artifact.repositoryId === expected.repositoryId
+    && /^[a-f0-9]{64}$/.test(proof.artifact.sha256 ?? ''), 'report')
 }
 
 /** The driver's closed stage error is emitted only after its finally confirmed cleanup.

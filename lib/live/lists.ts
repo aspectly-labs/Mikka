@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg'
 import { sql } from 'drizzle-orm'
 import type { workspaceDb } from '../workspace-db'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { liveGatewayConfig, type LiveScope } from './scope'
 import type { LiveInvalidation } from './events'
@@ -9,7 +10,7 @@ import { ownerLiveScope } from './owner-scope'
 type Database = Pick<PoolClient, 'query'>
 export type OwnerListKind = 'thread_list' | 'task_run_list' | 'bot_chat_list' | 'device_list'
 export type WorkspaceListKind = 'issue_list' | 'bot_list' | 'group_list' | 'workspace_settings' | 'schedule_list'
-type ListKind = OwnerListKind | WorkspaceListKind | 'model_settings'
+type ListKind = OwnerListKind | WorkspaceListKind | 'model_settings' | 'integration_settings'
 type Target = { scope: LiveScope; events: LiveInvalidation[] }
 
 const target = (scope: LiveScope, kinds: readonly ListKind[]): Target => ({
@@ -82,6 +83,18 @@ export async function groupListTargets(database: Database, workspaceDatabase: Da
   return (await workspaceScopes(workspaceDatabase, group.workspaceId, rows.map(row => row.memberId))).map(scope => target(scope, ['group_list']))
 }
 
+/** The group chats a Bot is an active member of: its look is part of each group's avatar in the chat list (R-36). */
+async function botGroups(database: Database, botId: string) {
+  const { rows } = await database.query<{ conversationId: string }>(
+    `SELECT DISTINCT "conversationId" FROM conversation_members WHERE "memberType"='bot' AND "memberId"=$1 AND "leftAt" IS NULL`, [botId])
+  return rows.map(row => row.conversationId)
+}
+
+/** Each group a Bot is in re-reads its list row, for its members only: the row carries the Bot's face (GroupSummary.bots). */
+export async function botGroupListTargets(database: Database, workspaceDatabase: Database, botId: string) {
+  return mergeTargets((await Promise.all((await botGroups(database, botId)).map(id => groupListTargets(database, workspaceDatabase, id)))).flat())
+}
+
 export async function botListTargets(database: Database, workspaceDatabase: Database, botId: string) {
   const { rows: [bot] } = await database.query<{ ownerId: string; workspaceId: string }>('SELECT "ownerId","workspaceId" FROM bots WHERE id=$1', [botId])
   if (!bot) return []
@@ -112,7 +125,7 @@ type Resolve = (database: Database, workspaceDatabase: Database) => Promise<Targ
 /** Register at the real writer. A nested savepoint or held query wrapper does
  * not publish before the outer COMMIT, and deferred reads retain its database. */
 async function changed(executor: object, key: string, resolve: Resolve) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive } = await import('./notify')
   afterDatabaseCommit(executor, `list:${key}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')
@@ -142,6 +155,8 @@ export const botRemovedChanged = (executor: object, ownerId: string, workspaceId
   ...(await workspaceScopes(workspace, workspaceId, [ownerId])).map(scope => target(scope, ['bot_list', 'thread_list', 'task_run_list'])),
   ...await ownerListTargets(workspace, ownerId, ['bot_chat_list']),
 ]))
+/** A Bot's name or look changed: the group lists that show it re-read (botGroupListTargets). */
+export const botGroupsChanged = (executor: object, botId: string) => changed(executor, `bot-groups:${botId}`, (db, workspace) => botGroupListTargets(db, workspace, botId))
 export const groupListChanged = (executor: object, conversationId: string, removedUserId: string | null = null) => changed(executor, `group:${conversationId}:${removedUserId ?? ''}`, (db, workspace) => groupListTargets(db, workspace, conversationId, removedUserId))
 export const groupListReadChanged = (executor: object, conversationId: string, ownerId: string) => changed(executor, `group-read:${conversationId}:${ownerId}`, async (db, workspace) => (await groupListTargets(db, workspace, conversationId)).filter(value => value.scope.ownerId === ownerId))
 /** Only the reader's channel in the selected workspace consumes this receipt. */
@@ -159,6 +174,10 @@ export const archivePreferenceChanged = (executor: object, ownerId: string) => c
     WHERE m."userId"=$1 AND m.status='active' AND (w.kind='team' OR w."userId"=$1)`, [ownerId])
   return rows.map(scope => target(scope, ['thread_list', 'group_list']))
 })
+/** Workspace defaults affect its members; a scoped personal pin preference affects only that reader. */
+export const threadDirectorySettingsChanged = (executor: object, workspaceId: string, ownerId?: string) =>
+  changed(executor, `directory-settings:${workspaceId}:${ownerId ?? 'workspace'}`, async (_db, workspace) =>
+    (await workspaceScopes(workspace, workspaceId, ownerId ? [ownerId] : null)).map(scope => target(scope, ['thread_list', 'group_list'])))
 export const ownerListChanged = (executor: object, ownerId: string, kinds: readonly OwnerListKind[]) => changed(executor, `owner:${ownerId}:${[...kinds].sort().join(',')}`, (_db, workspace) => ownerListTargets(workspace, ownerId, kinds))
 /** 自动化: a workspace's schedules, their next run and their history. */
 export const scheduleListChanged = (executor: object, workspaceId: string) => workspaceListChanged(executor, workspaceId, ['schedule_list'])
@@ -193,13 +212,38 @@ export const ownerProfileListsChanged = (executor: object, ownerId: string) => c
  * The account itself re-reads in every workspace it is an active member of (its subscriptions are its own there).
  * Subscriptions serve their owner only (decision 2026-11-17), so no teammate re-reads. No connection, model or quota crosses.
  */
-export async function ownerSettingsTargets(_database: Database, workspaceDatabase: Database, ownerId: string): Promise<Target[]> {
+async function accountSettingsTargets(workspaceDatabase: Database, ownerId: string, kind: 'model_settings' | 'integration_settings'): Promise<Target[]> {
   const { rows: memberships } = await workspaceDatabase.query<{ workspaceId: string }>(`SELECT "workspaceId" FROM mikka_workspace_members WHERE "userId"=$1 AND status='active'`, [ownerId])
-  return mergeTargets(memberships.map(({ workspaceId }) => target({ ownerId, workspaceId }, ['model_settings'])))
+  return mergeTargets(memberships.map(({ workspaceId }) => target({ ownerId, workspaceId }, [kind])))
 }
+export const ownerSettingsTargets = (_database: Database, workspaceDatabase: Database, ownerId: string) => accountSettingsTargets(workspaceDatabase, ownerId, 'model_settings')
+export const ownerIntegrationSettingsTargets = (_database: Database, workspaceDatabase: Database, ownerId: string) => accountSettingsTargets(workspaceDatabase, ownerId, 'integration_settings')
 /** Best effort: an action that already succeeded never fails on its invalidation (the page's own response updates it). */
 export const ownerSettingsChanged = (executor: object, ownerId: string) => changed(executor, `owner-settings:${ownerId}`, (database, workspace) => ownerSettingsTargets(database, workspace, ownerId))
   .catch(() => console.warn('[live] settings invalidation unavailable'))
+/** Device-side connection checks finish after the initiating settings response. */
+export const ownerIntegrationSettingsChanged = (executor: object, ownerId: string) => changed(executor, `integration-settings:${ownerId}`, (database, workspace) => ownerIntegrationSettingsTargets(database, workspace, ownerId))
+  .catch(() => console.warn('[live] integration settings invalidation unavailable'))
+
+/** Account-level keyboard settings refresh only their owner in every active
+ * workspace. The existing key contains a workspace ID, never bindings. */
+export async function ownerKeyboardShortcutTargets(database: Database, workspaceDatabase: Database, ownerId: string): Promise<Target[]> {
+  return (await ownerSettingsTargets(database, workspaceDatabase, ownerId)).map(({ scope }) => target(scope, ['workspace_settings']))
+}
+export const ownerKeyboardShortcutsChanged = (executor: object, ownerId: string) => changed(executor, `owner-shortcuts:${ownerId}`, (database, workspace) => ownerKeyboardShortcutTargets(database, workspace, ownerId))
+  .catch(() => console.warn('[live] keyboard settings invalidation unavailable'))
+
+/** A Linear connection is owner-specific, but its settings appear in each of
+ * that owner's active workspaces. Publish only a content-free settings event
+ * to those owner channels after the connection transaction commits. */
+export async function ownerWorkspaceSettingsTargets(_database: Database, workspace: Database, ownerId: string): Promise<Target[]> {
+  const { rows } = await workspace.query<LiveScope>(`SELECT m."userId" AS "ownerId",w.id AS "workspaceId"
+    FROM mikka_workspaces w JOIN mikka_workspace_members m ON m."workspaceId"=w.id AND m.status='active'
+    WHERE m."userId"=$1 AND (w.kind='team' OR w."userId"=$1)`, [ownerId])
+  return rows.map(scope => target(scope, ['workspace_settings']))
+}
+export const ownerWorkspaceSettingsChanged = (executor: object, ownerId: string) => changed(executor, `owner-workspace-settings:${ownerId}`, (database, workspace) => ownerWorkspaceSettingsTargets(database, workspace, ownerId))
+  .catch(() => console.warn('[live] workspace settings invalidation unavailable'))
 
 /** The account's workspace directory and personal issue identifiers are read
  * across selected workspaces. Their transport still uses the actual owned
@@ -213,7 +257,7 @@ export const ownerWorkspaceListsChanged = (executor: object, ownerId: string, ki
  * transaction. A removed member may clear this known list after COMMIT; this
  * snapshot never grants a ticket or authorizes a subsequent content read. */
 export async function workspaceListScopesBeforeChange(executor: Pick<typeof workspaceDb, 'execute'>, workspaceId: string): Promise<LiveScope[]> {
-  if (!liveGatewayConfig(process.env)) return []
+  if (!liveGatewayConfig(runtimeEnv())) return []
   const { rows } = await executor.execute<LiveScope>(sql`SELECT m."userId" AS "ownerId",w.id AS "workspaceId" FROM mikka_workspaces w
     JOIN mikka_workspace_members m ON m."workspaceId"=w.id AND m.status='active'
     WHERE w.id=${workspaceId} AND (w.kind='team' OR w."userId"=m."userId")`)
@@ -235,7 +279,7 @@ export const workspaceListScopeChanged = (executor: object, workspaceId: string,
 
 /** Called with the actual locked issue before its scope changes. */
 export async function issueListScopesBeforeChange(issue: IssueScope): Promise<LiveScope[]> {
-  if (!liveGatewayConfig(process.env)) return []
+  if (!liveGatewayConfig(runtimeEnv())) return []
   try {
     const { workspacePool } = await import('../workspace-db')
     return await issueListScopes(workspacePool, issue)

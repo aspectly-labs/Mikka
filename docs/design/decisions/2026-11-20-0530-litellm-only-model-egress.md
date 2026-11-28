@@ -2,7 +2,7 @@
 
 - Date: 2026-11-20
 - Source: Alex, [#2869](https://github.com/alexj11324/Mikka/issues/2869): 「所有模型调用必须经过后台的 LiteLLM」「之前的各条直连路径必须全部退役，不保留兜底、不保留开关」。
-- Status: accepted routing requirement; implementation and production acceptance are tracked on #2869.
+- **Status:** Accepted. [2026-11-27-2304](2026-11-27-2304-official-subscription-cpa-egress.md) governs the subscription exception in rule 7.
 - Supersedes: the direct Vercel/provider egress and optional protocol-converter portions of [2026-11-15-2000](2026-11-15-2000-one-model-gateway.md), including the community default-model exception.
 
 ## 原因

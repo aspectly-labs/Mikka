@@ -14,7 +14,7 @@ type Query = Pick<Pool | PoolClient, 'query'>
  */
 export async function quotaFallbackKey(query: Query, ownerId: string, workspaceId: string, modelId: string): Promise<{ key: UsableApiKey; model: string } | null> {
   if (!(await apiKeyAfterQuota(query, ownerId))) return null
-  const keys = (await usableApiKeys(query, ownerId, workspaceId)).filter(key => key.mine && apiKeyChatBaseUrl(key) && key.models.length)
-  const key = keys.find(key => key.models.includes(modelId))
+  const keys = await usableApiKeys(query, ownerId, workspaceId)
+  const key = keys.find(key => key.mine && key.modelsError !== 'invalid' && apiKeyChatBaseUrl(key) && key.models.includes(modelId))
   return key ? { key, model: modelId } : null
 }

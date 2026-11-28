@@ -1,10 +1,13 @@
 import { WorkerEntrypoint } from 'cloudflare:workers'
 import { Container } from '@cloudflare/containers'
-import { apiRequest } from './request.mjs'
+import { internalOnlyPath } from './internal-only.mjs'
+import { apiRequest, subscriptionChatToApi } from './request.mjs'
 import { applicationEnvironment } from './environment.mjs'
 import { configureTaskBridge, taskMachine } from './task-machine.mjs'
-import { businessWorkflowDelivery, businessWorldRequest, eveServiceRequest, liteLlmRequest, publicWorkflowDispatch } from './services.mjs'
+import { businessWorkflowDelivery, businessWorldRequest, eveServiceRequest, githubRedeliveryRequest, liteLlmRequest, publicWorkflowDispatch } from './services.mjs'
 import { brokerRequest, identityRequest } from '../../credential-identity/transport.mjs'
+import { legacyDaemonEdgeResponse } from '../../../lib/daemon-edge-cutoff.mjs'
+import { GITHUB_REDELIVERY_HOSTNAME } from '../../../lib/env/hosts-constants.mjs'
 export { ContainerProxy } from '@cloudflare/containers'
 
 export class BusinessApi extends Container {
@@ -15,7 +18,7 @@ export class BusinessApi extends Container {
   constructor(ctx, env) {
     super(ctx, env)
     this.envVars = applicationEnvironment(env)
-    if (env.EVE_SERVICE || env.BUSINESS_WORLD || env.CREDENTIAL_IDENTITY || env.LITELLM) this.envVars.NODE_EXTRA_CA_CERTS = '/etc/cloudflare/certs/cloudflare-containers-ca.crt'
+    if (env.EVE_SERVICE || env.BUSINESS_WORLD || env.CREDENTIAL_IDENTITY || env.LITELLM || env.GITHUB_REDELIVERY) this.envVars.NODE_EXTRA_CA_CERTS = '/etc/cloudflare/certs/cloudflare-containers-ca.crt'
     if (env.CREDENTIAL_IDENTITY || env.CREDENTIAL_BROKER) {
       if (!env.CREDENTIAL_IDENTITY || !env.CREDENTIAL_BROKER) throw new Error('CREDENTIAL_API_CONFIGURATION_INVALID')
       this.envVars.CREDENTIAL_RUNTIME = 'cloudflare'
@@ -44,6 +47,7 @@ export class BusinessApi extends Container {
     if (this.env.CREDENTIAL_BROKER) await this.ctx.container.interceptOutboundHttps('broker.internal', this.ctx.exports.CredentialBrokerOutbound)
     if (this.env.EVE_SERVICE) await this.ctx.container.interceptOutboundHttps('eve.internal', this.ctx.exports.EveOutbound)
     if (this.env.LITELLM) await this.ctx.container.interceptOutboundHttps('litellm.internal', this.ctx.exports.LiteLlmOutbound)
+    if (this.env.GITHUB_REDELIVERY) await this.ctx.container.interceptOutboundHttps(GITHUB_REDELIVERY_HOSTNAME, this.ctx.exports.GitHubRedeliveryOutbound)
     if (this.env.BUSINESS_WORLD) await this.ctx.container.interceptOutboundHttps('world.internal',
       this.ctx.exports.BusinessWorldOutbound({ props: { capability: this.envVars.MIKKA_BUSINESS_WORLD_TOKEN } }))
   }
@@ -77,6 +81,10 @@ export class LiteLlmOutbound extends WorkerEntrypoint {
   fetch(request) { return liteLlmRequest(request, this.env.LITELLM) }
 }
 
+export class GitHubRedeliveryOutbound extends WorkerEntrypoint {
+  fetch(request) { return githubRedeliveryRequest(request, this.env.GITHUB_REDELIVERY) }
+}
+
 export class BusinessWorldOutbound extends WorkerEntrypoint {
   fetch(request) { return businessWorldRequest(request, this.env.BUSINESS_WORLD, this.ctx.props.capability) }
 }
@@ -93,11 +101,20 @@ BusinessApi.outboundHandlers = { taskMachine }
 export default class ApiIngress extends WorkerEntrypoint {
   fetch(request) {
     const env = this.env
+    if (internalOnlyPath(new URL(request.url).pathname)) return new Response(null, { status: 404 })
     if (env.BUSINESS_WORLD && publicWorkflowDispatch(request.url)) return new Response(null, { status: 404 })
     const forwarded = apiRequest(request, env.PUBLIC_ORIGIN)
     if (!forwarded) return new Response(null, { status: 400, headers: { 'cache-control': 'no-store' } })
+    // Reject retired legacy desktop daemons and removed heartbeats at the
+    // Worker edge so they never wake the BusinessApi Durable Object / Container.
+    const cutoff = legacyDaemonEdgeResponse(forwarded)
+    if (cutoff) return cutoff
     // One active request or task never owns shutdown of the shared host.
     return env.BUSINESS_API.getByName('shared-api').fetch(forwarded)
+  }
+
+  subscriptionChat(request) {
+    return subscriptionChatToApi(request, this.env.PUBLIC_ORIGIN, forwarded => this.env.BUSINESS_API.getByName('shared-api').fetch(forwarded))
   }
 
   eveProduct(request, scope) {

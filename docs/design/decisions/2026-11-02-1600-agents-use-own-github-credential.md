@@ -1,6 +1,7 @@
 # Agents use the person's own GitHub credential; Mikka adds no push gate
 
 - Date: 2026-11-02
+- **Status:** Superseded by [2026-11-02-1730-coordinator-github-mcp](2026-11-02-1730-coordinator-github-mcp.md)
 - Source: Alex, relayed by the coordinator session: 「Codex 和 Claude Code
   都不是这样做的……你防不住的，只能靠模型自己的判断。你设得太紧了，把凭据给它。」
   ("Codex and Claude Code don't do it this way… you can't prevent it, only the

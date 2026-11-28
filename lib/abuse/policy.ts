@@ -1,9 +1,10 @@
 import { CodedError, type CodedErrorOptions } from '@mikka/protocol/coded-error'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 /** USD accounting uses integer microdollars. The one-off card allowance is no longer
  * granted (decision 2026-11-15-1900); its size stays for reading old grants and history. */
 export const FREE_ALLOWANCE_MICRO_USD = 1_000_000
 export const MICRO_USD_PER_POINT = 10_000 // Billing conversion: 100 points = USD 1.
-export const HOSTED_CALL_TIMEOUT_MS = 60_000
+export const HOSTED_CALL_TIMEOUT_MS = 120_000
 /**
  * Estimated maximum cost one hosted call holds while in flight. Output is capped
  * at 4,096 tokens (model.ts); USD 0.10 covers that at USD 15 per million output
@@ -37,7 +38,7 @@ const positive = (value: string | undefined, fallback: number) => {
     : fallback
 }
 export function abuseLimits(
-  env: Record<string, string | undefined> = process.env,
+  env: EnvMap = runtimeEnv(),
 ) {
   return {
     dailyMicroUsd: positive(env.MIKKA_FREE_MODEL_DAILY_CENTS, 2500) * 10_000,

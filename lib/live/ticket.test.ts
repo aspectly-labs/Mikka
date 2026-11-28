@@ -33,7 +33,7 @@ before(async () => {
   mock.module(new URL('../enterprise/live-authority.ts', import.meta.url).href, { namedExports: { workspaceLiveTicket: async (
     scope: { ownerId: string; workspaceId: string }, sessionId: string, config: Parameters<typeof liveTicket>[1],
   ) => ({ status: 'allowed', ticket: liveTicket(scope, config, Date.now(), sessionId) }) } })
-  mock.module(new URL('../request-log.ts', import.meta.url).href, { namedExports: { noteLogRpcAction: () => {}, withRequestLog: (_name: string, handler: (request: Request) => Promise<Response>) => handler } })
+  mock.module(new URL('../request-log.ts', import.meta.url).href, { namedExports: { noteLogRpcAction: () => {}, noteLogUser: () => {}, withRequestLog: (_name: string, handler: (request: Request) => Promise<Response>) => handler } })
   route = await import('../../app/api/live/ticket/route')
 })
 

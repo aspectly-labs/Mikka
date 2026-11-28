@@ -1,6 +1,7 @@
 # Threads take the allowed models in the person's order
 
 - Date: 2026-11-02
+- **Status:** Superseded in part by [2026-11-02-1610](2026-11-02-1610-model-settings-r1-r5.md)
 - Source: Alex, relayed by the coordinator session: 「就这么去做吧」 on the model-order scheme, then his additions the same day (the default order; two settings entries, 「设备」 and 「模型与订阅」; 「允许使用的模型」 with add/remove and drag order; run location on that page). The coordinator filled in what Alex did not say (marked "coordinator" below).
 - Rule: —
 - Superseded in part by: [2026-11-02-1610](2026-11-02-1610-model-settings-r1-r5.md) (移除 has no confirmation), [2026-11-02-1620](2026-11-02-1620-preset-keys-speak-both-protocols.md) (a preset key speaks both protocols) and [2026-11-02-1830](2026-11-02-1830-preferred-models-and-agent.md) (允许使用的模型 is now 优先使用的模型)

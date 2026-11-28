@@ -102,7 +102,7 @@
     "apps/mobile/tests/motion-preference.test.mts": "372cd6e04aa5c41e935264c63b9ce4f92c064f0af388ae912cdf14832e588ecc",
     "apps/mobile/tests/openui-questions.test.mts": "8569f3b15122109e863f1ee74a078358bb407373c824c6eab1f652197ef315fc",
     "apps/mobile/tests/pending-actions.test.mts": "d74625ac9b9eb66257409cac2ea1ef5ea1106ef0b75b3fbef8d27ebdb966a094",
-    "docs/design/components.md": "13ae4751a8d3723c5c18bd8016b185491d25eb7758372d4ca1584d075dfeb52f",
+    "mikka-hosted-ui/docs/design/components.md": "13ae4751a8d3723c5c18bd8016b185491d25eb7758372d4ca1584d075dfeb52f",
     "docs/design/mobile.md": "2c72e968947e0b8df0fdaf913ae6a6d6ee21188dd46d4899cb4cd823c29bc354",
     "package.json": "98970f522bf2fc808878a16c546373a4028ad9cbe1a0c0017107829aecf31c33"
   },
@@ -111,6 +111,6 @@
     "Docker validated mobile source hashes match the published source.",
     "package.json preserves current main scripts; only test:mobile is replaced from the validated Docker snapshot.",
     "ui-policy.yml adds pnpm test:mobile to existing Core unit checks; final GitHub CI validates the integrated tree.",
-    "Latest main Agent Profiles changes are preserved; docs/design/components.md was merged with both inventories."
+    "Latest main Agent Profiles changes are preserved; mikka-hosted-ui/docs/design/components.md was merged with both inventories."
   ]
 }

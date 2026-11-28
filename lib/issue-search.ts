@@ -4,6 +4,7 @@ import { issues } from '@/lib/db/schema'
 import { resourceAccessPredicate } from '@/lib/resource-access/predicate'
 import { ActionFailureError } from '@/lib/action-error'
 import { pullRequestSchema, readIssueMetadata } from '@/lib/issue-metadata'
+import { jsonbSafeUuidExprSql } from './primitives/jsonb-predicates'
 
 /** Backend relation-picker search. Authorization is applied before the SQL limit,
  * with owner-only personal tasks, active workspace membership and no 100-row cap.
@@ -199,7 +200,7 @@ export async function fetchCandidates(db: Db, input: { userId: string; visibilit
   // Keep the already-issued identifier in this authorized page. Team changes
   // and owner prefix settings are neither naming nor authorization sources.
   const [packed] = await db.select({
-    data: sql<SearchTransportRow[] | null>`jsonb_agg(q.v order by (q.v->>8)::timestamptz desc,(q.v->>0)::uuid desc)`,
+    data: sql<SearchTransportRow[] | null>`jsonb_agg(q.v order by (q.v->>8)::timestamptz desc,${sql.raw(jsonbSafeUuidExprSql('q.v->>0'))} desc)`,
   }).from(page)
   return (packed.data ?? []).map(([id, ownerId, ownerName, scope, title, status, priority, revision, cursorKey, metadata, issuedIdentifier]): SearchRow => ({
     id, ownerId, ownerName, scope, title, status, priority, revision, updatedAt: new Date(cursorKey), cursorKey,

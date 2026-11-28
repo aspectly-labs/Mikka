@@ -1,7 +1,8 @@
 import type { SessionHistoryMessage } from 'eve/channels'
 import type { EveScope } from './scope'
 
-/** Only old text is imported. Historic rich rows remain immutable in Mikka. */
+/** Only old text is imported. Historic rich rows remain immutable in Mikka. A turn an Edit or Regenerate replaced
+ * (`mikkaSuperseded`, lib/coordinator/turn-revisions.ts) is not part of the conversation. */
 export async function priorHistory(scope: EveScope): Promise<SessionHistoryMessage[]> {
   if (scope.surface !== 'web') return []
   const { pool } = await import('../db')
@@ -17,6 +18,7 @@ export async function priorHistory(scope: EveScope): Promise<SessionHistoryMessa
       END, '') AS text
     FROM coordinator_messages
     WHERE "userId"=$1 AND "botId"=$2 AND message->>'role' IN ('user','assistant')
+      AND NOT message ? 'mikkaSuperseded'
     ORDER BY position`, [scope.ownerId, scope.botId])
   return rows.filter(row => row.text.trim())
 }

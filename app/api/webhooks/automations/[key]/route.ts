@@ -1,10 +1,8 @@
-import { withRequestLog } from '@/lib/request-log'
 import { handleAutomationWebhook } from '@/lib/schedules/webhook-route'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-
-/** An automation's webhook URL; lib/schedules/webhook-route.ts. The key in the path is masked in traces. */
-async function handlePOST(request: Request, { params }: { params: Promise<{ key: string }> }) {
-  return handleAutomationWebhook(request, (await params).key)
-}
-
-export const POST = withRequestLog('/api/webhooks/automations/[key]', handlePOST)
+/** An automation's webhook URL; lib/schedules/webhook-route.ts verifies the secret key before acting. */
+export const POST = defineRoute<'public', 'none', { key: string }>(
+  { route: '/api/webhooks/automations/[key]', auth: 'public', origin: 'any', workspace: 'none' },
+  async ({ request, params }) => handleAutomationWebhook(request, params.key),
+)
