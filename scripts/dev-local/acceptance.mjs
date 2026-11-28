@@ -21,6 +21,7 @@ import { verifyFactoryWatchdog } from './factory-watchdog-acceptance.mjs'
 import { verifyWorkspaceGovernance } from './workspace-governance-acceptance.mjs'
 import { assertFlashTestModel, assertTestModelRequest } from '../test-model-policy.mjs'
 import { prepareCloudAcceptance } from '../e2b/cloud-acceptance-release.mjs'
+import { REPOSITORY_KEY } from '../../tests/mvp/isolated-env.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
 const selectedItems = process.env.LOCAL_LOOP_ITEMS?.split(',') ?? ['1', '2', '3', '4', '5', '6', '7']
@@ -141,6 +142,10 @@ const run = async id => {
 }
 
 async function dispatch(name, text, signal) {
+  // Sequential acceptance items must not race a previous runtime-notification
+  // turn: eve may fold adjacent queued input, and task creation authority must
+  // remain bound to this item's own user-message source event.
+  await until(signal, async () => (await json(accounts.owner, '/api/coordinator/messages')).working === false ? true : null)
   const since = new Date()
   await sendMessage(accounts.owner, `${text}\n验收标记：${runId}-${name}`, randomUUID())
   const created = await until(signal, async () => (await query('SELECT id FROM agent_runs WHERE "userId"=$1 AND "createdAt">=$2 AND prompt LIKE $3 ORDER BY "createdAt" DESC LIMIT 1', [accounts.owner.userId, since, `%${runId}-${name}%`]))[0])
@@ -255,6 +260,8 @@ async function setup() {
   }))
   assert.equal(new URL(runtime.server ?? runtime.appUrl).origin, origin, 'runtime origin mismatch')
   accounts = await step('account-lease', 120_000, () => acquireTestAccounts({ environment, database: pool, runId, workerId: 'local-loop', requestId: runId }))
+  if (needsDaemon) await query(`INSERT INTO repository_settings("userId","remoteKey","verifyCommand") VALUES($1,$2,'npm test')
+    ON CONFLICT ("userId","remoteKey") DO UPDATE SET "verifyCommand"=excluded."verifyCommand","updatedAt"=now()`, [accounts.owner.userId, REPOSITORY_KEY])
   if (needsModels) await step('local-account-ready', 120_000, signal => until(signal, async () => {
     const refreshed = await fetch('http://127.0.0.1:3191/refresh', { method: 'POST', signal: AbortSignal.timeout(90_000) })
     if (!refreshed.ok) return false
@@ -305,8 +312,9 @@ async function factoryApproval(runId, signal) {
     return row.stage === 'approval' && row.status === 'pending' ? row : null
   })
   const stages = await query(`SELECT a.stage,r."sessionId" FROM factory_attempts a JOIN agent_runs r ON r.id=a."runId" WHERE a."taskId"=$1 AND a.status='passed' ORDER BY a.position`,[task.id])
-  assert.deepEqual(stages.slice(-3).map(row=>row.stage),['execute','review','verify'])
-  assert.equal(new Set(stages.slice(-3).map(row=>row.sessionId)).size,3,'independent CLI sessions for all three stages')
+  const expectedStages = task.route?.flowVersion === 2 ? ['execute','review'] : ['execute','review','verify']
+  assert.deepEqual(stages.slice(-expectedStages.length).map(row=>row.stage),expectedStages)
+  assert.equal(new Set(stages.slice(-expectedStages.length).map(row=>row.sessionId)).size,expectedStages.length,'independent CLI sessions for every required check stage')
   return task
 }
 
@@ -407,6 +415,10 @@ async function accept(device) {
     // without waiting for network failures or changing run rows in the DB.
     const unavailable = `${runtime.scenario.barePath}.unavailable-${runId}`
     await rename(runtime.scenario.barePath, unavailable)
+    // Keep the path present but invalid: a vanished parent fails before the
+    // daemon can even enter its repository stage, while an empty directory is
+    // a real unavailable repository and must produce that failed stage.
+    await mkdir(runtime.scenario.barePath, { recursive: true })
     try {
       const id = await dispatch('item3', `创建新任务，以 readOnly:true 派发给本机 ${device.name}（设备ID ${device.id}）检查仓库 ${repo}。读取 README 并报告，不要替换仓库重试。任务描述完整保留验收标记。`, signal)
       const done = await terminal(id, signal)
@@ -418,7 +430,7 @@ async function accept(device) {
       assert.match(done.error, /clone|fetch|repository|仓库|not found|does not exist/i, 'Failure reason does not describe the repository failure')
       await progress('item3-failure-stage', 'scope', 'HTTP thread projection preserves the repository failure and its stage; visual placement is not browser-tested')
       await progress('item3-failure-stage', 'evidence', id)
-    } finally { await rename(unavailable, runtime.scenario.barePath) }
+    } finally { await rm(runtime.scenario.barePath, { recursive: true, force: true }); await rename(unavailable, runtime.scenario.barePath) }
   })
   if (only.includes('4')) await check('item4-agent-communication', 240_000, async signal => {
     const workspace = (await json(accounts.owner, '/api/workspace')).workspace.id

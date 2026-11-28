@@ -1,17 +1,62 @@
 #!/usr/bin/env node
 // Fixed local fixture CLI. Never connects to GitHub or claims real CI evidence.
 import { execFileSync } from 'node:child_process'
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { MVP_SERVICES } from '../../tests/mvp/isolated-env.mjs'
 
 const REPO = 'mikka-e2e/core-loop'
 const RUN_TOKEN = 'mvp-synthetic-installation-run'
 const USER_TOKEN = 'mikka-local-synthetic-user-token'
+const SYNTHETIC_TOKENS = [RUN_TOKEN, USER_TOKEN]
+const CREDENTIALS_REQUIRED = 'Local fixture credentials required'
 const git = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+const credentialsRequired = () => { throw new Error(CREDENTIALS_REQUIRED) }
+
+function ownedPrivateDirectory(path) {
+  const uid = process.getuid?.()
+  if (uid === undefined) return false
+  try {
+    const stat = lstatSync(path)
+    return stat.isDirectory() && stat.uid === uid && (stat.mode & 0o077) === 0 && realpathSync(path) === path
+  } catch { return false }
+}
+
+/** Match the daemon's prepared native gh login. The fallback intentionally
+ * accepts only the two public synthetic fixture values; a host's real gh login
+ * or any GITHUB_TOKEN is never a credential source for this loopback CLI. */
+export function fixtureGitHubCredential(env = process.env) {
+  if (env.GITHUB_TOKEN) credentialsRequired()
+  if (env.GH_TOKEN) {
+    if (SYNTHETIC_TOKENS.includes(env.GH_TOKEN)) return env.GH_TOKEN
+    credentialsRequired()
+  }
+  let fd
+  try {
+    const configured = env.GH_CONFIG_DIR ?? ''
+    if (!isAbsolute(configured)) credentialsRequired()
+    const config = resolve(configured)
+    const parent = dirname(config)
+    if (basename(dirname(parent)) !== 'adapters' || basename(parent) !== 'github'
+      || !/^github-[a-zA-Z0-9]{6}$/.test(basename(config)) || !ownedPrivateDirectory(parent) || !ownedPrivateDirectory(config)) credentialsRequired()
+    fd = openSync(join(config, 'hosts.yml'), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    const stat = fstatSync(fd), uid = process.getuid?.()
+    if (uid === undefined || !stat.isFile() || stat.nlink !== 1 || stat.uid !== uid || (stat.mode & 0o077) !== 0 || stat.size <= 0 || stat.size > 4096) credentialsRequired()
+    const bytes = Buffer.alloc(stat.size)
+    if (readSync(fd, bytes, 0, stat.size, 0) !== stat.size) credentialsRequired()
+    const match = /^github\.com:\n    oauth_token: "(mvp-synthetic-installation-run|mikka-local-synthetic-user-token)"\n    git_protocol: https\n$/.exec(bytes.toString('utf8'))
+    if (!match) credentialsRequired()
+    return match[1]
+  } catch {
+    credentialsRequired()
+  } finally { if (fd !== undefined) closeSync(fd) }
+}
 
 export async function fixtureGh(args, { env = process.env, origin = MVP_SERVICES, fetcher = fetch, gitRun = git, output = value => process.stdout.write(`${value}\n`) } = {}) {
-  if (![RUN_TOKEN,USER_TOKEN].includes(env.GH_TOKEN) || (env.GH_REPO && env.GH_REPO !== REPO) || (env.GH_HOST && env.GH_HOST !== 'github.com')) throw new Error('Local fixture credentials required')
+  const credential = fixtureGitHubCredential(env)
+  if ((env.GH_REPO && env.GH_REPO !== REPO) || (env.GH_HOST && env.GH_HOST !== 'github.com')) throw new Error(CREDENTIALS_REQUIRED)
   const options = new Map(), positional = []
   for (let index = 0; index < args.length; index++) {
     const value = args[index]
@@ -26,7 +71,7 @@ export async function fixtureGh(args, { env = process.env, origin = MVP_SERVICES
   if (option('--repo', '-R') && option('--repo', '-R') !== REPO) throw new Error('Local fixture repository required')
   const api = async (path, method = 'GET', body) => {
     if (path !== 'graphql' && path !== `repos/${REPO}` && !path.startsWith(`repos/${REPO}/`)) throw new Error('Unsupported local fixture API')
-    const response = await fetcher(`${origin}/github/${path}`, { method, redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${env.GH_TOKEN}`, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
+    const response = await fetcher(`${origin}/github/${path}`, { method, redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) })
     if (!response.ok) throw new Error(`Local fixture API HTTP ${response.status}`)
     return response.json()
   }

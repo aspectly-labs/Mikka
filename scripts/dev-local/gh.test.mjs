@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtemp, appendFile, rm } from 'node:fs/promises'
+import { mkdtemp, appendFile, chmod, link, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -71,4 +71,58 @@ test('real agent-shaped push, gh PR and exact-head receipt use only the fixture 
     await assert.rejects(gh(['pr', 'view', 'https://github.com/another/repository/pull/1']), /fixture pull request required/)
     await assert.rejects(gh(['api', 'repos/another/repository/pulls']), /fixture API/)
   } finally { await services.close(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test('prepared native hosts.yml credentials are accepted only as bounded private synthetic fixture config', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'mikka-local-gh-config-'))
+  const parent = join(root, 'adapters', 'github')
+  const contents = token => `github.com:\n    oauth_token: "${token}"\n    git_protocol: https\n`
+  try {
+    await mkdir(parent, { recursive: true, mode: 0o700 })
+    await chmod(parent, 0o700)
+    const config = await mkdtemp(join(parent, 'github-'))
+    await chmod(config, 0o700)
+    const file = join(config, 'hosts.yml')
+    const env = { GH_CONFIG_DIR: config, GH_TOKEN: '', GITHUB_TOKEN: '', GH_REPO: 'mikka-e2e/core-loop', GH_HOST: 'github.com' }
+    const run = async values => {
+      const output = []
+      await fixtureGh(['--version'], { env: values ?? env, output: value => output.push(value) })
+      return output
+    }
+    const refused = values => assert.rejects(run(values), /Local fixture credentials required/)
+
+    await writeFile(file, contents('mvp-synthetic-installation-run'), { mode: 0o600 })
+    assert.match((await run())[0], /local-fixture/)
+    await writeFile(file, contents('mikka-local-synthetic-user-token'), { mode: 0o600 })
+    assert.match((await run())[0], /local-fixture/)
+    const authorizations = []
+    await fixtureGh(['repo', 'view', 'mikka-e2e/core-loop'], { env, output: () => {}, fetcher: async (_url, init) => {
+      authorizations.push(new Headers(init?.headers).get('authorization'))
+      return new Response(JSON.stringify({ default_branch: 'trunk' }), { status: 200 })
+    } })
+    assert.deepEqual(authorizations, ['Bearer mikka-local-synthetic-user-token'])
+    await refused({ ...env, GITHUB_TOKEN: 'mikka-local-synthetic-user-token' })
+    await refused({ ...env, GH_CONFIG_DIR: 'adapters/github/github-abc123' })
+    await refused({ ...env, GH_CONFIG_DIR: parent })
+
+    await writeFile(file, contents('private-host-token'), { mode: 0o600 })
+    await refused()
+    await writeFile(file, contents('mvp-synthetic-installation-run'), { mode: 0o600 })
+
+    await chmod(file, 0o644); await refused(); await chmod(file, 0o600)
+    await chmod(config, 0o755); await refused(); await chmod(config, 0o700)
+    await chmod(parent, 0o755); await refused(); await chmod(parent, 0o700)
+
+    const alias = join(config, 'alias.yml')
+    await link(file, alias); await refused(); await rm(alias)
+
+    await rm(file)
+    await writeFile(alias, contents('mvp-synthetic-installation-run'), { mode: 0o600 })
+    await symlink(alias, file); await refused(); await rm(file); await rm(alias)
+
+    await writeFile(file, 'x'.repeat(4097), { mode: 0o600 })
+    await refused()
+    await rm(file)
+    await refused()
+  } finally { await rm(root, { recursive: true, force: true }) }
 })

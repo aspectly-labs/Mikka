@@ -56,5 +56,35 @@ export function nativeLocalModelAnswer(request) {
   const url = published.match(/https:\/\/github\.com\/mikka-e2e\/core-loop\/pull\/\d+/)?.[0]
   if (!url) return { status: 422, code: 'fixture_publication_receipt_missing' }
   if (!shell.some(value => value.includes('FIXTURE_CHECKS_PASSED'))) return c.call('Bash', { command: `gh pr checks ${url} --watch && printf '\\nFIXTURE_CHECKS_PASSED\\n'`, description: 'Read local fixture CI for the actual published head' })
-  return c.call('submit', { summary: `Appended the requested README marker and published ${url}. Local fixture checks passed.`, criteria: [{ text: `README.md contains local acceptance ${marker}`, passed: true, command: 'npm test', exitCode: 0, evidence: published }] })
+  const capture = c.results('submit_capture', true).at(-1)
+  if (!capture) {
+    if (!c.has('submit_capture')) return { status: 422, code: 'fixture_capture_tool_missing' }
+    const receipt = shell.find(value => value.includes('FIXTURE_CAPTURE_READY'))
+    if (!receipt) {
+      return c.call('Bash', {
+        command: `set -e
+check_output="$(npm test 2>&1)"
+commit="$(git rev-parse HEAD)"
+receipt="$TMPDIR/mikka-local-acceptance-evidence.txt"
+png="$TMPDIR/mikka-local-acceptance-evidence.png"
+{
+  printf 'Mikka local acceptance evidence\\n'
+  printf 'marker: ${marker}\\n'
+  printf 'pull: ${url}\\n'
+  printf 'commit: %s\\n' "$commit"
+  printf '\\nnpm test output (exit 0):\\n%s\\n' "$check_output"
+} > "$receipt"
+ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=0x111827:s=1200x675 -vf "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile=\${receipt}:expansion=none:fontcolor=white:fontsize=28:x=48:y=48:line_spacing=10" -frames:v 1 "$png"
+test -s "$png"
+printf '\\nFIXTURE_CAPTURE_PATH=%s\\nFIXTURE_CAPTURE_READY\\n' "$png"`,
+        description: 'Render the actual verification output as inspectable visual evidence',
+      })
+    }
+    const path = /FIXTURE_CAPTURE_PATH=(\/[^\s]+)/.exec(receipt)?.[1]
+    if (!path) return { status: 422, code: 'fixture_capture_receipt_missing' }
+    return c.call('submit_capture', { path, title: `Local acceptance ${marker} verification output` })
+  }
+  const captureId = typeof capture === 'object' && capture !== null ? capture.captureId : undefined
+  if (typeof captureId !== 'string' || !/^[a-f0-9-]{36}$/i.test(captureId)) return { status: 422, code: 'fixture_capture_id_missing' }
+  return c.call('submit', { summary: `Appended the requested README marker and published ${url}. Local fixture checks passed.`, visualEvidence: [{ captureId, publicSafe: true }], criteria: [{ text: `README.md contains local acceptance ${marker}`, passed: true, command: 'npm test', exitCode: 0, evidence: published }] })
 }

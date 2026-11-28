@@ -153,6 +153,7 @@ What is fake and what is real:
 | Verification and password-reset mail ([Resend](https://resend.com/docs/api-reference/emails/send-email)) | Real with a real `RESEND_API_KEY`; otherwise a local outbox at `http://127.0.0.1:3191/mail` (JSON at `/mail.json`), one terminal line per mail |
 | Cron (the production quarter-hour Worker, `cloudflare/suggestions-cron`) | `scripts/dev-local/cron.mjs` calls the same `/api/cron/*` endpoints on the same schedule against the local API, with `CRON_SECRET` or a local placeholder ([securing cron jobs](https://vercel.com/docs/cron-jobs/manage-cron-jobs#securing-cron-jobs)) |
 | [Vercel Workflow](https://useworkflow.dev/docs/deploying/world/local-world) | The local world configured by `apps/api/scripts/dev.mjs` |
+| Device/live gateway | Real in-process built-in gateway; Vite proxies only its canonical socket upgrades |
 | Database, auth, daemon, git clone/worktree/commit/push | Real |
 
 ### Which model local runs use
@@ -172,9 +173,11 @@ The existing development setup uses these settings.
   ([infisical-cloud.md](infisical-cloud.md)) into the process environment
   only; never write it to a file, a commit, a log or a report.
 - `pnpm dev:local` adds it to every local account and picks DS 4.1 Flash for
-  the Coordinator and the Bots (`scripts/dev-local/seed-model-keys.ts`). Outside
-  dev:local, the same setup uses a DeepSeek key in Settings › 模型与订阅 with
-  an allowed Flash model selected.
+  the Coordinator and the Bots (`scripts/dev-local/seed-model-keys.ts`). Those
+  Bot chat choices stay in `bot_model_choices`; coding-run dispatch separately
+  uses the production model-order writer to place the Flash API-key candidate
+  first in each owner/workspace order. Outside dev:local, the same setup uses a
+  DeepSeek key in Settings › 模型与订阅 with an allowed Flash model selected.
 - All model requests use LiteLLM. Set both `MIKKA_LITELLM_URL` and
   `MIKKA_LITELLM_MASTER_KEY` for a real service. Configure built-in aliases
   and upstream credentials there; user API keys are passed only for their

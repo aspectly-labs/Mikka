@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { CAPTURE_CONTENT_TYPES, CAPTURE_MAX_BYTES } from '@mikka/protocol/capture'
+import { localTestAccountsMode } from '@mikka/protocol/local-test-mode'
 import { isLoopbackHost, LOCALHOST_HOSTNAME } from '@/lib/env/hosts'
+import { runtimeEnv } from '@/lib/env/server'
 
 const uuid = z.uuid()
 const sha = z.string().regex(/^[a-f0-9]{40}$/)
@@ -20,12 +22,14 @@ export type PublicCapture = z.infer<typeof publicCaptureSchema>
 export type PublicationEvidence = z.infer<typeof publicationEvidenceSchema>
 
 /** Public capture links use only the existing revocable share route. */
-export function publicCaptureToken(value: string) {
+export function publicCaptureToken(value: string, env: Readonly<Record<string, string | undefined>> = runtimeEnv()) {
   let url: URL
   try { url = new URL(value) } catch { return null }
-  if (url.href !== value || url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.port) return null
-  if (isLoopbackHost(url.hostname, { allowSubdomain: true }) || url.hostname.endsWith(`.${LOCALHOST_HOSTNAME}`) || url.hostname.startsWith('[')
-    || /^\d+(?:\.\d+){3}$/.test(url.hostname)) return null
+  const loopback = isLoopbackHost(url.hostname, { allowSubdomain: true }) || url.hostname.endsWith(`.${LOCALHOST_HOSTNAME}`) || url.hostname.startsWith('[')
+    || /^\d+(?:\.\d+){3}$/.test(url.hostname)
+  const localFixture = loopback && url.protocol === 'http:' && localTestAccountsMode(env)
+  if (url.href !== value || (url.protocol !== 'https:' && !localFixture) || url.username || url.password || url.search || url.hash) return null
+  if ((!localFixture && url.port) || (loopback && !localFixture)) return null
   return url.pathname.match(/^(?:\/[\w-]+)*\/api\/captures\/shared\/(mkc_[A-Za-z0-9_-]{32})$/)?.[1] ?? null
 }
 
