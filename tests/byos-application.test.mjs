@@ -26,7 +26,7 @@ import { authorizeSubscriptionUse } from '../lib/subscription-runtime.ts'
 import { authorizedAccessName } from '../lib/subscription-access-snapshot.ts'
 import { readSubscriptionQuota } from '../packages/daemon/src/subscription-quota.ts'
 import { signSubscriptionChat, verifySubscriptionChat } from '../lib/subscription-chat-ticket.ts'
-import { runNativeCliThroughGateway, startNativeLiteLlm } from './support/native-cli-litellm.mjs'
+import { runNativeCliThroughGateway } from './support/native-cli-cpa.mjs'
 import { seedFixtureWorkspace } from './helpers/task-workspace.ts'
 
 const workspaceId = '20000000-0000-4000-8000-000000000001'
@@ -48,6 +48,7 @@ test(scenario, { timeout: 90_000 }, async t => {
   const secretMethods = []
   const blockedDeletes = new Set()
   let providerCalls = 0
+  let officialNativeCli = false
   let unexpectedExternalRequests = 0
   const devices = new Map()
   const deviceVerifier = 'v'.repeat(43)
@@ -70,7 +71,8 @@ test(scenario, { timeout: 90_000 }, async t => {
     const codex = request.url.includes('/codex/')
     const body = codex ? Object.fromEntries(new URLSearchParams(raw)) : JSON.parse(raw)
     assert.equal(body.code, 'fixture-grant'); assert.equal(body.grant_type, 'authorization_code')
-    assert.equal(body.redirect_uri, codex ? 'https://auth.openai.com/deviceauth/callback' : 'http://localhost:54545/callback')
+    const validRedirect = codex ? ['https://auth.openai.com/deviceauth/callback'] : ['http://localhost:54545/callback', 'https://platform.claude.com/oauth/code/callback']
+    assert.ok(validRedirect.includes(body.redirect_uri))
     assert.equal(body.code_verifier.length, 43)
     if (!codex) assert.equal(body.state.length, 43)
     const claims = Buffer.from(JSON.stringify({ email: 'fixture@example.invalid', 'https://api.openai.com/auth': { chatgpt_account_id: 'fixture-account', chatgpt_plan_type: 'plus' } })).toString('base64url')
@@ -88,7 +90,7 @@ test(scenario, { timeout: 90_000 }, async t => {
       return
     }
     assert.equal(body.stream, true)
-    if (!process.env.MIKKA_NATIVE_LITELLM_BIN) assert.ok(!Object.hasOwn(body, 'metadata'), 'no synthetic native identity metadata')
+    if (!officialNativeCli) assert.ok(!Object.hasOwn(body, 'metadata'), 'no synthetic native identity metadata')
     const provider = request.url.endsWith('/codex') ? 'codex' : 'claude'
     if (provider === 'codex') { assert.equal(body.store, false); assert.equal(request.headers.originator, 'Mikka'); assert.equal(request.headers['chatgpt-account-id'], 'fixture-account') }
     const raw = JSON.stringify(body)
@@ -163,16 +165,6 @@ test(scenario, { timeout: 90_000 }, async t => {
   })
   await new Promise(resolve => infisical.listen(0, '127.0.0.1', resolve))
   const origin = `https://127.0.0.1:${infisical.address().port}`
-  let nativeLiteLlm
-  try {
-    nativeLiteLlm = await startNativeLiteLlm(root, directory, origin, certificate)
-  } catch (error) {
-    infisical.closeAllConnections()
-    await new Promise(resolve => infisical.close(resolve))
-    await pool.end()
-    throw error
-  }
-  if (nativeLiteLlm) t.after(nativeLiteLlm.close)
   const repository = new SubscriptionRepository(pool)
   let workerStarts = 0
   let service
@@ -198,8 +190,10 @@ test(scenario, { timeout: 90_000 }, async t => {
           return snapshot(...args)
         }, snapshot)
     }
-    return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token', ...(nativeLiteLlm ? { nativeLiteLlmUrl: nativeLiteLlm.url, nativeLiteLlmKey: nativeLiteLlm.key } : {}) })
+    return new SubscriptionWorkerClient({ binary, env: { SSL_CERT_FILE: certificate, MIKKA_BYOS_FIXTURE_UPSTREAM_ORIGIN: origin } }, { scope, databaseUrl, infisicalOrigin: origin, project: 'fixture-project', environment: 'test', path: '/byos-cpa', workloadToken: 'fixture-workload-token',accessPath:'/byos-cpa',accessToken:'fixture-workload-token' })
   }, { ready: () => true, nativeIsolation: 'verified_runtime', oauth: { codex: true, claude: true } }, undefined, chatOnly ? authorizeSubscriptionUse : async (_owner, workspace) => assert.equal(workspace, workspaceId), undefined, undefined, undefined, chat.fixtureTransport)
+  const directService = new SubscriptionService(repository, service.worker, service.capabilities,
+    service.quota, service.workspace, service.admitModel, service.member)
   const dependencies = {
     session: async request => {
       const value = request.headers.get('cookie')?.match(/fixture=([a-z-]+)/)?.[1]
@@ -358,6 +352,19 @@ test(scenario, { timeout: 90_000 }, async t => {
         const model = await resolveAgentModel({ type: 'subscription', bindingId: remembered }, { defaultModel: () => { throw new Error('paid fallback invoked') }, subscriptionModel: bindingId => resolveAgentSubscription('alice', consumerId, bindingId, service, dependencies.workspace) })
         await assertChat(model, use)
       }
+      const beforeDirect = { callbacks: chat.captured.length, providerCalls }
+      const direct = await chat.traceModel(async () => streamText({
+        model: await directService.model(use), prompt: 'HELLO', maxRetries: 0,
+      }).text)
+      assert.equal(direct.result, 'subscription fixture')
+      assert.equal(chat.captured.length, beforeDirect.callbacks)
+      assert.equal(providerCalls, beforeDirect.providerCalls + 1)
+      const directCallId = direct.spans.find(span => span.name === 'model.subscription.cpa')?.attributes['mikka.model.call_id']
+      assert.equal(typeof directCallId, 'string')
+      const directUsage = await pool.query('SELECT state, "billingSource", "generationId", "inputTokens", "outputTokens" FROM hosted_usage WHERE id=$1', [directCallId])
+      assert.deepEqual(directUsage.rows, [{
+        state: 'settled', billingSource: 'subscription', generationId: null, inputTokens: '1', outputTokens: '1',
+      }])
       assert.equal(secretMethods.filter(method => method === 'POST').length, initialSecretCreates, 'task reuse must not log in or store credentials again')
       if (chat.realLiteLLM) t.diagnostic(`${provider}: pinned LiteLLM preserved CPA trace, unique usage, and owner isolation`)
       let toolCalls = 0
@@ -396,7 +403,29 @@ test(scenario, { timeout: 90_000 }, async t => {
         assert.equal(contextResponse.status,200)
         const metadata=await contextResponse.json();assert.equal(metadata.route,nativeRoute);assert.equal(metadata.revision,revision);assert.ok(!JSON.stringify(metadata).includes('accessToken'));assert.ok(!JSON.stringify(metadata).includes('fixture-access'))
         const payload={path:provider==='codex'?'/responses':'/v1/messages',headers:{'user-agent':'Mikka/1.0',originator:'Mikka',authorization:'Bearer caller-placeholder'},body:provider==='codex'?{model:'fixture-model',stream:true,store:false,input:[{role:'user',content:'HELLO'}]}:{model:'fixture-model',stream:true,max_tokens:16,messages:[{role:'user',content:'HELLO'}]}}
-        if (nativeLiteLlm && task === 0) await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model', metadata, bindingId: agentBinding.body.bindingId, consumerId: agentId })
+        if (task === 0) {
+          const { handleModelGateway, modelGatewayDependencies, forwardNativeSubscription } = await import('../lib/model-gateway/handler.ts')
+          const { mintGatewayToken } = await import('../lib/model-gateway/token.ts')
+          const { token } = await mintGatewayToken(pool, { runId, ownerId: 'alice', workspaceId, harness: provider === 'claude' ? 'claude_code' : 'codex',
+            model: 'fixture-model', source: { kind: 'subscription', deviceId } })
+          const deps = modelGatewayDependencies()
+          deps.subscription = (...args) => forwardNativeSubscription(...args, service)
+          const request = new Request('http://localhost/api/model-gateway', { method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(payload.body) })
+          const response = await handleModelGateway(request, provider === 'claude' ? 'anthropic' : 'openai', provider === 'claude' ? 'messages' : 'responses', deps)
+          assert.equal(response.status, 200)
+          assert.match(await response.text(), /subscription fixture/)
+          const { rows } = await pool.query('SELECT state, "billingSource", "generationId", "inputTokens", "outputTokens" FROM hosted_usage WHERE "usageRunId"=$1', [runId])
+          assert.deepEqual(rows, [{ state: 'settled', billingSource: 'subscription', generationId: null, inputTokens: '1', outputTokens: '1' }])
+        }
+        if (task === 0 && (provider === 'claude' ? process.env.MIKKA_NATIVE_CLAUDE_BIN : process.env.MIKKA_NATIVE_CODEX_BIN)) {
+          officialNativeCli = true
+          try {
+            await runNativeCliThroughGateway({ provider, directory, service, pool, runId, deviceId, workspaceId, model: 'fixture-model', metadata, bindingId: agentBinding.body.bindingId, consumerId: agentId })
+          } finally {
+            officialNativeCli = false
+          }
+        }
         const callsBeforeRetiredRoute = providerCalls
         const retired = await nativePost(runId, { action: 'request', payload })
         assert.equal(retired.status, 410)
@@ -478,14 +507,19 @@ test(scenario, { timeout: 90_000 }, async t => {
     assert.equal(gone.rows[0].state, 'disconnected'); assert.ok(gone.rows[0].removedAt)
     if (chat.realLiteLLM) t.diagnostic('Scripted chat crossed pinned LiteLLM, the signed CPA callback and real PostgreSQL')
     if (process.env.MIKKA_BYOS_BACKEND_ONLY === '1') { console.log('Backend-only acceptance complete; browser acceptance intentionally not run'); return }
+    await pool.query(`INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES ('browser-owner','Browser fixture','browser-owner@byos-fixture.invalid',true,now(),now())`)
+    await pool.query(`INSERT INTO mikka_workspace_members ("workspaceId","userId",name,email,role,status) VALUES ($1,'browser-owner','Browser fixture','browser-owner@byos-fixture.invalid','admin','active')`, [workspaceId])
     const hostedUiConfig = resolve(root, '.hosted-ui/tsconfig.json')
     // Actual Settings component in Chromium, synthetic session/provider only.
     const require = createRequire(import.meta.url)
     const esbuild = require(require.resolve('esbuild', { paths: [require.resolve('tsx')] }))
     const bundle = join(directory, 'browser.js')
-    await esbuild.build({ stdin: { contents: `import React from 'react';import{createRoot}from'react-dom/client';import{NextIntlClientProvider}from'@/lib/intl/i18n-client';import{SubscriptionSettings}from'@hosted/web/components/settings/subscription-settings';import messages from '@/messages/en.json';createRoot(document.getElementById('root')).render(<NextIntlClientProvider locale="en" messages={messages}><SubscriptionSettings userKey="browser-owner" workspaceId="${workspaceId}"/></NextIntlClientProvider>);`, resolveDir: root, loader: 'tsx' }, outfile: bundle, bundle: true, platform: 'browser', format: 'iife', tsconfig: hostedUiConfig, define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '""' }, plugins: [{
-      name: 'stub-model-order-server-action',
+    await esbuild.build({ stdin: { contents: `import React from 'react';import{createRoot}from'react-dom/client';import{NextIntlClientProvider}from'@/lib/intl/i18n-client';import{SubscriptionSettings}from'@hosted/web/components/settings/subscription-settings';import messages from '@/messages/en.json';createRoot(document.getElementById('root')).render(<NextIntlClientProvider locale="en" messages={messages}><SubscriptionSettings workspaceId="${workspaceId}"/></NextIntlClientProvider>);`, resolveDir: root, loader: 'tsx' }, outfile: bundle, bundle: true, platform: 'browser', format: 'iife', tsconfig: hostedUiConfig, define: { 'process.env.NODE_ENV': '"production"', 'process.env.MIKKA_BASE_PATH': '""' }, plugins: [{
+      name: 'settings-browser-fixture',
       setup(build) {
+        // The public root and the separately installed hosted overlay must
+        // share the React runtime, as in the official renderer build.
+        build.onResolve({ filter: /^(react|react-dom)(\/.*)?$/ }, args => ({ path: require.resolve(args.path) }))
         build.onResolve({ filter: /^@\/app\/actions\/model-order$/ }, () => ({ path: 'model-order-action', namespace: 'fixture' }))
         build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export async function refreshSubscriptionModels() { return { error: "fixture-only" } }', loader: 'js' }))
       }
@@ -511,7 +545,7 @@ test(scenario, { timeout: 90_000 }, async t => {
     const context = await browser.newContext()
     await context.addCookies([{ name: 'fixture', value: 'browser-owner', url: browserOrigin }])
     let authorizations = 0
-    let claudeCallback
+    let claudeCode
     await context.route('https://auth.openai.com/**', async route => {
       authorizations++; assert.equal(route.request().url(), 'https://auth.openai.com/codex/device')
       await route.fulfill({ body: '<html><body>Official device page fixture: enter ABCD-EFGH</body></html>' })
@@ -519,38 +553,51 @@ test(scenario, { timeout: 90_000 }, async t => {
     await context.route('https://claude.ai/**', async route => {
       authorizations++
       const query = new URL(route.request().url()).searchParams
-      assert.equal(query.get('redirect_uri'), 'http://localhost:54545/callback')
-      claudeCallback = `http://localhost:54545/callback?code=fixture-grant&state=${query.get('state')}`
+      assert.equal(query.get('redirect_uri'), 'https://platform.claude.com/oauth/code/callback')
+      claudeCode = `fixture-grant#${query.get('state')}`
       await route.fulfill({ body: '<html><body>Official authorization fixture; registered loopback callback would appear in address bar.</body></html>' })
     })
     const page = await context.newPage()
     const errors = []; page.on('pageerror', error => errors.push(error.message))
     await page.goto(browserOrigin)
     assert.equal((await subscriptionCallback(new Request(`${browserOrigin}/api/subscriptions/callback?code=fixture-grant&state=${'x'.repeat(43)}`), dependencies)).status, 410)
-    await page.getByRole('button', { name: 'Connect subscription' }).first().click()
-    await page.getByLabel('Device authorization code').waitFor()
-    const popupPromise = context.waitForEvent('page')
-    await page.getByRole('link', { name: 'Open official sign-in page' }).click()
-    const popup = await popupPromise; await popup.waitForLoadState(); await popup.close()
-    await page.waitForTimeout(5200)
-    await page.getByRole('button', { name: 'Check authorization' }).click()
-    await page.getByRole('status').waitFor()
-    await page.waitForTimeout(5200)
-    await page.getByRole('button', { name: 'Check authorization' }).click()
-    await page.getByText('Connected', { exact: true }).waitFor()
-    await page.getByRole('button', { name: 'Disconnect', exact: true }).click()
-    await page.getByRole('button', { name: 'Connect subscription' }).last().click()
-    const claudePopupPromise = context.waitForEvent('page')
-    await page.getByRole('link', { name: 'Open official sign-in page' }).click()
-    const claudePopup = await claudePopupPromise; await claudePopup.waitForLoadState(); await claudePopup.close()
-    assert.ok(claudeCallback)
-    await page.getByLabel('Complete callback URL').fill(claudeCallback)
-    await page.getByRole('button', { name: 'Check authorization' }).click()
-    await page.getByText('Connected', { exact: true }).waitFor()
+    async function openProvider(provider, address) {
+      try {
+        const button = page.getByRole('button', { name: 'Connect', exact: true })
+        const row = page.locator('div').filter({ has: page.getByText(provider, { exact: true }) }).filter({ has: button }).last()
+        const connect = row.getByRole('button', { name: 'Connect', exact: true })
+        await connect.waitFor({ timeout: 5000 })
+        const [popup] = await Promise.all([context.waitForEvent('page'), connect.click({ timeout: 5000 })])
+        await popup.waitForURL(address)
+        await popup.close()
+      } catch (error) {
+        t.diagnostic(JSON.stringify({ errors, settings: (await page.locator('main').innerText()).slice(0, 1500) }))
+        throw error
+      }
+    }
+    const connected = page.getByRole('switch', { name: /^Use /, checked: true })
+    async function disconnectProvider() {
+      await connected.waitFor({ state: 'attached' })
+      const row = page.locator('[id^="subscription-"]').filter({ has: connected })
+      await row.getByRole('button', { name: /^More for / }).click()
+      await page.getByRole('menuitem', { name: 'Disconnect', exact: true }).click()
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Disconnect', exact: true }).press('Enter')
+      await connected.waitFor({ state: 'detached' })
+    }
+    await openProvider('ChatGPT / Codex', 'https://auth.openai.com/codex/device')
+    await page.getByText('ABCD-EFGH', { exact: true }).waitFor()
+    await disconnectProvider()
+    await openProvider('Claude', 'https://claude.ai/**')
+    assert.ok(claudeCode)
+    await page.getByLabel('Authorization code', { exact: true }).fill(claudeCode)
+    await page.getByRole('button', { name: 'Complete connection' }).click()
+    await connected.waitFor({ state: 'attached' })
+    const browserRows = await pool.query(`SELECT provider,state FROM byos_connections WHERE "ownerId"='browser-owner' ORDER BY provider`)
+    assert.deepEqual(browserRows.rows, [{ provider: 'claude', state: 'connected' }, { provider: 'codex', state: 'disconnected' }])
     assert.equal(authorizations, 2); assert.deepEqual(errors, [])
     await page.screenshot({ path: '/tmp/mikka-byos-oauth-review-browser.png', fullPage: true })
-    await page.getByRole('button', { name: 'Disconnect', exact: true }).click()
-    console.log('BYOS browser acceptance: actual Settings -> CPA device pending/complete + registered Claude callback URL handoff -> owner-bound persistence -> disconnect; synthetic providers only')
+    await disconnectProvider()
+    console.log('BYOS browser acceptance: Settings -> Codex device polling and Claude web code handoff -> owner-bound persistence -> disconnect; synthetic providers only')
 
   } finally {
     if (browser) await browser.close()

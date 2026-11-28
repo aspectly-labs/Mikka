@@ -30,8 +30,6 @@ export interface WorkerConfiguration {
   retainEnrollmentSources?: boolean
   use?: { bindingId: string; consumerId: string; runId?: string }
   executionOnly?: boolean
-  nativeLiteLlmUrl?: string
-  nativeLiteLlmKey?: string
   enableCodexOAuth?: boolean
   enableRuntime?: boolean
   enablePlainModels?: boolean

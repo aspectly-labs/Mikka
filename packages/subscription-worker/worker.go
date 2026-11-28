@@ -37,8 +37,6 @@ type Worker struct {
 	QuotaClient      *http.Client
 	ModelsClient     *http.Client
 	NativeClient     *http.Client
-	NativeLiteLLMURL string
-	NativeLiteLLMKey string
 	Scope            Scope
 	Authenticator    sdkauth.Authenticator
 	Executor         core.ProviderExecutor

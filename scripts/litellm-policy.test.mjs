@@ -49,13 +49,14 @@ test('subscription inference endpoints are routing metadata and cannot hide in q
   }
 })
 
-test('the native Go broker rejects the retired provider-direct endpoints', () => {
+test('the native Go broker permits fixed CPA endpoints and rejects other provider destinations', () => {
   const native = 'packages/subscription-worker/native_broker.go'
-  const old = `endpoint := "https://api.anthropic.com" + request.Path
-endpoint = "https://chatgpt.com/backend-api/codex/responses"`
-  assert.deepEqual(auditLiteLlmSource(native, old).map(item => item.line), [1, 2])
-  assert.deepEqual(auditLiteLlmSource(native, `endpoint := base + "/v1/mikka/subscription/codex/responses"`), [])
-  assert.deepEqual(auditLiteLlmSource('packages/subscription-worker/plain_model.go', old), [])
+  const invalid = `endpoint := "https://api.anthropic.com" + request.Path
+endpoint = "https://api.openai.com/v1/responses"`
+  assert.deepEqual(auditLiteLlmSource(native, invalid).map(item => item.line), [1, 2])
+  assert.deepEqual(auditLiteLlmSource(native, `endpoint = "https://api.anthropic.com/v1/messages?beta=true"
+endpoint = "https://api.anthropic.com/v1/messages/count_tokens?beta=true"
+endpoint = "https://chatgpt.com/backend-api/codex/responses"`), [])
   assert.deepEqual(auditLiteLlmSource('packages/subscription-worker/quota.go',
     `endpoint := "https://api.anthropic.com/api/oauth/usage"`), [])
 })

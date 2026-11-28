@@ -149,6 +149,8 @@ try {
     MIKKA_DATABASE_URL: url, DATABASE_URL: url,
     MIKKA_BYOS_FIXTURE_BINARY: `${worker}bin/mikka-subscription-fixture`,
     MIKKA_BYOS_LITELLM_BINARY: process.env.MIKKA_BYOS_LITELLM_BINARY ?? "",
+    MIKKA_NATIVE_CLAUDE_BIN: process.env.MIKKA_NATIVE_CLAUDE_BIN ?? "",
+    MIKKA_NATIVE_CODEX_BIN: process.env.MIKKA_NATIVE_CODEX_BIN ?? "",
     MIKKA_BYOS_CHAT_ONLY: process.env.MIKKA_BYOS_CHAT_ONLY ?? ""
   })
   await run(process.execPath, ["scripts/migrate.mjs"], migrationEnv)

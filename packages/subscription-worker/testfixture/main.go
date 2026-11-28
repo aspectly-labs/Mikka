@@ -77,20 +77,18 @@ func run() error {
 		return w.ErrUnsupported
 	}
 	var c struct {
-		Scope            w.Scope           `json:"scope"`
-		Use              *w.RuntimeUse     `json:"use"`
-		ExecutionOnly    bool              `json:"executionOnly"`
-		AccessSnapshot   *w.AccessSnapshot `json:"accessSnapshot"`
-		AccessPath       string            `json:"accessPath"`
-		AccessToken      string            `json:"accessToken"`
-		DatabaseURL      string            `json:"databaseUrl"`
-		Origin           string            `json:"infisicalOrigin"`
-		Project          string            `json:"project"`
-		Environment      string            `json:"environment"`
-		Path             string            `json:"path"`
-		Token            string            `json:"workloadToken"`
-		NativeLiteLLMURL string            `json:"nativeLiteLlmUrl"`
-		NativeLiteLLMKey string            `json:"nativeLiteLlmKey"`
+		Scope          w.Scope           `json:"scope"`
+		Use            *w.RuntimeUse     `json:"use"`
+		ExecutionOnly  bool              `json:"executionOnly"`
+		AccessSnapshot *w.AccessSnapshot `json:"accessSnapshot"`
+		AccessPath     string            `json:"accessPath"`
+		AccessToken    string            `json:"accessToken"`
+		DatabaseURL    string            `json:"databaseUrl"`
+		Origin         string            `json:"infisicalOrigin"`
+		Project        string            `json:"project"`
+		Environment    string            `json:"environment"`
+		Path           string            `json:"path"`
+		Token          string            `json:"workloadToken"`
 	}
 	if json.Unmarshal(line, &c) != nil {
 		return w.ErrUnsupported
@@ -126,7 +124,7 @@ func run() error {
 		return w.ErrUnsupported
 	}
 	client := &http.Client{Transport: fixtureTransport(func(request *http.Request) (*http.Response, error) {
-		model := request.URL.String() == "https://api.anthropic.com/v1/messages" || request.URL.String() == "https://api.anthropic.com/v1/messages?beta=true" || request.URL.String() == "https://chatgpt.com/backend-api/codex/responses"
+		model := request.URL.String() == "https://api.anthropic.com/v1/messages" || request.URL.String() == "https://api.anthropic.com/v1/messages?beta=true" || request.URL.String() == "https://chatgpt.com/backend-api/codex/responses" || request.URL.String() == "https://api.anthropic.com/v1/messages/count_tokens?beta=true"
 		quota := request.URL.String() == "https://chatgpt.com/backend-api/wham/usage" || request.URL.String() == "https://api.anthropic.com/api/oauth/usage"
 		oauth := request.URL.String() == "https://auth.openai.com/api/accounts/deviceauth/usercode" || request.URL.String() == "https://auth.openai.com/api/accounts/deviceauth/token" || request.URL.String() == "https://auth.openai.com/oauth/token" || request.URL.String() == "https://platform.claude.com/v1/oauth/token"
 		if !model && !oauth && !quota {
@@ -134,7 +132,9 @@ func run() error {
 		}
 		clone := request.Clone(request.Context())
 		target := *upstream
-		if model {
+		if request.URL.Path == "/v1/messages/count_tokens" {
+			target.Path = "/provider/count"
+		} else if model {
 			target.Path = "/provider/" + c.Scope.Provider
 		} else if quota {
 			target.Path = "/quota/" + c.Scope.Provider
@@ -151,26 +151,7 @@ func run() error {
 		worker.OAuth = w.CPAClaudeOAuth{Client: client}
 	}
 	worker.QuotaClient = client
-	if c.NativeLiteLLMURL != "" {
-		base, err := url.Parse(c.NativeLiteLLMURL)
-		if err != nil || base.Scheme != "http" || base.Hostname() != "127.0.0.1" {
-			return w.ErrUnsupported
-		}
-		worker.NativeLiteLLMURL, worker.NativeLiteLLMKey = c.NativeLiteLLMURL, c.NativeLiteLLMKey
-	} else {
-		worker.NativeLiteLLMURL, worker.NativeLiteLLMKey = "http://127.0.0.1:40123", "fixture-llm-proxy"
-		worker.NativeClient = &http.Client{Transport: fixtureTransport(func(request *http.Request) (*http.Response, error) {
-			if request.URL.Hostname() != "127.0.0.1" || !strings.HasPrefix(request.URL.Path, "/v1/mikka/subscription/") {
-				return nil, w.ErrUnsupported
-			}
-			clone := request.Clone(request.Context())
-			clone.Header.Del("X-Litellm-Api-Key")
-			target := *upstream
-			target.Path = "/provider/" + c.Scope.Provider
-			clone.URL, clone.Host = &target, upstream.Host
-			return http.DefaultTransport.RoundTrip(clone)
-		})}
-	}
+	worker.NativeClient = client
 	if c.ExecutionOnly {
 		worker.Secrets = nil
 	}
