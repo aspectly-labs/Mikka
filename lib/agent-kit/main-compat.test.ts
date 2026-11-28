@@ -27,7 +27,7 @@ const latestBinding=mock.fn(async()=>subscription)
 const scopedBinding=mock.fn(async()=>{if(missing)throw Error('missing binding');return subscription})
 const claimed=mock.fn(async(_pool:unknown,_run:string,_device:string,lease:Date)=>{currentRun.status='preparing';currentRun.leaseExpiresAt=lease;return 'claimed'})
 // The claim reads a stored legacy `ask` as allow (lib/computer/claim.ts), so a grant is only ever allow.
-let computerPermission: 'allow' = 'allow'
+let computerPermission = 'allow' as const
 const cloudClaimed=mock.fn(async(_pool:unknown,_owner:unknown,_run:string,_device:string,lease:Date)=>{currentRun.status='preparing';currentRun.leaseExpiresAt=lease;return {botId,ownerId:owner,display:':3',policyVersion:1,permission:computerPermission}})
 const publicationPolicy=defaultRunPolicy()
 publicationPolicy.permissions.git_push='allow'
