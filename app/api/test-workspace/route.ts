@@ -1,19 +1,28 @@
-import { withRequestLog } from '@/lib/request-log'
-import { getTranslations } from 'next-intl/server'
+import { getTranslations } from '@/lib/intl/i18n-server'
 import { createHmac } from 'node:crypto'
 import { auth, authBaseURL } from '@/lib/auth'
+import { defineRoute } from '@/lib/primitives/define-route'
+import { envExact, readEnv } from '@/lib/env/server'
+import { DEFAULT_LOCAL_DEV_ORIGIN } from '@/lib/env/hosts'
 
 async function handlePOST(request: Request) {
   const i18nText = await getTranslations();
-  if (process.env.NODE_ENV !== 'development') return new Response(null, { status: 404 })
+  if (!envExact('NODE_ENV', 'development')) return new Response(null, { status: 404 })
 
   const origin = request.headers.get('origin')
-  const trustedOrigins = ['http://localhost:3000', authBaseURL, process.env.V0_RUNTIME_URL, process.env.V0_DEV_APP_URL, process.env.V0_BUILD_URL, process.env.V0_SANDBOX_URL]
+  const trustedOrigins = [
+    DEFAULT_LOCAL_DEV_ORIGIN,
+    authBaseURL,
+    readEnv('V0_RUNTIME_URL'),
+    readEnv('V0_DEV_APP_URL'),
+    readEnv('V0_BUILD_URL'),
+    readEnv('V0_SANDBOX_URL'),
+  ]
     .filter((value): value is string => Boolean(value))
     .map(value => new URL(value).origin)
   if (!origin || !trustedOrigins.includes(origin)) return new Response(null, { status: 403 })
 
-  const secret = process.env.BETTER_AUTH_SECRET
+  const secret = readEnv('BETTER_AUTH_SECRET')
   if (!secret) return new Response(null, { status: 503 })
 
   const fingerprint = createHmac('sha256', secret).update('mikka-preview-test-account').digest('hex')
@@ -35,4 +44,12 @@ async function handlePOST(request: Request) {
   }
 }
 
-export const POST = withRequestLog('/api/test-workspace', handlePOST)
+export const POST = defineRoute<'public', 'none'>(
+  {
+    route: '/api/test-workspace',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request }) => handlePOST(request),
+)

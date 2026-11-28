@@ -1,6 +1,7 @@
 # Attach files in every chat
 
 - Date: 2026-11-03
+- **Status:** Accepted
 - Source: Alex, in the attachment repair chat: 「很多都有麻烦，你全都加上可以吗？你就看其他竞品加了什么，你加什么，而且，像 Markdown 之类的肯定很重要的东西，麻烦你都要加上呀」; 「不只是BOT吧，还有Agent呀，凡是涉及聊天界面的，你都要处理吧」.
 - Rule: R-10, R-42
 - Replaces: —
@@ -23,4 +24,4 @@ attachment states: 「现在可以了，继续吧」. The following frames are *
 - Figma page: [`917:456`](https://www.figma.com/design/zPe5LKycb2XuT1ivCLRw07?node-id=917-456).
 - Proposal and coverage: [`../chat-attachments.md`](../chat-attachments.md).
 - New attachment UI follows the confirmation requirement in
-  [`2026-11-01-0330-ui-figma-and-skill-review-before-code.md`](2026-11-01-0330-ui-figma-and-skill-review-before-code.md).
+  [`2026-11-01-0330-ui-figma-and-skill-review-before-code.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md).

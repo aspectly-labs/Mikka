@@ -1,6 +1,7 @@
 # Coordinator OpenUI instructions follow OpenUI's generator
 
 - Date: 2026-10-31
+- **Status:** Superseded by [2026-11-25-remove-openui.md](2026-11-25-remove-openui.md)
 - Source: Alex, 2026-10-31, testing the Coordinator after 「介绍一下北京的历史」 and 「北京有哪些景点啊?」 came back as plain Markdown: 「是不是我们没有按照 Vercel 的 AI Gateway，还有 OpenUI 官网的那些 instruction，来做这个提示词和这些设计啊？」
 - Rule: —
 - Replaces: the hand-written Coordinator presentation block that opened with "Prefer a natural text reply for a simple exchange"

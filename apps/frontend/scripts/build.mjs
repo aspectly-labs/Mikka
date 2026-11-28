@@ -17,8 +17,8 @@ async function assetFiles(directory) {
   return result
 }
 
-export async function buildFrontend({ target = 'web', outdir = resolve(frontend, 'dist', target), clean = true, serverPages = false, publicTestFixture = false } = {}) {
-  const config = await frontendConfig({ target, outdir, clean, serverPages, publicTestFixture })
+export async function buildFrontend({ target = 'web', outdir = resolve(frontend, 'dist', target), clean = true } = {}) {
+  const config = await frontendConfig({ target, outdir, clean })
   outdir = resolve(config.root, config.build.outDir)
   // This directory belongs to the build. Complete its removal before Vite
   // writes anything, then verify the emitted inventory before publishing it.
@@ -33,17 +33,26 @@ export async function buildFrontend({ target = 'web', outdir = resolve(frontend,
     const name = relative(outdir, path).split(sep).join('/')
     if (clean && !assets.has(name)) throw new Error(`FRONTEND_ASSET_UNEXPECTED: ${name}`)
   }
-  const fingerprint = createHash('sha256')
   // Incremental desktop development retains old chunks for existing windows,
   // but only this build's emitted assets identify the current application.
+  //
+  // The identity is the emitted *content* alone. A chunk file name already
+  // encodes that chunk's own hash, so folding the name back in counts the same
+  // bytes twice and makes the identity depend on how the bundler happened to
+  // split and order modules; an equivalent chunking split then changes the
+  // identity of an application that did not change. Sorting the per-asset
+  // digests keeps the result independent of emission order as well.
+  const digests = []
   for (const name of [...assets.keys()].sort()) {
     const asset = assets.get(name)
     const content = await readFile(resolve(outdir, name))
     const emitted = Buffer.from(asset.type === 'chunk' ? asset.code : asset.source)
     if (!content.equals(emitted)) throw new Error(`FRONTEND_ASSET_CONTENT_MISMATCH: ${name}`)
-    fingerprint.update(name)
-    fingerprint.update(content)
+    digests.push(createHash('sha256').update(content).digest('hex'))
   }
+  digests.sort()
+  const fingerprint = createHash('sha256')
+  for (const digest of digests) fingerprint.update(digest)
   const rendererBuild = fingerprint.digest('hex')
   const result = { ...inventory, rendererBuild }
   await writeFile(resolve(outdir, 'renderer-build.js'), `export const rendererBuild = ${JSON.stringify(rendererBuild)};\n`)
@@ -60,7 +69,9 @@ export async function buildFrontend({ target = 'web', outdir = resolve(frontend,
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const target = process.argv.includes('--desktop') ? 'desktop' : 'web'
-  const result = await buildFrontend({ target, serverPages: process.argv.includes('--server-pages'), publicTestFixture: process.argv.includes('--public-test-fixture') })
+  const args = process.argv.slice(2)
+  if (args.length > 1 || args.some(arg => !['web', 'desktop', '--desktop'].includes(arg))) throw new Error('FRONTEND_BUILD_ARGUMENTS_INVALID')
+  const target = args.some(arg => arg === 'desktop' || arg === '--desktop') ? 'desktop' : 'web'
+  const result = await buildFrontend({ target })
   process.stdout.write(`${JSON.stringify({ target, rendererBuild: result.rendererBuild, actions: result.usedActions.length, exports: result.exports, serverModules: result.serverModules })}\n`)
 }

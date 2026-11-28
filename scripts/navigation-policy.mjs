@@ -1,6 +1,6 @@
 // Every move inside the app window goes through one place, so the address
 // always says what is on screen and back steps through it one move at a time
-// (docs/design/rules.md R-82; decisions/2026-11-01-1320-navigation-model.md).
+// (mikka-hosted-ui/docs/design/rules.md R-82; decisions/2026-11-01-1320-navigation-model.md).
 //
 // - Only components/workspace/workspace-navigation.ts and
 //   lib/settings-navigation.ts write the browser history.
@@ -13,7 +13,7 @@
 // The files below predate the rule and each keeps exactly the count it has,
 // with its reason. A new call anywhere, or one more in these files, fails.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { officialCoreFiles, readUi, uiExists, unverifiable } from './official-ui-tree.mjs'
 
 /** The two modules that own the address. */
 export const navigationModules = ['components/workspace/workspace-navigation.ts', 'lib/settings-navigation.ts']
@@ -24,20 +24,10 @@ export const navigationAllowlist = {
   'app/api/web/complete/route.ts': { 'navigation/history': { count: 1, reason: 'fixed web sign-in completion script removes its one-time code and state before notifying the same-origin opener' } },
   'components/auth/reset-password-form.tsx': { 'navigation/history': { count: 1, reason: 'drops the reset token from the address after reading it' } },
   'components/auth/verify-email-form.tsx': { 'navigation/history': { count: 1, reason: 'drops the verification token from the address after reading it' } },
-  'hooks/settings/use-billing.ts': { 'navigation/history': { count: 1, reason: 'drops the Stripe return key (top-up, card verification) after showing its result' } },
   'components/plugins/connected-apps.tsx': { 'navigation/history': { count: 1, reason: 'drops the Composio OAuth return keys after showing the result' } },
   'components/plugins/github-settings.tsx': { 'navigation/history': { count: 1, reason: 'drops the GitHub App return keys after showing the result' }, 'navigation/address': { count: 1, reason: 'sign-in return to the GitHub app page with the one-time link token, after switching the browser account' } },
-  'hooks/settings/use-google-sign-in.ts': { 'navigation/history': { count: 1, reason: 'drops the Google link return key after showing the result' } },
   'lib/subscription-enrollment-binding-proof.ts': { 'navigation/history': { count: 1, reason: 'script in the subscription enrollment page drops its one-time proof from the address' } },
   'lib/subscription-enrollment-handoff.ts': { 'navigation/history': { count: 1, reason: 'script in the subscription hand-off page drops its one-time key from the address' } },
-  'components/workspace/issue-workspace.tsx': { 'navigation/router': { count: 6, reason: 'sign-out leaves for /sign-in; Settings opened on its own route goes back to the app (home or the page before Settings) when pushSettingsHistory cannot' } },
-  'components/settings/settings-shell.tsx': { 'navigation/router': { count: 2, reason: 'sign-out leaves for /sign-in; Settings links fall back to the router where pushSettingsHistory cannot' } },
-  'components/settings/settings-view.tsx': { 'navigation/router': { count: 2, reason: 'an unknown settings section is replaced by 通用; a layer\'s section switch falls back to the router where pushSettingsHistory cannot' } },
-  'components/settings/settings-preview.tsx': { 'navigation/router': { count: 6, reason: 'the signed-out Settings preview sends every control to sign-in' } },
-  'hooks/settings/use-preferences-page.ts': { 'navigation/router': { count: 1, reason: 'reloads the same page in the new language' } },
-  'components/nav-user.tsx': { 'navigation/router': { count: 1, reason: 'reloads the same page in the new language' } },
-  'hooks/settings/use-team-directory.ts': { 'navigation/router': { count: 1, reason: 'Settings › 团队 in a layer falls back to the router where pushSettingsHistory cannot' } },
-  'components/desktop/desktop-integration.tsx': { 'navigation/router': { count: 1, reason: 'a notification link that is not a place in the app window' } },
   'lib/auth-return.ts': { 'navigation/address': { count: 3, reason: 'validates where sign-in may return to; it accepts only these exact shapes' } },
   'lib/mobile-web-target.ts': { 'navigation/address': { count: 5, reason: 'validates where the phone app may open the web; it accepts only these exact shapes' } },
   'app/api/integrations/github/connect/route.ts': { 'navigation/address': { count: 1, reason: 'sign-in return to the GitHub app page (section=plugins&app=github)' } },
@@ -77,18 +67,20 @@ export function auditNavigation(file, source) {
 export function navigationPolicyFiles() {
   return execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
     .split('\0')
-    .filter(file => /^(?:app|components|hooks|lib)\/.*\.(?:[cm]?[jt]sx?)$/.test(file) && !/\.test\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.d.ts') && existsSync(file))
+    .concat(officialCoreFiles())
+    .filter(file => /^(?:app|components|hooks|lib)\/.*\.(?:[cm]?[jt]sx?)$/.test(file) && !/\.test\.[cm]?[jt]sx?$/.test(file) && !file.endsWith('.d.ts') && uiExists(file))
 }
 
 export function auditRepository() {
-  return navigationPolicyFiles().flatMap(file => auditNavigation(file, readFileSync(file, 'utf8')))
+  return navigationPolicyFiles().flatMap(file => auditNavigation(file, readUi(file)))
 }
 
 /** Allowlisted counts that are now higher than the file needs: lower them so a new call cannot hide in the slack. */
 export function staleAllowances() {
   const stale = []
   for (const [file, entries] of Object.entries(navigationAllowlist)) {
-    const code = existsSync(file) ? withoutComments(readFileSync(file, 'utf8')) : ''
+    if (unverifiable(file)) continue
+    const code = uiExists(file) ? withoutComments(readUi(file)) : ''
     for (const [rule, { count }] of Object.entries(entries)) {
       const pattern = rules.find(item => item.rule === rule).pattern
       const found = [...code.matchAll(pattern)].length

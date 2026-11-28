@@ -49,7 +49,7 @@ test('detail and activity revalidate current access while returning only changed
   const { db, pool } = await import('../lib/db')
   const { workspacePool } = await import('../lib/workspace-db')
   const { actAs } = await import('../lib/acting-user')
-  const { getIssue, saveIssue, listIssueVersions, pollIssue, pollIssueVersionSummaries, promoteIssueToTeam } = await import('../app/actions/issues')
+  const { getIssue, saveIssue, listIssueVersions, pollIssue, pollIssueVersionSummaries, pollIssueActivityPage, loadEarlierIssueActivity, promoteIssueToTeam } = await import('../app/actions/issues')
   const { syncCoordinatorChat } = await import('../app/actions/coordinator')
   const { getIssueTeam, setIssueTeam } = await import('../app/actions/team-relations')
   const owner = `detail-cache-${randomUUID()}`, stranger = `detail-stranger-${randomUUID()}`
@@ -138,6 +138,55 @@ test('detail and activity revalidate current access while returning only changed
 
     assert.equal((await actAs(stranger, () => pollIssue(id, bodyChanged.version))).error, 'issueNotFound')
     assert.equal((await actAs(stranger, () => pollIssueVersionSummaries(id, snapshot.version, snapshot.positions))).error, 'issueNotFound')
+    assert.equal((await actAs(stranger, () => loadEarlierIssueActivity(id, 2, snapshot.items[0].id))).error, 'issueNotFound')
+    assert.equal((await actAs(stranger, () => pollIssueActivityPage(id))).error, 'issueNotFound')
+    // 100 displayed transitions need their 101st predecessor; the 102nd
+    // row establishes whether an older page exists, without skipping it.
+    for (let revision = 53; revision <= 202; revision++) {
+      await pool.query('insert into issue_versions(id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$3)',
+        [randomUUID(), id, owner, revision, `Revision ${revision}`, JSON.stringify(revision < 103 ? content : changedBody), 'todo', 'normal', 'user'])
+      if (revision === 100 || revision === 101 || revision === 102) {
+        await pool.query('update issues set revision=$2 where id=$1', [id, revision])
+        const boundary = successful(await read(() => pollIssueActivityPage(id)))
+        assert.ok(!boundary.snapshot.unchanged)
+        assert.equal(boundary.snapshot.items.length, Math.min(revision, 100))
+        assert.equal(boundary.snapshot.predecessor?.revision ?? null, revision > 100 ? revision - 100 : null)
+        assert.equal(boundary.snapshot.hasMore, revision > 100, 'a hidden predecessor must remain reachable through Show earlier')
+      }
+    }
+    await pool.query('update issues set revision=202 where id=$1', [id])
+    const first = successful(await read(() => pollIssueActivityPage(id)))
+    assert.ok(!first.snapshot.unchanged)
+    assert.equal(first.snapshot.items.length, 100)
+    assert.equal(first.snapshot.hasMore, true)
+    assert.equal(first.snapshot.items[0].revision, 202)
+    assert.equal(first.snapshot.items.length, 100, 'the response never exposes a 101st visible row')
+    const edge = first.snapshot.items.at(-1)!
+    assert.equal(edge.revision, 103)
+    assert.equal(first.snapshot.predecessor?.revision, 102, 'private predecessor is the actual adjacent prior revision')
+    assert.equal(edge.descriptionChanged, true, 'SQL derives the page-boundary change against its predecessor')
+    const { deriveIssueActivity } = await import('../lib/issue-activity')
+    assert.ok(deriveIssueActivity(first.snapshot.items, [], Infinity, first.snapshot.predecessor).some(event => event.source?.kind === 'revision' && event.source.revision === 103), 'oldest page event can be derived using its predecessor')
+    const sentinel = first.snapshot.items.at(-1)!
+    assert.equal(sentinel.revision, 103)
+    const second = successful(await read(() => loadEarlierIssueActivity(id, sentinel.revision, sentinel.id)))
+    assert.ok(second.page)
+    assert.equal(second.page.items.length, 100)
+    assert.equal(second.page.items[0].revision, 102)
+    assert.equal(second.page.hasMore, true)
+    assert.equal(second.page.items.length, 100, 'older response never exposes a 101st visible row')
+    assert.equal(second.page.predecessor?.revision, 2)
+    assert.deepEqual(second.page.cursor, { revision: 3, id: second.page.items.at(-1)!.id })
+    const third = successful(await read(() => loadEarlierIssueActivity(id, second.page.cursor!.revision, second.page.cursor!.id)))
+    assert.ok(third.page)
+    assert.equal(third.page.items.length, 2)
+    assert.equal(third.page.hasMore, false)
+    assert.equal(third.page.cursor, null)
+    const all = [...first.snapshot.items, ...second.page.items, ...third.page.items]
+    assert.equal(new Set(all.map(row => row.id)).size, 202, 'pages do not overlap')
+    assert.ok(all.every(row => !row.content.content), 'historical bodies do not leave the database')
+    assert.equal(all.at(-1)?.revision, 1)
+    await pool.query('update issues set revision=51 where id=$1', [id])
     // A previously authorized workspace membership is checked again, even with
     // valid cursors. Legacy issue_members never grant workspace task access.
     await pool.query('insert into mikka_workspaces(id,"userId",name) values($1,$2,$3)', [workspaceId, owner, 'Detail cache fixture'])
@@ -157,9 +206,9 @@ test('detail and activity revalidate current access while returning only changed
     assert.ok(shared.issue)
     await t.test('an explicit read-only grant invalidates an editable cursor and supplies the persisted discussion without seeding the document', async () => {
       assert.equal(shared.issue?.canSteer, true)
-      const { loadIssueDocument, upsertLinearComment, encodedIssueDocument } = await import('../lib/linear-sync/document')
+      const { loadIssueDocument, upsertThreadMessage, encodedIssueDocument } = await import('../lib/task-comments/issue-document')
       const doc = loadIssueDocument(null, createdShared.issue!.content)
-      upsertLinearComment(doc, { threadId: 'discussion-existing', messageId: 'first', author: 'Owner', authorUserId: owner, body: 'Existing discussion', at: new Date().toISOString() })
+      upsertThreadMessage(doc, { threadId: 'discussion-existing', messageId: 'first', author: 'Owner', authorUserId: owner, body: 'Existing discussion', at: new Date().toISOString() })
       const state = encodedIssueDocument(doc)
       doc.destroy()
       await pool.query('insert into issue_documents("issueId","userId",state) values ($1,$2,$3)', [sharedId, owner, state])
@@ -198,6 +247,8 @@ test('detail and activity revalidate current access while returning only changed
     await pool.query('update mikka_workspace_members set status=\'suspended\' where "workspaceId"=$1 and "userId"=$2', [workspaceId, stranger])
     assert.equal((await readShared(() => pollIssue(sharedId, shared.version))).error, 'issueNotFound')
     assert.equal((await readShared(() => pollIssueVersionSummaries(sharedId, sharedSnapshot.version, sharedSnapshot.positions))).error, 'issueNotFound')
+    assert.equal((await readShared(() => pollIssueActivityPage(sharedId))).error, 'issueNotFound')
+    assert.equal((await readShared(() => loadEarlierIssueActivity(sharedId, 2, sharedSnapshot.items[0].id))).error, 'issueNotFound')
     assert.equal((await readChat(botId, previousChat.version, continuation)).error, 'botNotFound', 'revoked workspace membership denies the chat and its cached citations')
     assert.equal((await syncCoordinatorChat(botId)).error, 'authRequired', 'expected auth failures survive the Server Action boundary')
     await pool.query('delete from bots where id=$1', [botId])
@@ -362,14 +413,10 @@ test('detail and activity revalidate current access while returning only changed
       })
       await t.test('an authorized Linear import verifies its target until the link is removed', async () => {
         const { linearTeamSyncs } = await import('../lib/db/schema')
-        const { createAppIssueFromLinear } = await import('../lib/linear-sync/issue-sync')
         const [sync] = await db.insert(linearTeamSyncs).values({ id: randomUUID(), ownerId: owner,
           workspaceId, linearTeamId: randomUUID(), linearTeamKey: 'ALIS', linearTeamName: 'Verified read fixture', active: true }).returning()
-        const imported = await createAppIssueFromLinear(sync, { id: randomUUID(), identifier: 'ALIS-1',
-          title: 'Verified read fixture', description: '', dueDate: null, priority: 0, url: 'https://example.invalid/fixture',
-          updatedAt: new Date().toISOString(), state: null, team: { id: sync.linearTeamId, key: sync.linearTeamKey, name: sync.linearTeamName },
-          assignee: null, labels: [] })
-        assert.ok(imported)
+        const { historicalLinearTask } = await import('./helpers/historical-linear-task')
+        const imported = await historicalLinearTask(pool, owner, workspaceId, sync.id, randomUUID(), 'ALIS-1', 'Verified read fixture')
         const verified = successful(await readWorkspace(() => pollIssue(imported.id)))
         assert.equal(verified.issue?.linearTargetVerified, true)
         assert.equal(verified.issue?.scope, 'workspace')

@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { useTranslations } from 'next-intl'
+import { useTranslations } from '@/lib/intl/i18n-client'
 import { featureAvailability, gatedFeatureEnabled, gatedFeatures, killSwitches, upcomingFeatures, type GatedFeature, type UpcomingFeature } from '@/lib/feature-flags'
 import { getClientConfiguration, subscribeClientConfiguration } from './client-configuration'
 
@@ -14,7 +14,7 @@ export function useFeatureAvailability(feature: UpcomingFeature) {
 }
 
 export function useGatedFeature(feature: GatedFeature) {
-  return gatedFeatureEnabled(useFeatures().flags[gatedFeatures[feature]])
+  return gatedFeatureEnabled(useFeatures().flags[gatedFeatures[feature].key])
 }
 
 export function useCloudComputer() { return useFeatures().cloudComputer }

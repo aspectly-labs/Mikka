@@ -1,6 +1,7 @@
 # Factory human approval uses a live Mikka session
 
 - Date: 2026-11-09
+- **Status:** Accepted
 - Source: [#1503](https://github.com/alexj11324/Mikka/issues/1503) requires the normal smoke account to complete “派任务 → 开 PR → 要求修改 → 合并”. This records the backend compatibility decision for that requirement, alongside the supported sign-in methods in `lib/auth.ts` and the existing [separation of GitHub connection from sign-in](2026-11-01-0303-github-plugin-connection-separate-from-login.md).
 - Rule: —
 - Replaces: only the linked GitHub/Google account requirement in [194 v1](../../factory/194-approval-contract-v1.md), [194 v2](../../factory/194-main-approval-v2.md) and [494](../../factory/494-approve-and-publish.md). Their other ownership, evidence and publication requirements remain.

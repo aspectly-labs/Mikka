@@ -1,30 +1,76 @@
 import 'server-only'
+import { createPrepaidE2B, releaseInterruptedE2BCreation, E2B_TIMEOUT_REQUEST_BUDGET_MS, e2bCreationTimeout, e2bInitialAllocationNeedsRecovery, settleE2BAwakeInterval, withE2BProviderTime, observeMissingE2BAllocation, verifyE2BAllocation } from '@/lib/cloud-computer/e2b-compute-billing'
+import { isCloudEdition } from '@/lib/edition'
+import { releasedDesktopWorker } from '@/lib/cloud-template-models'
+import { armDueTimerSoon } from '@/lib/due-timer'
+import { e2bResourceAccount, e2bCreateAccount, bindE2BResource } from '@/lib/secrets/e2b-resource'
 import { createHash, createHmac } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { Sandbox, SandboxNotFoundError } from 'e2b'
-import { computerTemplate, e2bApiKey, sandboxKeyOwner, withE2BErrors } from '@/lib/secrets/e2b-runtime'
+import { ApiClient, ConnectionConfig, Sandbox, SandboxNotFoundError } from 'e2b'
+import type { PoolClient } from 'pg'
+import { computerTemplate, sandboxKeyOwner, withE2BErrors } from '@/lib/secrets/e2b-runtime'
 import { E2BKeyError } from '@/lib/secrets/flag'
 import { bootstrapOfficialInstance, runtimeCommandOptions, runtimeRequestOptions, type RuntimeBudget } from './official-runtime'
 import type { ProcessedCaptureVideo, RecordingStep } from '../../packages/daemon/src/agents/capture-video.mjs'
+import { SANDBOX_VNC_PROBE_URL } from '@/lib/env/hosts'
+import { readEnv } from '@/lib/env/server'
 
 const lifetime = 15 * 60_000
-export type DesktopLease = { botId: string; ownerId: string; display: number; epoch: number; controlledBy: string | null; controlUntil: number; computerAllowed: boolean; policyVersion: number }
-// A sandbox belongs to the E2B team whose key created it: its owner's own key (orchestration § 2).
+export type DesktopLease = { botId: string; ownerId: string; display: number; epoch: number; controlledBy: string | null; controlUntil: number; computerAllowed: boolean;
+  /** Compat: pre-upgrade lease drivers still compare the stored version. */
+  policyVersion: number }
+// A sandbox belongs to the E2B account that allocated it.
 // Every call resolves the owner from the machine's record, never from whoever is asking.
-const options = async (ownerId: string) => ({ apiKey: await e2bApiKey(ownerId, 'Cloud computer is not configured'), timeoutMs: lifetime, proxy: process.env.HTTPS_PROXY ?? process.env.https_proxy })
+const options = (apiKey: string) => ({ apiKey, timeoutMs: lifetime, proxy: readEnv('HTTPS_PROXY') ?? readEnv('https_proxy') })
 const ownerOf = async (workspaceId: string, id: string) => {
   const owner = await sandboxKeyOwner(workspaceId, id)
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'sandbox has no owner record')
   return owner
 }
 
-export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget) {
+export async function connectComputer(workspaceId: string, id: string, signal?: AbortSignal, budget?: RuntimeBudget, policyOnly = false) {
   const owner = await ownerOf(workspaceId, id)
-  const base = await options(owner)
+  if (policyOnly) return connectComputerForPolicy(owner, id)
+  const account = await e2bResourceAccount(owner, 'sandbox', id)
+  const base = options(account.apiKey)
   const request = runtimeRequestOptions(budget)
   const boundedSignal = signal && request.signal ? AbortSignal.any([signal, request.signal]) : signal ?? request.signal
-  return withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) }))
+  const inspect = () => withE2BErrors(owner, false, () => Sandbox.getInfo(id, { ...base, ...request, signal: boundedSignal }))
+  return withE2BProviderTime(owner, id, base.timeoutMs, { providerScope: account.scope, inspect },
+    timeoutMs => withE2BErrors(owner, false, () => Sandbox.connect(id, { ...base, ...request, timeoutMs,
+      ...(isCloudEdition() ? {
+        requestTimeoutMs: Math.min(E2B_TIMEOUT_REQUEST_BUDGET_MS, request.requestTimeoutMs ?? E2B_TIMEOUT_REQUEST_BUDGET_MS), retries: 0,
+      } : {}),
+      ...(boundedSignal ? { signal: boundedSignal, retries: 0 } : {}) })))
+}
+
+/** Open only the existing envd data plane. The authenticated GET exposes the
+ * envd token that Sandbox.getInfo projects away. The Sandbox constructor does
+ * no provider I/O, so a concurrent pause cannot be undone by this path. */
+export const connectComputerForPolicy = connectRunningComputer
+
+export async function connectRunningComputer(owner: string, id: string, client?: PoolClient, signal?: AbortSignal): Promise<Sandbox> {
+  const read = () => e2bResourceAccount(owner, 'sandbox', id)
+  const account = client ? await (await import('@/lib/db')).withDatabaseClient(client, read) : await read()
+  const prepared = { ...options(account.apiKey), requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0 }
+  const config = new ConnectionConfig(prepared)
+  const requestSignal = config.getSignal(E2B_TIMEOUT_REQUEST_BUDGET_MS)
+  const { data, response } = await new ApiClient(config).api.GET('/sandboxes/{sandboxID}', {
+    params: { path: { sandboxID: id } }, signal: signal && requestSignal ? AbortSignal.any([signal, requestSignal]) : signal ?? requestSignal,
+  })
+  if (response.status === 404 || data?.state === 'paused' || data?.lifecycle?.autoResume === true)
+    throw new PolicySandboxUnavailable()
+  if (!data || data.sandboxID !== id || data.state !== 'running' || !data.envdVersion || !data.envdAccessToken)
+    throw new E2BKeyError('e2b_unavailable', 'Running E2B data plane unavailable')
+  const end = Date.parse(data.endAt)
+  if (!Number.isFinite(end) || end <= Date.now()) throw new PolicySandboxUnavailable()
+  return new Sandbox({ ...prepared, sandboxId: id, sandboxDomain: data.domain ?? undefined,
+    envdVersion: data.envdVersion, envdAccessToken: data.envdAccessToken })
+}
+
+export class PolicySandboxUnavailable extends Error {
+  constructor() { super('No safely addressable running sandbox to synchronize') }
 }
 
 /** The machine's sandbox no longer exists at E2B (killed, or expired while paused). */
@@ -34,7 +80,7 @@ export function computerGone(error: unknown) {
 
 /** Static provider observation. Unlike connect(), this cannot resume a paused machine. */
 export async function readComputerMetrics(ownerId: string, sandboxId: string, start: Date, end: Date, signal: AbortSignal) {
-  const base = await options(ownerId)
+  const base = options((await e2bResourceAccount(ownerId, 'sandbox', sandboxId)).apiKey)
   return withE2BErrors(ownerId, false, () => Sandbox.getMetrics(sandboxId, {
     ...base, start, end, signal, retries: 0, requestTimeoutMs: 10_000,
   }))
@@ -47,16 +93,47 @@ export async function computerWorkerSha(sandbox: Sandbox) {
 
 export async function killComputer(workspaceId: string, id: string) {
   const owner = await ownerOf(workspaceId, id)
-  const base = await options(owner)
+  const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
   await withE2BErrors(owner, false, () => Sandbox.kill(id, base))
+  await settleE2BAwakeInterval(owner, id)
 }
 
 export async function computerState(workspaceId: string, id: string, observed?: (expiresAt: Date) => void) {
   const owner = await ownerOf(workspaceId, id)
-  const base = await options(owner)
+  const base = options((await e2bResourceAccount(owner, 'sandbox', id)).apiKey)
   const info = await withE2BErrors(owner, false, () => Sandbox.getInfo(id, base))
   if (info.state !== 'paused') observed?.(info.endAt)
   return info.state === 'paused' ? 'sleeping' : 'running'
+}
+
+/** Check a desktop before a connection can buy time or wake it. An immutable
+ * released template identifies a paused desktop without resuming its guest. */
+export async function observeComputerWorker(workspaceId: string, id: string): Promise<'current' | 'stale' | 'gone' | 'unknown'> {
+  const workerSha = readEnv('MIKKA_CLOUD_WORKER_SHA')
+  if (!isCloudEdition() || !workerSha) return 'unknown'
+  const owner = await ownerOf(workspaceId, id)
+  const account = await e2bResourceAccount(owner, 'sandbox', id)
+  const info = await withE2BErrors(owner, false, () => Sandbox.getInfo(id, {
+    ...options(account.apiKey), requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+  })).catch(error => {
+    if (computerGone(error)) return null
+    throw error
+  })
+  if (!info) return 'gone'
+  if (info.state === 'running') {
+    try {
+      const running = await connectRunningComputer(owner, id)
+      return await computerWorkerSha(running) === workerSha ? 'current' : 'stale'
+    } catch (error) {
+      if (error instanceof PolicySandboxUnavailable) return 'unknown'
+      throw error
+    }
+  }
+  const recordedWorker = info.metadata.application === 'mikka' && info.metadata.workspaceId === workspaceId
+    && /^[a-f0-9]{40}$/.test(info.metadata.workerSha ?? '') ? info.metadata.workerSha : undefined
+  const knownWorker = recordedWorker ?? releasedDesktopWorker(info.templateId)
+  if (info.state !== 'paused' || !knownWorker) return 'unknown'
+  return knownWorker === workerSha ? 'current' : 'stale'
 }
 
 /** Verified additive desktop image, or the original official base for rollback. */
@@ -67,13 +144,52 @@ export async function createComputer(workspaceId: string, operationId: string) {
   const { pool } = await import('@/lib/db')
   const owner = (await pool.query<{ ownerId: string }>('SELECT "ownerId" FROM cloud_machines WHERE "workspaceId"=$1 AND "operationId"=$2', [workspaceId, operationId])).rows[0]?.ownerId
   if (!owner) throw new E2BKeyError('e2b_unavailable', 'cloud machine has no owner record')
-  const base = await options(owner)
-  const sandbox = await withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, idempotencyKey: operationId,
-    metadata: { application: 'mikka', workspaceId },
+  const account = await e2bCreateAccount(owner, operationId)
+  const base = options(account.apiKey)
+  const workerSha = isCloudEdition() ? releasedDesktopWorker(template) : undefined
+  const metadata = { application: 'mikka', workspaceId, operationId, ...(workerSha ? { workerSha } : {}) }
+  if (await e2bInitialAllocationNeedsRecovery(owner, operationId)) {
+    const recovered = await reconcileInitialComputerAllocation(workspaceId, owner, operationId)
+    if (!recovered) throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation recovery pending')
+    const sandboxId = recovered.sandboxId
+    return withE2BProviderTime(owner, sandboxId, lifetime, { providerScope: account.scope,
+      inspect: () => withE2BErrors(owner, false, () => Sandbox.getInfo(sandboxId, base)) },
+    timeoutMs => withE2BErrors(owner, false, () => Sandbox.connect(sandboxId, {
+      ...base, timeoutMs, requestTimeoutMs: E2B_TIMEOUT_REQUEST_BUDGET_MS, retries: 0,
+    })))
+  }
+  base.timeoutMs = await e2bCreationTimeout(owner, account.scope, operationId, template, { workspaceId, runId: null }, lifetime)
+  if (isCloudEdition()) armDueTimerSoon('run-recovery')
+  const sandbox = await createPrepaidE2B(owner, operationId, () => withE2BErrors(owner, true, () => Sandbox.create(template, { ...base, retries: 0, idempotencyKey: operationId,
+    metadata,
     lifecycle: { onTimeout: 'pause', autoResume: false },
-  }))
+  })))
+  await verifyE2BAllocation(owner, operationId, sandbox.sandboxId, base)
+  await bindE2BResource(owner, 'sandbox', sandbox.sandboxId, account.scope)
   if (template === 'desktop') await bootstrapOfficialInstance(sandbox, 'desktop')
   return sandbox
+}
+
+/** Observe an expired desktop allocation by its exact durable create identity.
+ * Recovery does not connect, allocate or renew a sandbox. */
+export async function reconcileInitialComputerAllocation(workspaceId: string, ownerId: string, operationId: string) {
+  if (await releaseInterruptedE2BCreation(ownerId, operationId)) return null
+  const account = await e2bResourceAccount(ownerId, 'operation', operationId)
+  const prepared = { ...options(account.apiKey), requestTimeoutMs: 8_000, retries: 0 }
+  const metadata = { application: 'mikka', workspaceId, operationId }
+  const candidates = Sandbox.list({ ...prepared, limit: 2, query: { metadata, state: ['running', 'paused'] } })
+  const matches = await withE2BErrors(ownerId, false, () => candidates.nextItems(prepared))
+  if (matches.length > 1 || candidates.hasNext
+    || matches.some(item => Object.entries(metadata).some(([key, value]) => item.metadata[key] !== value)))
+    throw new E2BKeyError('e2b_unavailable', 'Bot computer allocation identity unavailable')
+  const recovered = matches[0]
+  if (!recovered) {
+    await observeMissingE2BAllocation(ownerId, operationId)
+    return null
+  }
+  await verifyE2BAllocation(ownerId, operationId, recovered.sandboxId, prepared, recovered)
+  await bindE2BResource(ownerId, 'sandbox', recovered.sandboxId, account.scope)
+  return recovered
 }
 
 /** Refresh authorization guards without replacing the desktop script baked
@@ -95,7 +211,7 @@ umask 077
 head -c 32 /dev/urandom > /run/mikka-viewer/key
 chmod 0755 /opt/mikka/computer/lease-driver.py
 nohup flock -n /run/mikka-viewer/gateway.lock /usr/bin/python3 /opt/mikka/computer/viewer-gateway.py </dev/null >>/run/mikka-viewer/gateway.log 2>&1 &
-for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:6080/vnc)" = 401 ] && exit 0; sleep .2; done
+for i in $(seq 1 30); do [ "$(curl -s -o /dev/null -w "%{http_code}" ${SANDBOX_VNC_PROBE_URL})" = 401 ] && exit 0; sleep .2; done
 exit 1`
   const result = await sandbox.commands.run(start, { user: 'root', ...runtimeCommandOptions(10_000, budget) })
   if (result.stdout.trim() !== 'mikka-runtime-install-required') return

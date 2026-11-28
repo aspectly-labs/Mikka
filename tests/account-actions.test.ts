@@ -35,8 +35,8 @@ const calls = {
 }
 
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports })
-mock.module('next/headers', { namedExports: { headers: async () => new Headers({ cookie: 'session=x' }) } })
-mock.module('next-intl/server', { namedExports: { getTranslations: async () => (key: string, values?: Record<string, unknown>) => `${key}:${JSON.stringify(values ?? {})}` } })
+mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers({ cookie: 'session=x' }) } })
+mock.module('@/lib/intl/i18n-server', { namedExports: { getTranslations: async () => (key: string, values?: Record<string, unknown>) => `${key}:${JSON.stringify(values ?? {})}` } })
 stub('../lib/auth.ts', { auth: { $context: Promise.resolve({ sessionConfig: { freshAge: 24 * 60 * 60 } }), api: {
   getSession: async () => current,
   updateUser: calls.updateUser,
@@ -49,7 +49,7 @@ stub('../lib/auth.ts', { auth: { $context: Promise.resolve({ sessionConfig: { fr
 } } })
 stub('../lib/mcp/resource.ts', { appOrigin: 'https://app.example.com' })
 stub('../lib/account/avatar.ts', { saveAvatar: calls.saveAvatar })
-stub('../lib/account/sessions.ts', { listSignedInDevices: calls.listDevices, sessionTokenFor: async (userId: string, id: string) => tokens[`${userId}:${id}`] ?? null })
+stub('../lib/account/sessions.ts', { listSignedInDevices: calls.listDevices, sessionTokenFor: async (userId: string, id: string) => tokens[`${userId}:${id}`] ?? null, endSignedInDevice: async (userId: string, id: string) => tokens[`${userId}:${id}`] ? [tokens[`${userId}:${id}`]] : [] })
 stub('../lib/account/export.ts', { EXPORT_LINK_TTL_MS: 86_400_000, reserveExport: calls.reserveExport, releaseExport: calls.releaseExport })
 stub('../lib/account/mail.ts', { accountMailConfigured: () => mailConfigured, sendAccountMail: calls.sendMail })
 stub('../lib/account/shared-links.ts', { listSharedArtifacts: calls.listShared })

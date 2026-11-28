@@ -5,9 +5,13 @@ import type { ActionResult } from '@/lib/action-result'
 import { billingPortalUrl, planCheckoutUrl, workspaceBillingView, type BillingView } from '@/lib/billing/service'
 import { workspaceAction } from '@/lib/workspace-admin/action'
 import { currentWorkspaceActor } from '@/lib/workspace-admin/current'
-import { getLocale } from 'next-intl/server'
+import { getLocale } from '@/lib/intl/i18n-server'
 import { pointsPurchase, pointsPurchaseUrl } from '@/lib/billing/points-purchase'
 import { workspaceCreditBillingView, type CreditBillingView } from '@/lib/billing/history'
+import { readWorkspaceBillingSettings, writeWorkspaceAutoRecharge, writeWorkspaceOveragePolicy } from '@/lib/billing/settings'
+import type { WorkspaceBillingSettingsView } from '@/lib/billing/contract'
+import { enterprisePrincipal } from '@/lib/enterprise/principal'
+import { requireUser } from '@/lib/issue-access'
 import { currentDesktopSession } from '@/lib/desktop-rpc/session'
 
 /** 设置 › 计费. Admins only. */
@@ -96,9 +100,38 @@ export async function getHostedUsage(workspaceId?: string) {
   })
 }
 
+export async function getBillingSettings(workspaceId?: string): Promise<ActionResult<WorkspaceBillingSettingsView>> {
+  return workspaceAction(async () => {
+    const [user, actor] = await Promise.all([requireUser(), currentWorkspaceActor(workspaceId)])
+    return readWorkspaceBillingSettings(actor.userId, actor.workspaceId, user[enterprisePrincipal])
+  })
+}
+
+async function saveAutoRechargePolicyActionBody(
+  policy: unknown,
+  workspaceId?: string,
+): Promise<ActionResult<WorkspaceBillingSettingsView>> {
+  return workspaceAction(async () => {
+    const [user, actor] = await Promise.all([requireUser(), currentWorkspaceActor(workspaceId)])
+    return writeWorkspaceAutoRecharge(actor.userId, actor.workspaceId, policy, user[enterprisePrincipal])
+  })
+}
+
+async function saveOveragePolicyActionBody(
+  policy: unknown,
+  workspaceId?: string,
+): Promise<ActionResult<WorkspaceBillingSettingsView>> {
+  return workspaceAction(async () => {
+    const [user, actor] = await Promise.all([requireUser(), currentWorkspaceActor(workspaceId)])
+    return writeWorkspaceOveragePolicy(actor.userId, actor.workspaceId, policy, user[enterprisePrincipal])
+  })
+}
+
 // Money, permissions, credentials and deletion: the session is read from the database, not the cookie cache.
 export async function openBillingPortal(...args: Parameters<typeof openBillingPortalBody>) { return withFreshSession(() => openBillingPortalBody(...args)) }
 export async function startPlanCheckout(...args: Parameters<typeof startPlanCheckoutBody>) { return withFreshSession(() => startPlanCheckoutBody(...args)) }
 export async function startPointsPurchase(...args: Parameters<typeof startPointsPurchaseBody>) { return withFreshSession(() => startPointsPurchaseBody(...args)) }
 export async function startChatPointsPurchase(...args: Parameters<typeof startChatPointsPurchaseBody>) { return withFreshSession(() => startChatPointsPurchaseBody(...args)) }
 export async function startCardVerification(...args: Parameters<typeof startCardVerificationBody>) { return withFreshSession(() => startCardVerificationBody(...args)) }
+export async function saveAutoRechargePolicy(...args: Parameters<typeof saveAutoRechargePolicyActionBody>) { return withFreshSession(() => saveAutoRechargePolicyActionBody(...args)) }
+export async function saveOveragePolicy(...args: Parameters<typeof saveOveragePolicyActionBody>) { return withFreshSession(() => saveOveragePolicyActionBody(...args)) }

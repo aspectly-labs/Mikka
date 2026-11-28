@@ -1,14 +1,13 @@
 import { factoryWorkspaceResponse } from '@/lib/factory/workspace-http';
 import { actAs } from "@/lib/acting-user";
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/api-auth";
+import { RouteResponse } from "@/lib/server-runtime/server";
+import { type ApiSession } from "@/lib/api-auth";
 import { factoryRouteEnabled, handleFactoryRoute } from "@/lib/factory/route-http";
 import { issueMutationsEnabled } from "@/lib/coordinator/issue-tools-enabled";
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const dynamic = "force-dynamic";
 /** POST /api/factory/tasks/route: non-LLM routing (BE-10b); contract in lib/factory/route-http.ts. */
-export async function POST(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
+async function unguardedPOST(request: Request, session: ApiSession) {
   const scoped = () => factoryWorkspaceResponse(session?.user?.id, async () => {
     const result = await handleFactoryRoute(
       async () => {
@@ -24,7 +23,17 @@ export async function POST(request: Request) {
         enabled: factoryRouteEnabled(issueMutationsEnabled()),
       },
     );
-    return NextResponse.json(result.body, { status: result.status, headers: { "Cache-Control": "private, no-store" } });
+    return RouteResponse.json(result.body, { status: result.status, headers: { "Cache-Control": "private, no-store" } });
   });
   return session?.user ? actAs(session.user, scoped) : scoped();
 }
+export const POST = defineRoute(
+  {
+    route: '/api/factory/tasks/route',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    onOriginFailure: () => RouteResponse.json({ error: 'originRejected' }, { status: 403, headers: { 'Cache-Control': 'private, no-store' } }),
+  },
+  ({ request, session }) => unguardedPOST(request, session),
+)

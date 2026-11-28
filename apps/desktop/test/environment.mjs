@@ -25,7 +25,7 @@ if (process.env.DATABASE_URL !== database || process.env.MIKKA_DATABASE_URL !== 
 const origin = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000'
 const hostname = new URL(origin).hostname
 const port = Number(new URL(origin).port || 3000)
-// NextRequest normalizes 127.x.x.x to localhost. The descriptor must name the
+// The test server is addressed as localhost. The descriptor must name the
 // actual request origin; never relax attestation to accept a different origin.
 if (hostname !== 'localhost' || new URL(origin).origin !== origin) throw new Error('DESKTOP_TEST_REQUIRES_CANONICAL_LOCALHOST_ORIGIN')
 const secret = randomBytes(32).toString('hex')
@@ -35,7 +35,7 @@ Object.assign(process.env, {
   MIKKA_TEST_DEPLOYMENT_SHA: sha,
   MIKKA_TEST_ENVIRONMENT_FILE: process.env.MIKKA_TEST_ENVIRONMENT_FILE || '.cache/e2e/environment.json',
   AUTH_TRUSTED_ORIGINS: `${origin},http://127.0.0.1:${port + 1},http://localhost:${port + 1}`,
-  NEXT_TELEMETRY_DISABLED: '1', DEVICE_GATEWAY_PUSH_SECRET: secret,
+  DEVICE_GATEWAY_PUSH_SECRET: secret,
 })
 
 await mkdir('.cache/e2e', { recursive: true, mode: 0o700 })

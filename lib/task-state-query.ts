@@ -3,6 +3,7 @@ import { deviceSessionOpenSql } from './device-presence'
 import { agentRuns } from './db/schema'
 import { correlatedColumn } from './db/correlated-column'
 import { runFailureBrief } from './run-failure-projection'
+import type { ThreadOutcome } from './thread-groups'
 
 /** The 30-day run list is a rolling duration, including across daylight-saving changes. */
 export const runHistoryWindow = sql`interval '720 hours'`
@@ -17,8 +18,7 @@ const run = {
 export const runAwaitingApproval = sql<boolean>`exists (select 1 from run_publications p where p."runId"=${run.id} and p."userId"=${run.userId} and p.status='awaiting_approval')
   or (${run.status} in ('preparing','running','waiting_input','finishing') and ${run.stopRequestedAt} is null and (
     exists (select 1 from agent_tool_approvals a where a."runId"=${run.id} and a."userId"=${run.userId} and a.status='pending' and a."expiresAt">now())
-    or exists (select 1 from local_computer_reviews v where v."runId"=${run.id} and v."userId"=${run.userId} and v.decision is null and v."expiresAt">now() and v."seenAt"<>'-infinity'::timestamptz
-      and exists (select 1 from devices d where d.id=v."deviceId" and (d."sessionOpenedAt" IS NOT NULL AND (d."sessionClosedAt" IS NULL OR d."sessionClosedAt" < d."sessionOpenedAt"))))))`
+))`
 /** Queued for a local device that is off or has no open session (lib/device-session.ts). */
 export const runDeviceOffline = sql<boolean>`${run.status}='queued' and exists (select 1 from devices d where d.id=${run.deviceId} and d."ownerId"=${run.userId} and d.kind='local'
   and (d.enabled=false or not ${sql.raw(deviceSessionOpenSql('d'))}))`
@@ -28,7 +28,9 @@ export const runOfflineDevice = sql<{ id: string; lastSeenAt: string | null } | 
 
 /** The same bounded facts back mobile, detail and canonical batch state. */
 export const taskStateRunColumns = {
-  runId: agentRuns.id, status: agentRuns.status, outcome: agentRuns.outcome,
+  runId: agentRuns.id, status: agentRuns.status,
+  // An unjudged succeeded run reads done so list/panel/inbox agree while the judge catches up (#1863).
+  outcome: sql<ThreadOutcome | null>`coalesce(${agentRuns.outcome}, case when ${agentRuns.status}='succeeded' then 'done' end)`.as('outcome'),
   pauseReason: agentRuns.pauseReason, stopReason: agentRuns.stopReason, threadReplacedBy: agentRuns.threadReplacedBy,
   failureDetails: runFailureBrief.as('failureDetails'), awaitingApproval: runAwaitingApproval.as('awaitingApproval'),
   deviceOffline: runDeviceOffline.as('deviceOffline'), offlineDevice: runOfflineDevice.as('offlineDevice'),

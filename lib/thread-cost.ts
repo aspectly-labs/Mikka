@@ -1,0 +1,274 @@
+import { readRunChain, type RunChainQueryable } from './run-chain'
+import { CLOUDFLARE_LEGACY_PRICE_VERSION, machineHourlyMicroUsd, machineSkuGeometry, machineSkuListPrice, parseMachineLedgerLabel, parseMachineSku, type MachineProvider, type MachineSku, type MachineListPrice } from './cloud-computer/machine-pricing'
+import { THREAD_COST_GROUPINGS, type ThreadCostGrouping } from './thread-cost-grouping'
+
+export { THREAD_COST_GROUPINGS, type ThreadCostGrouping }
+
+/**
+ * A thread's cost (#2934 item 4): every model receipt and machine charge of the
+ * runs in one run chain, read from hosted_usage and thread_machine_sessions.
+ * Nothing here is a price list: model cost is what settlement recorded, and a
+ * machine's estimate uses the rate associated with its prepaid chunks.
+ *
+ * What counts as charged (#2934, as Capy: free usage is never shown as a charge).
+ * Settlement (HostedUsageStore.settle) splits a Mikka 额度 receipt's cost and records
+ * the part the platform funded in hosted_usage."platformMicroUsd":
+ * - charged, the workspace's own money: plan allowance (Mikka Pro's monthly 额度, paid
+ *   for by the plan), purchased credit, and debt (an overrun past purchased credit,
+ *   which the workspace owes and repays from its next credit);
+ * - covered, funded by the platform: a free-message turn (no card, nothing bought,
+ *   the whole cost) and free credit (a hosted_allowances grant made before the
+ *   2026-11-15 no-trial decision).
+ * A receipt settled before that column existed has NULL: its funding is unknown and is
+ * counted apart, as neither charged nor covered. "unpaidMicroUsd" cannot stand in for
+ * it: it counts free credit and debt together for the platform's daily cap.
+ */
+
+/** Who paid: Mikka 额度, the person's subscription (Claude / Codex) or their own API key. */
+export type ThreadCostSource = 'credits' | 'subscription' | 'api_key'
+
+export interface ThreadCostAmount {
+  /** Sum of settled receipts that report a cost. */
+  microUsd: number
+  /** Receipts with no known cost yet (pending, unknown, or a provider that reports none). Never read as zero. */
+  unpricedReceipts: number
+}
+
+/** Settled Mikka 额度 receipts with a known cost, split apart from what was charged. */
+export interface ThreadFundingAmount {
+  /** List cost of these receipts (or of their platform-funded part). */
+  microUsd: number
+  /** How many receipts contributed to `microUsd`. */
+  receipts: number
+}
+
+export interface ThreadModelCost {
+  model: string
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  /** `credits` is what the workspace was charged on Mikka 额度; see the module comment. */
+  bySource: Record<ThreadCostSource, ThreadCostAmount>
+  /** This model's Mikka 额度 usage the platform funded: not charged. */
+  covered: ThreadFundingAmount
+  /** This model's settled Mikka 额度 receipts whose funding was not recorded: neither charged nor covered. */
+  fundingUnknown: ThreadFundingAmount
+}
+
+/**
+ * One row per machine size. `billing` says how the row's running time is priced:
+ * `metered` at the size's rate; `unknown_size` when Mikka billed the run but its
+ * size is unrecognised or changed within the run (no rate is guessed); `unbilled`
+ * when the run's cloud machine has no Mikka charge at all (no prepaid chunk).
+ */
+export interface ThreadMachineCost {
+  provider: MachineProvider | null
+  size: MachineSku['size'] | null
+  vcpu: number | null
+  ramGib: number | null
+  pricingSource: 'cloudflare_legacy_memory' | 'cloudflare_cgroup_list' | 'e2b_provisioned_list' | null
+  pricingVersion: string | null
+  catalogueListPrice: MachineListPrice | null
+  billing: 'metered' | 'unknown_size' | 'unbilled'
+  /** Running time recorded per interval in thread_machine_sessions, to the second; an open interval counts up to now. */
+  seconds: number
+  activeVcpuMs?: number
+  /** seconds × the size's hourly rate; null unless `billing` is `metered`. */
+  meteredMicroUsd: number | null
+  /** What the workspace was charged for its 5-minute prepaid chunks from Mikka 额度 (decision 2026-11-15-1900). */
+  chargedMicroUsd: number
+  /** The platform-funded part of those chunks: not charged. */
+  coveredMicroUsd: number
+  /** Settled chunks whose funding was not recorded: neither charged nor covered. */
+  fundingUnknownMicroUsd: number
+  /** Prepaid chunks with no settled cost yet. */
+  unpricedReceipts: number
+}
+
+export interface ThreadCost {
+  threadId: string
+  groupBy: ThreadCostGrouping
+  /** Two columns in the UI: Mikka 额度, and usage included in the person's own subscription or key. */
+  totals: {
+    /**
+     * What the workspace was charged on Mikka 额度 (plan, purchased credit, debt). Covered and
+     * unknown-funding receipts are not in it; unpriced ones (no cost yet) are counted here.
+     */
+    credits: ThreadCostAmount
+    included: ThreadCostAmount & { bySource: Record<Exclude<ThreadCostSource, 'credits'>, ThreadCostAmount> }
+    /**
+     * Mikka 额度 usage the platform funded (a free-message turn, free credit), at list cost: shown apart, never
+     * as a charge.
+     */
+    covered: ThreadFundingAmount
+    /** Mikka 额度 receipts settled before funding was recorded: cost known, who paid unknown. Neither charged nor covered. */
+    fundingUnknown: ThreadFundingAmount
+  }
+  models?: ThreadModelCost[]
+  machines?: ThreadMachineCost[]
+}
+
+const amount = (): ThreadCostAmount => ({ microUsd: 0, unpricedReceipts: 0 })
+const add = (target: ThreadCostAmount, cost: number | null) => {
+  if (cost === null) target.unpricedReceipts++
+  else target.microUsd += cost
+}
+const sourceOf = (value: unknown): ThreadCostSource =>
+  value === 'subscription' || value === 'api_key' ? value : 'credits'
+const funded = (): ThreadFundingAmount => ({ microUsd: 0, receipts: 0 })
+const fund = (target: ThreadFundingAmount, value: number) => {
+  target.microUsd += value
+  target.receipts++
+}
+/** How a Mikka 额度 receipt's cost divides: unpriced (no cost yet), unknown funding, or charged plus covered. */
+type Funding = { kind: 'unpriced' } | { kind: 'unknown'; cost: number } | { kind: 'known'; charged: number; covered: number }
+const fundingOf = (cost: number | null, platform: unknown): Funding => {
+  if (cost === null) return { kind: 'unpriced' }
+  if (platform === null || platform === undefined) return { kind: 'unknown', cost }
+  const covered = Math.min(cost, Math.max(0, Number(platform)))
+  return { kind: 'known', charged: cost - covered, covered }
+}
+
+/**
+ * The cost of the thread containing `runId`, or null when `ownerId` does not
+ * own that run in `workspaceId`. Ownership is the run chain's own fence
+ * (readRunChain), so another member of the workspace reads nothing.
+ */
+export async function readThreadCost(
+  q: RunChainQueryable,
+  input: { ownerId: string; workspaceId: string; runId: string; groupBy: ThreadCostGrouping },
+): Promise<ThreadCost | null> {
+  if (!(THREAD_COST_GROUPINGS as readonly string[]).includes(input.groupBy)) return null
+  // A corrupt chain (cycle or over the depth cap) throws runChainDepthExceeded, like every other chain read.
+  const chain = await readRunChain(q, input.ownerId, input.runId)
+  if (!chain) return null
+  const runIds = chain.attempts.map(attempt => attempt.runId)
+  const { rows: fenced } = await q.query(
+    'SELECT count(*)::int AS n FROM agent_runs WHERE id=ANY($1::uuid[]) AND "userId"=$2 AND "workspaceId"=$3',
+    [runIds, input.ownerId, input.workspaceId],
+  )
+  if (Number(fenced[0]?.n) !== runIds.length) return null
+
+  // Failed receipts were released and charged nothing; every other state is real usage.
+  const { rows: receipts } = await q.query(
+    `SELECT u.id,u.model,u."billingSource" AS source,u.state,u."costMicroUsd" AS cost,u."platformMicroUsd" AS platform,
+        u."inputTokens" AS input,u."outputTokens" AS output,u."usageRunId"::text AS "runId",e."hourlyMicroUsd",e."pricingVersion",
+        CASE WHEN $2::boolean THEN u."machineCompute"-'grant' END AS "machineCompute"
+      FROM hosted_usage u
+      LEFT JOIN e2b_compute_leases e ON $2::boolean AND e."operationId"=CASE
+        WHEN u.id ~ '^machine:e2b:[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}:[0-9]+$' THEN split_part(u.id,':',3)::uuid END
+        AND e."workspaceId"=u."usageWorkspaceId" AND e."ownerId"=u."executionOwnerId" AND u.model='machine/e2b-'||e.size
+      WHERE u."usageRunId"=ANY($1::uuid[]) AND u.state<>'failed'`,
+    [runIds, input.groupBy === 'machine'],
+  )
+  // Intervals are read in the thread's own owner and workspace; time recorded after a
+  // scope_changed hand-off belongs to the new scope, not to this thread's cost. Only the
+  // machine grouping returns them, so other groupings skip the read entirely.
+  const { rows: sessions } = input.groupBy === 'machine'
+    ? await q.query(
+      `SELECT "runId"::text AS "runId",
+          COALESCE(sum(EXTRACT(EPOCH FROM (COALESCE("endedAt",clock_timestamp())-"startedAt"))),0)::float8 AS seconds
+        FROM thread_machine_sessions WHERE "runId"=ANY($1::uuid[]) AND "ownerId"=$2 AND "workspaceId"=$3 GROUP BY "runId"`,
+      [runIds, input.ownerId, input.workspaceId],
+    )
+    : { rows: [] as { runId: string; seconds: number }[] }
+
+  const credits = amount()
+  const included = { ...amount(), bySource: { subscription: amount(), api_key: amount() } }
+  const covered = funded()
+  const fundingUnknown = funded()
+  const models = new Map<string, ThreadModelCost>()
+  const machines = new Map<string, ThreadMachineCost>()
+  const machine = (provider: MachineProvider | null, sku: MachineSku | null, pricingVersion: string | null, billing: ThreadMachineCost['billing'], measuredCloudflare = false) => {
+    const key = billing === 'metered' ? `${provider}:${sku?.size}:${pricingVersion ?? ''}` : `${billing}:${provider ?? ''}`
+    const geometry = sku && machineSkuGeometry(sku)
+    let row = machines.get(key)
+    if (!row) machines.set(key, row = {
+      provider, size: sku?.size ?? null, vcpu: geometry?.vcpu ?? null, ramGib: geometry?.ramGib ?? null,
+      pricingSource: measuredCloudflare ? 'cloudflare_cgroup_list' : sku?.provider === 'cloudflare' ? 'cloudflare_legacy_memory' : sku ? 'e2b_provisioned_list' : null,
+      pricingVersion, catalogueListPrice: sku ? machineSkuListPrice(sku) : null, billing, seconds: 0, meteredMicroUsd: billing === 'metered' ? 0 : null,
+      chargedMicroUsd: 0, coveredMicroUsd: 0, fundingUnknownMicroUsd: 0, unpricedReceipts: 0,
+    })
+    return row
+  }
+  type RatedMachine = { provider: MachineProvider; sku: MachineSku | null; rate: number | null; version: string | null; measuredCloudflare: boolean }
+  const runSizes = new Map<string, Map<string, RatedMachine>>()
+
+  for (const receipt of receipts) {
+    const settled = receipt.state === 'settled' && receipt.cost !== null
+    const cost = settled ? Number(receipt.cost) : null
+    const source = sourceOf(receipt.source)
+    // Only Mikka 额度 is split by funding; subscription and key usage was never charged by Mikka.
+    const funding = source === 'credits' ? fundingOf(cost, receipt.platform) : null
+    if (source !== 'credits') { add(included, cost); add(included.bySource[source], cost) }
+    else if (funding?.kind === 'unknown') fund(fundingUnknown, funding.cost)
+    else if (funding?.kind === 'known') {
+      add(credits, funding.charged)
+      if (funding.covered > 0) fund(covered, funding.covered)
+    } else add(credits, null)
+    const model = String(receipt.model)
+    // A prepayment is known by machineChunkId's receipt id, never by its label alone:
+    // a custom API-key provider can name a model anything, including a machine label.
+    const identity = parseMachineLedgerLabel(model)
+    const id = String(receipt.id)
+    if (identity && source === 'credits' && id.startsWith('machine:') && (identity.provider === 'e2b') === id.startsWith('machine:e2b:')) {
+      const sku = parseMachineSku(identity.provider, identity.size)
+      const recordedRate = Number(receipt.hourlyMicroUsd)
+      const measurement = receipt.machineCompute as {
+        source?: string; price?: { version?: string }; activeVcpuMs?: number; provisionedMs?: number; measuredCost?: number
+      } | null
+      const measuredCloudflare = sku?.provider === 'cloudflare' && measurement?.source === 'cloudflare_cgroup_list'
+      const rate = sku?.provider === 'cloudflare' && !measuredCloudflare ? machineHourlyMicroUsd(sku.size)
+        : sku && Number.isSafeInteger(recordedRate) && recordedRate > 0 ? recordedRate : null
+      const version = measuredCloudflare ? measurement.price?.version ?? null
+        : sku?.provider === 'cloudflare' ? CLOUDFLARE_LEGACY_PRICE_VERSION
+          : sku && typeof receipt.pricingVersion === 'string' ? receipt.pricingVersion : null
+      const run = String(receipt.runId)
+      const sizes = runSizes.get(run) ?? new Map()
+      sizes.set(`${model}:${rate}:${version ?? ''}`, { provider: identity.provider, sku, rate, version, measuredCloudflare })
+      runSizes.set(run, sizes)
+      const row = rate !== null || measuredCloudflare ? machine(identity.provider, sku, version, 'metered', measuredCloudflare)
+        : machine(identity.provider, null, null, 'unknown_size')
+      if (measuredCloudflare && settled && measurement.activeVcpuMs !== undefined &&
+          measurement.provisionedMs !== undefined && measurement.measuredCost !== undefined) {
+        row.activeVcpuMs = (row.activeVcpuMs ?? 0) + measurement.activeVcpuMs
+        row.seconds += measurement.provisionedMs / 1_000
+        row.meteredMicroUsd = (row.meteredMicroUsd ?? 0) + measurement.measuredCost
+      }
+      if (funding?.kind === 'known') { row.chargedMicroUsd += funding.charged; row.coveredMicroUsd += funding.covered }
+      else if (funding?.kind === 'unknown') row.fundingUnknownMicroUsd += funding.cost
+      else row.unpricedReceipts++
+      continue
+    }
+    let row = models.get(model)
+    if (!row) models.set(model, row = { model, calls: 0, inputTokens: 0, outputTokens: 0,
+      bySource: { credits: amount(), subscription: amount(), api_key: amount() }, covered: funded(), fundingUnknown: funded() })
+    row.calls++
+    row.inputTokens += Number(receipt.input ?? 0)
+    row.outputTokens += Number(receipt.output ?? 0)
+    if (funding?.kind === 'known') {
+      add(row.bySource.credits, funding.charged)
+      if (funding.covered > 0) fund(row.covered, funding.covered)
+    } else if (funding?.kind === 'unknown') fund(row.fundingUnknown, funding.cost)
+    else add(row.bySource[source], cost)
+  }
+  for (const session of sessions) {
+    const sizes = [...runSizes.get(String(session.runId))?.values() ?? []]
+    const [only] = sizes
+    if (sizes.length === 1 && only.measuredCloudflare) continue
+    const known = sizes.length === 1 && only.rate !== null
+    const providers = new Set(sizes.map(size => size.provider))
+    const row = !only ? machine(null, null, null, 'unbilled')
+      : known ? machine(only.provider, only.sku, only.version, 'metered')
+        : machine(providers.size === 1 ? only.provider : null, null, null, 'unknown_size')
+    const seconds = Math.max(0, Math.floor(Number(session.seconds)))
+    row.seconds += seconds
+    if (known && row.meteredMicroUsd !== null) row.meteredMicroUsd += Math.round(seconds * only.rate! / 3600)
+
+  }
+
+  const result: ThreadCost = { threadId: chain.rootRunId, groupBy: input.groupBy, totals: { credits, included, covered, fundingUnknown } }
+  if (input.groupBy === 'model') result.models = [...models.values()].sort((a, b) => b.calls - a.calls || a.model.localeCompare(b.model))
+  if (input.groupBy === 'machine') result.machines = [...machines.values()].sort((a, b) => b.seconds - a.seconds || b.chargedMicroUsd - a.chargedMicroUsd)
+  return result
+}

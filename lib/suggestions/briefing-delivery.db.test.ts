@@ -13,8 +13,8 @@ if (process.env.REQUIRE_DB === '1') assert.ok(enabled, 'matching isolated loopba
 test('cron, lazy suggestion reads and app connection deliver each briefing through the committed event', { skip: !enabled, timeout: 60_000 }, async t => {
   const direct: string[] = [], committed: string[] = [], scheduled: Promise<unknown>[] = []
   const wakeReady = new Map<string, () => void>()
-  const next = await import('next/server')
-  t.mock.module('next/server', { namedExports: { ...next, after: (work: () => Promise<unknown>) => { scheduled.push(work()) } } })
+  const next = await import('@/lib/server-runtime/server')
+  t.mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after: (work: () => Promise<unknown>) => { scheduled.push(work()) } } })
   t.mock.module('../coordinator/wake', { namedExports: { wakeCoordinator: async (userId: string) => { direct.push(userId) } } })
   const provider = await import('../composio')
   t.mock.module('../composio', { namedExports: { ...provider, getComposio: () => null } })
@@ -39,6 +39,7 @@ test('cron, lazy suggestion reads and app connection deliver each briefing throu
     delete coordinatorWakeTransport.wake
     for (const table of ['coordinator_events', 'briefings', 'suggestions', 'user_time_zones']) await pool.query(`DELETE FROM ${table} WHERE "userId"=ANY($1::text[])`, [people])
     await pool.query('DELETE FROM "user" WHERE id=ANY($1::text[])', [people])
+    await (await import('../builtin-gateway/runtime')).builtinGateway()?.stop()
     await Promise.all([pool.end(), workspacePool.end()])
   })
   coordinatorWakeTransport.wake = async userId => {

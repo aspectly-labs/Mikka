@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "Public copy of the promoters list in private mikka-cloud docs/operations/releases/deploy-pipeline.json (authoritative). Release workflows gate their promotion jobs on this list before reading any secret; scripts/release/release-policy.mjs refuses to promote when the two lists differ. Never add github-merge-queue[bot] or github-actions[bot].",
+  "promoters": [
+    {
+      "id": 183887963,
+      "login": "alexj11324",
+      "note": "Owner. Every workflow_dispatch run in aspectly-labs/Mikka from 2026-10-26 to 2026-11-26 (832 of 848) used this account; Claude Code, Codex and Cursor agents act through the owner's OAuth."
+    },
+    {
+      "id": 158243242,
+      "login": "devin-ai-integration[bot]",
+      "note": "Devin. Authored 86 of the last 500 aspectly-labs/Mikka PRs and triggers pull_request runs; commits in Mikka, mikka-hosted-ui and mikka-cloud."
+    }
+  ]
+}

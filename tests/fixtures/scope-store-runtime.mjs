@@ -4,7 +4,7 @@ import { registerHooks } from 'node:module'
 import assert from 'node:assert/strict'
 import { PgDialect, QueryBuilder } from 'drizzle-orm/pg-core'
 import * as schema from '../../lib/db/schema.ts'
-const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_organization_workspaces\".\"organizationId\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\" = $1 and \"mikka_workspace_members\".\"status\" = $2 and (\"mikka_workspaces\".\"kind\" = $3 or (\"mikka_workspaces\".\"kind\" = $4 and \"mikka_workspaces\".\"userId\" = $5))) order by \"mikka_workspaces\".\"createdAt\" asc"
+const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\" as \"mfa\", \"mikka_organization_workspaces\".\"organizationId\" as \"org\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\"=$1 and \"mikka_workspace_members\".\"status\"='active' and (\"mikka_workspaces\".\"kind\"='team' or (\"mikka_workspaces\".\"kind\"='personal' and \"mikka_workspaces\".\"userId\"=\"mikka_workspace_members\".\"userId\"))) order by \"mikka_workspaces\".\"createdAt\" asc"
 function expandMembershipAliases(sql) {
   for (const [table, name] of [['mikka_workspaces', 'w'], ['mikka_workspace_members', 'm'], ['mikka_organization_workspaces', 'o']]) {
     sql = sql.replaceAll('"' + table + '" "' + name + '"', '"' + table + '"')
@@ -60,18 +60,21 @@ function workspaceQuery(columns) {
     where(value){condition=dialect.sqlToQuery(value);statement=statement.where(value);return query},
     async orderBy(order){
       const p=globalThis.scopeStoreProbe,userId=condition.params[0]
-      assert.deepEqual(Object.keys(columns),['id','kind','organizationId'])
+      assert.deepEqual(Object.keys(columns),['id','kind','factorAt','organizationId'])
       const compiled=statement.orderBy(order).toSQL()
       assert.equal(expandMembershipAliases(compiled.sql),expectedMembershipSql)
-      assert.deepEqual(compiled.params,[userId,'active','team','personal',userId])
+      assert.deepEqual(compiled.params,[userId])
       return p.activeMembers.has(userId)?[{...p.workspace,organizationId:null}]:[]
     },
     async limit(count){
-      // This scope-store fixture has no Organization link; its real gate still runs.
-      assert.equal(table,'mikka_organization_workspaces')
-      assert.deepEqual(condition.params,[globalThis.scopeStoreProbe.workspace.id])
+      // The fixture workspace has no Organization link or MFA requirement.
+      assert.equal(table,'mikka_workspaces')
+      assert.deepEqual(Object.keys(columns), ['organizationId', 'factorAt'])
+      const compiled = statement.limit(count).toSQL()
+      assert.equal(compiled.sql, 'select "mikka_organization_workspaces"."organizationId", "mikka_workspaces"."twoFactorRequiredAt" from "mikka_workspaces" left join "mikka_organization_workspaces" on "mikka_organization_workspaces"."workspaceId" = "mikka_workspaces"."id" where "mikka_workspaces"."id" = $1 limit $2')
+      assert.deepEqual(compiled.params,[globalThis.scopeStoreProbe.workspace.id, 1])
       assert.equal(count,1)
-      return []
+      return [{organizationId:null,factorAt:null}]
     },
     async for(mode){
       const p=globalThis.scopeStoreProbe
@@ -98,7 +101,7 @@ registerHooks({
   load(url,context,next){
     if(url==='scope-store:db')return {format:'module',source:`export {scopeStoreDatabase as db,scopeStorePool as pool} from ${JSON.stringify(import.meta.url)}`,shortCircuit:true}
     if(url==='scope-store:workspace')return {format:'module',source:`export {scopeStoreWorkspaceDatabase as workspaceDb,scopeStorePool as workspacePool} from ${JSON.stringify(import.meta.url)}`,shortCircuit:true}
-    if(url==='scope-store:acting-user')return {format:'module',source:'export async function currentUser(){throw Error("scope store already receives its authenticated actor")}',shortCircuit:true}
+    if(url==='scope-store:acting-user')return {format:'module',source:'export async function currentUser(){throw Error("scope store already receives its authenticated actor")};export async function requireUser(){throw Error("scope store already receives its authenticated actor")}',shortCircuit:true}
     if(url==='scope-store:view')return {format:'module',source:'export async function issueView(issue){return issue}',shortCircuit:true}
     return next(url,context)},
 })

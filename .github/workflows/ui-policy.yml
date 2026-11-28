@@ -1,24 +1,26 @@
 name: CI
 
-# Merge-blocking source and database checks run on GitHub's PR merge candidate,
-# not a same-repository branch push. This avoids duplicating the same expensive
-# jobs and detects integration failures against the target branch at PR time.
-# - pull_request: premerge checks (same-repo and fork PRs);
-# - merge_group: synthetic queue candidate, if a queue is enabled later;
-# - push main: postmerge verification of each distinct main commit.
-# CI runs no browser tests (decision 2026-11-01-1520). Preserve the existing
-# protected status-check names.
+# Pull requests to main run selected source and unit checks. Merge queue candidates
+# also run database shards and applicable acceptance on the combined commit.
+# Main retains each distinct postmerge run. The daily schedule has no diff, so
+# the selector selects every lane; jobs bound to another event (merge-group
+# candidate and governance checks, PR screenshots, push-only cloud secret access)
+# still skip, and the schedule adds the offline browser journeys. `CI OK` is the single
+# aggregate; keep the older protected check names until branch protection
+# requires `CI OK` instead (.github/workflows/README.md).
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
   merge_group:
   workflow_dispatch:
   schedule:
-    - cron: '23 3 * * 1'
+    - cron: '23 3 * * *'
 
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   # Main commits need unique groups: a new pending run must not evict an older
@@ -28,7 +30,6 @@ concurrency:
 
 env:
   # Existing accounting/admission suites exercise the hosted deployment.
-  # The self-hosted image workflow separately runs the default community mode.
   MIKKA_EDITION: cloud
   # A cache restore that fails (e.g. the account's cache egress limit) would
   # otherwise hang for actions/cache's 10-minute default before falling back
@@ -49,7 +50,7 @@ jobs:
     name: Cloud credential access (OIDC)
     # Credential checks do not run for documentation-only changes.
     needs: changes
-    if: needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && github.event_name == 'push' && github.repository == 'alexj11324/Mikka' && github.ref != 'refs/heads/wabi/issue-116-migration-prerequisite'
+    if: needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && github.event_name == 'push' && (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref != 'refs/heads/wabi/issue-116-migration-prerequisite'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -83,26 +84,21 @@ jobs:
           JS
 
   ui-policy-full:
-    name: Core unit checks${{ matrix.node == '22' && ' (Node 22)' || '' }}
+    name: Core unit checks
     needs: changes
-    if: needs.changes.result == 'success' && needs.changes.outputs.core == 'true'
+    if: needs.changes.result == 'success' && needs.changes.outputs.core == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
     # Fixed standard Linux image; host namespace/security policy stays unchanged.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22', '24']
     env:
       BETTER_AUTH_SECRET: ci-build-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
       MIKKA_DATABASE_URL: postgres://mikka:mikka@127.0.0.1:5432/mikka
-      NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/pnpm-install
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           ffmpeg-github-token: ${{ github.token }}
       - name: Ensure FFmpeg for Factory evidence acceptance regressions
         timeout-minutes: 5
@@ -122,26 +118,21 @@ jobs:
         run: pnpm test:governance
 
   ui-policy-integrations:
-    name: Integration unit checks${{ matrix.node == '22' && ' (Node 22)' || '' }}
+    name: Integration unit checks
     needs: changes
-    if: needs.changes.result == 'success' && needs.changes.outputs.integration == 'true'
+    if: needs.changes.result == 'success' && needs.changes.outputs.integration == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
     # Fixed standard Linux image; host namespace/security policy stays unchanged.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['22', '24']
     env:
       BETTER_AUTH_SECRET: ci-build-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
       MIKKA_DATABASE_URL: postgres://mikka:mikka@127.0.0.1:5432/mikka
-      NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/pnpm-install
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           ffmpeg-github-token: ${{ github.token }}
       - name: Ensure FFmpeg for real recording regressions
         run: |
@@ -149,6 +140,13 @@ jobs:
             sudo "$(command -v node)" scripts/ci/apt-mirrors.mjs
             sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
             sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y ffmpeg
+          fi
+      - name: Ensure isolated process support for HTTP provider fixtures
+        run: |
+          if ! command -v bwrap >/dev/null; then
+            sudo "$(command -v node)" scripts/ci/apt-mirrors.mjs
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y bubblewrap
           fi
       - name: Run selected integration tasks through Nx Core
         run: node scripts/ci/run-units.mjs integration
@@ -158,7 +156,7 @@ jobs:
   source-checks:
     name: Source checks
     needs: changes
-    if: needs.changes.result == 'success' && needs.changes.outputs.source == 'true'
+    if: needs.changes.result == 'success' && needs.changes.outputs.source == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
     # Fixed standard Linux image; host namespace/security policy stays unchanged.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -166,20 +164,41 @@ jobs:
       BETTER_AUTH_SECRET: ci-build-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
       MIKKA_DATABASE_URL: postgres://mikka:mikka@127.0.0.1:5432/mikka
-      NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/pnpm-install
         with:
           ffmpeg-github-token: ${{ github.token }}
+      - name: Verify draft CI fail-closed and ready-for-review triggers
+        run: node --test scripts/ci/draft-ci-policy.test.mjs
       - name: Shadow selection against full baseline scenarios
         run: node scripts/ci/shadow.mjs
       - run: pnpm check:cloud-boundary
+      - run: pnpm check:sql-safety
+      - run: pnpm check:route-guard
+        if: always()
+      - run: pnpm test:anti-hardcoding
+        if: always()
+      - run: pnpm check:config-contracts
+        if: always()
+      - run: pnpm lint:semantic
+        if: always()
+      - run: pnpm test:semantic-lint
+        if: always()
       - name: Verify all production release credentials use existing Infisical OIDC
-        run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs
+        run: node --test scripts/mobile-ota-credentials.test.mjs scripts/release/apple-credentials.test.mjs scripts/release/ios-app-store-signing.test.mjs scripts/release/mobile-next-update.test.mjs
         if: always()
       - name: Verify production auth and lease acceptance drivers without credentials
         run: node --test scripts/acceptance/auth-audit-production.test.mjs scripts/acceptance/cloud-lease-audit.test.mjs scripts/acceptance/cloud-lease-recovery.test.mjs scripts/acceptance/shared-account-queue.test.mjs scripts/ops/production-smoke.test.mjs
+        if: always()
+      - run: pnpm docs:check
+        if: always()
+      - name: Check waiting issues
+        run: node scripts/check-waiting-issues.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         if: always()
       - run: pnpm lint:code
         if: always()
@@ -196,7 +215,6 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         if: always()
       - run: pnpm --filter @mikka/protocol typecheck
-      - run: pnpm --filter @mikka/mobile typecheck
 
       - name: Audit business UI composition
         run: pnpm --silent lint:ui --json > ui-audit.json
@@ -223,7 +241,7 @@ jobs:
   daemon-checks:
     name: Daemon checks
     needs: changes
-    if: needs.changes.result == 'success' && needs.changes.outputs.daemon == 'true'
+    if: needs.changes.result == 'success' && needs.changes.outputs.daemon == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
     # Fixed standard Linux image; host namespace/security policy stays unchanged.
     runs-on: ubuntu-22.04
     timeout-minutes: 20
@@ -231,7 +249,6 @@ jobs:
       BETTER_AUTH_SECRET: ci-build-secret-0123456789abcdef0123456789abcdef
       BETTER_AUTH_URL: http://localhost:3000
       MIKKA_DATABASE_URL: postgres://mikka:mikka@127.0.0.1:5432/mikka
-      NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/pnpm-install
@@ -288,21 +305,11 @@ jobs:
         env:
           MIKKA_DAEMON_DIST_DIR: ${{ steps.daemon-package.outputs.package-directory }}
 
-  # PR specializations are reusable jobs so the stable gate can require their
+  # Acceptance suites are reusable jobs so the stable gate can require their
   # actual conclusions. Main retains its existing independent release workflows.
-  image-checks:
-    needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.image == 'true'
-    uses: ./.github/workflows/self-hosted-image.yml
-    with:
-      selected: true
-    permissions:
-      contents: read
-      packages: write
-
   analytics-checks:
     needs: changes
-    if: github.event_name != 'push' && needs.changes.outputs.analytics == 'true'
+    if: github.event_name != 'push' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) && needs.changes.outputs.analytics == 'true'
     uses: ./.github/workflows/analytics-ssr.yml
     with:
       selected: true
@@ -313,15 +320,63 @@ jobs:
     # Exact-main acceptance stays in the standalone postmerge push workflow.
     needs: changes
     if: >-
-      (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
+      (github.event_name == 'merge_group' ||
+       (github.event_name == 'pull_request' && github.base_ref != 'main' && github.event.pull_request.draft != true)) &&
       needs.changes.result == 'success' && needs.changes.outputs.db == 'true'
     uses: ./.github/workflows/workspace-governance-acceptance.yml
+
+  frontend-screenshots:
+    # Description evidence only. No browser (decision 2026-11-01-1520).
+    # Editing the description reruns .github/workflows/frontend-screenshots.yml
+    # without rerunning this suite.
+    name: Frontend changes include a screenshot
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Require a screenshot or recording in the description
+        run: node scripts/ci/frontend-screenshot-check.mjs
+
+  candidate-checks:
+    if: github.event_name == 'merge_group'
+    uses: ./.github/workflows/ci-merge-candidate.yml
+
+  desktop-checks:
+    # Path-routed like Orca: on a pull request the trusted selector reports
+    # `desktop` only for apps/desktop, the workspace packages it links,
+    # desktop.yml, .npmrc, the paths desktop.yml runs, the Nx closure of
+    # @mikka/desktop and lockfile or manifest changes that reach it
+    # (scripts/ci/select.mjs, desktop-inputs.mjs); merge groups and the daily run
+    # keep the broad rule (global inputs too). Main pushes rely on the merge-queue run.
+    needs: changes
+    if: needs.changes.result == 'success' && needs.changes.outputs.desktop == 'true' && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true)
+    uses: ./.github/workflows/desktop.yml
+    with:
+      selected: true
+
+  nightly-journey:
+    # The daily full run also runs the offline browser journeys (#2890 keeps
+    # them off pull requests). Scheduled runs only, on the canonical repository.
+    # Not yet a need of CI OK: the journeys have never passed (the old name guard
+    # skipped every run). Add it to ci-ok's needs once a scheduled run is green.
+    if: github.event_name == 'schedule' && github.repository_id == '1427517699' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/nightly-journey.yml
+    permissions:
+      contents: read
+      actions: read
 
   ui-policy:
     # The required check name. It reports success when only documentation
     # changed; otherwise it mirrors the full suite's result.
     name: UI policy (strict)
-    needs: [changes, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, image-checks, analytics-checks, workspace-governance-checks]
+    needs: [changes, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, candidate-checks, frontend-screenshots, desktop-checks]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -329,18 +384,27 @@ jobs:
       contents: read
       actions: read
     steps:
-      - name: Require every selected source, unit and daemon job
+      - name: Draft PR is not a validated merge candidate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          echo 'Draft: mark Ready for review to run the PR checks.' >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+      - name: Require every selected CI job
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
           EXPECT_CORE: ${{ needs.changes.outputs.core }}
           EXPECT_INTEGRATION: ${{ needs.changes.outputs.integration }}
           EXPECT_SOURCE: ${{ needs.changes.outputs.source }}
           EXPECT_DAEMON: ${{ needs.changes.outputs.daemon }}
-          EXPECT_IMAGE: ${{ github.event_name != 'push' && needs.changes.outputs.image == 'true' }}
-          EXPECT_ANALYTICS: ${{ github.event_name != 'push' && needs.changes.outputs.analytics == 'true' }}
-          EXPECT_GOVERNANCE: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.db == 'true' }}
+          EXPECT_ANALYTICS: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.analytics == 'true' }}
+          EXPECT_GOVERNANCE: ${{ (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref != 'main')) && needs.changes.outputs.db == 'true' }}
+          EXPECT_CANDIDATE: ${{ github.event_name == 'merge_group' }}
+          EXPECT_SCREENSHOTS: ${{ github.event_name == 'pull_request' }}
+          EXPECT_DESKTOP: ${{ github.event_name != 'push' && needs.changes.outputs.desktop == 'true' }}
+          DESKTOP: ${{ needs.desktop-checks.result }}
+          CANDIDATE: ${{ needs.candidate-checks.result }}
           GOVERNANCE: ${{ needs.workspace-governance-checks.result }}
-          IMAGE: ${{ needs.image-checks.result }}
+          SCREENSHOTS: ${{ needs.frontend-screenshots.result }}
           ANALYTICS: ${{ needs.analytics-checks.result }}
           CORE: ${{ needs.ui-policy-full.result }}
           INTEGRATION: ${{ needs.ui-policy-integrations.result }}
@@ -348,7 +412,7 @@ jobs:
           DAEMON: ${{ needs.daemon-checks.result }}
         run: |
           test "$CHANGES_RESULT" = success
-          for name in CORE INTEGRATION SOURCE DAEMON IMAGE ANALYTICS GOVERNANCE; do
+          for name in CORE INTEGRATION SOURCE DAEMON ANALYTICS GOVERNANCE CANDIDATE SCREENSHOTS DESKTOP; do
             expected="EXPECT_$name"
             case "${!expected}" in
               true) test "${!name}" = success ;;
@@ -356,10 +420,20 @@ jobs:
               *) exit 1 ;;
             esac
           done
-          echo 'All selected source/unit/daemon and governance jobs succeeded.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'All selected CI jobs succeeded.' >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: always()
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+        with:
+          node-version: 24
+      - name: Verify rule-as-code architecture map and snapshot guards
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+        run: node scripts/rule-as-code-audit.mjs && node --test scripts/rule-as-code-audit.test.mjs
+      - name: Verify Engineering Handbook, ADR status headers and no competitor source citations
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+        run: node --test scripts/engineering-handbook.test.mjs scripts/no-competitor-source.test.mjs
       - name: Record actual completed job timings
         if: always()
         run: node scripts/ci/summary.mjs
@@ -369,16 +443,15 @@ jobs:
   browser-tests-full:
     # CI runs no browser tests (decision 2026-11-01-1520); this job keeps the
     # database suites that the required check names cover.
-    name: Database checks (${{ matrix.shard }})${{ matrix.node == '22' && ' (Node 22)' || '' }}
+    name: Database checks (${{ matrix.shard }})
     needs: changes
-    if: needs.changes.result == 'success' && needs.changes.outputs.db == 'true'
+    if: needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true))
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(needs.changes.outputs.db_matrix).shard }}
-        node: ['22', '24']
     services:
       postgres:
         image: postgres:17
@@ -408,12 +481,11 @@ jobs:
       BETTER_AUTH_URL: http://localhost:3100
       MIKKA_TEST_DEPLOYMENT_SHA: ${{ github.sha }}
       MIKKA_TEST_ENVIRONMENT_FILE: .cache/e2e/environment.json
-      NEXT_TELEMETRY_DISABLED: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/pnpm-install
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
           ffmpeg-github-token: ${{ github.token }}
       # The .deb files apt downloads for the packages below, keyed on the package
       # list and the runner image (a new image can carry newer dependencies).
@@ -480,7 +552,7 @@ jobs:
           RUN_DISPATCH_DB_TESTS: '1'
           FACTORY_MONITOR_TEST_URL: postgresql://e2e:e2e-local-only@127.0.0.1:5432/mikka_e2e
           CREDENTIAL_TEST_RETAIN_RESOURCES: '1'
-          DB_TEST_EXPECTED: test:abuse-db,test:account-db,test:active-agents,test:activity-actor-db,test:agent-kit-db,test:agent-tool-approval-db,test:approved-writes-db,test:artifact-migration-db,test:audit-db,test:bot-chats-db,test:bot-threads-db,test:captures-db,test:chat-attachments-db,test:cloud-backend-db,test:cloud-services-db,test:coding-workspace-db,test:computer-db,test:conversation-reads,test:coordinator-issue-create-db,test:coordinator-issue-tools-db,test:coordinator-native,test:coordinator-task-binding-db,test:credentials-db,test:desktop-auth,test:device-enrollment-db,test:device-revocation-db,test:domain-lifecycle-db,test:drive-db,test:enterprise-db,test:eve-db,test:execution-settings-db,test:factory,test:factory-activity-db,test:factory-activity-http-db,test:factory-all-dispatch-db,test:factory-approval-db,test:factory-check-independence-db,test:factory-checks-db,test:factory-monitor-db,test:factory-routing-db,test:github-connections-db,test:group-turns,test:groups,test:inbox-db,test:issue-search-db,test:live-db,test:local-repository-migration-db,test:migration-steps-db,test:model-admission-db,test:onboarding-db,test:organization-invitations-db,test:organization-join-domains-db,test:ops-db,test:pat-api-db,test:pat-db,test:personal-mailbox-default-off-db,test:plugins-db,test:preview-driver,test:project-decisions-db,test:project-resources-db,test:project-v2-db,test:relation-cycle,test:run-dispatch,test:run-publication-db,test:run-recovery-db,test:schedules-db,test:scope-detachment-db,test:secrets-db,test:self-improvement-db,test:self-improvement-unit,test:session-mailbox-db,test:settings-activity-db,test:settings-prefs-db,test:skill-semantic-db,test:slack-installation-db,test:suggestion-artifact-db,test:task-identity-db,test:task-presentation-db,test:test-accounts-db,test:user-facts-db,test:visibility-db,test:web-auth-db,test:worker-authorization-db,test:workspace-admin-db,test:workspace-migration-db,test:workspace-permissions-migration-db
+          DB_TEST_EXPECTED: test:abuse-db,test:account-db,test:active-agents,test:activity-actor-db,test:agent-kit-db,test:agent-tool-approval-db,test:approved-writes-db,test:artifact-migration-db,test:audit-db,test:bot-chats-db,test:bot-threads-db,test:captures-db,test:chat-attachments-db,test:cloud-backend-db,test:cloud-services-db,test:coding-workspace-db,test:computer-db,test:conversation-reads,test:coordinator-issue-create-db,test:coordinator-issue-tools-db,test:coordinator-native,test:coordinator-task-binding-db,test:credentials-db,test:desktop-auth,test:device-enrollment-db,test:device-revocation-db,test:domain-lifecycle-db,test:drive-db,test:enterprise-db,test:eve-db,test:eve-graphile-db,test:execution-settings-db,test:factory,test:factory-activity-db,test:factory-activity-http-db,test:factory-all-dispatch-db,test:factory-approval-db,test:factory-check-independence-db,test:factory-checks-db,test:factory-monitor-db,test:factory-routing-db,test:github-connections-db,test:group-turns,test:groups,test:inbox-db,test:interop-db,test:issue-search-db,test:live-db,test:local-repository-migration-db,test:migration-steps-db,test:model-admission-db,test:onboarding-db,test:ops-db,test:organization-invitations-db,test:organization-join-domains-db,test:pat-api-db,test:pat-db,test:personal-mailbox-default-off-db,test:plugins-db,test:preview-driver,test:project-decisions-db,test:project-resources-db,test:project-v2-db,test:relation-cycle,test:run-dispatch,test:run-publication-db,test:run-recovery-db,test:schedules-db,test:scope-detachment-db,test:secrets-db,test:self-improvement-db,test:self-improvement-unit,test:session-mailbox-db,test:settings-activity-db,test:settings-prefs-db,test:skill-semantic-db,test:slack-installation-db,test:stop-before-turn-db,test:suggestion-artifact-db,test:task-attachments-db,test:task-identity-db,test:task-presentation-db,test:test-accounts-db,test:user-facts-db,test:visibility-db,test:web-auth-db,test:worker-authorization-db,test:workspace-admin-db,test:workspace-migration-db,test:workspace-permissions-migration-db
       - name: Preserve synthetic CLI approval database evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -491,7 +563,7 @@ jobs:
             /tmp/mikka-http-network-approval-*/*/repo/cli.stderr.log
             ${{ runner.temp }}/pr13-personal-mailbox-results.xml
           if-no-files-found: warn
-      # No production build in CI: Vercel builds main (decision 2026-11-01-0230).
+      # This job does not build the production release artifact.
 
   browser-tests:
     # The required check name. Same docs-only behavior as UI policy above.
@@ -504,11 +576,19 @@ jobs:
       contents: read
       actions: read
     steps:
+      - name: Draft PR is not a validated merge candidate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          echo 'Draft: mark Ready for review to run the PR checks.' >> "$GITHUB_STEP_SUMMARY"
+          exit 1
       - name: Require every selected database shard
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          EXPECT_DB: ${{ needs.changes.outputs.db }}
+          EXPECT_DB: ${{ (github.event_name != 'pull_request' || github.base_ref != 'main') && needs.changes.outputs.db == 'true' }}
           DB_RESULT: ${{ needs.browser-tests-full.result }}
+          DB_SELECTED: ${{ needs.changes.outputs.db }}
+          DB_SUITES: ${{ needs.changes.outputs.db_suites }}
+          DB_MATRIX: ${{ needs.changes.outputs.db_matrix }}
         run: |
           test "$CHANGES_RESULT" = success
           case "$EXPECT_DB" in
@@ -516,7 +596,18 @@ jobs:
             false) test "$DB_RESULT" = skipped ;;
             *) exit 1 ;;
           esac
-          echo "Database gate: $DB_RESULT; complete inventory validated in Changed files." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$DB_SELECTED" = true ] && [ "$EXPECT_DB" = false ]; then
+            message='Database checks deferred to merge queue'
+            if [ -n "$DB_SUITES" ]; then message="$message; suites: $DB_SUITES"; fi
+            if [ -n "$DB_MATRIX" ]; then
+              shards="$(node -e 'console.log(JSON.parse(process.env.DB_MATRIX).shard.length)')"
+              message="$message; shard count: $shards"
+            fi
+            printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            printf '::notice::%s\n' "$message"
+          else
+            echo "Database gate: $DB_RESULT; complete inventory validated in Changed files." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         if: always()
       - name: Record actual completed job timings
@@ -524,3 +615,56 @@ jobs:
         run: node scripts/ci/summary.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+
+  ci-ok:
+    # The single aggregate check, as Orca and most merge-queue repositories do:
+    # it waits for every CI job (not yet nightly-journey) and fails if any failed or was cancelled. A
+    # skipped job passes only where its own `if:` (the trusted selection and
+    # the event) left it out: each CI_OK_EXPECT_* below is that job's `if:`
+    # (scripts/ci/ci-ok.test.mjs compares them).
+    name: CI OK
+    needs: [changes, cloud-secret-access, ui-policy-full, ui-policy-integrations, source-checks, daemon-checks, analytics-checks, workspace-governance-checks, frontend-screenshots, candidate-checks, desktop-checks, ui-policy, browser-tests-full, browser-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Draft PR is not a validated merge candidate
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+        run: |
+          echo 'Draft: mark Ready for review to run the PR checks.' >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - name: Require every selected CI job; accept only selected skips
+        env:
+          CI_OK_NEEDS: ${{ toJSON(needs) }}
+          CI_OK_EXPECT_CHANGES: 'true'
+          CI_OK_EXPECT_CLOUD_SECRET_ACCESS: ${{ needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true' && github.event_name == 'push' && (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref != 'refs/heads/wabi/issue-116-migration-prerequisite' }}
+          CI_OK_EXPECT_UI_POLICY_FULL: ${{ needs.changes.result == 'success' && needs.changes.outputs.core == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_UI_POLICY_INTEGRATIONS: ${{ needs.changes.result == 'success' && needs.changes.outputs.integration == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_SOURCE_CHECKS: ${{ needs.changes.result == 'success' && needs.changes.outputs.source == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_DAEMON_CHECKS: ${{ needs.changes.result == 'success' && needs.changes.outputs.daemon == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_ANALYTICS_CHECKS: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) && needs.changes.outputs.analytics == 'true' }}
+          CI_OK_EXPECT_WORKSPACE_GOVERNANCE_CHECKS: ${{ (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.base_ref != 'main' && github.event.pull_request.draft != true)) && needs.changes.result == 'success' && needs.changes.outputs.db == 'true' }}
+          CI_OK_EXPECT_FRONTEND_SCREENSHOTS: ${{ github.event_name == 'pull_request' && needs.changes.result == 'success' }}
+          CI_OK_EXPECT_CANDIDATE_CHECKS: ${{ github.event_name == 'merge_group' }}
+          CI_OK_EXPECT_DESKTOP_CHECKS: ${{ needs.changes.result == 'success' && needs.changes.outputs.desktop == 'true' && github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.draft != true) }}
+          CI_OK_EXPECT_UI_POLICY: 'true'
+          CI_OK_EXPECT_BROWSER_TESTS_FULL: ${{ needs.changes.result == 'success' && needs.changes.outputs.db == 'true' && (github.event_name != 'pull_request' || (github.base_ref != 'main' && github.event.pull_request.draft != true)) }}
+          CI_OK_EXPECT_BROWSER_TESTS: 'true'
+        # Main's verdict script, as the selector loads main's bootstrap, so a pull request
+        # cannot edit the script that judges it. It still controls this workflow, the
+        # needs and the expectations above (ci-ok.test.mjs ties each to its job's if:).
+        # Only the PR that introduces the script runs its own copy.
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          policy="$RUNNER_TEMP/ci-ok.mjs"
+          if git show origin/main:scripts/ci/ci-ok.mjs > "$policy" 2>/dev/null; then
+            echo "Verdict from main's scripts/ci/ci-ok.mjs"
+          else
+            echo 'scripts/ci/ci-ok.mjs is not on main yet: using this commit'"'"'s copy'
+            cp scripts/ci/ci-ok.mjs "$policy"
+          fi
+          node "$policy"

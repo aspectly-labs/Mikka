@@ -1,36 +1,19 @@
-import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { ActionFailureError } from '@/lib/action-error'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
-import { decidePendingAction } from '@/lib/pending-actions'
-import { pendingActionsOutsideToken } from '@/lib/tokens/scope'
-
-export const dynamic = 'force-dynamic'
-
-type Params = { params: Promise<{ id: string }> }
+import { json } from '@/lib/mobile-api'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /**
- * `POST /api/mobile/pending-actions/:id` with `{ approve }`: the person
- * approves (runs) or declines one proposal from the app, as the web's
- * decidePendingAction server action does. The list is `/api/pending-actions`.
- * 409 when it was already decided or has expired.
+ * Retired: nothing waits for approval (ADR 2026-11-27-1615), so there is
+ * nothing to approve or decline. Kept for one release so older phone builds
+ * that still post `{ approve }` here get the same answer as the web's retired
+ * decision (`pendingActionUnavailable`, 409) instead of a 404. Remove with the
+ * hosted follow-up.
  */
-async function handlePOST(request: Request, { params }: Params) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
-  const id = z.uuid().safeParse((await params).id)
-  const body = z.object({ approve: z.boolean() }).safeParse(await request.json().catch(() => null))
-  if (!id.success || (await pendingActionsOutsideToken(user, [id.data])).size) return json({ error: 'pendingActionUnavailable' }, 409)
-  if (!body.success) return json({ error: 'invalidInput' }, 400)
-  try {
-    const { status, error } = await decidePendingAction(user.id, id.data, body.data.approve)
-    return json({ status, reason: error })
-  } catch (error) {
-    if (error instanceof ActionFailureError) return json({ error: error.code }, 409)
-    throw error
-  }
-}
-
-export const POST = withRequestLog('/api/mobile/pending-actions/[id]', handlePOST)
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }>(
+  {
+    route: '/api/mobile/pending-actions/[id]',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async () => json({ error: 'pendingActionUnavailable' }, 409),
+)

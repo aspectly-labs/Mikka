@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 import test from 'node:test'
 import { Pool } from 'pg'
 import type { SubscriptionWorkerClient } from '../../packages/daemon/src/subscription-worker-client'
@@ -7,6 +8,8 @@ import { SubscriptionRepository } from '@/lib/subscription-repository'
 import { dbUrl, seedAgent, seedRun, seedUser, seedWorkspace } from '../../tests/support/workspace-admin-db'
 import { cleanupAccountSubscriptions, type SubscriptionCleanupFactory } from './subscription-cleanup'
 import { cleanupAccountRuntimes } from './runtime-cleanup'
+import { cleanupAccountBilling } from './billing-cleanup'
+import { cleanupAccountConnections } from './external-cleanup'
 import { requestAccountDeletion, resumeAccountDeletion } from './deletion-jobs'
 
 test('account cleanup calls only owner-scoped adapters and retains unresolved external mappings', { skip: !dbUrl }, async t => {
@@ -19,8 +22,10 @@ test('account cleanup calls only owner-scoped adapters and retains unresolved ex
     await database.query('INSERT INTO byos_secret_artifacts(name,"connectionId","ownerId","workspaceId",provider,kind,"notBefore","publishedAt","createStarted","createSettled") VALUES($1,$2,$3,$4,\'codex\',\'grant\',now(),now(),true,true)', [`${secret}-${owner}`, ownConnection, owner, ws.id])
     const repository = new SubscriptionRepository(database), calls: string[] = []
     let acknowledgeCustody = false
+    let workerError = true
     const factory: SubscriptionCleanupFactory = async () => ({ repository,
       worker: scope => ({ call: async (method: string) => {
+        if (workerError) throw Object.assign(new Error('private provider body'), { name: 'WorkerRefusal', code: 'metadata_unavailable' })
         assert.equal(scope.ownerId, owner); assert.equal(scope.connectionId, ownConnection)
         calls.push(method)
         if (method === 'disconnect') await database.query('UPDATE byos_connections SET state=\'disconnected\',epoch=epoch+1,"secretName"=NULL,"secretDigest"=NULL,"providerSubject"=NULL WHERE id=$1 AND "ownerId"=$2', [scope.connectionId, scope.ownerId])
@@ -29,6 +34,8 @@ test('account cleanup calls only owner-scoped adapters and retains unresolved ex
       } } as unknown as SubscriptionWorkerClient),
       status: async (userId, id) => { const row = await repository.connection(userId, id); return { id, provider: row.provider, state: row.state, revision: Number(row.epoch), cleanup: { pending: acknowledgeCustody ? 0 : 1, failed: 0, providerRevocation: 'not_implemented' as const, uncertainCreates: 0 } } },
     })
+    assert.deepEqual(await cleanupAccountSubscriptions(owner, database, factory), { blockedReasons: ['subscription_cleanup_failed'], warnings: [], blockerErrors: { subscription_cleanup_failed: 'WorkerRefusal:metadata_unavailable' } })
+    workerError = false
     const options = { mainPool: database, workspacePool: database, externalCleanup: async (subject: string, target: Pool) => cleanupAccountSubscriptions(subject, target, factory) }
     const requested = await requestAccountDeletion(owner, `${owner}@example.invalid`, randomUUID(), options)
     assert.ok(requested.ok)
@@ -68,5 +75,250 @@ test('account cleanup calls only owner-scoped adapters and retains unresolved ex
     assert.deepEqual(blocked.sort(), ['cloud_thread_cleanup_pending', 'cloud_runtime_cleanup_required', 'cloud_snapshot_cleanup_required'].sort())
     assert.equal((await database.query('SELECT state FROM thread_machines WHERE "runId"=$1', [peerRun])).rows[0].state, 'running')
     assert.equal((await database.query('SELECT "sandboxId" FROM cloud_machines WHERE "workspaceId"=$1 AND "ownerId"=$2', [workspace.id, subject])).rows[0].sandboxId, botSandbox)
+  })
+  await t.test('hosted account deletion discloses legacy external E2B custody and never requires a personal key', async t => {
+    const previousEdition = process.env.MIKKA_EDITION
+    process.env.MIKKA_EDITION = 'cloud'
+    t.after(() => { if (previousEdition === undefined) delete process.env.MIKKA_EDITION; else process.env.MIKKA_EDITION = previousEdition })
+    const subject = await seedUser(database, 'external-e2b-owner')
+    const workspace = await seedWorkspace(database, subject, [{ userId: subject, role: 'admin' }])
+    const botSandbox = randomUUID(), retrySandbox = randomUUID(), threadSandbox = randomUUID(), snapshot = randomUUID()
+    const operation = randomUUID(), threadOperation = randomUUID()
+    const agentId = await seedAgent(database, subject)
+    const runId = await seedRun(database, { userId: subject, agentId, workspaceId: workspace.id, status: 'succeeded' })
+    await database.query('INSERT INTO cloud_machines("workspaceId","ownerId","operationId","sandboxId") VALUES($1,$2,$3,$4)',
+      [workspace.id, subject, operation, botSandbox])
+    await database.query(`INSERT INTO thread_machines("runId","workspaceId","ownerId","sandboxId","snapshotId","filesystemSnapshotId","operationId",state)
+      VALUES($1,$2,$3,$4,'codex',$5,$6,'paused')`, [runId, workspace.id, subject, threadSandbox, snapshot, threadOperation])
+    await database.query('INSERT INTO sandbox_kill_retries("sandboxId","ownerId") VALUES($1,$2)', [retrySandbox, subject])
+    await database.query(`INSERT INTO e2b_resource_accounts(kind,id,"ownerId",scope)
+      SELECT kind,id,$1,'personal' FROM unnest($2::text[],$3::text[]) AS r(kind,id)`,
+      [subject, ['sandbox','sandbox','sandbox','snapshot','operation','operation'],
+        [botSandbox, retrySandbox, threadSandbox, snapshot, operation, threadOperation]])
+    const options = { mainPool: database, workspacePool: database }
+    const requested = await requestAccountDeletion(subject, `${subject}@example.invalid`, randomUUID(), options)
+    assert.ok(requested.ok)
+    const done = await resumeAccountDeletion(requested.id, options)
+    assert.equal(done.stage, 'completed', JSON.stringify([done.blockedReasons, done.blockerErrors]))
+    assert.ok(done.warnings.includes('e2b_external_resources_managed_at_provider'))
+  })
+  await t.test('a live plan is cancelled while its workspace row still exists, and a cancel that cannot be confirmed aborts the deletion', async () => {
+    // Stripe is the only party that can stop the charge, and the Customer Portal that could
+    // cancel it goes with the workspace. Shared tenants keep the plan they pay for themselves.
+    const subject = await seedUser(database, 'cleanup-billing'), workspace = await seedWorkspace(database, subject, [{ userId: subject, role: 'admin' }])
+    const teamOwner = await seedUser(database, 'cleanup-billing-team'), shared = await seedWorkspace(database, teamOwner, [{ userId: teamOwner, role: 'admin' }, { userId: subject, role: 'member' }])
+    // Provider ids are unique per run: workspace_billing rows outlive the workspace row they bill.
+    const providerId = (prefix: 'cus' | 'sub') => `${prefix}_${randomUUID().replaceAll('-', '')}`
+    const soloCustomer = providerId('cus'), soloSubscription = providerId('sub'), teamCustomer = providerId('cus'), teamSubscription = providerId('sub')
+    await database.query(`INSERT INTO workspace_billing("workspaceId","stripeCustomerId","stripeSubscriptionId",plan,status) VALUES
+      ($1,$2,$3,'pro','active'),($4,$5,$6,'pro','active')`, [workspace.id, soloCustomer, soloSubscription, shared.id, teamCustomer, teamSubscription])
+    const provider = (outcome: 'canceled' | 'refused') => {
+      const seen: Array<{ method: string; url: string; ownWorkspacePresent: boolean }> = []
+      const fetchImpl = (async (url: string, init: RequestInit) => {
+        const method = init.method ?? 'GET'
+        // Ordering evidence: the workspace row must still be readable when Stripe is asked.
+        const ownWorkspacePresent = (await database.query('SELECT count(*)::int n FROM mikka_workspaces WHERE id=$1', [workspace.id])).rows[0].n === 1
+        seen.push({ method, url, ownWorkspacePresent })
+        if (method === 'GET') {
+          const customer = new URL(url).searchParams.get('customer')
+          const id = customer === soloCustomer ? soloSubscription : customer === teamCustomer ? teamSubscription : null
+          return new Response(JSON.stringify({ has_more: false, data: id ? [{ id, customer, status: 'active' }] : [] }))
+        }
+        if (outcome === 'refused') return new Response('{"error":{"message":"card detail"}}', { status: 402 })
+        return new Response(JSON.stringify({ id: new URL(url).pathname.split('/').at(-1), customer: soloCustomer, status: 'canceled' }))
+      }) as unknown as typeof fetch
+      return { seen, fetchImpl }
+    }
+    const env = { MIKKA_EDITION: 'cloud', STRIPE_SECRET_KEY: 'fixture' }
+    const requested = await requestAccountDeletion(subject, `${subject}@example.invalid`, randomUUID(), { mainPool: database, workspacePool: database })
+    assert.ok(requested.ok)
+    if (!requested.ok) return
+    const plan = (await database.query<{ plan: { solo: string[]; shared: string[] } }>('SELECT plan FROM account_deletion_jobs WHERE id=$1', [requested.id])).rows[0].plan
+    assert.deepEqual(plan.solo, [workspace.id]); assert.deepEqual(plan.shared, [shared.id])
+    const attempt = (outcome: 'canceled' | 'refused') => {
+      const { seen, fetchImpl } = provider(outcome)
+      return { seen, options: { mainPool: database, workspacePool: database,
+        externalCleanup: async () => cleanupAccountBilling(database, { soloWorkspaceIds: plan.solo, fetchImpl, env }) } }
+    }
+    const refused = attempt('refused'), held = await resumeAccountDeletion(requested.id, refused.options)
+    assert.equal(held.stage, 'external_pending'); assert.deepEqual(held.blockedReasons, ['billing_subscription_cancel_failed'])
+    assert.deepEqual(refused.seen.map(call => call.method), ['GET', 'DELETE'])
+    // The failed cancel disclosed no provider detail and removed nothing local.
+    assert.equal((await database.query('SELECT count(*)::int n FROM "user" WHERE id=$1', [subject])).rows[0].n, 1)
+    assert.equal((await database.query('SELECT count(*)::int n FROM mikka_workspaces WHERE id=$1', [workspace.id])).rows[0].n, 1)
+    const allowed = attempt('canceled'), completed = await resumeAccountDeletion(requested.id, allowed.options)
+    assert.equal(completed.stage, 'completed'); assert.deepEqual(completed.warnings, [])
+    assert.equal((await database.query('SELECT count(*)::int n FROM "user" WHERE id=$1', [subject])).rows[0].n, 0)
+    assert.equal((await database.query('SELECT count(*)::int n FROM mikka_workspaces WHERE id=$1', [workspace.id])).rows[0].n, 0)
+    const cancelled = allowed.seen.filter(call => call.method === 'DELETE')
+    assert.deepEqual(cancelled.map(call => call.url), [`https://api.stripe.com/v1/subscriptions/${soloSubscription}`])
+    assert.equal(cancelled[0].ownWorkspacePresent, true, 'the plan is cancelled before its workspace row is deleted')
+    assert.equal(allowed.seen.some(call => call.url.includes(teamCustomer)), false, 'a shared tenant keeps its own plan')
+  })
+  await t.test('an account without billing never reaches the provider; one with a customer but no reachable provider holds the account', async () => {
+    const env = { MIKKA_EDITION: 'cloud', STRIPE_SECRET_KEY: 'fixture' }
+    const free = await seedUser(database, 'cleanup-billing-free'), freeWorkspace = await seedWorkspace(database, free, [{ userId: free, role: 'admin' }])
+    const untouched: string[] = []
+    const spy = (async (url: string) => { untouched.push(url); return new Response('{}') }) as unknown as typeof fetch
+    assert.deepEqual(await cleanupAccountBilling(database, { soloWorkspaceIds: [freeWorkspace.id], fetchImpl: spy, env }), { blockedReasons: [], warnings: [] })
+    assert.deepEqual(untouched, [], 'no customer means no network call')
+    // The default adapter must include billing; with no provider configured it holds the
+    // account exactly like composio_not_configured, instead of deleting a plan it cannot stop.
+    const paid = await seedUser(database, 'cleanup-billing-unconfigured'), paidWorkspace = await seedWorkspace(database, paid, [{ userId: paid, role: 'admin' }])
+    await database.query('INSERT INTO workspace_billing("workspaceId","stripeCustomerId","stripeSubscriptionId",plan,status) VALUES($1,$2,$3,\'pro\',\'active\')',
+      [paidWorkspace.id, `cus_${randomUUID().replaceAll('-', '')}`, `sub_${randomUUID().replaceAll('-', '')}`])
+    const edition = process.env.MIKKA_EDITION, key = process.env.STRIPE_SECRET_KEY
+    delete process.env.MIKKA_EDITION; delete process.env.STRIPE_SECRET_KEY
+    try {
+      assert.deepEqual(await cleanupAccountConnections(paid, database, undefined, [paidWorkspace.id]), { blockedReasons: ['billing_provider_not_configured'], warnings: [] })
+    } finally {
+      if (edition === undefined) delete process.env.MIKKA_EDITION; else process.env.MIKKA_EDITION = edition
+      if (key === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = key
+    }
+  })
+})
+
+test('billing cleanup records bounded failure phases through real HTTP and the retained PostgreSQL job', { skip: !dbUrl, timeout: 90_000 }, async t => {
+  const database = new Pool({ connectionString: dbUrl, max: 5 })
+  const owner = await seedUser(database, 'billing-diagnostics')
+  const workspace = await seedWorkspace(database, owner, [{ userId: owner, role: 'admin' }])
+  const customer = `cus_${randomUUID().replaceAll('-', '')}`, subscription = `sub_${randomUUID().replaceAll('-', '')}`
+  const privateText = `fixture_private_${randomUUID().replaceAll('-', '')}`
+  await database.query(`INSERT INTO workspace_billing("workspaceId","stripeCustomerId","stripeSubscriptionId",plan,status)
+    VALUES($1,$2,$3,'pro','active')`, [workspace.id, customer, subscription])
+  type Phase = 'list' | 'cancel'
+  type Scenario = { phase?: Phase; status?: number; mode?: 'json' | 'schema' | 'foreign_customer' | 'page_stuck' | 'page_limit' | 'unconfirmed' | 'socket' | 'timeout'; terminal?: boolean }
+  let scenario: Scenario = {}, received: string[] = [], handlerError: unknown, page = 0
+  const server = createServer((request, response) => {
+    try {
+      const address = new URL(request.url!, 'http://fixture.invalid')
+      const phase: Phase = request.method === 'DELETE' ? 'cancel' : 'list'
+      assert.equal(request.method, phase === 'list' ? 'GET' : 'DELETE')
+      assert.equal(address.pathname, phase === 'list' ? '/v1/subscriptions' : `/v1/subscriptions/${subscription}`)
+      assert.equal(request.headers.authorization, 'Bearer ' + privateText)
+      if (phase === 'list') assert.equal(address.searchParams.get('customer'), customer)
+      else assert.equal(request.headers['idempotency-key'], 'account-deletion-cancel:' + subscription)
+      received.push(phase)
+      const fail = scenario.phase === phase
+      if (fail && scenario.mode === 'socket') { request.socket.destroy(); return }
+      if (fail && scenario.mode === 'timeout') return
+      if (fail && scenario.status) {
+        response.writeHead(scenario.status, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: privateText, customer, subscription } })); return
+      }
+      response.setHeader('content-type', 'application/json')
+      if (fail && scenario.mode === 'json') { response.end(privateText); return }
+      if (fail && scenario.mode === 'schema') { response.end(JSON.stringify({ privateText })); return }
+      const row = { id: subscription, customer, status: scenario.terminal ? 'canceled' : 'active' }
+      if (phase === 'list') {
+        if (fail && scenario.mode === 'foreign_customer') row.customer = 'cus_' + privateText
+        if (fail && scenario.mode === 'page_limit') row.id = 'sub_page_' + ++page
+        response.end(JSON.stringify({ has_more: fail && ['page_stuck', 'page_limit'].includes(scenario.mode ?? ''),
+          data: fail && scenario.mode === 'page_stuck' ? [] : [row] }))
+      } else response.end(JSON.stringify({ id: subscription, status: fail && scenario.mode === 'unconfirmed' ? 'active' : 'canceled' }))
+    } catch (error) { handlerError = error; response.writeHead(500); response.end() }
+  })
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
+  const address = server.address(); assert.ok(address && typeof address !== 'string')
+  const origin = `http://127.0.0.1:${address.port}`, originalFetch = globalThis.fetch
+  const transport: typeof fetch = (input, init) => {
+    const target = new URL(input instanceof Request ? input.url : String(input))
+    assert.equal(target.origin, 'https://api.stripe.com')
+    return originalFetch(origin + target.pathname + target.search, init)
+  }
+  const env = { MIKKA_EDITION: 'cloud', STRIPE_SECRET_KEY: privateText }
+  const call = async (input: Scenario) => {
+    scenario = input; received = []; handlerError = undefined; page = 0
+    const result = await cleanupAccountBilling(database, { soloWorkspaceIds: [workspace.id], fetchImpl: transport, env })
+    assert.equal(handlerError, undefined)
+    return result
+  }
+  const diagnostic = (result: Awaited<ReturnType<typeof cleanupAccountBilling>>, phase: string, code: string) => {
+    assert.deepEqual(result.blockedReasons, ['billing_subscription_cancel_failed'])
+    assert.deepEqual(result.blockerErrors, { billing_subscription_cancel_failed: `BillingCleanup:${phase}:${code}` })
+    const text = JSON.stringify({ blockedReasons: result.blockedReasons, warnings: result.warnings, blockerErrors: result.blockerErrors })
+    for (const secret of [privateText, customer, subscription, owner, workspace.id, origin, 'api.stripe.com']) assert.equal(text.includes(secret), false)
+  }
+  let job: string | undefined
+  t.after(async () => {
+    server.closeAllConnections()
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+    try {
+      if (job) {
+        await database.query('DELETE FROM account_deletion_workspace_guards WHERE "workspaceId"=$1 AND "jobId"=$2', [workspace.id, job])
+        await database.query('DELETE FROM account_deletion_guards WHERE "subjectId"=$1 AND "jobId"=$2', [owner, job])
+        await database.query('DELETE FROM account_deletion_jobs WHERE id=$1 AND "subjectUserId"=$2', [job, owner])
+      }
+    } finally { await database.end() }
+  })
+
+  for (const phase of ['list', 'cancel'] as const) {
+    for (const status of [401, 403, 429, 500, 503, 418]) await t.test(`${phase} HTTP ${status} retains only its closed diagnostic`, async () => {
+      diagnostic(await call({ phase, status }), phase, status === 418 ? 'http_other' : `http_${status}`)
+      assert.deepEqual(received, phase === 'list' ? ['list'] : ['list', 'cancel'])
+    })
+    for (const [mode, code] of [['json', 'invalid_json'], ['schema', 'invalid_response']] as const)
+      await t.test(`${phase} ${mode} refusal retains no provider payload`, async () => diagnostic(await call({ phase, mode }), phase, code))
+    await t.test(`${phase} HTTP 404 preserves its existing terminal contract`, async () => {
+      const result = await call({ phase, status: 404 })
+      assert.deepEqual(result, { blockedReasons: [], warnings: phase === 'list' ? [] : ['billing_subscription_cancel_already_gone'] })
+    })
+  }
+  for (const [mode, code] of [['foreign_customer', 'billing_customer_scope_mismatch'], ['page_stuck', 'billing_subscription_page_stuck'], ['page_limit', 'billing_subscription_page_limit']] as const)
+    await t.test(`${mode} cannot become cancellation authority`, async () => {
+      diagnostic(await call({ phase: 'list', mode }), 'list', code)
+      assert.equal(received.includes('cancel'), false)
+    })
+  await t.test('an unconfirmed cancellation or disconnected response keeps the account blocked', async () => {
+    diagnostic(await call({ phase: 'cancel', mode: 'unconfirmed' }), 'cancel', 'billing_subscription_cancel_unconfirmed')
+    diagnostic(await call({ phase: 'cancel', mode: 'socket' }), 'cancel', 'type_error')
+    assert.deepEqual(received, ['list', 'cancel'])
+  })
+  await t.test('malformed local customer and unknown exception text stay private', async () => {
+    await database.query('UPDATE workspace_billing SET "stripeCustomerId"=$2 WHERE "workspaceId"=$1', [workspace.id, privateText])
+    try {
+      diagnostic(await call({}), 'customer', 'invalid_customer')
+      assert.deepEqual(received, [])
+    } finally { await database.query('UPDATE workspace_billing SET "stripeCustomerId"=$2 WHERE "workspaceId"=$1', [workspace.id, customer]) }
+    const result = await cleanupAccountBilling(database, { soloWorkspaceIds: [workspace.id], env,
+      fetchImpl: async () => { throw Object.assign(new Error(privateText), { name: privateText, code: privateText }) } })
+    diagnostic(result, 'list', 'unknown')
+  })
+  await t.test('successful and already-terminal responses keep their unchanged reports', async () => {
+    assert.deepEqual(await call({}), { blockedReasons: [], warnings: [] })
+    assert.deepEqual(received, ['list', 'cancel'])
+    assert.deepEqual(await call({ terminal: true }), { blockedReasons: [], warnings: [] })
+    assert.deepEqual(received, ['list'])
+  })
+  await t.test('the default cleanup forwards a real timeout to the job and a later confirmed retry completes', async () => {
+    const previousEdition = process.env.MIKKA_EDITION, previousKey = process.env.STRIPE_SECRET_KEY
+    process.env.MIKKA_EDITION = 'cloud'; process.env.STRIPE_SECRET_KEY = privateText
+    globalThis.fetch = (input, init) => new URL(input instanceof Request ? input.url : String(input)).origin === 'https://api.stripe.com'
+      ? transport(input, init) : originalFetch(input, init)
+    try {
+      const options = { mainPool: database, workspacePool: database }
+      const requested = await requestAccountDeletion(owner, `${owner}@example.invalid`, randomUUID(), options)
+      assert.ok(requested.ok); if (!requested.ok) return
+      job = requested.id
+      scenario = { phase: 'cancel', mode: 'timeout' }; received = []; handlerError = undefined
+      const blocked = await resumeAccountDeletion(job, options)
+      assert.equal(handlerError, undefined); assert.deepEqual(received, ['list', 'cancel'])
+      assert.equal(blocked.stage, 'external_pending')
+      diagnostic(blocked, 'cancel', 'timeout')
+      const retained = (await database.query('SELECT stage,"blockedReasons","blockerErrors" FROM account_deletion_jobs WHERE id=$1', [job])).rows[0]
+      assert.deepEqual(retained, { stage: 'external_pending', blockedReasons: blocked.blockedReasons, blockerErrors: blocked.blockerErrors })
+      assert.equal((await database.query('SELECT count(*)::int n FROM "user" WHERE id=$1', [owner])).rows[0].n, 1)
+      assert.equal((await database.query('SELECT count(*)::int n FROM mikka_workspaces WHERE id=$1', [workspace.id])).rows[0].n, 1)
+      await assert.rejects(database.query('UPDATE mikka_workspace_members SET name=\'late write\' WHERE "workspaceId"=$1 AND "userId"=$2', [workspace.id, owner]), { code: '55000' })
+      scenario = {}; received = []
+      const completed = await resumeAccountDeletion(job, options)
+      assert.equal(completed.stage, 'completed'); assert.deepEqual(completed.blockerErrors, {})
+      assert.deepEqual(received, ['list', 'cancel'])
+      assert.equal((await database.query('SELECT count(*)::int n FROM "user" WHERE id=$1', [owner])).rows[0].n, 0)
+    } finally {
+      globalThis.fetch = originalFetch
+      if (previousEdition === undefined) delete process.env.MIKKA_EDITION; else process.env.MIKKA_EDITION = previousEdition
+      if (previousKey === undefined) delete process.env.STRIPE_SECRET_KEY; else process.env.STRIPE_SECRET_KEY = previousKey
+    }
   })
 })

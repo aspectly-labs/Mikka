@@ -8,6 +8,7 @@
 
 import { withBasePath } from '@/lib/base-path'
 import { turnstileHeaders } from '@/lib/signup-refusal'
+import { toMikkaErrorContract, type MikkaErrorContract } from './primitives/error-contract'
 
 export type AuthRecoveryError = 'invalid_token' | 'password_length' | 'rate_limited' | 'unavailable' | 'turnstile_failed' | 'turnstile_unavailable' | 'invalid_request' | 'failed'
 export type AuthRecoveryResult = { ok: true } | { ok: false; error: AuthRecoveryError; retryAfter?: number }
@@ -29,6 +30,21 @@ export function classifyFailure(status: number, code: string | undefined, retryA
   if (status === 503 || code === 'AUTH_EMAIL_DELIVERY_UNAVAILABLE') return { ok: false, error: 'unavailable' }
   if (status === 400 || status === 403) return { ok: false, error: 'invalid_request' }
   return { ok: false, error: 'failed' }
+}
+
+/** Additive canonical single-CTA error contract for an auth-recovery failure response. */
+export function authRecoveryErrorContract(
+  status: number,
+  code: string | undefined,
+  retryAfter: string | null,
+  now?: number,
+): MikkaErrorContract {
+  const classified = classifyFailure(status, code, retryAfter)
+  return toMikkaErrorContract(classified, {
+    status,
+    retryAfter: classified.retryAfter ?? retryAfter,
+    now,
+  })
 }
 
 async function post(path: string, body: Record<string, string>, headers: Record<string, string> = {}): Promise<AuthRecoveryResult> {

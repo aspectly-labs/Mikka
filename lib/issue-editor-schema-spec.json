@@ -33,6 +33,28 @@
       }
     ],
     [
+      "taskFile",
+      {
+        "group": "inline",
+        "inline": true,
+        "atom": true,
+        "attrs": {
+          "id": {
+            "default": null
+          },
+          "name": {
+            "default": ""
+          },
+          "size": {
+            "default": null
+          },
+          "mediaType": {
+            "default": null
+          }
+        }
+      }
+    ],
+    [
       "blockquote",
       {
         "content": "block+",

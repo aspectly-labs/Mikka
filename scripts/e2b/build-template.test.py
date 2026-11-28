@@ -46,6 +46,20 @@ def bootstrap_acceptance(run_id, harness):
             'startupTiming': {**base, 'startedAt': 1200, 'endedAt': 1600, 'ms': 400, 'phases': []}}
 
 
+class ReleaseMetadataTests(unittest.TestCase):
+    def test_both_coherent_official_actions_identities_keep_release_metadata(self):
+        for owner, owner_id in [('alexj11324', '183887963'), ('aspectly-labs', '359279274')]:
+            env = {'GITHUB_REPOSITORY': f'{owner}/Mikka', 'GITHUB_REPOSITORY_ID': '1427517699',
+                   'GITHUB_REPOSITORY_OWNER_ID': owner_id, 'GITHUB_SHA': 'a' * 40,
+                   'MIKKA_RUNTIME_SOURCE': 'b' * 40, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '2'}
+            self.assertEqual(bt.release_metadata(env), {'application': 'mikka-template-release',
+                             'sourceCommit': 'b' * 40, 'runId': '123', 'runAttempt': '2'})
+            for change in [{'GITHUB_REPOSITORY_ID': '1'}, {'GITHUB_REPOSITORY_OWNER_ID': ''},
+                           {'GITHUB_REPOSITORY_OWNER_ID': '359279274' if owner == 'alexj11324' else '183887963'},
+                           {'GITHUB_REPOSITORY': 'foreign/Mikka'}]:
+                self.assertEqual(bt.release_metadata({**env, **change}), {'application': 'mikka-template-release'})
+
+
 class FakeResponse(io.BytesIO):
     def __enter__(self): return self
     def __exit__(self, *_): return False
@@ -737,6 +751,26 @@ with fixture.root_file_metadata():
         invalid['templates']['desktop']['conservation']['after']['sha256'] = 'e' * 64
         with self.assertRaisesRegex(ValueError, 'release_conservation_invalid desktop'):
             bt.verify_release_evidence(invalid)
+
+    def test_release_machine_sizes_require_quota_and_observed_hardware(self):
+        self.assertEqual(bt.available_sizes('claude', 8), ['small', 'medium'])
+        self.assertEqual(bt.available_sizes('codex', 16), ['small', 'medium', 'large'])
+        self.assertEqual(bt.available_sizes('claude', 32), ['small', 'medium', 'large', 'ultra'])
+        self.assertEqual(bt.available_sizes('desktop', 32), ['medium'])
+        with self.assertRaisesRegex(ValueError, 'e2b_confirmed_memory_invalid'):
+            bt.available_sizes('claude', 12)
+        observed = {'sandboxID': 'sandbox', 'templateID': 'candidate', 'cpuCount': 1, 'memoryMB': 4096}
+
+        def request(method, path, api_key):
+            self.assertEqual((method, path, api_key), ('GET', '/sandboxes/sandbox', 'fixture'))
+            return observed
+
+        bt.verify_sandbox_hardware('candidate', 'sandbox', 'small', 'fixture', request)
+        for field, mismatch in [('templateID', 'another'), ('cpuCount', True), ('memoryMB', 8192)]:
+            original, observed[field] = observed[field], mismatch
+            with self.assertRaisesRegex(ValueError, 'e2b_observed_hardware_mismatch'):
+                bt.verify_sandbox_hardware('candidate', 'sandbox', 'small', 'fixture', request)
+            observed[field] = original
 
     def test_publication_keeps_child_lifecycle_unknown_and_refuses_missing_or_overstated_observations(self):
         valid = mcp_timing('run-codex', 'codex')

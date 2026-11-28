@@ -9,7 +9,7 @@ import { OFFICIAL_WEB_URL } from '../lib/web-connection/policy'
 import { WORKSPACE_SELECTION_HEADER } from '../lib/workspace-selection'
 import { withBasePath } from '../lib/base-path'
 import { decode, encode } from '../lib/desktop-rpc/wire'
-import { WORKSPACE_NAME } from '../components/workspace/issue-properties'
+import { WORKSPACE_NAME } from '../lib/workspace-defaults'
 import { disposableDatabase } from './helpers/e2e-target.mjs'
 import { seedFixtureWorkspace } from './helpers/task-workspace'
 
@@ -42,8 +42,8 @@ test('registered Project RPC reads and writes stay inside a native human session
   // Reuse the API build's framework adapters. Auth, registry/actions, request
   // Workspace selection, resource ACLs and both PostgreSQL pools remain real.
   const framework = [
-    mock.module('next/headers', { namedExports: await import('../apps/api/compat/headers') }),
-    mock.module('next-intl/server', { namedExports: await import('../apps/api/compat/intl') }),
+    mock.module('@/lib/server-runtime/headers', { namedExports: await import('../lib/server-runtime/headers') }),
+    mock.module('@/lib/intl/i18n-server', { namedExports: await import('../lib/intl/i18n-server') }),
   ]
   const { pool } = await import('../lib/db')
   const { workspacePool } = await import('../lib/workspace-db')

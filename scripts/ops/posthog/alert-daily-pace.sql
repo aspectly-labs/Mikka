@@ -1,15 +1,23 @@
 WITH latest AS (
-    SELECT timestamp AS snapshot_at,
-        toFloat(properties.collection_healthy) AS collection_healthy,
-        toFloat(properties.provider_healthy) AS provider_healthy,
-        toFloat(properties.today_bytes) AS today_bytes,
-        parseDateTimeBestEffort(toString(properties.latest_hour_end)) AS reported_through
+    SELECT count() AS snapshots,
+        argMax(tuple(timestamp,
+            toFloat(properties.collection_healthy),
+            toFloat(properties.provider_healthy),
+            toFloat(properties.today_bytes),
+            parseDateTimeBestEffort(toString(properties.latest_hour_end))
+        ), timestamp) AS snapshot
     FROM events
     WHERE event = 'mikka_ops_snapshot'
       AND properties.environment = 'production'
       AND timestamp >= now() - INTERVAL 1 DAY
-    ORDER BY timestamp DESC
-    LIMIT 1
+), reading AS (
+    SELECT snapshots,
+        if(snapshots > 0, tupleElement(snapshot, 1), NULL) AS snapshot_at,
+        if(snapshots > 0, tupleElement(snapshot, 2), NULL) AS collection_healthy,
+        if(snapshots > 0, tupleElement(snapshot, 3), NULL) AS provider_healthy,
+        if(snapshots > 0, tupleElement(snapshot, 4), NULL) AS today_bytes,
+        if(snapshots > 0, tupleElement(snapshot, 5), NULL) AS reported_through
+    FROM latest
 ), pace AS (
     SELECT *,
         toInt(substring(toString(toTimeZone(reported_through, 'UTC')), 12, 2)) AS utc_hours,
@@ -17,28 +25,34 @@ WITH latest AS (
         dateDiff('minute', snapshot_at, now()) AS snapshot_age_minutes,
         dateDiff('minute', reported_through, now()) AS provider_age_minutes,
         today_bytes * 24 / greatest(toInt(substring(toString(toTimeZone(reported_through, 'UTC')), 12, 2)), 1) AS projected_daily_bytes
-    FROM latest
+    FROM reading
 ), result AS (
     SELECT *,
         projected_daily_bytes * utc_month_days AS equivalent_monthly_bytes,
-        collection_healthy = 1 AND provider_healthy = 1
+        coalesce(snapshots > 0 AND collection_healthy = 1 AND provider_healthy = 1
             AND utc_hours >= 3 AND utc_hours <= 24
             AND snapshot_age_minutes >= 0 AND snapshot_age_minutes <= 60
             AND provider_age_minutes >= 0 AND provider_age_minutes <= 180
             AND reported_through <= snapshot_at
             AND substring(toString(toTimeZone(reported_through, 'UTC')), 1, 10) = substring(toString(toTimeZone(snapshot_at, 'UTC')), 1, 10)
             AND substring(toString(toTimeZone(snapshot_at, 'UTC')), 1, 10) = substring(toString(toTimeZone(now(), 'UTC')), 1, 10)
-            AND today_bytes >= 0 AS eligible
+            AND today_bytes >= 0 AND isFinite(equivalent_monthly_bytes), false) AS eligible
     FROM pace
 )
 SELECT
     if(eligible, equivalent_monthly_bytes / 500000000000, NULL) AS value,
-    concat('UTC daily run rate | today=', toString(round(today_bytes, 0)), ' bytes/', toString(utc_hours), ' reported hours',
-        ' | projected day=', toString(round(projected_daily_bytes, 0)), ' bytes',
-        ' | ', toString(utc_month_days), '-day equivalent=', toString(round(equivalent_monthly_bytes, 0)), ' bytes vs 500000000000 budget',
-        ' | reported=', toString(toTimeZone(reported_through, 'UTC')),
-        ' | snapshot age=', toString(snapshot_age_minutes), 'm; provider age=', toString(provider_age_minutes), 'm',
-        ' | ', if(eligible, 'eligible', 'suppressed: stale/unhealthy/early UTC day')) AS source,
-    today_bytes, utc_hours, projected_daily_bytes, equivalent_monthly_bytes, 500000000000 AS monthly_budget_bytes,
+    multiIf(snapshots = 0, 'unknown: no recent production snapshot',
+        isNull(reported_through), 'unknown: missing or invalid provider timestamp',
+        NOT eligible, 'unknown: stale, unhealthy, or ineligible UTC window',
+        concat('UTC daily run rate | today=', toString(round(today_bytes, 0)), ' bytes/', toString(utc_hours), ' reported hours',
+            ' | projected day=', toString(round(projected_daily_bytes, 0)), ' bytes',
+            ' | ', toString(utc_month_days), '-day equivalent=', toString(round(equivalent_monthly_bytes, 0)), ' bytes vs 500000000000 budget',
+            ' | reported=', toString(toTimeZone(reported_through, 'UTC')),
+            ' | snapshot age=', toString(snapshot_age_minutes), 'm; provider age=', toString(provider_age_minutes), 'm')) AS source,
+    today_bytes, utc_hours,
+    if(eligible, projected_daily_bytes, NULL) AS projected_daily_bytes,
+    if(eligible, equivalent_monthly_bytes, NULL) AS equivalent_monthly_bytes,
+    500000000000 AS monthly_budget_bytes,
     snapshot_age_minutes, provider_age_minutes, reported_through, snapshot_at, eligible
 FROM result
+LIMIT 1

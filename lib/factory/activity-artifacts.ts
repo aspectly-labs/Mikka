@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg'
-import { workspaceLink } from '../../components/workspace/workspace-navigation'
+import { workspaceLink } from '../workspace-navigation'
 import { withBasePath } from '../base-path'
 import type { ArtifactKind } from '../db/schema'
 import { taskReaderScope } from '../task-workspace'

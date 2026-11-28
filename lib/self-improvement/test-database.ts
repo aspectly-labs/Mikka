@@ -1,3 +1,4 @@
+import { isLoopbackHost, LOCALHOST_HOSTNAME } from '@/lib/env/hosts'
 import { disposableDatabase } from '../../tests/helpers/e2e-target.mjs'
 /** Test-only target resolution. Never use either application's database fallback. */
 export function improvementTestDatabase(env: Readonly<Record<string, string | undefined>>): string | undefined {
@@ -10,11 +11,11 @@ export function improvementTestDatabase(env: Readonly<Record<string, string | un
     return undefined
   }
   const target = new URL(value)
-  const local = ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)
+  const local = isLoopbackHost(target.hostname)
   const standalone = target.pathname === '/mikka_improvement'
   const shared = !explicit && disposable && value === env.E2E_DATABASE_URL
     && value === env.MIKKA_DATABASE_URL && value === env.DATABASE_URL
   if (!['postgres:', 'postgresql:'].includes(target.protocol) || !local || target.search || target.hash
-    || (!standalone && !shared)) throw new Error('Self-improvement tests require an isolated localhost test database')
+    || (!standalone && !shared)) throw new Error(`Self-improvement tests require an isolated ${LOCALHOST_HOSTNAME} test database`)
   return value
 }

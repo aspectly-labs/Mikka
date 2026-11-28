@@ -123,7 +123,7 @@ test('模型与订阅：默认顺序来自已有订阅，添加、键盘与菜�
   // A reorder that does not reach the server: the list goes back as saved and the moved row says 顺序未保存 with 重试 (R3).
   let refused = false
   await page.route('**/*', route => {
-    if (!refused && route.request().method() === 'POST' && route.request().headers()['next-action']) { refused = true; return route.abort() }
+    if (!refused && route.request().method() === 'POST' && route.request().headers()['x-mikka-rpc'] === '1') { refused = true; return route.abort() }
     return route.fallback()
   })
   await list.getByRole('listitem').last().getByRole('button', { name: 'e2e-opus-reported 的更多操作' }).click()

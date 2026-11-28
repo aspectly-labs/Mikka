@@ -120,3 +120,55 @@ test('audit retention requires an explicit admin policy, honors hold/export leas
     assert.deepEqual(await applyAuditRetention(live.id, new Date(), database), { deleted: 0, skipped: 'retain' })
   })
 })
+
+test('the sweep opens only workspaces whose retention is due: nothing due is one read and no transaction', { skip: !dbUrl }, async t => {
+  // The sweep reads every workspace, so this case runs on its own copies of the audit tables.
+  const schema = `audit_sweep_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: dbUrl, max: 1 })
+  await admin.query(`CREATE SCHEMA ${schema}`)
+  for (const table of ['workspace_audit_retention', 'workspace_audit_events', 'workspace_deletions', 'workspace_audit_exports'])
+    await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`)
+  const options = `-c search_path=${schema},public`
+  const main = new Pool({ connectionString: dbUrl, options, max: 5 }), workspace = new Pool({ connectionString: dbUrl, options, max: 5 }), database = { main, workspace }
+  t.after(async () => { await Promise.all([main.end(), workspace.end()]); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end() })
+  const day = 86_400_000
+  const event = async (workspaceId: string, createdAt: Date) => (await main.query<{ id: string }>(`INSERT INTO workspace_audit_events("workspaceId","actorType","actorName",action,category,metadata,"createdAt") VALUES($1,'system','Mikka','token.revoked','security','{}',$2) RETURNING id`, [workspaceId, createdAt])).rows[0].id
+  // Ten deleted workspaces still in their 90-day grace (production's shape) and one policy whose oldest event is inside its period.
+  const grace = Array.from({ length: 10 }, () => randomUUID())
+  for (const id of grace) {
+    await event(id, new Date(Date.now() - 5 * day))
+    await main.query('INSERT INTO workspace_deletions(id,"deletedAt") VALUES($1,$2)', [id, new Date(Date.now() - 10 * day)])
+  }
+  const young = randomUUID()
+  await main.query(`INSERT INTO workspace_audit_retention("workspaceId","retentionDays","legalHold","configuredBy") VALUES($1,30,false,'fixture-admin')`, [young])
+  const youngEvent = await event(young, new Date(Date.now() - 5 * day))
+
+  const counted = (pool: Pool) => {
+    const calls = { query: 0, connect: 0 }
+    const query = pool.query.bind(pool), connect = pool.connect.bind(pool)
+    pool.query = ((...args: Parameters<Pool['query']>) => { calls.query++; return query(...args) }) as Pool['query']
+    // pool.query checks out through connect(callback); only explicit checkouts (transactions) count.
+    pool.connect = ((...args: unknown[]) => { if (!args.length) calls.connect++; return Reflect.apply(connect, pool, args) }) as Pool['connect']
+    return calls
+  }
+  const mainCalls = counted(main), workspaceCalls = counted(workspace)
+  assert.deepEqual(await sweepAuditRetention(database), { scanned: 0, deleted: 0, pending: 0 })
+  assert.deepEqual(mainCalls, { query: 1, connect: 0 }, 'one set-based read on the main database')
+  assert.deepEqual(workspaceCalls, { query: 0, connect: 0 }, 'no workspace transaction, lock or BEGIN/COMMIT')
+
+  // Work that is due is still applied: a grace that ended, and a policy whose oldest event passed its period.
+  const ended = grace[0]
+  await main.query('UPDATE workspace_deletions SET "deletedAt"=$2 WHERE id=$1', [ended, new Date(Date.now() - 91 * day)])
+  const oldEvent = await event(young, new Date(Date.now() - 40 * day))
+  mainCalls.query = 0; mainCalls.connect = 0
+  assert.deepEqual(await sweepAuditRetention(database), { scanned: 2, deleted: 2, pending: 0 })
+  assert.equal(mainCalls.connect, 2, 'one locked pass per due workspace, none for the nine still in grace')
+  assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE "workspaceId"=$1', [ended])).rows[0].n, 0)
+  assert.equal((await main.query('SELECT 1 FROM workspace_audit_events WHERE id=$1', [oldEvent])).rowCount, 0)
+  assert.equal((await main.query('SELECT 1 FROM workspace_audit_events WHERE id=$1', [youngEvent])).rowCount, 1)
+  for (const id of grace.slice(1)) assert.equal((await main.query('SELECT count(*)::int n FROM workspace_audit_events WHERE "workspaceId"=$1', [id])).rows[0].n, 1)
+
+  // The limit bounds one sweep; what is left stays due for the next.
+  for (const id of grace.slice(1, 4)) await main.query('UPDATE workspace_deletions SET "deletedAt"=$2 WHERE id=$1', [id, new Date(Date.now() - 91 * day)])
+  assert.equal((await sweepAuditRetention(database, 2)).scanned, 2)
+  assert.equal((await sweepAuditRetention(database, 2)).scanned, 1)
+})

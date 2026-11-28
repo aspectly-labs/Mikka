@@ -27,8 +27,8 @@
 | **Bot** | Lives in one workspace and has one owner. Runs on Mikka's own AI SDK on Vercel; when it has work to do, it sends a thread through the daemon to Claude Code or Codex (R-05). |
 | **Thread** | The work a bot dispatched (`agent_runs`). Each turn of it is a **run**. |
 | **Agent** | The coding worker that runs a thread: Claude Code or Codex. Code may say `harness`; the UI says Agent (R-43). |
-| **Model credential** | A personal Claude Code/Codex subscription, a personal API key, or an Organization API key/gateway/custom endpoint. Subscription credentials remain account-owned. Model and credential are frozen at admission. |
-| **Share** | An explicit resource ACL for content. It grants no model, device, personal memory, Secret or payment authority. Personal API key grants remain separate; personal subscriptions cannot enter a member pool ([0017](decisions/2026-11-10-0017-collaboration-governance.md)). |
+| **Model credential** | A personal Claude Code/Codex subscription, a personal API key, or a workspace's own API key/gateway/custom endpoint (工作区连接, added by its admins). Subscription credentials remain account-owned. Model and credential are frozen at admission. |
+| **Share** | An explicit resource ACL for content. It grants no model, device, personal memory, Secret or payment authority. Personal subscriptions and API keys cannot enter a member pool ([0017](decisions/2026-11-10-0017-collaboration-governance.md), [2026-11-27-1740](decisions/2026-11-27-1740-model-keys-personal-or-workspace.md)). |
 | **Mikka 默认** | The hosted model, paid from the workspace's credits. It is a **model**, never a machine. |
 | **Machine (电脑)** | Where an Agent runs: **Mikka Cloud** (a sandbox on the run owner's own E2B key) or a **device** (a personal computer running the desktop app, or a server running the daemon). Both are **runners** with one contract (§3). |
 | **Mikka Cloud** | The cloud machine. It is a **machine**, never a model. Mikka hosts no sandbox of its own. |
@@ -58,7 +58,15 @@ flowchart TD
    belongs to, with no switch and no admin limit ([2026-11-01-2240-own-credentials-always-usable](decisions/2026-11-01-2240-own-credentials-always-usable.md)). If several qualify, the bot's saved choice wins;
    after that a subscription comes before an API key, and Claude comes before
    ChatGPT/Codex.
-2. **Otherwise Mikka 默认**, through the usual hosted admission (§7). A
+   In a team workspace, the owner's own subscriptions and API keys are used
+   only while the admin switch 团队权限 › 订阅与 API Key is on (the default);
+   off, runs there skip to the workspace's keys and Mikka 默认.
+2. **Then the workspace's own API keys** (工作区连接), which a team
+   workspace's admins add and manage, and every active member's runs there
+   use. A person's API key is never shared into a workspace, and no other
+   member's personal key is ever used; personal and workspace keys are added
+   separately ([2026-11-27-1740-model-keys-personal-or-workspace](decisions/2026-11-27-1740-model-keys-personal-or-workspace.md)).
+3. **Otherwise Mikka 默认**, through the usual hosted admission (§7). A
    subscription serves its owner only; no other member's subscription is ever
    used ([2026-11-17-1400-subscriptions-owner-only](decisions/2026-11-17-1400-subscriptions-owner-only.md)).
 
@@ -155,10 +163,11 @@ and deliver stops, without a permission round trip before each tool or model cal
   slots come from the actual Agent installed on that runner. A failed cloud
   boot self-check marks the runner unhealthy so its runs can be placed again.
 - **Tools and providers.** Claude Code uses `bypassPermissions`; Codex uses
-  approvals `never`. Only the real selected provider credential goes to the CLI:
-  Claude Code talks to Anthropic and Codex to OpenAI directly. No placeholder,
-  provider proxy or extra permission-preflight request is inserted before a
-  call. Connected apps still make their normal authenticated operation through
+  approvals `never`. API-key runs hold a run-bound Mikka gateway token;
+  the gateway admits and meters requests, then sends them through backend
+  LiteLLM. Internal models use LiteLLM aliases. Official subscription OAuth
+  keeps the explicit independent path pending compatibility proof and Alex's
+  separate decision ([0530](decisions/2026-11-20-0530-litellm-only-model-egress.md)). Connected apps still make their normal authenticated operation through
   Mikka's MCP entry; that operation does not acquire another permission gate
   first. Third-party API Secrets use the separate [non-readable capability
   boundary](decisions/2026-11-08-0240-credential-exposure-boundary.md) where
@@ -382,8 +391,9 @@ checks are superseded.
    protected path on its actual runner. Never log credentials or bake them
    into a reusable image.
 3. **Execution and renewal.** The assigned machine has the authority to run
-   the task. Official CLIs call their providers directly; no Mikka model proxy
-   or extra server authorization request precedes each model or tool call.
+   the task. API-key model requests use the run-bound Mikka gateway and
+   backend LiteLLM; official subscription OAuth retains its explicit separate
+   path. Connected tools keep their existing authorization boundary.
    Refresh naturally expiring provider tokens in the background before expiry
    and update the live CLI's normal credential mechanism. A healthy Claude Code
    run does not end merely because an old access token expires. Routine
@@ -398,6 +408,7 @@ checks are superseded.
 
 When a member leaves a team, their shares, card designation and credit
 shares leave that workspace at once, and their bots there are paused (暂停).
+A workspace API key they added stays the workspace's.
 An admin may take a bot over. It then runs on the admin's resources or the
 workspace's.
 
@@ -410,14 +421,15 @@ host binding; choosing a reporter never transfers that Bot owner's accounts or
 computer. Personal app connections remain the execution requester's connections.
 
 Admission and an explicit device handoff resolve current ownership, membership
-and sharing authority before issuing the machine's assignment. A shared
-subscription or API key requires both members to be active, the explicit share
-and the applicable workspace policy at admission. A later revocation delivers a
+and sharing authority before issuing the machine's assignment. A model
+credential is the requester's own or, for an API key, the workspace's own key
+while the requester is an active member there; no member's personal
+subscription or API key serves another member. A later revocation delivers a
 stop rather than imposing a fresh permission round trip on each provider or tool
 call. The selected resource and payer cannot change implicitly on retry.
 A host-authorized device handoff checks the new device's owner and preserves
 the requester's identity; a consented quota fallback records the newly selected
-API key and its actual owner. Cloud continuation freezes its parent placement
+API key and its actual owner (the person, or the workspace for a workspace key). Cloud continuation freezes its parent placement
 before rebinding to the new thread machine.
 
 Artifact versions retain this provenance without changing the artifact's owner
@@ -457,11 +469,11 @@ external bill.
 | MVP | Later |
 | --- | --- |
 | A personal workspace for everyone; team workspaces beside it | — |
-| Account-level subscriptions, API keys and custom providers on 「模型与订阅」; own credentials usable in every workspace with no switch; subscriptions serve their owner only (2026-11-17); 「分享给团队成员」 for API keys, which an admin can switch off | Per-member spend caps |
+| Account-level subscriptions, API keys and custom providers on 「模型与订阅」; own credentials usable in every workspace with no switch; subscriptions serve their owner only (2026-11-17); API keys are a person's or the workspace's, added separately and never shared; the team switch decides whether members' own subscriptions and keys serve there (2026-11-27-1740) | Per-member spend caps |
 | Model order of §2; Mikka 默认 when there is nothing else; no mid-run switch; 「订阅额度用完后，自动改用 API Key」; a popup when nothing is left | — |
 | Model → Agent mapping with a per-model override | — |
 | Mikka Cloud on each person's own E2B key, with no Mikka caps | — |
-| Personal computers and daemon servers as runners with the same contract: daemon-managed Agents, an ordinary worktree, direct provider credentials and no sandbox; cloud machines on additive official E2B templates | — |
+| Personal computers and daemon servers as runners with the same contract: daemon-managed Agents, an ordinary worktree, run-bound model gateway tokens or official subscription credentials and no sandbox; cloud machines on additive official E2B templates | — |
 | A device capability check and 参与调度 instead of Agent detection and 「设备离线时」; 优先使用的模型 in order instead of label rules and 任务默认 | — |
 | 立即警告 (the action card) when there is no machine; the offline flow of §4 | — |
 | One cloud VM per task, retained across authorized attempts; leases and heartbeats; selected credentials prepared once, background renewal and pushed stops | — |

@@ -53,7 +53,7 @@ let stateQueries: typeof import('../lib/task-state-query')
 let taskQueries: typeof import('../lib/task-block-runs')
 let schema: typeof import('../lib/db/schema')
 before(async () => {
-  mock.module('next/headers', { namedExports: { headers: async () => new Headers() } })
+  mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers() } })
   stub('../lib/auth.ts', { auth: { api: { getSession: async () => { order.push('auth'); return viewer ? { user: { id: viewer } } : null } } } })
   stub('../lib/workspace-access.ts', { loadWorkspaceContext: async (requested: string | undefined, user: { id: string }) => {
     assert.equal(requested, undefined); assert.equal(user.id, viewer)
@@ -118,7 +118,8 @@ test('task runs fetch owner bot looks with the bounded latest issue rows in one 
   assert.match(text, /"issues"\."workspaceId" in \(\$\d+\)/)
   assert.ok(params.includes('bound'))
   assert.equal(params.filter(value => value === WORKSPACE).length, 3, 'run, task and bot all use the selected tenant')
-  assert.match(text, /and "agent_runs"\."issueId" is not null and "agent_runs"\."createdAt" > now\(\) - interval '720 hours'\)/)
+  // A soft-deleted thread leaves the list (#2936).
+  assert.match(text, /and "agent_runs"\."issueId" is not null and "agent_runs"\."deletedAt" is null and "agent_runs"\."createdAt" > now\(\) - interval '720 hours'\)/)
   assert.deepEqual(workspaceReads, [OWNER])
   const binding = text.indexOf('from computer_run_bindings crb'), direct = text.indexOf('from bots b where b.id="agent_runs"."botId"')
   const runtime = text.indexOf('from bot_cloud_runtimes bcr')
@@ -194,7 +195,7 @@ test('shared run facts correlate to the outer Run in both single-table and joine
     const query = database.select(stateQueries.taskStateRunColumns).from(agentRuns).$dynamic()
     if (joined) query.innerJoin(agents, eq(agents.id, agentRuns.agentId))
     const { sql: text, params } = query.where(and(eq(agentRuns.userId, OWNER), eq(agentRuns.workspaceId, WORKSPACE))).toSQL()
-    for (const alias of ['p', 'a', 'v']) {
+    for (const alias of ['p', 'a']) {
       assert.ok(text.includes(`${alias}."runId"="agent_runs"."id"`), `${alias} must not capture its own id (${joined ? 'joined' : 'single-table'})`)
       assert.ok(text.includes(`${alias}."userId"="agent_runs"."userId"`), `${alias} must retain the outer owner`)
     }
@@ -209,6 +210,7 @@ test('shared run facts correlate to the outer Run in both single-table and joine
     assert.match(text, /where \("agent_runs"\."userId" = \$\d+ and "agent_runs"\."workspaceId" = \$\d+\)/)
     assert.ok(params.includes(OWNER) && params.includes(WORKSPACE), 'actor and Workspace remain parameterized')
     assert.ok(!text.includes(OWNER) && !text.includes(WORKSPACE))
+    assert.match(text, /coalesce\(("agent_runs"\.)?"outcome", case when ("agent_runs"\.)?"status"='succeeded' then 'done' end\)/, 'an unjudged succeeded run reads done (#1863)')
   }
   assert.equal(queries.length, 0, 'query construction does not execute or add a read')
 })

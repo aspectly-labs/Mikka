@@ -1,18 +1,15 @@
 name: App icon
 
-# The iOS app and the desktop app share one Icon Composer bundle
-# (apps/mobile/assets/icon.icon, copied to apps/desktop/build/icon.icon).
-# EAS compiles the iOS copy with Xcode's actool; electron-builder compiles the
-# desktop copy. This job compiles both the same way on a pull request, so a
-# broken bundle fails here, and renders each appearance with Icon Composer's
-# ictool for review (artifact `app-icon-previews`). macos-26: on macos-15,
-# Xcode 26.3's asset agent crashes when it renders a glass layer for macOS.
+# The iOS app and the desktop app share one Icon Composer bundle. Its public
+# copy is apps/desktop/build/icon.icon; the active iOS app in private
+# mikka-hosted-ui (mobile-next/apps/mobile/assets/mikka/icon.icon) carries the
+# same bundle. This job compiles apps/desktop/build/icon.icon for both iOS and
+# macOS with Xcode's actool on a merge candidate, so a broken bundle fails here,
+# and renders each appearance with Icon Composer's ictool for review (artifact
+# `app-icon-previews`). macos-26: on macos-15, Xcode 26.3's asset agent crashes
+# when it renders a glass layer for macOS.
 on:
-  pull_request:
-    paths:
-      - 'apps/mobile/assets/icon.icon/**'
-      - 'apps/desktop/build/icon.icon/**'
-      - '.github/workflows/app-icon.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -24,8 +21,6 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: The iOS and desktop bundles are the same file
-        run: diff -r apps/mobile/assets/icon.icon apps/desktop/build/icon.icon
       - name: Select Xcode 26
         run: |
           xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
@@ -40,7 +35,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/out/ios"
           mkdir -p "$out"
-          cp -R apps/mobile/assets/icon.icon "$RUNNER_TEMP/AppIcon.icon"
+          cp -R apps/desktop/build/icon.icon "$RUNNER_TEMP/AppIcon.icon"
           actool "$RUNNER_TEMP/AppIcon.icon" --compile "$out" \
             --output-format human-readable-text --notices --warnings --errors \
             --output-partial-info-plist "$out/assetcatalog_generated_info.plist" \
@@ -71,7 +66,7 @@ jobs:
           mkdir -p "$out"
           "$ICTOOL" --version || true
           for rendition in Default Dark TintedLight TintedDark ClearLight ClearDark; do
-            "$ICTOOL" apps/mobile/assets/icon.icon --export-image \
+            "$ICTOOL" apps/desktop/build/icon.icon --export-image \
               --output-file "$out/$rendition.png" \
               --platform iOS --rendition "$rendition" \
               --width 1024 --height 1024 --scale 1

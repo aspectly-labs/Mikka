@@ -4,8 +4,7 @@
 # Also a symlink of that name (a link is not a directory, so the slash form misses it).
 node_modules
 
-# next.js
-/.next/
+# build output
 /.output/
 /apps/frontend/dist/
 /apps/api/generated/spa.ts
@@ -37,7 +36,6 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
 
 # browser test artifacts
 /playwright-report/
@@ -71,6 +69,8 @@ next-env.d.ts
 
 # Private chat-attachment acceptance state and generated screenshots.
 /.cache/attachments/
+/.cache/screenshots/
+/.cache/fixtures/
 
 # hosted UI layer checkout (docs/ui-overlay.md)
 /.hosted-ui/
@@ -94,3 +94,4 @@ next-env.d.ts
 /.mikka-cloud/
 /.mikka-web/
 /.cloudflare-marketing/
+/data/

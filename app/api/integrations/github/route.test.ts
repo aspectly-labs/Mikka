@@ -17,8 +17,8 @@ class CloudServiceError extends Error {
 }
 stub('../../../../lib/api-auth.ts', { auth })
 stub('../../../../lib/auth.ts', { auth })
-stub('../../../../lib/fresh-session.ts', { freshSessionRoute: (handler: unknown) => handler })
-stub('../../../../lib/request-log.ts', { withRequestLog: (_path: string, handler: unknown) => handler })
+stub('../../../../lib/fresh-session.ts', { freshSessionRoute: (handler: unknown) => handler, withFreshSession: (fn: () => unknown) => fn() })
+stub('../../../../lib/request-log.ts', { noteLogRpcAction: () => {}, noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
 stub('../../../../lib/github/cloud.ts', { useCloudGitHub: async () => cloud })
 stub('../../../../lib/cloud-services/errors.ts', { CloudServiceError, cloudErrorStatus: () => 403 })
 stub('../../../../lib/github/connection.ts', {

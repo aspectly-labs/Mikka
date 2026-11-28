@@ -1,5 +1,6 @@
 import type { AnonymousCodexCandidate } from './anonymous-codex-spare'
 import type { AnonymousClaudeCandidate } from './anonymous-claude-spare'
+import type { McpDeviceCheckCommand } from '@mikka/protocol/mcp-check'
 import { captureRunFailure } from "@mikka/protocol/run-failure"
 // Daemon boot, shared by every mode (ADR 0004): started by the desktop app,
 // headless `mikka daemon`, and `tsx watch` in dev.
@@ -52,6 +53,7 @@ import { MockAdapter } from "./adapters/mock"
 import type { AgentAdapter } from "./adapters/types"
 import { publishRun, snapshotTree } from "./agents/publish"
 import { agentPublishedReceipt, githubReceiptEnvironment } from './agents/github-runtime'
+import { checkoutEnvironmentRepositories } from './environment-repositories'
 import { prepareLocalGitHub } from './agents/local-github'
 import { runPaths } from "./agents/run-context"
 import { CAPTURES_DIR, CaptureUploader } from "./captures"
@@ -91,15 +93,10 @@ import { QuotaPoller, type QuotaSource } from "./quota/poller"
 import { DAEMON_VERSION, daemonPaths, type DaemonPaths } from "./paths"
 import { daemonTracer, runIdHash } from "./tracing"
 import { decide, pushDecision, runPolicy } from "./permissions"
-import { judgeComputerAction, noServerDecision } from "./decision-judgments"
-import type { ServerDecide } from "./server-decision"
 import { RpcServer, type RpcHandlers } from "./rpc/server"
 import { RunJournal } from "./runs/journal"
-import {
-  baseReport,
-  RunSupervisor,
-  type SupervisorDeps,
-} from "./runs/supervisor"
+import { baseReport } from "./runs/publication"
+import { RunSupervisor, type SupervisorDeps } from "./runs/supervisor"
 import { DEVICE_GATEWAY_UPDATE_REQUIRED_CODE, DeviceGatewayClosedError, DeviceSession, type DeviceSessionVerdict } from "./device-gateway"
 import { deviceRepoSchema } from "@mikka/protocol"
 import type { DeviceRepo, MemoryServer, ServerLink } from "./server-link"
@@ -117,7 +114,6 @@ import { createHostedBotRunner } from "./subscription-hosted-runner"
 import { ComputerBroker } from "./computer/broker.mjs"
 import { detectComputerDriver, executeDriver, type ComputerDriver } from "./computer/driver.mjs"
 import { createHostedComputerExecutor, type CredentialExecutorAuthority } from "./computer/credential-executor"
-import { followWebComputerReviews } from "./computer/web-review"
 import { DeviceWorkSignal } from "./device-work-signal"
 import { localComputerMcp } from "./computer/local-grant.mjs"
 
@@ -151,8 +147,6 @@ export interface DaemonOptions {
    * Subscription-quota reader. Omitted or `null`: no polling.
    */
   quotaSource?: QuotaSource | null
-  /** Ignored when it is below the poller's minimum interval. */
-  quotaPollMs?: number
   /**
    * How real agent CLIs start; they run directly by default (decision
    * 2026-11-01-2335). `null` offers only the mock harness.
@@ -291,6 +285,7 @@ export class Daemon {
   private refusedRuns = new Set<string>()
   /** Runs a commands read reported queued: being claimed, or failed until the next pass retries them. */
   private queuedClaims = new Map<string, "claiming" | "failed">()
+  private deferredQueueClaims = new Set<string>()
   private quota: QuotaPoller | null = null
   /** Aborts the daemon's own requests (claims, reads) when it stops. */
   private lifetime = new AbortController()
@@ -310,6 +305,8 @@ export class Daemon {
   private reportOnOpen = false
   /** A device command waiting to run (until idle, or until its runs end). */
   private heldDeviceCommand: DeviceManagementCommand | undefined
+  private mcpChecks = new Map<string, Promise<void>>()
+  private completedMcpChecks = new Set<string>()
   private heldCommandPass: Promise<void> | null = null
   /** The cloud worker's token expires within the hour: the next report asks for its successor. */
   private rotationDue = false
@@ -320,8 +317,6 @@ export class Daemon {
   /** Resolved when a credential arrives (`device.setCredential`). */
   private credentialArrived = new Set<() => void>()
   private deviceType: "laptop" | "server" | undefined
-  private reviewAbort: AbortController | null = null
-  private reviewLoop: Promise<void> = Promise.resolve()
   private cloudComputerBroker: ComputerBroker | null = null
   private localComputerDriver: ComputerDriver | null = null
   private localComputerBroker: ComputerBroker | null = null
@@ -384,7 +379,8 @@ export class Daemon {
       this.options.retainResources,
       runId => this.journal.get(runId)?.assignment.traceContext,
     )
-    this.worktrees = new WorktreeManager(this.options.taskRegistered ? '/workspace/worktrees' : paths.worktrees, this.options.retainResources)
+    this.worktrees = new WorktreeManager(this.options.taskRegistered ? '/workspace/worktrees' : paths.worktrees,
+      this.options.retainResources, Boolean(this.options.taskRegistered || this.options.e2bContainerRuntime))
     this.repositories = new RepositoryCache(this.options.taskRegistered ? '/workspace/repos' : paths.repos, undefined, this.options.retainResources)
     // Hosted subscriptions start their CLIs through the hosted runner.
     this.sandbox = this.options.hostedSubscriptions ? null : await this.createAgentSandbox()
@@ -392,12 +388,11 @@ export class Daemon {
     this.options.link.onUpgradeRequired?.(latest => this.enterUpdateRequired(latest))
     if (this.stopped) throw new Error("daemon stopped during startup")
     if (!this.options.hostedSubscriptions && this.sandbox) this.localComputerDriver = await detectComputerDriver()
-    if (this.localComputerDriver && this.options.link.syncComputerReviews) {
+    if (this.localComputerDriver) {
       this.localComputerBroker = new ComputerBroker({
         driver: this.localComputerDriver,
         socketPath: join(paths.dataDir, 'local-computer.sock'),
         transport: 'tcp',
-        needsPerson: this.computerNeedsPerson(),
         permitted: runId => {
           const assignment = this.journal.get(runId)?.assignment
           return Boolean(!this.stopped && this.registered && assignment?.localComputer && !assignment.computer &&
@@ -410,7 +405,7 @@ export class Daemon {
           const recheck = async () => {
             const current = this.journal.get(runId)?.assignment.localComputer
             context.assertLive()
-            if (!this.supervisor.computerRunAllowed(runId) || !current || current.botId !== initial.botId || current.ownerId !== initial.ownerId || current.workspaceId !== initial.workspaceId || current.policyVersion !== initial.policyVersion || current.permission !== initial.permission)
+            if (!this.supervisor.computerRunAllowed(runId) || !current || current.botId !== initial.botId || current.ownerId !== initial.ownerId || current.workspaceId !== initial.workspaceId || current.permission !== initial.permission)
               throw new Error('Local computer authority changed')
           }
           try {
@@ -436,10 +431,9 @@ export class Daemon {
       }
       const executeOrdinary = async (current: typeof driver, call: import('./computer/driver.mjs').ComputerCall, display: string | undefined, runId: string, assertLive: () => void) => {
         const computer = liveComputer(runId, display)
-        return executeDriver(current, call, display, { botId: computer.botId, ownerId: computer.ownerId, policyVersion: computer.policyVersion }, assertLive)
+        return executeDriver(current, call, display, { botId: computer.botId, ownerId: computer.ownerId }, assertLive)
       }
       this.cloudComputerBroker = new ComputerBroker({ driver, socketPath: join(paths.dataDir, 'computer.sock'),
-        needsPerson: this.computerNeedsPerson(),
         permitted: runId => {
           const entry = this.journal.get(runId)
           return Boolean(!this.stopped && this.registered && cloudComputerGrantMatches(entry?.assignment, runId, this.device.deviceId) && this.supervisor?.computerRunAllowed(runId))
@@ -454,7 +448,7 @@ export class Daemon {
           } catch (error) {
             // A refusal carries the server's own fixed wording (a recording already going, the person holds the desktop).
             const detail = error instanceof DaemonError && typeof (error.data as { error?: unknown } | undefined)?.error === 'string' ? (error.data as { error: string }).error : undefined
-            throw Object.assign(new Error('Capture failed'), detail ? { safeMessage: detail } : {})
+            throw Object.assign(new Error('Capture failed'), detail ? { safeMessage: detail, cause: error } : { cause: error })
           }
         },
       })
@@ -524,6 +518,7 @@ export class Daemon {
         : this.realAdapters()),
     ]))
     this.supervisor = new RunSupervisor({
+      runActivityChanged: active => this.rpc?.publishRunActivity(active),
       acquireWorkspaceControl: this.options.e2bContainerRuntime || this.options.taskRegistered
         ? (assignment, signal, onLost) => acquireCloudWorkspaceControl({ runId: assignment.runId, deviceId: assignment.deviceId, signal, onLost })
         : undefined,
@@ -539,6 +534,7 @@ export class Daemon {
       startCredential: hosted?.start,
       prepareSubscription: hosted?.prepare,
       prepareRunMailbox: this.options.link.prepareRunMailbox?.bind(this.options.link),
+      prepareRunDrive: this.options.link.prepareRunDrive?.bind(this.options.link),
       prepareRunToolApproval: this.options.link.prepareRunToolApproval?.bind(this.options.link),
       prepareRunGitHub: hosted ? undefined : (assignment, signal, onCredential) => prepareLocalGitHub(assignment, {
         stateDir: join(this.paths.adapterState, 'github'), link: this.options.link, signal, onCredential,
@@ -566,7 +562,7 @@ export class Daemon {
               repo.path,
               repo.setup ? { ...repo.setup, command: undefined } : undefined
             )
-            if (repo.setup?.approved && repo.setup.command) {
+            if (repo.setup?.command) {
               const checked = await hosted.command(
                 worktree,
                 repo.setup.command,
@@ -578,6 +574,12 @@ export class Daemon {
             return result
           }
         : undefined,
+      prepareEnvironmentRepositories: (assignment, root, signal) => checkoutEnvironmentRepositories(root,
+        assignment.projectEnvironment!.startupRepositories!, async key => {
+          const link = this.options.link
+          if (!this.device.deviceId || !link.githubLease) throw new Error('Environment repository authorization unavailable')
+          return (await link.githubLease(this.device.deviceId, assignment.runId, signal, key)).token
+        }, signal),
       repository: assignment => this.repository(assignment),
       prepareRepository: (assignment, signal, githubEnvironment, policyReady, onRepositoryTiming) => prepareRunRepository(this.repositories,
         runPaths(this.paths.adapterState, assignment.runId).privateDir, assignment, signal, githubEnvironment, policyReady, this.options.collectCliTiming, onRepositoryTiming),
@@ -622,6 +624,7 @@ export class Daemon {
             issueId: assignment.issueId,
             summary: report.summary,
             signal,
+            gitIdentity: assignment.gitIdentity,
             pushBranch: assignment.pushBranch,
             baseBranch: assignment.remoteUrl ? await this.repositories.baseRef(assignment.remoteUrl, assignment.baseBranch) : assignment.baseBranch,
             push: (() => {
@@ -647,6 +650,7 @@ export class Daemon {
         pid: process.pid,
       }),
       handlers: this.handlers(),
+      isRunActive: () => this.supervisor.activeRunIds().length > 0,
       log: this.log,
     })
     await this.rpc.listen()
@@ -679,14 +683,10 @@ export class Daemon {
     sweepModelProbeHomes(paths.dataDir)
     // Runs survive restarts: pick up what the journal says was active.
     await this.supervisor.resumeAll()
-    // The person's own logins are never read (devices are runners), so only
-    // an injected source polls.
+    // The person's own logins are never read at startup. Provider quota is
+    // fetched only when the desktop explicitly requests a snapshot.
     if (!hosted && this.options.quotaSource) {
-      this.quota = new QuotaPoller(
-        this.options.quotaSource,
-        { log: this.log, intervalMs: this.options.quotaPollMs }
-      )
-      this.quota.start()
+      this.quota = new QuotaPoller(this.options.quotaSource, { log: this.log })
     }
     this.log.info(
       {
@@ -1014,15 +1014,37 @@ export class Daemon {
     return false
   }
 
-  /** One read after a push, or right after the socket opens. Wait is zero: the signal already arrived. */
+  /** Discovery stays on the selected device and sends one bounded receipt. */
+  private answerMcpChecks(deviceId: string, commands: readonly McpDeviceCheckCommand[]) {
+    for (const command of commands) {
+      if (this.stopped || this.mcpChecks.has(command.id) || this.completedMcpChecks.has(command.id)) continue
+      const work = (async () => {
+        const { checkStdioMcp } = await import('./mcp-check')
+        const receipt = await checkStdioMcp(command, this.lifetime.signal)
+        if (this.stopped) return
+        const result = await this.options.link.report(deviceId, { mcpChecks: [receipt] })
+        this.holdDeviceCommands(result.deviceCommands ?? [])
+        this.completedMcpChecks.add(command.id)
+        if (this.completedMcpChecks.size > 64) this.completedMcpChecks.delete(this.completedMcpChecks.values().next().value!)
+      })().catch(() => {
+        // Neither SDK errors nor command output/credentials enter daemon logs.
+        this.log.warn({ check_id: command.id }, 'MCP check receipt unavailable; next work push may retry')
+      }).finally(() => { this.mcpChecks.delete(command.id) })
+      this.mcpChecks.set(command.id, work)
+    }
+  }
+
+  /** One read after a push, or right after the socket opens. */
   private async pullSignaledWork(deviceId: string, signal: AbortSignal) {
     const failedClaims = [...this.queuedClaims].flatMap(([id, state]) => state === "failed" ? [id] : [])
+    const pendingAtRead = this.pendingQueueClaims()
     const skipRuns = [...failedClaims, ...this.refusedRuns, ...this.stopping, ...this.ended].slice(0, COMMANDS_MAX_SKIP)
     let queued: string[] = []
     const commands = await this.options.link.fetchCommands(deviceId, 0, {
       signal,
       workspaceSkip: [...this.workspaceReads],
       onWorkspaceRequests: requests => this.answerWorkspaceRequests(deviceId, requests),
+      onMcpChecks: commands => this.answerMcpChecks(deviceId, commands),
       skipRuns,
       onQueuedRuns: (runIds) => { queued = runIds },
       updates: { daemonLatest: this.knownLatest ?? DAEMON_VERSION },
@@ -1034,7 +1056,7 @@ export class Daemon {
     })
     if (this.stopped || signal.aborted) return
     await this.applyCommands(commands)
-    if (queued.length > 0) this.claimQueued(queued)
+    if (queued.length > 0) this.claimQueued(this.unreservedOffers(queued, pendingAtRead))
     // Confirm delivery, retaining IDs on failure so the next read retries without redelivery.
     while ((this.unacked.size > 0 || this.refusedSteers.size > 0) && !signal.aborted) {
       const ids = [...this.unacked].slice(0, 500)
@@ -1044,6 +1066,29 @@ export class Daemon {
       for (const id of ids) this.unacked.delete(id)
       for (const id of refused) this.refusedSteers.delete(id)
     }
+  }
+
+  private pendingQueueClaims() {
+    return [...this.queuedClaims].flatMap(([runId, state]) => state === "claiming" ? [runId] : [])
+  }
+
+  private unreservedOffers(offered: string[], pendingAtRead: string[]) {
+    const pending = new Set([...pendingAtRead, ...this.pendingQueueClaims()])
+    const candidates = offered.filter(runId => !pending.has(runId))
+    const available = Math.max(0, offered.length - pending.size)
+    if (available < candidates.length) {
+      let settled = false
+      for (const runId of pending) {
+        if (this.queuedClaims.get(runId) === "claiming") this.deferredQueueClaims.add(runId)
+        else settled = true
+      }
+      if (settled) void this.syncWithServer()
+    }
+    return candidates.slice(0, available)
+  }
+
+  private recheckDeferredOffers(runId: string) {
+    if (this.deferredQueueClaims.delete(runId)) void this.syncWithServer()
   }
 
   /** Starts claiming the reported queued runs; true when any claim began. */
@@ -1058,13 +1103,15 @@ export class Daemon {
         () => {
           if (this.initialRepositorySync?.runId === runId) this.initialRepositorySync.received?.()
           this.queuedClaims.delete(runId)
+          this.recheckDeferredOffers(runId)
         },
         (error: unknown) => {
           if (this.initialRepositorySync?.runId === runId) this.initialRepositorySync.received?.()
           this.queuedClaims.set(runId, "failed")
           // The server has no open session for this device: redial, and the reopened socket claims again.
-          if (error instanceof DeviceSessionRequiredError) { this.session?.redial(); return }
+          if (error instanceof DeviceSessionRequiredError) { this.deferredQueueClaims.delete(runId); this.session?.redial(); return }
           this.log.warn({ run_id: runId, err: error }, "could not start run")
+          this.recheckDeferredOffers(runId)
         }
       )
     }
@@ -1086,7 +1133,7 @@ export class Daemon {
             if (!entry) return { result: { ok: false as const, code: 'workspace_checkout_unavailable' as const }, files: [] }
             return readWorkspaceDiffReceipt(request, entry, this.repository(entry.assignment).path)
           }
-          if (request.request.kind.startsWith('git_')) {
+          if (request.request.kind.startsWith('git_') || request.request.kind.startsWith('file_')) {
             if (!entry) return { result: { ok: false as const, code: 'workspace_checkout_unavailable' as const }, files: [] }
             return handleWorkspaceGitRequest(request, entry, this.repository(entry.assignment).path)
           }
@@ -1167,9 +1214,34 @@ export class Daemon {
         }
         continue
       }
+      if (command.kind === "compact") {
+        if (this.stopping.has(command.runId) || this.unacked.has(command.messageId)) continue
+        try {
+          await this.supervisor.compact(command.runId, command.instructions)
+          this.unacked.add(command.messageId)
+          acted = true
+          this.log.info(
+            { run_id: command.runId, message_id: command.messageId },
+            "compact handed to the agent"
+          )
+        } catch (error) {
+          if (!(error instanceof RunNotFoundError))
+            this.log.warn(
+              { run_id: command.runId, err: error },
+              "could not compact the agent session"
+            )
+        }
+        continue
+      }
       if (this.unacked.has(command.messageId)) continue
       try {
-        await this.supervisor.send(command.runId, command.text)
+        const sendOptions = command.clientComposed || command.slashCommand
+          ? {
+              ...(command.clientComposed ? { clientComposed: true as const } : {}),
+              ...(command.slashCommand ? { slashCommand: command.slashCommand } : {}),
+            }
+          : undefined
+        await this.supervisor.send(command.runId, command.text, sendOptions)
         this.unacked.add(command.messageId)
         acted = true
         this.log.info(
@@ -1197,10 +1269,10 @@ export class Daemon {
     return info.harness === 'claude_code' || info.harness === 'codex' ? true : undefined
   }
 
-  /** A subscription run here takes a per-run access lease (subscription-local-runner.ts). */
+  /** A subscription run here uses the run-bound model gateway (subscription-local-runner.ts). */
   private localSubscriptionCapable(info: HarnessInfo) {
     return (info.harness === "claude_code" || info.harness === "codex") && info.installed &&
-      this.supportsToolApproval(info) === true && Boolean(this.options.link.nativeLease)
+      this.supportsToolApproval(info) === true && Boolean(this.options.link.nativeContext)
   }
 
   /** Advertise only a checked local runner, replacing any old readiness or failure. */
@@ -1373,18 +1445,6 @@ export class Daemon {
     ]
   }
 
-  /** The server's Decisions API for this daemon's runs; no answer until the link provides one. */
-  private serverDecide(): ServerDecide {
-    const link = this.options.link
-    return link.decide ? link.decide.bind(link) : noServerDecision
-  }
-
-  /** Under computer `ask`: whether one action needs the person, judged with the run's task. */
-  private computerNeedsPerson() {
-    return (runId: string, evidence: { call: unknown; recent: string[] }, signal?: AbortSignal) =>
-      judgeComputerAction(this.serverDecide(), runId, { ...evidence, task: this.journal.get(runId)?.assignment.prompt }, signal)
-  }
-
   /** What every real adapter of this daemon is built with, subscription runs included. */
   private adapterOptions() {
     const sandbox = this.agentSandbox()
@@ -1406,16 +1466,14 @@ export class Daemon {
   }
 
   /**
-   * Subscription runs on this device: the server hands each run its
-   * short-lived access token, never the refresh grant (subscription-local-runner.ts).
+   * Subscription runs on this device receive the run-scoped Mikka model
+   * gateway credential (subscription-local-runner.ts).
    */
   private localSubscriptions() {
-    const link = this.options.link
     const options = this.adapterOptions()
-    if (!options || !link.nativeLease) return undefined
+    if (!options) return undefined
     return createLocalSubscriptionRunner({
       stateDir: this.paths.adapterState,
-      link: { nativeLease: link.nativeLease.bind(link) },
       claude: options.claude,
       codex: options.codex,
     })
@@ -1477,19 +1535,11 @@ export class Daemon {
     }
     // Only Mikka's own daemon operations; the server sends the settings (docs/operations/tracing.md, "Daemon").
     if (!this.stopped) daemonTracer.configure(tracing, { version: DAEMON_VERSION })
-    const computerBroker = this.localComputerBroker ?? this.cloudComputerBroker ?? this.options.computerBroker
-    if (computerBroker && !this.options.link.syncComputerReviews) throw new Error("Computer review transport unavailable")
     this.registered = true
     if (this.options.hostedSubscriptions && !this.stopped) this.options.taskRegistered?.()
     if (this.options.hostedSubscriptions && this.options.e2bContainerRuntime && workspaceId && !this.stopped) {
       try { writeCloudRegistration(this.paths.dataDir, deviceId, workspaceId, credential) }
       catch { this.log.warn({ event: 'cloud_registration_notice_failed' }, 'Cloud registration notification unavailable') }
-    }
-    if (computerBroker && !this.stopped) {
-      this.reviewAbort?.abort()
-      const abort = new AbortController()
-      this.reviewAbort = abort
-      this.reviewLoop = followWebComputerReviews(computerBroker, deviceId, this.options.link, abort.signal, this.workSignal, () => this.session?.redial())
     }
   }
 
@@ -1562,13 +1612,24 @@ export class Daemon {
         await this.supervisor.resumeAll(true)
         // Claims that failed after a commands read reported them are retried here.
         for (const [runId, state] of this.queuedClaims) if (state === "failed") this.queuedClaims.delete(runId)
-        for (const runId of await link.pendingRuns(deviceId)) {
-          if (this.refusedRuns.has(runId) || this.queuedClaims.has(runId)) continue
-          await this.claimAndStart(runId).catch((error: unknown) => {
-            // No open session on the server: this pass ends and the socket is redialed.
-            if (error instanceof DeviceSessionRequiredError || error instanceof DaemonUpgradeRequiredError) throw error
-            this.log.warn({ run_id: runId, err: error }, "could not start run")
-          })
+        const skip = new Set([...this.queuedClaims.keys(), ...this.refusedRuns].slice(0, COMMANDS_MAX_SKIP))
+        while (true) {
+          const pendingAtRead = this.pendingQueueClaims()
+          const offered = this.unreservedOffers((await link.pendingRuns(deviceId, [...skip])).filter(runId => !skip.has(runId)), pendingAtRead)
+          if (!offered.length) break
+          let retry = false
+          for (const runId of offered) {
+            skip.add(runId)
+            if (this.refusedRuns.has(runId) || this.queuedClaims.has(runId)) { retry = true; continue }
+            try { await this.claimAndStart(runId) }
+            catch (error) {
+              // No open session on the server: this pass ends and the socket is redialed.
+              if (error instanceof DeviceSessionRequiredError || error instanceof DaemonUpgradeRequiredError) throw error
+              this.log.warn({ run_id: runId, err: error }, "could not start run")
+              retry = true
+            }
+          }
+          if (!retry || skip.size >= COMMANDS_MAX_SKIP) break
         }
       }
       await this.pruneWorktrees()
@@ -1625,8 +1686,6 @@ export class Daemon {
     this.server = "unregistered"
     this.revokeLocalComputerGrants()
     this.registered = false
-    this.reviewAbort?.abort()
-    this.reviewAbort = null
     this.saveDevice({ credential: undefined })
     for (const runId of this.supervisor?.activeRunIds() ?? []) {
       void this.supervisor.cancel(runId).catch(() => this.log.warn({ run_id: runId }, 'could not stop revoked session'))
@@ -1875,7 +1934,11 @@ export class Daemon {
   private handlers(): RpcHandlers {
     return {
       "daemon.status": () => this.status(),
-      "quota.snapshot": () => this.quota?.snapshot() ?? unknownQuotaReport(),
+      "quota.snapshot": async () => {
+        if (!this.quota) return unknownQuotaReport()
+        await this.quota.refresh()
+        return this.quota.snapshot()
+      },
       "daemon.drain": () => {
         this.draining = true
         // Give the response time to reach the caller before sockets close.
@@ -1886,8 +1949,6 @@ export class Daemon {
       },
       "daemon.update": async () => ({ state: await this.requestUpdate() }),
       "device.setCredential": (raw) => {
-        this.reviewAbort?.abort()
-        this.reviewAbort = null
         const { credential, workspaceId, traceContext } =
           daemonRpc["device.setCredential"].params.parse(raw)
         // The device id is kept, in every workspace (ADR ORV-284):
@@ -1906,8 +1967,6 @@ export class Daemon {
         return { ok: true as const }
       },
       "device.clearCredential": () => {
-        this.reviewAbort?.abort()
-        this.reviewAbort = null
         // Signed out in the app: stop talking to the server as that person.
         // The device id stays, so signing in again keeps the device.
         this.saveDevice({ credential: undefined })
@@ -2043,10 +2102,9 @@ export class Daemon {
     if (this.rotationTimer) clearTimeout(this.rotationTimer)
     await this.quota?.stop()
     this.lifetime.abort()
+    await Promise.allSettled(this.mcpChecks.values())
     for (const arrived of [...this.credentialArrived]) arrived()
     await this.session?.stop()
-    this.reviewAbort?.abort()
-    await this.reviewLoop.catch(() => undefined)
     await this.syncing
     await this.checkpointScan
     // A commands read starts claims outside the pass. Abort their HTTP

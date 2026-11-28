@@ -6,10 +6,19 @@ import { sessionMustBeFresh } from '@/lib/fresh-session'
 const calls: unknown[][] = []
 let owner: string | null = 'owner'
 let installedForRefresh: { id: string; enabled: boolean; transport: string }[] = []
+let availableTools = ['list_issues']
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports })
 stub('../api-auth.ts', { auth: { api: { getSession: async () => owner ? { user: { id: owner } } : null } } })
 stub('../request-log.ts', { noteLogRpcAction: () => {}, noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
-stub('./runtime.ts', { runPersonalMcp: async (actor: string, authority: unknown, command: { serverId: string; cursor?: string }) => {
+stub('./runtime.ts', { mcpConnections: { check: async (actor: string, serverId: string) => {
+  assert.ok(sessionMustBeFresh())
+  calls.push(['checkMcp', actor, serverId])
+  return { status: 'connected', tools: availableTools.map(name => ({ name, enabled: true, available: true, description: 'server description' })) }
+}, detail: async (actor: string, serverId: string) => {
+  assert.ok(sessionMustBeFresh())
+  calls.push(['detailMcp', actor, serverId])
+  return { status: 'connected', tools: availableTools.map(name => ({ name, enabled: true, available: true, description: 'server description' })) }
+} }, runPersonalMcp: async (actor: string, authority: unknown, command: { serverId: string; cursor?: string }) => {
   assert.ok(sessionMustBeFresh())
   calls.push(['refreshMcp', actor, authority, command])
   return { serverId: command.serverId, tools: [{ name: 'list_issues', description: 'server description', inputSchema: {} }], nextCursor: null }
@@ -25,7 +34,6 @@ stub('./runtime.ts', { runPersonalMcp: async (actor: string, authority: unknown,
   deleteSkill: async (...args: unknown[]) => { calls.push(['deleteSkill', ...args]) },
 }, workspaceMcp: {
   list: async (userId: string, workspaceId: string) => { calls.push(['workspaceMcpList', userId, workspaceId]); return { workspaceId, servers: [], count: 0 } },
-  share: async (userId: string, input: unknown) => { assert.ok(sessionMustBeFresh(), 'sharing reads the normal session from the database'); calls.push(['workspaceMcpShare', userId, input]); return { servers: [], count: 0 } },
 } })
 stub('./skill-source.ts', { fetchSkillSource: async (input: unknown) => ({ ...input as object, body: '# Fixture' }) })
 stub('../composio.ts', { getComposio: () => ({}) })
@@ -110,24 +118,24 @@ test('an app page needs a signed-in person, not a connected account', async () =
   assert.equal((await response.json() as { tools: { read: unknown[] } }).tools.read.length, 1)
 })
 
-test('custom MCP sharing is a fresh owner HTTP action; workspace reads and mutations reject injected authority', async () => {
+test('retired MCP sharing answers 410 to a fresh owner session and touches no storage; workspace reads reject injected authority', async () => {
   const workspaceId = randomUUID(), serverId = randomUUID(), path = '/api/integrations/mcp/shares'
   const input = { workspaceId, serverId, shared: true }
   owner = null; calls.length = 0
   assert.equal((await mcpShares.PATCH(request(path, 'PATCH', input))).status, 401)
   owner = 'owner'
   assert.equal((await mcpShares.PATCH(request(path, 'PATCH', input, 'https://foreign.acme.dev'))).status, 403)
-  for (const injected of [{ ownerId: 'peer' }, { requester: 'peer' }, { grantId: randomUUID() }, { revision: 1 }])
-    assert.equal((await mcpShares.PATCH(request(path, 'PATCH', { ...input, ...injected }))).status, 400)
+  for (const body of [input, { ...input, shared: false }, { ...input, ownerId: 'peer' }, { ...input, grantId: randomUUID() }]) {
+    const response = await mcpShares.PATCH(request(path, 'PATCH', body))
+    assert.deepEqual({ status: response.status, body: await response.json() }, { status: 410, body: { error: 'mcpSharingRetired' } })
+  }
   assert.deepEqual(calls, [])
-  assert.equal((await mcpShares.PATCH(request(path, 'PATCH', input))).status, 200)
-  assert.deepEqual(calls.at(-1), ['workspaceMcpShare', 'owner', input])
   assert.equal((await mcp.GET(request(`/api/integrations/mcp?workspaceId=${workspaceId}`))).status, 200)
   assert.deepEqual(calls.at(-1), ['workspaceMcpList', 'owner', workspaceId])
   assert.equal((await mcp.GET(request('/api/integrations/mcp?workspaceId=invalid'))).status, 400)
 })
 
-test('MCP sharing rejects missing and delegated credentials before storage even when the session stub has an owner', async () => {
+test('retired MCP sharing still rejects missing and delegated credentials even when the session stub has an owner', async () => {
   owner = 'owner'; calls.length = 0
   const path = '/api/integrations/mcp/shares'
   const input = { workspaceId: randomUUID(), serverId: randomUUID(), shared: true }
@@ -143,8 +151,8 @@ test('MCP sharing rejects missing and delegated credentials before storage even 
   const native = request(path, 'PATCH', input)
   native.headers.delete('cookie')
   native.headers.set('authorization', `Bearer ${'n'.repeat(40)}`)
-  assert.equal((await mcpShares.PATCH(native)).status, 200)
-  assert.deepEqual(calls, [['workspaceMcpShare', 'owner', input]])
+  assert.equal((await mcpShares.PATCH(native)).status, 410)
+  assert.deepEqual(calls, [])
 })
 
 test('a key goes from the signed-in person to Composio and never back out, in a response or a log', async () => {
@@ -209,9 +217,23 @@ test('owner Settings refresh uses the personal discovery grant, accepts only a l
   assert.equal((await POST(request(path, 'POST', { serverId }))).status, 409)
   installedForRefresh = [{ id: serverId, enabled: true, transport: 'http' }]
   calls.length = 0
-  const result = await POST(request(path, 'POST', { serverId, cursor: 'next' }))
-  installedForRefresh = []
+  assert.equal((await POST(request(path, 'POST', { serverId, cursor: 'not a tool name' }))).status, 400)
+  const result = await POST(request(path, 'POST', { serverId }))
   assert.equal(result.status, 200)
   assert.deepEqual(await result.json(), { serverId, tools: [{ name: 'list_issues' }], nextCursor: null })
-  assert.deepEqual(calls, [['listMcp', 'owner'], ['refreshMcp', 'owner', undefined, { serverId, cursor: 'next' }]])
+  assert.deepEqual(calls, [['listMcp', 'owner'], ['checkMcp', 'owner', serverId]])
+  try {
+    availableTools = Array.from({ length: 51 }, (_, i) => `tool_${String(i).padStart(2, '0')}`)
+    const first = await (await POST(request(path, 'POST', { serverId }))).json()
+    assert.equal(first.tools.length, 50)
+    assert.equal(first.nextCursor, 'tool_49')
+    availableTools.shift()
+    calls.length = 0
+    const second = await POST(request(path, 'POST', { serverId, cursor: first.nextCursor }))
+    assert.deepEqual(await second.json(), { serverId, tools: [{ name: 'tool_50' }], nextCursor: null })
+    assert.deepEqual(calls, [['listMcp', 'owner'], ['detailMcp', 'owner', serverId]])
+  } finally {
+    installedForRefresh = []
+    availableTools = ['list_issues']
+  }
 })

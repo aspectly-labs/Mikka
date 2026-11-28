@@ -1,10 +1,13 @@
 import 'server-only'
+import { allocatedTaskProvider } from './task-compute-provider'
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { ThreadMachineFence } from './thread-machines'
 import { threadLifecycleProvider, type ThreadProviderInfo } from './thread-lifecycle-provider'
+import { E2B_RENEW_LEAD_MS, E2B_REVIEW_TIMEOUT_MARGIN_MS, e2bCreationRecoveryAt, settleE2BAwakeInterval, voidUnallocatedE2BCompute } from './e2b-compute-billing'
 import { logThreadLifecycle, threadLifecycleErrorKind } from './thread-lifecycle-log'
 import { taskActivityChanged } from '../factory/activity-live'
+import { jsonbSafeBigIntSql, jsonbSafeDoubleSql } from '../primitives/jsonb-predicates'
 
 export const THREAD_MACHINE_IDLE_MS = 2 * 60_000
 export const THREAD_MACHINE_PROVIDER_MS = 15 * 60_000
@@ -47,14 +50,20 @@ export type ThreadLifecycleRow = {
   reviewExpiresAt?: Instant
   issueId: string | null; taskClosed: boolean; checkpointReady: boolean
   filesystemSnapshotId?: string | null; snapshotState?: string | null; restoreStartedAt?: Instant
+  /** #2926 composer's Keep awake: the person's switch, honoured on the idle
+   * sleep decision only — lease loss and run ends still pause the machine. */
+  keepAwake?: boolean
 }
 type Dependencies = {
-  provider: Pick<typeof threadLifecycleProvider, 'info' | 'keepAlive'> & Partial<Pick<typeof threadLifecycleProvider, 'findCreated'>>
+  provider: Pick<typeof threadLifecycleProvider, 'info'> & {
+    keepAlive?(sandboxId: string, ownerId: string, timeoutMs: number, renew?: boolean): Promise<number | void>
+  } & Partial<Pick<typeof threadLifecycleProvider, 'findCreated' | 'prepareKeepAlive'>>
   park: (pool: Pool, actor: Actor, runId: string, fence: ThreadMachineFence) => Promise<unknown>
   end: (pool: Pool, actor: Actor, runId: string, fence: ThreadMachineFence) => Promise<unknown>
   acknowledgeStop: (pool: Pool, actor: Actor, runId: string) => Promise<boolean>
   stop: (pool: Pool, actor: Actor, row: ThreadLifecycleRow, cause: StopCause, claimId: string, now: number) => Promise<boolean>
   recover: (pool: Pool, actor: Actor, row: ThreadLifecycleRow, now: number) => Promise<void>
+  settleAwake?: typeof settleE2BAwakeInterval
   now: () => number
 }
 
@@ -65,8 +74,7 @@ const fenceOf = (row: ThreadLifecycleRow): ThreadMachineFence => ({ epoch: row.e
 const pendingCreation = (row: ThreadLifecycleRow) => Boolean(row.workerLeaseId || row.workerLeaseUntil
   || row.lifecycle.phase === 'create_requested' || row.lifecycle.phase === 'restore_requested' || row.lifecycle.creationMissingAt != null)
 
-// E2B runs on the user's own key: Mikka sets no execution budget on it. A machine
-// pauses when its run ends or it sits unclaimed, and the provider timeout pauses it as a safety net.
+// The provider timeout pauses a running machine when its authorized interval expires.
 type StopCause = 'task_closed' | 'execution_lease_lost' | 'provider_paused'
 type Decision = { action: 'stop' | 'recover'; at: number; reason: StopCause }
   | { action: 'keep' | 'pause' | 'retire' | 'wait' | 'missing'; at: number | null; reason: string }
@@ -134,6 +142,7 @@ export function threadMachineLifecycleDecision(row: ThreadLifecycleRow, provider
   if (terminal) return { action: 'pause', at: now, reason: 'run_ended' }
   if (row.status === 'queued' && !live(row.leaseExpiresAt, now)) {
     const idleAt = at(row.lastActiveAt) + THREAD_MACHINE_IDLE_MS
+    if (row.keepAwake) return { action: 'keep', at: now + THREAD_MACHINE_REFRESH_MS, reason: 'unclaimed_idle' }
     return { action: now >= idleAt ? 'pause' : 'keep', at: Math.min(idleAt, now + THREAD_MACHINE_REFRESH_MS), reason: 'unclaimed_idle' }
   }
   return { action: 'keep', at: now + THREAD_MACHINE_REFRESH_MS, reason: row.stopRequestedAt ? 'stop_pending' : 'active_run' }
@@ -188,6 +197,7 @@ const runtime: Dependencies = {
   acknowledgeStop: async (pool, actor, runId) => (await import('./thread-machines')).acknowledgeQueuedThreadStop(pool, actor, runId),
   stop: requestLifecycleStop,
   recover: async (_pool, actor, _row, now) => (await import('@/lib/run-leases')).reclaimLostRuns(actor.userId, new Date(now)),
+  settleAwake: settleE2BAwakeInterval,
 }
 
 /** Shared by the per-run Workflow and the existing deployment-owned recovery
@@ -211,10 +221,6 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     LEFT JOIN issues i ON i.id=m."issueId" LEFT JOIN run_checkpoints c ON c."runId"=r.id AND c."userId"=r."userId"
     WHERE m."runId"=$1 AND m."ownerId"=$2 AND m."workspaceId"=$3`, [runId, actor.userId, actor.workspaceId])).rows[0]
   if (!row) return false
-  if (row.snapshotId === 'cloudflare-task-v1') {
-    const { reconcileSponsoredTaskMachine } = await import('./sponsored-lifecycle')
-    return reconcileSponsoredTaskMachine(pool, actor, runId, row, now)
-  }
   // A replay of the legacy monitor is not new task demand. Share the stored
   // deadline with recovery so two sequential callbacks cannot both renew a
   // VM, and provider failures respect their persisted backoff.
@@ -226,12 +232,12 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
   }
   const token = randomUUID(), claimUntil = now + CLAIM_MS
   const claimed = await pool.query(`UPDATE thread_machines SET lifecycle=lifecycle||jsonb_build_object('owner','run-recovery','reconcileId',$6::text,'reconcileUntil',$7::double precision,
-        'reconcileVersion',COALESCE((lifecycle->>'reconcileVersion')::bigint,0)+1),
+        'reconcileVersion',COALESCE(${jsonbSafeBigIntSql('lifecycle', 'reconcileVersion')},0)+1),
       "lifecycleAt"=to_timestamp($7::double precision/1000)
     WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND epoch=$4 AND "sandboxId" IS NOT DISTINCT FROM $5::text
-      AND COALESCE((lifecycle->>'reconcileUntil')::double precision,0)<=$8::double precision
+      AND COALESCE(${jsonbSafeDoubleSql('lifecycle', 'reconcileUntil')},0)<=$8::double precision
       AND "lifecycleAt" IS NOT DISTINCT FROM $9::timestamptz
-      AND COALESCE((lifecycle->>'reconcileVersion')::bigint,0)=$10::bigint RETURNING "runId"`,
+      AND COALESCE(${jsonbSafeBigIntSql('lifecycle', 'reconcileVersion')},0)=$10::bigint RETURNING "runId"`,
   [runId, actor.userId, actor.workspaceId, row.epoch, row.sandboxId, token, claimUntil, now, row.lifecycleAtVersion, row.lifecycle.reconcileVersion ?? 0])
   if (!claimed.rowCount) return row.lifecycle.reconcileUntil && row.lifecycle.reconcileUntil > now ? row.lifecycle.reconcileUntil : now + 1
 
@@ -245,7 +251,7 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
       WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND epoch=$4 AND "sandboxId" IS NOT DISTINCT FROM $5::text
         AND lifecycle->>'reconcileId'=$6 AND (state<>'ended' OR $9::boolean) RETURNING "runId"`,
     [runId, actor.userId, actor.workspaceId, row.epoch, row.sandboxId, token, JSON.stringify({ ...observed, ...metadata }), due, row.state === 'ended'])
-    if (result.rowCount && (metadata.phase !== row.lifecycle.phase || metadata.reason !== row.lifecycle.reason)) {
+    if (result.rowCount && metadata.phase !== undefined && (metadata.phase !== row.lifecycle.phase || metadata.reason !== row.lifecycle.reason)) {
       const emit = () => logThreadLifecycle(row, { phase: metadata.phase, reason: metadata.reason, deadline: due, provider: providerOutcome,
         computeSeconds: Number(row.computeSeconds) + (row.runningSince ? Math.max(0, deps.now() - at(row.runningSince)) / 1_000 : 0),
         computeSource: row.lifecycle.computeSource })
@@ -254,10 +260,25 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     }
     return result.rowCount ? due ?? false : now + 1
   }
-  const keepAlive = async (due: number, reason: string) => {
+  const keepAlive = async (due: number, reason: string, observedDeadline: number | null) => {
+    const canFund = !row.stopRequestedAt && !['stop_pending', 'task_closed', 'execution_lease_lost', 'provider_paused'].includes(reason)
+    const reviewCovered = reason === 'human_review' && observedDeadline !== null && observedDeadline >= due
+    const requestedMs = reason === 'human_review'
+      ? Math.min(THREAD_MACHINE_PROVIDER_MS, Math.max(1, due - deps.now()) + E2B_REVIEW_TIMEOUT_MARGIN_MS)
+      : THREAD_MACHINE_PROVIDER_MS
+    const prepared = reviewCovered ? undefined
+      : await deps.provider.prepareKeepAlive?.(row.sandboxId!, actor.userId, requestedMs, canFund)
     // A static provider timeout cannot resume a paused VM. Hold the same
     // run→machine lock order as resume/adopt while extending this exact epoch.
-    const client = await pool.connect()
+    let preservePayment = false
+    let client: PoolClient
+    try {
+      await prepared?.begin()
+      client = await pool.connect()
+    } catch (error) {
+      await prepared?.cancel()
+      throw error
+    }
     try {
       await client.query('BEGIN')
       const run = (await client.query('SELECT status,"stopRequestedAt","stopReason" FROM agent_runs WHERE id=$1 AND "userId"=$2 FOR UPDATE', [runId, actor.userId])).rows[0]
@@ -279,17 +300,45 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
           return next
         }
       }
-      await deps.provider.keepAlive(row.sandboxId!, actor.userId, THREAD_MACHINE_PROVIDER_MS)
-      providerOutcome = 'timeout_renewed'
-      const next = await finish({ phase: reason === 'human_review' ? 'review_resumed' : reason === 'provisioning' ? 'provisioning' : 'active', reason, failures: 0, providerDeadline: deps.now() + THREAD_MACHINE_PROVIDER_MS }, due, client)
+      const stopping = Boolean(run?.stopRequestedAt)
+      let renewedDeadline: number | null | undefined
+      if (!reviewCovered && !(stopping && canFund)) {
+        try {
+          renewedDeadline = prepared ? await prepared.apply(client)
+            : (await deps.provider.keepAlive?.(row.sandboxId!, actor.userId, requestedMs, !stopping)) ?? undefined
+          preservePayment = renewedDeadline !== null
+        } catch (error) {
+          // Provider receipt may have been lost. The durable dispatch marker
+          // survives the APP rollback and recovery will inspect the deadline.
+          preservePayment = true
+          throw error
+        }
+      }
+      const providerDeadline = renewedDeadline ?? observedDeadline ?? (prepared ? deps.now() : deps.now() + THREAD_MACHINE_PROVIDER_MS)
+      const renewalAt = stopping || reviewCovered ? due : Math.max(deps.now() + 5_000, providerDeadline - E2B_RENEW_LEAD_MS + 3_000)
+      if (!reviewCovered && (renewedDeadline != null || !prepared && !stopping)) providerOutcome = 'timeout_renewed'
+      const next = await finish({ phase: reason === 'human_review' ? 'review_resumed' : reason === 'provisioning' ? 'provisioning' : 'active', reason, failures: 0, providerDeadline }, Math.min(due, renewalAt), client)
       await client.query('COMMIT')
       committedTransition?.()
       committedTransition = undefined
       return next
-    } catch (error) { committedTransition = undefined; await client.query('ROLLBACK'); throw error } finally { client.release() }
+    } catch (error) {
+      committedTransition = undefined
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
+      if (!preservePayment) await prepared?.cancel()
+    }
   }
 
   try {
+    if (allocatedTaskProvider(row) === 'cloudflare') {
+      phase = 'sponsored_reconcile_failed'
+      const { reconcileSponsoredTaskMachine } = await import('./sponsored-lifecycle')
+      const due = await reconcileSponsoredTaskMachine(pool, actor, runId, row, now)
+      return await finish({ failures: 0 }, due || null)
+    }
     // A concurrent SDK resume owns this short intent. Do not observe/pause the
     // VM or replace its phase before its lease-fenced completion CAS returns.
     // Stop/closure/revocation clears the lease and takes the normal path.
@@ -302,6 +351,9 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
     }
     let provider: ThreadProviderInfo | null = null
     if (!row.sandboxId && !live(row.workerLeaseUntil, now) && pendingCreation(row) && row.operationId && deps.provider.findCreated) {
+      const recoveryAt = await e2bCreationRecoveryAt(actor.userId, row.operationId)
+      if (recoveryAt !== undefined && recoveryAt >= now)
+        return await finish({ phase: row.lifecycle.phase ?? 'create_requested', reason: 'creation_provider_deadline' }, recoveryAt + 1)
       const created = await deps.provider.findCreated(runId, actor.workspaceId, row.operationId, actor.userId)
       if (!created) {
         // A list response may briefly lag allocation creation. Reconfirm once
@@ -314,6 +366,8 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         [runId, actor.userId, actor.workspaceId, row.epoch, token, row.operationId, observedAt])
         if (!missing.rowCount) return now + 1
         row.state = missing.rows[0].state
+        if (observedAt >= missingAt + THREAD_MACHINE_STOP_GRACE_MS)
+          await voidUnallocatedE2BCompute(actor.userId, row.operationId, true)
         providerOutcome = 'missing'
         await (await import('@/lib/live/panels')).runChanged(pool, runId)
         return await finish({ phase: 'needs_reconciliation', reason: 'creation_cleanup_unconfirmed', creationMissingAt: missingAt },
@@ -374,6 +428,12 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         || (row.status === 'paused' && row.pauseReason === 'quota_exhausted' && row.safeExit)))
         await deps.park(pool, actor, runId, fenceOf(row))
     }
+    if (provider?.state === 'paused' && !live(row.workerLeaseUntil, now) && row.state !== 'ended' && row.sandboxId) {
+      await (deps.settleAwake ?? settleE2BAwakeInterval)(actor.userId, row.sandboxId, new Date(now), undefined, {
+        runId: row.runId,
+        expectedEpoch: row.epoch,
+      })
+    }
     const decision = threadMachineLifecycleDecision(row, provider, now)
     if (decision.action === 'retire') {
       phase = 'retire_failed'
@@ -403,10 +463,10 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         return finish({ phase: 'needs_reconciliation', reason: 'execution_condition_changed' }, deps.now() + 1)
       observed.observedStop = true
       const stopAt = deps.now() + THREAD_MACHINE_STOP_GRACE_MS
-      if (provider?.state === 'running' && row.state === 'running') return await keepAlive(stopAt, decision.reason)
+      if (provider?.state === 'running' && row.state === 'running') return await keepAlive(stopAt, decision.reason, provider.endAt)
       return await finish({ phase: 'needs_reconciliation', reason: decision.reason, observedStop: true }, stopAt)
     }
-    if (decision.action === 'keep') return await keepAlive(decision.at!, decision.reason)
+    if (decision.action === 'keep') return await keepAlive(decision.at!, decision.reason, provider?.endAt ?? null)
     if (decision.action === 'missing') {
       const missing = await pool.query(`UPDATE thread_machines SET state='error',"runningSince"=NULL,
           lifecycle=lifecycle||jsonb_build_object('providerMissingReceipt',$4::text),
@@ -414,6 +474,16 @@ export async function reconcileThreadMachine(pool: Pool, actor: Actor, runId: st
         WHERE "runId"=$1 AND epoch=$2 AND "sandboxId"=$3 AND lifecycle->>'reconcileId'=$4 AND state<>'ended'
           AND "ownerId"=$5 AND "workspaceId"=$6`, [runId, row.epoch, row.sandboxId, token, actor.userId, actor.workspaceId])
       if (missing.rowCount) {
+        if (!live(row.workerLeaseUntil, now) && row.sandboxId) {
+          const missingObservedAt = typeof row.lifecycle.providerMissingAt === 'number' && Number.isFinite(row.lifecycle.providerMissingAt)
+            ? row.lifecycle.providerMissingAt
+            : now
+          await (deps.settleAwake ?? settleE2BAwakeInterval)(actor.userId, row.sandboxId, new Date(missingObservedAt), undefined, {
+            runId: row.runId,
+            expectedEpoch: row.epoch,
+            expectedStates: ['error'],
+          })
+        }
         taskActivityChanged(pool, runId)
         await (await import('@/lib/live/panels')).runChanged(pool, runId)
       }

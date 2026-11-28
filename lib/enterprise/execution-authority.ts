@@ -4,6 +4,7 @@ import type { PoolClient } from 'pg'
 import { deviceRequestCaller } from '@/lib/device-request-context'
 import { verifyBearer } from '@/lib/cron-auth'
 import { WorkspaceError } from '@/lib/workspace-error'
+import { readEnv } from '@/lib/env/server'
 
 type Query = Pick<PoolClient, 'query'>
 type Runtime = { workflowRunId: string; workflowName: string; stepId: string }
@@ -69,7 +70,7 @@ export async function withEveProductAuthority<T>(
  * The credential stays in this short-lived private context and is never logged
  * or added to an Enterprise principal, task, audit row, or Workflow input. */
 export async function withRecoveryCronAuthority<T>(request: Request, work: () => Promise<T>): Promise<T> {
-  const secret = process.env.CRON_SECRET
+  const secret = readEnv('CRON_SECRET')
   if (!secret || !await verifyBearer(request.headers.get('authorization'), secret)) throw new WorkspaceError('workspaceAccessDenied')
   return runWithAuthority({ source: 'cron', secret }, work)
 }
@@ -119,7 +120,7 @@ export async function currentExecutionAuthority(userId: string, workspaceId: str
   const held = authority.getStore()
   if (held) {
     if (!held.active || held.expiresAt <= Date.now()) return false
-    if (held.source === 'cron') return held.secret === process.env.CRON_SECRET
+    if (held.source === 'cron') return held.secret === readEnv('CRON_SECRET')
     if (held.source === 'eve') {
       const [{ internalEveRequestScope }, { agentKitEnabled }] = await Promise.all([import('@/lib/eve/auth'), import('@/lib/agent-kit/config')])
       const scope = internalEveRequestScope(held.request)

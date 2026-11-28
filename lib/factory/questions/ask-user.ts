@@ -6,7 +6,7 @@ import { PENDING_QUESTION_STATUSES } from "./schema";
 export { PENDING_QUESTION_STATUSES };
 
 /** Claude Code AskUserQuestion `header` is a short chip label (max 12 chars). */
-const HEADERS: Record<string, string> = { context: "Context", decision: "Decision", permission: "Permission", external: "External" };
+const HEADERS: Record<string, string> = { context: "Context", decision: "Decision", external: "External" };
 
 type QuestionView = {
   id: string; kind: string; question: string; context?: string | null; options: string[] | null;
@@ -38,6 +38,8 @@ export function toAskUserQuestion(q: QuestionView) {
     options: (q.options ?? []).map((label) => ({ label, description: "", value: label })),
     multiSelect: false,
     reference: q.reference,
+    // When it was asked, so a list of questions can show and order it by that time (the Inbox).
+    ...(q.createdAt ? { createdAt: new Date(q.createdAt).toISOString() } : {}),
   };
 }
 

@@ -67,7 +67,7 @@ ship a smaller surface without the UI claiming a feature it cannot perform.
   explicit rollback during #1415. `Mikka Dev` uses a separate profile and never
   checks or installs production desktop updates.
 - The desktop window is opaque on every platform, with no vibrancy material
-  ([decision](decisions/2026-11-17-1500-desktop-window-opaque.md)). On macOS
+  ([decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-17-1500-desktop-window-opaque.md)). On macOS
   the window keeps the inset traffic lights over the page's own top bar
   (`apps/desktop/src/main/window-appearance.ts`). Controls over a drag strip
   are `-webkit-app-region: no-drag`, and a strip never extends under a control

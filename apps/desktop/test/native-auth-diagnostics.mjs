@@ -18,7 +18,7 @@ const ROUTES = [
   ['^/mikka(?:/en)?/sign-up$', 'sign-up'],
   ['^/mikka(?:/en)?/a/[^/]+$', 'public-share'],
   ['^/mikka/api/artifacts/shared/[^/]+(?:/frame)?$', 'public-share-api'],
-  ['^/mikka/(?:assets|_next)/', 'asset'],
+  ['^/mikka/assets/', 'asset'],
 ]
 
 export function authDiagnosticRoute(value) {

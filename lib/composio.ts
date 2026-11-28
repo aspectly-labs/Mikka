@@ -3,9 +3,10 @@ import { Composio } from '@composio/core'
 import { COMPOSIO_ACTIONS, executeComposioAction, resolveComposioAccount, type ComposioActionName, type ComposioActionResult, type ComposioDispatchGate } from '@/lib/composio-actions'
 import { disconnectAndForgetAccount, providerAnswer, providerIdentity, SLACK_USER_INFO, sanitizeEmail, slackAnswer, slackUserEmail, slackUserId } from '@/lib/composio-accounts'
 import { chosenComposioDefault, forgetComposioAccount } from '@/lib/composio-account-store'
+import { readEnv } from '@/lib/env/server'
 
 export function getComposio() {
-  const apiKey = process.env.COMPOSIO_API_KEY
+  const apiKey = readEnv('COMPOSIO_API_KEY')
   return apiKey ? new Composio({ apiKey }) : null
 }
 

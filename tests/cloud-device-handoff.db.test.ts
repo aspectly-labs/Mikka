@@ -26,21 +26,22 @@ test('admitted Cloud tasks park their real binding before normal local recovery'
   let appPool: Pool | undefined, workspacePool: Pool | undefined
   let machines: Awaited<ReturnType<typeof fakeThreadMachines>> | undefined
   const scoped = { MIKKA_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(),
-    MIKKA_DATABASE_URL_UNPOOLED: target.toString(), DATABASE_URL_UNPOOLED: target.toString(), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') }
+    MIKKA_DATABASE_URL_UNPOOLED: target.toString(), DATABASE_URL_UNPOOLED: target.toString(),
+    WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'), E2B_API_KEY: 'synthetic-cloud-handoff-e2b-key' }
   const previous = Object.fromEntries(Object.keys(scoped).map(name => [name, process.env[name]]))
   Object.assign(process.env, scoped)
   try {
     const directory = new URL('../drizzle/', import.meta.url)
     for (const migration of orderMigrations((await readdir(directory)).filter(name => name.endsWith('.sql')))) await pool.query(await readFile(new URL(migration, directory), 'utf8'))
-    const next = await import('next/server')
-    mock.module('next/server', { namedExports: { ...next, after() {} } })
+    const next = await import('@/lib/server-runtime/server')
+    mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after() {} } })
     const workflow = await import('workflow/api')
     let cloudWorkflows = 0
     mock.module('workflow/api', { namedExports: { ...workflow, start: async () => { cloudWorkflows++; return { runId: 'synthetic-workflow' } } } })
     const { queueFactoryCloudRun } = await import('../lib/factory/queue-cloud')
     const { createExecutionClaim } = await import('./helpers/factory-execution-claim')
     const { issueRunToken, verifyRunToken } = await import('../lib/mcp/worker')
-    const { apiKeyForRun } = await import('../lib/model-api-keys')
+    const { validateRunApiKey } = await import('../lib/model-api-keys')
     appPool = (await import('../lib/db')).pool; workspacePool = (await import('../lib/workspace-db')).workspacePool
     const harnesses = [{ harness: 'codex', installed: true, toolApproval: true, subscriptionBroker: true, modelSlots: [{ slot: 'gpt-5', model: 'gpt-5', name: 'gpt-5' }] }]
     machines = await fakeThreadMachines(pool, harnesses)
@@ -61,6 +62,7 @@ test('admitted Cloud tasks park their real binding before normal local recovery'
       await pool.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$1,$2,true,now(),now())', [userId, `${userId}@example.invalid`])
       await pool.query('INSERT INTO issue_prefixes("userId",prefix) VALUES($1,\'CHOF\')', [userId])
       await pool.query('INSERT INTO mikka_workspaces(id,"userId",name,kind) VALUES($1,$2,\'Cloud handoff fixture\',\'team\')', [workspaceId, userId])
+      await pool.query('INSERT INTO mikka_workspace_entitlements("workspaceId",plan,source) VALUES($1,\'pro\',\'cloud\')', [workspaceId])
       await pool.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,$2,$2,$3,\'admin\',\'active\')', [workspaceId, userId, `${userId}@example.invalid`])
       await pool.query('INSERT INTO bots(id,"ownerId","workspaceId",name) VALUES($1,$2,$3,\'Cloud handoff Bot\')', [botId, userId, workspaceId])
       for (const [device, agent, kind] of [[parentDevice, agentId, 'cloud'], [deviceB, agentB, 'local']]) {
@@ -166,7 +168,7 @@ test('admitted Cloud tasks park their real binding before normal local recovery'
       assert.match(child.prompt, /Host task handoff/)
       assert.ok(child.prompt.includes(f.task.sourceEventId))
       assert.equal((await latestCheckpoint(child.retryOf))?.baseCommit, 'a'.repeat(40))
-      assert.equal((await apiKeyForRun(pool, child.id, f.keyId, 'codex')).ownerId, f.userId)
+      assert.equal((await validateRunApiKey(pool, child.id, f.keyId)).ownerId, f.userId)
       const claim = createExecutionClaim(pool, async () => true)
       assert.equal((await claim(f.userId, f.deviceB, child.id, new Date(Date.now() + 90_000).toISOString())).length, 1)
       await reclaimLostRuns(f.userId, f.now)

@@ -1,6 +1,7 @@
 # One task, one cloud sandbox, paused between its runs
 
 - Date: 2026-11-01
+- **Status:** Superseded by [2026-11-10-1600-thread-filesystem-snapshots](2026-11-10-1600-thread-filesystem-snapshots.md)
 - Source: Alex, in the MVP acceptance session: 「E2B 是一次任务完成之后就不再使用的，但相关文件还是要存储，避免后续可能还会再开 follow up。任务跟沙箱机器应该是强绑定。不能一个任务用完之后，另外一个任务接着去用，这是不允许的。」 and 「免费和暂停能保留多久就保留多久，如果收费就不保留。」
 - Rule: —
 - Replaces: one new sandbox per run, killed when the run ends

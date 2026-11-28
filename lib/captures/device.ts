@@ -1,5 +1,5 @@
 import 'server-only'
-import { NextResponse } from 'next/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
@@ -14,7 +14,7 @@ import type { CaptureError, CaptureOwner } from './store'
 
 const LIVE = ['preparing', 'running', 'waiting_input', 'finishing'] as const
 
-export const captureJson = (body: unknown, status = 200) => NextResponse.json(body, { status, headers: { 'cache-control': 'private, no-store' } })
+export const captureJson = (body: unknown, status = 200) => RouteResponse.json(body, { status, headers: { 'cache-control': 'private, no-store' } })
 
 const STATUS: Record<CaptureError['error'], number> = { invalid: 400, too_large: 413, not_found: 404, conflict: 409, unavailable: 503 }
 export const captureFailure = (failure: CaptureError) => captureJson({ error: failure.message, code: failure.error }, STATUS[failure.error])

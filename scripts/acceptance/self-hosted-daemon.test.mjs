@@ -7,7 +7,7 @@ import { liveTicket } from '../../lib/live/scope.ts'
 import { devicePresenceGrant } from '../../lib/device-presence-grant.ts'
 import { checkSessionTarget, checkOwnedEnrollment, enrollmentToken, createOwnerRequest, presenceTarget } from './self-hosted-daemon.mjs'
 
-const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_SHA: 'a'.repeat(40),
+const env = { GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_SHA: 'a'.repeat(40),
   RUNNER_TEMP: '/tmp/runner', GITHUB_WORKSPACE: '/tmp/checkout' }
 const session = { origin: 'http://localhost:3000', revision: env.GITHUB_SHA, ownerId: 'fixture-owner',
   workspaceId: 'a0000000-0000-4000-8000-000000000001', cookie: 'session=synthetic-fixture' }

@@ -1,6 +1,7 @@
 # Each Agent keeps its own 优先使用的模型; the page re-reads on its own
 
 - Date: 2026-11-05
+- **Status:** Superseded in part by [2026-11-17-1800](2026-11-17-1800-one-agent-per-thread.md)
 - Source: Alex, testing 设置 › 模型与订阅 in production, relayed by the coordinator session: the 优先使用的 Agent toggle does not filter the list (「选了 Claude Code，只显示 Claude Code 能跑的模型；选了 Codex，只显示 Codex 能跑的模型。每个 Agent 有自己的优先顺序」); the page does not refresh after a subscription connects; 「待检查」 does not change after 检查额度; there is no way to refresh a subscription's models. The coordinator filled in what Alex did not say (marked "coordinator").
 - Rule: R-05 (link); R-40 (a settings row may say what it does)
 - Superseded in part by: [2026-11-17-1800](2026-11-17-1800-one-agent-per-thread.md) (no cross-Agent fallback: "Nothing for this Agent, models for the other", "Dispatch follows the same split" and the 自动 Profile's "then the other's" no longer apply; a thread keeps one Agent and every dispatch names it)

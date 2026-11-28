@@ -1,13 +1,12 @@
 import { factoryHumanWorkspaceResponse } from '@/lib/factory/workspace-http';
-import { NextResponse } from 'next/server';
+import { RouteResponse } from '@/lib/server-runtime/server';
 import { auth } from '@/lib/api-auth';
 import { pool } from '@/lib/db';
 import { withRequestLog, noteLogUser } from '@/lib/request-log';
 import { factoryBrowserSession } from '@/lib/factory/browser-human';
 import { factoryHumanStore, factorySpecApproval } from '@/lib/factory/server';
 import { handleFactoryFlow } from '@/lib/factory/flow-http';
-export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
+import { defineRoute } from '@/lib/primitives/define-route'
 const respond = withRequestLog('/api/factory/tasks/[taskId]/flow', async (request: Request, context: { params: Promise<{ taskId: string }> }) => {
   const session = await factoryBrowserSession(request,headers => auth.api.getSession({ headers, query: { disableCookieCache: true } }));
   const actor = session ? { userId: session.user.id, sessionId: session.session.id } : null;
@@ -21,9 +20,26 @@ const respond = withRequestLog('/api/factory/tasks/[taskId]/flow', async (reques
       origin: request.headers.get('origin'), url: request.url,
       ...(request.method === 'POST' ? { body: await request.json().catch(() => null) } : {}),
     });
-    return NextResponse.json(result.body,{ status: result.status, headers: { 'Cache-Control': 'private, no-store' } });
+    return RouteResponse.json(result.body,{ status: result.status, headers: { 'Cache-Control': 'private, no-store' } });
   });
 
 });
-export const GET = respond;
-export const POST = respond;
+export const GET = defineRoute<'public','none',{ taskId: string }>(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => respond(request, { params: Promise.resolve(params) }),
+)
+
+export const POST = defineRoute<'public','none',{ taskId: string }>(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, params }) => respond(request, { params: Promise.resolve(params) }),
+)

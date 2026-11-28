@@ -48,7 +48,7 @@ test('actual SDK streaming passes its call id through the instrumented Coordinat
   } })
   const result = streamText({ model, tools: createTools(), prompt: 'Synthetic offline request', maxRetries: 0 })
   for await (const part of result.fullStream) if (part.type === 'error') throw part.error
-  assert.deepEqual(calls, [[owner, input, undefined, 'sdk-call']])
+  assert.deepEqual(calls, [[owner, input, undefined, 'sdk-call', { botId: bot, executionId: execution.id, runtime: execution.snapshot.runtime }, undefined]])
   assert.equal(modelCalls, 1)
   assert.equal(beforeCall.mock.callCount(), 1); assert.equal(afterCall.mock.callCount(), 1)
   assert.equal((await result.toolResults)[0]?.toolCallId, 'sdk-call')

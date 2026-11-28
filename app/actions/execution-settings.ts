@@ -1,13 +1,15 @@
 "use server";
-import { headers } from "next/headers";
+import { headers } from "@/lib/server-runtime/headers";
 import { auth } from "@/lib/auth";
 import { ActionFailureError, runAction } from "@/lib/action-error";
 import type { ActionResult } from "@/lib/action-result";
+import { chatModelOptionsSchema } from "@/lib/model-picker-options";
+import type { ModelModes } from "@/lib/model-capabilities";
 import type { BotModelMenu } from "@/lib/bot-model-menu-view";
 import { loadWorkspaceContext } from "@/lib/workspace-access";
 import { pool } from "@/lib/db";
 import { ExecutionSettings } from "@/lib/execution-settings";
-import { botModelMenu, botModelScope, chooseBotModel as chooseBotModelFor, refreshBotModelMenu } from "@/lib/bot-model-menu";
+import { botModelMenu, botModelScope, chooseBotModel as chooseBotModelFor, refreshBotModelMenu, setPreferredRoute, setChatModelSettings } from "@/lib/bot-model-menu";
 import { z } from "zod";
 import { chatBotId } from "@/lib/coordinator/coordinator-bot";
 async function context(workspaceId?: string) {
@@ -32,8 +34,8 @@ async function chatScope(chatBot: string | null, workspaceId?: string) {
 export async function getBotModelMenu(chatBot: string | null, workspaceId?: string) {
   const { botId, scope } = await chatScope(chatBot, workspaceId);
   const settings = new ExecutionSettings(pool);
-  // The chat menu also upgrades optional Codex Fast metadata; ordinary dispatch keeps valid legacy catalogues.
-  await settings.ensureCatalogues(scope, undefined, undefined, { codexPriority: true });
+  // A valid catalogue is immediately usable; optional Fast metadata refreshes in the owned after queue.
+  await settings.ensureCatalogues(scope, undefined, undefined, { codexPriority: true, deferOptional: true });
   return botModelMenu(pool, settings, scope, botId);
 }
 /** 刷新模型列表: re-reads what this person can use here, after asking each subscription for its models. */
@@ -54,6 +56,41 @@ export async function chooseBotModel(chatBot: string | null, id: string): Promis
   });
 }
 
+/**
+ * Saves the chat's reasoning level and/or serving speed beside its model (decision 2026-11-25-1700) and returns
+ * the menu. A field left out keeps its value; null goes back to the default. The picker offers only what the
+ * chosen model supports, and the next run checks it again against the model it freezes.
+ */
+export async function setChatModelOptions(chatBot: string | null, change: { effort?: string | null; serviceTier?: string | null; modes?: ModelModes }): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const parsed = chatModelOptionsSchema.safeParse(change);
+    if (!parsed.success) throw new ActionFailureError("validationGeneric");
+    const { botId, scope } = await chatScope(chatBot);
+    const settings = new ExecutionSettings(pool);
+    const menu = await botModelMenu(pool, settings, scope, botId);
+    await setChatModelSettings(pool, scope, botId, parsed.data, menu.current.capabilities);
+    return botModelMenu(pool, settings, scope, botId);
+  });
+}
+
+/** Validate a preference chosen by the caller's picker without changing the account or chat. */
+export async function setPreferredModelRoute(chatBot: string | null, modelKey: string, optionId: string): Promise<ActionResult<BotModelMenu>> {
+  return runAction(async () => {
+    const { botId, scope } = await chatScope(chatBot);
+    return setPreferredRoute(pool, new ExecutionSettings(pool), scope, botId, modelKey, optionId);
+  });
+}
+
 export async function refreshBotModels(connectionId: string, workspaceId?: string) {
   return new ExecutionSettings(pool).refreshBotModels(await context(workspaceId), connectionId);
+}
+
+/**
+ * The person's subscriptions that hit their usage limit here and the threads each paused (#2938). Read again when the
+ * live channel reports a thread-list change, which the pause itself pushes; owner only.
+ */
+export async function getUsageLimits(workspaceId?: string) {
+  const { readUsageLimits } = await import("@/lib/usage-limits");
+  const scope = await context(workspaceId);
+  return readUsageLimits(pool, scope.ownerId, scope.workspaceId);
 }

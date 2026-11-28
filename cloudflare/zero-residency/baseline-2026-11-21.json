@@ -1,0 +1,393 @@
+{
+  "baseline": "epic3076-cf0-zero-residency",
+  "issue": "https://github.com/aspectly-labs/Mikka/issues/3077",
+  "capturedAt": "2026-11-21",
+  "capture": {
+    "method": "read-only Cloudflare API application inventory; no writes, no stops",
+    "endpoint": "GET /client/v4/accounts/d8f6630c7869111a5139bc5ed4d24ace/containers/applications",
+    "sanitized": "metadata only (names, ids, scheduling policy, instance caps, timestamps); no images, environment variables or credentials retained",
+    "observedRunning": "29 of 31 applications reported one running instance at capture; per-app running fields were removed during sanitization, so per-app running state is unverified"
+  },
+  "summary": {
+    "applications": 31,
+    "defaultSchedulingPolicy": 29,
+    "durableObjectPolicy": 2,
+    "releasePinnedBusinessApi": 23,
+    "distinctReleases": [
+      "2f673b389adc",
+      "3f7eaa6042d0",
+      "514b921155ad",
+      "603d1d95f026",
+      "8a079f179722",
+      "9a655d49e2ef",
+      "9bbe245ca19d",
+      "ac9013c6d7e1",
+      "ae2060e75032",
+      "b53e8f369ff2",
+      "d59c85cb321b",
+      "d8b0f3ff8dd4",
+      "db3a09d802a6"
+    ]
+  },
+  "applications": [
+    {
+      "name": "mikka-api-9bbe245ca19d-44834900850-1-businessapi",
+      "id": "a030c142-bc8a-46cc-b9cf-06ab3140a54e",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "9bbe245ca19d",
+      "createdAt": "2026-11-21T00:09:35.648999936Z",
+      "updatedAt": "2026-11-21T00:09:37.176999936Z"
+    },
+    {
+      "name": "mikka-api-staging-9bbe245ca19d-44834900850-1-businessapi",
+      "id": "a033b9bd-0fe0-40b8-aac9-62796dd65d0c",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "9bbe245ca19d",
+      "createdAt": "2026-11-20T23:37:16.872999936Z",
+      "updatedAt": "2026-11-20T23:37:18.024Z"
+    },
+    {
+      "name": "mikka-api-staging-603d1d95f026-44824274619-1-businessapi",
+      "id": "a0323d40-da63-4ebc-bdee-588a94817687",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "603d1d95f026",
+      "createdAt": "2026-11-20T22:19:26.044999936Z",
+      "updatedAt": "2026-11-20T22:19:27.076999936Z"
+    },
+    {
+      "name": "mikka-api-514b921155ad-44716198689-1-businessapi",
+      "id": "a0341318-56fd-48d7-ae13-143c03c708ae",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "514b921155ad",
+      "createdAt": "2026-11-20T12:14:50.072Z",
+      "updatedAt": "2026-11-20T12:14:51.040999936Z"
+    },
+    {
+      "name": "mikka-api-staging-514b921155ad-44716198689-1-businessapi",
+      "id": "a03f2a08-b5e4-47a4-b8c4-e8a132243a83",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "514b921155ad",
+      "createdAt": "2026-11-20T10:28:36.929999872Z",
+      "updatedAt": "2026-11-20T10:28:37.841999872Z"
+    },
+    {
+      "name": "mikka-api-staging-db3a09d802a6-44082264453-1-businessapi",
+      "id": "a0364852-f4c3-4743-9642-038664a6124a",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "db3a09d802a6",
+      "createdAt": "2026-11-17T12:40:40.004Z",
+      "updatedAt": "2026-11-17T12:40:40.838000128Z"
+    },
+    {
+      "name": "mikka-api-b53e8f369ff2-44044113013-2-businessapi",
+      "id": "a0395dc2-f972-4a3f-a78e-0ad510a95c4d",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "b53e8f369ff2",
+      "createdAt": "2026-11-17T09:11:41.391000064Z",
+      "updatedAt": "2026-11-19T06:31:01.657999872Z"
+    },
+    {
+      "name": "mikka-api-staging-b53e8f369ff2-44044113013-2-businessapi",
+      "id": "a03556b0-e63c-4760-9a32-0f26524c2824",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "b53e8f369ff2",
+      "createdAt": "2026-11-17T08:53:16.696999936Z",
+      "updatedAt": "2026-11-17T08:53:17.631000064Z"
+    },
+    {
+      "name": "mikka-api-staging-b53e8f369ff2-44044113013-1-businessapi",
+      "id": "a03d0627-341e-4ce6-99b1-d317c5609c5c",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "b53e8f369ff2",
+      "createdAt": "2026-11-17T08:29:01.088Z",
+      "updatedAt": "2026-11-17T08:29:02.126000128Z"
+    },
+    {
+      "name": "mikka-api-2f673b389adc-44023934484-2-businessapi",
+      "id": "a034a778-9dfb-42ad-a0f3-5c584b270075",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "2f673b389adc",
+      "createdAt": "2026-11-17T06:29:26.212999936Z",
+      "updatedAt": "2026-11-17T06:29:27.540999936Z"
+    },
+    {
+      "name": "mikka-api-staging-2f673b389adc-44023934484-2-businessapi",
+      "id": "a03cb481-63fd-490e-b08d-c8542563bcc1",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "2f673b389adc",
+      "createdAt": "2026-11-17T06:14:06.391000064Z",
+      "updatedAt": "2026-11-17T06:14:07.587000064Z"
+    },
+    {
+      "name": "mikka-api-9a655d49e2ef-43951706221-1-businessapi",
+      "id": "a03973b2-20eb-4147-84aa-080c8b07c900",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "9a655d49e2ef",
+      "createdAt": "2026-11-16T22:30:52.742000128Z",
+      "updatedAt": "2026-11-16T22:30:53.791000064Z"
+    },
+    {
+      "name": "mikka-litellm",
+      "id": "a03e5056-e265-4060-ad33-65e93fc9a40d",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-litellm*",
+      "release": null,
+      "createdAt": "2026-11-16T22:18:32.350000128Z",
+      "updatedAt": "2026-11-20T23:52:28.225999872Z"
+    },
+    {
+      "name": "mikka-api-staging-9a655d49e2ef-43951706221-1-businessapi",
+      "id": "a03db5f1-7fdb-4bc2-9618-237105b32f47",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "9a655d49e2ef",
+      "createdAt": "2026-11-16T22:04:30.519000064Z",
+      "updatedAt": "2026-11-16T22:04:31.779000064Z"
+    },
+    {
+      "name": "mikka-litellm-staging",
+      "id": "a034a1e5-4158-4f1c-8532-007bb3fe4e22",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-litellm*",
+      "release": null,
+      "createdAt": "2026-11-16T21:53:58.64Z",
+      "updatedAt": "2026-11-20T23:37:29.456Z"
+    },
+    {
+      "name": "mikka-api-3f7eaa6042d0-43798137072-6-businessapi",
+      "id": "a03b3314-059a-44bc-be35-fac6d85bc31a",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "3f7eaa6042d0",
+      "createdAt": "2026-11-16T15:18:44.124999936Z",
+      "updatedAt": "2026-11-16T15:18:45.401999872Z"
+    },
+    {
+      "name": "mikka-api-staging-3f7eaa6042d0-43798137072-6-businessapi",
+      "id": "a0388f7a-cf89-4630-9789-e9f5eba25929",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "3f7eaa6042d0",
+      "createdAt": "2026-11-16T14:38:04.958000128Z",
+      "updatedAt": "2026-11-16T14:38:05.888999936Z"
+    },
+    {
+      "name": "mikka-api-d59c85cb321b-43659450248-1-businessapi",
+      "id": "a0303868-4f63-46a0-a9e0-126eddd6072d",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "d59c85cb321b",
+      "createdAt": "2026-11-15T03:12:34.536999936Z",
+      "updatedAt": "2026-11-15T03:12:35.512999936Z"
+    },
+    {
+      "name": "mikka-api-staging-d59c85cb321b-43659450248-1-businessapi",
+      "id": "a036a750-2c7c-4014-aa02-c4262b9cda88",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "d59c85cb321b",
+      "createdAt": "2026-11-15T01:33:20.812999936Z",
+      "updatedAt": "2026-11-15T01:33:21.824999936Z"
+    },
+    {
+      "name": "mikka-api-ac9013c6d7e1-43574093174-1-businessapi",
+      "id": "a032a786-2a44-4dc4-8d6d-f3c99e593717",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "ac9013c6d7e1",
+      "createdAt": "2026-11-14T09:32:23.048999936Z",
+      "updatedAt": "2026-11-14T09:32:24.414000128Z"
+    },
+    {
+      "name": "mikka-api-staging-ac9013c6d7e1-43574093174-1-businessapi",
+      "id": "a033106f-6916-4e5d-aeda-a5efec90b1ad",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "ac9013c6d7e1",
+      "createdAt": "2026-11-14T08:34:59.446000128Z",
+      "updatedAt": "2026-11-14T08:35:00.44Z"
+    },
+    {
+      "name": "mikka-api-staging-ae2060e75032-43527060735-1-businessapi",
+      "id": "a034a604-3d2a-44d8-af4d-9ad0b9828975",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "ae2060e75032",
+      "createdAt": "2026-11-14T06:36:50.033999872Z",
+      "updatedAt": "2026-11-14T06:36:51.022000128Z"
+    },
+    {
+      "name": "mikka-api-8a079f179722-43403712785-1-businessapi",
+      "id": "a03e6801-6ae9-4152-bc8c-08ffc9839d06",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "8a079f179722",
+      "createdAt": "2026-11-13T13:26:17.576Z",
+      "updatedAt": "2026-11-13T13:26:18.606000128Z"
+    },
+    {
+      "name": "mikka-task-sandbox",
+      "id": "46fff0884b2e4f7c80ed1835499431de",
+      "schedulingPolicy": "durable_object",
+      "maxInstances": null,
+      "environment": "production",
+      "pattern": "mikka-task-sandbox*",
+      "release": null,
+      "createdAt": "2026-11-13T12:05:07.732Z",
+      "updatedAt": "2026-11-13T12:05:07.732Z"
+    },
+    {
+      "name": "mikka-cloud-services-cloudservices",
+      "id": "a0390432-a318-4c47-9d5a-ad15698f4050",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-cloud-services*",
+      "release": null,
+      "createdAt": "2026-11-13T11:49:02.036Z",
+      "updatedAt": "2026-11-13T11:49:02.929999872Z"
+    },
+    {
+      "name": "mikka-api-staging-8a079f179722-43403712785-1-businessapi",
+      "id": "a033954e-47c1-431a-959e-8cff0318c07b",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "8a079f179722",
+      "createdAt": "2026-11-13T10:23:52.560999936Z",
+      "updatedAt": "2026-11-13T10:23:53.411000064Z"
+    },
+    {
+      "name": "mikka-api-staging-d8b0f3ff8dd4-43368604374-1-businessapi",
+      "id": "a03ce30a-bfda-4495-962c-9aa63fbe5eb7",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-api-<sha>-<run>-<n>-businessapi",
+      "release": "d8b0f3ff8dd4",
+      "createdAt": "2026-11-13T07:22:16.412999936Z",
+      "updatedAt": "2026-11-13T09:08:23.699000064Z"
+    },
+    {
+      "name": "mikka-task-sandbox-staging",
+      "id": "2ffa8196e7cb485d88ea041771c89082",
+      "schedulingPolicy": "durable_object",
+      "maxInstances": null,
+      "environment": "staging",
+      "pattern": "mikka-task-sandbox*",
+      "release": null,
+      "createdAt": "2026-11-13T06:40:51.864Z",
+      "updatedAt": "2026-11-13T06:40:51.864Z"
+    },
+    {
+      "name": "mikka-credential-broker-credentialbrokerruntime",
+      "id": "a037d16e-1537-44c0-94f1-8e04b0eb0961",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "production",
+      "pattern": "mikka-credential-broker*",
+      "release": null,
+      "createdAt": "2026-11-13T06:09:08.12Z",
+      "updatedAt": "2026-11-13T10:06:24.659000064Z"
+    },
+    {
+      "name": "mikka-credential-broker-preview-credentialbrokerruntime",
+      "id": "a0334067-1c63-46c8-b9e2-aed57c9bfc1f",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "preview",
+      "pattern": "mikka-credential-broker*",
+      "release": null,
+      "createdAt": "2026-11-13T05:42:52.972Z",
+      "updatedAt": "2026-11-13T10:06:30.720999936Z"
+    },
+    {
+      "name": "mikka-cloud-services-staging-cloudservices",
+      "id": "a036216b-4fea-4d91-9385-cef6b734f4f8",
+      "schedulingPolicy": "default",
+      "maxInstances": 1,
+      "environment": "staging",
+      "pattern": "mikka-cloud-services*",
+      "release": null,
+      "createdAt": "2026-11-11T18:39:34.680999936Z",
+      "updatedAt": "2026-11-13T10:17:45.208Z"
+    }
+  ],
+  "oracle": {
+    "host": "Oracle VM (engineering host, this machine)",
+    "observedAt": "2026-11-21",
+    "alwaysOnContainers": [
+      {
+        "name": "mikka-eve-prod",
+        "port": "127.0.0.1:8081->8080",
+        "observedIdle": "0.00% CPU, ~288MiB RSS, ~20s PostgreSQL queue poll, 2 persistent DB connections"
+      },
+      {
+        "name": "mikka-eve-staging",
+        "port": "127.0.0.1:8080->8080",
+        "observedIdle": "0.00% CPU, ~186MiB RSS"
+      }
+    ],
+    "tunnel": "cloudflared -> dify/pdf.nebula-spaces.com (production Eve origin behind mikka-eve-relay-prod)",
+    "note": "production Eve is this Oracle VM, not a CF container app; CF eve-runtime worker is the in-flight candidate"
+  }
+}

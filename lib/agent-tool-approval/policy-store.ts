@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { JSONContent } from '@tiptap/core'
 import { z } from 'zod'
-import { applyApprovalMode, approvalModeSchema, intersectNetworkDomains, CONFIGURABLE_ACTIONS, networkAllowSchema, runPolicySchema, storedPermissionsSchema, type ConfigurableAction, type PermissionDecision, type RunPolicy } from '@mikka/protocol/agent-policy'
-import { resolveTrustedRunPolicy } from './policy-snapshot'
+import { defaultRunPolicy, readOnlyRunPolicy, legacyApprovalModeSchema, networkAllowSchema, runPolicySchema, storedPermissionsSchema, type PermissionDecision, type RunPolicy } from '@mikka/protocol/agent-policy'
+import { runGitIdentitySchema, type RunGitIdentity } from '@mikka/protocol/device'
+import { resolveSettingValue } from '@/lib/settings/registry'
 import { intersectRunPolicy } from '../run-assignment-policy'
 import type { MailboxTransactionLease, MailboxTransactionGuard } from '@/lib/mailbox-transaction-guard'
 import { writeTransaction } from '@/lib/operations/write-transaction'
@@ -74,16 +75,24 @@ export const realCliMembershipGuard: CliMembershipGuard = async (workspaceId, us
   return acquireWorkspaceMembership(workspacePool, { workspaceId, userId }, signal)
 }
 
-// Computer authority has its existing persisted broker policy. Adding a
-// shared protocol action must not silently create a second writable source.
-export const cliPolicyValuesSchema = z.strictObject({ permissions: storedPermissionsSchema.omit({ computer_use: true }).optional(), networkAllow: networkAllowSchema.optional(), approvalMode: approvalModeSchema.optional() })
+/** A CLI policy layer an older build stored (`cli_run_policy` on workspaces,
+ * teams and projects). It restricts nothing (ADR 2026-11-27-1615); the
+ * schema remains for code that still moves legacy rows. */
+export const cliPolicyValuesSchema = z.strictObject({ permissions: storedPermissionsSchema.omit({ computer_use: true }).optional(), networkAllow: networkAllowSchema.optional(), approvalMode: legacyApprovalModeSchema.optional() })
 export const cliPolicyLayerSchema = cliPolicyValuesSchema.extend({ defaults: cliPolicyValuesSchema.optional() })
 type CliPolicyValues = z.infer<typeof cliPolicyValuesSchema>
 // Defaults replace scalar/list fields; permission choices inherit per action.
-const mergeCliPolicyValues = (base: CliPolicyValues, next: CliPolicyValues): CliPolicyValues => ({ ...base, ...next, ...(next.permissions ? { permissions: { ...base.permissions, ...next.permissions } } : {}) })
-const rank = { deny: 0, ask: 1, allow: 2 } as const
+export const mergeCliPolicyValues = (base: CliPolicyValues, next: CliPolicyValues): CliPolicyValues => ({ ...base, ...next, ...(next.permissions ? { permissions: { ...base.permissions, ...next.permissions } } : {}) })
+
+/** What every run gets: full access (ADR 2026-11-27-1615). The daemon's own
+ * push is the claim's publication decision; the computer grant is attached
+ * at claim from its own policy. */
+function fullAccessRunPolicy(): RunPolicy {
+  const policy = defaultRunPolicy()
+  return { ...policy, permissions: { ...policy.permissions, git_push: 'allow' } }
+}
 /** Caller identity is authenticated by the host. Workspace membership is
- * separately pinned by cliAgentPolicyGuard through transaction commit. */
+ * separately pinned by the caller's membership guard through transaction commit. */
 export async function lockCliAgentPolicy(tx: PoolClient, userId: string, agentId: string, botId: string | null, task?: CliTaskScope, runWorkspaceId?: string) {
   let workspaceId: string | null = null
   if (botId) {
@@ -121,85 +130,68 @@ export async function lockCliAgentPolicy(tx: PoolClient, userId: string, agentId
     if (!device.rows[0]) throw new Error('agentPolicyUnavailable')
     deviceKind = device.rows[0].kind
   }
-  let workspace: z.infer<typeof cliPolicyLayerSchema> = {}
-  const workspaceLayers: z.infer<typeof cliPolicyLayerSchema>[] = []
-  const workspaceById = new Map<string, z.infer<typeof cliPolicyLayerSchema>>()
+  // Stored CLI layers (workspace, team and project permissions, network lists
+  // and read_only) restrict nothing any more (ADR 2026-11-27-1615). Their
+  // rows are still locked and versioned in the same order: the revision keeps
+  // fencing admitted runs, and the hierarchy stays bound to its workspace.
   const workspaceVersions: string[][] = []
   for (const id of workspaceIds) {
-    const row = await tx.query<{ policy: unknown; version: string; generation: string }>(`SELECT cli_run_policy AS policy,cli_run_policy_version AS version,cli_run_policy_generation AS generation FROM workspace_computer_policies WHERE "workspaceId"=$1 FOR SHARE`, [id])
+    const row = await tx.query<{ version: string; generation: string }>(`SELECT cli_run_policy_version AS version,cli_run_policy_generation AS generation FROM workspace_computer_policies WHERE "workspaceId"=$1 FOR SHARE`, [id])
     if (!row.rows[0]) throw new Error('agentPolicyUnavailable')
-    // A malformed stored policy fails closed; a ZodError would escape as a
-    // generic 500 and bypass the caller's agentPolicyUnavailable handling.
-    const parsed = cliPolicyLayerSchema.safeParse(row.rows[0].policy)
-    if (!parsed.success) throw new Error('agentPolicyUnavailable', { cause: parsed.error })
-    const layer = parsed.data
-    workspaceLayers.push(layer); workspaceById.set(id, layer)
-    if (id === primaryWorkspaceId) workspace = layer
     const version = String(row.rows[0].version)
     if (!/^\d+$/.test(version)) throw new Error('agentPolicyUnavailable')
     workspaceVersions.push([id, row.rows[0].generation, version])
   }
-  const scopedLayers: z.infer<typeof cliPolicyLayerSchema>[] = []
   const scopeVersions: string[][] = []
   const hierarchy = task?.hierarchy
-  const scopeLayers: { team?: z.infer<typeof cliPolicyLayerSchema>; project?: z.infer<typeof cliPolicyLayerSchema> } = {}
   for (const kind of ['team','project'] as const) {
     const id = hierarchy?.[kind === 'team' ? 'teamId' : 'projectId']
     if (!id || !hierarchy) continue
     await tx.query(`INSERT INTO cli_scope_policies(kind,scope_id,workspace_id) VALUES($1,$2,$3) ON CONFLICT(kind,scope_id) DO NOTHING`, [kind,id,hierarchy.workspaceId])
-    const { rows: [row] } = await tx.query<{ workspaceId: string; policy: unknown; version: string; generation: string }>(`SELECT workspace_id AS "workspaceId",cli_run_policy AS policy,cli_run_policy_version AS version,cli_run_policy_generation AS generation FROM cli_scope_policies WHERE kind=$1 AND scope_id=$2 FOR SHARE`,[kind,id])
+    const { rows: [row] } = await tx.query<{ workspaceId: string; version: string; generation: string }>(`SELECT workspace_id AS "workspaceId",cli_run_policy_version AS version,cli_run_policy_generation AS generation FROM cli_scope_policies WHERE kind=$1 AND scope_id=$2 FOR SHARE`,[kind,id])
     if (!row || row.workspaceId !== hierarchy.workspaceId || !/^\d+$/.test(String(row.version))) throw new Error('agentPolicyUnavailable')
-    const parsed = cliPolicyLayerSchema.safeParse(row.policy)
-    if (!parsed.success) throw new Error('agentPolicyUnavailable', { cause: parsed.error })
-    const layer = parsed.data
-    scopedLayers.push(layer); scopeLayers[kind] = layer
     scopeVersions.push([kind,id,row.generation,String(row.version)])
   }
-  let defaults: CliPolicyValues = {}
-  const defaultSources: { scope: 'workspace' | 'team' | 'project'; scopeId: string; defaults: CliPolicyValues }[] = []
-  const inherit = (scope: 'workspace' | 'team' | 'project', scopeId: string, layer?: z.infer<typeof cliPolicyLayerSchema>) => {
-    if (!layer?.defaults) return
-    defaults = mergeCliPolicyValues(defaults, layer.defaults)
-    defaultSources.push({ scope, scopeId, defaults: layer.defaults })
-  }
-  // The Bot and task share one tenant; optional team/project policies narrow it.
-  for (const id of workspaceIds) inherit('workspace', id, workspaceById.get(id))
-  if (hierarchy) {
-    if (hierarchy.teamId) inherit('team', hierarchy.teamId, scopeLayers.team)
-    if (hierarchy.projectId) inherit('project', hierarchy.projectId, scopeLayers.project)
-  }
-  // The workspace is the base, not only a ceiling: an explicit workspace allow
-  // must be able to widen a protocol default. Team/project still narrow it.
-  const configured = mergeCliPolicyValues(defaults, {
-    ...(workspace.permissions ? { permissions: workspace.permissions } : {}),
-    ...(workspace.networkAllow !== undefined ? { networkAllow: workspace.networkAllow } : {}),
-    ...(workspace.approvalMode !== undefined ? { approvalMode: workspace.approvalMode } : {}),
-  })
-  const policy = resolveTrustedRunPolicy({ workspace: { permissions: configured.permissions, networkAllow: configured.networkAllow }, personalApprovalMode: configured.approvalMode, environment: deviceKind === 'cloud' ? 'cloud' : 'local' })
-  for (const layer of [...workspaceLayers, ...scopedLayers]) {
-    for (const action of CONFIGURABLE_ACTIONS) {
-      if (action === 'computer_use') continue
-      const override = layer.permissions?.[action]
-      // Stored layers parse git_push to allow / deny only (storedPermissionsSchema).
-      if (override && rank[override] < rank[policy.permissions[action]]) (policy.permissions as Record<ConfigurableAction, PermissionDecision>)[action] = override
-    }
-    if (layer.networkAllow !== undefined) {
-      policy.networkCeiling = policy.networkCeiling === undefined ? [...layer.networkAllow] : intersectNetworkDomains(policy.networkCeiling, layer.networkAllow)
-      policy.networkAllow = intersectNetworkDomains(policy.networkAllow, layer.networkAllow)
-    }
-  }
-  if ([...workspaceLayers, ...scopedLayers].some(layer => layer.approvalMode === 'read_only')) {
-    policy.readOnly = true
-    policy.permissions.install_dependency = 'deny'
-    policy.permissions.write_outside_repo = 'deny'
-    policy.permissions.git_push = 'deny'
-  }
+  const policy = fullAccessRunPolicy()
   const revision = createHash('sha256').update(JSON.stringify(['sandbox-task-policy-v3',deviceKind,userId,scope.botId,scope.workspaceId,scope.agentId,workspaceVersions,scopeVersions,task ? { issueId: task.issueId, workspaceId: task.workspaceId, hierarchy: task.hierarchy } : null])).digest('hex')
-  return { policy, revision, workspaceId: primaryWorkspaceId, workspaceIds, hierarchy, defaults, defaultSources, policySnapshotRequired: [...workspaceLayers, ...scopedLayers].some(layer => Object.keys(layer).length > 0), layers: { workspace, ...scopeLayers } }
+  // No stored layer changes the policy, so none requires a signed snapshot.
+  return { policy, revision, workspaceId: primaryWorkspaceId, workspaceIds, hierarchy, policySnapshotRequired: false }
+}
+
+/** Resolve personal/workspace Git identity under the held APP transaction when typed settings exist. */
+async function readRunGitIdentity(tx: PoolClient, userId: string, workspaceId: string): Promise<RunGitIdentity | undefined> {
+  const { rows: [present] } = await tx.query<{ ok: boolean }>(
+    `SELECT to_regclass('public.personal_setting_values') IS NOT NULL AND to_regclass('public.workspace_setting_values') IS NOT NULL AS ok`,
+  )
+  if (!present?.ok) return undefined
+  const { rows } = await tx.query<{ scope: 'personal' | 'workspace'; key: string; textValue: string | null }>(
+    `SELECT 'personal'::text AS scope, key, "textValue" FROM personal_setting_values
+       WHERE "userId" = $1 AND "workspaceId" = $2 AND key IN ('gitAuthorName', 'gitAuthorEmail')
+     UNION ALL
+     SELECT 'workspace'::text AS scope, key, "textValue" FROM workspace_setting_values
+       WHERE "workspaceId" = $2 AND key IN ('gitAuthorName', 'gitAuthorEmail')`,
+    [userId, workspaceId],
+  )
+  const personalName = rows.find(row => row.scope === 'personal' && row.key === 'gitAuthorName')?.textValue
+  const workspaceName = rows.find(row => row.scope === 'workspace' && row.key === 'gitAuthorName')?.textValue
+  const personalEmail = rows.find(row => row.scope === 'personal' && row.key === 'gitAuthorEmail')?.textValue
+  const workspaceEmail = rows.find(row => row.scope === 'workspace' && row.key === 'gitAuthorEmail')?.textValue
+  const name = resolveSettingValue('gitAuthorName', personalName, workspaceName).value as string
+  const email = resolveSettingValue('gitAuthorEmail', personalEmail, workspaceEmail).value as string
+  if (!name && !email) return undefined
+  return runGitIdentitySchema.parse({
+    ...(name ? { name } : {}),
+    ...(email ? { email } : {}),
+  })
 }
 
 /** Resolve a run's exact owner, Bot and worker; then read the workspace policy. */
-export async function lockCliRunPolicy(tx: PoolClient, runId: string, userId: string, options: { freezeHierarchy?: boolean } = {}) {
+export async function lockCliRunPolicy(
+  tx: PoolClient,
+  runId: string,
+  userId: string,
+  options: { freezeHierarchy?: boolean; includeGitIdentity?: boolean } = {},
+) {
   // Policy must precede Factory/task/run locks. Read the task with the run,
   // then freeze any new hierarchy only after acquiring the policy locks.
   const result = await tx.query<CliTaskRow & { botId: string | null; agentId: string; issueId: string | null; runWorkspaceId: string | null; policyCeiling: unknown; hierarchy: unknown }>(`SELECT "botId","agentId","issueId",r."agentDefinition"->'policyCeiling' AS "policyCeiling",
@@ -221,10 +213,12 @@ export async function lockCliRunPolicy(tx: PoolClient, runId: string, userId: st
       AND (cli_policy_hierarchy IS NULL OR cli_policy_hierarchy=$3::jsonb) RETURNING id`, [runId,userId,task.hierarchy])
     if (!frozen.rowCount) throw new Error('agentPolicyChanged')
   }
-  if (run.policyCeiling == null) return current
+  const gitIdentity = options.includeGitIdentity ? await readRunGitIdentity(tx, userId, run.runWorkspaceId) : undefined
+  const resolved: typeof current & { gitIdentity?: RunGitIdentity } = gitIdentity ? { ...current, gitIdentity } : current
+  if (run.policyCeiling == null) return resolved
   const ceiling = runPolicySchema.safeParse(run.policyCeiling)
   if (!ceiling.success) throw new Error('agentPolicyUnavailable')
-  return { ...current, policy: intersectRunPolicy(current.policy, ceiling.data),
+  return { ...resolved, policy: intersectRunPolicy(current.policy, ceiling.data),
     revision: createHash('sha256').update(JSON.stringify(['provider-policy-ceiling-v1', current.revision, ceiling.data])).digest('hex') }
 }
 
@@ -248,14 +242,14 @@ export async function providerContinuationPolicy(tx: PoolClient, userId: string,
   // reauthorizes it, but an existing host ceiling (especially deny) survives.
   if (source.computerUse) policy.permissions.computer_use = source.computerUse
   else delete policy.permissions.computer_use
-  if (source.readOnly || policy.readOnly) policy = applyApprovalMode(policy, 'read_only')
+  if (source.readOnly || policy.readOnly) policy = readOnlyRunPolicy(policy)
   const { rows: assignments } = await tx.query<{ stage: string; policy: unknown }>(`SELECT a.stage,a.output->'check'->'policy' AS policy
     FROM factory_attempts a JOIN factory_tasks t ON t.id=a."taskId" AND t."attemptId"=a.id
     JOIN agent_runs r ON r.id=a."runId" AND r."issueId"=t."issueId" AND r."userId"=t."userId"
     WHERE r.id=$1 AND r."userId"=$2 AND a.stage IN ('review','verify','monitor')`, [sourceRunId, userId])
   for (const assignment of assignments) {
     if (assignment.stage !== 'monitor') policy = intersectRunPolicy(policy, runPolicySchema.parse(assignment.policy))
-    policy = applyApprovalMode(policy, 'read_only')
+    policy = readOnlyRunPolicy(policy)
   }
   return policy
 }
@@ -273,17 +267,6 @@ export async function policyMemberships(current: Awaited<ReturnType<typeof lockC
   } catch (error) { await Promise.all(leases.map(lease => lease.close())); throw error }
 }
 
-export function cliAgentPolicyGuard(userId: string, agentId: string, botId: string | null, membership: CliMembershipGuard): MailboxTransactionGuard {
-  return async (tx, signal) => {
-    const current = await lockCliAgentPolicy(tx,userId,agentId,botId)
-    return policyMemberships(current,userId,signal,membership)
-  }
-}
-
-export async function readCliAgentPolicy(pool: Pick<Pool, 'connect'>, userId: string, agentId: string, botId: string | null, guard: CliMembershipGuard = realCliMembershipGuard) {
-  return writeTransaction(pool, tx => lockCliAgentPolicy(tx,userId,agentId,botId), { guard: cliAgentPolicyGuard(userId,agentId,botId,guard) })
-}
-
 /** Hold the workspace membership lease through the application transaction. */
 export function cliPolicyGuard(runId: string, userId: string, membership: CliMembershipGuard): MailboxTransactionGuard {
   return async (tx, signal) => {
@@ -293,12 +276,18 @@ export function cliPolicyGuard(runId: string, userId: string, membership: CliMem
 }
 
 /** Read an authenticated run's policy under the same locks used by decisions. */
-export async function readCliRunPolicy(pool: Pick<Pool, 'connect'>, runId: string, userId: string, guard: CliMembershipGuard = realCliMembershipGuard) {
+export async function readCliRunPolicy(
+  pool: Pick<Pool, 'connect'>,
+  runId: string,
+  userId: string,
+  guard: CliMembershipGuard = realCliMembershipGuard,
+  options?: { includeGitIdentity?: boolean },
+) {
   // The work resolved the policy in this transaction and still holds its locks
   // (advisory, FOR SHARE) through COMMIT, so the membership lease is taken for
   // that same result instead of resolving it a second time (12 statements).
   let current: Awaited<ReturnType<typeof lockCliRunPolicy>> | undefined
-  return writeTransaction(pool, async tx => (current = await lockCliRunPolicy(tx, runId, userId)), {
+  return writeTransaction(pool, async tx => (current = await lockCliRunPolicy(tx, runId, userId, options)), {
     guard: (_tx, signal) => policyMemberships(current!, userId, signal, guard),
   })
 }

@@ -53,12 +53,12 @@ function fakePosthog() {
   }
 }
 
-test('a fresh project gets the dashboard, every insight, the note and five alerts; a second run writes nothing', async () => {
+test('a fresh project gets the dashboard, every insight, the note and all alerts; a second run writes nothing', async () => {
   const posthog = fakePosthog()
   const first = await sync(posthog, { apply: true })
   assert.equal(posthog.store.dashboards.length, 1)
   assert.equal(posthog.store.insights.length, INSIGHTS.length)
-  assert.equal(posthog.store.alerts.length, 5)
+  assert.equal(posthog.store.alerts.length, ALERTS.length)
   const [dashboard] = posthog.store.dashboards
   assert.equal(dashboard.name, DASHBOARD.name)
   assert.equal(dashboard.tiles.filter(tile => tile.insight).length, INSIGHTS.filter(item => item.tile).length)
@@ -116,6 +116,45 @@ test('every alert reads one row: no any_row, and each SQL alert query aggregates
   }
 })
 
+test('the existing error alert also covers low-volume LiteLLM decision failures', () => {
+  const alert = ALERTS.find(item => item.key === 'error-spike')
+  const insight = INSIGHTS.find(item => item.key === alert.insight)
+  assert.equal(alert.id, '01a1a144-b9d6-0000-6229-896dc85243ec')
+  assert.equal(insight.shortId, 'STBizeTe')
+  const query = insight.query.source.query
+  assert.doesNotMatch(query, /FROM events/)
+  assert.match(query, /FROM posthog\.trace_spans/)
+  assert.match(query, /attributes\['mikka\.ai\.operation'\] = 'decision'/)
+  assert.match(query, /attributes\['mikka\.ai\.route'\] = 'litellm'/)
+  assert.match(query, /calls < 3 OR calls != unique_calls OR calls != known_calls, NULL/)
+  assert.match(query, /failed_calls \/ nullIf\(calls, 0\) > 0.2/)
+  assert.match(query, /INTERVAL 1 HOUR/)
+  assert.equal(alert.enabled, true)
+  assert.equal(ALERTS.length, 5)
+  assert.match(query, /CROSS JOIN decision_errors/)
+})
+
+test('the combined error query updates the existing insight without rebinding the alert', async () => {
+  const posthog = fakePosthog()
+  await sync(posthog, { apply: true })
+  const definition = INSIGHTS.find(item => item.key === 'alert-error-spike')
+  const insight = posthog.store.insights.find(item => item.name === definition.name)
+  const alert = posthog.store.alerts.find(item => item.insight === insight.id)
+  insight.short_id = definition.shortId
+  insight.query.source.query = readFileSync(new URL('./posthog/alert-error-spike.sql', import.meta.url), 'utf8')
+  alert.id = ALERTS.find(item => item.key === 'error-spike').id
+  alert.subscribed_users = [42, 84]
+  posthog.writes.length = 0
+
+  assert.deepEqual((await sync(posthog)).actions, ['update insight alert-error-spike STBizeTe (query)'])
+  assert.deepEqual(posthog.writes, [])
+  await sync(posthog, { apply: true })
+  assert.deepEqual(posthog.writes, [['updateInsight', insight.id, ['query']]])
+  assert.equal(alert.insight, insight.id)
+  assert.deepEqual(alert.subscribed_users, [42, 84])
+  assert.deepEqual(insight.query, definition.query)
+})
+
 test('the API key is required and never appears in errors', async () => {
   assert.throws(() => posthogApi({ key: undefined }), /POSTHOG_PERSONAL_API_KEY/)
   assert.throws(() => posthogApi({ key: 'phc_projecttoken' }), /personal API key/)
@@ -131,7 +170,7 @@ const readEngineReceipt = () => JSON.parse(readFileSync(new URL('./posthog/error
 test('the exact error-alert SQL and fixtures retain their verified real HogQL result', () => {
   const receipt = readEngineReceipt()
   const cases = errorAlertFixtures()
-  const source = INSIGHTS.find(item => item.key === 'alert-error-spike').query.source.query
+  const source = readFileSync(new URL('./posthog/alert-error-spike.sql', import.meta.url), 'utf8')
   assert.equal(receipt.schema_version, 1)
   assert.equal(receipt.kind, 'synthetic_hogql_readonly')
   assert.equal(receipt.project_id, 670821)
@@ -141,8 +180,8 @@ test('the exact error-alert SQL and fixtures retain their verified real HogQL re
   assert.equal(receipt.fixtures_sha256, fixtureDigest(JSON.stringify(cases)))
   assert.equal(receipt.acceptance_script_sha256, fixtureDigest(readFileSync(new URL('./posthog-alert-acceptance.mjs', import.meta.url))))
   assert.equal(receipt.baseline_sha256, fixtureDigest(receipt.baseline_sql))
-  const metricTail = sql => sql.slice(sql.indexOf('    service_start AS ('))
-  assert.equal(metricTail(source), metricTail(receipt.baseline_sql), 'preserve the owner array coverage and baseline computation')
+  const serviceCoverage = sql => sql.slice(sql.indexOf('    service_start AS ('), sql.indexOf('    hourly AS ('))
+  assert.equal(serviceCoverage(source), serviceCoverage(receipt.baseline_sql), 'preserve service coverage and full-hour selection')
   const query = syntheticErrorQuery(source, cases, receipt.baseline_sql)
   assert.equal(receipt.synthetic_query_sha256, fixtureDigest(query))
   assert.equal(receipt.result_sha256, fixtureDigest(receipt.result))

@@ -9,28 +9,24 @@ import { samplePoolTransport } from '@/lib/db/transport-sample'
 import { manageDatabasePool } from '@/lib/db/pool-lifecycle'
 import { COMMIT_EXECUTOR, observePoolCommits } from '@/lib/db/commit-effects'
 import { currentTransactionBoundary } from '@/lib/db/transaction-boundary'
+import { isProductionEnv, readEnv, runtimeEnv } from '@/lib/env'
 
 // Workspace tables live in the Marketplace database; existing auth and tasks stay in MIKKA_DATABASE_URL.
 const globalDb = globalThis as unknown as { workspacePool?: Pool }
-const connectionString = workspaceDatabaseURL(process.env)
-const pool = process.env.VERCEL_ENV === 'preview'
+const connectionString = workspaceDatabaseURL(runtimeEnv())
+const isPreview = readEnv('VERCEL_ENV') === 'preview'
+const pool = isPreview
   ? new Pool({ connectionString, max: 5, connectionTimeoutMillis: 10000, idleTimeoutMillis: 20000 })
   : globalDb.workspacePool ?? new Pool({ connectionString, max: 5, connectionTimeoutMillis: 10000, idleTimeoutMillis: 20000 })
 manageDatabasePool(pool)
 observePoolCommits(pool)
-if (process.env.NODE_ENV !== 'production' && process.env.VERCEL_ENV !== 'preview') globalDb.workspacePool = pool
+if (!isProductionEnv() && !isPreview) globalDb.workspacePool = pool
 pool.on('connect', client => sampleClient(client))
 samplePoolTransport(pool, 'workspace')
 const database = drizzle(pool, { schema })
 type Transaction = Parameters<Parameters<typeof database.transaction>[0]>[0]
 type HeldWorkspace = { client: PoolClient; transaction: Transaction; lease: { active: boolean }; boundary: object | undefined }
 const heldWorkspace = new AsyncLocalStorage<HeldWorkspace>()
-/** A job started by an APP commit can run before the outer Workspace writer
- * releases its connection. Start that job with its own Workspace checkout. */
-export function withoutWorkspaceClient<T>(work: () => T): T {
-  return heldWorkspace.exit(work)
-}
-
 const currentWorkspace = () => {
   const held = heldWorkspace.getStore()
   return held?.lease.active && held.boundary === currentTransactionBoundary() ? held : undefined

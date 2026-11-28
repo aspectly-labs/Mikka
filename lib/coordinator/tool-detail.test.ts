@@ -92,3 +92,12 @@ test('a dispatch names the coding agent from its model when the answer does not'
   const [handoff] = toolDetail({ name: 'dispatch_run', input: JSON.stringify({ issueId: TASK, model: { harness: 'codex' }, note: 'Go' }), output: cut({ runId: RUN, status: 'queued' }) })
   assert.deepEqual(handoff, { kind: 'handoff', runId: RUN, harness: 'codex', status: 'queued' })
 })
+
+test('a stored call names the task or thread it read as a citation, so the chat loads its chip; a failed call names none', async () => {
+  const { toolCitations } = await import('./tool-detail')
+  const TASK = '0a5c49d1-0d4d-489c-8f9e-0000000000a1', RUN = '2b2ff606-ecb7-4b11-a211-0000000000c3'
+  assert.deepEqual(toolCitations({ name: 'get_issue', state: 'done', input: '{"identifier": "ALEX-45"}', output: `{"id": "${TASK}"}` }), [`[[issue:${TASK}]]`])
+  assert.deepEqual(toolCitations({ name: 'get_run', state: 'done', input: `{"runId": "${RUN}"}` }), [`[[run:${RUN}]]`])
+  assert.deepEqual(toolCitations({ name: 'get_issue', state: 'error', input: `{"issueId": "${TASK}"}` }), [])
+  assert.deepEqual(toolCitations({ name: 'read_file', state: 'done', input: '{"path": "a.ts"}' }), [])
+})

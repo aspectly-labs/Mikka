@@ -1,6 +1,7 @@
 # Machines start from E2B's own templates; runs use no sandbox and ask nothing per tool
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-03-1430-official-e2b-templates-unchanged](2026-11-03-1430-official-e2b-templates-unchanged.md)
 - Source: Alex, relayed by the coordinator session: 「codex 做了一些工作，现在已经确认 e2b 提供模板，bot 直接使用 desktop 模板，干活的 agent 直接用 Claude 和 codex 模板，去掉 Anthropic sandbox runtime 包装」;
   for a person's own computer or server: 「自己的服务器和电脑直接走自己的Claude/codex，也不做沙箱了」;
   for permissions: 「那就不要decision api 了，直接走bypass」

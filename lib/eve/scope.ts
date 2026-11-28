@@ -3,7 +3,9 @@ import type { AuthResult } from 'eve/channels/auth'
 
 export const eveScopeSchema = z.object({
   ownerId: z.string().min(1), botId: z.uuid(), workspaceId: z.uuid(),
-  surface: z.enum(['web','slack']).default('web'),
+  /** 'factory' is the #3082 Software Factory role surface: sessions opened by
+   * /eve/v1/mikka/factory-attempts for a bound Factory run, never chat. */
+  surface: z.enum(['web','slack','factory']).default('web'),
 })
 export type EveScope = z.infer<typeof eveScopeSchema>
 

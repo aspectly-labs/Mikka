@@ -11,6 +11,7 @@ import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { requireWorkspace } from '@/lib/workspace-access'
 import { workspaceDb } from '@/lib/workspace-db'
 import { monthBounds, monthDays } from './month'
+import { byokWebSearchUsage, type WebSearchUsageDay } from '../search/usage'
 
 /**
  * `threads` counts the threads a bot started in the month (the 新线程 column and the
@@ -23,6 +24,7 @@ export interface WorkspaceUsage {
   month: string
   /** Only the requester sees their own model/runtime account references, including on a shared Bot. */
   executionAccounts?: ExecutionAccountUsage[]
+  webSearchDaily?: WebSearchUsageDay[]
   hosted?: Awaited<ReturnType<typeof import('../abuse/runtime')['hostedUsage']['status']>>
   /** Admins see every bot and member; members only their own bots (S-A). */
   scope: 'workspace' | 'own'
@@ -85,6 +87,7 @@ export async function workspaceUsage(actorId: string, workspaceId: string, month
     FROM agent_runs WHERE "userId"=$1 AND "agentDefinition"->'executionIdentity'->>'workspaceId'=$2
       AND "createdAt"<$4 AND ("finishedAt" IS NULL OR "finishedAt">=$3)`, [actorId, workspaceId, start, end])
   const executionAccounts = executionAccountUsage(accountRuns)
+  const webSearchDaily = await byokWebSearchUsage(pool, { ownerId: actorId, workspaceId }, start, end)
   const accountOwners = [...new Set(executionAccounts.map(account => account.ownerId))]
   const accountNames = accountOwners.length ? new Map((await workspaceDb.select({ userId: workspaceMembers.userId, name: workspaceMembers.name }).from(workspaceMembers)
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), inArray(workspaceMembers.userId, accountOwners)))).map(member => [member.userId, member.name])) : new Map<string, string>()
@@ -92,7 +95,7 @@ export async function workspaceUsage(actorId: string, workspaceId: string, month
   if (admin) await (await import('../abuse/runtime')).ensureLegacyVerification(workspaceId)
   return {
     ...(admin ? {hosted:await (await import('../abuse/runtime')).hostedUsage.status(workspaceId)} : {}),
-    month, executionAccounts, scope: admin ? 'workspace' : 'own',
+    month, executionAccounts, webSearchDaily, scope: admin ? 'workspace' : 'own',
     totals: { threads: botUsage.reduce((sum, bot) => sum + bot.threads, 0), seconds: botUsage.reduce((sum, bot) => sum + bot.seconds, 0) },
     bots: botUsage, members: memberUsage,
     daily: monthDays(month).map(date => ({ date, threads: byDay.get(date) ?? 0 })),

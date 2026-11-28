@@ -25,7 +25,7 @@ export function factoryDispatchFailureReason(device: FactoryDispatchDevice, harn
   return null;
 }
 
-/** #453 BeQuestions option: value 1-80, label 1-200, description <=300, action only for the cloud key link. */
+/** #453 clarification option: value 1-80, label 1-200, description <=300, action only for the cloud key link. */
 export interface FactoryClarificationOption { value: 'wait' | 'cloud'; label: string; description: string; action?: 'cloudKeySettings' }
 export interface FactoryClarification { id: string; title: string; options: FactoryClarificationOption[]; multiple: false; allowCustom: false; task: string }
 

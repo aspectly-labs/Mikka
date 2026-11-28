@@ -1,8 +1,14 @@
 import 'server-only'
+import { createHash } from 'node:crypto'
 import { sql, type SQLWrapper } from 'drizzle-orm'
 import { db } from '@/lib/db'
 
 const fingerprint = sql<string>`md5(coalesce(string_agg(md5(to_jsonb(snapshot)::text), ',' order by md5(to_jsonb(snapshot)::text)), ''))`
+
+/** Compute the exact same collection MD5 hash as `queryVersion` from per-row MD5 signatures. */
+export function queryVersionFromRowSignatures(signatures: readonly string[]): string {
+  return createHash('md5').update([...signatures].sort().join(',')).digest('hex')
+}
 
 /** Fingerprint a bounded result inside Postgres; unchanged polls never transfer its rows. */
 export async function queryVersion(query: SQLWrapper, executor: Pick<typeof db, 'execute'> = db): Promise<string> {

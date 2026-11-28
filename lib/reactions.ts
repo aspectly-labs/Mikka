@@ -48,3 +48,15 @@ export async function visibleGroupMessages(userId: string, messageIds: readonly 
      WHERE m.id = ANY($2::uuid[])`, [userId, messageIds])
   return rows.map(row => row.id)
 }
+
+/** Of these messages (group chat or Bot chat), the ones this person may currently read and react to. */
+export async function visibleReactableMessages(userId: string, messageIds: readonly string[]): Promise<string[]> {
+  if (!messageIds.length) return []
+  const { rows } = await pool.query<{ id: string }>(
+    `SELECT id FROM coordinator_messages WHERE "userId"=$1 AND id = ANY($2::uuid[])
+     UNION
+     SELECT m.id FROM conversation_messages m JOIN conversation_members cm ON cm."conversationId"=m."conversationId"
+       AND cm."memberType"='user' AND cm."memberId"=$1 AND cm."leftAt" IS NULL
+     WHERE m.id = ANY($2::uuid[])`, [userId, messageIds])
+  return rows.map(row => row.id)
+}

@@ -3,10 +3,10 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { bots, coordinatorMessages } from '@/lib/db/schema'
 import { tokenWorkspace } from '@/lib/tokens/principal'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { json, mobileUser, unauthorized } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
-export const dynamic = 'force-dynamic'
 
 const query = z.object({ message: z.uuid(), index: z.coerce.number().int().min(0).max(1) })
 const DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/
@@ -15,10 +15,7 @@ const DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})
  * `GET /api/mobile/chat/image?message=<id>&index=<n>`: a photo the person sent
  * in a chat (`images` on a chat item), from their own stored message only.
  */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const params = query.safeParse(Object.fromEntries(new URL(request.url).searchParams))
   if (!params.success) return json({ error: 'notFound' }, 404)
   const [row] = await db.select({ message: coordinatorMessages.message, botId: coordinatorMessages.botId }).from(coordinatorMessages)
@@ -39,4 +36,12 @@ async function handleGET(request: Request) {
   })
 }
 
-export const GET = withRequestLog('/api/mobile/chat/image', handleGET)
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/chat/image',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)

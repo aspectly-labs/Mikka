@@ -22,7 +22,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 function inputs() {
   let time = 1_800_000_000_000
   const item = CASES[0], fixture = fixtureTask(revision, item), controller = new AbortController()
-  const env = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'alexj11324/Mikka',
+  const env = { GITHUB_ACTIONS: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'aspectly-labs/Mikka',
     GITHUB_REF: 'refs/heads/main', GITHUB_SHA: revision, MIKKA_EXPECTED_DEPLOYMENT_SHA: revision,
     MIKKA_OBSERVABILITY_MODEL_CASE: item.id, ACME_DEMO_EMAIL: EMAIL, ACME_DEMO_PASSWORD: PASSWORD,
     PATH: '/usr/bin', HOME: '/synthetic-home', GITHUB_TOKEN: 'SYNTHETIC_GITHUB_TOKEN', PROVIDER_KEY: 'SYNTHETIC_PROVIDER_KEY' }

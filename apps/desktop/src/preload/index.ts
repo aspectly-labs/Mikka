@@ -5,6 +5,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 import type { MikkaBridge, SshInstallState, BundledBridge, BundledLiveEvent, BundledViewerEvent } from '@mikka/protocol/bridge'
 import { IPC, BUNDLED_IPC } from '@mikka/protocol/ipc'
+import { windowKindFromArgv, trayBridge } from '../window-kind'
 
 const prefix = '--mikka-app-origin='
 const appOrigin = process.argv.find(argument => argument.startsWith(prefix))?.slice(prefix.length)
@@ -23,9 +24,21 @@ const localPage = (decodedPath === '/mikka' || decodedPath.startsWith('/mikka/')
 if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin && localPage : window.location.origin === appOrigin)) {
   // Lets the page reserve room for the macOS traffic lights and draw its own drag region.
   // The preload runs before <html> exists, so wait for the document.
-  const markPlatform = () => { document.documentElement.dataset.desktopPlatform = process.platform }
+  const markPlatform = () => {
+    document.documentElement.dataset.desktopPlatform = process.platform
+    const windowKind = windowKindFromArgv(process.argv)
+    if (windowKind) document.documentElement.dataset.desktopWindow = windowKind
+  }
   if (document.documentElement) markPlatform()
   else window.addEventListener('DOMContentLoaded', markPlatform, { once: true })
+
+  // The first command can arrive between navigation and React mounting its listener.
+  const menuListeners = new Set<(command: unknown) => void>()
+  let pendingMenuCommand: unknown
+  ipcRenderer.on(IPC.appMenuCommand, (_event: IpcRendererEvent, command: unknown) => {
+    if (!menuListeners.size) pendingMenuCommand = command
+    else for (const listener of menuListeners) listener(command)
+  })
 
   const bridge = {
     app: {
@@ -52,12 +65,29 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
       },
       installUpdate: () => ipcRenderer.invoke(IPC.appInstallUpdate),
       requireUpdate: () => ipcRenderer.invoke(IPC.appRequireUpdate),
+      // Native menu commands (⌘W, ⌘T, ⌘1–9 …), sent by main to this window; the page validates each one.
+      onMenuCommand: (listener: (command: unknown) => void) => {
+        menuListeners.add(listener)
+        if (pendingMenuCommand !== undefined) {
+          const command = pendingMenuCommand
+          pendingMenuCommand = undefined
+          listener(command)
+        }
+        return () => { menuListeners.delete(listener) }
+      },
     },
     notifications: {
       show: (notification: unknown) => ipcRenderer.invoke(IPC.notificationsShow, notification),
       setBadge: (count: unknown) => ipcRenderer.invoke(IPC.notificationsSetBadge, count),
       onClick: onNotificationClick,
       consumePendingClick: () => ipcRenderer.invoke(IPC.notificationsConsumePendingClick),
+      access: () => ipcRenderer.invoke(IPC.notificationsAccess),
+      onAccessChange: (listener: (access: unknown) => void) => {
+        const handler = (_event: IpcRendererEvent, access: unknown) => listener(access)
+        ipcRenderer.on(IPC.notificationsAccessChanged, handler)
+        return () => { ipcRenderer.removeListener(IPC.notificationsAccessChanged, handler) }
+      },
+      openSystemSettings: () => ipcRenderer.invoke(IPC.notificationsOpenSettings),
     },
     ssh: {
       onChange: (listener: (state: SshInstallState) => void) => {
@@ -82,6 +112,11 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
     quota: {
       get: () => ipcRenderer.invoke(IPC.quotaGet),
     },
+    appSettings: {
+      read: () => ipcRenderer.invoke(IPC.appSettingsRead),
+      write: (patch: unknown) => ipcRenderer.invoke(IPC.appSettingsWrite, patch),
+    },
+    tray: trayBridge(windowKindFromArgv(process.argv), state => ipcRenderer.invoke(IPC.trayUpdate, state)),
   }
   const bundledBridge: BundledBridge = {
     session: () => ipcRenderer.invoke(BUNDLED_IPC.session),
@@ -95,6 +130,11 @@ if (appOrigin && window.top === window && (bundled ? localOrigin === appOrigin &
       probe: address => ipcRenderer.invoke(BUNDLED_IPC.serverProbe, address),
       select: url => ipcRenderer.invoke(BUNDLED_IPC.serverSelect, url),
       disconnect: url => ipcRenderer.invoke(BUNDLED_IPC.serverDisconnect, url),
+    },
+    telemetry: {
+      state: () => ipcRenderer.invoke(BUNDLED_IPC.telemetryState),
+      setEnabled: enabled => ipcRenderer.invoke(BUNDLED_IPC.telemetrySet, enabled),
+      capture: (event, properties) => { ipcRenderer.send(BUNDLED_IPC.telemetryCapture, event, properties) },
     },
     onSessionChanged: listener => {
       const handler = () => listener()

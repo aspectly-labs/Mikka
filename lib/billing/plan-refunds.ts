@@ -5,6 +5,7 @@ import { z } from 'zod'
 import type { db } from '@/lib/db'
 import { billingEntitlementOutbox, workspaceBilling, workspaceCreditGrants } from '@/lib/db/schema'
 import { hostedBillingChanged } from '@/lib/live/billing'
+import { resolveWorkspaceCapabilities } from '@/lib/governance/capabilities'
 import { stripeConfig, stripeGet } from './stripe'
 import type { PointsWebhookOptions } from './points-webhook'
 
@@ -80,7 +81,11 @@ export async function reconcilePlanRefunds(tx: Transaction, eventId: string, gra
     receiptUrl: grant.receiptUrl, periodStart: grant.periodStart, expiresAt: grant.expiresAt })
   if (refundCents === BigInt(grant.amountCents)) {
     const [billing] = await tx.select().from(workspaceBilling).where(eq(workspaceBilling.workspaceId, grant.workspaceId)).for('update').limit(1)
-    if (billing?.billingInvoiceId === grant.stripeInvoiceId && billing.billingPlan !== 'free' && billing.stripeSubscriptionId) {
+    if (
+      billing?.billingInvoiceId === grant.stripeInvoiceId
+      && resolveWorkspaceCapabilities({ plan: billing.billingPlan, mode: 'cloud', kind: 'team' }).isPaidPlan
+      && billing.stripeSubscriptionId
+    ) {
       const revision = billing.billingRevision + 1
       if (!Number.isSafeInteger(revision)) throw new Error('billing_revision_overflow')
       await tx.update(workspaceBilling).set({ billingPlan: 'free', billingExpiresAt: null, billingRevision: revision, updatedAt: new Date() }).where(eq(workspaceBilling.workspaceId, grant.workspaceId))

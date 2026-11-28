@@ -1,6 +1,7 @@
 # Cloud runs use no Docker: one task, one machine is the isolation
 
 - Date: 2026-11-01
+- **Status:** Superseded by [2026-11-01-2335 E2B official templates](2026-11-01-2335-e2b-official-templates.md)
 - Source: Alex, relayed by the coordinator session after cloud runs failed
   because `docker create` of the 1.1 GB hosted image took 65.7 s on a thread
   machine started from a snapshot (vfs storage driver, cold disk) and the

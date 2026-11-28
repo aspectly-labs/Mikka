@@ -8,6 +8,7 @@ import type { DeviceCaller } from '../lib/device-link'
 import type { SecretHttpPolicy } from '../lib/secrets/delivery'
 import type { ProjectExecutionSnapshot } from '../lib/project-resources/contracts'
 import { dbUrl, seedAgent, seedIssue, seedPersonalWorkspace, seedProjectTasks, seedUser, seedWorkspace } from './support/workspace-admin-db'
+import { assignTaskEnvironment } from './helpers/run-project-resources'
 
 test('protected task Secret claims and use-time checks against PostgreSQL', { skip: !dbUrl }, async t => {
   const previousKey = process.env.WORKSPACE_SECRETS_KEY
@@ -78,8 +79,7 @@ test('protected task Secret claims and use-time checks against PostgreSQL', { sk
         values($1,$2,$3,'Secret access Project','','','planned','none','','','','','[]',1)`, [projectId, owner, ws.id])
       await (await import('../lib/resource-access/projects')).registerProjectAccess(owner, projectId, ws.id)
       await seedProjectTasks(pool, projectId, [issueId])
-      await resources.saveProjectResources(owner, { workspaceId: ws.id, projectId, revision: 1,
-        repositories: [{ repositoryKey, baseBranch: null, environmentId: environment.id, isPrimary: true }], environmentIds: [environment.id], defaultEnvironmentId: environment.id })
+      await assignTaskEnvironment(pool, owner, ws.id, [issueId], environment.id)
       projectExecution = await resources.withProjectExecution({ userId: owner, workspaceId: ws.id, issueId, repositoryKey, baseBranch: null, runtime: kind, harness: 'codex' }, async snapshot => snapshot)
       assert.deepEqual(projectExecution.environment?.secretIds, [saved.id])
     }
@@ -226,5 +226,13 @@ test('protected task Secret claims and use-time checks against PostgreSQL', { sk
       async (_run, tx) => await runtime.taskSecretSnapshot(f.workspaceId, f.binding.repository, f.owner, tx) === f.injection.snapshot)
     assert.equal(result?.status, 200, 'an unchanged security snapshot may finish the claim')
     assert.ok(!(await result!.text()).includes(f.value))
+  })
+
+  await t.test('a mixed-case frozen Environment secret id still invalidates its run on rotation', async () => {
+    const f = await fixture({ environment: true })
+    await pool.query(`update agent_runs set "agentDefinition"=jsonb_set("agentDefinition",'{projectExecution,environment,secretIds}', to_jsonb(array[upper($2::text)])) where id=$1`, [f.runId, f.saved.id])
+    await store.replaceWorkspaceSecret(f.owner, f.ws.id, { id: f.saved.id, value: f.value + '-rotated' })
+    const { rows: [row] } = await pool.query('select "stopRequestedAt" from agent_runs where id=$1', [f.runId])
+    assert.notEqual(row.stopRequestedAt, null, 'rotating a selected secret stops the run whatever case its frozen id was stored in')
   })
 })

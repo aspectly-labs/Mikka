@@ -1,9 +1,14 @@
 # Settings surface
 
+The [registered settings backend](settings-backend/registry.md) defines typed
+writes, workspace inheritance, reset and row-search metadata for #2956.
+The [Git and review backend](settings-backend/git-review.md) describes PR
+defaults, repository automation and the existing execution boundaries.
+
 Each section is a small heading over one card of rows, as in
 Comma's 「模型与 API」 (decision 2026-10-30). This is the open-source default
-settings surface; the hosted settings are affectUI screens used as shipped
-([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)).
+settings surface; the hosted settings are affectUI screens edited to match the reference product
+([2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)).
 `components/settings/primitives.tsx` owns the shapes; product code only
 supplies content.
 
@@ -29,23 +34,97 @@ supplies content.
 
 ## Layout
 
-Settings render inside the app window (`SettingsFrame` in
-`components/settings/settings-shell.tsx`): the window bar and icon rail stay,
-the section list is the card's first column, and the section scrolls beside it.
-There is no 「返回应用」; the rail leaves Settings. On phones the section list is
-the sheet behind the header's sidebar button, with the rail items at its foot.
+The official app shows Settings in its own frame. Use the sidebar to search
+sections and teams, or use Back to return to the previous page. Settings
+keeps the selected workspace when moving between sections. On narrow screens,
+open the sidebar from the page header.
 
 ## Sections
 
 The section list is `SETTINGS_SECTIONS` in `lib/settings-sections.ts`; the
-sidebar, URL parsing and page body all read it.
+sidebar, URL parsing and page body all read it. The table below is generated
+from that source; edit the source, then run `pnpm docs:generate`.
 
-- **Personal (account):** Account, Security, Preferences, Notifications, Memory, Connections, 模型与订阅 (subscriptions, API keys, 运行位置 and 优先使用的模型; it replaced API 与订阅 and Bot 与 Agents), Secrets and logins, Data and privacy, Devices. The same in every workspace. Personal access tokens are built but hidden (`unbuilt`).
-- **Workspace:** General, App & run permissions, Members, Teams, Team permissions (admins), Secrets and environment, Run environments, Audit log (admins), Usage, Billing, Mikka Cloud (server administrators). A personal workspace has its own workspace settings ([decision 2026-11-02-0216](design/decisions/2026-11-02-0216-personal-workspace-has-workspace-settings.md), with the full table).
+<!-- generated:settings-sections -->
+Source: `SETTINGS_SECTIONS` in `lib/settings-sections.ts`.
+
+| Group | Section id | Title |
+| --- | --- | --- |
+| `personal` | `preferences` | General |
+| `personal` | `appearance` | Appearance |
+| `personal` | `account` | Profile |
+| `personal` | `security` | Security |
+| `personal` | `notifications` | Notifications |
+| `personal` | `shortcuts` | Shortcuts |
+| `personal` | `privacy` | Data and privacy |
+| `personal` | `logins` | Secrets and logins |
+| `compute` | `models` | Models and subscriptions |
+| `compute` | `environments` | Cloud environments |
+| `compute` | `computers` | Devices |
+| `compute` | `secrets` | Secrets & Credentials |
+| `compute` | `integrations` | Integrations |
+| `compute` | `connections` | Connectors and MCP |
+| `compute` | `mcp` | Custom MCP |
+| `compute` | `developer` | API |
+| `agent` | `instructions` | Instructions |
+| `agent` | `team-skills` | Skills |
+| `agent` | `threads` | Threads |
+| `agent` | `git` | Git and pull requests |
+| `agent` | `agent-configs` | Agent configurations |
+| `agent` | `memory` | Memory |
+| `review` | `review-repositories` | Review repositories |
+| `review` | `review-config` | Review config |
+| `workspace` | `general` | Workspace general |
+| `workspace` | `identity` | Identity and access |
+| `workspace` | `issue-states` | Task states |
+| `workspace` | `members` | Members |
+| `workspace` | `teams` | Teams |
+| `workspace` | `permissions` | Team permissions |
+| `workspace` | `billing` | Billing |
+| `workspace` | `usage` | Usage |
+| `workspace` | `activity` | Activity |
+| `workspace` | `audit` | Audit log |
+| `workspace` | `organization` | Organization |
+| `workspace` | `cloud` | Mikka Cloud |
+| `personal` | `referrals` | Referrals |
+| `personal` | `experiments` | Experiments |
+| `personal` | `cloud-credentials` | Cloud credentials |
+<!-- /generated:settings-sections -->
+
+A personal workspace has its own workspace settings ([decision 2026-11-02-0216](design/decisions/2026-11-02-0216-personal-workspace-has-workspace-settings.md), with the full table).
 
 Account and Security hold how the person signs in, including linking Google
 to the Mikka account. Connections holds connected apps (Gmail, Calendar,
 Notion, Slack, Linear, Telegram), even when the app is a Google one.
+
+Open the **Custom MCP** tab in Connections to find or add a server. The owner
+can enable or disable a server and manage its workspace share. Recipients of
+a shared connection can see its status. If a change's result is unconfirmed,
+**Check again** reads the saved state.
+
+## Threads
+
+Settings › Threads (`section=threads`) holds thread-title instructions and
+regeneration triggers. The shipped `SegmentedControl` selects **Mine** or the
+current workspace's name and shows the existing `ThreadTitleSection` for that
+scope. Both scopes belong to the workspace carried in
+the Settings URL, including a personal workspace. Mine instructions add to the
+workspace instructions; Mine triggers can inherit the workspace default.
+Members see the workspace's disabled controls and read-only state; only
+workspace admins can edit them.
+
+The official UI composes this page through the existing `settings-preferences`
+slot (`page: 'threads'`, `workspaceId`) and reuses `useThreadTitleSettings` and its existing
+read/write actions. Preferences keeps its ordinary personal settings; General
+keeps workspace identity, transfer and deletion. Neither repeats the title
+settings. See the [Threads settings decision](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-19-threads-settings.md).
+
+
+The [organization security contract](design/decisions/2026-11-20-1900-settings-organization-security.md)
+defines native two-factor enrollment and recovery, organization MFA/grace
+requirements, DNS-verified domain admission and invitations with an explicit
+role/team scope. Organization membership alone continues to grant no workspace
+access.
 
 ## Run environments
 

@@ -7,10 +7,9 @@ import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { WorkspaceReviewError, type DiffFileMetadata, type DiffFilePatch, type GitHubReviewMutation,
   type ReviewAnchor, type ReviewBatchReceipt } from '@mikka/protocol/coding-workspace-review'
 import { observePoolCommits } from '../../db/commit-effects'
-import { GitHubAccessError } from '../../github/user-access-error'
-import type { RequestBudget } from '../../request-budget'
 import type { ReviewActor } from './authority'
 import { orderMigrations } from '../../../scripts/migration-order.mjs'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import { disposableDatabase, E2E_DB_RULE } from '../../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../../tests/support/drop-test-database'
 
@@ -58,27 +57,25 @@ test('native GitHub review delivery and reconciliation on PostgreSQL 17', { skip
   Object.assign(process.env, environment)
   let appPool: Pool | undefined, workspacePool: Pool | undefined
   const tokens = new Map<string, { token: string; githubAccountId: string; expiresAt: Date }>()
+  const realFetch = globalThis.fetch
+  const githubHttp = await startGitHubAccessHttp({
+    getUser: req => {
+      const credential = [...tokens.values()].find(value => `Bearer ${value.token}` === req.headers.authorization)
+      return credential ? { id: credential.githubAccountId, login: 'delivery-fixture' } : null
+    },
+  })
+  const routedAuth = githubHttp.routeFetch(realFetch)
   try {
     const directory = new URL('../../../drizzle/', import.meta.url)
     for (const name of orderMigrations((await readdir(directory)).filter(name => name.endsWith('.sql'))))
       await pool.query(await readFile(new URL(name, directory), 'utf8'))
-    const next = await import('next/server')
-    mock.module('next/server', { namedExports: { ...next, after() {} } })
-    mock.module('next/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({
+    const next = await import('@/lib/server-runtime/server')
+    mock.module('@/lib/server-runtime/server', { namedExports: { ...next, after() {} } })
+    mock.module('@/lib/server-runtime/headers', { namedExports: { headers: async () => new Headers(), cookies: async () => ({
       get: () => undefined, getAll: () => [], has: () => false, set() {}, delete() {},
     }) } })
-    mock.module('next-intl/server', { namedExports: { getLocale: async () => 'en',
+    mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en',
       getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
-    const userToken = mock.fn(async (userId: string, options: { minValidityMs?: number; budget?: RequestBudget } = {}) => {
-      const value = tokens.get(userId)
-      assert.ok(value, 'native writes must request the actual fixture user credential')
-      assert.equal(options.minValidityMs, 45_000); assert.ok(options.budget && options.budget.deadline > Date.now())
-      return value
-    })
-    mock.module(new URL('../../github/user-access.ts', import.meta.url).href, { namedExports: {
-      githubTokenForUser: userToken, GitHubAccessError,
-      githubRepositoryReadCredential: async () => { throw new Error('An installation/read credential cannot authorize native publishing') },
-    } })
     const { saveGitHubConnection } = await import('../../github/connection')
     const { ensureReviewScope } = await import('./service')
     const { withReviewTransaction } = await import('./authority')
@@ -188,6 +185,9 @@ test('native GitHub review delivery and reconciliation on PostgreSQL 17', { skip
       const calls: { method: string; pathname: string; body?: Record<string, unknown> }[] = []
       context.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
         const url = new URL(String(input)), method = init.method ?? 'GET'
+        if (url.origin === 'https://api.github.com' && method === 'GET' && url.pathname === '/user') {
+          return routedAuth(input, init)
+        }
         assert.equal(url.origin, 'https://api.github.com'); assert.equal(init.redirect, 'error'); assert.equal(init.credentials, 'omit')
         const credential = [...tokens.values()].find(value => `Bearer ${value.token}` === new Headers(init.headers).get('authorization'))
         assert.ok(credential, 'the wire credential is a real encrypted fixture user connection')
@@ -672,6 +672,7 @@ test('native GitHub review delivery and reconciliation on PostgreSQL 17', { skip
       })
   } finally {
     mock.restoreAll()
+    await githubHttp.close()
     for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value }
     await dropTestDatabase(admin, database, pool, appPool, workspacePool)
     await admin.end()

@@ -8,7 +8,7 @@ import test from 'node:test'
 import { getEventListeners } from 'node:events'
 import { waitForApiReady } from '../../../scripts/dev-local/shutdown.mjs'
 import { apiProxyOptions, developmentDocument, developmentRequest } from './dev-http.mjs'
-import { closeDevelopment, developmentOptions, developmentResponse, developmentWorkerReady, staleRouteFiles, staleRoutesRefusal } from './dev.mjs'
+import { closeDevelopment, developmentOptions, developmentResponse, developmentWorkerReady, openPublicPort, staleRouteFiles, staleRoutesRefusal } from './dev.mjs'
 
 const request = (path, options) => new Request(`http://localhost:3000${path}`, options)
 const html = '<!doctype html><html lang="zh-CN"><head></head><body><div id="root"></div></body></html>'
@@ -75,20 +75,21 @@ test('development applies real locale, document cookie and private-link policies
   assert.equal(redirected.status, 307)
   assert.equal(redirected.headers.get('location'), 'http://localhost:3000/mikka/en?workspace=x')
   assert.equal(transformed, 0)
-  const localized = await developmentDocument(request('/mikka/en/reset-password?token=opaque', { headers: { Cookie: 'NEXT_LOCALE=zh-CN', 'Sec-Fetch-Dest': 'document' } }), render)
+  const localized = await developmentDocument(request('/mikka/en/reset-password?token=opaque', { headers: { Cookie: 'mikka-locale=zh-CN', 'Sec-Fetch-Dest': 'document' } }), render)
   assert.equal(localized.status, 200)
   assert.match(await localized.text(), /<html lang="en"/)
   assert.equal(localized.headers.get('referrer-policy'), 'no-referrer')
   assert.equal(localized.headers.get('cache-control'), 'no-store')
   assert.equal(localized.headers.get('vary'), 'Accept-Language, Cookie')
-  assert.match(localized.headers.get('set-cookie'), /^NEXT_LOCALE=en; Max-Age=31536000; Path=\/mikka; SameSite=Lax$/)
+  // Phase 1 of the cookie rename writes both names alike (i18n/locale-cookie.mjs).
+  assert.deepEqual(localized.headers.getSetCookie(), ['mikka-locale=en; Max-Age=31536000; Path=/mikka; SameSite=Lax', 'NEXT_LOCALE=en; Max-Age=31536000; Path=/mikka; SameSite=Lax'])
   assert.equal(transformed, 1)
-  const nonDocument = await developmentDocument(request('/mikka/en', { headers: { Cookie: 'NEXT_LOCALE=zh-CN', 'Sec-Fetch-Dest': 'empty' } }), render)
+  const nonDocument = await developmentDocument(request('/mikka/en', { headers: { Cookie: 'mikka-locale=zh-CN', 'Sec-Fetch-Dest': 'empty' } }), render)
   assert.equal(nonDocument.headers.get('set-cookie'), null)
 })
 
 test('page redirects retain the allowed browser host and configured HTTPS preview origin', async () => {
-  const incoming = host => ({ method: 'GET', url: '/', originalUrl: '/mikka', headers: { host }, rawHeaders: ['Host', host, 'Accept-Language', 'en', 'Cookie', 'NEXT_LOCALE=en'] })
+  const incoming = host => ({ method: 'GET', url: '/', originalUrl: '/mikka', headers: { host }, rawHeaders: ['Host', host, 'Accept-Language', 'en', 'Cookie', 'mikka-locale=en'] })
   const local = developmentRequest(incoming('127.0.0.1:3000'), 'https://preview.example.invalid')
   assert.equal(local.url, 'http://127.0.0.1:3000/mikka')
   const secure = developmentRequest(incoming('preview.example.invalid'), 'https://preview.example.invalid')
@@ -104,7 +105,7 @@ test('HEAD does not transform a document; unknown APIs/assets and writes never g
   const head = await developmentDocument(request('/mikka', { method: 'HEAD' }), never)
   assert.equal(head.status, 200)
   assert.equal(head.body, null)
-  for (const path of ['/mikka/api/missing', '/mikka/%61pi/missing', '/.well-known/workflow/missing', '/mikka/assets/missing.js', '/mikka/_next/missing', '/outside']) {
+  for (const path of ['/mikka/api/missing', '/mikka/%61pi/missing', '/.well-known/workflow/missing', '/mikka/assets/missing.js', '/outside']) {
     const response = await developmentDocument(request(path), never)
     assert.equal(response.status, 404, path)
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
@@ -151,6 +152,30 @@ test('a worker ready message arriving before the wait is retained', async () => 
   await worker.wait(new AbortController().signal)
   assert.equal(api.listenerCount, 0)
   worker.dispose()
+})
+
+test('the public port opens only after the worker has an address', async () => {
+  // A browser reaching the port during the first build gets the runner's own
+  // six-second wait as a 500 ("Runner did not become ready in time") and shows a
+  // failed thread for a server that is merely still starting.
+  const api = workerMessages(), worker = developmentWorkerReady(api), opened = []
+  const pending = openPublicPort(worker, async () => { opened.push('listen') }, AbortSignal.timeout(30_000))
+  api.emit({ event: 'compiled' })
+  await Promise.resolve()
+  assert.deepEqual(opened, [], 'compiled is not an address; nothing may listen yet')
+  api.emit({ address: { host: '127.0.0.1', port: 43003 } })
+  await pending
+  assert.deepEqual(opened, ['listen'])
+  worker.dispose()
+})
+
+test('a worker that never becomes ready never opens the public port', async () => {
+  const api = workerMessages(), worker = developmentWorkerReady(api), opened = []
+  const pending = openPublicPort(worker, async () => { opened.push('listen') }, AbortSignal.timeout(30_000))
+  api.emit({ event: 'init-error', error: 'private initialization detail' })
+  await assert.rejects(pending, { code: 'API_DEV_WORKER_INIT_FAILED' })
+  assert.deepEqual(opened, [], 'a server with no worker behind it must not accept requests')
+  assert.equal(api.listenerCount, 0)
 })
 
 test('a real worker init error fails immediately without an HTTP retry or raw error disclosure', async () => {

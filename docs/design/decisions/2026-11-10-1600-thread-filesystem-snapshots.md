@@ -1,6 +1,7 @@
 # Task machines keep one owner-created filesystem snapshot and restore from it
 
 - Date: 2026-11-10
+- **Status:** Accepted
 - Source: P0 brief for thread-level cloud machine lifecycle and snapshot restore (2026-11-10), superseding the snapshot-cost assumption in [2026-11-01-1410](2026-11-01-1410-one-task-one-sandbox.md). No direct quote from Alex was available when this decision was recorded.
 - Rule: —
 - Replaces: the sentence "Per-task snapshots are not used: E2B documents no price or retention for them." in [2026-11-01-1410-one-task-one-sandbox](2026-11-01-1410-one-task-one-sandbox.md). The rest of that decision (one task, one sandbox; pause instead of kill; never share a machine across tasks) remains in force.

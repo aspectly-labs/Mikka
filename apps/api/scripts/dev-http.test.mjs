@@ -58,12 +58,12 @@ test('the real Vite base middleware preserves the bare application mount and its
       }
     })
     await t.test('query and locale remain attached to the original URL', async () => {
-      const response = await get('/mikka?section=plugins&view=a%2Fb', { headers: { cookie: 'NEXT_LOCALE=zh-CN' } })
+      const response = await get('/mikka?section=plugins&view=a%2Fb', { headers: { cookie: 'mikka-locale=zh-CN' } })
       assert.equal(response.status, 200)
       assert.equal(response.headers.get('location'), null)
       assert.match(await response.text(), /<html lang="zh-CN"/)
       assert.equal(seen.at(-1).url, origin + '/mikka?section=plugins&view=a%2Fb')
-      const english = await get('/mikka?section=plugins', { headers: { cookie: 'NEXT_LOCALE=en' } })
+      const english = await get('/mikka?section=plugins', { headers: { cookie: 'mikka-locale=en' } })
       assert.equal(english.status, 307)
       assert.equal(new URL(english.headers.get('location'), origin).pathname, '/mikka/en')
       assert.equal(new URL(english.headers.get('location'), origin).search, '?section=plugins')

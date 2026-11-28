@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { LIVE_ID, type LiveInvalidation } from './events'
 import { coordinatorSessionScope } from './coordinator-session'
@@ -31,7 +32,7 @@ type Resolve = (database: Database, workspaceDatabase: Database) => Promise<Targ
 
 /** Register at the real writer: nothing is sent before the outer COMMIT, and a rollback sends nothing. */
 async function changed(executor: object, key: string, resolve: Resolve) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive } = await import('./notify')
   afterDatabaseCommit(executor, `chat:${key}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

@@ -110,7 +110,19 @@ test('an open thread\'s later reads leave its prompt and report in the database 
       const reset = await as(() => getIssueThread(issue, run, { kind: 'history', after: position }))
       assert.equal(reset.historyPage?.append, false)
       assert.ok(reset.historyPage.before)
-      await assert.rejects(as(() => getOlderIssueThread(null, run, initial.historyPage!.before!)))
+      const byRunOnly = await as(() => getOlderIssueThread(null, run, initial.historyPage!.before!))
+      assert.equal(byRunOnly.chain, initial.historyPage.chain)
+      await assert.rejects(as(() => getOlderIssueThread(randomUUID(), run, initial.historyPage!.before!)))
+      const outsider = `thread-detail-outsider-${randomUUID()}`
+      try {
+        await pool.query('insert into "user"(id,name,email,"emailVerified","createdAt","updatedAt") values($1,$1,$2,true,now(),now())', [outsider, `${outsider}@example.invalid`])
+        await seedFixtureWorkspace(pool, outsider)
+        await assert.rejects(withActivitySession(outsider, () => getOlderIssueThread(null, run, initial.historyPage!.before!)) as Promise<unknown>, { code: 'runNotFound' })
+      } finally {
+        await pool.query('delete from mikka_workspace_members where "userId"=$1', [outsider])
+        await pool.query('delete from mikka_workspaces where "userId"=$1', [outsider])
+        await pool.query('delete from "user" where id=$1', [outsider])
+      }
     })
     await t.test('only the claiming device and current native session can change a live Composer model', async () => {
       const { issueDeviceToken, hashDeviceToken } = await import('../lib/device-link')

@@ -38,15 +38,14 @@ import {
   type DeviceRegistered,
 } from "@mikka/protocol"
 
-import type { LocalComputerDecision, LocalComputerRequest } from "@mikka/protocol/computer"
 import type { CaptureUploadRequest, CaptureUploadResponse, CaptureView, ScreenCaptureRequest, ScreenCaptureResponse } from "@mikka/protocol/capture"
 import type { RunChunk } from "./chunks"
 import type { ToolApprovalGate } from "./agents/tool-approval"
 import type { RunMailbox } from './run-mailbox'
-import type { ServerDecide } from './server-decision'
+import type { RunDrive } from './run-drive'
 import type { WorkspaceReadCommand, WorkspaceReadReceipt } from '@mikka/protocol/coding-workspace'
 import type { ChatFileDownload } from '@mikka/protocol/chat-attachments'
-import type { NativeBrokerContext, NativeBrokerRequest, NativeLease } from '@mikka/protocol/subscription'
+import type { NativeBrokerContext } from '@mikka/protocol/subscription'
 import { DeviceGatewayRequiredError, DeviceSessionRequiredError, RunNotPinnedHereError, ServerUnreachableError } from "./errors"
 import type { DeviceGatewaySocket } from "./device-gateway"
 
@@ -84,10 +83,10 @@ export interface ServerLink {
    * request came from, so the daemon stops before its next request.
    */
   onUpgradeRequired?(listener: (latest?: string) => void): void
-  /** The server's Decisions API on behalf of one run (server-decision.ts). */
-  decide?: ServerDecide
   /** Optional host-only adapter for the claimed run; never model-supplied. */
   prepareRunMailbox?(assignment: RunAssignment, signal: AbortSignal, check: () => void): Promise<RunMailbox | undefined>
+  /** The run's shared Drive mirror over its MCP endpoint (decision 2026-11-19-2200). */
+  prepareRunDrive?(assignment: RunAssignment, signal: AbortSignal): Promise<RunDrive | undefined>
   claimCoordinator?(deviceId: string, signal: AbortSignal): Promise<NativeCoordinatorJob | null>
   coordinatorCommand?(deviceId: string, turnId: string, command: NativeCoordinatorCommand, signal: AbortSignal): Promise<void>
   coordinatorToolResult?(deviceId: string, turnId: string, callId: string, signal: AbortSignal): Promise<NativeCoordinatorToolResult>
@@ -110,21 +109,16 @@ export interface ServerLink {
   report(deviceId: string, report: DeviceReport): Promise<DeviceReportResult>
   listRepos(deviceId: string): Promise<DeviceRepo[]>
   /** Ids of queued runs pinned to this device. */
-  pendingRuns(deviceId: string): Promise<string[]>
+  pendingRuns(deviceId: string, skip?: readonly string[]): Promise<string[]>
   /** Fails with `RunNotPinnedHereError` for runs pinned elsewhere. */
   claimRun(deviceId: string, runId: string, signal?: AbortSignal, options?: { initialRepository: true }): Promise<RunAssignment>
   localComputerAuthority?(deviceId: string, runId: string): Promise<NonNullable<RunAssignment['localComputer']>>
   /** Receipted resumes require a current online source/access/lease fence. */
   validateSkillReceipt?(runId:string,receiptId:string):Promise<SkillReceiptRevalidation>
-  /** Owner-reviewed computer requests; responses carry decisions only. */
-  syncComputerReviews?(deviceId: string, requests: LocalComputerRequest[], signal?: AbortSignal): Promise<LocalComputerDecision[]>
   /** Private hosted-run channel; these methods never return provider tokens. */
   nativeContext?(deviceId:string,runId:string,signal?:AbortSignal,requireModelCatalogue?:boolean):Promise<NativeBrokerContext>
-  nativeRequest?(deviceId:string,runId:string,payload:NativeBrokerRequest,signal?:AbortSignal):Promise<{contentType:string;body:ReadableStream<Uint8Array>}>
-  /** A device run's subscription access lease (never a refresh grant); asked again before it expires. */
-  nativeLease?(deviceId:string,runId:string,signal?:AbortSignal):Promise<NativeLease>
   /** Natural-expiry renewal only; initial GitHub credentials arrive with the claim. */
-  githubLease?(deviceId:string,runId:string,signal?:AbortSignal):Promise<{ token: string; expiresAt: string | null }>
+  githubLease?(deviceId:string,runId:string,signal?:AbortSignal,startupRepository?:string):Promise<{ token: string; expiresAt: string | null }>
   /**
    * Screenshots and recordings a run keeps as evidence (`@mikka/protocol/capture`).
    * Optional: links without them keep the files on this machine.
@@ -187,6 +181,7 @@ export interface ServerLink {
 }
 
 export interface FetchCommandsOptions {
+  onMcpChecks?: (commands: import('@mikka/protocol/mcp-check').McpDeviceCheckCommand[]) => void
   signal?: AbortSignal
   workspaceSkip?: readonly string[]
   onWorkspaceRequests?: (requests: WorkspaceReadCommand[]) => void
@@ -492,10 +487,10 @@ export class MemoryServer {
         this.check()
         return this.repos.get(deviceId) ?? []
       },
-      pendingRuns: async (deviceId) => {
+      pendingRuns: async (deviceId, skip) => {
         this.check()
         return [...this.runs]
-          .filter(([, r]) => r.deviceId === deviceId && r.state === "queued")
+          .filter(([id, r]) => r.deviceId === deviceId && r.state === "queued" && !skip?.includes(id))
           .map(([id]) => id)
       },
       claimRun: async (deviceId, runId) => {

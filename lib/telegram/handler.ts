@@ -2,12 +2,13 @@ import { issueVisibility } from '@/lib/issue-visibility'
 import 'server-only'
 
 import { createHash } from 'node:crypto'
-import { getTranslations } from 'next-intl/server'
+import { getTranslations } from '@/lib/intl/i18n-server'
 import { and, desc, eq, gt, sql } from 'drizzle-orm'
 import type { Message, SlashCommandEvent, Thread } from 'chat'
 import type { TelegramMessage } from '@chat-adapter/telegram'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { readEnv } from '@/lib/env/server'
 import { recordCoordinatorEvent } from '@/lib/coordinator-event-store'
 import { coordinatorBot } from '@/lib/coordinator/coordinator-bot'
 import { userMessageEvent } from '@/lib/coordinator-events'
@@ -280,7 +281,7 @@ async function handleTelegramMessage(input: {
   if (!input.isDM || input.author.isBot || input.author.isMe || !input.author.userId) return
   const telegramUserId = input.author.userId
   const t = await getTranslations({ locale: localeOf(input.raw), namespace: 'TelegramBot' })
-  const username = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, '') ?? ''
+  const username = readEnv('TELEGRAM_BOT_USERNAME')?.replace(/^@/, '') ?? ''
   const command = parseTelegramCommand(input.text, username)
   if (command?.name === 'start') {
     if (!command.args) {

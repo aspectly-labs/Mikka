@@ -1,6 +1,7 @@
 # Bound Bot-sidebar work titles and stored short titles
 
 - Date: 2026-11-10
+- **Status:** Superseded in part by [2026-11-19-1600-codex-thread-titles.md](2026-11-19-1600-codex-thread-titles.md) (Latin title limit replaced; CJK limit and storage rules retained)
 - Source: Alex, circling expanded Bot children in the new UI: 「标题必须限制字数，现在没有小模型专门去生成这个标题的吗？」. He then required the restriction in the database. The agreed limit follows the existing task-short-title target: 12 CJK characters or 6 words, at most 60 characters.
 - Rule: R-01; the short-title contract.
 - Replaces: the approximate limit in [2026-11-06-1400](2026-11-06-1400-task-short-titles.md), the sidebar's direct full-title/prompt label, and storing a long manually typed title verbatim as its derived short title in [2026-11-10-1213](2026-11-10-1213-new-task-optional-title.md).

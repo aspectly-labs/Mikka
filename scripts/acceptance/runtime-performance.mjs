@@ -100,7 +100,7 @@ export async function preflight(config) {
   assert.ok(protectedRoots.length > 0, 'List the main/developer checkout as protected')
   assert.deepEqual(config.targets.map(target => target.kind).sort(), ['next', 'vite'])
   assert.ok(Array.isArray(config.envNames) && config.envNames.every(name => /^[A-Z][A-Z0-9_]*$/.test(name)))
-  assert.ok(!config.envNames.some(name => /^(?:NODE_OPTIONS|NODE_ENV|PORT|BETTER_AUTH_URL|VERCEL_GIT_COMMIT_SHA|MIKKA_DEV_SKIP_ENV_FILES)$/.test(name)), 'Runtime location/build controls are set per measured child')
+  assert.ok(!config.envNames.some(name => /^(?:NODE_OPTIONS|NODE_ENV|PORT|BETTER_AUTH_URL|MIKKA_BUILD_REVISION|MIKKA_DEV_SKIP_ENV_FILES)$/.test(name)), 'Runtime location/build controls are set per measured child')
   const env = Object.fromEntries(config.envNames.map(name => { assert.equal(typeof process.env[name], 'string', `Required environment variable ${name} is missing`); return [name, process.env[name]] }))
   const database = new URL(env.MIKKA_DATABASE_URL ?? env.DATABASE_URL)
   assert.ok(['postgres:', 'postgresql:'].includes(database.protocol) && ['localhost', '127.0.0.1', '[::1]'].includes(database.hostname), 'Use the existing real isolated loopback database')
@@ -126,6 +126,9 @@ export async function preflight(config) {
     assert.equal(target.origin, origin.origin, 'Specify the exact origin without a trailing slash')
     assert.ok(Array.isArray(target.command) && target.command.every(value => typeof value === 'string'))
     assert.equal(await realpath(target.command[0]), await realpath(process.execPath), 'Both commands must use the same explicit Node binary as this driver')
+    // The `next` kind measures a checkout from before the framework was
+    // removed: point snapshotsRoot at that historical commit. It is the
+    // baseline this migration is compared against, not a product dependency.
     const suffix = target.kind === 'next'
       ? ['node_modules/next/dist/bin/next', 'dev', '--webpack', '--hostname', origin.hostname, '--port', origin.port]
       : ['apps/api/scripts/dev.mjs', '--host', origin.hostname, '--port', origin.port]
@@ -208,7 +211,7 @@ async function coldAndHot({ target, iteration, browser, output, env, redact, sig
     child = spawn('/usr/bin/python3', [supervisor, receiptPath, ...target.command], { cwd: target.root, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: {
       PATH: process.env.PATH, HOME: process.env.HOME, LANG: 'C.UTF-8', ...env,
       NODE_ENV: 'development', BETTER_AUTH_URL: target.origin, PORT: new URL(target.origin).port,
-      VERCEL_GIT_COMMIT_SHA: target.revision, MIKKA_DEV_SKIP_ENV_FILES: '1',
+      MIKKA_BUILD_REVISION: target.revision, MIKKA_DEV_SKIP_ENV_FILES: '1',
     } })
     child.once('error', error => ready.reject(error))
     child.once('exit', (code, terminatedBy) => { result.exit = { code, signal: terminatedBy }; ready.reject(new Error('DEVELOPMENT_PROCESS_EXITED_BEFORE_READY')) })

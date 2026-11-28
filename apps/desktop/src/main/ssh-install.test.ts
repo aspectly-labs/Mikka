@@ -109,9 +109,14 @@ test('cancelled and timed out commands stop their own installer descendants', { 
     let pid: number | undefined
     let failure: unknown
     try {
-      const leaf = `const fs=require('node:fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(beatFile)},String(Date.now())),20)`
-      const parent = `const{spawn}=require('node:child_process');const fs=require('node:fs');const child=spawn(process.execPath,['-e',${JSON.stringify(leaf)}],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(pidFile)},String(child.pid));setInterval(()=>{},1000)`
-      const running = runProcess(process.execPath, ['-e', parent], undefined, mode === 'timeout' ? 1500 : 5000, controller.signal)
+      // Start the real descendant directly from sh. Booting two Node runtimes
+      // can exhaust the fixture timeout before cancellation is even exercised.
+      const script = `
+        (i=0; while :; do i=$((i + 1)); printf '%s' "$i" > "$2.tmp"; mv "$2.tmp" "$2"; sleep 0.02; done) &
+        echo "$!" > "$1"
+        wait
+      `
+      const running = runProcess('/bin/sh', ['-c', script, 'fixture', pidFile, beatFile], undefined, mode === 'timeout' ? 1500 : 5000, controller.signal)
       // Attach before waiting for the child, so an actual early failure is not
       // an unhandled rejection. The assertion below still observes the result.
       running.catch(() => {})

@@ -20,11 +20,20 @@ stub('../db/index.ts', { pool: { query: async (sql: string, params: unknown[]) =
     queries.push(params)
     return { rows: runAvailable && params[0] === runId && params[1] === device && params[2] === machineOwner ? [{ remoteKey: 'v2/github.com/owner/repo' }] : [] }
   }
+  if (sql.includes('FROM agent_runs WHERE')) return { rows: [{ agentDefinition: { projectExecution: {
+    environment: { repositoryKeys: ['v2/github.com/owner/repo', 'v2/github.com/org/docs'],
+      repositories: [{ key: 'v2/github.com/org/demand', baseBranch: null, clone: 'demand' }] },
+  } } }] }
   assert.match(sql, /cloud_machines/); assert.match(sql, /bot_desktops/)
   queries.push(params)
   // The machine row must belong to the device credential's own person.
   return { rowCount: machineOwner !== null && params[0] === device && params[1] === workspace && params[2] === machineOwner ? 1 : 0 }
 } } })
+let environmentAvailable = true
+stub('../project-resources/run-lease.ts', { withRunProjectResources: async (_pool: unknown, _run: unknown, issue: () => Promise<unknown>) => {
+  if (!environmentAvailable) throw new Error('projectEnvironmentUnavailable')
+  return issue()
+} })
 stub('../device-link.ts', { authenticateDevice: async () => caller })
 
 let authorize: typeof import('./desktop-token-authority')['authorizeDesktopGitHubToken']
@@ -82,4 +91,19 @@ test('a mismatched device token or invalid run identifier cannot refresh any cre
   caller = null
   assert.equal(await authorizeRun(request(), device, runId), null)
   assert.deepEqual(queries, [])
+})
+
+test('startup credentials require the frozen extra repository, a live run and current environment access', async () => {
+  const { authorizeEnvironmentRepositoryToken } = await import('./desktop-token-authority')
+  const authorize = (key: string) => authorizeEnvironmentRepositoryToken(request(), device, runId, key)
+  const key = 'v2/github.com/org/docs'
+  assert.deepEqual(await authorize(key), { runId, userId: 'owner', remoteKey: key })
+  assert.equal(await authorize('v2/github.com/owner/repo'), null)
+  assert.equal(await authorize('v2/github.com/org/demand'), null)
+  assert.equal(await authorize('v2/github.com/org/other'), null)
+  environmentAvailable = false
+  try { await assert.rejects(authorize(key), /projectEnvironmentUnavailable/) }
+  finally { environmentAvailable = true }
+  runAvailable = false
+  assert.equal(await authorize(key), null)
 })

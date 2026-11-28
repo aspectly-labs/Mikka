@@ -1,14 +1,14 @@
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
 import { ActionFailureError } from '@/lib/action-error'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
 import { runOutsideToken } from '@/lib/tokens/scope'
 import { actAs } from '@/lib/acting-user'
 import { effectiveRequestWorkspace } from '@/lib/request-workspace'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
-export const dynamic = 'force-dynamic'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -18,11 +18,7 @@ type Params = { params: Promise<{ id: string }> }
  * (lib/run-quota.ts): on the person's API key, or with its original credential
  * after the reset. `:id` is the paused run (`paused.runId` of the thread).
  */
-async function handlePOST(request: Request, { params }: Params) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
+async function handlePOST(request: Request, user: ApiSession['user'], { params }: Params) {
   const id = z.uuid().safeParse((await params).id)
   if (!id.success) return json({ error: 'runNotFound' }, 404)
   const workspaceId = await effectiveRequestWorkspace(user)
@@ -42,4 +38,12 @@ async function handlePOST(request: Request, { params }: Params) {
   }
 }
 
-export const POST = withRequestLog('/api/mobile/threads/[id]/continue', handlePOST)
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped', { id: string }>(
+  {
+    route: '/api/mobile/threads/[id]/continue',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async ({ request, user, params }) => handlePOST(request, user, { params: Promise.resolve(params) }),
+)

@@ -10,7 +10,7 @@ import {evaluationObservation} from '../agent-kit/eval-fixtures'
 import {canonicalJSON} from '../agent-kit/definition'
 import type {EvalTrace,ToolObservation} from '../agent-kit/evals'
 
-export const evaluationReplySchema=z.strictObject({text:z.string().max(16000),outcome:z.enum(['answered','blocked','approval_required'])})
+export const evaluationReplySchema=z.strictObject({text:z.string().max(16000),outcome:z.enum(['answered','blocked'])})
 
 /** Observe the native durable terminal facts; partial JSON is never a result. */
 export async function evaluationDeliveryTrace(delivery:Delivery,plan:EvaluationPlan,signal:AbortSignal):Promise<EvalTrace> {

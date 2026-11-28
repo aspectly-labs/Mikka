@@ -67,7 +67,7 @@ test('The globe opens the browser in place of the right panel; notes on a page g
   const releaseResponse = Promise.withResolvers<void>()
   await page.route('**/*', async route => {
     const request = route.request()
-    if (request.method() !== 'POST' || !request.headers()['next-action'] || !request.postData()?.includes(message)) return route.fallback()
+    if (request.method() !== 'POST' || request.headers()['x-mikka-rpc'] !== '1' || !request.postData()?.includes(message)) return route.fallback()
     // Let the actual action commit. Delay only delivery of its response to reproduce a send in flight.
     const response = await route.fetch()
     storedResponse.resolve()

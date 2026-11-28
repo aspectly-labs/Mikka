@@ -1,6 +1,7 @@
 # One person is a personal workspace; a team starts with a second person
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session after a screenshot of the account menu (「青柠科技」「acme的工作区」「创建团队工作区」, with no way to tell the personal one apart and no way to pick a workspace in 设置): 「用户注册后第一个必须是个人工作区。没有个人工作区就不能创建团队工作区。」 Then, correcting the first draft: 「个人是没有团队的概念的，个人工作区就是个人工作区。1. 一个人是没有团队的，必须是个人工作区。2. 如果要新建团队工作区，必须邀请第二个人参加才叫团队。如果没有邀请第二个人，是不能建立团队工作区的。」 Then: 「只要填了邮箱，那边邀请了就算团队，不需要检查。」 and 「比如你已经邀请了一个人，那个人还没有回复你，没有接受邀请。那么你也可以进入团队界面，上面就会显示是否共享给团队。」 On a member joining a team: 「默认不付」. On a team left with one person: 「走了就走了呗，只有你一个人，那就用你默认的点数呀。然后点数如果没了，用不了，你可以走 API 呀，还有订阅呀。」 On where sharing is set: 「他在添加订阅的时候，添加完之后，下面就应该显示一个『是否共享给团队』，而不应该在团队那上面进行操作……明明应该在同一个页面显示的地方，你跑到另外一个页面，导致我找不到，又用不了。」 Alex left the 设置 workspace picker open; the coordinator chose the option below.
 - Rule: R-26
 - Replaces, in part: [2026-11-01-2310-personal-and-team-workspaces-apart](2026-11-01-2310-personal-and-team-workspaces-apart.md) level 3 (「我的点数用于这个团队」 shown in every team) and [2026-11-02-0216-personal-workspace-has-workspace-settings](2026-11-02-0216-personal-workspace-has-workspace-settings.md) (「分享我的订阅给团队成员」 and 「我的点数用于这个团队」 set in a team workspace's settings); [2026-10-31-2130-personal-vs-workspace](2026-10-31-2130-personal-vs-workspace.md) (the personal workspace was created on first need, after an invitation if that came first, and a team could be created alone)

@@ -308,8 +308,9 @@ test('run chains: folding, LIMIT on roots, stop forwarding and isolation', { ski
     const current = await readCliRunPolicy(pool, teamRun, me.userId)
     assert.equal(current.workspaceId, shared)
     assert.deepEqual(current.workspaceIds, [shared])
-    assert.equal(current.policy.permissions.network, 'deny')
-    assert.equal(current.policy.permissions.git_push, 'deny')
+    // A legacy workspace cli_run_policy restricts nothing (ADR 2026-11-27-1615): every run gets full access.
+    assert.equal(current.policy.permissions.network, 'allow')
+    assert.equal(current.policy.permissions.git_push, 'allow')
     const personalPolicy = await readCliRunPolicy(pool, personalRun, me.userId)
     assert.equal(personalPolicy.workspaceId, personal)
     assert.notEqual(personalPolicy.policy.permissions.network, 'deny')

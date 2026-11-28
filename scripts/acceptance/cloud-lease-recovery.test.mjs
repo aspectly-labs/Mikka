@@ -14,7 +14,7 @@ const fixture = () => ({ identity, workspaceId, profiles: [profile('claude_code'
   bots: { items: [{ id: botId, name: '测试1505 1234abcd' }], live: { ownerId: owner, workspaceId } },
   sessions: [{ id: 'old-session', userId: owner, token: 'OLD_PRIVATE'.repeat(4), userAgent: 'node', createdAt: time, updatedAt: time }] })
 const sha = 'a'.repeat(40)
-const env = { GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
+const env = { GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
   GITHUB_SHA: sha, APPLICATION_SHA: sha, LEASE_AUDIT_RECOVERY_RUN: '42418118236' }
 
 test('recovery selects only the exact interrupted time, fixture prefix, small subscriptions and own old session', () => {

@@ -1,8 +1,14 @@
 import { driveResponse } from '@/lib/drive/server'
+import { defineRoute } from '@/lib/primitives/define-route'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-export async function PATCH(request: Request, { params }: { params: Promise<{ volumeId: string }> }) {
-  return driveResponse(request, 'write', await params)
-}
+export const PATCH = defineRoute<'session', 'none', { volumeId: string }>(
+  {
+    route: '/api/drive/volumes/[volumeId]/entries',
+    auth: 'session',
+    origin: 'native-mobile-allowed',
+    workspace: 'none', write: true, freshSession: true,
+  },
+  async ({ request, params, session }) => driveResponse(request, 'write', params, session),
+)

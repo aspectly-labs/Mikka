@@ -12,7 +12,7 @@ import { createTestDatabase, dropTestDatabase } from '../../tests/support/drop-t
 import { seedTeam } from '../../tests/support/workspace-admin-db'
 import { orderMigrations } from '../../scripts/migration-order.mjs'
 import { captureDatabaseQuery, observePoolCommits } from '../db/commit-effects'
-import { groupListTargets, issueListTargets, issueListScopesBeforeChange, issueListScopeChanged, ownerListTargets, ownerSettingsTargets, runListChanged, runListTargets, workspaceListTargets } from './lists'
+import { botGroupListTargets, groupListTargets, issueListTargets, issueListScopesBeforeChange, issueListScopeChanged, ownerListTargets, ownerSettingsTargets, ownerWorkspaceSettingsTargets, runListChanged, runListTargets, workspaceListTargets } from './lists'
 import { liveChannelId, type LiveScope } from './scope'
 import type { LiveInvalidation } from './events'
 import { isolateCoordinatorWakes } from '../../tests/support/coordinator-wake'
@@ -21,7 +21,7 @@ const url = process.env.E2E_DATABASE_URL
 if (process.env.REQUIRE_DB === '1') assert.ok(url, 'actual isolated PostgreSQL required')
 if (url) assert.ok(disposableDatabase(process.env, url), 'loopback *_e2e only')
 const scheduled: (() => Promise<void>)[] = []
-mock.module('next/server', { namedExports: { after: (work: () => Promise<void>) => { scheduled.push(work) } } })
+mock.module('@/lib/server-runtime/server', { namedExports: { after: (work: () => Promise<void>) => { scheduled.push(work) } } })
 // The same writers also wake task/thread detail panels with their run, thread
 // or document IDs, bot chats with their bot IDs and group pages with their group
 // IDs; panels.db.test.ts, chats.db.test.ts and groups.db.test.ts cover those keys.
@@ -130,6 +130,19 @@ test('real PG: lists retain their reader scope and publish only the originating 
       assert.equal((await database.query('SELECT count(*)::integer AS n FROM mikka_workspaces')).rows[0].n, before, 'notifications never create a workspace')
     })
 
+    await t.test('a Bot\'s look reaches the group lists it stands in, for their members only', async () => {
+      const bot = randomUUID(), lone = randomUUID()
+      await database.query(`INSERT INTO conversation_members ("conversationId","memberType","memberId",role) VALUES ($1,'bot',$2,'member')`, [groupId, bot])
+      try {
+        const targets = await botGroupListTargets(database, database, bot)
+        assert.deepEqual(targets, await groupListTargets(database, database, groupId), 'the group\'s own list audience, nobody else')
+        assert.ok(targets.length > 0 && targets.every(value => value.events.every(event => event.kind === 'group_list' && event.id === team)))
+        assert.deepEqual(await botGroupListTargets(database, database, lone), [], 'a Bot in no group wakes no list')
+        await database.query(`UPDATE conversation_members SET "leftAt"=now() WHERE "conversationId"=$1 AND "memberId"=$2`, [groupId, bot])
+        assert.deepEqual(await botGroupListTargets(database, database, bot), [], 'a Bot that left no longer stands in the group\'s avatar')
+      } finally { await database.query(`DELETE FROM conversation_members WHERE "conversationId"=$1 AND "memberId"=$2`, [groupId, bot]) }
+    })
+
     await t.test('workspace lists use active members; a private group does not notify unrelated members', async () => {
       const workspace = await workspaceListTargets(database, team, ['workspace_settings'])
       assert.deepEqual(new Set(workspace.map(value => value.scope.ownerId)), new Set(['owner', 'peer', 'foreign', 'no-home']))
@@ -142,9 +155,14 @@ test('real PG: lists retain their reader scope and publish only the originating 
       assert.deepEqual((await groupListTargets(database, database, groupId, 'foreign')).map(value => value.scope.ownerId), ['owner'], 'a caller cannot invent prior group membership')
     })
 
-    await t.test('模型与订阅 pushes model_settings to the account alone, in each workspace it is an active member of', async () => {
+    await t.test('owner-specific integrations push workspace_settings only to the account in its active workspaces', async () => {
+      const audience = async () => (await ownerWorkspaceSettingsTargets(database, database, 'owner')).map(value => `${value.scope.ownerId}@${value.scope.workspaceId === home ? 'home' : 'team'}:${value.events.map(event => event.kind).join(',')}`).sort()
+      assert.deepEqual(await audience(), ['owner@home:workspace_settings', 'owner@team:workspace_settings'])
+      assert.deepEqual(await ownerWorkspaceSettingsTargets(database, database, 'no-such-account'), [])
+    })
+
+    await t.test('model and subscription pushes remain owner-only model_settings, not workspace settings', async () => {
       const audience = async () => (await ownerSettingsTargets(database, database, 'owner')).map(value => `${value.scope.ownerId}@${value.scope.workspaceId === home ? 'home' : 'team'}:${value.events.map(event => event.kind).join(',')}`).sort()
-      // Subscriptions serve their owner only (decision 2026-11-17): teammates never receive these settings; never the app-wide workspace_settings.
       assert.deepEqual(await audience(), ['owner@home:model_settings', 'owner@team:model_settings'])
       assert.deepEqual(await ownerSettingsTargets(database, database, 'no-such-account'), [])
     })

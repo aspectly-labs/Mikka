@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { LIVE_ID, type LiveInvalidation } from './events'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -29,7 +30,7 @@ export async function hostedBillingTargets(workspaceDatabase: Database, workspac
 
 /** Register at the writer: sent after the outer COMMIT; a rollback sends nothing. */
 export async function hostedBillingChanged(executor: object, workspaceId: string) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterDatabaseCommit(executor, `hosted_billing:${workspaceId}`, () => scheduleLive(async () => {
     const { withoutDatabaseClient } = await import('../db/request-scope')

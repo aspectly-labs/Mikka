@@ -40,11 +40,12 @@ export const groupRuntime: GroupRuntime = {
       const { agentProfileDispatchAvailability }=await import('@/lib/factory/agent-profile')
       return withDatabaseClient(client,async()=>{
         const executionBotId=bot.ownerId===ownerId ? bot.id : await (await import('./coordinator-bot')).chatBotId(ownerId,null,workspaceId)
-        const key=JSON.stringify([executionBotId,bot.repository])
+        const repository=await (await import('@/lib/bot-environment')).botRepository({workspaceId,environmentId:bot.environmentId,repository:bot.repository})
+        const key=JSON.stringify([executionBotId,repository])
         const cached=availability.get(key)
         if (cached) return cached
-        if (bot.repository && !await (await import('@/lib/workspace-admin/bots')).repositoryAvailable(workspaceId,bot.repository)) return {available:false,reason:'repositoryNotFound'}
-        const result=await agentProfileDispatchAvailability(pool,{ownerId,workspaceId,botId:executionBotId},{location:bot.repository?undefined:'cloud',cloudPurpose:bot.repository?'task':'desktop'},{deferStaleQuota:true})
+        if (repository && !await (await import('@/lib/workspace-admin/bots')).repositoryAvailable(workspaceId,repository)) return {available:false,reason:'repositoryNotFound'}
+        const result=await agentProfileDispatchAvailability(pool,{ownerId,workspaceId,botId:executionBotId},{location:repository?undefined:'cloud',cloudPurpose:repository?'task':'desktop'},{deferStaleQuota:true})
         availability.set(key,result)
         return result
       })
@@ -61,9 +62,9 @@ export const groupRuntime: GroupRuntime = {
   async delegate(scope,client) { return (await import('./group-factory')).delegateGroupTask(client,scope) },
   async generate(agent, input) {
     const scope = hostedBillingScope.getStore()
-    // Same code the chat shows today; the detail tells the two missing scopes apart in the stored error and logs.
-    if (!scope) throw new CodedError('verification_required', { detail: 'billing_scope_missing' })
-    if (agent.memberType === 'bot' && !scope.ownerId) throw new CodedError('verification_required', { detail: 'billing_owner_missing' })
+    // Missing billing scope is its own refusal, not a credits/cards failure.
+    if (!scope) throw new CodedError('billing_scope_missing')
+    if (agent.memberType === 'bot' && !scope.ownerId) throw new CodedError('billing_owner_missing')
     // 停止 in the group aborts it too (lib/coordinator/group-turns.ts).
     const signal = input.signal ? AbortSignal.any([AbortSignal.timeout(20000), input.signal]) : AbortSignal.timeout(20000)
     let streamFailure: unknown

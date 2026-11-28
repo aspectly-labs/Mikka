@@ -3,10 +3,11 @@ import 'server-only'
 // Rules: no value (secret or env) ever leaves this module; list/create/replace/delete return metadata only. Every write runs in one
 // MIKKA-DB transaction and calls the audit hook inside it, so #432's recordAudit(tx, …) slots in
 // and an audit failure rolls the write back. targetLabel is always the NAME, never the value.
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { workspaceSecrets } from '@/lib/db/secrets-schema'
-import { requireWorkspace, WorkspaceError } from '@/lib/workspace-access'
+import { requireWorkspace } from '@/lib/workspace-access'
+import { WorkspaceError } from '@/lib/workspace-error'
 import { workspaceDb } from '@/lib/workspace-db'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
 import { sealSecret, secretAad, SecretsKeyMissingError } from './crypto'
@@ -43,7 +44,7 @@ export interface WorkspaceSecretView {
   id: string
   name: string
   kind: 'secret' | 'env'
-  scopeType: 'workspace' | 'repository'
+  scopeType: 'workspace' | 'repository' | 'thread'
   /** '' for workspace scope, owner/repo (lowercase) for repository scope. */
   scopeRef: string
   note: string
@@ -58,7 +59,7 @@ type Row = typeof workspaceSecrets.$inferSelect
 
 function seal(value: string, row: Parameters<typeof secretAad>[0]) {
   try { return sealSecret(value, secretAad(row)) } catch (error) {
-    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable')
+    if (error instanceof SecretsKeyMissingError) throw new WorkspaceError('secretsUnavailable', { cause: error })
     throw error
   }
 }
@@ -98,7 +99,7 @@ export class SecretsStoreError extends Error {
 export async function guardSecretsDb<T>(work: () => Promise<T>, onUnique?: () => Error): Promise<T> {
   try { return await work() } catch (error) {
     if (error instanceof WorkspaceError || error instanceof SecretsStoreError) throw error
-    if (onUnique && isUnique(error)) throw onUnique()
+    if (onUnique && isUnique(error)) throw Object.assign(onUnique(), { cause: error })
     if (!isDbError(error)) throw error
     throw new SecretsStoreError(pgCode(error))
   }
@@ -128,7 +129,7 @@ export async function requireSecretPermission(userId: string, workspaceId: strin
 /** Any member. Metadata only: no value is ever read back (secret or env). */
 export async function listWorkspaceSecrets(userId: string, workspaceId: string): Promise<WorkspaceSecretView[]> {
   await requireSecretPermission(userId, workspaceId, 'secret.list')
-  const rows = await guardSecretsDb(() => db.select().from(workspaceSecrets).where(eq(workspaceSecrets.workspaceId, workspaceId))
+  const rows = await guardSecretsDb(() => db.select().from(workspaceSecrets).where(and(eq(workspaceSecrets.workspaceId, workspaceId), ne(workspaceSecrets.scopeType, 'thread')))
     .orderBy(asc(workspaceSecrets.scopeType), asc(workspaceSecrets.scopeRef), asc(workspaceSecrets.name)))
   return views(workspaceId, rows)
 }
@@ -216,7 +217,7 @@ export async function importWorkspaceSecrets(userId: string, workspaceId: string
   const scoped = { workspaceId, kind, ...scopeColumns(scope) }
   assertSecretPermission(role, 'secret.create', [scoped])
   let parsed: ReturnType<typeof parseDotenv>
-  try { parsed = parseDotenv(text) } catch { throw new WorkspaceError('secretImportTooLarge') }
+  try { parsed = parseDotenv(text) } catch (error) { throw new WorkspaceError('secretImportTooLarge', { cause: error }) }
   const errors: ImportResult['errors'] = [...parsed.errors]
   const entries = parsed.entries.filter(entry => isReservedEnvName(entry.name) ? (errors.push({ line: entry.line, name: entry.name, reason: 'reserved' }), false) : true)
   errors.sort((a, b) => a.line - b.line)

@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import { LIVE_ID, type LiveInvalidation } from './events'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -20,7 +21,7 @@ export async function pullRequestStatusTargets(database: Database, workspaceData
 
 /** A GitHub webhook committed a delivered PR's state. Sent after COMMIT; a failed write sends nothing. */
 export async function pullRequestStatusChanged(executor: object, issueIds: readonly string[]) {
-  if (!issueIds.length || !liveGatewayConfig(process.env)) return
+  if (!issueIds.length || !liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive, sendLiveInvalidations } = await import('./notify')
   afterDatabaseCommit(executor, `pull_request_status:${[...new Set(issueIds)].sort().join(',')}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')

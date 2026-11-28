@@ -52,7 +52,7 @@ concurrency:
   queue: max
 jobs:
   acceptance:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && (inputs.mode == 'preflight' || inputs.mode == 'execute')
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && (inputs.mode == 'preflight' || inputs.mode == 'execute')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -153,7 +153,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
   controlled-failure:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && inputs.mode == 'controlled-failure'
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && inputs.mode == 'controlled-failure'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -240,7 +240,7 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
   export:
-    if: github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' && inputs.mode == 'export'
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' && inputs.mode == 'export'
     runs-on: ubuntu-latest
     timeout-minutes: 8
     permissions:

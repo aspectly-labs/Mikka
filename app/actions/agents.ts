@@ -5,10 +5,11 @@ import { readRunFailure, type RunFailure } from '@mikka/protocol/run-failure'
 import { withDatabaseOperation } from '@/lib/db/egress-sample'
 import { desktopHumanSessionId } from '@/lib/desktop-rpc/session'
 import { deploymentSwitch } from '@/lib/deployment-switches'
+import { withFreshSession } from '@/lib/fresh-session'
 
 import { createHash } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
-import { headers } from 'next/headers'
+import { headers } from '@/lib/server-runtime/headers'
 import { threadModelChoice, type ThreadModelChoice } from '@/lib/thread-model-choice'
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { SelectResult } from 'drizzle-orm/query-builders/select.types'
@@ -43,7 +44,7 @@ import { executionBotName, runBotId, runBotName, threadNameLines } from '@/lib/r
 import { requireIssueAccessWithoutBody } from '@/lib/issue-access'
 import { workspaceDb } from '@/lib/workspace-db'
 import { workspaceMembers } from '@/lib/db/workspace-schema'
-import { ISSUE_THREAD_LIMIT, canReadThread, projectIssueThreads, threadQuestionRunId, withRunChain, type IssueThread } from '@/lib/issue-threads'
+import { ISSUE_THREAD_LIMIT, canReadThread, isThreadRun, projectIssueThreads, threadQuestionRunId, withRunChain, type IssueThread } from '@/lib/issue-threads'
 import { readThreadQuestionState, type ThreadQuestionDeadline } from '@/lib/issue-thread-questions'
 import { runIsActive } from '@/lib/issue-run-conversation'
 import { issueThreadListText } from '@/lib/issue-thread-list-projection'
@@ -54,13 +55,10 @@ import { threadPromptView } from '@/lib/thread-prompt'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { enterprisePrincipal } from '@/lib/enterprise/principal'
-import { actAs } from '@/lib/acting-user'
+import { actAs, requireUser } from '@/lib/acting-user'
+import { runtimeEnv } from '@/lib/env/server'
 
-async function getUserId(): Promise<string> {
-  const session = await auth.api.getSession({ headers: await headers() })
-  if (!session?.user) throw new ActionFailureError('authRequired')
-  return session.user.id
-}
+const getUserId = async () => (await requireUser()).id
 
 async function getWorkspaceReader() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -126,7 +124,7 @@ export async function pollDevices() {
   const userId = await getUserId()
   const { devices: items, observedAt, presenceDevices } = await readDevices(userId)
   const { ownerListRead } = await import('@/lib/live/list-read-server')
-  const live = withDevicePresence(await ownerListRead(userId, [], observedAt), presenceDevices, process.env, observedAt)
+  const live = withDevicePresence(await ownerListRead(userId, [], observedAt), presenceDevices, runtimeEnv(), observedAt)
   return { devices: items, live, presenceFallback: false }
 }
 
@@ -157,7 +155,7 @@ async function readDevices(userId: string) {
 }
 
 /** Mints a device token. The plaintext is returned once and never stored. */
-export async function createDeviceToken(input: { name: string }): Promise<ActionResult<{ token: string }>> {
+async function createDeviceTokenBody(input: { name: string }): Promise<ActionResult<{ token: string }>> {
   return runAction(async () => {
     const userId = await getUserId()
     const parsed = z.object({ name: z.string().trim().max(60) }).safeParse(input)
@@ -166,6 +164,8 @@ export async function createDeviceToken(input: { name: string }): Promise<Action
     return { token }
   })
 }
+
+export async function createDeviceToken(...args: Parameters<typeof createDeviceTokenBody>) { return withFreshSession(() => createDeviceTokenBody(...args)) }
 
 export interface SshHostView {
   alias: string
@@ -231,10 +231,11 @@ async function issueThreadAccess(issueId: string) {
 }
 
 const threadColumns = {
-  id: agentRuns.id, issueId: agentRuns.issueId, userId: agentRuns.userId, agentId: agentRuns.agentId, status: agentRuns.status, title: agentRuns.title, prompt: agentRuns.prompt, promptTaskStart: agentRuns.promptTaskStart, promptTaskLength: agentRuns.promptTaskLength,
+  id: agentRuns.id, issueId: agentRuns.issueId, userId: agentRuns.userId, workspaceId: agentRuns.workspaceId, agentId: agentRuns.agentId, status: agentRuns.status, title: agentRuns.title, prompt: agentRuns.prompt, promptTaskStart: agentRuns.promptTaskStart, promptTaskLength: agentRuns.promptTaskLength,
   // Only the report's summary: runSummaryText reads nothing else of it.
   sessionId: agentRuns.sessionId, deviceRepoId: agentRuns.deviceRepoId, failureDetails: agentRuns.failureDetails, report: sql<Record<string, unknown> | null>`case when jsonb_typeof(${agentRuns.report}) = 'object' then jsonb_build_object('summary', ${agentRuns.report}->'summary') end`, error: agentRuns.error, createdAt: agentRuns.createdAt, finishedAt: agentRuns.finishedAt,
-  agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind,
+  agentName: runBotName, harness: agents.harness, ownerName: users.name, stopRequestedAt: agentRuns.stopRequestedAt, pauseReason: agentRuns.pauseReason, outcome: agentRuns.outcome, kind: agentRuns.kind, threadRelation: agentRuns.threadRelation, tags: agentRuns.tags, folder: agentRuns.folder,
+  botId: sql<string | null>`(select b.id from bots b where b.id = ${runBotId})`, startedAt: agentRuns.startedAt,
   botColor: sql<string | null>`(select b.color from bots b where b.id = ${runBotId})`, botShape: sql<string | null>`(select b.shape from bots b where b.id = ${runBotId})`,
   // Who did the stretch (lib/issue-threads.ts threadProfile): the frozen Profile's public summary and its current mark.
   profile: sql<unknown>`case when ${agentRuns.agentDefinition}->'agentProfile' is null then null else jsonb_build_object(
@@ -248,7 +249,7 @@ const threadColumns = {
 const threadCursorColumns = { ...threadColumns, prompt: sql<string>`coalesce(${threadNameLines}, '')` }
 
 // Read-only location and changes need authority, not conversation content.
-const threadIdentityColumns = { id: agentRuns.id, userId: agentRuns.userId }
+const threadIdentityColumns = { id: agentRuns.id, userId: agentRuns.userId, workspaceId: agentRuns.workspaceId }
 
 const { title: _title, prompt: _prompt, promptTaskStart: _promptTaskStart, promptTaskLength: _promptTaskLength, sessionId: _sessionId, deviceRepoId: _deviceRepoId, report: _report, error: _error, ...threadListColumns } = threadColumns
 
@@ -259,7 +260,7 @@ export async function listIssueThreads(issueId: string): Promise<IssueThread[]> 
 
 /** The same list, plus the channel its `issue_threads` key arrives on: the issue's
  * workspace, or the owner's home for a personal issue; null reads once a minute. */
-export async function pollIssueThreads(issueId: string, includeTaskWork = false, activityCursor?: { version?: string; positions?: import('@/lib/list-poll').ListPosition[] }) {
+export async function pollIssueThreads(issueId: string, includeTaskWork = false, activityCursor?: { version?: string; positions?: import('@/lib/list-poll').ListPosition[]; paged?: boolean }) {
   return withDatabaseOperation('/actions/threads/issue-list', async () => {
     const { threads, issue, user, teamId } = await readIssueThreads(issueId)
     const [{ documentLiveWorkspace }, { workspacePool }] = await Promise.all([import('@/lib/live/panels'), import('@/lib/workspace-db')])
@@ -271,8 +272,10 @@ export async function pollIssueThreads(issueId: string, includeTaskWork = false,
     if (!includeTaskWork) return snapshot
     const { listIssueConnections } = await import('@/app/actions/issue-operations')
     const connections = await listIssueConnections(issue.id)
-    const { pollIssueVersionSummaries } = await import('@/app/actions/issues')
-    const activity = await pollIssueVersionSummaries(issue.id, activityCursor?.version, activityCursor?.positions)
+    const { pollIssueVersionSummaries, pollIssueActivityPage } = await import('@/app/actions/issues')
+    const activity = activityCursor?.paged
+      ? await pollIssueActivityPage(issue.id, activityCursor.version)
+      : await pollIssueVersionSummaries(issue.id, activityCursor?.version, activityCursor?.positions)
     if (activity.error) throw new ActionFailureError(activity.error)
     if (activity.viewerId !== user.id) throw new ActionFailureError('issueNotFound')
     return { ...snapshot, teamId, connections, activity: activity.snapshot, viewerId: user.id }
@@ -283,7 +286,7 @@ export type IssueWorkSnapshot = Extract<Awaited<ReturnType<typeof pollIssueThrea
 
 /** Reuse the authorized content read, then release its document lock before
  * reading the Work view. The stable task and both viewer identities must agree. */
-export async function pollTaskDetail(issueId: string, known?: string, activityCursor?: { version?: string; positions?: import('@/lib/list-poll').ListPosition[] }) {
+export async function pollTaskDetail(issueId: string, known?: string, activityCursor?: { version?: string; positions?: import('@/lib/list-poll').ListPosition[]; paged?: boolean }) {
   return cacheReadAction(async () => {
     const { pollIssue } = await import('@/app/actions/issues')
     const document = await pollIssue(issueId, known)
@@ -321,20 +324,36 @@ type ReadableThreadResult<T extends ThreadColumns> = {
   user: { id: string }
 }
 
+async function readableThreadSelect(issueId: string, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<ThreadColumns>> {
+  const access = await issueThreadAccess(issueId)
+  if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
+  const [row] = await db.select(columns).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.issueId, access.issue.id), eq(agentRuns.workspaceId, access.issue.workspaceId!))).limit(1)
+  if (!row || !canReadThread(row.userId, access.user.id, access.memberIds)) throw new ActionFailureError('runNotFound')
+  return { row, user: access.user }
+}
+
 function readableThread(issueId: string | null, runId: string, columns: typeof threadColumns): Promise<ReadableThreadResult<typeof threadColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadCursorColumns): Promise<ReadableThreadResult<typeof threadCursorColumns>>
 function readableThread(issueId: string | null, runId: string, columns: typeof threadIdentityColumns): Promise<ReadableThreadResult<typeof threadIdentityColumns>>
-async function readableThread(issueId: string | null, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<typeof threadColumns> | ReadableThreadResult<typeof threadCursorColumns> | ReadableThreadResult<typeof threadIdentityColumns>> {
-  if (issueId !== null) {
-    const access = await issueThreadAccess(issueId)
-    if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
-    const [row] = await db.select(columns).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
-      .where(and(eq(agentRuns.id, runId), eq(agentRuns.issueId, access.issue.id), eq(agentRuns.workspaceId, access.issue.workspaceId!))).limit(1)
-    if (!row || !canReadThread(row.userId, access.user.id, access.memberIds)) throw new ActionFailureError('runNotFound')
-    return { row, user: access.user }
-  }
+async function readableThread(issueId: string | null, runId: string, columns: ThreadColumns): Promise<ReadableThreadResult<ThreadColumns>> {
+  if (issueId !== null) return readableThreadSelect(issueId, runId, columns)
   const user = await getWorkspaceReader()
   if (!z.uuid().safeParse(runId).success) throw new ActionFailureError('runNotFound')
+  // A caller that doesn't know the task (a thread opened by run id alone) still
+  // reaches an attached run: the run's own binding names the issue whose access
+  // check decides. Unattached runs keep the owner-only rule below.
+  const [binding] = await db.select({ issueId: agentRuns.issueId }).from(agentRuns).where(eq(agentRuns.id, runId)).limit(1)
+  if (binding?.issueId) {
+    // A denied task read must not reveal the run exists: collapse the task's
+    // refusal into the same runNotFound a missing run returns.
+    try {
+      return await readableThreadSelect(binding.issueId, runId, columns)
+    } catch (error) {
+      if (error instanceof ActionFailureError && error.code === 'issueNotFound') throw new ActionFailureError('runNotFound', undefined, undefined, { cause: error })
+      throw error
+    }
+  }
   const [row] = await db.select(columns)
     .from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(users, eq(users.id, agentRuns.userId))
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.userId, user.id), eq(agentRuns.workspaceId, user[tokenWorkspace]), isNull(agentRuns.issueId))).limit(1)
@@ -393,6 +412,8 @@ export interface IssueThreadDetail {
    */
   context?: import('@/lib/context-usage').ContextUsage
   composerModel?: import('@/lib/context-usage').ContextUsage['composerModel']
+  /** The owner's live run's plan over all of that run's chunks, whichever page is held (lib/thread-plan-read.ts); absent otherwise. */
+  plan?: import('@/lib/thread-plan').ThreadPlanItem[] | null
 }
 
 /**
@@ -461,30 +482,52 @@ export async function getThreadMachine(issueId: string | null, runId: string): P
 }
 
 /**
+ * The thread summary header read (#2935): machine {kind,size,state}, repository,
+ * branch, context used with its real model-catalog limit, and cost from
+ * readThreadCost's two-column totals. Owner-only like getThreadMachine.
+ */
+export async function getThreadSummary(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/summary', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const latestRunId = chain?.latestRunId ?? row.id
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    const [{ readThreadMachine }, { readThreadLocation }, { readThreadCost }] = await Promise.all([
+      import('@/lib/thread-machine-view'), import('@/lib/thread-summary'), import('@/lib/thread-cost')])
+    const [machine, context, location, threadCost] = await Promise.all([
+      readThreadMachine(pool, user.id, runIds),
+      readContextUsage(runIds, row.id, latestRunId),
+      readThreadLocation(pool, user.id, latestRunId),
+      row.workspaceId === null ? Promise.resolve(null) : readThreadCost(pool, { ownerId: user.id, workspaceId: row.workspaceId, runId: row.id, groupBy: 'thread' })])
+    const { catalogIdFor, catalogModel } = await import('@/lib/model-catalog')
+    // The current attempt's model decides the window: after a continuation
+    // changes models, context.model is still the frozen original's.
+    const windowModel = context.composerModel?.served ?? context.composerModel?.selected ?? context.model
+    const windowTokens = windowModel
+      ? catalogModel(catalogIdFor(windowModel) ?? windowModel)?.contextWindow ?? null
+      : null
+    return {
+      cost: threadCost?.totals ?? null,
+      machine: machine ? { kind: machine.kind, size: location.machineSize, state: machine.state,
+        ...(machine.cloud?.compute ? { e2bCompute: machine.cloud.compute } : {}) } : null,
+      repository: location.repository,
+      branch: location.branch,
+      context: { ...context, windowTokens },
+    }
+  })
+}
+
+/**
  * What this thread's run holds (lib/context-usage.ts). One query counts every
  * character in SQL and returns no text: a cursor read must stay small, so the
  * brief cannot be sent again to be measured (tests/thread-detail-bytes.db.test.ts).
  * It covers the whole run chain and the whole stored brief whatever the cursor
  * returned, so a cursor read reports the same usage as a full one.
  */
+/** What this thread's run holds; the one reader is lib/context-usage-read.ts. */
 async function readContextUsage(runIds: string[], rootRunId: string, latestRunId: string): Promise<import('@/lib/context-usage').ContextUsage> {
-  const { CONTEXT_CHARS_SQL, contextUsageFromCounts } = await import('@/lib/context-usage')
-  const { rows: [counted] } = await pool.query<Record<string, string | number | null>>(CONTEXT_CHARS_SQL, [runIds, rootRunId, latestRunId])
-  const count = (value: unknown) => Number(value ?? 0) || 0
-  const counts = (ascii: unknown, other: unknown) => ({ ascii: count(ascii), other: count(other) })
-  return contextUsageFromCounts({
-    prompt: counts(counted?.promptAscii, counted?.promptOther),
-    // The task range is sliced in SQL by the recorded code points, and is empty
-    // when the range does not hold (lib/thread-prompt.ts rejects it there).
-    task: counts(counted?.taskAscii, counted?.taskOther),
-    messages: counts(counted?.messageAscii, counted?.messageOther),
-    conversation: counts(counted?.conversationAscii, counted?.conversationOther),
-    ...(typeof counted?.selectedModel === 'string' || typeof counted?.servedModel === 'string' ? { composerModel: {
-      selected: typeof counted?.selectedModel === 'string' ? counted.selectedModel : null,
-      served: typeof counted?.servedModel === 'string' ? counted.servedModel : null,
-    } } : {}),
-    model: typeof counted?.model === 'string' ? counted.model : null,
-  })
+  return (await import('@/lib/context-usage-read')).readContextUsage(pool, runIds, rootRunId, latestRunId)
 }
 
 /** Load the whole-history estimate after the conversation's first page. */
@@ -505,18 +548,25 @@ async function readThreadComposerModel(runId: string) {
 
 async function readThreadMessages(runIds: string[], viewerId: string, ids?: string[]): Promise<IssueThreadDetail['messages']> {
   if (ids && !ids.length) return []
+  const { systemEventDataSchema } = await import('@mikka/protocol/slash-commands')
   const messages = await db.select({ id: runMessages.id, sourceRunId:runMessages.runId, editable:sql<boolean>`${runMessages.origin}='owner' AND ${runMessages.deliveredAt} IS NOT NULL AND failure IS NULL`,
       submissionId: sql<string | null>`${coordinatorEvents.payload}#>>'{threadSubmission,requestId}'`,
+      systemEvent: sql<unknown>`${coordinatorEvents.payload}->'threadSystemEvent'`,
       text: runMessages.text, at: runMessages.createdAt, userId: runMessages.userId, name: users.name, email: users.email, image: users.image })
       .from(runMessages).leftJoin(users, eq(users.id, runMessages.userId))
-      .leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id), eq(coordinatorEvents.userId, viewerId), eq(coordinatorEvents.kind, 'user_message')))
+      .leftJoin(coordinatorEvents, and(eq(coordinatorEvents.id, runMessages.id), eq(coordinatorEvents.userId, runMessages.userId), eq(coordinatorEvents.kind, 'user_message')))
       .where(ids ? and(inArray(runMessages.runId, runIds), inArray(runMessages.id, ids)) : inArray(runMessages.runId, runIds))
       .orderBy(asc(runMessages.createdAt), asc(runMessages.id))
-  return messages.map(message => ({
-    id: message.id, sourceRunId: message.sourceRunId, editable: message.editable && message.userId === viewerId,
-    ...(message.submissionId ? { submissionId: message.submissionId } : {}), text: message.text, at: message.at,
-    author: message.name || message.email || '', image: message.image ?? null, mine: message.userId === viewerId,
-  }))
+  return messages.map(message => {
+    const parsedEvent = message.systemEvent ? systemEventDataSchema.safeParse(message.systemEvent) : null
+    return {
+      id: message.id, sourceRunId: message.sourceRunId, editable: message.editable && message.userId === viewerId,
+      ...(message.submissionId && message.userId === viewerId ? { submissionId: message.submissionId } : {}),
+      ...(parsedEvent?.success ? { systemEvent: parsedEvent.data } : {}),
+      text: message.text, at: message.at,
+      author: message.name || message.email || '', image: message.image ?? null, mine: message.userId === viewerId,
+    }
+  })
 }
 
 async function readPagedThreadMessages(runIds: string[], viewerId: string, ids: string[], append: boolean) {
@@ -604,27 +654,25 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
   const questionWake = thread.questionWake ?? null
   if (questionWake) error = questionWake.error
   const liveStatus = live?.status ?? row.status
-  let replyAvailable = true
-  let retryAvailable = !!questionWake || liveStatus === 'failed'
-  if (!runIsActive(liveStatus)) {
-    // Independent checks cannot enter ordinary continuation (latestTaskRun).
-    // Read the latest run's host binding, never a report or the root's stage.
-    const { rows: [target] } = await pool.query<{ independentCheck: boolean }>(`SELECT EXISTS (
-      SELECT 1 FROM factory_attempts a WHERE a."runId"=r.id AND a.stage IN ('review','verify','monitor')
-      ) AS "independentCheck" FROM agent_runs r
-      WHERE r.id=$1 AND r."userId"=$2 AND r."issueId" IS NOT DISTINCT FROM $3::uuid`, [thread.latestRunId, user.id, row.issueId])
-    replyAvailable = !!target && (!target.independentCheck || thread.question === 'waiting')
-    if (!target) retryAvailable = false
-    else if (target.independentCheck) {
-      const recovery = liveStatus === 'failed' && row.issueId
-        ? await originalSessionRetry(user.id, thread.latestRunId, row.issueId) : null
-      retryAvailable = originalSessionRetryAvailable(recovery?.question, thread.latestRunId)
+  let replyAvailable = row.userId === user.id
+  let retryAvailable = row.userId === user.id && (!!questionWake || liveStatus === 'failed')
+  let threadRelation = thread.threadRelation ?? null
+  // Independent checks (review/verify/monitor) and subagents are strictly read-only for humans (Alex, 2026-11-24, superseding R-10):
+  // no human composer or human retry whether active, waiting or ended. Agent-to-agent messaging stays on peer paths.
+  if (row.userId === user.id) {
+    const target = await readHumanControlTarget(thread.latestRunId, user.id, row.issueId)
+    const inheritedSubagent = !threadRelation && chain && chain.rootRunId !== row.id ? await isSubagentRoot(chain.rootRunId, user.id) : false
+    if (inheritedSubagent) threadRelation = 'subagent'
+    const nonInteractive = inheritedSubagent || isReadOnlyForHuman(target, row)
+    if (nonInteractive || (!runIsActive(liveStatus) && !target)) {
+      replyAvailable = false
+      retryAvailable = false
     }
   }
   const [{ threadLiveReferences, documentLiveWorkspace }, { workspacePool }] = await Promise.all([import('@/lib/live/panels'), import('@/lib/workspace-db')])
   const chainRunIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
   const quotaView = row.userId === user.id ? import('@/lib/run-quota-view') : null
-  const [runs, issueWorkspaceId, context, composerModel, delivery, quota, modelFallback] = await Promise.all([
+  const [runs, issueWorkspaceId, context, composerModel, delivery, quota, modelFallback, plan] = await Promise.all([
     threadLiveReferences(pool, workspacePool, runIds, user.id),
     row.issueId ? documentLiveWorkspace(pool, workspacePool, row.issueId, user.id) : null,
     // Over the whole chain and the whole brief, so a cursor read reports what a full one does.
@@ -634,12 +682,14 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
       threadDeliveryView(pool, user.id, chain?.rootRunId ?? row.id, thread.latestRunId)) : undefined,
     quotaView?.then(({ threadQuotaView }) => threadQuotaView(user.id, chainRunIds, thread.latestRunId)),
     quotaView?.then(({ threadModelFallbackState }) => threadModelFallbackState(user.id, chainRunIds, thread.latestRunId)),
+    row.userId === user.id && runIsActive(liveStatus) && runIds.includes(thread.latestRunId)
+      ? import('@/lib/thread-plan-read').then(({ readRunPlan }) => readRunPlan(pool, { runId: thread.latestRunId, ownerId: user.id })) : undefined,
   ])
   return {
     readReceipts,
     delivery,
     live: { viewerId: user.id, runs, issueWorkspaceId, questionDeadline, ...(Object.keys(revisions).length ? { revisions } : {}) },
-    thread: { ...thread, failureDetails, questionWake, prompt: promptOmitted ? '' : prompt, ...(!promptOmitted && hasInstructions ? { hasInstructions: true as const } : {}), stopRequestedAt, replyAvailable, retryAvailable, quota: quota ?? null, modelFallback: modelFallback?.notices ?? null, modelFallbackPending: modelFallback?.pending ?? false, error, feedbackEligible: row.userId===user.id && ['succeeded','failed'].includes(row.status) && !!row.finishedAt && !!row.sessionId && !!row.deviceRepoId },
+    thread: { ...thread, threadRelation, failureDetails, questionWake, prompt: promptOmitted ? '' : prompt, ...(!promptOmitted && hasInstructions ? { hasInstructions: true as const } : {}), stopRequestedAt, replyAvailable, retryAvailable, quota: quota ?? null, modelFallback: modelFallback?.notices ?? null, modelFallbackPending: modelFallback?.pending ?? false, error, feedbackEligible: row.userId===user.id && ['succeeded','failed'].includes(row.status) && !!row.finishedAt && !!row.sessionId && !!row.deviceRepoId },
     chunks,
     messages,
     chunkCursor: transcript.cursor,
@@ -648,6 +698,7 @@ async function readIssueThread(issueId: string | null, runId: string, after?: Th
     ...(messageUpdates?.length ? { messageUpdates } : {}),
     context,
     ...(composerModel ? { composerModel } : {}),
+    ...(plan !== undefined ? { plan } : {}),
     ...(promptOmitted ? { promptOmitted: true as const } : {}),
   }
 }
@@ -688,12 +739,91 @@ async function readThreadChanges(issueId: string | null, runId: string): Promise
 
 const THREAD_CHANGES_MAX_TEXT = 8 * 1024 * 1024
 
+/** #2929: one turn's changes — the same gzip patch path as getThreadChanges but
+ * scoped to a single attempt of the chain, so the Changes view can page turns. */
+export async function getThreadTurnChanges(issueId: string | null, runId: string, turnRunId: string): Promise<ThreadChangesResult> {
+  return withDatabaseOperation('/actions/threads/turn-changes', async () => {
+    const { row } = await readableThread(issueId, runId, threadIdentityColumns)
+    const chain = await readRunChain(pool, row.userId, row.id)
+    if (chain && !chain.attempts.some(attempt => attempt.runId === turnRunId)) return { state: 'none' }
+    const { rows: [checkpoint] } = await pool.query<{ patch: Buffer | null; unavailableReason: string | null }>(
+      'SELECT patch,"unavailableReason" FROM run_checkpoints WHERE "runId"=$1 AND "userId"=$2', [turnRunId, row.userId])
+    if (!checkpoint?.patch) return { state: 'none' }
+    if (checkpoint.unavailableReason) return { state: 'tooLarge' }
+    let text: string
+    try { text = gunzipSync(checkpoint.patch, { maxOutputLength: THREAD_CHANGES_MAX_TEXT }).toString('utf8') } catch { return { state: 'tooLarge' } }
+    const changes = parseUnifiedDiff(text)
+    if (!changes.files.length) return { state: 'none' }
+    const { rows: [published] } = await pool.query<{ url: string }>(
+      `SELECT "pullRequest"->>'url' AS url FROM run_publications WHERE "runId"=$1 AND "pullRequest"->>'url' IS NOT NULL ORDER BY "updatedAt" DESC LIMIT 1`, [turnRunId])
+    const prUrl = published && safeHttpUrl(published.url)
+    if (prUrl) for (const file of changes.files) file.url = `${prUrl.replace(/\/+$/, '')}/files#diff-${createHash('sha256').update(file.path).digest('hex')}`
+    return { state: 'ready', changes }
+  })
+}
+
+type HumanControlTarget = { independentCheck: boolean; subagent?: boolean; kind?: string | null }
+
+/** Host binding check for human composer/write actions: independent checks and subagents are strictly read-only for humans (Alex, 2026-11-24). */
+async function readHumanControlTarget(runId: string, userId: string, issueId: string | null): Promise<HumanControlTarget | null> {
+  const { rows: [target] } = await pool.query<HumanControlTarget>(`SELECT EXISTS (
+    SELECT 1 FROM factory_attempts a WHERE a."runId"=r.id AND a.stage IN ('review','verify','monitor')
+    ) AS "independentCheck", (r."threadRelation"='subagent') AS subagent, r.kind FROM agent_runs r
+    WHERE r.id=$1 AND r."userId"=$2 AND r."issueId" IS NOT DISTINCT FROM $3::uuid`, [runId, userId, issueId])
+  return target ?? null
+}
+
+function isReadOnlyForHuman(target: HumanControlTarget | null, row: { kind?: string | null; threadRelation?: string | null }) {
+  if (row.threadRelation === 'subagent' || (row.kind && !isThreadRun({ kind: row.kind }))) return true
+  if (!target) return false
+  return Boolean(target.independentCheck || target.subagent || (target.kind && !isThreadRun({ kind: target.kind })))
+}
+
+async function isSubagentRoot(rootRunId: string, userId: string): Promise<boolean> {
+  const { rows: [root] } = await pool.query<{ subagent: boolean }>(
+    `SELECT ("threadRelation"='subagent') AS subagent FROM agent_runs WHERE id=$1 AND "userId"=$2`,
+    [rootRunId, userId])
+  return Boolean(root?.subagent)
+}
+
+async function assertHumanWritableThread(userId: string, row: { id: string; issueId: string | null; kind?: string | null; threadRelation?: string | null }) {
+  if (isReadOnlyForHuman(null, row)) throw new ActionFailureError('threadCannotContinue')
+  const chain = await readRunChain(pool, userId, row.id)
+  if (chain && chain.rootRunId !== row.id && await isSubagentRoot(chain.rootRunId, userId)) throw new ActionFailureError('threadCannotContinue')
+  const targetRunId = chain?.latestRunId ?? row.id
+  const target = await readHumanControlTarget(targetRunId, userId, row.issueId)
+  if (isReadOnlyForHuman(target, row)) throw new ActionFailureError('threadCannotContinue')
+}
+
 function safeHttpUrl(value: string) {
   try { const url = new URL(value); return url.protocol === 'https:' ? url.toString() : null } catch { return null }
 }
 
 /** Something a person says in a running thread; the daemon delivers it to the agent. */
-export async function sendIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string }): Promise<{ runId: string; continued: boolean }> {
+export async function sendIssueThreadMessage(input: {
+  issueId: string | null
+  runId: string
+  text: string
+  requestId?: string
+  modelChoice?: ThreadModelChoice
+  delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode
+  expectedOwnerId?: string
+  expectedWorkspaceId?: string
+  retryOriginalSession?: true
+  questionWakeGeneration?: string
+  references?: import('@/lib/thread-references-server').ThreadReference[]
+  mentions?: import('@mikka/protocol/slash-commands').StructuredMention[]
+  sendAsText?: boolean
+}): Promise<{
+  runId: string
+  continued: boolean
+  blocked?: {
+    command: string
+    originalText: string
+    validCommands: string[]
+    reason: 'dangerous_passthrough' | 'terminal_only' | 'host_owned'
+  }
+}> {
   const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
   if (!text.success) throw new ActionFailureError('messageRequired')
   const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
@@ -710,6 +840,7 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
   if(input.modelChoice !== undefined && (input.retryOriginalSession || !input.requestId || !threadModelChoice.safeParse(input.modelChoice).success))throw new ActionFailureError('validationGeneric')
   if(input.requestId!==undefined && input.retryOriginalSession)throw new ActionFailureError('validationGeneric')
   if(input.questionWakeGeneration!==undefined && (!input.retryOriginalSession || !z.uuid().safeParse(input.questionWakeGeneration).success))throw new ActionFailureError('validationGeneric')
+  await assertHumanWritableThread(user.id, row)
   if(input.questionWakeGeneration!==undefined) {
     if(!row.issueId)throw new ActionFailureError('threadCannotContinue')
     try {
@@ -739,8 +870,302 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
       }
     }
   }
+
+  const slashProtocol = await import('@mikka/protocol/slash-commands')
+  let control: import('@/lib/thread-continue').ThreadMessageControl | undefined
+  const leadingSlash = !input.sendAsText ? slashProtocol.parseLeadingSlashCommand(text.data) : null
+  const hasSkillSignal = Boolean(
+    !input.sendAsText &&
+    ((input.mentions?.some(m => m.kind === 'skill')) || /\$[a-z][a-z0-9-]*/.test(text.data)),
+  )
+  let runtime: Awaited<ReturnType<typeof import('@/lib/thread-commands').readThreadRuntimeCommands>> = null
+  if (leadingSlash || hasSkillSignal) {
+    const { readThreadRuntimeCommands } = await import('@/lib/thread-commands')
+    runtime = await readThreadRuntimeCommands(pool, user.id, row.id)
+  }
+
+  if (input.sendAsText) {
+    control = { kind: 'client_composed' }
+  } else if (leadingSlash && runtime) {
+    const cmdLower = leadingSlash.name.toLowerCase()
+    // Bug 1: block dangerous pass-through, terminal_slash_commands, and host-owned commands before reaching Claude CLI.
+    if (runtime.harness === 'claude_code') {
+      const blockedCheck = slashProtocol.isBlockedClaudeCommand(leadingSlash.name, runtime.terminalSlashCommands)
+      if (blockedCheck.blocked) {
+        const validCommands = runtime.commands.map(c => c.name)
+        const { appendThreadSystemEvent } = await import('@/lib/thread-commands')
+        await appendThreadSystemEvent(runtime.latestRunId, user.id, {
+          kind: 'command_blocked',
+          command: blockedCheck.canonical,
+          originalText: text.data,
+          validCommands,
+          reason: blockedCheck.reason,
+        })
+        return {
+          runId: runtime.latestRunId,
+          continued: false,
+          blocked: {
+            command: blockedCheck.canonical,
+            originalText: text.data,
+            validCommands,
+            reason: blockedCheck.reason,
+          },
+        }
+      }
+    }
+    // Bug 2: route /compact to real per-harness compaction while preserving requestId & human actor metadata.
+    if (cmdLower === 'compact') {
+      const instructions = leadingSlash.args.trim().slice(0, 4_000)
+      control = { kind: 'compact', ...(instructions ? { instructions } : {}) }
+    } else {
+      // Allowed runtime slash command (e.g. Claude custom/MCP/skill command or Codex /review, /init):
+      // deliver unwrapped via control.kind='slash'.
+      const matchedRuntime = runtime.commands.find(
+        c => c.name.toLowerCase() === cmdLower || c._meta.aliases?.some(a => a.toLowerCase() === cmdLower),
+      )
+      if (matchedRuntime) {
+        control = {
+          kind: 'slash',
+          name: matchedRuntime.name,
+          ...(leadingSlash.args ? { args: leadingSlash.args } : {}),
+        }
+      }
+    }
+  }
+
+  let body = text.data
+  if (!control && input.references?.length) {
+    const refs = z.array((await import('@/lib/thread-references-server')).threadReference).max(20).safeParse(input.references)
+    if (!refs.success) throw new ActionFailureError('validationGeneric')
+    const resolved = await (await import('@/lib/thread-references-server')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data)
+    body = (await import('@/lib/thread-references-server')).expandReferences(resolved) + body
+    if (body.length > 10_000) throw new ActionFailureError('messageRequired')
+  }
+  if (!control && input.mentions?.length) {
+    const parsedMentions = slashProtocol.structuredMentionsSchema.safeParse(input.mentions)
+    if (!parsedMentions.success) throw new ActionFailureError('validationGeneric')
+    const { resolveStructuredMentions, expandStructuredMentions } = await import('@/lib/thread-references-server')
+    const resolvedMentions = await resolveStructuredMentions(pool, user.id, row.workspaceId ?? null, parsedMentions.data)
+    const mentionPrefix = expandStructuredMentions(resolvedMentions)
+    if (mentionPrefix && body.length + mentionPrefix.length <= 10_000) {
+      body = mentionPrefix + body
+    }
+  }
+  if (!control && runtime) {
+    const skillMentions = (input.mentions ?? []).filter(m => m.kind === 'skill').map(m => m.id)
+    const runtimeSkills = runtime.commands.filter(c => c._meta.source === 'skill').map(c => c.name)
+    const knownSkills = [...new Set([...skillMentions, ...runtimeSkills])]
+    if (knownSkills.length) {
+      const resolvedSkills = slashProtocol.resolveSkillMentionsForHarness(runtime.harness, body, knownSkills)
+      if (resolvedSkills.text.length <= 10_000) body = resolvedSkills.text
+    }
+  }
+  await refuseUnavailableReferences(user.id,row.id,text.data)
   // A working thread gets it as a message; an ended one runs again in the same thread (R-81, lib/thread-continue.ts).
-  return sendThreadMessage(user.id,row.id,text.data,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice)
+  return sendThreadMessage(user.id,row.id,body,{source:'human',sessionId:session.session.id},input.requestId,input.delivery,input.modelChoice,control)
+}
+
+/** #2941 item 3: preview cards for the composer's typed references. Same
+ * resolution the send runs; never throws per reference. */
+export async function getReferencePreview(input: { issueId: string | null; runId: string; references: import('@/lib/thread-references-server').ThreadReference[] }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  const refs = z.array((await import('@/lib/thread-references-server')).threadReference).max(20).safeParse(input.references)
+  if (!refs.success) throw new ActionFailureError('validationGeneric')
+  return { references: await (await import('@/lib/thread-references-server')).resolveThreadReferences(pool, user.id, row.workspaceId ?? null, refs.data) }
+}
+
+/**
+ * #3333: `/side` (alias `/btw`) asks a side question without disturbing or steering
+ * the main run. Spawns a real side thread (`relation: 'side'`) anchored to the
+ * thread (or `fromMessageId`) and records an inline `side_note` system event.
+ */
+export async function btwIssueThreadMessage(input: { issueId: string | null; runId: string; text: string; fromMessageId?: string | null }) {
+  const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
+  if (!text.success) throw new ActionFailureError('messageRequired')
+  if (input.fromMessageId !== undefined && input.fromMessageId !== null && !z.uuid().safeParse(input.fromMessageId).success) {
+    throw new ActionFailureError('validationGeneric')
+  }
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  await assertHumanWritableThread(user.id, row)
+  const { spawnThread } = await import('@/lib/thread-lifecycle')
+  const { appendThreadSystemEvent } = await import('@/lib/thread-commands')
+  const chain = await readRunChain(pool, user.id, row.id)
+  const targetRunId = chain?.latestRunId ?? row.id
+  const sideRun = await spawnThread(user, row.id, {
+    relation: 'side',
+    fromMessageId: input.fromMessageId ?? null,
+    question: text.data,
+  })
+  if (!sideRun) throw new ActionFailureError('threadCannotContinue')
+  await appendThreadSystemEvent(targetRunId, user.id, {
+    kind: 'side_note',
+    question: text.data,
+    sideRunId: String(sideRun.id),
+    status: 'pending',
+  })
+  return { stored: true, sideRunId: String(sideRun.id) }
+}
+
+/** #2941 item 4: context stats consistent with the summary read (same
+ * conversationUsage module). */
+export async function getThreadContextStats(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const chain = await readRunChain(pool, user.id, row.id)
+  return { usage: await readContextUsage(chain?.attempts.map(a => a.runId) ?? [row.id], chain?.rootRunId ?? row.id, chain?.latestRunId ?? row.id) }
+}
+
+/**
+ * Real per-harness `/compact` (#3333 Bug 2):
+ * - Claude Code: raw `/compact [instructions]` user turn (no JSON wrapper, no `client_composed`).
+ * - Codex: app-server JSON-RPC `thread/compact/start`.
+ * Active runs receive a `compact` control command; ended runs continue with `followUpControl: { kind: 'compact' }`.
+ */
+export async function compactThread(input: { issueId: string | null; runId: string; instructions?: string }) {
+  const instructions = input.instructions?.trim().slice(0, 4_000) || undefined
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  await assertHumanWritableThread(user.id, row)
+  const display = instructions ? `/compact ${instructions}` : '/compact'
+  const result = await sendThreadMessage(
+    user.id,
+    row.id,
+    display,
+    'user',
+    undefined,
+    undefined,
+    undefined,
+    { kind: 'compact', ...(instructions ? { instructions } : {}) },
+  )
+  return { requested: true, runId: result.runId, continued: result.continued }
+}
+
+/** Runtime-reported + host-owned `/` commands for this coding thread (#3333). */
+export async function getThreadCommands(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { readThreadAvailableCommands } = await import('@/lib/thread-commands')
+  const result = await readThreadAvailableCommands(pool, user.id, row.id)
+  if (!result) throw new ActionFailureError('runNotFound')
+  return result
+}
+
+/** Machine size options and the thread's current preferred machine size for `/machine` (#3333). */
+export async function getThreadMachineOptions(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  const { DEFAULT_MACHINE_SIZE, selectableMachineSizeOptions, isMachineSize } = await import('@/lib/cloud-computer/machine-pricing')
+  const chain = await readRunChain(pool, user.id, row.id)
+  const rootId = chain?.rootRunId ?? row.id
+  const latestId = chain?.latestRunId ?? row.id
+  const { rows } = await pool.query<{ id: string; preferred: string | null }>(
+    `SELECT id, "agentDefinition"->>'preferredMachineSize' AS preferred FROM agent_runs WHERE id = ANY($1::uuid[]) AND "userId"=$2`,
+    [[...new Set([latestId, rootId])], user.id],
+  )
+  const latestPref = rows.find(r => r.id === latestId)?.preferred
+  const rootPref = rows.find(r => r.id === rootId)?.preferred
+  const chosen = latestPref ?? rootPref
+  const current = chosen && isMachineSize(chosen) ? chosen : DEFAULT_MACHINE_SIZE
+  return {
+    current,
+    options: selectableMachineSizeOptions(),
+  }
+}
+
+/** Set the preferred machine size for this thread's next run via `/machine` (#3333). */
+export async function setThreadMachineSize(input: { issueId: string | null; runId: string; machineSize: string }) {
+  const { SELECTABLE_MACHINE_SIZES } = await import('@/lib/cloud-computer/machine-pricing')
+  if (!(SELECTABLE_MACHINE_SIZES as readonly string[]).includes(input.machineSize)) {
+    throw new ActionFailureError('validationGeneric')
+  }
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id) throw new ActionFailureError('runNotFound')
+  await assertHumanWritableThread(user.id, row)
+  const chain = await readRunChain(pool, user.id, row.id)
+  const rootId = chain?.rootRunId ?? row.id
+  const latestId = chain?.latestRunId ?? row.id
+  const targetIds = [...new Set([rootId, latestId])]
+  await pool.query(
+    `UPDATE agent_runs SET "agentDefinition" = jsonb_set(coalesce("agentDefinition", '{}'::jsonb), '{preferredMachineSize}', to_jsonb($2::text), true), "updatedAt"=now()
+     WHERE id = ANY($1::uuid[]) AND "userId"=$3`,
+    [targetIds, input.machineSize, user.id],
+  )
+  const { runChanged } = await import('@/lib/live/panels')
+  await runChanged(pool, rootId)
+  if (latestId !== rootId) await runChanged(pool, latestId)
+  return { machineSize: input.machineSize }
+}
+
+/** #2941 item 5: thread-scoped env vars — names only, values never read back. */
+export async function listThreadEnvVars(input: { issueId: string | null; runId: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
+  const { rows } = await pool.query<{ id: string; name: string; note: string; updatedAt: Date }>(
+    `SELECT id,name,note,"updatedAt" FROM workspace_secrets WHERE "workspaceId"=$1 AND "scopeType"='thread' AND "scopeRef"=$2 ORDER BY name`,
+    [row.workspaceId, scopeRef])
+  return { env: rows.map(r => ({ id: r.id, name: r.name, note: r.note, updatedAt: r.updatedAt })) }
+}
+export async function setThreadEnvVar(input: { issueId: string | null; runId: string; name: string; value: string }) {
+  const name = z.string().trim().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).max(256).safeParse(input.name)
+  const value = z.string().min(1).max(8192).safeParse(input.value)
+  if (!name.success || !value.success) throw new ActionFailureError('validationGeneric')
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
+  const { setThreadScopeSecret } = await import('@/lib/secrets/thread-scope')
+  return { env: await setThreadScopeSecret(user.id, row.workspaceId, scopeRef, { name: name.data, value: value.data }) }
+}
+export async function deleteThreadEnvVar(input: { issueId: string | null; runId: string; name: string }) {
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { readRunChain } = await import('@/lib/run-chain')
+  const scopeRef = (await readRunChain(pool, user.id, row.id))?.rootRunId ?? row.id
+  const { deleteThreadScopeSecret } = await import('@/lib/secrets/thread-scope')
+  await deleteThreadScopeSecret(user.id, row.workspaceId, scopeRef, input.name)
+  return { deleted: true }
+}
+
+/** #2941 item 6: @-mentioning a bot in a thread dispatches the note to that
+ * bot's own thread — a coordinator event in its inbox (same shape sendToBot
+ * uses for interop peers) plus the wake that starts its turn. */
+export async function mentionThreadBot(input: { issueId: string | null; runId: string; botId: string; text: string }) {
+  const text = z.string().trim().min(1).max(10_000).safeParse(input.text)
+  const botId = z.uuid().safeParse(input.botId)
+  if (!text.success || !botId.success) throw new ActionFailureError('validationGeneric')
+  const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
+  if (row.userId !== user.id || !row.workspaceId) throw new ActionFailureError('runNotFound')
+  const { rows: [bot] } = await pool.query<{ id: string; ownerId: string }>(
+    `SELECT id,"ownerId" FROM bots WHERE id=$1 AND "workspaceId"=$2`, [botId.data, row.workspaceId])
+  if (!bot) throw new ActionFailureError('botNotFound')
+  // A mention starts the bot's turn; require canSteer on the bot, as sendToBot does.
+  const { resourceActionAllowed } = await import('@/lib/resource-access/store')
+  if (!await resourceActionAllowed(db, user.id, { kind: 'bot', id: bot.id, workspaceId: row.workspaceId }, 'canSteer'))
+    throw new ActionFailureError('botNotFound')
+  const { rows: [inserted] } = await pool.query<{ id: string }>(
+    `INSERT INTO coordinator_events (id,"userId","botId",kind,"dedupeKey",payload,tier)
+     VALUES ($1,$2,$3,'run_report',$4,$5,'result') ON CONFLICT ("dedupeKey") DO NOTHING RETURNING id`,
+    [crypto.randomUUID(), bot.ownerId, bot.id, `mention:${user.id}:${bot.id}:${row.id}:${crypto.randomUUID()}`,
+     JSON.stringify({ text: text.data, source: 'peer', from: { kind: 'user', id: user.id }, threadRunId: row.id })])
+  if (inserted) {
+    const { wakeCoordinator } = await import('@/lib/coordinator/wake')
+    await wakeCoordinator(bot.ownerId)
+  }
+  return { dispatched: true, eventId: inserted?.id ?? null }
+}
+
+/** A typed reference the sender cannot read (deleted, another workspace, no access) is refused before it reaches the thread (#2941). */
+async function refuseUnavailableReferences(userId: string, runId: string, text: string) {
+  const { messageReferences } = await import('@/lib/composer-references')
+  if (!messageReferences(text).length) return
+  const { rows: [run] } = await pool.query<{ workspaceId: string | null }>('SELECT "workspaceId" FROM agent_runs WHERE id=$1 AND "userId"=$2', [runId, userId])
+  if (!run?.workspaceId) throw new ActionFailureError('runNotFound')
+  const { unavailableReferences } = await import('@/lib/message-references')
+  if ((await unavailableReferences({ userId, workspaceId: run.workspaceId }, text)).length) throw new ActionFailureError('referenceBroken')
 }
 
 /**
@@ -749,7 +1174,17 @@ export async function sendIssueThreadMessage(input: { issueId: string | null; ru
  * dispatch with no machine or model) returned as its code, so the thread says
  * why instead of 「发送失败」. Other failures still throw.
  */
-export async function sendIssueThreadReply(input: { issueId: string | null; runId: string; text: string; requestId?: string; modelChoice?: ThreadModelChoice; delivery?: import('@/lib/thread-delivery').ThreadDeliveryMode; expectedOwnerId?: string; expectedWorkspaceId?: string; retryOriginalSession?: true; questionWakeGeneration?: string }): Promise<ActionResult<{ sent: true; runId: string; continued: boolean }>> {
+export async function sendIssueThreadReply(input: Parameters<typeof sendIssueThreadMessage>[0]): Promise<ActionResult<{
+  sent: true
+  runId: string
+  continued: boolean
+  blocked?: {
+    command: string
+    originalText: string
+    validCommands: string[]
+    reason: 'dangerous_passthrough' | 'terminal_only' | 'host_owned'
+  }
+}>> {
   return runAction(async () => { const result=await sendIssueThreadMessage(input); return { sent: true as const,...result } })
 }
 
@@ -760,6 +1195,7 @@ export async function createThreadReplyVersion(input: { issueId: string | null; 
     if (!desktopHumanSessionId() && (requestHeaders.has('authorization') || !requestHeaders.get('cookie'))) throw new ActionFailureError('authRequired')
     const session = await auth.api.getSession({headers:requestHeaders,query:{disableCookieCache:true}})
     if (!session?.session?.id || session.user.id !== user.id || row.userId !== user.id) throw new ActionFailureError('runNotFound')
+    await assertHumanWritableThread(user.id, row)
     return (await import('@/lib/thread-reply-versions')).createReplyVersion(pool,user.id,row.id,input.change)
   })
 }
@@ -770,16 +1206,22 @@ export async function getThreadReplyVersions(issueId:string|null,runId:string) {
   return (await import('@/lib/thread-reply-versions')).readReplyVersions(pool,user.id,row.id)
 }
 
-export async function changeQueuedThreadReply(input: { issueId: string | null; runId: string; messageId: string; action: 'cancel' | 'sendNow' }) {
+export async function changeQueuedThreadReply(input: { issueId: string | null; runId: string; messageId: string; action: 'cancel' | 'sendNow' | 'edit'; text?: string }) {
   return runAction(async () => {
-    if (!z.uuid().safeParse(input.messageId).success || !['cancel','sendNow'].includes(input.action)) throw new ActionFailureError('validationGeneric')
+    if (!z.uuid().safeParse(input.messageId).success || !['cancel','sendNow','edit'].includes(input.action)
+        || (input.action === 'edit' && !z.string().min(1).max(10_000).safeParse(input.text).success)) throw new ActionFailureError('validationGeneric')
     const { row, user } = await readableThread(input.issueId, input.runId, threadColumns)
     const requestHeaders = await headers()
     if (!desktopHumanSessionId() && (requestHeaders.has('authorization') || !requestHeaders.get('cookie'))) throw new ActionFailureError('authRequired')
     const session = await auth.api.getSession({ headers: requestHeaders, query: { disableCookieCache: true } })
     if (!session?.session?.id || session.user.id !== user.id || row.userId !== user.id) throw new ActionFailureError('runNotFound')
-    const { cancelQueuedThreadReply, deliverQueuedThreadReply } = await import('@/lib/thread-delivery-queue')
+    const { cancelQueuedThreadReply, deliverQueuedThreadReply, editQueuedThreadReply } = await import('@/lib/thread-delivery-queue')
     if (input.action === 'cancel') return { status: await cancelQueuedThreadReply(pool, user.id, row.id, input.messageId) }
+    if (input.action === 'edit') {
+      const text = typeof input.text === 'string' ? input.text : ''
+      if (!text.trim() || text.length > 10000) return { status: 'invalid' as const }
+      return { status: await editQueuedThreadReply(pool, user.id, row.id, input.messageId, text) }
+    }
     return { status: await deliverQueuedThreadReply(pool, user.id, row.id, input.messageId) ? 'sent' as const : 'tooLate' as const }
   })
 }
@@ -798,6 +1240,12 @@ export async function getThreadContinuationModels(issueId: string, runId: string
  * a thread is one run, named for its work, never for its bot). Null when the
  * run is not this person's or works on no task.
  */
+/** A run's sub-agent cards (#2939): the parent's children with name, mark, brief and live state. */
+export async function listSubagentRuns(runId: string) {
+  const reader = await getWorkspaceReader()
+  return (await import('@/lib/subagent-runs')).listSubagentRuns(reader, runId)
+}
+
 export async function getThreadName(runId: string): Promise<string | null> {
   const reader = await getWorkspaceReader()
   const parsed = z.uuid().safeParse(runId)
@@ -806,6 +1254,369 @@ export async function getThreadName(runId: string): Promise<string | null> {
   if (source?.kind !== 'run' || !source.issue) return null
   const key = source.issue.identifier ?? (source.issue.number === null ? null : `#${source.issue.number}`)
   return key ? `${key} ${source.issue.title}` : source.issue.title
+}
+
+
+
+
+/** #2940 items 1/4: review sessions minted on the thread's own machine —
+ * terminal (item 1, several per machine via the named-session key) and the
+ * user-facing preview browser (item 4, short-lived ticket through the same
+ * gateway). Task-scoped authority: only a thread bound to a task exposes a
+ * machine review capability at all. */
+async function threadSessionAuthority(issueId: string | null, runId: string) {
+  const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+  if (row.userId !== user.id || !issueId) return null
+  const [{ getApiSession }, { workspacePool }, { resolveTaskReviewAuthority }] = await Promise.all([
+    import('@/lib/api-auth'), import('@/lib/workspace-db'), import('@/lib/coding-workspace/review-authority')])
+  const session = await getApiSession({ headers: await headers(), query: { disableCookieCache: true, disableRefresh: true } })
+  if (!session) throw new ActionFailureError('authRequired')
+  // Fence every authority resolution to THIS thread's run — the resolver
+  // otherwise selects the task's newest run and a control could reach a
+  // different thread's machine (review_binding_changed denies instead).
+  return { session, workspacePool, resolve: resolveTaskReviewAuthority, runId: row.id }
+}
+
+export async function listThreadReviewSessions(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/review-sessions', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId }, async (authority, client) => {
+      const { rows } = await client.query<{ id: string; kind: string; name: string; expiresAt: Date; createdAt: Date }>(
+        `SELECT id,kind,name,"expiresAt","createdAt" FROM coding_review_sessions
+          WHERE "runId"=$1 AND "ownerId"=$2 AND "workspaceId"=$3 AND "revokedAt" IS NULL AND "expiresAt">clock_timestamp()
+          ORDER BY kind,name`, [authority.runId, authority.ownerId, authority.workspaceId])
+      return rows.map(r => ({ id: r.id, kind: r.kind, name: r.name, expiresAt: r.expiresAt.toISOString(), createdAt: r.createdAt.toISOString() }))
+    })
+  })
+}
+
+export async function openThreadTerminal(issueId: string | null, runId: string, input?: { name?: string }) {
+  return withDatabaseOperation('/actions/threads/terminal/open', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    return ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId }, async (authority, client) => {
+      if (authority.machineKind !== 'cloud') throw new ActionFailureError('runNotFound')
+      const { beginReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+      const lease = await beginReviewSession(authority, { kind: 'terminal', name: input?.name ?? '' }, client)
+      return { id: lease.id, name: input?.name ?? '', expiresAt: lease.expiresAt }
+    })
+  })
+}
+
+export async function closeThreadTerminal(issueId: string | null, runId: string, input: { id: string; name?: string }) {
+  return withDatabaseOperation('/actions/threads/terminal/close', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    // Confirm the lease inside the authority transaction, then release the
+    // SQL locks before the provider close — the HTTP close handler's order.
+    const authority = await ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId },
+      async (current, client) => {
+        const { readReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+        const lease = await readReviewSession(current, { kind: 'terminal', id: input.id, name: input.name ?? '' }, client)
+        if (!lease) return null
+        return current
+      })
+    if (!authority) return { closed: false }
+    const { revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const result = await revokeReviewSession(authority, { kind: 'terminal', id: input.id })
+    return { closed: !result.pending }
+  })
+}
+
+export async function openThreadBrowser(issueId: string | null, runId: string, input?: { port?: number }) {
+  return withDatabaseOperation('/actions/threads/browser/open', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    const session = ctx.session
+    const { resolveTaskReviewAuthority } = await import('@/lib/coding-workspace/review-authority')
+    const { beginReviewSession, readReviewSession, revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const { resumeReviewMachine } = await import('@/lib/coding-workspace/review-machine')
+    const { prepareRunPreview, issueRunPreview } = await import('@/lib/coding-workspace/preview/runtime')
+    const { isPreviewPort } = await import('@/lib/coding-workspace/preview/port')
+    const port = input?.port
+    if (port !== undefined && !isPreviewPort(port)) throw new ActionFailureError('runNotFound')
+    const parentOrigin = `https://${(await headers()).get('host')}`
+    const signal = AbortSignal.timeout(50_000)
+    let authority = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, { runId: ctx.runId })
+    const fence = () => ({ runId: authority.runId, bindingId: authority.bindingId })
+    const lease = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+      async (current, client) => { authority = current; return beginReviewSession(current, { kind: 'preview' }, client) })
+    try {
+      await resumeReviewMachine(authority, lease, signal)
+      const result = await prepareRunPreview(authority, { ...(port !== undefined ? { port } : {}), expiresAt: lease.expiresAt, ...(authority.sponsoredPlacement ? { lease } : {}) })
+      if (!result.running) {
+        await revokeReviewSession(authority, { kind: 'preview', id: lease.id })
+        return { running: false as const }
+      }
+      const confirmed = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+        async (current, client) => { authority = current; return readReviewSession(current, { kind: 'preview', id: lease.id }, client) })
+      if (!confirmed || confirmed.id !== lease.id) throw new ActionFailureError('runNotFound')
+      const preview = await issueRunPreview(result, parentOrigin, { id: confirmed.id,
+        expiresAt: new Date(Math.min(Date.parse(confirmed.expiresAt), Date.parse(result.expiresAt))).toISOString() })
+      const still = await resolveTaskReviewAuthority(pool, ctx.workspacePool, session, issueId!, fence(),
+        async (current, client) => readReviewSession(current, { kind: 'preview', id: lease.id }, client))
+      if (!still) throw new ActionFailureError('runNotFound')
+      return { id: lease.id, url: preview.url, expiresAt: lease.expiresAt }
+    } catch (cause) {
+      try { await revokeReviewSession(authority, { kind: 'preview', id: lease.id }) } catch { /* best effort */ }
+      throw cause
+    }
+  })
+}
+
+export async function closeThreadBrowser(issueId: string | null, runId: string, input: { id: string }) {
+  return withDatabaseOperation('/actions/threads/browser/close', async () => {
+    const ctx = await threadSessionAuthority(issueId, runId)
+    if (!ctx) return null
+    const authority = await ctx.resolve(pool, ctx.workspacePool, ctx.session, issueId!, { runId: ctx.runId },
+      async (current, client) => {
+        const { readReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+        const lease = await readReviewSession(current, { kind: 'preview', id: input.id }, client)
+        if (!lease) return null
+        return current
+      })
+    if (!authority) return { closed: false }
+    const { revokeReviewSession } = await import('@/lib/coding-workspace/review-sessions')
+    const result = await revokeReviewSession(authority, { kind: 'preview', id: input.id })
+    return { closed: !result.pending }
+  })
+}
+
+/** #2940 item 2: uploads on the thread's chain, owner only. */
+export async function listThreadUploads(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/uploads', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-workspace')).listThreadUploads(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 2: a fresh signed download URL for one of the thread's uploads. */
+export async function getThreadUploadDownloadUrl(issueId: string | null, runId: string, fileId: string) {
+  return withDatabaseOperation('/actions/threads/uploads/download', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-workspace')).threadUploadDownloadUrl(pool, user.id, runIds, fileId)
+  })
+}
+
+/** #2940 item 2: the files this thread changed, from the latest
+ * coding-workspace diff snapshot per run. */
+export async function listThreadChangedFiles(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/changed-files', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-workspace')).listThreadChangedFiles(pool, user.id, row.workspaceId ?? null, runIds)
+  })
+}
+
+/** #2940 item 3: the thread's machine — spec identity and liveness metrics. */
+export async function getThreadMachineDetail(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/machine-detail', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).getThreadMachineDetail(pool, user.id, row.workspaceId ?? null, row.id)
+  })
+}
+
+/** #2940 item 3: re-run setup/maintenance on the thread's machine — the
+ * refresh_runtime the machine route already serves. */
+export async function rerunThreadMachineSetup(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/machine-setup', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).rerunThreadMachineSetup(pool, user.id, row.workspaceId ?? null, row.id)
+  })
+}
+
+/** #2926 composer machine menu: Sleep machine / Wake machine — the same
+ * pause|resume the machine route serves, through threadMachineAction. */
+export async function pauseOrResumeThreadMachine(issueId: string | null, runId: string, action: 'pause' | 'resume') {
+  return withDatabaseOperation('/actions/threads/machine-state', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const { threadMachineAction } = await import('@/lib/cloud-computer/thread-machines')
+    return threadMachineAction(pool, { userId: user.id, workspaceId: row.workspaceId ?? '' } as never, row.id, action)
+  })
+}
+
+/** #2926 composer machine menu: the Keep awake switch, persisted on the
+ * machine row for the lifecycle's idle-sleep decision. */
+export async function setThreadMachineKeepAwake(issueId: string | null, runId: string, keepAwake: boolean) {
+  return withDatabaseOperation('/actions/threads/machine-keep-awake', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-workspace')).setThreadMachineKeepAwake(pool, user.id, row.workspaceId ?? null, row.id, keepAwake)
+  })
+}
+
+/** #2926 composer machine menu: Move to cloud / a device — the move route's
+ * own handler, as a server action for the composer. */
+export async function moveThreadToTarget(issueId: string | null, runId: string, target: { deviceId: string | 'cloud' }) {
+  return withDatabaseOperation('/actions/threads/move', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    return (await import('@/lib/thread-lifecycle')).moveThread(user, row.id, target)
+  })
+}
+
+/** #2926 usage-limit card: try every quota-paused thread again with its own
+ * credential — per-run failures are skipped, like the bulk credits switch. */
+export async function retryAllQuotaPausedRuns(): Promise<{ runId: string; retried: boolean }[]> {
+  const userId = await getUserId()
+  const { pausedQuotaRuns, retryQuotaPausedRun } = await import('@/lib/run-quota')
+  const results: { runId: string; retried: boolean }[] = []
+  for (const runId of await pausedQuotaRuns(userId)) {
+    try { await retryQuotaPausedRun(userId, runId); results.push({ runId, retried: true }) }
+    catch { results.push({ runId, retried: false }) }
+  }
+  return results
+}
+
+/** #2940 item 5: the pull requests a thread's chain published, owner only —
+ * the publication receipt is the requester's own record, like the run-location
+ * icon getThreadMachine serves. */
+export async function listThreadPulls(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/pulls', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    const pulls = await import('@/lib/thread-pulls')
+    await pulls.drainThreadPullMergeIntents(pool, user.id, runIds)
+    return pulls.listThreadPulls(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 5: arm or clear "merge when ready" on a pull this thread
+ * published. The intent never merges by itself — a read or poll drains it
+ * through mergePullRequest's own gates, as the person with their token. */
+export async function setThreadPullMergeWhenReady(issueId: string | null, runId: string, input: { repo: string; number: number; headSha: string; enabled: boolean; confirmFailedChecks?: boolean }) {
+  return withDatabaseOperation('/actions/threads/pulls/merge-intent', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const { rows: [meta] } = await pool.query<{ issueId: string | null; workspaceId: string | null }>('SELECT "issueId","workspaceId" FROM agent_runs WHERE id=$1', [row.id])
+    const pulls = await import('@/lib/thread-pulls')
+    const state = await pulls.setThreadPullMergeIntent(pool, user.id, meta?.workspaceId ?? null, meta?.issueId ?? null, row.id, input)
+    let outcome: { outcome: string; code: string | null } | null = null
+    if (state === 'armed') {
+      const chain = await readRunChain(pool, row.userId, row.id)
+      const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+      // The first drain's verdict for this pull (merged/refused/still armed)
+      // reaches the caller so the tab can say what actually happened. A
+      // continuation can re-publish the same pull: the drain walks intents
+      // oldest-first, so the freshest verdict is the last matching entry.
+      outcome = (await pulls.drainThreadPullMergeIntents(pool, user.id, runIds))
+        .findLast(entry => entry.repo === input.repo && entry.number === input.number) ?? null
+    }
+    return { state, outcome }
+  })
+}
+
+/** #2940 item 5: one poll drains every armed merge intent on the thread's
+ * chain — the "when ready" tick. Still-blocked pulls stay armed. */
+export async function syncThreadPullMerges(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/pulls/merge-sync', async () => {
+    const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+    if (row.userId !== user.id) return null
+    const chain = await readRunChain(pool, row.userId, row.id)
+    const runIds = chain ? chain.attempts.map(attempt => attempt.runId) : [row.id]
+    return (await import('@/lib/thread-pulls')).drainThreadPullMergeIntents(pool, user.id, runIds)
+  })
+}
+
+/** #2940 item 6: the review actor for this session — the same shape the git
+ * HTTP routes build, so the thread adapter reaches the existing git service
+ * unchanged rather than re-implementing it. */
+async function threadReviewActor() {
+  const { getApiSession } = await import('@/lib/api-auth')
+  const session = await getApiSession({ headers: await headers(), query: { disableCookieCache: true } })
+  if (!session?.user) throw new ActionFailureError('authRequired')
+  const context = await loadWorkspaceContext(undefined, session.user)
+  return { userId: session.user.id, workspaceId: context.workspace.id, credential: session.tokenId
+    ? { kind: 'pat' as const, id: session.tokenId }
+    : { kind: 'session' as const, id: session.session.id } }
+}
+
+async function threadGitScope(issueId: string | null, runId: string) {
+  const { row, user } = await readableThread(issueId, runId, threadIdentityColumns)
+  if (row.userId !== user.id) return null
+  const { rows: [meta] } = await pool.query<{ deviceRepoId: string | null }>('SELECT "deviceRepoId" FROM agent_runs WHERE id=$1', [row.id])
+  if (!meta?.deviceRepoId) return null
+  return { actor: await threadReviewActor(), runId: row.id, repoId: meta.deviceRepoId }
+}
+
+/** #2940 item 6: git status adapted to the thread — resolves the run's repo
+ * itself and delegates to lib/coding-workspace/git unchanged. */
+export async function getThreadGitStatus(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-status', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { getRunGitStatus } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await getRunGitStatus({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId)).value
+  })
+}
+
+/** #2940 item 6: git history adapted to the thread, paged like the route. */
+export async function getThreadGitHistory(issueId: string | null, runId: string, input?: { cursor?: string; limit?: number }) {
+  return withDatabaseOperation('/actions/threads/git-history', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunGitHistory } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunGitHistory({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId,
+      { ...(input?.cursor ? { cursor: input.cursor } : {}), limit: input?.limit ?? 20 })).value
+  })
+}
+
+/** #2929: the thread's turns as diff boundaries — one entry per run-chain
+ * attempt, each carrying the base/head its checkpoint review retained. */
+export async function getThreadGitTurns(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-turns', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunGitTurns } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunGitTurns({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId))
+  })
+}
+
+/** #2929: one turn's diff — a finished attempt reads its own retained
+ * checkpoint snapshot (`source: 'checkpoint'`, which carries the captured tree
+ * including uncommitted edits and works frozen); the still-running attempt
+ * reads `working`. `turnRunId` must be an attempt of the thread's chain. */
+export async function getThreadGitTurnDiff(issueId: string | null, runId: string, input: { turnRunId?: string; live?: boolean; cursor?: string; limit?: number }) {
+  return withDatabaseOperation('/actions/threads/git-turn-diff', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { diffPage } = await import('@/lib/coding-workspace/diff/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    const deps = { database: pool, membership: workspacePool }
+    if (input.live || !input.turnRunId || input.turnRunId === scope.runId)
+      return diffPage(deps, scope.actor, scope.runId, scope.repoId,
+        { selection: { source: 'working' }, ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
+    return diffPage(deps, scope.actor, input.turnRunId, scope.repoId,
+      { selection: { source: 'checkpoint' }, ...(input.cursor ? { cursor: input.cursor } : {}), limit: input.limit })
+  })
+}
+
+/** #2940 item 3/6: the run's checkpoint/snapshot list, adapted to the thread. */
+export async function listThreadGitCheckpoints(issueId: string | null, runId: string) {
+  return withDatabaseOperation('/actions/threads/git-checkpoints', async () => {
+    const scope = await threadGitScope(issueId, runId)
+    if (!scope) return null
+    const { listRunCheckpoints } = await import('@/lib/coding-workspace/git/service')
+    const { workspacePool } = await import('@/lib/workspace-db')
+    return (await listRunCheckpoints({ database: pool, membership: workspacePool }, scope.actor, scope.runId, scope.repoId))
+  })
 }
 
 /** Asks the daemon to stop the run; it repeats until the run has ended. */
@@ -821,6 +1632,17 @@ export async function resumeQuotaPausedRunOnApiKey(runId: string): Promise<{ run
 /** A run paused because its subscription's quota ran out is tried again with its original credential. Owner only; a repeat returns the same run. */
 export async function retryQuotaPausedRun(runId: string): Promise<{ runId: string }> {
   return withOwnWorkspaceRun(runId, async userId => (await import('@/lib/run-quota')).retryQuotaPausedRun(userId, runId))
+}
+
+/** A quota-paused run switches to a Mikka 额度 model (a LiteLLM catalogue id). Owner only. */
+export async function resumeQuotaPausedRunOnCredits(runId: string, model: string): Promise<{ runId: string }> {
+  return withOwnWorkspaceRun(runId, async userId => (await import('@/lib/run-quota')).resumeQuotaPausedRunOnCredits(userId, runId, model))
+}
+
+/** #2938 (5): every quota-paused thread of the person moves to Mikka 额度 at once. */
+export async function resumeAllQuotaPausedOnCredits(model: string): Promise<{ runId: string; continued: string | null }[]> {
+  const userId = await getUserId()
+  return (await import('@/lib/run-quota')).resumeAllQuotaPausedOnCredits(userId, model)
 }
 
 /** Settings #504 queues maintenance through the same owner-scoped backend as HTTP. */

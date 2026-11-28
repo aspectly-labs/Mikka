@@ -5,17 +5,19 @@ import { POLICY_SNAPSHOT_TTL_MS, policyDistributionContextSchema, policyIssuer, 
 import { policySnapshotHash } from '@mikka/protocol/node-policy-snapshot'
 import type { RunPolicy } from '@mikka/protocol/agent-policy'
 import type { readCliRunPolicy } from './policy-store'
+import { readEnv } from '@/lib/env/server'
 
 export function requestPolicyIssuer(request: Request) {
   const url = new URL(request.url), index = url.pathname.indexOf('/v1/')
   if (index < 0) throw Error('policyIssuerInvalid')
-  // Next strips its basePath before adapting the route Request. The public
-  // deployment config remains authoritative even when request.url omits it.
+  // The route can receive either the transport's original URL (base path
+  // intact) or a facade whose path was stripped. The configured deployment
+  // base path is authoritative for both.
   return policyIssuer(`${url.origin}${BASE_PATH || url.pathname.slice(0,index)}`)
 }
 /** Domain-separated signing material from the existing server secret; never persisted or sent. */
 function signingKey(issuer: string) {
-  const secret = process.env.BETTER_AUTH_SECRET
+  const secret = readEnv('BETTER_AUTH_SECRET')
   if (!secret || Buffer.byteLength(secret) < 32) throw Error('policySigningUnavailable')
   const seed = hkdfSync('sha256',secret,'mikka-cli-policy-snapshot-v1',policyIssuer(issuer),32)
   const privateKey = createPrivateKey({ key: Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),Buffer.from(seed)]), format:'der',type:'pkcs8' })

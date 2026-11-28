@@ -4,6 +4,7 @@ import { PULL_REQUEST_REFRESH_ACTIONS, reviewRefreshEvent } from './publication-
 import { noteLogOutcome } from '@/lib/request-log'
 import { reviewCheckEvent } from './review-checks'
 import { completedCiSuite } from './ci-suite-event'
+import { pullWakeEvent } from './pull-request-wake-event'
 import { createHash } from 'node:crypto'
 
 export const GITHUB_WEBHOOK_MAX_BYTES = 1_000_000
@@ -38,8 +39,8 @@ export async function dispatchVerifiedGitHubWebhook(event: string | null, rawBod
   // delivery, so a failure here answers 503 and the redelivery adds no second run.
   const { githubAutomationEvents } = await import('@/lib/schedules/github-events')
   const automationEvents = githubAutomationEvents(event, payload).length > 0
+  const deliveryKey = options.deliveryId && /^[A-Za-z0-9-]{1,100}$/.test(options.deliveryId) ? `github:${options.deliveryId}` : `github-body:${createHash('sha256').update(event).update('\0').update(rawBody).digest('hex')}`
   if (automationEvents) {
-    const deliveryKey = options.deliveryId && /^[A-Za-z0-9-]{1,100}$/.test(options.deliveryId) ? `github:${options.deliveryId}` : `github-body:${createHash('sha256').update(event).update('\0').update(rawBody).digest('hex')}`
     try { await (await import('@/lib/schedules/runtime')).fireGitHubAutomations(deliveryKey, event, payload) }
     catch (error) {
       console.error(JSON.stringify({ event: 'github_automation_fire_failed', causeName: error instanceof Error ? error.name : 'unknown' }))
@@ -53,13 +54,23 @@ export async function dispatchVerifiedGitHubWebhook(event: string | null, rawBod
   const pr = payload.pull_request as { html_url?: unknown; merged?: unknown; merge_commit_sha?: unknown; head?: { sha?: unknown } } | undefined
   const merged = event === 'pull_request' && payload.action === 'closed' && pr?.merged === true && typeof pr.html_url === 'string'
     ? { url: pr.html_url, headSha: typeof pr.head?.sha === 'string' ? pr.head.sha : null, mergeCommitSha: typeof pr.merge_commit_sha === 'string' ? pr.merge_commit_sha : null } : null
-  if (!suite && !refresh && !review && !merged && !hasNotifications) { noteLogOutcome(automationEvents ? 'work' : 'ignored'); return new Response(null, { status: automationEvents ? 202 : 204, headers: noStore }) }
+  const wake = pullWakeEvent(event, payload)
+  if (!wake && !suite && !refresh && !review && !merged && !hasNotifications) { noteLogOutcome(automationEvents ? 'work' : 'ignored'); return new Response(null, { status: automationEvents ? 202 : 204, headers: noStore }) }
   // A suite is a durable resume hint. Persist it before acknowledging GitHub:
   // afterJob work is best-effort and cannot be the only owner of this event.
   // Redelivery is safe through the Coordinator event outbox dedupe key.
   if (suite) await (await import('./ci-suite-wake')).wakeLinkedCiSuite(suite)
+  // A synchronize event must update the qualified publication head before checking conflict.
+  if (wake && refresh) await (await import('./publication-webhook')).refreshPublishedPullRequest(event, payload)
+  if (wake && await (await import('./pull-request-wake')).wakePullRequestThreads(wake, deliveryKey)) {
+    // The durable workflow rechecks only the authorized PR and original head.
+    // Start it before acknowledgement so this delivery can be retried if it fails to start.
+    const { start } = await import('workflow/api')
+    const { wakeConflictingPullRequest } = await import('@/workflows/pull-request-wake/workflow')
+    await start(wakeConflictingPullRequest, [wake, deliveryKey])
+  }
   const work = async () => {
-    if (refresh) await (await import('./publication-webhook')).refreshPublishedPullRequest(event, payload)
+    if (refresh && !wake) await (await import('./publication-webhook')).refreshPublishedPullRequest(event, payload)
     if (review) await (await import('./publication-webhook')).invalidatePublishedPullReview(payload)
     if (merged) await (await import('@/lib/factory/server')).factoryMerges.pullRequestMerged(merged)
     if (hasNotifications) {

@@ -1,6 +1,7 @@
 # The Coordinator does screen work on its own desktop and dispatches the rest
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session in the Coordinator prompt
   audit: 「涉及 computer use、要看前端测试过程的，Coordinator 用自己的桌面做；不涉及的，默认派活给 Agent。」
   The coordinator session added on the same day: Mikka 默认 is for Bot chats

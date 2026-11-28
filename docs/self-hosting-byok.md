@@ -35,47 +35,38 @@ S3 配置优先于 R2。配置其中一部分却缺少必要字段时会拒绝�
 
 每条秘密继续使用独立随机 AES-256-GCM 数据密钥。主密钥只包裹数据密钥；owner、credential ID、网站 origin 和用途绑定到 authenticated additional data。密码、会话快照和被包裹的数据密钥使用不同用途，跨用户、跨站点或篡改密文无法解密。不要把此密钥提交进仓库；恢复备份需要原密钥，更换密钥需要先迁移既有记录。
 
-社区版在同一进程调用现有 broker：一次性租约、浏览器页面绑定、权限检查、截图保护和审计保持有效，不需要部署 `services/credential-broker`。云版继续使用独立 broker、AWS KMS 和 Vercel OIDC；即使意外设置本地主密钥，`MIKKA_EDITION=cloud` 也不会改用它。
+社区版在同一进程调用现有 broker：一次性租约、浏览器页面绑定、权限检查、截图保护和审计保持有效，不需要部署 `services/credential-broker`。云版通过 Cloudflare 私有 broker/identity 使用 AWS KMS；即使意外设置本地主密钥，`MIKKA_EDITION=cloud` 也不会改用它。
 
-## 管理员配置的默认模型
+## 必需的 LiteLLM 模型出口
+
+社区版和云版都通过后台 LiteLLM 发出 Mikka 管理的模型请求，包括 Coordinator、标题、Decisions、Planning、转写，以及个人 API Key 的聊天和 Agent 运行。应用不再直连厂商、Vercel AI Gateway、Workers AI 或自部署模型。
 
 | 变量 | 用途 |
 | --- | --- |
-| `MIKKA_DEFAULT_MODEL_BASE_URL` | OpenAI-compatible Chat Completions API 根地址，例如 `https://models.example.com/v1`。 |
-| `MIKKA_DEFAULT_MODEL_API_KEY` | 自己的提供方 API Key。 |
-| `MIKKA_DEFAULT_MODEL_ID` | 提供方实际 model ID，例如 `local-model`。 |
+| `MIKKA_LITELLM_URL` | 受信任 LiteLLM 服务的根地址，例如 Compose 内网的 `http://litellm:4000`；也支持包含 `/v1` 的地址。 |
+| `MIKKA_LITELLM_MASTER_KEY` | 应用调用该 LiteLLM 的服务密钥；与 LiteLLM 的 `LITELLM_MASTER_KEY` 匹配。只放在服务端 secret 配置中，不交给 Agent。 |
 
-三项完整配置后，社区版的「Mikka 默认」、Coordinator、短标题、行动标题和资料提取使用该提供方。请求直接发送到该地址，不增加 Mikka 云服务代理，不扣 Mikka 额度，也不会在失败时自动将内容发送给另一个提供方。禁止跟随 HTTP 重定向。
+两项缺一时，模型请求不可用，没有直连 fallback。模型准入、工作区权限、原有预算预留和用量记录仍由 Mikka 执行。daemon 的 API-key 运行使用本次运行绑定的 Mikka 网关令牌，经后台 LiteLLM；不把用户真实 Key 交给 CLI。
 
-组织配置了模型准入规则时，需允许 `provider: "openai-compatible"`、规范化后的 endpoint、提供方实际 model ID、`servingProviders: ["openai-compatible"]` 和当前用户。每次 SDK 工具步骤前重新检查，修改或撤销规则不会被「Mikka 默认」这个 UI 别名绕过。
+同机运行的 Desktop/daemon 可通过 HTTP loopback 连接本地服务器：`BETTER_AUTH_URL` 必须与连接地址的 origin 完全一致（协议、主机、端口），设备类型必须是本地。服务器只下发 `mkg_` 运行令牌和对应的 Mikka 模型网关地址，不下发厂商 Key。其他 HTTP 地址和云端设备仍需 HTTPS。支持该协议的 daemon 会发送 `x-mikka-model-gateway-loopback: 1`；旧 daemon 收到 `daemonUpgradeRequired`，运行保留在队列中，升级后再领取。
 
-未配置该三项时，可以继续使用自己的 `AI_GATEWAY_API_KEY` 或原有 `ZEROCAT_BASE_URL` / `ZEROCAT_API_KEY` 路径。Coordinator 不再以运行在 Vercel 上作为社区版启用条件。云版继续保留固定 ZeroCat 路由、首 token 超时回退和现有计费。
+在 LiteLLM 中配置 `mikka-default`、`mikka-title`、`mikka-decision` 和 `mikka-planning` 别名。`mikka-title` 映射到 GPT-6 Luna；其他别名的实际模型和上游由部署者配置。Vercel AI Gateway、Neon AI Gateway、Workers AI 或自己的兼容模型都是 LiteLLM 上游；在 LiteLLM 的配置和 secret 环境中设置它们的凭据。参考同版本的 [`deploy/litellm/config.yaml`](../deploy/litellm/config.yaml)。个人 API Key 的模型和端点继续通过「模型与订阅」选择，后端将已授权的来源交给 LiteLLM，失败时不切换到 Mikka 的 Key。
 
-只连接个人 Claude / ChatGPT 订阅，或为 Bot 选择自己的 API Key，也可以聊天，不需要服务器默认模型和云连接。聊天启用、消息唤醒和原有后台重试都检查这个 Bot 的真实选项、工作区权限及当前连接状态。暂停、断开、旧版本绑定或已知耗尽的订阅不会启用聊天；过期的额度读数可提交下一次正式检查，执行前仍会重新验证。明确选择「Mikka 默认」时，不会因管理员未配置它就悄悄改用个人订阅。
+旧 `MIKKA_DEFAULT_MODEL_*`、`ZEROCAT_*`、应用内 Workers AI 配置、`DECISIONS_URL`、`DECISIONS_API_KEY`、`OPENAI_DECISIONS_API_KEY` 和 `DECISION_MODEL` 不再提供独立模型路径。把实际模型、端点和上游凭据迁到 LiteLLM 配置后，再升级应用；只设置旧变量无法启用默认模型。Decisions 使用 LiteLLM 的原生 `/v1/decisions` 协议，别名是 `mikka-decision`。
 
-## Workers AI 默认模型备用路径
-
-由服务端付费的默认模型可使用 Cloudflare Workers AI 作为 ZeroCat 的备用路径。将 `MIKKA_HOSTED_MODEL_FALLBACK` 设为 `cloudflare-workers-ai`，配置对应账户的 `CLOUDFLARE_WORKERS_AI_ACCOUNT_ID` 及已有推理权限的 `CLOUDFLARE_WORKERS_AI_TOKEN`。服务端固定调用该账户的 Workers AI API 和 `@cf/deepseek-ai/deepseek-v4.1-flash-1017`。组织或工作区开启模型准入规则时，需要显式允许此提供商、账户端点和逻辑模型。已有 Gateway 规则不会扩大该权限。
-
-此选项沿用原有的预算预留、首个 token 前的切换和流式结算。每次按供应商实际报告的输入、缓存命中和输出 token 计算用量，Startup Credit 的净额以账户账单为准。配置了 Workers AI 的主机对其他未支持的托管模型会返回准入失败。个人订阅和自行选择的自托管模型继续走各自已有的凭证路径。
-
-## Decisions
-
-| 变量 | 默认值 / 用途 |
-| --- | --- |
-| `DECISION_MODEL` | 默认 `openai/gpt-6-luna-decisions`。 |
-| `DECISIONS_URL` | 默认 `https://ai-gateway.vercel.sh/v1/decisions`。自配服务需实现相同的 Decisions 请求、回答和调用回执协议。 |
-| `DECISIONS_API_KEY` | 自配兼容服务的专用 Bearer Key，也可用于默认 Gateway。其他兼容服务可沿用管理员指定的 `AI_GATEWAY_API_KEY`。 |
-| `OPENAI_DECISIONS_API_KEY` | 原生 OpenAI Decisions 的专用凭证，用于 `https://api.openai.com/v1/decisions`。 |
-| `DECISIONS_BILLING_PROFILE` | 原生端点当前支持 `openai-global-standard`。仅在账户实际使用全球标准价格时配置。 |
-
-默认 Gateway 地址仍支持现有 `AI_GATEWAY_API_KEY` 或 Vercel OIDC。自配地址不会收到 Vercel OIDC 令牌。没有可用凭据时 `decide()` 返回 `null`，保留既有降级行为。
-
-用户发来的消息仍直接投递到所选 Bot，原任务的正式完成结果也沿用原订阅处理，不要求先调用 Decisions。其他需要语义判断的后台事件会保持待处理，不会编造分类或额外要求用户批准。
+官方 Claude Code 和 Codex 订阅的推理、登录、续期和额度查询由独立 CPA Subscription Worker 负责。用户自带 API Key 和 Managed Model 继续使用 LiteLLM。滚动升级时保留 Compose 的内网聊天回调，直到回滚版本也使用独立 CPA 路径。[订阅推理决定](design/decisions/2026-11-27-2304-official-subscription-cpa-egress.md)
 
 ## PostHog 与功能缺省值
 
-`POSTHOG_HOST` 配置完整的 ingestion URL，默认 `https://us.i.posthog.com`。项目 token 仍为 `NEXT_PUBLIC_POSTHOG_KEY`；本地求值使用的 secret 仍为 `POSTHOG_SECRET_KEY`。不设置项目 token 时，不创建客户端、不发送统计。Web 前端的公开 token 和 host 属于前端构建配置；桌面客户端使用连接服务器的功能快照。
+`POSTHOG_HOST` 配置完整的 ingestion URL，默认 `https://us.i.posthog.com`。项目 token 为 `MIKKA_PUBLIC_POSTHOG_KEY`（旧名 `NEXT_PUBLIC_POSTHOG_KEY` 和 `NEXT_PUBLIC_POSTHOG_HOST` 仍可使用，见[改名说明](operations/public-env-rename.md)）；本地求值使用的 secret 仍为 `POSTHOG_SECRET_KEY`。不设置项目 token 时，不创建客户端、不发送统计。Web 前端的公开 token 和 host 属于前端构建配置；桌面客户端使用连接服务器的功能快照。
+
+### 桌面客户端的统计、错误报告和功能 flag
+
+- **功能 flag**：桌面渲染进程的 CSP 只连接 app 自己，不加载 PostHog SDK。它读的 flag（`lib/feature-flags.ts` 的 `CLIENT_FLAG_KEYS`）由所连服务器在 bootstrap 里按同一个用户 id、在服务器配置的同一个 PostHog 项目中求值（`lib/desktop-rpc/features.ts`），再经 Web 同一个 `postHogFlag` 读出。所以自托管服务器的桌面客户端看到的是这台服务器自己 PostHog 项目的值；服务器没配 PostHog 时用上表的缺省值。flag 变化在下一次 bootstrap（启动、换账号或换工作区）生效，不另外轮询。安全和计费判断始终在服务器上做，客户端的值只决定界面显示。
+- **统计和错误报告**：只有官方构建带 PostHog 项目的公开 ingestion key（发布时读取 `MIKKA_PUBLIC_POSTHOG_KEY`，旧名 `NEXT_PUBLIC_POSTHOG_KEY`）。发送地址取构建时的 `POSTHOG_HOST`（旧名 `NEXT_PUBLIC_POSTHOG_HOST`），未设置时为 `https://us.i.posthog.com`，与 Web 的缺省一致；官方发布不设置它，因为 Mikka Cloud 的 PostHog 项目在美国区。社区版和自己构建的桌面客户端没有 key，什么都不发。官方客户端只在当前账号位于内置服务器（Mikka Cloud）时发送；连到自托管服务器的账号不向 Mikka 发送任何事件。
+- **发什么**：由主进程发送，经过与 Web 相同的白名单（`lib/analytics-policy.ts`）：页面浏览（路由去掉 id 和查询串）、Web Vitals、渲染进程错误（`$exception`：错误类名和 app 自己打包代码的栈帧，即函数名、`mikka://app` 下的打包文件和行列号；桌面端把错误信息换成类名，不发送）、渲染/运行错误的类名（`frontend_render_error`、`frontend_runtime_error`），以及桌面自己的 `desktop_api_error`（被拒绝或失败的 API 请求：路由模板、方法、状态码、错误码）、`desktop_main_error`（主进程错误类名，不含信息和堆栈）和 `desktop_process_gone`（子进程退出原因）。每个事件带 `platform=desktop`、版本号和公开仓库、官方 UI 两个提交 SHA。不发送消息、代码、文件内容、路径里的 id、错误信息，也不发送 app 自身代码以外的栈帧。主进程自己的报告每小时最多 200 条，同一种失败 10 分钟内只报一次；共享关闭、自托管或构建没有 key 时，这些报告既不发送也不计数。
+- **关闭**：设置 › 电脑 › 隐私 ›「共享使用情况和错误报告」，默认开；选择保存在本机用户数据目录的 `telemetry.json`（同时保存登录前使用的匿名 id），关闭后统计和错误报告都不再发送，与 Web 的退出开关同时停止统计和错误事件的做法一致。
+- **崩溃转储**：Electron `crashReporter` 需要接收 minidump 的端点，目前没有，所以不启用；渲染进程崩溃只以 `desktop_process_gone` 记录原因。
 
 以下是没有 PostHog 时的社区版默认行为。明确设置的管理员旧环境变量仍优先；连接了 PostHog 后，明确的远程布尔值优先。云版 deployment switch 保持原有远程/旧变量回退顺序。
 
@@ -111,6 +102,7 @@ S3 配置优先于 R2。配置其中一部分却缺少必要字段时会拒绝�
 | `mikka-email-sign-in-off` | `false` | 邮箱登录可用 |
 | `mikka-computer-tab-off` | `false` | 电脑 tab 可用 |
 | `mikka-proactive-profile` / `mikka-proactive-research` | `false` | 不打开实验能力 |
+| `mikka-track-owner-clicks` | `false` | 不上报控件点击（owner-click 分析） |
 | 四个 `mikka-upcoming-*` | `false` | 不显示尚未实现的功能 |
 | 未知 flag | `false` | 不凭未知 key 打开能力 |
 | `mikka-linear-sync` | 关闭 | 保留 Alex 关闭的全局 Linear 同步；连接自己的 Linear 账号是另一条路径 |

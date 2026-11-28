@@ -14,14 +14,20 @@ import { fakeThreadMachines } from './support/thread-machine-fake'
 import { isolateCoordinatorWakes } from './support/coordinator-wake'
 import { addFactoryVisualEvidence } from './helpers/factory-visual-evidence'
 
-mock.module('next-intl/server',{namedExports:{getLocale:async()=> 'en',getTranslations:async()=> (key:string)=> key}})
-mock.module('next/headers',{namedExports:{cookies:async()=>({get:()=>undefined}),headers:async()=>new Headers()}})
+mock.module('@/lib/intl/i18n-server',{namedExports:{getLocale:async()=> 'en',getTranslations:async()=> (key:string)=> key}})
+mock.module('@/lib/server-runtime/headers',{namedExports:{cookies:async()=>({get:()=>undefined}),headers:async()=>new Headers()}})
 let httpOwner: string | null = null
-mock.module(new URL('../lib/api-auth.ts',import.meta.url).href,{namedExports:{auth:{api:{getSession:async()=>httpOwner?{user:{id:httpOwner,email:`${httpOwner}@example.test`,name:"Fixture owner"}}:null}}}})
+mock.module(new URL('../lib/api-auth.ts',import.meta.url).href,{namedExports:{auth:{api:{getSession:async()=>httpOwner?{user:{id:httpOwner,email:`${httpOwner}@example.test`,name:"Fixture owner"}}:null}},apiWorkspaceAllowed:()=>true}})
 
 const harnesses = [{ harness: 'codex', installed: true, subscriptionBroker: true, computerBroker: true }]
 
 test('cloud runs: the bot runtime is created on dispatch, once; the kill switch falls back to the card', { skip: !dbUrl }, async t => {
+  const savedEdition = process.env.MIKKA_EDITION
+  process.env.MIKKA_EDITION = 'community'
+  t.after(() => {
+    if (savedEdition === undefined) delete process.env.MIKKA_EDITION
+    else process.env.MIKKA_EDITION = savedEdition
+  })
   delete process.env.MIKKA_CLOUD_COMPUTER_TASKS
   process.env.MIKKA_BYOS_ENABLED = '1'
   const coordinator = await isolateCoordinatorWakes(t)
@@ -79,7 +85,6 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
     await pool.query('DELETE FROM agent_runs WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM bot_desktops WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM cloud_machines WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
@@ -115,7 +120,6 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
     await pool.query(`INSERT INTO byos_connections (id,"ownerId","workspaceId",provider,state,epoch,"secretName","secretDigest","providerSubject","modelCatalog") VALUES ($1,$2,$3,'codex','connected',1,$5,$4,'synthetic-subject',$6)`, [connection, id, ws.id, 'a'.repeat(64), `synthetic-${connection}`, JSON.stringify({ revision: '1', models: ['gpt-5'] })])
     await pool.query('UPDATE byos_connections SET quota=$2::jsonb WHERE id=$1', [connection, JSON.stringify({ vendor: 'codex', source: 'official', status: 'ok', plan: null, observedAt: new Date().toISOString(), windows: [{ kind: 'five_hour', used: .2, resetsAt: new Date(Date.now() + 3_600_000).toISOString() }] })])
     await pool.query(`INSERT INTO byos_bindings (id,"ownerId","workspaceId","consumerId","connectionId","connectionRevision",route,"modelId") VALUES ($1,$2,$3,'catalogue',$4,1,'codex_cpa','gpt-5')`, [randomUUID(), id, ws.id, connection])
-    await pool.query(`INSERT INTO workspace_subscription_shares ("ownerId","workspaceId") VALUES ($1,$2)`, [id, ws.id])
     if (e2bKey) await pool.query(`INSERT INTO workspace_e2b_keys ("workspaceId",ciphertext,iv,"keyVersion",last4,"createdBy","updatedBy") VALUES ($1,'x','x',1,'abcd',$2,$2)`, [ws.id, id])
     await order.changeOrder(pool, { ownerId: id, workspaceId: ws.id }, { kind: 'location', location: 'cloud' })
     return { id, workspaceId: ws.id, issueId, botId, connection }
@@ -441,6 +445,76 @@ test('cloud runs: the bot runtime is created on dispatch, once; the kill switch 
     assert.equal(queued.status, 'queued')
     assert.equal((await pool.query('SELECT "deviceId" FROM agent_runs WHERE id=$1', [queued.runId])).rows[0].deviceId, server)
     assert.equal(await count('SELECT count(*)::int AS n FROM bot_cloud_runtimes WHERE "botId"=$1', [n.botId]), 0)
+  })
+
+  await t.test('a repository dispatch can select Cloudflare without an E2B key and preserves the billing refusal', async t => {
+    const fixture = await person('cloudflare-without-e2b', false)
+    const keys = ['NODE_ENV', 'MIKKA_FLAG_OVERRIDES', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN'] as const
+    const previous = keys.map(key => process.env[key])
+    t.after(() => keys.forEach((key, index) => {
+      const value = previous[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    Object.assign(process.env, { NODE_ENV: 'test', MIKKA_TASK_MACHINE_BRIDGE_TOKEN: 'synthetic-coordinator-fixture',
+      MIKKA_FLAG_OVERRIDES: JSON.stringify({ 'mikka-task-provider': 'cloudflare' }) })
+    const result = await dispatch(fixture.id, fixture.issueId, fixture.botId) as { error?: string; failedRunId?: string }
+    assert.equal(result.error, 'points_exhausted', JSON.stringify(result))
+    assert.ok(result.failedRunId)
+    const { rows: [run] } = await pool.query(`SELECT status,error,"agentDefinition"->'taskCompute'->>'provider' AS provider
+      FROM agent_runs WHERE id=$1 AND "userId"=$2`, [result.failedRunId, fixture.id])
+    assert.deepEqual(run, { status: 'failed', error: 'points_exhausted', provider: 'cloudflare' })
+  })
+
+  await t.test('legacy Cloudflare billing refusal honors an admitted local recovery grant', async t => {
+    const keys = ['MIKKA_FLAG_OVERRIDES', 'MIKKA_CLOUDFLARE_TASK_WORKSPACES', 'MIKKA_TASK_MACHINE_BRIDGE_TOKEN'] as const
+    const previous = keys.map(key => process.env[key])
+    t.after(() => keys.forEach((key, index) => {
+      const value = previous[index]
+      if (value === undefined) delete process.env[key]
+      else Object.assign(process.env, { [key]: value })
+    }))
+    delete process.env.MIKKA_FLAG_OVERRIDES
+    process.env.MIKKA_TASK_MACHINE_BRIDGE_TOKEN = 'synthetic-legacy-coordinator-fixture'
+    for (const withServer of [false, true]) {
+      const fixture = await person('legacy-cloudflare-billing', withServer, withServer ? 33295 : 33294)
+      const event = randomUUID()
+      await pool.query(`INSERT INTO coordinator_events (id,"userId","botId","issueId",kind,"dedupeKey",payload,"deliveredAt")
+        VALUES ($1,$2,$3,$4,'user_message',$1::uuid::text,'{"text":"Run this repository task."}',now())`,
+      [event, fixture.id, fixture.botId, fixture.issueId])
+      const server = randomUUID()
+      let previousRunId: string | undefined
+      if (withServer) {
+        delete process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES
+        const previous = await steps.dispatchRun(fixture.id, { model: { harness: 'codex', model: 'gpt-5' }, issueId: fixture.issueId,
+          repo: 'octo/repo', sourceEventId: event, readOnly: true }, undefined, fixture.botId) as { runId?: string }
+        assert.ok(previous.runId, JSON.stringify(previous))
+        previousRunId = previous.runId
+        await pool.query(`UPDATE agent_runs SET status='succeeded',"finishedAt"=now() WHERE id=$1`, [previousRunId])
+        await pool.query('DELETE FROM thread_machines WHERE "runId"=$1', [previousRunId])
+        await pool.query(`INSERT INTO devices (id,"ownerId",name,kind,"deviceType",enabled,"lastSeenAt",harnesses,"sessionOpenedAt")
+          VALUES ($1,$2,'Server','local','server',true,now(),$3,now())`, [server, fixture.id, JSON.stringify([
+          { harness: 'codex', installed: true, subscriptionBroker: true, modelSlots: [{ slot: 'gpt-5', model: 'gpt-5', name: 'gpt-5' }] },
+        ])])
+        await pool.query(`INSERT INTO agents (id,"userId","deviceId",harness,name) VALUES ($1,$2,$3,'codex',$4)`,
+          [randomUUID(), fixture.id, server, `codex-${server.slice(0, 8)}`])
+      }
+      process.env.MIKKA_CLOUDFLARE_TASK_WORKSPACES = fixture.workspaceId
+      const result = await steps.dispatchRun(fixture.id, { model: { harness: 'codex' }, issueId: fixture.issueId,
+        repo: 'octo/repo', sourceEventId: event }, undefined, fixture.botId) as { error?: string; failedRunId?: string; runId?: string; fallback?: string }
+      const { rows: [failed] } = await pool.query(`SELECT id,error,"agentDefinition"->>'allowLocalRecovery' AS eligible
+        FROM agent_runs WHERE "userId"=$1 AND status='failed' AND id IS DISTINCT FROM $2::uuid`, [fixture.id, previousRunId ?? null])
+      assert.equal(failed?.eligible, 'true', JSON.stringify(result))
+      assert.equal(failed?.error, 'points_exhausted')
+      if (withServer) {
+        assert.equal(result.fallback, 'cloudUnavailable', JSON.stringify(result))
+        const { rows: [local] } = await pool.query(`SELECT "deviceId", "agentDefinition"->>'model' AS model, "agentDefinition"->>'readOnly' AS "readOnly" FROM agent_runs WHERE id=$1`, [result.runId])
+        assert.deepEqual(local, { deviceId: server, model: 'gpt-5', readOnly: 'true' })
+      } else {
+        assert.equal(result.error, 'points_exhausted', JSON.stringify(result))
+        assert.equal(result.failedRunId, failed.id)
+      }
+    }
   })
 
   await t.test('the Coordinator: its own bot row gets the runtime, once, and never borrows a bot\'s', async () => {

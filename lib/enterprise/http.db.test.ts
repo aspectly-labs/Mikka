@@ -48,8 +48,8 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
   observePoolCommits(pool)
   // Native HTTP uses the production API request adapters, as the mobile DB fixture does.
   const requestContext = await import('../../apps/api/src/context')
-  t.mock.module('next/headers', { namedExports: await import('../../apps/api/compat/headers') })
-  t.mock.module('next-intl/server', { namedExports: await import('../../apps/api/compat/intl') })
+  t.mock.module('@/lib/server-runtime/headers', { namedExports: await import('../../lib/server-runtime/headers') })
+  t.mock.module('@/lib/intl/i18n-server', { namedExports: await import('../../lib/intl/i18n-server') })
   async function withMobileRequest<T>(request: Request, work: () => Promise<T>) {
     const scope = requestContext.createRequestScope(request)
     try { return await requestContext.runRequestScope(scope, work) }
@@ -219,7 +219,8 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
         if (governance[2]) response = await (await import('../../app/api/workspaces/[workspaceId]/governance/usage/route')).GET(request, context)
         else {
           const route = await import('../../app/api/workspaces/[workspaceId]/governance/route')
-          response = request.method === 'GET' ? await route.GET(request, context) : await route.POST(request, context)
+          // Approval templates are gone (ADR 2026-11-27-1615): the route only reads.
+          response = request.method === 'GET' ? await route.GET(request, context) : new Response(null, { status: 405 })
         }
       } else if (organizationIdentity && ['GET', 'POST'].includes(request.method)) {
         response = await withMobileRequest(request, async () => {
@@ -1065,8 +1066,8 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     assert.equal((await session(oidcCookies))?.user.id, userId, 'neither sign-out touches the independent OIDC session')
   })
   await t.test('the 组织 page client adds a second Org admin, who can export audit until revoked, then is refused (#1669)', async adminTest => {
-    const { organizationApi } = await import('../../hooks/settings/use-organization')
-    const { GovernanceRequestError } = await import('../../hooks/settings/use-workspace-governance')
+    const { organizationApi } = await import('../organization-client')
+    const { GovernanceRequestError } = await import('../organization-client')
     const { auth: applicationAuth } = await import('../auth')
     const native = await applicationAuth.$context
     const secondAdmin = `org-second-admin-${randomUUID()}`
@@ -1218,11 +1219,11 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     assert.equal(patch.status, 200); assert.equal((await patch.json()).members.length, 0)
     assert.equal((await requestScim(`Groups/${group.id}`, 'DELETE')).status, 204)
   })
-  await t.test('real governance HTTP usage, CSV and templates require the admitted SSO principal and current Workspace membership', async () => {
+  await t.test('real governance HTTP usage, CSV and summary require the admitted SSO principal and current Workspace membership', async () => {
     const previousEdition = process.env.MIKKA_EDITION
     process.env.MIKKA_EDITION = 'cloud'
     const workspaceId = randomUUID(), templateId = randomUUID(), plainSessionId = randomUUID(), plainToken = randomBytes(32).toString('hex')
-    const personalWorkspaceId = randomUUID(), personalTaskId = randomUUID(), organizationTaskId = randomUUID()
+    const personalWorkspaceId = randomUUID(), personalTaskId = randomUUID(), organizationTaskId = randomUUID(), artifactId = randomUUID()
     const signedIn = await session(oidcCookies); assert.ok(signedIn)
     const assuredToken = (await pool.query('select token from session where id=$1', [signedIn.session.id])).rows[0].token as string
     await pool.query('insert into mikka_workspaces (id,"userId",name,kind) values ($1,$2,\'Governance SSO fixture\',\'team\')', [workspaceId, userId])
@@ -1241,22 +1242,35 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     const detailCall = (token: string, issueId: string, extraHeaders: Record<string, string> = {}) => fetch(`${appOrigin}/api/mobile/tasks/${issueId}`, {
       headers: { authorization: `Bearer ${token}`, 'x-mikka-locale': 'en', ...extraHeaders }, signal: AbortSignal.timeout(10_000),
     })
-    const call = (token: string, apply = false, csv = false) => fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance${apply ? '' : `/usage${csv ? '?format=csv' : ''}`}`, {
-      method: apply ? 'POST' : 'GET', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      ...(apply ? { body: JSON.stringify({ action: 'apply', templateId }) } : {}), signal: AbortSignal.timeout(10_000),
+    const call = (token: string, csv = false) => fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance/usage${csv ? '?format=csv' : ''}`, {
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
-    const templateCall = (token: string, input?: unknown) => fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance`, {
-      method: input === undefined ? 'GET' : 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      ...(input === undefined ? {} : { body: JSON.stringify(input) }), signal: AbortSignal.timeout(10_000),
+    const summaryCall = (token: string) => fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance`, {
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
-    const templateInput = { action: 'save', template: { name: 'SSO template', rules: { approvalMode: 'read_only' } } }
     try {
+      const artifactToken = `mks_${randomBytes(24).toString('base64url')}`
+      const html = '<main>Restricted native artifact</main>'
+      await pool.query('insert into artifacts (id,"userId","workspaceId",kind,title) values ($1,$2,$3,\'html\',\'Native share\')', [artifactId, userId, workspaceId])
+      await pool.query('insert into artifact_versions (id,"artifactId",version,"storageKey","inlineContent",sha256,size,"authorName") values ($1,$2,1,$3,$4,$5,$6,\'Fixture\')',
+        [randomUUID(), artifactId, `fixture/${artifactId}`, html, createHash('sha256').update(html).digest('hex'), Buffer.byteLength(html)])
+      await pool.query('insert into artifact_shares (id,"artifactId","tokenHash","createdBy",visibility) values ($1,$2,$3,$4,\'workspace\')',
+        [randomUUID(), artifactId, createHash('sha256').update(artifactToken).digest('hex'), userId])
+      const [metadata, frame] = await Promise.all([
+        import('../../app/api/artifacts/shared/[token]/route'), import('../../app/api/artifacts/shared/[token]/frame/route'),
+      ])
+      for (const [suffix, route] of [['', metadata], ['/frame', frame]] as const) {
+        const open = (token: string) => route.GET(new Request(`${appOrigin}/api/artifacts/shared/${artifactToken}${suffix}`, {
+          headers: { authorization: `Bearer ${token}`, 'x-mikka-client': 'desktop' },
+        }), { params: Promise.resolve({ token: artifactToken }) })
+        assert.equal((await open(plainToken)).status, 404)
+        const admitted = await open(assuredToken)
+        assert.equal(admitted.status, 200)
+        if (suffix) assert.ok((await admitted.text()).includes(html))
+      }
       assert.equal((await call(plainToken)).status, 403, 'ordinary authenticated session cannot read enforced-SSO usage')
-      assert.equal((await call(plainToken, false, true)).status, 403)
-      assert.equal((await call(plainToken, true)).status, 403, 'Workspace admin alone cannot apply an enforced-SSO template')
-      assert.equal((await templateCall(plainToken)).status, 403)
-      assert.equal((await templateCall(plainToken, templateInput)).status, 403)
-      assert.equal((await templateCall(plainToken, { action: 'delete', templateId })).status, 403)
+      assert.equal((await call(plainToken, true)).status, 403)
+      assert.equal((await summaryCall(plainToken)).status, 403)
       assert.equal((await pool.query('select count(*) from workspace_computer_policies where "workspaceId"=$1', [workspaceId])).rows[0].count, '0')
       const personal = await detailCall(plainToken, personalTaskId)
       assert.equal(personal.status, 200, 'the registered mobile detail route reads this plain session Personal task without a selection cookie')
@@ -1287,22 +1301,18 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
       assert.equal(explicitlyPersonal.status, 200)
       assert.deepEqual(await explicitlyPersonal.json(), personalBody)
       assert.equal((await call(assuredToken)).status, 200, 'native bearer retains the real OIDC assurance through the governance lease')
-      assert.equal((await call(assuredToken, false, true)).status, 200)
-      const summary = await templateCall(assuredToken); assert.equal(summary.status, 200)
-      assert.ok((await summary.json()).templates.some((row: { id: string }) => row.id === templateId))
-      const saved = await templateCall(assuredToken, templateInput); assert.equal(saved.status, 200)
-      const savedId = (await saved.json()).id as string; assert.ok(savedId)
-      assert.equal((await templateCall(assuredToken, { action: 'delete', templateId: savedId })).status, 200)
       assert.equal((await call(assuredToken, true)).status, 200)
-      assert.deepEqual((await pool.query('select cli_run_policy from workspace_computer_policies where "workspaceId"=$1', [workspaceId])).rows[0].cli_run_policy, { approvalMode: 'read_only' })
+      const summary = await summaryCall(assuredToken); assert.equal(summary.status, 200)
+      // A stored template configures nothing any more (ADR 2026-11-27-1615).
+      assert.deepEqual((await summary.json()).templates, [])
+      assert.equal((await fetch(`${appOrigin}/api/workspaces/${workspaceId}/governance`, { method: 'POST', headers: { authorization: `Bearer ${assuredToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'apply', templateId }), signal: AbortSignal.timeout(10_000) })).status, 405)
       await pool.query('update mikka_workspace_members set status=\'suspended\' where "workspaceId"=$1 and "userId"=$2', [workspaceId, userId])
       assert.equal((await call(assuredToken)).status, 403, 'SSO assurance and Enterprise plan cannot restore Workspace membership')
       assert.equal((await call(assuredToken, true)).status, 403)
-      assert.equal((await templateCall(assuredToken)).status, 403)
-      assert.equal((await templateCall(assuredToken, templateInput)).status, 403)
+      assert.equal((await summaryCall(assuredToken)).status, 403)
     } finally {
+      await pool.query('delete from artifacts where id=$1', [artifactId])
       await pool.query('delete from issues where id=any($1::uuid[])', [[personalTaskId, organizationTaskId]])
-      await pool.query('delete from workspace_subscription_shares where "ownerId"=$1 and "workspaceId"=$2', [userId, personalWorkspaceId])
       await pool.query('delete from session where id=$1', [plainSessionId])
       await pool.query('delete from workspace_computer_policies where "workspaceId"=$1', [workspaceId])
       await pool.query('delete from enterprise_org_policy where "organizationId"=$1', [organizationId])
@@ -1407,7 +1417,6 @@ test('enterprise HTTP fixture: OIDC + signed SAML + SCIM lifecycle + scoped revo
     } finally {
       await pool.query('delete from enterprise_break_glass where "organizationId"=$1 and "sessionId"=any($2::text[])', [organizationId, sessionIds])
       await pool.query('delete from issues where id=any($1::uuid[])', [[taskId, personalTaskId]])
-      await pool.query('delete from workspace_subscription_shares where "ownerId"=$1 and "workspaceId"=$2', [adminId, personalWorkspaceId])
       await pool.query('delete from session where id=any($1::text[])', [sessionIds])
       await pool.query('delete from mikka_workspaces where id=any($1::uuid[])', [[workspaceId, personalWorkspaceId]])
       await pool.query('delete from enterprise_org_policy where "organizationId"=$1', [organizationId])

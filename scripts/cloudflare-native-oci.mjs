@@ -1,3 +1,4 @@
+import { privateMikkaRepository } from './cloudflare-source.mjs'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -5,6 +6,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildDeploymentId } from '../lib/deployment-id.mjs'
 import { childEnvironment, sourceContext, validateReceipt, withOverlayKey } from './cloudflare-ci.mjs'
+import { legacyPublicName } from '../lib/public-env.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SHA = /^[a-f0-9]{40}$/
@@ -25,7 +27,7 @@ export function releaseId(publicSha, runId, runAttempt) {
 
 export function releaseSelection(env, receipt) {
   const context = sourceContext(env, env.GITHUB_SHA, env.OVERLAY_SHA)
-  validateReceipt(receipt, context)
+  validateReceipt(receipt, context, privateMikkaRepository('mikka-hosted-ui', env))
   return { context, publicSha: context.publicSha, privateSha: context.privateSha,
     id: releaseId(context.publicSha, context.runId, context.runAttempt) }
 }
@@ -34,22 +36,26 @@ export function buildEnvironment(env, publicSha, privateSha, id) {
   let settings
   try { settings = JSON.parse(env.API_PUBLIC_BUILD_SETTINGS) }
   catch { fail('CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED') }
-  const mandatory = ['NEXT_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'NEXT_PUBLIC_TURNSTILE_SITE_KEY']
-  const names = [...mandatory, 'NEXT_PUBLIC_COMPUTER_ENABLED']
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings) || Object.keys(settings).length !== names.length
-      || names.some(name => typeof settings[name] !== 'string')) fail('CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED')
-  for (const key of mandatory) if (!settings[key] || /[\r\n]/.test(settings[key])) fail('CF_OCI_PUBLIC_BUILD_VALUE_REQUIRED')
-  if (!/^pk_(?:live|test)_/.test(settings.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)) fail('CF_OCI_STRIPE_PUBLIC_KEY_INVALID')
-  if (!['0', '1'].includes(settings.NEXT_PUBLIC_COMPUTER_ENABLED)) fail('CF_OCI_COMPUTER_BUILD_SETTING_INVALID')
+  const mandatory = ['MIKKA_PUBLIC_POSTHOG_KEY', 'MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'MIKKA_PUBLIC_TURNSTILE_SITE_KEY']
+  const names = [...mandatory, 'MIKKA_PUBLIC_COMPUTER_ENABLED']
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings) || Object.keys(settings).length !== names.length) fail('CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED')
+  // Until phase 2 of the rename (lib/public-env.mjs), each setting may still
+  // carry its legacy key in the secret, but never both keys at once.
+  const values = {}
+  for (const name of names) {
+    const keys = [name, legacyPublicName(name)].filter(key => Object.hasOwn(settings, key))
+    if (keys.length !== 1 || typeof settings[keys[0]] !== 'string') fail('CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED')
+    values[name] = settings[keys[0]]
+  }
+  for (const key of mandatory) if (!values[key] || /[\r\n]/.test(values[key])) fail('CF_OCI_PUBLIC_BUILD_VALUE_REQUIRED')
+  if (!/^pk_(?:live|test)_/.test(values.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY)) fail('CF_OCI_STRIPE_PUBLIC_KEY_INVALID')
+  if (!['0', '1'].includes(values.MIKKA_PUBLIC_COMPUTER_ENABLED)) fail('CF_OCI_COMPUTER_BUILD_SETTING_INVALID')
   return {
     ...childEnvironment(env, publicSha, privateSha),
     MIKKA_EDITION: 'cloud', MIKKA_DEPLOYMENT_STAGE: 'production', MIKKA_DEPLOYMENT_ENVIRONMENT: 'production',
     MIKKA_BUILD_BYOS_WORKER: '1', NITRO_PRESET: 'node-server',
     MIKKA_UI_OVERLAY_DIR: '.hosted-ui',
-    MIKKA_DEPLOYMENT_ID: id, NEXT_PUBLIC_POSTHOG_KEY: settings.NEXT_PUBLIC_POSTHOG_KEY,
-    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: settings.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-    NEXT_PUBLIC_TURNSTILE_SITE_KEY: settings.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
-    NEXT_PUBLIC_COMPUTER_ENABLED: settings.NEXT_PUBLIC_COMPUTER_ENABLED,
+    MIKKA_DEPLOYMENT_ID: id, ...values,
   }
 }
 
@@ -73,7 +79,6 @@ export function command(bin, args, options = {}) {
 export function buildProduct(work, env) {
   const commands = [
     ['SUBSCRIPTION_WORKER', 'node', ['scripts/build-subscription-worker.mjs']],
-    ['AGENT_UI', 'corepack', ['pnpm', 'generate:agent-ui']],
     ['FRONTEND', 'node', ['apps/frontend/scripts/build.mjs', 'web']],
     ['API', 'node', ['apps/api/scripts/build.mjs']],
   ]
@@ -204,7 +209,7 @@ async function prepareArtifacts(work, selected, env, webRenderer) {
 export async function readSelection(env) {
   const receipt = JSON.parse(await readFile(join(root, '.cloudflare-ci/receipt.json'), 'utf8'))
   const selected = releaseSelection(env, receipt)
-  validateReceipt(receipt, selected.context)
+  validateReceipt(receipt, selected.context, privateMikkaRepository('mikka-hosted-ui', env))
   if (git(root, 'rev-parse', 'HEAD') !== selected.publicSha
       || git(join(root, '.hosted-ui'), 'rev-parse', 'HEAD') !== selected.privateSha) fail('CF_OCI_CHECKOUT_DRIFT')
   return { receipt, selected }
@@ -214,7 +219,7 @@ export function verifyOverlayMain(work, privateSha, env = process.env) {
   if (!SHA.test(privateSha ?? '')) fail('CF_OCI_OVERLAY_SOURCE_REQUIRED')
   const shallow = stdout('git', ['rev-parse', '--is-shallow-repository'], {cwd:work,env,stage:'OVERLAY_HISTORY'})
   command('git', ['fetch','--quiet','--no-tags','--filter=blob:none',...(shallow === 'true' ? ['--unshallow'] : []),
-    'git@github.com:alexj11324/mikka-hosted-ui.git','refs/heads/main'], {cwd:work,env,stage:'OVERLAY_MAIN_FETCH'})
+    'git@github.com:' + privateMikkaRepository('mikka-hosted-ui', env) + '.git','refs/heads/main'], {cwd:work,env,stage:'OVERLAY_MAIN_FETCH'})
   command('git', ['merge-base','--is-ancestor',privateSha,'FETCH_HEAD'], {cwd:work,env,stage:'OVERLAY_MAIN_ANCESTRY'})
 }
 
@@ -225,8 +230,8 @@ async function prepare() {
   await withOverlayKey(process.env, env => verifyOverlayMain(join(root,'.hosted-ui'),selected.privateSha,env))
   const env = buildEnvironment(process.env, selected.publicSha, selected.privateSha, selected.id)
   const publicBuildSettings = { publicSha: selected.publicSha, privateSha: selected.privateSha, publication: 'registry-only',
-    NEXT_PUBLIC_POSTHOG_KEY: env.NEXT_PUBLIC_POSTHOG_KEY, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-    NEXT_PUBLIC_TURNSTILE_SITE_KEY: env.NEXT_PUBLIC_TURNSTILE_SITE_KEY, NEXT_PUBLIC_COMPUTER_ENABLED: env.NEXT_PUBLIC_COMPUTER_ENABLED }
+    MIKKA_PUBLIC_POSTHOG_KEY: env.MIKKA_PUBLIC_POSTHOG_KEY, MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: env.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+    MIKKA_PUBLIC_TURNSTILE_SITE_KEY: env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY, MIKKA_PUBLIC_COMPUTER_ENABLED: env.MIKKA_PUBLIC_COMPUTER_ENABLED }
   const publicBuildSettingsSha256 = hash(JSON.stringify(publicBuildSettings))
   const work = root
   buildProduct(work, env)
@@ -317,7 +322,7 @@ async function publish() {
     const broker = digestFromRepoDigests(brokerRefs, process.env.CLOUDFLARE_ACCOUNT_ID, selected.id, 'mikka-credential-broker')
     await readSelection(process.env)
     const receipt = { version: 1, ...selected.context, ...verified,
-      overlayCheckout: { repository: 'alexj11324/mikka-hosted-ui', requestedSha: selected.privateSha, actualSha: selected.privateSha },
+      overlayCheckout: { repository: privateMikkaRepository('mikka-hosted-ui'), requestedSha: selected.privateSha, actualSha: selected.privateSha },
       localImageId: record.localImageId, webRenderer: record.webRenderer,
       brokerImage: broker.image, brokerDigest: broker.digest, brokerLocalImageId: record.brokerLocalImageId,
       brokerOfflineVerification: record.brokerOfflineVerification,

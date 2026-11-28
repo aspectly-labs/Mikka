@@ -45,16 +45,6 @@ export function observeReads(page, requirements, actionIds, basePath) {
       assert.equal(response.ok(), true, `Read must succeed: ${requirement.path ?? requirement.action}`)
       const headers = response.headers()
       const action = observedAction(response.request(), new URL(response.url()).pathname, basePath, actionIds)
-      if (requirement.action && action?.kind === 'flight') {
-        // Next awaits the action before generating its Flight response, whose
-        // page stream can remain open after the action result is consumed.
-        // Combine that completed invocation with the caller's positive DOM
-        // checks; ordinary API/RPC JSON must finish and parse below.
-        assert.equal(response.status(), 200, 'The observed action must succeed')
-        assert.ok((headers['content-type'] ?? '').includes('text/x-component'), 'The observed action must use its real Flight response')
-        assert.ok(!headers['x-action-redirect'], 'An auth redirect is not action completion')
-        return { linearUnavailable: false }
-      }
       assert.ok((headers['content-type'] ?? '').includes('application/json'), 'The observed API/RPC read must return JSON')
       phase = 'body'
       assert.equal(await response.finished(), null, 'Read body must finish before capture')

@@ -8,8 +8,9 @@ import { singleFlight } from '@/lib/single-flight'
 import { readCompactRunFailure, runFailureBrief, type CompactRunFailure } from '@/lib/run-failure-projection'
 
 import { createHash } from 'node:crypto'
-import { headers } from 'next/headers'
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { readEnv } from '@/lib/env/server'
+import { headers } from '@/lib/server-runtime/headers'
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { deviceOnlineStates, deviceSessionOpen } from '@/lib/device-presence'
 import { gatewayConfig } from '@/lib/builtin-gateway/config'
 import { ActionFailureError } from '@/lib/action-error'
@@ -30,8 +31,11 @@ import { beginWorkspaceListRead } from '@/lib/live/revision-read'
 import { threadTitle } from '@/lib/short-title'
 import { threadName } from '@/lib/issue-threads'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
+import { tokenWorkspace } from '@/lib/tokens/principal'
+import { enterprisePrincipal, type EnterprisePrincipal } from '@/lib/enterprise/principal'
 import { joinThreadRead, threadUnread } from '@/lib/thread-reads'
 import { issueVisibility } from '@/lib/issue-visibility'
+import { runtimeEnv } from '@/lib/env/server'
 
 /** The newest run on each issue, for the right column's 我的任务 groups (MIK-38). */
 export interface TaskRun {
@@ -79,7 +83,7 @@ async function readTaskRuns() {
     expiresAt: sql<Date | null>`(select min(r."createdAt")+${runHistoryWindow} from agent_runs r where r."issueId"=${agentRuns.issueId} and r."userId"=${agentRuns.userId} and r."workspaceId"=${agentRuns.workspaceId} and r."createdAt">now()-${runHistoryWindow})`.as('expiresAt'),
     harnesses: sql<string[]>`array(select a.harness from agent_runs r join agents a on a.id=r."agentId" where r."issueId"=${agentRuns.issueId} and r."userId"=${agentRuns.userId} and r."workspaceId"=${agentRuns.workspaceId} and r."createdAt" > now() - ${runHistoryWindow} group by a.harness order by max(r."createdAt") desc)`.as('harnesses'),
   }).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).innerJoin(issues, eq(issues.id, agentRuns.issueId))
-    .where(and(eq(agentRuns.userId, session.user.id), eq(agentRuns.workspaceId, context.workspace.id), visibility.predicate, isNotNull(agentRuns.issueId), sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`))
+    .where(and(eq(agentRuns.userId, session.user.id), eq(agentRuns.workspaceId, context.workspace.id), visibility.predicate, isNotNull(agentRuns.issueId), isNull(agentRuns.deletedAt), sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`))
     .orderBy(agentRuns.issueId, desc(agentRuns.createdAt), desc(agentRuns.id)).limit(200).as('latest_task_runs')
   // Select the same 200 issues first. Bot decoration is a one-to-one join in
   // this database; a missing or foreign bot cannot remove or duplicate a task.
@@ -188,12 +192,12 @@ async function readThreads(known?: string, previous?: ListPosition[]) {
       pauseReason: agentRuns.pauseReason, stopReason: agentRuns.stopReason, awaitingApproval: runAwaitingApproval.as('awaitingApproval'), threadReplacedBy: agentRuns.threadReplacedBy,
     }).from(agentRuns).innerJoin(agents, eq(agents.id, agentRuns.agentId)).leftJoin(devices, eq(devices.id, agentRuns.deviceId))
       .leftJoin(conversationReads, joinThreadRead(session.user.id))
-      .where(and(eq(agentRuns.userId, session.user.id), eq(agentRuns.workspaceId, context.workspace.id), sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`))
+      .where(and(eq(agentRuns.userId, session.user.id), eq(agentRuns.workspaceId, context.workspace.id), isNull(agentRuns.deletedAt), sql`${agentRuns.createdAt} > now() - ${runHistoryWindow}`))
       .orderBy(desc(sql`greatest(${agentRuns.lastReplyAt}, ${agentRuns.updatedAt})`), desc(agentRuns.createdAt), desc(agentRuns.id)).limit(200)
     const signature = await queryVersionWithExpiry(snapshot, sql`min(snapshot."createdAt")+${runHistoryWindow}`)
     const version = createHash('sha256').update(JSON.stringify([session.user.id, context.workspace.id, signature.version])).digest('hex').slice(0, 32)
     const visible = snapshot.as('thread_list_expiry')
-    const live = withDevicePresence(await ownerListRead(session.user.id, [signature.expiresAt], observedAt, begun), presenceDevices, process.env, observedAt)
+    const live = withDevicePresence(await ownerListRead(session.user.id, [signature.expiresAt], observedAt, begun), presenceDevices, runtimeEnv(), observedAt)
     // Device presence has its own bounded watcher prerequisite. Until that
     // route is ready, queued local work retains the shared slow fallback.
     // A session change pushes thread_list (lib/device-session.ts): no fallback read.
@@ -225,7 +229,13 @@ async function conversationActor() {
   const session = await auth.api.getSession({ headers: await headers() })
   if (!session?.user) throw new ActionFailureError('authRequired')
   const context = await loadWorkspaceContext(undefined, session.user)
-  return { ownerId: session.user.id, reader: session.user, workspaceId: context.workspace.id }
+  const principal = (session.user as { [enterprisePrincipal]?: EnterprisePrincipal })[enterprisePrincipal]
+  const reader = {
+    ...session.user,
+    [tokenWorkspace]: context.workspace.id,
+    ...(principal ? { [enterprisePrincipal]: principal } : {}),
+  }
+  return { ownerId: session.user.id, reader, workspaceId: context.workspace.id }
 }
 
 /**
@@ -315,6 +325,157 @@ async function organizeTarget(target: ConversationTarget, { ownerId, workspaceId
   return state
 }
 
+/**
+ * A thread's cost for its ⋯ menu and cost popover (#2934, #2931): model receipts and machine time of every run in
+ * the thread's chain, split into Mikka 额度 and usage included in the person's own subscription or key.
+ * Only the thread's owner reads it; any other reader gets runNotFound.
+ */
+export async function readThreadCost(runId: string, groupBy: import('@/lib/thread-cost').ThreadCostGrouping = 'thread'): Promise<ActionResult<import('@/lib/thread-cost').ThreadCost, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  // Server actions are callable with any argument; the read rejects an unknown grouping as runNotFound.
+  const cost = await (await import('@/lib/thread-cost')).readThreadCost(pool, { ownerId, workspaceId, runId, groupBy })
+  return cost ?? { error: 'runNotFound' }
+}
+
+/**
+ * A thread's summary for its header and right column (#2935): cost totals, machine, repository, branch and context
+ * in one read (lib/thread-summary.ts). Only the thread's owner in its workspace reads it; any other reader gets runNotFound.
+ */
+export async function readThreadSummary(runId: string): Promise<ActionResult<import('@/lib/thread-summary-read').ThreadSummary, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const catalogue = await (await import('@/lib/model-catalog-server')).modelCatalog()
+  const summary = await (await import('@/lib/thread-summary-read')).readThreadSummary(pool, { ownerId, workspaceId, runId, catalogue })
+  return summary ?? { error: 'runNotFound' }
+}
+
+/**
+ * A thread's machine workspace for the right column's Files and Setup tabs (#2928, #2940): its checkout, machine,
+ * frozen Environment and uploads (lib/thread-workspace.ts). Only the thread's owner reads it; anyone else gets runNotFound.
+ */
+export async function readThreadWorkspace(runId: string): Promise<ActionResult<import('@/lib/thread-workspace-read').ThreadWorkspace, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const read = await (await import('@/lib/thread-workspace-read')).readThreadWorkspace(pool, { ownerId, workspaceId, runId })
+  return read ?? { error: 'runNotFound' }
+}
+
+/**
+ * The live sandbox's latest recorded load (CPU, memory, disk) for the Setup tab, read from the provider without waking
+ * it; null for a thread that runs elsewhere or is not running. Only the thread's owner reads it.
+ */
+export async function readThreadMachineMetrics(runId: string): Promise<import('@/lib/thread-workspace-read').ThreadMachineMetrics | null> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const { readComputerMetrics } = await import('@/lib/computer/e2b-provider')
+  try {
+    return await (await import('@/lib/thread-workspace-read')).readThreadMachineMetrics(pool, { ownerId, workspaceId, runId },
+      (owner, sandboxId, start, end) => readComputerMetrics(owner, sandboxId, start, end, AbortSignal.timeout(12_000)))
+  } catch (failure) {
+    // The provider is unreachable or the sandbox is gone: the tab shows no numbers, never stale or made-up ones.
+    console.warn('[thread-workspace] machine metrics unavailable', failure instanceof Error ? failure.message : failure)
+    return null
+  }
+}
+
+/** The files the person sent in their chat with a Bot, for the Files tab's Uploads view; null when the Bot is not in this workspace. */
+export async function readBotChatUploads(botId: string): Promise<ActionResult<import('@/lib/thread-workspace-read').ThreadWorkspace['uploads'], 'botNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const uploads = await (await import('@/lib/thread-workspace-read')).readBotChatUploads(pool, { ownerId, workspaceId, botId })
+  return uploads ?? { error: 'botNotFound' }
+}
+
+/**
+ * The sub-agents a thread dispatched (#2939): its child runs, oldest first, each with what its card shows. Only the
+ * thread's owner reads them; any other reader gets runNotFound. A child's change reaches the parent's `run` live key.
+ */
+export async function readSubagentRuns(runId: string): Promise<ActionResult<import('@/lib/subagent-run-read').SubagentRun[], 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const runs = await (await import('@/lib/subagent-run-read')).readSubagentRuns(pool, { ownerId, workspaceId, runId })
+  return runs ?? { error: 'runNotFound' }
+}
+
+/** Every run of the thread's chain, so each list that shows one of them reads again. */
+async function threadListsChanged(runIds: readonly string[]) {
+  const { pool } = await import('@/lib/db')
+  const { runListChanged } = await import('@/lib/live/lists')
+  for (const id of runIds) await runListChanged(pool, id)
+}
+
+async function chainRunIds(ownerId: string, runId: string) {
+  const { pool } = await import('@/lib/db')
+  const chain = await (await import('@/lib/run-chain')).readRunChain(pool, ownerId, runId)
+  return chain?.attempts.map(attempt => attempt.runId) ?? []
+}
+
+/**
+ * Deletes a thread (#2936, ⋯ 删除): it leaves every list at once and can be restored for 30 days
+ * (lib/thread-lifecycle.ts). A thread that is still working is not deleted. Only its owner, in its Workspace.
+ */
+export async function removeThread(runId: string): Promise<ActionResult<import('@/lib/thread-lifecycle-owner').ThreadDeletion, 'runNotFound' | 'threadWorking'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const result = await (await import('@/lib/thread-lifecycle-owner')).deleteThread(pool, { ownerId, workspaceId, runId })
+  if (result === 'working') return { error: 'threadWorking' }
+  if (!result) return { error: 'runNotFound' }
+  await threadListsChanged(await chainRunIds(ownerId, runId))
+  return result
+}
+
+/** Restores a thread deleted less than 30 days ago (#2936). Only its owner, in its Workspace. */
+export async function undoRemoveThread(runId: string): Promise<ActionResult<import('@/lib/thread-lifecycle-owner').ThreadDeletion, 'runNotFound'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const result = await (await import('@/lib/thread-lifecycle-owner')).restoreThread(pool, { ownerId, workspaceId, runId })
+  if (!result) return { error: 'runNotFound' }
+  await threadListsChanged(await chainRunIds(ownerId, runId))
+  return result
+}
+
+/** A thread's tags (#2936, ⋯ 标签); with `tags`, replaces them (lib/thread-lifecycle.ts normalizeThreadTags). Owner only. */
+export async function threadTags(runId: string, tags?: string[]): Promise<ActionResult<{ threadId: string; tags: string[] }, 'runNotFound' | 'validationGeneric'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const lifecycle = await import('@/lib/thread-lifecycle-owner')
+  const normalized = tags === undefined ? undefined : lifecycle.normalizeThreadTags(tags)
+  if (normalized === null) return { error: 'validationGeneric' }
+  const { pool } = await import('@/lib/db')
+  const result = await lifecycle.threadTags(pool, { ownerId, workspaceId, runId }, normalized)
+  if (!result) return { error: 'runNotFound' }
+  if (normalized) await threadListsChanged([result.threadId])
+  return result
+}
+
+/**
+ * What ⋯ 做成自动化 opens the automation editor with (#2936): every run sent to this thread. The editor saves it through
+ * createAutomation, which checks the thread again. Owner only; a thread with no task cannot run again.
+ */
+export async function threadAutomationSeed(runId: string): Promise<ActionResult<{ singleThreadId: string; title: string; prompt: string }, 'runNotFound' | 'threadCannotContinue'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const seed = await (await import('@/lib/thread-lifecycle-owner')).threadAutomationSeed(pool, { ownerId, workspaceId, runId })
+  if (seed === 'noTask') return { error: 'threadCannotContinue' }
+  return seed ?? { error: 'runNotFound' }
+}
+
+type ForkError = 'runNotFound' | 'messageRequired' | 'validationGeneric' | 'threadCannotContinue' | 'threadReplaced' | 'threadModelUnavailable' | 'agentRepoMissing' | 'runInvalid'
+/**
+ * Fork from a message (#2936, ⋯ 分叉 and the message's More menu): a new thread of the same task that starts from this
+ * thread up to the message, with the person's instruction (lib/thread-continue.ts forkThread). The source thread is
+ * replaced by it (one thread per task). Owner only.
+ */
+export async function forkThreadFrom(input: { runId: string; itemId?: string | null; mode: 'full' | 'summary'; text: string; requestId: string }): Promise<ActionResult<{ runId: string; threadId: string; replacedThreadId: string | null }, ForkError | import('@/lib/action-result').ActionErrorCode>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  try {
+    return await (await import('@/lib/thread-continue')).forkThread(ownerId, workspaceId, input)
+  } catch (error) {
+    if (error instanceof ActionFailureError) return { error: error.code as import('@/lib/action-result').ActionErrorCode }
+    throw error
+  }
+}
+
 export async function readConversationOrganization(target: ConversationTarget) {
   return organizeTarget(target, await conversationActor())
 }
@@ -327,11 +488,124 @@ export async function setConversationOrganization(target: ConversationTarget, ch
   return organizeTarget(target, actor, change)
 }
 
+/** ⋯ menu thread actions (#2931) — same lifecycle functions the /api/threads routes call; only the owner succeeds. */
+export async function shareThread(runId: string): Promise<ActionResult<{ shareId: string; url: string }, 'runNotFound'>> {
+  const { reader } = await conversationActor()
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId)) return { error: 'runNotFound' }
+  const share = await lc.createThreadShare(reader, runId)
+  return share ? { shareId: share.shareId, url: `/threads/shared/${share.token}` } : { error: 'runNotFound' }
+}
+
+export async function revokeThreadShare(runId: string): Promise<ActionResult<{ revoked: number }, 'runNotFound'>> {
+  const { reader } = await conversationActor()
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId)) return { error: 'runNotFound' }
+  const revoked = await lc.revokeThreadShares(reader, runId)
+  return revoked === null ? { error: 'runNotFound' } : { revoked }
+}
+
+export async function forkThread(runId: string, mode?: 'full' | 'summary'): Promise<ActionResult<{ runId: string }, 'runNotFound'>> {
+  const { reader } = await conversationActor()
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId) || (mode !== undefined && mode !== 'full' && mode !== 'summary')) return { error: 'runNotFound' }
+  const run = await lc.spawnThread(reader, runId, { relation: 'fork', mode: mode ?? 'full' })
+  return run ? { runId: run.id } : { error: 'runNotFound' }
+}
+
+export async function updateThread(runId: string, input: { taskId?: string | null; tags?: string[]; folder?: string | null }): Promise<ActionResult<{ updated: true }, 'runNotFound' | 'taskNotFound' | 'validationGeneric'>> {
+  const { reader } = await conversationActor()
+  const lc = await import('@/lib/thread-lifecycle')
+  const taskId = input?.taskId === undefined ? undefined : input.taskId === null ? null : typeof input.taskId === 'string' && lc.isRunId(input.taskId) ? input.taskId : undefined
+  const tags = input?.tags === undefined ? undefined : Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0 && tag.trim().length <= 60).slice(0, 20).map(tag => tag.trim()) : undefined
+  const ownerLc = await import('@/lib/thread-lifecycle-owner')
+  const folder = input?.folder === undefined ? undefined : ownerLc.normalizeThreadFolder(input.folder)
+  if (!lc.isRunId(runId) || (input?.taskId !== undefined && taskId === undefined) || (input?.tags !== undefined && tags === undefined) || (input?.folder !== undefined && folder === undefined) || (taskId === undefined && tags === undefined && folder === undefined))
+    return { error: 'validationGeneric' }
+  const run = await lc.patchThread(reader, runId, { ...(taskId !== undefined ? { taskId } : {}), ...(tags ? { tags } : {}), ...(folder !== undefined ? { folder } : {}) })
+  return run === 'forbidden' ? { error: 'taskNotFound' } : run ? { updated: true } : { error: 'runNotFound' }
+}
+
+/** Read or update a thread's folder (#3333 `/folder`). Owner only. */
+export async function threadFolder(runId: string, folder?: string | null): Promise<ActionResult<{ threadId: string; folder: string | null }, 'runNotFound' | 'validationGeneric'>> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const lifecycle = await import('@/lib/thread-lifecycle-owner')
+  const normalized = folder === undefined ? undefined : lifecycle.normalizeThreadFolder(folder)
+  if (folder !== undefined && normalized === undefined) return { error: 'validationGeneric' }
+  const { pool } = await import('@/lib/db')
+  const result = await lifecycle.threadFolder(pool, { ownerId, workspaceId, runId }, normalized)
+  if (!result) return { error: 'runNotFound' }
+  if (folder !== undefined) await threadListsChanged([result.threadId])
+  return result
+}
+
+/** Distinct thread folders for the owner in the active workspace (#3333 `/folder`). */
+export async function listThreadFolders(): Promise<{ folders: string[] }> {
+  const { ownerId, workspaceId } = await conversationActor()
+  const { pool } = await import('@/lib/db')
+  const { listWorkspaceThreadFolders } = await import('@/lib/thread-lifecycle-owner')
+  return { folders: await listWorkspaceThreadFolders(pool, ownerId, workspaceId) }
+}
+
+/** Connected Slack channels for composer `#` mentions (#3333); returns `{ connected: false, channels: [] }` when Slack is not connected. */
+export async function listComposerSlackChannels(expectedWorkspaceId?: string): Promise<{ connected: boolean; channels: { id: string; name: string; private: boolean }[] }> {
+  const { ownerId, workspaceId } = await conversationActor()
+  if (expectedWorkspaceId && expectedWorkspaceId !== workspaceId) throw new ActionFailureError('validationGeneric')
+  const app = readEnv('SLACK_APP_ID')
+  if (!app) return { connected: false, channels: [] }
+  const { slackInstallationChannels } = await import('@/lib/slack/automation-channels')
+  try {
+    const channels = await slackInstallationChannels(app, ownerId, workspaceId)
+    if (channels === null) return { connected: false, channels: [] }
+    return { connected: true, channels }
+  } catch {
+    return { connected: false, channels: [] }
+  }
+}
+
+export async function deleteAllThreads(input: { workspaceId: string; confirm: true }) {
+  if (input?.confirm !== true || !input.workspaceId) return { error: 'validationGeneric' } as const
+  const { currentWorkspaceActor } = await import('@/lib/workspace-admin/current')
+  const { userId: ownerId, workspaceId } = await currentWorkspaceActor(input.workspaceId)
+  const { deleteOwnedWorkspaceThreads } = await import('@/lib/settings/delete-threads')
+  return deleteOwnedWorkspaceThreads(ownerId, workspaceId)
+}
+
+export async function deleteThread(runId: string): Promise<ActionResult<{ recoveryDays: number }, 'runNotFound'>> {
+  const { reader } = await conversationActor()
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId)) return { error: 'runNotFound' }
+  const deleted = await lc.deleteThread(reader, runId)
+  return deleted === null ? { error: 'runNotFound' } : { recoveryDays: 30 }
+}
+
+export async function restoreThread(runId: string): Promise<ActionResult<{ restored: true }, 'runNotFound' | 'restoreExpired'>> {
+  const { reader } = await conversationActor()
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId)) return { error: 'runNotFound' }
+  const restored = await lc.restoreThread(reader, runId)
+  return restored === null ? { error: 'runNotFound' } : restored ? { restored: true } : { error: 'restoreExpired' }
+}
+
+export async function threadAutomation(runId: string, definition: Record<string, unknown>): Promise<ActionResult<Record<string, unknown>, 'runNotFound' | 'scheduleRejected' | 'validationGeneric'>> {
+  const { reader } = await conversationActor()
+  const lc = await import('@/lib/thread-lifecycle')
+  if (!lc.isRunId(runId) || !definition || typeof definition !== 'object' || Array.isArray(definition)) return { error: 'validationGeneric' }
+  const result = await lc.threadToAutomation(reader, runId, definition)
+  return result === 'forbidden' ? { error: 'scheduleRejected' } : result ? result as Record<string, unknown> : { error: 'runNotFound' }
+}
+
 export async function listConversations(input: DirectoryInput) {
   const { reader, workspaceId } = await conversationActor()
   const { conversationDirectory } = await import('@/lib/conversation-directory')
   const { pool } = await import('@/lib/db')
-  return conversationDirectory(pool, reader, workspaceId, input)
+  const projectId = typeof input?.projectId === 'string' ? input.projectId : undefined
+  if (!projectId) return conversationDirectory(pool, reader, workspaceId, input)
+  // Projects and their task links live in the workspace database; the reader's own project ACL picks the tasks.
+  const [{ accessibleProjects }, { projectDb }] = await Promise.all([import('@/lib/project-access'), import('@/lib/db/projects')])
+  const [project] = await accessibleProjects(reader, projectDb, workspaceId, projectId)
+  if (!project) throw new ActionFailureError('projectNotFound')
+  return conversationDirectory(pool, reader, workspaceId, input, { projectIssueIds: project.issueIds })
 }
 
 export async function listConversationSidebar() {
@@ -342,10 +616,17 @@ export async function listConversationSidebar() {
 }
 
 /** A workspace switch between composing and searching invalidates the old picker. */
-export async function findThreadReferences(expectedWorkspaceId: string, query: string, kind?: 'task' | 'thread' | 'pr') {
+export async function findThreadReferences(
+  expectedWorkspaceId: string,
+  query: string,
+  kind?: 'task' | 'thread' | 'pr' | 'bot' | 'device' | 'subagent' | 'plugin',
+  runId?: string,
+) {
   const { reader, workspaceId } = await conversationActor()
+  const { isRunId } = await import('@/lib/thread-lifecycle')
   if (expectedWorkspaceId !== workspaceId || typeof query !== 'string' || query.length > 120 ||
-    (kind !== undefined && !['task', 'thread', 'pr'].includes(kind))) throw new ActionFailureError('validationGeneric')
+    (kind !== undefined && !['task', 'thread', 'pr', 'bot', 'device', 'subagent', 'plugin'].includes(kind)) ||
+    (runId !== undefined && !isRunId(runId))) throw new ActionFailureError('validationGeneric')
   const { searchThreadReferences } = await import('@/lib/thread-reference-search')
-  return searchThreadReferences(reader, workspaceId, query.trim(), kind)
+  return searchThreadReferences(reader, workspaceId, query.trim(), kind, runId ? { runId } : undefined)
 }

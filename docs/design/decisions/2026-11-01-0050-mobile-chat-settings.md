@@ -1,6 +1,7 @@
 # A bot's page: 置顶, 通知 and 资料库, with the server to back them
 
 - Date: 2026-11-01
+- **Status:** Superseded in part by [2026-11-01-1215-star-is-the-pin](2026-11-01-1215-star-is-the-pin.md)
 - Source: Alex, in the mobile session. The bot page had shipped without
   资料库, per-bot notifications and pinning, because the server had none of
   them. He said: 「那你服务器你这后端该加的加，好吧？你没有东西你就加。」

@@ -13,6 +13,7 @@ const binding = { id: id(3), ownerId: 'alice', consumerId: id(1), workspaceId: i
 let selected: string | undefined
 let available: { bindingId: string; provider?: string }[] = []
 let savedBinding: Pick<BotSubscriptionChoice, 'bindingId'> & Partial<BotSubscriptionChoice> | undefined
+let bindingElsewhere = false
 let settingsError: Error | undefined
 let catalogueError: Error | undefined
 let catalogueReads = 0
@@ -25,6 +26,11 @@ mock.module('./enabled-models', { namedExports: { hostedModelEnabled: async () =
 const hostedCalls: unknown[][] = []
 const hostedModel = { modelId: 'hosted-fixture' }
 mock.module(new URL('./db/index.ts', import.meta.url).href, { namedExports: { pool: null } })
+let savedEffort: string | null = null
+const effortReads: unknown[][] = []
+mock.module(new URL('./bot-model-effort.ts', import.meta.url).href, { namedExports: {
+  botModelEffort: async (...args: unknown[]) => { effortReads.push(args.slice(1)); return savedEffort },
+} })
 mock.module(new URL('./workspace-db.ts', import.meta.url).href, { namedExports: {
   workspaceDb: { select: () => ({ from: () => ({ where: async () => [{ userId: 'bob', name: 'Public teammate' }] }) }) },
 } })
@@ -40,6 +46,7 @@ mock.module(new URL('./execution-settings.ts', import.meta.url).href, { namedExp
     async botModel() { if (settingsError) throw settingsError; return selected }
     async chatModels() { catalogueReads++; if (catalogueError) throw catalogueError; return available }
     async chatBinding(...args: unknown[]) { bindingReads.push(args); return savedBinding }
+    async bindingHeldElsewhere() { return bindingElsewhere }
     async bindingForBot(_scope: unknown, _bot: unknown, bindingId: string) { return bindingId }
   },
 } })
@@ -83,9 +90,12 @@ const noSubscription = {
   workspace: async () => { throw new Error('subscription authority must not be requested') },
 }
 beforeEach(() => {
+  savedEffort = null
+  effortReads.length = 0
   selected = undefined
   available = []
   savedBinding = undefined
+  bindingElsewhere = false
   settingsError = undefined
   catalogueError = undefined
   catalogueReads = 0
@@ -131,11 +141,30 @@ test('Coordinator on a Mikka 额度 model freezes and resolves that catalogue mo
   assert.deepEqual(hostedCalls, [[scope, CREDITS_MODEL]])
 })
 
+test('the Bot\'s saved effort is frozen with the turn\'s model, read once in the turn\'s workspace', async () => {
+  selected = CREDITS
+  savedEffort = 'high'
+  const frozen = await freezeBotModel({ ...scope, workspaceId: null }, noSubscription)
+  assert.deepEqual(frozen, { harness: 'ai_sdk', model: CREDITS_MODEL, effort: 'high' })
+  assert.equal(workspaceCalls, 1, 'the workspace is resolved once for the model and its effort')
+  assert.deepEqual(effortReads, [[{ ownerId: 'alice', workspaceId: id(2) }, null]])
+})
+
 test('a saved choice whose account is gone, with nothing bound, asks for a model instead of a silent default', async () => {
   // The Settings page showed 未连接账号 and these bots refused (binding_required) instead of replying.
   selected = id(9)
   available = []
   for (const botId of [null, id(1)]) await assert.rejects(freezeBotModel({ ...scope, botId }, noSubscription), NOT_CHOSEN)
+})
+
+test('a coordinator saved choice still held by another owner refuses as theirs-not-yours, not an unselected model', async () => {
+  // #3057: a member's stored borrow of an owner's binding must surface
+  // account_unavailable so the run says why, instead of asking for a model.
+  // (The named-bot refusal is covered by the real-PG regression in
+  // lib/execution-settings.db.test.ts; this adds the coordinator path.)
+  selected = id(9)
+  bindingElsewhere = true
+  await assert.rejects(freezeBotModel({ ...scope, botId: null }, noSubscription), { code: 'account_unavailable' })
 })
 
 test('a Mikka 额度 model picked in the composer stays on Mikka 额度 while a subscription is bound', async () => {

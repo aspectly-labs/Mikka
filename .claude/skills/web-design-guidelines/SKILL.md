@@ -7,7 +7,7 @@ description: "Review Mikka's official web interface for accessibility, responsiv
 
 Adapted workflow based on https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines and https://github.com/vercel-labs/web-interface-guidelines . This file is authored for Mikka, not a claim that the upstream rule corpus or browser tooling is vendored.
 
-Always read `docs/design/README.md`, `docs/design/rules.md`, `docs/design/components.md` and `docs/review-checklist.md` first. Do **not** fetch and execute unpinned remote instructions as binding project policy. External guidelines are optional research, subordinate to Mikka's accepted Figma/design decisions and paid components' as-shipped presentation.
+Always read `docs/design/README.md`, `mikka-hosted-ui/docs/design/rules.md`, `mikka-hosted-ui/docs/design/components.md` and `docs/review-checklist.md` first. Do **not** fetch and execute unpinned remote instructions as binding project policy. External guidelines are optional research, subordinate to Mikka's design decisions, above all the top-product reference for each surface (`mikka-hosted-ui/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md`); a paid component's shipped presentation is not a reason to keep a difference from it.
 
 Check on actual official screens:
 - Semantics and accessible controls (names, role, state, keyboard activation, focus trap/return, non-obscured focus, screen-reader updates).
@@ -17,4 +17,4 @@ Check on actual official screens:
 - Navigation (deep links, back/forward, route and accessible target, menu behavior).
 - Performance (no layout shifts, infinite loading, chat send delay, avoid idle network calls or duplicate listeners).
 
-Output `file:line + route + exact user action + evidence + severity + fix owner`. Treat source-only suspicions as hypotheses until interactive verification. Propose minimal changes using the existing components; no new theme, arbitrary spacing system or restyle of BoardUI Pro/affectUI/beUI Pro. Confirm with Mikka's accepted source-bound runtime tests.
+Output `file:line + route + exact user action + evidence + severity + fix owner`. Treat source-only suspicions as hypotheses until interactive verification. Propose minimal changes using the existing components; no new theme or arbitrary spacing system; a BoardUI Pro/affectUI/beUI Pro block is edited in place only to match its top-product reference. Confirm with Mikka's accepted source-bound runtime tests.

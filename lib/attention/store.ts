@@ -182,15 +182,51 @@ async function settlements(userId: string, matters: readonly (MatterSummary & Pi
   }))
 }
 
-async function applySettlement(tx: Tx, item: Awaited<ReturnType<typeof settlements>>[number], now: Date) {
-  const { matter, settled, reason } = item
-  if (settled.state === 'quiet') {
-    await tx.update(attentionMatters).set({ state: 'quiet', reason, updatedAt: now }).where(and(eq(attentionMatters.id, matter.id), eq(attentionMatters.state, 'handed')))
-    await log(tx, matter, 'quiet', false, { reason })
-  } else {
-    await tx.update(attentionMatters).set({ state: 'snoozed', reason, runAt: settled.runAt, updatedAt: now }).where(and(eq(attentionMatters.id, matter.id), eq(attentionMatters.state, 'handed')))
-    await log(tx, matter, 'snooze', false, { reason, runAt: settled.runAt })
+async function applySettlements(tx: Tx, items: ReadonlyArray<Awaited<ReturnType<typeof settlements>>[number]>, now: Date) {
+  if (!items.length) return
+  const quietItems = items.filter(item => item.settled.state === 'quiet')
+  const snoozedItems = items.filter((item): item is typeof item & { settled: { state: 'snoozed'; runAt: Date } } => item.settled.state !== 'quiet')
+  const logRows: Array<typeof attentionLog.$inferInsert> = []
+  if (quietItems.length) {
+    const updated = await tx.update(attentionMatters)
+      .set({
+        state: 'quiet',
+        reason: quietItems.length === 1
+          ? quietItems[0].reason
+          : sql`case ${sql.join(quietItems.map(item => sql`when ${attentionMatters.id} = ${item.matter.id}::uuid then ${item.reason}`), sql` `)} else ${attentionMatters.reason} end`,
+        updatedAt: now,
+      })
+      .where(and(inArray(attentionMatters.id, quietItems.map(item => item.matter.id)), eq(attentionMatters.state, 'handed')))
+      .returning({ id: attentionMatters.id })
+    const updatedIds = new Set(updated.map(row => row.id))
+    for (const item of quietItems) {
+      if (updatedIds.has(item.matter.id)) {
+        logRows.push({ id: randomUUID(), userId: item.matter.userId, matterId: item.matter.id, action: 'quiet', spends: false, reason: item.reason, runAt: null })
+      }
+    }
   }
+  if (snoozedItems.length) {
+    const updated = await tx.update(attentionMatters)
+      .set({
+        state: 'snoozed',
+        reason: snoozedItems.length === 1
+          ? snoozedItems[0].reason
+          : sql`case ${sql.join(snoozedItems.map(item => sql`when ${attentionMatters.id} = ${item.matter.id}::uuid then ${item.reason}`), sql` `)} else ${attentionMatters.reason} end`,
+        runAt: snoozedItems.length === 1
+          ? snoozedItems[0].settled.runAt
+          : sql`case ${sql.join(snoozedItems.map(item => sql`when ${attentionMatters.id} = ${item.matter.id}::uuid then ${item.settled.runAt.toISOString()}::timestamptz`), sql` `)} else ${attentionMatters.runAt} end`,
+        updatedAt: now,
+      })
+      .where(and(inArray(attentionMatters.id, snoozedItems.map(item => item.matter.id)), eq(attentionMatters.state, 'handed')))
+      .returning({ id: attentionMatters.id })
+    const updatedIds = new Set(updated.map(row => row.id))
+    for (const item of snoozedItems) {
+      if (updatedIds.has(item.matter.id)) {
+        logRows.push({ id: randomUUID(), userId: item.matter.userId, matterId: item.matter.id, action: 'snooze', spends: false, reason: item.reason, runAt: item.settled.runAt })
+      }
+    }
+  }
+  if (logRows.length) await tx.insert(attentionLog).values(logRows)
 }
 
 /**
@@ -211,7 +247,7 @@ export async function releaseAttention(userId: string, now = new Date(), call: A
   const settled = stale.length ? await settlements(userId, stale, now, call) : []
   const waiting = await db.transaction(async tx => {
     await lock(tx, userId)
-    for (const item of settled) await applySettlement(tx, item, now)
+    await applySettlements(tx, settled, now)
     await tx.update(attentionMatters).set({ state: 'waiting', recheck: true, runAt: null, updatedAt: now })
       .where(and(eq(attentionMatters.userId, userId), eq(attentionMatters.state, 'snoozed'), lte(attentionMatters.runAt, now)))
     const [inHand] = await tx.select({ id: attentionMatters.id }).from(attentionMatters).where(and(eq(attentionMatters.userId, userId), eq(attentionMatters.state, 'handed'))).limit(1)
@@ -336,12 +372,18 @@ export async function settleTurn(userId: string, matterIds: readonly string[], t
   await db.transaction(async tx => {
     await lock(tx, userId)
     if (toldPerson) {
-      for (const matter of open) {
-        const rows = await tx.update(attentionMatters).set({ state: 'notified', reason: 'told without recording', personAsked: false, updatedAt: now }).where(and(eq(attentionMatters.id, matter.id), eq(attentionMatters.state, 'handed'))).returning({ id: attentionMatters.id })
-        if (!rows.length) continue
-        await log(tx, matter, 'notify', !matter.personAsked, { reason: 'told without recording' })
+      const openById = new Map(open.map(matter => [matter.id, matter]))
+      const rows = await tx.update(attentionMatters)
+        .set({ state: 'notified', reason: 'told without recording', personAsked: false, updatedAt: now })
+        .where(and(eq(attentionMatters.userId, userId), inArray(attentionMatters.id, open.map(matter => matter.id)), eq(attentionMatters.state, 'handed')))
+        .returning({ id: attentionMatters.id })
+      if (rows.length) {
+        await tx.insert(attentionLog).values(rows.map(row => {
+          const matter = openById.get(row.id)!
+          return { id: randomUUID(), userId: matter.userId, matterId: matter.id, action: 'notify' as const, spends: !matter.personAsked, reason: 'told without recording', runAt: null }
+        }))
       }
-    } else for (const item of settled) await applySettlement(tx, item, now)
+    } else await applySettlements(tx, settled, now)
   })
   await releaseAttention(userId, now, call)
 }

@@ -11,16 +11,15 @@ Web 和桌面通过 [`apps/frontend`](../../apps/frontend/vite.config.mjs) 编�
 | --- | --- | --- |
 | Web 前端 | `apps/frontend/vite.config.mjs`，目标 `web` | `apps/frontend/dist/web`；公开路径 `/mikka/` |
 | 桌面前端 | `apps/desktop/scripts/build-renderer.mjs`，目标 `desktop` | `apps/desktop/dist/renderer`；由 Electron 本地协议提供 |
-| API | `apps/api/nitro.config.ts`、`apps/api/runtime/entry.ts` | Hono 分派现有业务 handler，Nitro 承担 Node/Vercel 生命周期 |
+| API | `apps/api/nitro.config.ts`、`apps/api/runtime/entry.ts` | Hono 分派现有业务 handler，由当前 Cloudflare API release 或自托管 Node 服务承载 |
 | Bot Agent | `apps/eve/agent/` | eve 服务；独立会话、事件与 Workflow 队列，部署见 [Bot runtime](eve-runtime.md) |
 | Node 产品 | `apps/api/scripts/build.mjs`，`node-server` preset | `.output/`，包含 API、静态文件、运行资源和构建清单 |
-| Vercel 产品 | 同一构建脚本，`vercel` preset | `.vercel/output/`，Build Output API v3、函数、静态资源和 Workflow 路由 |
 
 `renderer-manifest.json` 记录目标、`rendererBuild`、实际使用的 `usedActions` 和输入图。构建插件只把真实导入的显式注册动作转换成 RPC，不自动暴露一个模块的全部导出；浏览器图出现服务端运行依赖会失败。Vite 复用根目录 `public`，Web 静态内容随后挂到 `/mikka`。`index.html` 由页面策略返回，不作为绕过语言、安全头的静态文件发布；API、`/v1`、`.well-known` 的未知路径不能得到 SPA 的 200 响应。
 
-CSS 继续经过共享 Tailwind 与 Next 的构建期 Lightning CSS 引擎及目标；Vite 不再进行第二轮 CSS 压缩。Web 保留原 `instrumentation-client`、PostHog 和 VersionGuard；桌面保留原本的本地认证和主进程能力边界。开发模式使用真实 development React 与 React Fast Refresh。
+CSS 继续经过共享 Tailwind 与 Lightning CSS 的构建期处理及冻结的浏览器目标（`apps/frontend/scripts/css-targets.mjs`）；Vite 不再进行第二轮 CSS 压缩。Web 保留原 `instrumentation-client`、PostHog 和 VersionGuard；桌面保留原本的本地认证和主进程能力边界。开发模式使用真实 development React 与 React Fast Refresh。
 
-前端配置禁止自动公开任意 `VITE_*` 或服务端环境。只显式编译原来使用的公开值：Computer 的 acceptance/deployment/enabled/mock、应用 build、daemon package、PostHog key、Stripe publishable key、Turnstile site key。其中 Computer deployment 仍来自 `VERCEL_ENV`，不以缺失的同名公开变量关闭既有生产功能。
+前端配置禁止自动公开任意 `VITE_*` 或服务端环境。只显式编译原来使用的公开值：Computer 的 acceptance/deployment/enabled/mock、应用 build、daemon package、PostHog key、Stripe publishable key、Turnstile site key。其中 Computer deployment 来自显式 `MIKKA_DEPLOYMENT_STAGE`；缺失时保持未设置。
 
 ## 认证、RPC 与版本
 
@@ -33,35 +32,35 @@ CSS 继续经过共享 Tailwind 与 Next 的构建期 Lightning CSS 引擎及目
 
 Wire 使用 `{version, action, args}`；结果为 `{version, ok, result}` 或 `{version, ok: false, error: {code}}`。版本接受范围由现有协议常量控制。共享组件的 server action 调用通过这个边界转发，普通 REST handler 的方法、鉴权、Origin 检查和错误语义继续有效。
 
-Web 的请求内会话复用绑定同一 Cookie 身份；敏感操作仍通过原 fresh-session 路径升级验证。原 Better Auth `nextCookies` 写入经请求 Cookie journal 提交到响应，不能把 `Set-Cookie` 当普通逗号分隔列表。Web 的 SDK 会话仍是身份权威；bootstrap 只提供安全投影。账号切换递增请求代次，旧账号迟到的 401 或响应不得清掉新账号界面。明确切换语言时，Web 恢复原 `NEXT_LOCALE` 的一年有效期、`Path=/mikka`、`SameSite=Lax`；桌面不写这个浏览器 Cookie。
+Web 的请求内会话复用绑定同一 Cookie 身份；敏感操作仍通过原 fresh-session 路径升级验证。Better Auth 的响应 Cookie 由 `mikkaCookies`（`lib/auth-cookies.ts`）写进请求 Cookie journal，再由传输边界提交到响应，不能把 `Set-Cookie` 当普通逗号分隔列表。Web 的 SDK 会话仍是身份权威；bootstrap 只提供安全投影。账号切换递增请求代次，旧账号迟到的 401 或响应不得清掉新账号界面。明确切换语言时，Web 写 `mikka-locale`（一年有效期、`Path=/mikka`、`SameSite=Lax`）；桌面不写这个浏览器 Cookie。改名期间（`i18n/locale-cookie.mjs` 的第 1 阶段）旧名 `NEXT_LOCALE` 同值同属性一起写、作为回退一起读，不让它过期，所以 Web 发布回滚后旧代码仍能读到语言选择；停写和停读按发布阶段进行，见 `docs/design/decisions/2026-11-18-1500-retire-next-dependency.md`。
 
 生产构建同时固定源提交、应用 build 和 deployment ID。Web HTML/资源使用同一 deployment ID，静态资源 URL 带 `dpl`，同源 API 自定义请求带 `x-deployment-id`；`/api/version` 保持不绑定旧部署，以供 VersionGuard 检测更新。没有新增全页面 `__vdpl` Cookie。桌面继续使用自身 API 兼容协议，不固定到某个 Web deployment。
 
-## 现有路由与 Next 兼容范围
+## 现有路由与请求适配层
 
-[`generate-routes.mjs`](../../apps/api/scripts/generate-routes.mjs) 通过 TypeScript AST 读取 `app/**/route.ts` 的导出、re-export 与解构 handler，不执行路由模块。当前 [`routes.json`](../../apps/api/generated/routes.json) 为 version 1、basePath `/mikka`，包含 **240 条路由记录**（2026-11-08 源码快照）；每次增删路由后以生成清单为准。此数量只描述源码清单。它记录方法、源文件 hash、动态参数和 `maxDuration`，另有独立 browser RPC 与 OAuth consent 安全投影入口。
+[`generate-routes.mjs`](../../apps/api/scripts/generate-routes.mjs) 通过 TypeScript AST 读取 `app/**/route.ts` 的导出、re-export 与解构 handler，不执行路由模块。当前 [`routes.json`](../../apps/api/generated/routes.json) 为 version 1、basePath `/mikka`，包含 **368 条路由记录**（2026-11-18 源码快照）；每次增删路由后以生成清单为准。此数量只描述源码清单。它记录方法、源文件 hash、动态参数和 `maxDuration`，另有独立 browser RPC 与 OAuth consent 安全投影入口。
 
 Hono 根据静态优先的匹配规则延迟载入原 handler，保留参数、请求体、流和取消信号。未显式实现的 OPTIONS 返回 204 与 Allow；不支持的方法返回 405。HEAD 可选用 GET handler，但仍传入原 HEAD Request，最终取消并移除响应 body；这不保证业务 handler 自己会接受 HEAD。机器接口没有 SPA fallback。页面的 basePath、语言、尾斜杠、旧域名和安全头由 [`http-policy.mjs`](../../apps/api/runtime/http-policy.mjs) 处理。
 
-服务端 [`compat-aliases.mjs`](../../apps/api/compat-aliases.mjs) 只实现当前业务实际使用的接口：
+服务端请求适配层是仓库自己的模块，不再有任何框架 specifier 的别名：
 
-- `next/server`：Request/Response、带 basePath 的 URL、Cookie、redirect 与 `after`。
-- `next/headers`：当前请求的只读 headers 与可提交 Cookie journal。
-- `next/navigation`：redirect、permanentRedirect、notFound。
-- `next-intl/server` 与本地化导航：原中英文消息、请求 locale 和翻译接口。
+- `@/lib/server-runtime/server`：Request/Response、带 basePath 的 URL、Cookie、redirect 与 `after`。
+- `@/lib/server-runtime/headers`：当前请求的只读 headers 与可提交 Cookie journal。
+- `@/lib/server-runtime/navigation`：redirect、permanentRedirect、notFound。
+- `@/lib/intl/i18n-server` 与 `@/lib/server-runtime/localized-navigation`：原中英文消息、请求 locale 和翻译接口。服务端**不要** import `@/i18n/navigation`——那是客户端实现（React hooks 与 `window` 路由），且它的 `getPathname` 在根路径上会保留尾斜杠，触发一次多余的 308。
 - React `cache`：当前请求内的 memo；其他 React 导出继续使用真实 React。
 
-这些适配器不是完整的 Next 实现。Next 仍保留在依赖中，服务于兼容源码、既有测试和 CSS 构建；产品入口不启动 Next server，也不依赖 Flight 传输。新增服务端 Next API 必须先明确其语义和适配测试，不能因类型能编译就假定运行兼容。
+[`compat-aliases.mjs`](../../apps/api/compat-aliases.mjs) 因此只剩 `server-only`、`mikka-real-react`、`react` 和 `@` 四个键，[`build-contract.mjs`](../../apps/api/build-contract.mjs) 会拒绝任何残留的框架别名。Next.js 不是依赖；`scripts/next-free.test.mjs` 守住这条线。新增服务端能力时直接扩这些模块，不要重新引入框架 specifier。
 
 ## 请求结束、Workflow 与 tracing
 
 请求作用域使用 AsyncLocalStorage 保存真实 Request、Cookie、locale 和请求级缓存。Cookie 在响应提交边界写回。`after` 的生命周期在响应产生前登记到官方 `waitUntil`；回调在真实响应完成或断开后运行，流式响应不能以“已创建 Response”作为结束。嵌套任务加入同一生命周期，运行错误保留闭集诊断。
 
-Workflow 使用官方 `workflow/nitro` 集成，扫描根目录现有 workflow/step。Vercel 由 SDK 生成 flow/webhook、队列 trigger 和函数配置；finalize 仅加启动 wrapper、资源与清单，保留生成的队列信息，不自行替换 managed World。原有部署的未完成 run 必须继续到其绑定部署，不能通过删除旧部署或重定向队列来“迁移”。
+Workflow 使用官方 `workflow/nitro` 集成，扫描根目录现有 workflow/step。SDK 生成 Workflow flow/webhook 与队列配置；finalize 仅加启动 wrapper、资源与清单，保留生成的队列信息，不自行替换 managed World。原有部署的未完成 run 必须继续到其绑定部署，不能通过删除旧部署或重定向队列来“迁移”。
 
-`WORKFLOW_TARGET_WORLD=local` 时，插件注册 close hook，再调用官方 World 的 start；关停时调用 close。开发入口为每个端口保留独立本地数据目录。本地 World 的重启恢复验证与 Vercel 托管队列验证是两件事，前者不能证明生产分布式行为。
+`WORKFLOW_TARGET_WORLD=local` 时，插件注册 close hook，再调用官方 World 的 start；关停时调用 close。开发入口为每个端口保留独立本地数据目录。本地 World 的重启恢复验证与 Cloudflare 生产队列验收是两件事，前者不能证明生产分布式行为。
 
-每个 Node/Vercel 入口先静态载入 `mikka-tracing.mjs`，再动态载入应用图，保证 tracing 初始化早于实际 `pg` 导入；仅靠较晚的 Nitro 插件不满足这个顺序。`pg` 和 OTel 使用真实外部依赖及其 package 元数据。请求 span 按实际响应结束收尾，后台 `after` 工作保留捕获的上下文。真实 HTTP → SQL → 后台任务 trace、流断开和导出结果仍须在固定环境单独验收，不能由 bundle 文件存在推断通过。
+每个 Node/Cloudflare API 入口先静态载入 `mikka-tracing.mjs`，再动态载入应用图，保证 tracing 初始化早于实际 `pg` 导入；仅靠较晚的 Nitro 插件不满足这个顺序。`pg` 和 OTel 使用真实外部依赖及其 package 元数据。请求 span 按实际响应结束收尾，后台 `after` 工作保留捕获的上下文。真实 HTTP → SQL → 后台任务 trace、流断开和导出结果仍须在固定环境单独验收，不能由 bundle 文件存在推断通过。
 
 ## 开发与 Node 启动
 
@@ -85,20 +84,16 @@ pnpm dev --host 127.0.0.1 --port 3000
 
 [`start-app.mjs`](../../scripts/start-app.mjs) 在导入和监听前检查 `.output/mikka-build.json`、真实 Node 24、preset、revision、锁文件/路由/tracing hash 格式及可选测试 revision 绑定。它保留启动目录；从构建所对应的仓库根目录使用 `pnpm start`。启动时只做有界 `/mikka/api/version` 就绪检查，验证实际 build，随后不新增空闲读取。
 
-发布必须包含完整输出和所需运行依赖，不能只复制 `index.mjs`。finalize 将域名数据、E2B 脚本和已生成的 worker/enrollment 二进制等实际资源复制入 Node 输出或各 Vercel 函数，并记录 hash。独立归档运行还须验证原 `process.cwd()` 资源路径和正式入口；不要绕过启动校验临时拼接部分输出。
+发布必须包含完整输出和所需运行依赖，不能只复制 `index.mjs`。finalize 将域名数据、E2B 脚本和已生成的 worker/enrollment 二进制等实际资源复制入 Node 输出或对应 Cloudflare API release，并记录 hash。独立归档运行还须验证原 `process.cwd()` 资源路径和正式入口；不要绕过启动校验临时拼接部分输出。
 
 Docker 的公开验收入口使用同一次 Nitro 编译图的 `mikka-docker.mjs`；该 adapter 不自行 listen、不安装信号处理器、`trustProxy=false`。外层已核验环境持有 HTTP/WS 监听与 ingress，严格验证固定 origin/Host 后交给真实 Node request；关闭顺序包含响应结束、官方 waitUntil 和 Nitro close。不能用新起的普通 listener 替代这个环境证明。
 
-## Vercel 构建与生产切换记录
+## Cloudflare 生产与 Node 自托管
 
-Vercel 输出使用 Build Output API，并保留官方 Workflow 生成的队列入口和函数配置。
-frontend、API 和 Eve 输出必须绑定同一源码版本；仅有编译成功或 READY 状态不能
-证明外部服务、队列投递或业务验收通过。
-
-Vercel TLS 终止后的 origin 由服务端配置的应用域名和平台 deployment host 精确选取；不能信任任意 Forwarded/Host 来扩大认证 origin。Docker 与 Vercel 的 ingress 适配分别验收，普通 Web RPC 的同源校验保持独立。
-
-公司现有项目设置、身份交付、上传操作和生产切换记录见[私有运维入口](README.md)。
-通用 Eve 输出与独立 World 的要求见 [Bot runtime](eve-runtime.md)。
+公司生产 Web/API 由 Cloudflare release 工作流管理；发布、部署观察、回滚
+以及运行资源绑定以[当前 Web 部署合同](web-deploy.md)和私有运维入口为准。
+Node `node-server` 构建仍用于自托管及本地真实运行验收。Cloudflare 与 Node
+的 ingress/服务生命周期分别验收，普通 Web RPC 的同源校验保持独立。
 
 ## 回滚操作
 

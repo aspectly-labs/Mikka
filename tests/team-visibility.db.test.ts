@@ -15,13 +15,13 @@ if (process.env.REQUIRE_DB === '1' && !authorized) throw new Error('Visibility d
 test('real API/core visibility: immutable tenant, optional Team, provider scope and suspension', { skip: !authorized }, async t => {
   // Server actions need a Next request boundary even when actAs pins a valid workspace.
   // Supply only the browser transport; authentication and ACL still use the real fixture DB.
-  const request = mock.module('next/headers', { namedExports: {
+  const request = mock.module('@/lib/server-runtime/headers', { namedExports: {
     headers: async () => new Headers(),
     cookies: async () => ({ get: () => undefined }),
   } })
   t.after(() => request.restore())
-  const intl = await import('next-intl/server')
-  const locale = mock.module('next-intl/server', { namedExports: { ...intl, getLocale: async () => 'en',
+  const intl = await import('@/lib/intl/i18n-server')
+  const locale = mock.module('@/lib/intl/i18n-server', { namedExports: { ...intl, getLocale: async () => 'en',
     getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
   t.after(() => locale.restore())
   const { Pool } = await import('pg')
@@ -53,6 +53,7 @@ test('real API/core visibility: immutable tenant, optional Team, provider scope 
     for (const [w,u] of [[workspace,owner],[workspace,member],[otherWorkspace,foreign],[personalWorkspace,owner]]) await pool.query('insert into mikka_workspace_members ("workspaceId","userId",name,email,role,status) values ($1,$2,$2,$3,\'member\',\'active\')', [w,u,`${u}@example.invalid`])
     for (const [id,w,u] of [[team,workspace,owner],[otherTeam,otherWorkspace,foreign]]) await pool.query('insert into mikka_teams (id,"workspaceId","userId",name,identifier) values ($1,$2,$3,\'Visibility\',\'VIS\')', [id,w,u])
     for (const [id,u,scope,label,tenant] of [[shared,owner,'workspace','shared-label',workspace],[personal,owner,'personal','secret-label',personalWorkspace],[foreignIssue,foreign,'workspace','foreign-label',otherWorkspace],[unlinked,owner,'workspace','invite-label',workspace]]) {
+      await pool.query('INSERT INTO workspace_issue_labels(workspace_id,name,color) VALUES($1,$2,\'blue\')', [tenant, label])
       await registeredTask(pool, u, tenant, id, client =>
         client.query('insert into issues (id,"userId",title,content,status,priority,scope,"workspaceId") values ($1,$2,$3,$4,\'doing\',\'normal\',$5,$6)', [id,u,id,doc(label),scope,tenant]))
       await pool.query('insert into issue_members ("issueId","userId","memberId") values ($1,$2,$3)', [id,u,member])
@@ -271,6 +272,7 @@ test('real API/core visibility: immutable tenant, optional Team, provider scope 
     await pool.query('delete from issue_members where "issueId"=any($1::uuid[])',[[shared,personal,foreignIssue,unlinked]])
     await pool.query('delete from mikka_team_issues where "issueId"=any($1::uuid[])',[[shared,personal,foreignIssue,unlinked]])
     await pool.query('delete from issues where id=any($1::uuid[])',[[shared,personal,foreignIssue,unlinked]])
+    await pool.query('delete from workspace_issue_labels where workspace_id=any($1::uuid[])',[[workspace,otherWorkspace,personalWorkspace]])
     await pool.query('delete from mikka_teams where id=any($1::uuid[])',[[team,otherTeam]])
     await pool.query('delete from mikka_workspace_members where "workspaceId"=any($1::uuid[])',[[workspace,otherWorkspace,personalWorkspace]])
     await pool.query('delete from mikka_workspaces where id=any($1::uuid[])',[[workspace,otherWorkspace,personalWorkspace]])

@@ -21,6 +21,7 @@ const (
 	ErrCreateUncertain Refusal = "secret_create_outcome_unknown"
 	ErrMissing         Refusal = "secret_not_found"
 	ErrIntegrity       Refusal = "credential_integrity_failed"
+	ErrPayloadTooLarge Refusal = "subscription_payload_too_large"
 	ErrUnsupported     Refusal = "provider_route_unavailable"
 	ErrProvider        Refusal = "provider_operation_failed"
 	ErrReauthenticate  Refusal = "reconnect_required"

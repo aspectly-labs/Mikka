@@ -17,6 +17,7 @@
 // Naming (firm): the machine is a `device`; agents are named by `harness`.
 import { z } from "zod"
 import { taskMcpServerSchema } from './task-mcp'
+import { mcpDeviceCheckCommandSchema, mcpDeviceCheckReceiptSchema } from './mcp-check'
 import { workspaceReadCommand } from './coding-workspace'
 
 import { modelNameSchema, runPolicySchema } from "./agent-policy"
@@ -27,9 +28,10 @@ import { runStopReason, runBenchmarkContext } from "./run"
 import { MAX_PROFILE_SKILLS_PER_RUN, MAX_SKILLS_PER_RUN, profileRunSkillSchema, runSkillSchema } from "./skill"
 import { skillAssignmentReceiptSchema } from './skill-artifact'
 import { sanitizeTraceContext } from './trace-context'
-import { nativeLeaseSchema } from './subscription'
+import { nativeBrokerContextSchema, nativeLeaseSchema } from './subscription'
 import { mailboxCatalogueSchema } from './mailbox'
 import { taskSecretAccessSchema } from './task-secrets'
+import { taskBranchSchema } from './orchestrator'
 
 const id = z.string().min(1).max(64)
 const isoTime = z.iso.datetime({ offset: true })
@@ -262,6 +264,7 @@ export type DaemonUpdateFailure = z.infer<typeof daemonUpdateFailureSchema>
 export const deviceManagementCommand = z.object({ id: z.uuid(), kind: z.enum(['redetect', 'restart', 'update', 'uninstall']) })
 export type DeviceManagementCommand = z.infer<typeof deviceManagementCommand>
 export const deviceReportSchema = z.object({
+  mcpChecks: z.array(mcpDeviceCheckReceiptSchema).max(1).optional(),
   completedDeviceCommands: z.array(z.uuid()).max(100).optional(),
   failedDeviceCommands: z.array(z.object({ id: z.uuid(), error: z.string().max(500) })).max(100).optional(),
   harnesses: z.array(harnessInfoSchema).max(20).optional(),
@@ -351,27 +354,50 @@ export const setupRecipeSchema = z.object({
   copyFiles: z.array(z.string().max(1_000)).max(200),
   /** Shell command run in the worktree, e.g. `bun install`. */
   command: z.string().max(2_000).optional(),
-  /** Approved once per repo by the user; unapproved recipes never run. */
+  /** Optional command to refresh an environment restored from its prebuilt snapshot. */
+  maintenance: z.string().max(2_000).optional(),
+  /** Legacy: nobody approves a recipe (ADR 2026-11-27-1615) and the daemon
+   * runs it either way. Still sent, as true, for released daemons that skip
+   * a recipe whose flag is false. */
   approved: z.boolean(),
 })
 export type SetupRecipe = z.infer<typeof setupRecipeSchema>
 
+/** A recipe as the server sends it to a daemon: `approved` is always true, so
+ * a released daemon also runs one stored before approval was removed. */
+export function runnableSetup(recipe: SetupRecipe): SetupRecipe {
+  return { ...recipe, approved: true }
+}
+
 export const REPO_ORIGIN_HEADER = "x-mikka-repo-origin-check"
+export const ENVIRONMENT_SNAPSHOT_HEADER = "x-mikka-environment-snapshot"
+export const PORTABLE_TASK_WORKSPACE_HEADER = "x-mikka-portable-task-workspace"
+export const portableTaskWorkspaceReceiptSchema = z.strictObject({
+  size: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  headSha: z.string().regex(/^[a-f0-9]{40}$/),
+})
+export const ENVIRONMENT_REPOSITORIES_HEADER = 'x-mikka-environment-repositories'
 export const PROJECT_ENVIRONMENT_HEADER = "x-mikka-project-environment"
 
 /** Sent by a daemon that injects `modelCredential`; a run frozen on an API key is handed only to one. */
 export const MODEL_CREDENTIAL_HEADER = "x-mikka-model-credential"
+/** Accepts a run-scoped gateway token over the same host's configured HTTP loopback origin. */
+export const MODEL_GATEWAY_LOOPBACK_HEADER = "x-mikka-model-gateway-loopback"
 /** The daemon accepts credentials prepared in the claim response (#1505). */
 export const RUN_CREDENTIALS_HEADER = "x-mikka-run-credentials"
 /** Only the first cloud claim can replace that sync's repository discovery. */
 export const INITIAL_REPOSITORY_HEADER = "x-mikka-initial-repository"
+/** The daemon accepts a configured prefix in the task's GitHub delivery branch. */
+export const CUSTOM_TASK_BRANCH_HEADER = "x-mikka-custom-task-branch"
 
 const credentialKey = z.string().min(1).max(4_096).refine(value => !/[\r\n\0]/.test(value))
 /** Background refresh response; null means the provider set no expiry. */
 export const runGitHubCredentialSchema = z.object({ token: credentialKey, expiresAt: isoTime.nullable() }).strip()
 const credentialBaseUrl = z.url().max(500).refine(value => {
   const url = new URL(value)
-  return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash
+  return !url.username && !url.password && !url.search && !url.hash
+    && (url.protocol === "https:" || (url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)))
 })
 
 /**
@@ -381,9 +407,56 @@ const credentialBaseUrl = z.url().max(500).refine(value => {
  */
 export const runModelCredentialSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("api_key"), key: credentialKey }).strict(),
-  z.object({ kind: z.literal("provider"), protocol: z.enum(["anthropic", "openai"]), baseUrl: credentialBaseUrl, key: credentialKey }).strict(),
+  z.object({ kind: z.literal("provider"), protocol: z.enum(["anthropic", "openai"]), baseUrl: credentialBaseUrl, key: credentialKey }).strict().refine(value => {
+    const url = new URL(value.baseUrl)
+    if (url.protocol === "https:") return true
+    const path = value.protocol === "anthropic" ? "/api/model-gateway/anthropic" : "/api/model-gateway/openai/v1"
+    return /^mkg_[A-Za-z0-9_-]{43}$/.test(value.key) && url.pathname.endsWith(path)
+      && /^(?:\/[A-Za-z0-9_-]+)*$/.test(url.pathname.slice(0, -path.length))
+  }),
 ])
 export type RunModelCredential = z.infer<typeof runModelCredentialSchema>
+
+/** A native subscription uses only a scoped Mikka model gateway credential. */
+export function isSubscriptionGatewayCredential(credential: RunModelCredential | undefined, protocol: 'anthropic' | 'openai'): credential is Extract<RunModelCredential, { kind: 'provider' }> {
+  if (credential?.kind !== 'provider' || credential.protocol !== protocol ||
+      !/^mkg_[A-Za-z0-9_-]{43}$/.test(credential.key) || !runModelCredentialSchema.safeParse(credential).success) return false
+  const path = protocol === 'anthropic' ? '/api/model-gateway/anthropic' : '/api/model-gateway/openai/v1'
+  return URL.parse(credential.baseUrl)?.pathname.endsWith(path) === true
+}
+
+
+const hasGitIdentityForbiddenChar = (value: string) =>
+  [...value].some(char => {
+    const code = char.charCodeAt(0)
+    return code < 0x20 || code === 0x7f || char === "<" || char === ">"
+  })
+
+/** Commit author/committer name: <= 100 chars non-empty after trim, or "" for default fallback. */
+export const gitAuthorNameSchema = z
+  .string()
+  .refine(value => value === "" || value.trim().length > 0, { message: "Invalid git author name" })
+  .transform(value => value.trim())
+  .pipe(z.string().max(100).refine(value => !hasGitIdentityForbiddenChar(value), { message: "Invalid git author name" }))
+
+/** Commit author/committer email: valid email (<= 254 chars) or "" for default fallback. */
+export const gitAuthorEmailSchema = z
+  .string()
+  .refine(value => value === "" || value.trim().length > 0, { message: "Invalid git author email" })
+  .transform(value => value.trim())
+  .pipe(
+    z.string().max(254).refine(
+      value => value === "" || (!hasGitIdentityForbiddenChar(value) && z.email().safeParse(value).success),
+      { message: "Invalid git author email" },
+    ),
+  )
+
+/** Resolved non-empty Git identity delivered to a run at claim time. */
+export const runGitIdentitySchema = z.strictObject({
+  name: gitAuthorNameSchema.pipe(z.string().min(1)).optional(),
+  email: gitAuthorEmailSchema.pipe(z.string().min(1)).optional(),
+})
+export type RunGitIdentity = z.infer<typeof runGitIdentitySchema>
 
 /** A repository record and its identity-scoped settings. */
 export const deviceRepoSchema = z.object({
@@ -424,6 +497,7 @@ export type RunKind = (typeof RUN_KINDS)[number]
 
 /** `POST /v1/devices/:deviceId/runs/:runId/claim`: what the daemon gets. */
 export const runAssignmentSchema = z.object({
+  portableTaskWorkspace: portableTaskWorkspaceReceiptSchema.optional(),
   /** The server handles native model observations without transitioning run state. */
   acceptsModelObservations: z.literal(true).optional(),
   runId: id,
@@ -439,7 +513,9 @@ export const runAssignmentSchema = z.object({
   /** Absent means origin/HEAD after fetch. */
   baseBranch: z.string().min(1).max(500).optional(),
   /** Frozen configuration, not a VM or a credential. Requires PROJECT_ENVIRONMENT_HEADER. */
-  projectEnvironment: z.object({ id: z.uuid(), revision: z.number().int().positive(), setup: setupRecipeSchema.optional() }).strict().optional(),
+  projectEnvironment: z.object({ id: z.uuid(), revision: z.number().int().positive(), fromSnapshot: z.literal(true).optional(), setup: setupRecipeSchema.optional(),
+    startupRepositories: z.array(z.object({ key: z.string().max(1000), baseBranch: z.string().min(1).max(250).nullable() }).strict()).max(100).optional(),
+  }).strict().optional(),
   expectedRepoRemote: z.string().max(2_000).optional(),
   harness: harnessSchema,
   prompt: z.string().max(100_000),
@@ -452,6 +528,8 @@ export const runAssignmentSchema = z.object({
   model: modelNameSchema.optional(),
   /** Frozen Profile effort, passed to the native harness unchanged. */
   effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  /** Server-verified serving speed tier (fast / ultrafast), passed to the native harness. */
+  serviceTier: z.enum(['fast', 'ultrafast']).optional(),
   /** Owner-bound subscription selection; the optional lease below is prepared once at claim. */
   subscriptionBinding: z.object({
     bindingId: z.uuid(), ownerId: z.string().min(1).max(128), workspaceId: z.uuid(),
@@ -459,6 +537,7 @@ export const runAssignmentSchema = z.object({
   }).strict().optional(),
   /** Access credential for the selected subscription. Kept in memory, never journaled. */
   subscriptionLease: nativeLeaseSchema.optional(),
+  subscriptionContext: nativeBrokerContextSchema.optional(),
   /**
    * The run's own API key, opened for this claim only. Never with
    * `subscriptionBinding`. The daemon keeps it in memory and hands it only
@@ -468,14 +547,20 @@ export const runAssignmentSchema = z.object({
   /** Local host authority comes only from the server's owner-bound Bot run. */
   localComputer: z.object({
     botId: z.uuid(), ownerId: z.string().min(1).max(128), workspaceId: z.uuid(),
-    policyVersion: z.number().int().nonnegative().max(2147483647),
-    permission: z.enum(['allow', 'ask']),
+    /** Compat: released daemons still require the field; new code ignores it. */
+    policyVersion: z.number().int().nonnegative().max(2147483647).optional(),
+    /** Always `allow`: the run uses the computer without asking anyone (ADR
+     * 2026-11-27-1615, 2026-11-27-1720). A workspace or device that blocks
+     * computer use sends no grant at all. An older server's `ask` never waited
+     * for a person and reads as allow; released daemons still accept both. */
+    permission: z.enum(['allow', 'ask']).transform((): 'allow' => 'allow'),
   }).strict().optional(),
   /** Trusted server assignment; the model cannot choose a Bot or display. */
   computer: z.object({
     botId: z.uuid(), ownerId: z.string().min(1).max(128),
     display: z.string().regex(/^:[1-9][0-9]{0,2}$/),
-    policyVersion: z.number().int().nonnegative().max(2147483647),
+    /** Compat: released daemons still require the field; new code ignores it. */
+    policyVersion: z.number().int().nonnegative().max(2147483647).optional(),
   }).strict().optional(),
   /**
    * 4e3: the task's explicit user variables (workspace + matching repository secrets/env, NAME -> value).
@@ -494,7 +579,7 @@ export const runAssignmentSchema = z.object({
   /** Mock harness only: fixture name under `packages/daemon/fixtures`. */
   fixture: z.string().max(200).optional(),
   /**
-   * The issue's branch (`mikka/<team>-<number>`, ADR 0024): every run of
+   * The issue's branch (default `mikka/<team>-<number>`, ADR 0024): every run of
    * the issue pushes its verified commit here, so one pull request follows
    * the issue across fix rounds. A run that starts a new worktree builds on
    * this branch from the remote when it exists. Without it the daemon
@@ -531,7 +616,7 @@ export const runAssignmentSchema = z.object({
    */
   github: z.object({
     endpoint: z.url(), repository: z.string().regex(/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/),
-    branch: z.string().regex(/^mikka\/[a-z0-9-]+-[1-9][0-9]*$/).optional(),
+    branch: taskBranchSchema.optional(),
     token: runGitHubCredentialSchema.shape.token.optional(),
     expiresAt: runGitHubCredentialSchema.shape.expiresAt.optional(),
   }).strict().refine(value => Boolean(value.token) === (value.expiresAt !== undefined), { message: 'A prepared GitHub token includes its natural expiry', path: ['expiresAt'] }).optional(),
@@ -549,6 +634,7 @@ export const runAssignmentSchema = z.object({
   continuesRunId: id.optional(),
   /** A same-device retry with no usable snapshot must reuse its real worktree. */
   requireWorktreeContinuation: z.literal(true).optional(),
+  freshEnvironmentCheckout: z.literal(true).optional(),
   /**
    * The latest checkpoint of the attempt this run takes over after its
    * machine went offline. Used only for a new worktree (another machine, or
@@ -571,6 +657,12 @@ export const runAssignmentSchema = z.object({
    * a new session gets `prompt`, which already includes it.
    */
   followUp: z.string().max(100_000).optional(),
+  /** Optional control directive for `followUp` (compact, allowed slash command, or literal client_composed). */
+  followUpControl: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('compact'), instructions: z.string().max(10_000).optional() }).strict(),
+    z.object({ kind: z.literal('slash'), name: z.string().trim().min(1).max(160), args: z.string().max(10_000).optional() }).strict(),
+    z.object({ kind: z.literal('client_composed') }).strict(),
+  ]).optional(),
   /**
    * The workspace's agent permissions and network allow-list (ADR 0028).
    * Absent from an older server: the daemon applies the ADR 0009 defaults.
@@ -603,7 +695,14 @@ export const runAssignmentSchema = z.object({
   repositorySkills: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)).max(MAX_PROFILE_SKILLS_PER_RUN).optional(),
   /** Frozen by the server benchmark ledger; never extracted from model output. */
   benchmark: runBenchmarkContext.optional(),
-}).refine(value => !(value.modelCredential && value.subscriptionBinding), { message: "A run has one model credential", path: ["modelCredential"] })
+  /** Resolved personal/workspace Git commit author & committer identity (#3110). */
+  gitIdentity: runGitIdentitySchema.optional(),
+}).refine(value => !(value.modelCredential && value.subscriptionBinding && !value.subscriptionContext), { message: "A run has one model credential", path: ["modelCredential"] })
+  .refine(value => !value.subscriptionContext || Boolean(value.subscriptionBinding && !value.subscriptionLease &&
+    value.subscriptionBinding.route === value.subscriptionContext.route &&
+    (value.harness === 'codex' ? value.subscriptionContext.route === 'codex_cli' && isSubscriptionGatewayCredential(value.modelCredential, 'openai')
+      : value.harness === 'claude_code' && value.subscriptionContext.route === 'claude_code_cli' && isSubscriptionGatewayCredential(value.modelCredential, 'anthropic'))),
+  { message: 'A subscription context requires its binding and model gateway credential', path: ['subscriptionContext'] })
   .refine(value => !value.subscriptionLease || Boolean(value.subscriptionBinding && value.subscriptionBinding.route === value.subscriptionLease.route &&
     (value.harness === 'codex' ? value.subscriptionLease.route === 'codex_cli' : value.harness === 'claude_code' && value.subscriptionLease.route === 'claude_code_cli')),
   { message: 'A subscription lease belongs to the selected harness and binding', path: ['subscriptionLease'] })
@@ -689,6 +788,13 @@ export const COMMANDS_MAX_SKIP_DEVICE_COMMANDS = 10
 /** Older daemons reject unknown command kinds; advertise this extension. */
 export const ACTIVE_TURN_STEER_HEADER = 'x-mikka-active-turn-steer'
 export const MAILBOX_NOTICE_HEADER = 'x-mikka-mailbox-notices'
+/** Advertises support for `compact` commands and `clientComposed` / `slashCommand` input flags (#3333). */
+export const RUN_CONTROL_COMMANDS_HEADER = 'x-mikka-run-control-commands'
+
+const slashCommandRefSchema = z.object({
+  name: z.string().trim().min(1).max(160),
+  args: z.string().max(10_000).optional(),
+})
 
 export const runCommandSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -696,8 +802,18 @@ export const runCommandSchema = z.discriminatedUnion("kind", [
     runId: id,
     messageId: z.uuid(),
     text: z.string().min(1).max(100_000),
+    /** Deliver text literally with no slash-command dispatch (`client_composed: true` on Claude SDK). */
+    clientComposed: z.literal(true).optional(),
+    /** Execute an allowed harness slash command directly without Mikka JSON source wrapper. */
+    slashCommand: slashCommandRefSchema.optional(),
   }),
   z.object({ kind: z.literal("steer"), runId: id, messageId: z.uuid(), text: z.string().min(1).max(100_000) }),
+  z.object({
+    kind: z.literal("compact"),
+    runId: id,
+    messageId: z.uuid(),
+    instructions: z.string().max(10_000).optional(),
+  }),
   z.object({ kind: z.literal("stop"), runId: id }),
   // A host notification carries addresses only; peer content remains behind
   // the authenticated mailbox read and retains its original provenance.
@@ -724,6 +840,7 @@ export const runCommandsResponse = z.object({
   daemonVersions: daemonVersionsSchema.optional().catch(undefined),
   /** The oldest pending device command, so a person's update reaches the device now. */
   deviceCommands: z.array(deviceManagementCommand).max(1).optional().catch(undefined),
+  mcpChecks: z.array(mcpDeviceCheckCommandSchema).max(1).optional(),
 })
 export type RunCommandsResponse = z.infer<typeof runCommandsResponse>
 

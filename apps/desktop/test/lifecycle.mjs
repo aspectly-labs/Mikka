@@ -194,7 +194,7 @@ async function seedHosted(app, page) {
       sameSite: cookie.sameSite === 'None' ? 'no_restriction' : cookie.sameSite?.toLowerCase(),
       ...(cookie.expires > 0 ? { expirationDate: cookie.expires } : {}),
     })
-    await partition.cookies.set({ url: origin, name: 'NEXT_LOCALE', value: 'zh-CN', path: '/' })
+    await partition.cookies.set({ url: origin, name: 'mikka-locale', value: 'zh-CN', path: '/' })
     await partition.cookies.flushStore()
   }, { cookies: state.cookies, origin: environment.origin })
   await page.goto(`${environment.origin}/mikka`, { waitUntil: 'domcontentloaded' })

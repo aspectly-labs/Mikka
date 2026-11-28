@@ -29,6 +29,10 @@ const LIST_LIMIT = 100
  * Notifications from a Composio app the person turned off as a source are dropped first.
  */
 export async function ingestNotifications(incoming: readonly ExternalNotification[], { route = true } = {}) {
+  // One batch shares its admission/billing reads (decisionBatchCache): a webhook
+  // delivery judges every notification it carries against the same workspace.
+  const { decisionBatchCache } = await import('@/lib/abuse/context')
+  return decisionBatchCache.run(new Map(), async () => {
   const woken = new Set<string>()
   const actionItems = new Map<string, ActionTitleInput[]>()
   // Apps the person turned off as a source in Settings are not read at all.
@@ -67,6 +71,7 @@ export async function ingestNotifications(incoming: readonly ExternalNotificatio
     const { wakeCoordinator } = await import('@/lib/coordinator/wake')
     for (const userId of woken) await wakeCoordinator(userId)
   }
+  })
 }
 
 const visible = (userId: string, since: Date) => and(eq(suggestions.userId, userId), eq(suggestions.shown, true), isNull(suggestions.dismissedAt), sql`not exists (select 1 from inbox_snoozes z where z."userId"=${userId} and z."itemType"='suggestion' and z."itemId"=${suggestions.id})`, gte(suggestions.createdAt, since))

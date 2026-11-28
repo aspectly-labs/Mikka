@@ -1,8 +1,8 @@
 import { hostedBillingScope } from '@/lib/abuse/context'
 import { groupDirectory } from '@/lib/group-conversations-directory'
-import { NextResponse } from 'next/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
-import { groupsWithPendingTurns, hasPendingGroupTurn, processGroupTurn } from '@/lib/coordinator/group-turns'
+import { groupsWithPendingTurns, processGroupTurn } from '@/lib/coordinator/group-turns'
 import { groupRuntime } from '@/lib/coordinator/group-runtime'
 import { and, eq, inArray } from 'drizzle-orm'
 import { auth, apiWorkspaceAllowed } from '@/lib/api-auth'
@@ -42,7 +42,7 @@ export async function respondGroupDecisionQuality(request: Request, conversation
   const result = await handleGroupDecisionQuality(pool, scoped, { userId: session?.user?.id ?? null, conversationId,
     method: request.method, origin: request.headers.get('origin'), host: request.headers.get('host') ?? url.host,
     body: request.method === 'POST' ? await request.text().catch(() => '') : undefined, limit: url.searchParams.get('limit') })
-  return NextResponse.json(result.body, { status: result.status, headers: { 'Cache-Control': 'private, no-store' } })
+  return RouteResponse.json(result.body, { status: result.status, headers: { 'Cache-Control': 'private, no-store' } })
 }
 export async function respondGroupDecisionReplay(request:Request,conversationId:string) {
   const session=await auth.api.getSession({headers:request.headers})
@@ -51,7 +51,7 @@ export async function respondGroupDecisionReplay(request:Request,conversationId:
   const {invokeDecision}=await import('@/lib/coordinator/decide')
   const result=await handleGroupDecisionReplay(pool,scoped,{userId:session?.user?.id ?? null,conversationId,method:request.method,
     origin:request.headers.get('origin'),host:request.headers.get('host') ?? url.host,body:await request.text().catch(()=>''),signal:request.signal},invokeDecision)
-  return NextResponse.json(result.body,{status:result.status,headers:{'Cache-Control':'private, no-store'}})
+  return RouteResponse.json(result.body,{status:result.status,headers:{'Cache-Control':'private, no-store'}})
 }
 export async function respondGroup(request: Request, resource: GroupRequest['resource'], id?: string) {
   const session = await auth.api.getSession({ headers: request.headers })
@@ -65,16 +65,12 @@ export async function respondGroup(request: Request, resource: GroupRequest['res
     body: request.method !== 'GET' ? await request.text().catch(() => '') : undefined,
     before: url.searchParams.get('before'), after: url.searchParams.get('after'), limit: url.searchParams.get('limit'), workspaceId: url.searchParams.get('workspaceId') ?? session?.tokenWorkspaceId,
   }, true)
-  if (resource === 'messages' && id && result.status < 300) {
-    // A send starts the worker. A history read (polled while a reply is generating) starts it only
-    // when a turn is still pending, instead of taking the group's lock and recovering on every poll.
-    const conversationId = id
-    afterJob('after:group-turn', async () => {
-      if (request.method === 'GET' && !await hasPendingGroupTurn(pool, conversationId).catch(() => false)) { await reconcileGroupTaskReports(conversationId); return }
-      await drainGroupTurns(conversationId, Date.now() + 220000)
-    })
+  if (resource === 'messages' && id && request.method === 'POST' && result.status < 300) {
+    // Only a committed send starts a request-bound worker (#2820: reads never do;
+    // the minute cron's resumePendingGroupTurns recovers turns and task reports that outlive a request).
+    afterJob('after:group-turn', () => drainGroupTurns(id, Date.now() + 220000))
   }
-  return NextResponse.json(result.body, { status: result.status, headers: { 'Cache-Control': 'private, no-store' } })
+  return RouteResponse.json(result.body, { status: result.status, headers: { 'Cache-Control': 'private, no-store' } })
 }
 
 /** Runs a group's pending turns one after another until none is left or the deadline nears. */

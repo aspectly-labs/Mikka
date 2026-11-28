@@ -1,12 +1,12 @@
 import { auth } from '@/lib/auth'
 import { freshSessionRoute } from '@/lib/fresh-session'
 import { auditRequestContext } from '@/lib/audit/events'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { secretAuditHook } from '@/lib/secrets/audit'
 import { createSecretDeliveryHandler } from '@/lib/secrets/delivery-http'
 import { listUserSecrets, replaceUserSecret } from '@/lib/secrets/user-store'
 import { listWorkspaceSecrets, replaceWorkspaceSecret } from '@/lib/secrets/store'
 
-export const dynamic = 'force-dynamic'
 
 const handle = createSecretDeliveryHandler({
   getSession: input => auth.api.getSession(input),
@@ -17,7 +17,26 @@ const handle = createSecretDeliveryHandler({
     secretAuditHook(actor, auditRequestContext(request.headers))),
 })
 
+const deliveryHeaders = {
+  'Cache-Control': 'private, no-store',
+  Vary: 'Cookie, Authorization',
+  'X-Content-Type-Options': 'nosniff',
+} as const
+
+const guarded = defineRoute(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    onOriginFailure: () => Response.json({ error: 'originRejected' }, { status: 403, headers: deliveryHeaders }),
+    onAuthFailure: () => Response.json({ error: 'authRequired' }, { status: 401, headers: deliveryHeaders }),
+    onAuthError: () => Response.json({ error: 'secretsUnavailable' }, { status: 503, headers: deliveryHeaders }),
+  },
+  ({ request }) => handle(request),
+)
+
 // Both metadata reads and credential-delivery changes require a fresh human
 // session. The factory rejects delegated tokens and enforces exact origins.
-export const GET = freshSessionRoute(handle)
-export const PATCH = freshSessionRoute(handle)
+export const GET = freshSessionRoute(guarded)
+export const PATCH = freshSessionRoute(guarded)

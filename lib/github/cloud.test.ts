@@ -1,6 +1,7 @@
 import '../../tests/support/server-only.mjs'
 import assert from 'node:assert/strict'
-import { before, beforeEach, mock, test } from 'node:test'
+import { after, before, beforeEach, mock, test } from 'node:test'
+import { startGitHubAccessHttp } from '../../tests/fakes/github-access-http.mjs'
 
 let ownApp = false, cloudEdition = false, binding: { revoked: boolean; scopes: string[] } | null = null, legacyCalls = 0
 let cache = [{ installation_id: '99', account_id: '42', account_login: 'owner', account_type: 'User', github_account_id: '42' }]
@@ -10,9 +11,12 @@ mock.module(new URL('../db/index.ts', import.meta.url).href, { namedExports: { p
   async query(sql: string) { return { rows: sql.includes('cloud_service_bindings') ? binding ? [binding] : [] : cache, rowCount: 1 } },
   async connect() { return { async query() { return { rows: [], rowCount: 1 } }, release() {} } },
 } } })
-mock.module(new URL('./app-config.ts', import.meta.url).href, { namedExports: { readGitHubAppConfig: async () => ({ source: ownApp ? 'database' : 'environment' }) } })
+mock.module(new URL('./app-config.ts', import.meta.url).href, { namedExports: { readGitHubAppConfig: async () => ({ id: '4840908', source: ownApp ? 'database' : 'environment' }) } })
 mock.module(new URL('../edition.ts', import.meta.url).href, { namedExports: { isCloudEdition: () => cloudEdition } })
-mock.module(new URL('./user-access.ts', import.meta.url).href, { namedExports: { githubTokenForUser: async () => { legacyCalls++; return { token: 'fixture-own-user-token', githubAccountId: '42', expiresAt: null } } } })
+mock.module(new URL('../auth.ts', import.meta.url).href, { namedExports: { auth: { api: {}, $context: Promise.resolve({ internalAdapter: { findAccounts: async () => [] } }) } } })
+mock.module(new URL('./connection.ts', import.meta.url).href, { namedExports: {
+  githubConnectionToken: async () => ({ token: 'fixture-own-user-token', githubAccountId: '42', expiresAt: null }),
+} })
 mock.module(new URL('./repository-installation.ts', import.meta.url).href, { namedExports: { linkedGitHubAccountId: async () => '42' } })
 mock.module(new URL('../cloud-services/runtime.ts', import.meta.url).href, { namedExports: { cloudRequest: async (userId: string, scope: string, path: string, init?: RequestInit) => {
   calls.push({ userId, scope, path, ...(init?.body ? { input: JSON.parse(String(init.body)) } : {}) })
@@ -22,7 +26,16 @@ mock.module(new URL('../cloud-services/runtime.ts', import.meta.url).href, { nam
   assert.fail('Unexpected cloud capability path')
 } } })
 let runtime: typeof import('./machine-credential'), cloud: typeof import('./cloud')
-before(async () => { runtime = await import('./machine-credential'); cloud = await import('./cloud') })
+let githubHttp: Awaited<ReturnType<typeof startGitHubAccessHttp>>
+const realFetch = globalThis.fetch
+before(async () => {
+  githubHttp = await startGitHubAccessHttp({
+    getUser: () => { legacyCalls++; return { id: 42, login: 'owner' } },
+  })
+  globalThis.fetch = githubHttp.routeFetch(realFetch) as typeof fetch
+  runtime = await import('./machine-credential'); cloud = await import('./cloud')
+})
+after(async () => { globalThis.fetch = realFetch; await githubHttp.close() })
 beforeEach(() => { ownApp = false; cloudEdition = false; binding = { revoked: false, scopes: ['github'] }; legacyCalls = 0; calls.length = 0; cache = [{ installation_id: '99', account_id: '42', account_login: 'owner', account_type: 'User', github_account_id: '42' }] })
 
 test('self-owned App wins over a cloud connection; no cloud provider call occurs', async () => {

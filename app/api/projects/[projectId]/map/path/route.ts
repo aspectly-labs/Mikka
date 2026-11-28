@@ -1,8 +1,7 @@
-import { withRequestLog } from '@/lib/request-log'
 import { projectMapHttp } from '@/lib/project-map/read-http'
-export const runtime = 'nodejs'
-export const dynamic = 'force-dynamic'
-export const GET = withRequestLog('/api/projects/[projectId]/map/path', async (request: Request, context: { params: Promise<{ projectId: string }> }) => {
-  const params = await context.params
-  return projectMapHttp(request, params.projectId, 'path')
-})
+import { defineRoute } from '@/lib/primitives/define-route'
+
+export const GET = defineRoute(
+  { route: '/api/projects/[projectId]/map/path', auth: 'public', origin: 'any', workspace: 'none' },
+  ({ request, params }) => projectMapHttp(request, params.projectId, 'path'),
+)

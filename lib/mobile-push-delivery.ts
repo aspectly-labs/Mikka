@@ -8,9 +8,10 @@ import { cloudClient, cloudRequest } from '@/lib/cloud-services/runtime'
 import { CloudServiceError } from '@/lib/cloud-services/errors'
 import { readCloudJson } from '@/lib/cloud-services/transport'
 import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
+import { readEnv } from '@/lib/env/server'
 
 const EXPO = 'https://exp.host/--/api/v2/push'
-type Notification = { to: string[]; title: string; body: string; data: Record<string, unknown>; collapseId?: string }
+type Notification = { to: string[]; title: string; body: string; data: Record<string, unknown>; collapseId?: string; silent?: boolean }
 type Receipt = { id: string; token: string; proof?: string }
 const FAILURE_CODES = ['message_too_big', 'rate_limited', 'provider_credentials', 'provider_unavailable'] as const
 type FailureCode = typeof FAILURE_CODES[number]
@@ -29,8 +30,9 @@ export function phonePushPayload(message: Notification, content: 'full' | 'remin
 
 async function expo(path: 'send' | 'getReceipts', body: unknown) {
   let response: Response
+  const expoAccessToken = readEnv('EXPO_ACCESS_TOKEN')
   try { response = await fetch(`${EXPO}/${path}`, { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', accept: 'application/json',
-    ...(process.env.EXPO_ACCESS_TOKEN ? { authorization: `Bearer ${process.env.EXPO_ACCESS_TOKEN}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }) }
+    ...(expoAccessToken ? { authorization: `Bearer ${expoAccessToken}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) }) }
   catch (cause) { throw new CloudServiceError('cloud_unavailable', 'network', cause) }
   return readCloudJson(response)
 }
@@ -40,6 +42,14 @@ async function removeTokens(userId: string, tokens: string[]) {
   if (tokens.length) await pool.query('DELETE FROM mobile_push_tokens WHERE "userId"=$1 AND token=ANY($2::text[])', [userId, tokens])
 }
 
+/**
+ * APNs (`aps.sound`) and FCM (`android.notification.sound`) only play sound
+ * resources bundled inside the signed native mobile app binary, `'default'`,
+ * or `null` (silent). Arbitrary user-uploaded audio files are unsupported by
+ * system push providers and stay client-local; `SETTINGS_REGISTRY.notificationSound`
+ * syncs preset choices across Web/Desktop and maps `'none'` to `silent: true`
+ * (see `docs/design/decisions/2026-11-22-0050-notification-sound-presets.md`).
+ */
 export async function deliverPhonePush(userId: string, notification: Notification, locale: 'zh-CN' | 'en') {
   let accepted = 0, invalid = 0
   const hosted = isCloudEdition(), provider = hosted ? 'expo' : 'cloud'
@@ -50,7 +60,7 @@ export async function deliverPhonePush(userId: string, notification: Notificatio
     const batch = message.to.slice(offset, offset + 100)
     let delivery: Delivery
     if (hosted) {
-      const result = await expo('send', batch.map(to => ({ to, title: message.title, body: message.body, data: message.data, sound: 'default', ...(message.collapseId ? { collapseId: message.collapseId } : {}) })))
+      const result = await expo('send', batch.map(to => ({ to, title: message.title, body: message.body, data: message.data, sound: message.silent ? null : 'default', ...(message.collapseId ? { collapseId: message.collapseId } : {}) })))
       if (!Array.isArray(result.data) || result.data.length !== batch.length) throw new CloudServiceError('cloud_unavailable', 'protocol')
       delivery = { invalidTokens: [], tickets: [], failures: [] }
       result.data.forEach((item: unknown, index: number) => {

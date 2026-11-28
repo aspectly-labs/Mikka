@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { webAuthHeaders } from '@/lib/web-connection/auth-server'
 
-export const dynamic = 'force-dynamic'
 // No interpolated input, cookies, bearer, or session lookup. Fragments never reach the server.
 const handoffScript = `(() => {
   const fragment = location.hash;
@@ -19,11 +19,14 @@ const handoffScript = `(() => {
   }
   window.close();
 })();`
-export async function GET() {
-  const digest = createHash('sha256').update(handoffScript).digest('base64')
-  return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Mikka</title></head><body><script>${handoffScript}</script></body></html>`, { headers: {
-    ...webAuthHeaders, 'Content-Type': 'text/html; charset=utf-8',
-    'Content-Security-Policy': `default-src 'none'; script-src 'sha256-${digest}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
-    'Cross-Origin-Opener-Policy': 'unsafe-none',
-  } })
-}
+export const GET = defineRoute(
+  { auth: 'public', origin: 'any', workspace: 'none' },
+  () => {
+    const digest = createHash('sha256').update(handoffScript).digest('base64')
+    return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Mikka</title></head><body><script>${handoffScript}</script></body></html>`, { headers: {
+      ...webAuthHeaders, 'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': `default-src 'none'; script-src 'sha256-${digest}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+      'Cross-Origin-Opener-Policy': 'unsafe-none',
+    } })
+  },
+)

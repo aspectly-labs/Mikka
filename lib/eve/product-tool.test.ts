@@ -12,36 +12,52 @@ const binding = {sessionId:'wrun_fixture',turnId:'turn_0',executionId:'10000000-
 const input = {recipient:'fixture@example.invalid',body:'Proposed message'}
 const definition: ProductCatalogueEntry = {name:'send_email',description:'Send mail',inputSchema:{type:'object'}}
 
-test('native product tool pauses through Eve with exact durable call/input binding',async()=>{
-  const requests:ProductOperation[]=[]
-  const rpc:typeof productRpc = async <T>(_scope:EveScope,request:ProductOperation)=>{assert.deepEqual(_scope,scope);requests.push(request);return {status:'user-approval'} as T}
-  const tool=createProductTool(scope,binding,definition,rpc)
-  const approval=tool.approval as ApprovalConfiguration<unknown>
-  const context={session:{id:binding.sessionId,turn:{id:binding.turnId},auth:{current:scopeAuth(scope)}},callId:'call_1',toolInput:input,abortSignal:new AbortController().signal}
-  assert.equal(await approval.request(context as never),'user-approval')
-  assert.deepEqual(requests,[{...binding,operation:'approval',name:definition.name,input,callId:'call_1'}])
-  assert.equal(await approval.request({...context,session:{...context.session,id:'wrun_other'}} as never),'denied')
-  assert.equal(await approval.request({...context,session:{...context.session,auth:{current:scopeAuth({...scope,ownerId:'other'})}}} as never),'denied')
-  assert.equal(requests.length,1)
+test('the product tool reviews the exact durable call/input binding and never pauses for a person',async()=>{
+  for(const status of ['not-applicable','denied','user-approval']) {
+    const requests:ProductOperation[]=[]
+    const rpc:typeof productRpc = async <T>(_scope:EveScope,request:ProductOperation)=>{assert.deepEqual(_scope,scope);requests.push(request);return {status} as T}
+    const tool=createProductTool(scope,binding,definition,rpc)
+    const approval=tool.approval as ApprovalConfiguration<unknown>
+    assert.equal(approval.response,undefined,'there is no human response to authorize')
+    const context={session:{id:binding.sessionId,turn:{id:binding.turnId},auth:{current:scopeAuth(scope)}},callId:'call_1',toolInput:input,abortSignal:new AbortController().signal}
+    // Anything but a clear not-applicable stops the call; nothing becomes a prompt.
+    assert.equal(await approval.request(context as never),status==='not-applicable'?'not-applicable':'denied')
+    assert.deepEqual(requests,[{...binding,operation:'approval',name:definition.name,input,callId:'call_1'}])
+    assert.equal(await approval.request({...context,session:{...context.session,id:'wrun_other'}} as never),'denied')
+    assert.equal(await approval.request({...context,session:{...context.session,auth:{current:scopeAuth({...scope,ownerId:'other'})}}} as never),'denied')
+    assert.equal(requests.length,1)
+  }
 })
 
-test('native approval accepts only original scoped owner and copies no token capability',async()=>{
+test('execution sends no responder and copies no token capability',async()=>{
   const requests:ProductOperation[]=[]
   const rpc:typeof productRpc = async <T>(_scope:EveScope,request:ProductOperation)=>{requests.push(request);return {output:'sent'} as T}
   const tool=createProductTool(scope,binding,definition,rpc)
-  const approval=tool.approval as ApprovalConfiguration<unknown>
   const owner=scopeAuth(scope)
-  const context={session:{id:binding.sessionId,turn:{id:binding.turnId}},request:{principal:owner},response:{principal:owner,decision:'approve'}}
-  assert.deepEqual(await approval.response!(context as never),{status:'allowed'})
-  for(const foreign of [scopeAuth({...scope,ownerId:'other'}),scopeAuth({...scope,botId:'other'}),scopeAuth({...scope,workspaceId:'other'}),scopeAuth({...scope,surface:'slack'}),{...owner,authenticator:'unknown'},null]) {
-    assert.equal((await approval.response!({...context,response:{...context.response,principal:foreign}} as never)).status,'rejected')
-    assert.equal((await approval.response!({...context,request:{principal:foreign}} as never)).status,'rejected')
-  }
-  const responder={...owner,getToken:()=>{throw new Error('must not access token')},attributes:{...owner.attributes,sourceEventId:'private-original-source'}}
+  const responder={...owner,getToken:()=>{throw new Error('must not access token')}}
   assert.equal(await tool.execute!(input as never,{callId:'call_1',abortSignal:new AbortController().signal,approval:{responder}} as never),'sent')
-  assert.deepEqual(requests,[{...binding,operation:'execute',name:definition.name,input,callId:'call_1',approvalResponder:owner}])
-  assert.equal(await tool.execute!(input as never,{callId:'call_2',abortSignal:new AbortController().signal} as never),'sent')
-  assert.equal(Object.hasOwn(requests[1],'approvalResponder'),false)
+  assert.deepEqual(requests,[{...binding,operation:'execute',name:definition.name,input,callId:'call_1'}])
+})
+
+test('Web Search sends the server-selected model on the original execution and call despite model-supplied arguments', async () => {
+  const frozen = { type: 'api_key' as const, keyId: '10000000-0000-4000-8000-000000000004', ownerId: scope.ownerId,
+    consumerId: scope.botId, workspaceId: scope.workspaceId, modelId: 'fixture/original-model' }
+  const requests: ProductOperation[] = []
+  const rpc: typeof productRpc = async <T>(_scope: EveScope, request: ProductOperation) => {
+    requests.push(request)
+    return { output: 'example result' } as T
+  }
+  const tool = createProductTool(scope, { ...binding, runtime: { harness: 'ai_sdk', model: frozen.modelId, modelSelection: frozen } },
+    { ...definition, name: 'web_search' }, rpc)
+  const misleadingInput = { query: 'fixture', webSearchModel: { modelId: 'model-chosen' } }
+  const context = { callId: 'stable-call', abortSignal: new AbortController().signal }
+  await tool.execute!(misleadingInput as never, context as never)
+  await tool.execute!(misleadingInput as never, context as never)
+  const managed = createProductTool(scope, { ...binding, runtime: { harness: 'ai_sdk', model: 'fixture/managed' } },
+    { ...definition, name: 'web_search' }, rpc)
+  await managed.execute!(misleadingInput as never, context as never)
+  assert.deepEqual(requests, [frozen, frozen, null].map(webSearchModel => ({ ...binding, operation: 'execute', name: 'web_search', input: misleadingInput,
+    callId: context.callId, webSearchModel })))
 })
 
 test('self-hosted product RPC uses the configured server and reserves the private capability for Cloudflare', async t => {
@@ -94,7 +110,7 @@ test('Cloudflare product RPC carries the native Eve scope without a second signe
 })
 
 
-test('actual native approval and execution bind the existing app contract only when invoked', async () => {
+test('actual review and execution bind the existing app contract only when invoked', async () => {
   const pendingBinding = { sessionId: binding.sessionId, turnId: binding.turnId }
   const allocations: unknown[] = []
   const requests: ProductOperation[] = []
@@ -112,7 +128,7 @@ test('actual native approval and execution bind the existing app contract only w
     // The deployed app requires this ID and rechecks its running execution key.
     assert.equal(request.executionId, binding.executionId)
     requests.push(request)
-    return (request.operation === 'approval' ? { status: 'user-approval' } : { output: 'sent' }) as T
+    return (request.operation === 'approval' ? { status: 'not-applicable' } : { output: 'sent' }) as T
   }
   const tool = createProductTool(scope, pendingBinding, definition, rpc)
   const readTool = createProductTool(scope, pendingBinding, { ...definition, needsApprovalReview: false }, rpc)
@@ -122,10 +138,10 @@ test('actual native approval and execution bind the existing app contract only w
   assert.equal(await (readTool.approval as ApprovalConfiguration<unknown>).request(context as never), 'not-applicable')
   assert.equal(allocations.length, 0)
   assert.equal(await readTool.execute!(input as never, context as never), 'sent')
-  assert.equal(await (tool.approval as ApprovalConfiguration<unknown>).request(context as never), 'user-approval')
-  // Eve may reconstruct the tool after its approval pause. Allocation uses the same business key.
+  assert.equal(await (tool.approval as ApprovalConfiguration<unknown>).request(context as never), 'not-applicable')
+  // Eve may reconstruct the tool between review and execution. Allocation uses the same business key.
   const resumed = createProductTool(scope, pendingBinding, definition, rpc)
-  assert.equal(await resumed.execute!(input as never, { ...context, approval: { responder: scopeAuth(scope) } } as never), 'sent')
+  assert.equal(await resumed.execute!(input as never, context as never), 'sent')
   assert.equal(allocations.length, 3)
   assert.deepEqual(requests.map(request => request.operation), ['execute', 'approval', 'execute'])
   const aborted = new AbortController()

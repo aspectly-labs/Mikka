@@ -12,7 +12,8 @@ import { AgentProfileAdmissionError } from '@/lib/factory/profile-admission'
 import { issueForUser } from '@/lib/issue-access'
 import { issueMutationsEnabled } from '@/lib/coordinator/issue-tools-enabled'
 import { actAs } from '@/lib/acting-user'
-import type { ActivityActor } from '@/lib/activity-actor'
+import { actingContext, type ActivityActor } from '@/lib/activity-actor'
+import { enterprisePrincipal } from '@/lib/enterprise/principal'
 import { addRunMessage,  requestRunStop } from '@/lib/agent-runs'
 import { forgetNotes, rememberNote } from '@/lib/coordinator/context'
 import { editMemory } from '@/lib/coordinator/store'
@@ -20,7 +21,6 @@ import { chatBotId } from '@/lib/coordinator/coordinator-bot'
 import { db } from '@/lib/db'
 import { agentRuns, agents, coordinatorSessions, devices, issueMembers, issues, runChunks, teamIssuePromotions } from '@/lib/db/schema'
 import { deviceIsOnline } from '@/lib/device-presence'
-import type { IssueLabel } from '@/lib/issue-metadata'
 import { readIssueMetadata } from '@/lib/issue-metadata'
 import { issueAttrsContent } from '@/lib/issue-summary-columns'
 import { getIssue, saveIssue } from '@/app/actions/issues'
@@ -28,8 +28,9 @@ import { updateIssueMetadata, type IssueMetadataPatch } from '@/app/actions/issu
 import { updateIssueRelation } from '@/app/actions/issue-operations'
 import { createIssueInput, updateIssueInput } from '@/lib/coordinator/issue-input'
 import { listProjects as readProjects, moveIssueToProject } from '@/app/actions/projects'
-import { taskReaderScope } from '@/lib/task-workspace'
+import { taskReaderScope, withTaskWorkspace } from '@/lib/task-workspace'
 import { tokenWorkspace } from '@/lib/tokens/principal'
+import { resolveTaskLabelNames } from '@/lib/task-labels/references'
 
 // The MCP tools that change things, and the reads that need more than one
 // table. Writes go through the app's own server actions inside `actAs`, so an
@@ -40,7 +41,8 @@ type Failure = { error: string; params?: Record<string, string | number>; confir
 
 function scopedUser(userId: string) {
   const workspaceId = taskReaderScope(userId).workspaceId
-  return workspaceId ? { id: userId, [tokenWorkspace]: workspaceId } : userId
+  const context = actingContext.getStore()
+  return workspaceId ? { id: userId, [tokenWorkspace]: workspaceId, [enterprisePrincipal]: context?.userId === userId ? context.enterprisePrincipal : undefined } : userId
 }
 
 async function taskActor(userId: string, actor?: ActivityActor) {
@@ -88,12 +90,6 @@ function textToDoc(text: string) {
   return { type: 'doc', content: lines.map(line => line ? { type: 'paragraph', content: [{ type: 'text', text: line }] } : { type: 'paragraph' }) }
 }
 
-/** The labels the person already uses, so a label named by an agent keeps its color. */
-async function knownLabels(userId: string): Promise<Map<string, IssueLabel>> {
-  const rows = await db.select({ content: issueAttrsContent }).from(issues).where(and(eq(issues.userId, userId), (await issueVisibility(userId)).predicate))
-  return new Map(rows.flatMap(row => readIssueMetadata(row.content).labels).map(label => [label.name.toLowerCase(), label]))
-}
-
 interface IssueChanges {
   title?: string
   status?: string
@@ -107,8 +103,9 @@ interface IssueChanges {
 }
 
 /** Applies the changes one action at a time, each on the revision the last one left. */
-async function applyChanges(userId: string, issueId: string, changes: IssueChanges) {
+async function applyChanges(issueId: string, changes: IssueChanges, resolvedLabelIds?: string[]) {
   let issue = unwrap(await getIssue(issueId)).issue
+  const labelIds = resolvedLabelIds ?? (changes.labels === undefined ? undefined : (await resolveTaskLabelNames(db, issue.workspaceId!, changes.labels)).labelIds)
   // Historical invitations do not grant personal-task or revoked workspace
   // access. Check the proposed person's effective access before any mutation.
   if (changes.assigneeUserId && !await issueForUser(changes.assigneeUserId, issue.id)) throw new ActionFailureError('memberNotJoined')
@@ -119,10 +116,7 @@ async function applyChanges(userId: string, issueId: string, changes: IssueChang
     })).issue
   }
   const patch: IssueMetadataPatch = {}
-  if (changes.labels) {
-    const known = await knownLabels(issue.userId)
-    patch.labels = changes.labels.map(name => known.get(name.toLowerCase()) ?? { name, color: 'gray' })
-  }
+  if (labelIds !== undefined) patch.labelIds = labelIds
   if (changes.assigneeUserId !== undefined) patch.assignee = changes.assigneeUserId ? { kind: 'member', id: changes.assigneeUserId } : null
   if (changes.assigneeAgentId !== undefined) patch.delegate = changes.assigneeAgentId ? { kind: 'agent', id: changes.assigneeAgentId } : null
   if (Object.keys(patch).length) issue = unwrap(await updateIssueMetadata({ id: issue.id, revision: issue.revision, patch })).issue
@@ -147,9 +141,16 @@ export async function createIssue(userId: string, input: IssueChanges & { title:
     if (toolCallId === undefined && input.assigneeUserId !== undefined) return { error: 'issueToolsDisabled' }
     if (teamId && toolCallId === undefined) return { error: 'validationGeneric' }
     const mutate = async () => {
+      const { labels, projectId, assigneeUserId, assigneeAgentId } = input
+      let labelIds: string[] | undefined
+      if (labels !== undefined) {
+        const workspaceId = taskReaderScope(userId).workspaceId
+        if (!workspaceId) throw new ActionFailureError('workspaceAccessDenied')
+        labelIds = (await withTaskWorkspace(userId, workspaceId, () => resolveTaskLabelNames(db, workspaceId, labels))).labelIds
+      }
       const fields = { title: input.title, content: textToDoc(input.body ?? ''), status: input.status ?? 'todo', priority: input.priority ?? 'normal' }
       const created = unwrap(await saveIssue(fields)).issue
-      return issueResult(await applyChanges(userId, created.id, { projectId: input.projectId, labels: input.labels, assigneeUserId: input.assigneeUserId, assigneeAgentId: input.assigneeAgentId }))
+      return issueResult(await applyChanges(created.id, { projectId, assigneeUserId, assigneeAgentId }, labelIds))
     }
     if (toolCallId === undefined) return mutate()
     if (!issueMutationsEnabled()) return { error: 'issueToolsDisabled' }
@@ -176,7 +177,7 @@ export async function updateIssue(userId: string, input: IssueChanges & { issueI
   return attempt(async () => actAs(await taskActor(userId, actor), async () => {
     if (toolCallId === undefined && input.assigneeUserId !== undefined) return { error: 'issueToolsDisabled' }
     const { issueId, ...changes } = input
-    const mutate = async () => issueResult(await applyChanges(userId, issueId, changes))
+    const mutate = async () => issueResult(await applyChanges(issueId, changes))
     if (toolCallId === undefined) return mutate()
     if (!issueMutationsEnabled()) return { error: 'issueToolsDisabled' }
     const parsed = updateIssueInput.safeParse(input)
@@ -259,7 +260,8 @@ async function mcpRunModel(userId: string, input: { issueId: string; agentId: st
     { ownerId: userId, workspaceId: await executionWorkspace(userId, botId), botId },
     { issueId: input.issueId, stage: 'execute', location: 'local', agentId: agent.id, deviceId: agent.deviceId, asked: { harness: agent.harness } })
   if (target.kind !== 'device' || target.agentId !== agent.id) throw new ActionFailureError('runModelMissing')
-  return { model: target.model, agentProfile, modelDispatch: { mode: selectionMode ?? 'preference', location: 'local' as const, entry: target.entry },
+  const { workerModelDispatchFromTarget } = await import('@/lib/agent-kit/worker')
+  return { model: target.model, agentProfile, modelDispatch: workerModelDispatchFromTarget(target, { mode: selectionMode ?? 'preference', location: 'local', profileEffort: agentProfile?.effort }),
     ...(target.subscriptionBindingId ? { subscriptionBindingId: target.subscriptionBindingId } : {}),
     ...(target.entry.source.kind === 'api_key' ? { apiKeyId: target.entry.source.keyId } : {}) }
 }

@@ -29,3 +29,28 @@ test('current and older trusted selectors schedule the docs classifier suite onc
     assert.equal(result, 0)
   }
 })
+
+test('core and integration lanes ignore retired public Web UI and OpenUI tasks from older trusted selectors', () => {
+  const retired = ['ci-core-8', 'ci-core-49', 'ci-core-52', 'ci-core-57', 'ci-core-view-state']
+  const combined = ['ci-core-7', ...retired, 'ci-integration-2']
+  for (const [kind, expected] of [['core', ['core-7']], ['integration', ['integration-2']]]) {
+    const result = main(kind, { CI_UNITS: JSON.stringify(combined) }, (_command, args) => {
+      const targets = args[args.indexOf('-t') + 1].split(',')
+      assert.deepEqual(targets, expected)
+      return { status: 0 }
+    })
+    assert.equal(result, 0)
+  }
+  for (const selection of [retired, ['ci-core-8', 'ci-integration-2']]) {
+    let spawned = false
+    const result = main('core', { CI_UNITS: JSON.stringify(selection) }, () => {
+      spawned = true
+      return { status: 0 }
+    })
+    assert.equal(result, 0)
+    assert.equal(spawned, false)
+  }
+  assert.throws(() => main('core', { CI_UNITS: JSON.stringify(['ci-core-7', 'ci-unknown']) }), /invalidUnitSelection/)
+  assert.throws(() => main('core', { CI_UNITS: '["ci-integration-2"]' }), /invalidUnitSelection/)
+  assert.throws(() => main('integration', { CI_UNITS: '["ci-core-8"]' }), /invalidUnitSelection/)
+})

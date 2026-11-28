@@ -1,5 +1,14 @@
 import { respondGroup } from '@/lib/group-conversations-route'
-export const dynamic = 'force-dynamic'
-type Context = { params: Promise<{ id: string }> }
+import { defineRoute } from '@/lib/primitives/define-route'
+
 /** `POST /api/conversations/:id/stop`: 停止 the group's reply in progress (and any still queued). */
-export async function POST(request: Request, { params }: Context) { return respondGroup(request, 'stop', (await params).id) }
+
+export const POST = defineRoute<'session', 'pat-scoped', { id: string }>(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    write: true,
+  },
+  ({ request, params }) => respondGroup(request, 'stop', params.id),
+)

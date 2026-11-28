@@ -1,6 +1,7 @@
 # 允许使用的模型 becomes 优先使用的模型, with 优先使用的 Agent in the same card
 
 - Date: 2026-11-02
+- **Status:** Superseded in part by [2026-11-05-0400](2026-11-05-0400-per-agent-model-lists.md)
 - Source: Alex, reviewing 设置 › 模型与订阅 on a phone, relayed by the coordinator session: Bot chats pick their own model, so this list only orders the models of tasks dispatched to an Agent; it is a preference, not a permission. 「允许」 is the wrong word. 优先使用的 Agent (Claude Code / Codex) belongs with it.
 - Rule: —
 - Superseded in part by: [2026-11-05-0400](2026-11-05-0400-per-agent-model-lists.md) (one list per Agent)

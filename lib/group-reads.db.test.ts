@@ -1,4 +1,3 @@
-import 'next/dist/server/node-environment-baseline'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -45,20 +44,15 @@ test('group read routes advance actual group history without opening private DMs
   const list = await import('../app/api/conversations/route')
   const links = await import('../app/api/conversation-links/[id]/messages/route')
   const messages = await import('../app/api/conversations/[id]/messages/route')
-  const { AfterContext } = await import('next/dist/server/after/after-context')
-  const { workAsyncStorage } = await import('next/dist/server/app-render/work-async-storage.external')
-  const { workUnitAsyncStorage } = await import('next/dist/server/app-render/work-unit-async-storage.external')
-  const { createRequestStoreForAPI } = await import('next/dist/server/async-storage/request-store')
-  const { NextRequest } = await import('next/server')
+  const { createRequestScope, runRequestScope } = await import('../apps/api/src/context')
+  const { RouteRequest } = await import('../lib/server-runtime/server')
   const history = async (query = '', conversationId: string = group) => {
-    const request = new NextRequest(`http://127.0.0.1/api/conversations/${conversationId}/messages${query}`)
-    const waits: Promise<unknown>[] = [], errors: unknown[] = [], closes: Array<() => void> = []
-    const afterContext = new AfterContext({ waitUntil: promise => { waits.push(promise) }, onClose: callback => { closes.push(callback) }, onTaskError: error => { errors.push(error) } })
-    const requestStore: ReturnType<typeof createRequestStoreForAPI> = Reflect.apply(createRequestStoreForAPI, undefined, [request, new URL(request.url), { tags: [], expirationsByCacheKind: new Map() }, undefined, undefined, undefined])
-    return workAsyncStorage.run({ afterContext } as NonNullable<ReturnType<typeof workAsyncStorage.getStore>>, () => workUnitAsyncStorage.run(requestStore, async () => {
+    const request = new RouteRequest(`http://127.0.0.1/api/conversations/${conversationId}/messages${query}`)
+    const scope = createRequestScope(request)
+    return runRequestScope(scope, async () => {
       try { return await messages.GET(request, { params: Promise.resolve({ id: conversationId }) }) }
-      finally { for (const close of closes) close(); await Promise.all(waits); assert.deepEqual(errors, []) }
-    }))
+      finally { await scope.after.finish() }
+    })
   }
   const linked = (id: string = exchangeLink, query = '') => links.GET(new Request(`http://127.0.0.1/api/conversation-links/${id}/messages${query}`), { params: Promise.resolve({ id }) })
   const call = (method: 'GET' | 'POST', id: string = group, messageId?: string, origin?: string) => route[method](new Request(`http://127.0.0.1/api/conversations/${id}/read`, {
@@ -74,6 +68,15 @@ test('group read routes advance actual group history without opening private DMs
     assert.equal(rows.find((row: { id: string }) => row.id === group).unreadCount, '1')
     assert.deepEqual(await (await call('POST', group, '1')).json(), { lastReadMessageId: ids[1], lastReadPosition: 2, unreadCount: 1 })
     assert.deepEqual(await (await call('POST', group, '4')).json(), { lastReadMessageId: ids[3], lastReadPosition: 4, unreadCount: 0 })
+  })
+  await t.test('a member without a name is listed by the local part of their email address, never left out', async () => {
+    const members = await import('../app/api/conversations/[id]/members/route')
+    await pool.query('UPDATE "user" SET name=\'\' WHERE id=$1', [member])
+    try {
+      const body = await (await members.GET(new Request(`http://127.0.0.1/api/conversations/${group}/members`), { params: Promise.resolve({ id: group }) })).json()
+      assert.equal(body.members.find((row: { id: string }) => row.id === member)?.name, member, 'the address is never sent, only what stands before @')
+      assert.equal(JSON.stringify(body).includes('@example.invalid'), false)
+    } finally { await pool.query('UPDATE "user" SET name=$1 WHERE id=$1', [member]) }
   })
   await t.test('unknown and foreign messages are rejected without moving the read position', async () => {
     for (const id of [foreign, randomUUID(), '5', '0', 'bad']) assert.equal((await call('POST', group, id)).status, 422)
@@ -188,12 +191,14 @@ test('group read routes advance actual group history without opening private DMs
         body: JSON.stringify({ body: text, mentions: selected.map(memberId => ({ memberType: 'agent', memberId })) }) }, true)
       assert.equal(response.status, 201)
     }
+    const billed: (string | null)[] = []
     const runtime = {
       async agents(userId: string, ids: string[], client: import('pg').PoolClient) { return (await client.query(`SELECT id,name,description FROM agents WHERE "userId"=$1 AND id=ANY($2::uuid[])`, [userId, ids])).rows },
       async authorized(workspaceId: string, userId: string) { return Boolean((await pool.query(`SELECT 1 FROM mikka_workspace_members WHERE "workspaceId"=$1 AND "userId"=$2 AND status='active'`, [workspaceId, userId])).rowCount) },
       async route(): Promise<never> { throw Error('An explicit mention must not call a decision fixture') },
       async correction(): Promise<never> { throw Error('Explicit mention roots need no correction fixture') },
       async generate(agent: { id: string }, input: { message: { text: string }; earlier: { text: string }[]; privatePeer?: { id: string } }) {
+        billed.push((await import('./abuse/context')).hostedBillingScope.getStore()?.turnRef ?? null)
         if (agent.id === c) { assert.deepEqual(input.earlier, []); return { text: 'public response', mentions: [] } }
         if (!input.privatePeer) return { text: `private question ${input.message.text}`, mentions: [], privateTo: b,
           sourceConversationId: group, linkedConversationId: dm, linkId: exchangeLink, anchorPosition: '4' }
@@ -215,12 +220,21 @@ test('group read routes advance actual group history without opening private DMs
     assert.equal((await (await call('GET', source)).json()).unreadCount, 2)
     const firstView = await (await linked(initial[0].id)).json()
     assert.deepEqual(firstView.messages.map((entry: { body: string }) => entry.body), ['private answer first','private question first'])
+    // Each private reply is stored under the id its usage receipt names: group:<anchored group message>:<reply id>.
+    const privateIds = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1`, [initial[0].linkedConversationId])).rows.map(row => row.id)
+    const anchor = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1 AND position=1`, [source])).rows[0].id
+    for (const id of privateIds) assert.ok(billed.includes(`group:${anchor}:${id}`), `private reply ${id} has its usage reference`)
     assert.equal((await history('', initial[0].linkedConversationId)).status, 404)
     await send('second'); await processGroupTurn(pool, source, runtime)
     const segments = (await pool.query(`SELECT id,"linkedConversationId","firstPosition"::text,"lastPosition"::text,"messageCount"::text FROM conversation_links WHERE "sourceConversationId"=$1 ORDER BY "anchorPosition"`, [source])).rows
     assert.equal(segments.length, 2)
     assert.equal(segments[0].linkedConversationId, segments[1].linkedConversationId)
     assert.deepEqual([segments[1].firstPosition, segments[1].lastPosition, segments[1].messageCount], ['3','4','2'])
+    // The reused transcript's second segment names the second group message, not the first.
+    const secondAnchor = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1 AND body='second'`, [source])).rows[0].id
+    const secondReplies = (await pool.query(`SELECT id FROM conversation_messages WHERE "conversationId"=$1 AND position BETWEEN 3 AND 4`, [segments[1].linkedConversationId])).rows.map(row => row.id)
+    assert.equal(secondReplies.length, 2)
+    for (const id of secondReplies) assert.ok(billed.includes(`group:${secondAnchor}:${id}`), `second-segment reply ${id} is billed under the second group message`)
     assert.equal(JSON.stringify(await (await linked(segments[0].id, '?before=999')).json()).includes('second'), false)
     assert.equal((await (await call('GET', source)).json()).unreadCount, 3, 'private message positions do not add source unread messages')
     // Remove a source peer while its initial model response is in flight.
@@ -280,6 +294,23 @@ test('group read routes advance actual group history without opening private DMs
     const membersView = await (await roster.GET(request('GET', `/api/conversations/${source}/members`), context)).json()
     assert.deepEqual(membersView.members.filter((p: { memberType: string }) => p.memberType === 'bot').map((p: { id: string }) => p.id).sort(), [a,b,c].sort())
     assert.ok(membersView.members.every((p: { memberType: string; color: string; shape: string }) => p.memberType !== 'bot' || p.color === 'bleu' && p.shape === 'cercle'))
+    // The chat list carries each group's Bot faces in member order, so its row draws the page's avatar (R-36).
+    await pool.query(`UPDATE bots SET color='rouge',shape='etoile' WHERE id=$1`, [b])
+    const listed = (await (await list.GET(request('GET', `/api/conversations?workspaceId=${w}`))).json()).conversations.find((row: { id: string }) => row.id === source)
+    const pageBots = (await (await roster.GET(request('GET', `/api/conversations/${source}/members`), context)).json()).members.filter((p: { memberType: string }) => p.memberType === 'bot')
+    assert.deepEqual(listed.bots, pageBots.map(({ id, color, shape }: { id: string; color: string; shape: string }) => ({ id, color, shape })))
+    assert.equal(listed.bots.length, 3)
+    assert.ok(listed.bots.every((face: Record<string, unknown>) => !('name' in face)), 'a face carries no name')
+    await pool.query(`UPDATE bots SET color='bleu',shape='cercle' WHERE id=$1`, [b])
+    // Who is writing a reply now: each running Bot once, in the order it started; a queued one is not answering yet.
+    const asked = [randomUUID(), randomUUID(), randomUUID(), randomUUID()]
+    for (const [index, message] of asked.entries()) await pool.query(`INSERT INTO conversation_messages (id,"conversationId",position,"authorType","authorId",body) VALUES ($1,$2,$3,'user',$4,'answering fixture')`, [message, source, 9000 + index, owner])
+    for (const [index, [bot, status]] of ([[b, 'running'], [a, 'running'], [b, 'running'], [c, 'queued']] as const).entries())
+      await pool.query(`INSERT INTO group_turns ("messageId","conversationId","userId",status,"botId","createdAt") VALUES ($1,$2,$3,$4,$5,now() + $6 * interval '1 second')`, [asked[index], source, owner, status, bot, index])
+    try {
+      const page = await handleGroup(pool, directory, { userId: member, method: 'GET', resource: 'messages', id: source, origin: null, host: '127.0.0.1' }, true)
+      assert.deepEqual((page.body as { answering: unknown }).answering, [{ memberType: 'bot', id: b }, { memberType: 'bot', id: a }])
+    } finally { await pool.query('DELETE FROM conversation_messages WHERE id=ANY($1::uuid[])', [asked]) }
     const send = async (text: string, selected: string[], userId = owner) => {
       const response = await handleGroup(pool, directory, { userId, method: 'POST', resource: 'messages', id: source, origin: null, host: '127.0.0.1',
         body: JSON.stringify({ body: text, mentions: selected.map(memberId => ({ memberType: 'bot', memberId })) }) }, true)

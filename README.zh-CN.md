@@ -11,16 +11,17 @@
 
 从本地到云端，所有 Agent 协作如一。
 
-[访问 Mikka](https://app.aspectlylabs.com/mikka) · [文档](https://aspectlylabs.com/mikka/docs) · [快速入门](https://aspectlylabs.com/mikka/docs/quickstart)
+[Mikka 官网](https://aspectlylabs.com/mikka) · [打开应用](https://app.aspectlylabs.com/mikka) · [文档](https://aspectlylabs.com/mikka/docs) · [快速入门](https://aspectlylabs.com/mikka/docs/quickstart) · [定价](https://aspectlylabs.com/pricing)
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-Community-FFB003)](https://linux.do)
+[![SPONSORED BY E2B FOR STARTUPS](https://img.shields.io/badge/SPONSORED%20BY-E2B%20FOR%20STARTUPS-ff3001?style=for-the-badge&labelColor=black)](https://e2b.dev/startups)
 
 [English](README.md) · **简体中文**
 
 </div>
 
-Mikka 为 Claude Code、Codex 和受支持的 Cursor 运行环境组织工作：Bot 负责协调任务，Agent 负责执行。
+Mikka 把 Claude Code 和 Codex 跑在隔离的云端机器上，与你自己电脑上的 Agent 连成一体，并把所有会话收进与 Coordinator 的同一个聊天里。Bot 负责协调 Claude Code、Codex 和受支持的 Cursor 运行环境的工作，Agent 负责执行。
 
 向 Bot 描述一个任务，Mikka 就能将编码工作派发给运行在 Mac、Linux 设备、SSH 服务器或符合条件的云端沙盒中的 Agent，并把进度、提问和结果汇总到同一个地方。你可以通过网页、macOS 或 iOS App 使用 Mikka。
 
@@ -28,7 +29,7 @@ Mikka 为 Claude Code、Codex 和受支持的 Cursor 运行环境组织工作：
 
 **Mikka Cloud。** [打开应用](https://app.aspectlylabs.com/mikka)，直接注册账号即可开始使用 Mikka。具体步骤参见[快速入门指南](https://aspectlylabs.com/mikka/docs/quickstart)。
 
-**自托管服务器。** 你可以使用 Docker 和 PostgreSQL 在自己的 Linux 主机上运行 Mikka。数据库可以选择 Compose 自带的 PostgreSQL，也可以使用托管 PostgreSQL（**[推荐 Neon](docs/self-hosting.md#managed-postgresql-neon-recommended)**，但不强制）。按照[自托管指南](docs/self-hosting.md)下载匹配版本的 Compose 文件，并配置必要的私有凭证。
+**社区自托管。** 自托管由社区维护。你可以使用 Docker 和 PostgreSQL 在自己的 Linux 主机上运行 Mikka。数据库可以选择 Compose 自带的 PostgreSQL，也可以使用托管 PostgreSQL（**[推荐 Neon](docs/self-hosting.md#managed-postgresql-neon-recommended)**，但不强制）。按照[自托管指南](docs/self-hosting.md)下载匹配版本的 Compose 文件，并配置必要的私有凭证。
 
 使用自带 PostgreSQL：
 
@@ -127,6 +128,15 @@ Mikka 的开发得到了 [Codex for Open Source](https://openai.com/form/codex-f
 </a>
 
 感谢 [Neon](https://neon.com) 通过 Neon Open Source Program 为 Mikka 提供支持。
+
+<a href="https://e2b.dev/startups">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/e2b-for-startups-dark.svg">
+    <img src="docs/assets/e2b-for-startups-light.svg" alt="E2B for Startups" width="151" height="32">
+  </picture>
+</a>
+
+感谢 [E2B](https://e2b.dev) 通过 [E2B for Startups](https://e2b.dev/startups) 计划为 Mikka 提供支持。借助 E2B 的沙箱，Mikka 可以在隔离的云端机器上让多个 Agent 并行工作，我们得以专注于产品本身，而不是基础设施。
 
 ## 许可证
 

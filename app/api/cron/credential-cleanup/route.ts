@@ -1,10 +1,12 @@
-import { cronUnauthorized } from '@/lib/cron-auth'
 import { cronJob } from '@/lib/background'
+import { defineRoute } from '@/lib/primitives/define-route'
 import { privateHeaders } from '@/lib/credentials/http'
-async function handleGET(request: Request) {
-  const refused = await cronUnauthorized(request); if (refused) return refused
-  // Retention hold: no automatic database deletion is authorized.
-  return Response.json({ disabled: true }, { headers: privateHeaders })
-}
+const handleGET = defineRoute(
+  { auth: 'cron-secret', origin: 'any', workspace: 'none' },
+  async () => {
+    // Retention hold: no automatic database deletion is authorized.
+    return Response.json({ disabled: true }, { headers: privateHeaders })
+  },
+)
 
 export const GET = cronJob('credential-cleanup', handleGET)

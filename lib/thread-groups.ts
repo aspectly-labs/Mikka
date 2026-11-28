@@ -82,10 +82,6 @@ type GroupedThread = { id: string; status: string; issueId: string | null; creat
 /** The task a thread works on, as far as grouping needs it. */
 export type GroupIssue = { status: string; metadata: { pullRequests: readonly PrLink[] } }
 
-export function threadIsActive(thread: { status: string }) {
-  return ACTIVE.has(thread.status)
-}
-
 /**
  * Which group a thread is in (R-52). The run's state decides only 进行中 and
  * 等待你 for a run asking a question; for an ended run the judged outcome

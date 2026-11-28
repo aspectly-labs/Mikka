@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import {applyApprovalMode,defaultRunPolicy} from "@mikka/protocol/agent-policy";
+import {readOnlyRunPolicy,defaultRunPolicy} from "@mikka/protocol/agent-policy";
 import { FactoryError } from "./contract";
 import type { FactoryTask, FactoryGate, createFactoryStore } from "./store";
 import { factoryBinding } from "./dispatch";
@@ -35,7 +35,7 @@ export function createFactoryMonitorConsumers(options: {
   const r=await receipt(tx,task);
   const {rows:[a]}=await tx.query('SELECT a.output,r.* FROM factory_attempts a JOIN agent_runs r ON r.id=a."runId" WHERE a.id=$1 AND a."taskId"=$2 AND a."candidateId"=$3',[task.attemptId,task.id,task.candidateId]);
   if(task.status!=="running"||!a||a.id!==runId||a.userId!==task.userId||a.issueId!==task.issueId||a.stopRequestedAt||a.kind!=="acceptance"||a.baseBranch!==r.candidate.sha||a.output?.monitorPublication?.runId!==runId||a.output.monitorPublication.receiptDigest!==digest(r)) throw new FactoryError("factoryMonitorAssignmentRequired");
-  return {baseBranch:r.candidate.sha,policy:applyApprovalMode(defaultRunPolicy(),"read_only")};
+  return {baseBranch:r.candidate.sha,policy:readOnlyRunPolicy(defaultRunPolicy())};
  }
  async function checked(tx:PoolClient,task:FactoryTask,runId:string) {
   await validateCheck(tx,task,runId);

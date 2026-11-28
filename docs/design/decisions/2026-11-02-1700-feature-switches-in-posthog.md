@@ -1,6 +1,7 @@
 # Feature switches live in PostHog
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「所有功能开关必须走 PostHog feature flag」. The coordinator set the scope: secrets, URLs and numeric settings are not switches; the three BYOS route switches (`MIKKA_BYOS_ENABLED`, `MIKKA_BYOS_CLAUDE_OAUTH`, `MIKKA_BYOS_CODEX_OAUTH`) are moved separately; when PostHog cannot be reached a switch keeps its present default.
 - Rule: —
 - Replaces: —

@@ -74,14 +74,14 @@ function transportTiming(value: unknown): WorkerTransportTiming | undefined {
   } catch { return undefined }
 }
 
-type RequestedServiceTier = 'priority' | 'omitted'
-type ActualServiceTier = 'missing' | 'priority' | 'default' | 'auto' | 'flex' | 'unrecognized'
+type RequestedServiceTier = 'priority' | 'ultrafast' | 'omitted'
+type ActualServiceTier = 'missing' | 'priority' | 'ultrafast' | 'default' | 'auto' | 'flex' | 'unrecognized'
 export type WorkerServiceTier = {
   version: 1; inputRequested: RequestedServiceTier; requested: RequestedServiceTier
   created: ActualServiceTier; completed: ActualServiceTier; incomplete: ActualServiceTier
 }
 const SERVICE_TIER_KEYS = ['version', 'inputRequested', 'requested', 'created', 'completed', 'incomplete'] as const
-const ACTUAL_SERVICE_TIERS: readonly string[] = ['missing', 'priority', 'default', 'auto', 'flex', 'unrecognized']
+const ACTUAL_SERVICE_TIERS: readonly string[] = ['missing', 'priority', 'ultrafast', 'default', 'auto', 'flex', 'unrecognized']
 
 /** A closed receipt, independent of timing. Never retain provider strings or infer actual from requested. */
 function serviceTier(value: unknown): WorkerServiceTier | undefined {
@@ -97,7 +97,7 @@ function serviceTier(value: unknown): WorkerServiceTier | undefined {
     }
     if (fields.version !== 1) return
     for (const key of ['inputRequested', 'requested'] as const) {
-      if (fields[key] !== 'priority' && fields[key] !== 'omitted') return
+      if (fields[key] !== 'priority' && fields[key] !== 'ultrafast' && fields[key] !== 'omitted') return
     }
     for (const key of ['created', 'completed', 'incomplete'] as const) {
       if (typeof fields[key] !== 'string' || !ACTUAL_SERVICE_TIERS.includes(fields[key])) return

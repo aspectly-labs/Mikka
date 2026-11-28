@@ -1,6 +1,7 @@
 # New platform tools reach existing Coordinators without a re-save
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session after the Coordinator said
   it had no `github_tools`: new platform tools must appear automatically in
   existing Coordinators; people must not have to re-save, but an owner's

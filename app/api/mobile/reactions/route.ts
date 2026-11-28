@@ -1,39 +1,53 @@
 import { z } from 'zod'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
-import { reactionsFor, visibleGroupMessages, REACTIONS, setReaction } from '@/lib/reactions'
+import { json } from '@/lib/mobile-api'
+import { reactionsFor, visibleReactableMessages, REACTIONS, setReaction } from '@/lib/reactions'
 import { messagesOutsideToken } from '@/lib/tokens/scope'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
-export const dynamic = 'force-dynamic'
 
 const input = z.object({ messageId: z.uuid(), emoji: z.enum(REACTIONS).nullable() }).strict()
 
-/** `POST /api/mobile/reactions` with `{ messageId, emoji }`: the person's reaction to a message, or none (`emoji: null`). */
-async function handlePOST(request: Request) {
-  if (!writeAllowed(request)) return forbiddenOrigin()
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+/**
+ * `POST /api/mobile/reactions` with `{ messageId, emoji }`: the person's reaction to a message,
+ * or none (`emoji: null`). Returns `{ ok: true, messageId, reactions }` with the updated counts.
+ */
+async function handlePOST(request: Request, user: ApiSession['user']) {
   const parsed = input.safeParse(await request.json().catch(() => null))
   if (!parsed.success) return json({ error: 'invalidReaction' }, 400)
   if ((await messagesOutsideToken(user, [parsed.data.messageId])).size || !await setReaction(user.id, parsed.data.messageId, parsed.data.emoji)) return json({ error: 'notFound' }, 404)
-  return json({ ok: true })
+  const updated = await reactionsFor(user.id, [parsed.data.messageId])
+  return json({ ok: true, messageId: parsed.data.messageId, reactions: updated[parsed.data.messageId] ?? [] })
 }
 
 /**
  * `GET /api/mobile/reactions?ids=<id>,<id>`: reactions on up to 100 group-chat
- * messages (a bot chat's come with it). Only messages in groups the person is
- * still in count; others read as having none.
+ * or Bot-chat messages. Only messages this person may currently access count;
+ * others read as having none.
  */
-async function handleGET(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
+async function handleGET(request: Request, user: ApiSession['user']) {
   const ids = z.array(z.uuid()).max(100).safeParse((new URL(request.url).searchParams.get('ids') ?? '').split(',').filter(Boolean))
   if (!ids.success) return json({ error: 'invalidIds' }, 400)
   const outside = await messagesOutsideToken(user, ids.data)
-  return json({ reactions: await reactionsFor(user.id, await visibleGroupMessages(user.id, ids.data.filter(id => !outside.has(id)))) })
+  return json({ reactions: await reactionsFor(user.id, await visibleReactableMessages(user.id, ids.data.filter(id => !outside.has(id)))) })
 }
 
-export const GET = withRequestLog('/api/mobile/reactions', handleGET)
-export const POST = withRequestLog('/api/mobile/reactions', handlePOST)
+export const GET = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/reactions',
+    auth: 'mobile-or-session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  async ({ request, user }) => handleGET(request, user),
+)
+
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/reactions',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async ({ request, user }) => handlePOST(request, user),
+)

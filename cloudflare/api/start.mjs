@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { configureOpsAlertForwarder } from './ops-alert-forwarder.mjs'
 
 export function verifyImage(evidence, env) {
   const sha = /^[a-f0-9]{40}$/
@@ -28,7 +29,7 @@ export function verifyConfiguration(env) {
   if (env.NODE_ENV !== 'production' || env.MIKKA_EDITION !== 'cloud' || env.VERCEL || env.VERCEL_ENV) {
     throw new Error('CLOUDFLARE_API_EDITION_INVALID')
   }
-  if (env.MIKKA_DEPLOYMENT_STAGE !== 'production') {
+  if (!['production', 'preview'].includes(env.MIKKA_DEPLOYMENT_STAGE)) {
     throw new Error('CLOUDFLARE_API_DEPLOYMENT_STAGE_INVALID')
   }
   const origin = httpsOrigin(env.BETTER_AUTH_URL)
@@ -57,6 +58,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     verifyImage(evidence, process.env)
   } else {
     verifyConfiguration(process.env)
+    await configureOpsAlertForwarder(process.env)
     await import('./server/mikka-entry.mjs')
   }
 }
