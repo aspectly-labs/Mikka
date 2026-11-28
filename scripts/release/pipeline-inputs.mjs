@@ -266,6 +266,8 @@ export async function priorDeployment(api, currentRun, selectedRun, target = 'st
         assert.ok(!log.includes('MIKKA_DEPLOYMENT_PIPELINE='), 'pipeline_deployment_summary_missing')
         continue
       }
+      assert.equal(summary?.version, 1, 'pipeline_summary_version_required')
+      assert.equal(summary.target, target, 'pipeline_summary_target_mismatch')
       assert.equal(summary?.deployment?.runId, String(run.id), 'pipeline_deployment_summary_run_mismatch')
       assert.equal(summary.deployment.runAttempt, String(run.run_attempt), 'pipeline_deployment_summary_attempt_mismatch')
       const log = (await api(`${repository}/actions/jobs/${job.id}/logs`, { bytes: true })).toString('utf8')
