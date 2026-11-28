@@ -180,18 +180,19 @@ export interface ApiKeysPage {
   /** A team workspace's admin: 添加工作区连接 shows. */
   canShare: boolean
   apiKeyAfterQuota: boolean
+  apiKeyWebSearch: boolean
 }
 
 export async function listApiKeys(query: Query, ownerId: string, workspace: { id: string; kind: 'personal' | 'team' }, options: { admin?: boolean } = {}): Promise<ApiKeysPage> {
   const manages = workspace.kind === 'team' && options.admin === true
-  const [keys, workspaceKeys, fallback] = await Promise.all([
+  const [keys, workspaceKeys, preferences] = await Promise.all([
     query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE "ownerId"=$1 ORDER BY "createdAt",id`, [ownerId]),
     manages ? query.query<Row>(`SELECT ${COLUMNS},to_jsonb(model_api_keys)->'daybreak' AS daybreak FROM model_api_keys WHERE "workspaceId"=$1 ORDER BY "createdAt",id`, [z.uuid().parse(workspace.id)]) : Promise.resolve({ rows: [] as Row[] }),
-    apiKeyAfterQuota(query, ownerId),
+    apiKeyPreferences(query, ownerId),
   ])
   return {
     keys: [...keys.rows.map(row => ({ ...view(row), shared: false })), ...workspaceKeys.rows.map(row => ({ ...view(row), shared: true }))],
-    canShare: manages, apiKeyAfterQuota: fallback,
+    canShare: manages, ...preferences,
   }
 }
 
@@ -573,6 +574,17 @@ export async function apiKeyOwnerOf(query: Query, id: string): Promise<{ ownerId
 }
 
 /** 订阅额度用完后，自动改用 API Key. On unless the person turned it off. */
+export async function apiKeyPreferences(query: Query, ownerId: string) {
+  const { rows: [row] } = await query.query<{ apiKeyAfterQuota: boolean; apiKeyWebSearch?: boolean }>(
+    `SELECT "apiKeyAfterQuota", (to_jsonb("user")->>'apiKeyWebSearch')::boolean AS "apiKeyWebSearch" FROM "user" WHERE id=$1`, [ownerId],
+  )
+  return { apiKeyAfterQuota: row?.apiKeyAfterQuota ?? true, apiKeyWebSearch: row?.apiKeyWebSearch === true }
+}
+
+export async function setApiKeyWebSearch(query: Query, ownerId: string, on: boolean) {
+  await query.query('UPDATE "user" SET "apiKeyWebSearch"=$2 WHERE id=$1', [ownerId, z.boolean().parse(on)])
+}
+
 export async function apiKeyAfterQuota(query: Query, ownerId: string): Promise<boolean> {
   const { rows: [row] } = await query.query<{ apiKeyAfterQuota: boolean }>('SELECT "apiKeyAfterQuota" FROM "user" WHERE id=$1', [ownerId])
   return row?.apiKeyAfterQuota ?? true

@@ -1,4 +1,5 @@
 import { defineDynamic } from 'eve/tools'
+import { webSearch } from 'eve/tools/web_search'
 import { turnModel, turnPolicy, turnRequest } from '../../../../lib/eve/runtime'
 import { scopeFromAuth } from '../../../../lib/eve/scope'
 import { EVE_FACTORY_ROLE_TOOLS, eveFactorySessionAuth } from '../../../../lib/eve/factory/session'
@@ -32,5 +33,9 @@ export default defineDynamic(async ctx => {
   const request = turnRequest.get()
   const binding = {sessionId:ctx.session.id,turnId:ctx.turn!.id}
   const catalogue = await productCatalogue(scope,binding,policy,runtime,request)
-  return Object.fromEntries(catalogue.map(definition => [definition.name,createProductTool(scope,binding,definition)]))
+  return Object.fromEntries(catalogue.map(definition => [definition.name,
+    definition.name === 'web_search' && runtime.nativeWebSearchBackend
+      ? webSearch({ provider: 'native' })
+      : createProductTool(scope, binding, definition),
+  ]))
 })

@@ -353,6 +353,7 @@ export class HostedUsageStore {
           attribution.actorId ?? attribution.ownerId ?? null, attribution.projectId ?? null, attribution.threadId ?? null, attribution.runId ?? null, attribution.attributionComplete ?? false, attribution.billingSource ?? null,
           isUsageTurnRef(attribution.turnRef) ? attribution.turnRef : null],
       )
+      if (attribution.byokWebSearchId === id) await tx.query('UPDATE hosted_usage SET "byokWebSearch"=true WHERE id=$1', [id])
       if (prepaid === true) await this.settleLocked(tx, id, estimate, 0, 0, undefined, undefined, undefined, true)
       else if (prepaid) await tx.query(`UPDATE hosted_usage SET state='unknown',"generationId"=$2,"machineCompute"=$3::jsonb,"machineComputeReviewAt"=now()+interval '5 minutes' WHERE id=$1`,
         [id, 'cf-cgroup:' + id, JSON.stringify(prepaid.machineMeter)])

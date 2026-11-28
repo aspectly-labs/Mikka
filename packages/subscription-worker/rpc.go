@@ -59,7 +59,7 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 			switch request.Method {
 			case "executeStream":
 				limit = modelRPCFrameMaxBytes
-			case "nativeStream":
+			case "nativeStream", "modelSearchStream":
 				limit = nativeRPCFrameMaxBytes
 			}
 		}
@@ -71,14 +71,14 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 			err = ErrUnsupported
 		} else {
 			timeout := 30 * time.Second
-			if request.Method == "executeStream" || request.Method == "nativeStream" {
+			if request.Method == "executeStream" || request.Method == "nativeStream" || request.Method == "modelSearchStream" {
 				timeout = 270 * time.Second
 			}
 			callCtx, cancel := context.WithTimeout(ctx, timeout)
 			if request.Method == "prepare" || request.Method == "prepareStream" || request.Method == "executeStream" {
 				callCtx, timing = withRequestTiming(callCtx)
 			}
-			if w.ExecutionOnly && request.Method != "executeStream" && request.Method != "execute" && request.Method != "quota" && request.Method != "nativeContext" && request.Method != "nativeStream" {
+			if w.ExecutionOnly && request.Method != "executeStream" && request.Method != "execute" && request.Method != "quota" && request.Method != "nativeContext" && request.Method != "nativeStream" && request.Method != "modelSearchStream" {
 				cancel()
 				_ = encodeTimingMessage(encoder, map[string]any{"id": request.ID, "error": string(ErrUnsupported)}, timing)
 				continue
@@ -86,14 +86,18 @@ func (w *Worker) Serve(ctx context.Context, input io.Reader, output io.Writer) e
 			switch request.Method {
 			case "nativeContext":
 				result, err = w.NativeContext(callCtx, request.Revision)
-			case "nativeStream":
+			case "nativeStream", "modelSearchStream":
 				var native NativeRequest
 				decoder := json.NewDecoder(bytes.NewReader(request.Payload))
 				decoder.DisallowUnknownFields()
 				if decoder.Decode(&native) != nil || decoder.Decode(new(any)) != io.EOF {
 					err = ErrUnsupported
 				} else {
-					err = w.NativeStream(callCtx, request.Revision, native, func(contentType, generationID string) error {
+					stream := w.NativeStream
+					if request.Method == "modelSearchStream" {
+						stream = w.ModelSearchStream
+					}
+					err = stream(callCtx, request.Revision, native, func(contentType, generationID string) error {
 						return encoder.Encode(map[string]any{"id": request.ID, "head": map[string]any{"contentType": contentType, "generationId": generationID}})
 					}, func(chunk []byte) error {
 						return encoder.Encode(map[string]any{"id": request.ID, "binaryChunk": base64.StdEncoding.EncodeToString(chunk)})

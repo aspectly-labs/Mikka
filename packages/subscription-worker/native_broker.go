@@ -55,6 +55,17 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	if w.Use == nil || w.Use.RunID == "" {
 		return ErrUnavailable
 	}
+	return w.nativeStream(ctx, epoch, request, false, head, emit)
+}
+
+func (w *Worker) ModelSearchStream(ctx context.Context, epoch int64, request NativeRequest, head func(string, string) error, emit func([]byte) error) error {
+	if w.Use == nil || w.Use.RunID != "" {
+		return ErrUnavailable
+	}
+	return w.nativeStream(ctx, epoch, request, true, head, emit)
+}
+
+func (w *Worker) nativeStream(ctx context.Context, epoch int64, request NativeRequest, modelSearch bool, head func(string, string) error, emit func([]byte) error) error {
 	var body struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
@@ -67,7 +78,11 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	}
 	ctx, stopAuthority, eventDriven := w.watchActiveAuthority(ctx)
 	defer stopAuthority()
-	if err := w.authorizeRuntime(ctx, epoch, "native", body.Model); err != nil {
+	execution, active := "native", "native_active"
+	if modelSearch {
+		execution, active = "model", "active"
+	}
+	if err := w.authorizeRuntime(ctx, epoch, execution, body.Model); err != nil {
 		return err
 	}
 	var canonical map[string]any
@@ -76,12 +91,24 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	if canonicalDecoder.Decode(&canonical) != nil {
 		return ErrUnsupported
 	}
+	if modelSearch {
+		if !body.Stream || !nativeSearchTools(w.Scope.Provider, canonical["tools"]) {
+			return ErrUnsupported
+		}
+		var supported bool
+		err := w.Repo.DB.QueryRowContext(ctx, `select coalesce(("modelCatalog"->'webSearchSupport'->($4::text))='true'::jsonb,false)
+			from byos_connections where id=$1 and "ownerId"=$2 and epoch=$3 and "modelCatalog"->>'revision'=epoch::text
+			and "modelCatalog"->'models' ? $4`, w.Scope.ConnectionID, w.Scope.OwnerID, epoch, body.Model).Scan(&supported)
+		if err != nil || !supported {
+			return ErrUnsupported
+		}
+	}
 	endpoint := ""
 	switch {
 	case w.Scope.Provider == "claude" && (request.Path == "/v1/messages" || request.Path == "/v1/messages?beta=true"):
 		endpoint = "https://api.anthropic.com/v1/messages?beta=true"
 		canonical["system"] = claudeSubscriptionSystem(canonical["system"])
-	case w.Scope.Provider == "claude" && request.Path == "/v1/messages/count_tokens":
+	case !modelSearch && w.Scope.Provider == "claude" && request.Path == "/v1/messages/count_tokens":
 		endpoint = "https://api.anthropic.com/v1/messages/count_tokens?beta=true"
 		canonical["system"] = claudeSubscriptionSystem(canonical["system"])
 	case w.Scope.Provider == "codex" && request.Path == "/responses":
@@ -139,6 +166,11 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 		account, _ := auth.Metadata["account_id"].(string)
 		upstream.Header.Set("ChatGPT-Account-Id", account)
 		upstream.Header.Set("Originator", "Mikka")
+		if modelSearch {
+			if session, ok := withCodexSession(ctx, w.Scope, w.Use, r.Epoch).Value(codexSessionKey{}).(string); ok {
+				upstream.Header.Set("Session-Id", session)
+			}
+		}
 	}
 	client := http.Client{Timeout: 270 * time.Second}
 	if w.NativeClient != nil {
@@ -160,7 +192,7 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 				case <-callCtx.Done():
 					return
 				case <-ticker.C:
-					if w.authorizeRuntime(callCtx, epoch, "native_active", body.Model) != nil {
+					if w.authorizeRuntime(callCtx, epoch, active, body.Model) != nil {
 						cancel()
 						return
 					}
@@ -188,7 +220,7 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 	if contentType == "" && w.Scope.Provider == "codex" && body.Stream {
 		contentType = "text/event-stream"
 	}
-	if contentType != "text/event-stream" && contentType != "application/json" {
+	if contentType != "text/event-stream" && (modelSearch || contentType != "application/json") {
 		return ErrProvider
 	}
 	if callCtx.Err() != nil {
@@ -211,7 +243,7 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 			if callCtx.Err() != nil {
 				return ErrUnavailable
 			}
-		} else if w.authorizeRuntime(ctx, r.Epoch, "native_active", body.Model) != nil {
+		} else if w.authorizeRuntime(ctx, r.Epoch, active, body.Model) != nil {
 			return ErrUnavailable
 		}
 		flush := len(carry) - len(token) + 1
@@ -234,4 +266,31 @@ func (w *Worker) NativeStream(ctx context.Context, epoch int64, request NativeRe
 			return ErrProvider
 		}
 	}
+}
+
+func nativeSearchTools(provider string, value any) bool {
+	tools, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	searches := 0
+	for _, item := range tools {
+		tool, ok := item.(map[string]any)
+		if !ok {
+			return false
+		}
+		kind, _ := tool["type"].(string)
+		name, _ := tool["name"].(string)
+		switch {
+		case provider == "codex" && kind == "web_search":
+			searches++
+		case provider == "claude" && kind == "web_search_20250305" && name == "web_search":
+			searches++
+		case provider == "codex" && kind == "function" && name != "":
+		case provider == "claude" && (kind == "" || kind == "custom") && name != "":
+		default:
+			return false
+		}
+	}
+	return searches == 1
 }

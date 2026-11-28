@@ -51,6 +51,57 @@ func bindNativeRunFixture(t *testing.T, w *Worker, revision int64, route string)
 	return run
 }
 
+func TestModelSearchUsesCurrentSubscriptionCapabilityAndNativeEvents(t *testing.T) {
+	for _, provider := range []string{"codex", "claude"} {
+		t.Run(provider, func(t *testing.T) {
+			w, _, _ := fixtureWorker(t, provider)
+			epoch := mustAcquire(t, w).Revision
+			bindFixture(t, w, epoch, provider+"_cpa")
+			path, kind, endpoint := "/responses", "web_search", "https://chatgpt.com/backend-api/codex/responses"
+			if provider == "claude" {
+				path, kind, endpoint = "/v1/messages", "web_search_20250305", "https://api.anthropic.com/v1/messages?beta=true"
+			}
+			calls := 0
+			w.NativeClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				body, _ := io.ReadAll(r.Body)
+				if r.URL.String() != endpoint || !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer fixture-"+provider+"-access-") || !bytes.Contains(body, []byte(kind)) || !bytes.Contains(body, []byte("fixture_tool")) {
+					t.Error("the native protocol replaced the destination, subscription, or tools")
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: {\"type\":\"fixture_search_event\"}\n\n"))}, nil
+			})}
+			ordinary := `{"type":"function","name":"fixture_tool"}`
+			if provider == "claude" {
+				ordinary = `{"name":"fixture_tool","input_schema":{"type":"object"}}`
+			}
+			request := NativeRequest{Path: path, Body: json.RawMessage(fmt.Sprintf(`{"model":"fixture-model","stream":true,"tools":[{"type":%q,"name":"web_search"},%s]}`, kind, ordinary))}
+			var output bytes.Buffer
+			send := func() error {
+				return w.ModelSearchStream(context.Background(), epoch, request, func(contentType, generationID string) error {
+					if contentType != "text/event-stream" || generationID != "" {
+						t.Error("invalid native response head")
+					}
+					return nil
+				}, func(part []byte) error { _, err := output.Write(part); return err })
+			}
+			if send() == nil || calls != 0 {
+				t.Fatal("missing account capability reached the provider")
+			}
+			catalogue := fmt.Sprintf(`{"revision":%d,"models":["fixture-model"],"webSearchSupport":{"fixture-model":true}}`, epoch)
+			if _, err := w.Repo.DB.Exec(`update byos_connections set "modelCatalog"=$1::jsonb where id=$2`, catalogue, w.Scope.ConnectionID); err != nil {
+				t.Fatal(err)
+			}
+			if err := send(); err != nil || calls != 1 || !strings.Contains(output.String(), "fixture_search_event") {
+				t.Fatal("bound subscription search failed", err)
+			}
+			request.Path = "/wrong"
+			if send() == nil || calls != 1 {
+				t.Fatal("an unapproved endpoint reached the provider")
+			}
+		})
+	}
+}
+
 func TestNativeBrokerUsesAccessOnlyCredentialsWithoutExportOrEndpointSelection(t *testing.T) {
 	for _, provider := range []string{"codex", "claude"} {
 		t.Run(provider, func(t *testing.T) {

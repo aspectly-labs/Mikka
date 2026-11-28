@@ -43,7 +43,24 @@ export default defineHook({events:{
           return { definition: current.definition, effectiveTools: [...effectiveTools], personalPlugins: plugins }
         })() : null,
       ])
-      turnModel.update(() => runtime)
+      const selected = runtime.modelSelection
+      const canSearch = !scheduled && !ctx.session.parent && policy?.effectiveTools.includes('web_search') !== false
+      let nativeSearch: typeof runtime.nativeWebSearchBackend
+      if (canSearch && selected?.type === 'api_key') {
+        nativeSearch = await (await import('../../../../lib/model-api-key-chat')).apiKeyNativeSearchBackend(selected)
+      } else if (canSearch && selected?.type === 'subscription' && selected.runOwnerId === undefined) {
+        const { subscriptionRuntime } = await import('../../../../lib/subscription-runtime')
+        nativeSearch = await subscriptionRuntime().modelSearchBackend({ ...selected, execution: 'model' }, true)
+      } else if (canSearch && !selected && runtime.model) {
+        const { managedSearchRoute } = await import('../../../../lib/model-gateway/provider-config')
+        const route = managedSearchRoute(runtime.model)
+        if (route) {
+          const { modelCatalog } = await import('../../../../lib/model-catalog-server')
+          const advertised = (await modelCatalog()).find(model => model.id === runtime.model && model.vendor === route.backend)
+          if (advertised?.tags.includes('web-search')) nativeSearch = route.backend
+        }
+      }
+      turnModel.update(() => nativeSearch ? { ...runtime, nativeWebSearchBackend: nativeSearch } : runtime)
       turnPolicy.update(() => policy)
     })
     if (!scheduled && !ctx.session.parent) {

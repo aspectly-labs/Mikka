@@ -2,6 +2,11 @@ import 'server-only'
 import { createHash, randomUUID } from 'node:crypto'
 import type { Pool } from 'pg'
 import { writeTransaction } from '../operations/write-transaction'
+import { WEB_USER_LIMIT_PER_MINUTE } from './types'
+
+export async function admitWebRequest(pool: Pick<Pool, 'connect'>, userId: string, signal?: AbortSignal) {
+  return consumeWebRate(pool, userId, Date.now(), WEB_USER_LIMIT_PER_MINUTE, signal)
+}
 
 /** Same sliding minute as the service, shared across durable workers/restarts.
  * Reuse Better Auth's existing rateLimit storage in a separate hashed namespace.

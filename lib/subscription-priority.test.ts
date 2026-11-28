@@ -137,7 +137,7 @@ test('existing catalogue transaction stores priority evidence with the same epoc
   const writes = statements.filter(s => s.sql.startsWith('UPDATE byos_connections'))
   assert.equal(writes.length, 1)
   const saved = JSON.parse(String(writes[0].values![1]))
-  assert.deepEqual(saved, { revision: '7', models: ['gpt-6-luna', 'gpt-6-sol', 'other'], priorityVersion: 1, prioritySupport: { 'gpt-6-luna': true, 'gpt-6-sol': false } })
+  assert.deepEqual(saved, { revision: '7', models: ['gpt-6-luna', 'gpt-6-sol', 'other'], webSearchVersion: 1, priorityVersion: 1, prioritySupport: { 'gpt-6-luna': true, 'gpt-6-sol': false } })
   const fence = statements.find(s => s.sql.includes('FOR UPDATE'))!
   assert.deepEqual(fence.values, [id(4), 'alice', '7'])
   assert.equal(statements.at(-1)!.sql, 'COMMIT')

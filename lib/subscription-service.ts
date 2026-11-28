@@ -1,7 +1,9 @@
 import { captureRunFailure, type RunFailureContext } from '@mikka/protocol/run-failure'
 import { WorkflowRunFailureError } from './workflow-run-failure'
 import { APP_BUILD } from './app-build'
-import { createSubscriptionChatModel } from './model-gateway/litellm-client'
+import { createSubscriptionChatModel, createSubscriptionSearchModel } from './model-gateway/litellm-client'
+import { nativeWebSearchBackendForTools, type NativeWebSearchBackend } from './model-gateway/provider-config'
+import { modelGatewayProtocolBody } from './model-gateway/protocol-fields.mjs'
 import { workerSubscriptionMatches } from './agent-kit/worker'
 import { SUBSCRIPTION_CHAT_MAX_BYTES } from './subscription-chat-ticket'
 import { quotaSnapshotSchema, type QuotaSnapshot } from '@mikka/protocol'
@@ -18,7 +20,7 @@ import { stepIdentity } from './model-call-timing'
 import { CLEANUP_DUE_SQL, expireSubscriptionAcquisitions } from './subscription-acquire-expiry'
 import { ownerSettingsChanged } from './live/lists'
 import { measureSubscriptionNative } from './subscription-native-timing'
-import { claudeFastSupport, codexDaybreakSupport, codexPrioritySupport, codexUltrafastSupport, subscriptionModelRequestPolicySchema, type CodexPrioritySupport, type SubscriptionCatalogueModel, type SubscriptionModelRequestPolicy } from './subscription-service-tier'
+import { claudeFastSupport, codexDaybreakSupport, codexPrioritySupport, codexUltrafastSupport, subscriptionModelRequestPolicySchema, subscriptionWebSearchSupported, type CodexPrioritySupport, type SubscriptionCatalogueModel, type SubscriptionModelRequestPolicy } from './subscription-service-tier'
 import { daybreakTierFromProgram } from './model-capabilities'
 
 // Matches modelRequestMaxBytes in the Go worker. The conversation's 100k
@@ -170,7 +172,9 @@ export class SubscriptionService {
         model.doStream = async options => {
           const failureContext: RunFailureContext = { credential: 'subscription', provider: connection.provider === 'openai' ? 'codex' : 'claude_code', appVersion: APP_BUILD, requestBodyValues: { prompt: options.prompt, tools: options.tools, providerOptions: options.providerOptions, headers: options.headers } }
           try {
-            const result = await doStream(options)
+            const search = nativeWebSearchBackendForTools(options.tools)
+            const result = search ? await this.nativeSearchModel(use, modelId, search, options.abortSignal ?? signal).doStream(options)
+              : await doStream(options)
             const reader = result.stream.getReader()
             let closed = false
             const stream: typeof result.stream = new ReadableStream({
@@ -212,6 +216,68 @@ export class SubscriptionService {
         }
         return model
       }
+    })
+  }
+
+  async modelSearchBackend(use: SubscriptionUse, refresh = false): Promise<NativeWebSearchBackend | undefined> {
+    if (use.execution !== 'model' || use.runId) return
+    const binding = await this.repository.binding(use.ownerId, use.bindingId)
+    if (binding.workspaceId !== use.workspaceId || binding.consumerId !== use.consumerId) return
+    let row = await this.repository.connection(use.ownerId, binding.connectionId)
+    const ready = () => !row.paused && row.state === 'connected' && binding.connectionRevision === Number(row.epoch)
+    if (!ready() || binding.route !== `${row.provider}_cpa`) return
+    if (refresh && row.modelCatalog?.webSearchVersion !== 1 && !row.modelCatalog?.webSearchSupport) {
+      const [{ pool }, { ExecutionSettings }] = await Promise.all([import('./db'), import('./execution-settings')])
+      try {
+        await new ExecutionSettings(pool).refreshBotModels({ ownerId: use.ownerId, workspaceId: use.workspaceId }, row.id,
+          (ownerId, connectionId) => this.models(ownerId, connectionId, AbortSignal.timeout(8000)))
+      } catch { return }
+      row = await this.repository.connection(use.ownerId, binding.connectionId)
+    }
+    if (!ready() || !subscriptionWebSearchSupported(row.modelCatalog, Number(row.epoch), binding.modelId)) return
+    return row.provider === 'claude' ? 'anthropic' : 'openai'
+  }
+
+  private nativeSearchModel(use: SubscriptionUse, modelId: string, protocol: NativeWebSearchBackend, signal?: AbortSignal) {
+    return createSubscriptionSearchModel(modelId, protocol, async init => {
+      const callSignal = init?.signal ?? signal
+      if (typeof init?.body !== 'string' || Buffer.byteLength(init.body, 'utf8') > MODEL_REQUEST_MAX_BYTES)
+        throw new SubscriptionRefusal('backend_unavailable', { detail: 'payload_over_transport_limit' })
+      const payload = JSON.parse(init.body)
+      if (payload.model !== modelId || payload.stream !== true || await this.modelSearchBackend(use) !== protocol)
+        throw new SubscriptionRefusal('binding_mismatch', { detail: 'native_search_unavailable' })
+      const authorized = await this.check(use, callSignal, undefined, true)
+      const route = authorized.binding.route
+      await this.admitModel({ workspaceId: use.workspaceId, ownerId: use.ownerId }, modelId, route, callSignal)
+      const row = await this.repository.connection(use.ownerId, authorized.binding.connectionId)
+      const [{ pool }, { admitWebRequest }] = await Promise.all([import('./db'), import('./search/rate-limit')])
+      if (!await admitWebRequest(pool, use.ownerId, callSignal)) throw new WorkerRefusal('subscription_rate_limited')
+      const headers = new Headers(init.headers)
+      const body: Record<string, unknown> = { ...modelGatewayProtocolBody(protocol, payload), model: modelId }
+      delete body.metadata
+      delete body.service_tier
+      const codexTier = this.modelRequestPolicy?.codexServiceTier
+      const daybreak = this.modelRequestPolicy?.codexCyberAccessProgram
+      const tier = daybreakTierFromProgram(daybreak)
+      const approvedFields = protocol === 'openai' ? {
+        store: false,
+        ...(codexTier === 'ultrafast' && authorized.codexUltrafastSupport === 'supported' ? { service_tier: codexTier }
+          : codexTier === 'priority' && authorized.codexPrioritySupport === 'supported' ? { service_tier: codexTier } : {}),
+        ...(tier && authorized.codexDaybreakTiers?.includes(tier) ? { access_programs: { cyber: daybreak } } : {}),
+      } : this.modelRequestPolicy?.claudeSpeed === 'fast' && authorized.claudeFastSupport === 'supported' ? { speed: 'fast' } : {}
+      const request = {
+        path: protocol === 'anthropic' ? '/v1/messages' : '/responses',
+        body: { ...body, ...approvedFields },
+        headers: Object.fromEntries(['accept', 'anthropic-version', 'anthropic-beta'].flatMap(name => {
+          const value = headers.get(name)
+          return value ? [[name, value]] : []
+        })),
+      }
+      if (protocol === 'anthropic' && 'speed' in approvedFields)
+        request.headers['anthropic-beta'] = [request.headers['anthropic-beta'], 'fast-mode-2026-02-01'].filter(Boolean).join(',')
+      const { streamSubscriptionModelSearch } = await import('./subscription-chat-bridge')
+      return streamSubscriptionModelSearch(use, modelId, protocol, callSignal,
+        () => this.worker(this.repository.scope(row)).forUse(use).modelSearchRequest(authorized.binding.connectionRevision, request, callSignal))
     })
   }
   /** Revalidate live custody before starting a CPA stream. */
@@ -376,6 +442,7 @@ export class SubscriptionService {
       if (item.prioritySupported !== undefined && typeof item.prioritySupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
       if (item.ultrafastSupported !== undefined && typeof item.ultrafastSupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
       if (item.fastSupported !== undefined && typeof item.fastSupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_priority_flag_invalid' })
+      if (item.webSearchSupported !== undefined && typeof item.webSearchSupported !== 'boolean') throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_web_search_flag_invalid' })
       if (item.efforts !== undefined && (!Array.isArray(item.efforts) || item.efforts.length > 12 || item.efforts.some((level: unknown) => typeof level !== 'string' || !EFFORT_NAME.test(level)))) throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_effort_invalid' })
       if (item.defaultEffort !== undefined && (typeof item.defaultEffort !== 'string' || !item.efforts?.includes(item.defaultEffort))) throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_effort_invalid' })
       if (item.daybreak !== undefined && (!Array.isArray(item.daybreak) || item.daybreak.length > 2 || item.daybreak.some((tier: unknown) => tier !== 'blue' && tier !== 'red'))) throw new SubscriptionRefusal('backend_unavailable', { detail: 'catalogue_daybreak_invalid' })
@@ -385,6 +452,7 @@ export class SubscriptionService {
         ...(row.provider === 'codex' && typeof item.prioritySupported === 'boolean' ? { prioritySupported: item.prioritySupported } : {}),
         ...(row.provider === 'codex' && typeof item.ultrafastSupported === 'boolean' ? { ultrafastSupported: item.ultrafastSupported } : {}),
         ...(row.provider === 'claude' && typeof item.fastSupported === 'boolean' ? { fastSupported: item.fastSupported } : {}),
+        ...(typeof item.webSearchSupported === 'boolean' ? { webSearchSupported: item.webSearchSupported } : {}),
         ...(Array.isArray(item.efforts) ? { efforts: [...new Set(item.efforts as string[])] } : {}),
         ...(typeof item.defaultEffort === 'string' ? { defaultEffort: item.defaultEffort } : {}),
         ...(row.provider === 'codex' && Array.isArray(item.daybreak) && item.daybreak.length ? { daybreak: [...new Set(item.daybreak as ('blue' | 'red')[])] } : {}),

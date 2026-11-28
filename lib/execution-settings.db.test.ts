@@ -220,7 +220,7 @@ test(
       });
       assert.deepEqual(refreshed.map(row=>row.modelId).sort(), ['provider-model','second-provider-model']);
       assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1',[connection])).rows[0].modelCatalog, {
-        revision:'1',models:['provider-model','second-provider-model'],priorityVersion:1,
+        revision:'1',models:['provider-model','second-provider-model'],webSearchVersion:1,priorityVersion:1,
         prioritySupport:{'provider-model':false,'second-provider-model':true},
       });
       assert.equal((await settings.connectedSubscriptions('alice',true)).includes(connection),false);

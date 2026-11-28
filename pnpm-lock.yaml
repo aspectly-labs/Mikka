@@ -20,7 +20,7 @@ patchedDependencies:
     hash: bb769f6de99c7a9bef428611c55f1cb7748d928b5680cd38770abc7283bd6d56
     path: patches/@workflow__world-postgres@5.4.1.patch
   eve@1.3.0:
-    hash: 566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed
+    hash: 2fbfa52f3137aed3e816e8195586c93b4d2651d7ef3fafa84a07f633069a9b62
     path: patches/eve@1.3.0.patch
   ffmpeg-static@5.3.0:
     hash: 7c49ecd9c22f1a10a87314ce3d1ab332d9c099736c6b8bd5bb86d4d50238776b
@@ -33,6 +33,9 @@ importers:
 
   .:
     dependencies:
+      '@ai-sdk/anthropic':
+        specifier: 4.0.108
+        version: 4.0.108(zod@4.6.7)
       '@ai-sdk/gateway':
         specifier: 4.0.121
         version: 4.0.121(zod@4.6.7)
@@ -284,7 +287,7 @@ importers:
         version: 8.5.1(react@19.3.1)
       eve:
         specifier: 1.3.0
-        version: 1.3.0(patch_hash=566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed)(e8be5ef357352dc1433cb93bf866c46f)
+        version: 1.3.0(patch_hash=2fbfa52f3137aed3e816e8195586c93b4d2651d7ef3fafa84a07f633069a9b62)(e8be5ef357352dc1433cb93bf866c46f)
       fflate:
         specifier: 0.8.3
         version: 0.8.3
@@ -540,7 +543,7 @@ importers:
         version: 5.4.1(patch_hash=bb769f6de99c7a9bef428611c55f1cb7748d928b5680cd38770abc7283bd6d56)(@opentelemetry/api@1.10.0)(@types/pg@8.23.1)(kysely@0.29.7)(sql.js@1.16.0)(typescript@6.0.3)
       eve:
         specifier: 1.3.0
-        version: 1.3.0(patch_hash=566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed)(b99b53494634a2b2300a4f3b0e6df2e7)
+        version: 1.3.0(patch_hash=2fbfa52f3137aed3e816e8195586c93b4d2651d7ef3fafa84a07f633069a9b62)(b99b53494634a2b2300a4f3b0e6df2e7)
 
   apps/frontend:
     devDependencies:
@@ -755,6 +758,12 @@ packages:
 
   '@ai-sdk/gateway@4.0.115':
     resolution: {integrity: sha512-Xn+gDWM4Ti2FzYmxhlZtjEuGBGZlOYaQMpwcVRSN4c9qCMUszD5F5TAbkxgLV/tHKeMfEX+WEuTCl6Kkj2r73A==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/anthropic@4.0.108':
+    resolution: {integrity: sha512-v31c9j/7A0Z+CTeqgi6TGEWimBAh7a/tHQQCa0z0oIZP6UyGQN7GR3RqzGOVs+pGwwkXz5uSakbEK6Rht2m5pw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -11690,6 +11699,12 @@ snapshots:
       '@vercel/oidc': 3.2.0
       zod: 4.6.7
 
+  '@ai-sdk/anthropic@4.0.108(zod@4.6.7)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.39
+      '@ai-sdk/provider-utils': 5.0.83(zod@4.6.7)
+      zod: 4.6.7
+
   '@ai-sdk/gateway@4.0.121(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.31
@@ -18505,7 +18520,7 @@ snapshots:
 
   etag@1.8.1: {}
 
-  eve@1.3.0(patch_hash=566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed)(b99b53494634a2b2300a4f3b0e6df2e7):
+  eve@1.3.0(patch_hash=2fbfa52f3137aed3e816e8195586c93b4d2651d7ef3fafa84a07f633069a9b62)(b99b53494634a2b2300a4f3b0e6df2e7):
     dependencies:
       ai: 7.0.179(zod@4.6.7)
       core-js-pure: 3.51.0
@@ -18522,7 +18537,7 @@ snapshots:
       solid-js: 2.0.0-rc.0
       vite: 8.3.6(@types/node@25.9.9)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.0)
 
-  eve@1.3.0(patch_hash=566e11a78eb561371d7783881b9609caf0a4d90daa003bac32a0f81069b281ed)(e8be5ef357352dc1433cb93bf866c46f):
+  eve@1.3.0(patch_hash=2fbfa52f3137aed3e816e8195586c93b4d2651d7ef3fafa84a07f633069a9b62)(e8be5ef357352dc1433cb93bf866c46f):
     dependencies:
       ai: 7.0.179(zod@4.6.7)
       core-js-pure: 3.51.0

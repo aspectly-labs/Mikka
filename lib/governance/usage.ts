@@ -13,6 +13,7 @@ import { csvCell } from './policy'
 import { writeTransaction } from '@/lib/operations/write-transaction'
 import { enterprisePrincipal, type EnterpriseReader } from '@/lib/enterprise/principal'
 import { threadCostsPending } from '@/lib/settings/device-activity-contract'
+import { BYOK_WEB_SEARCH_USAGE_LABEL } from '@/lib/search/types'
 
 /**
  * Every dimension this report can answer by. `day` and `model` are always
@@ -101,7 +102,8 @@ export async function readWorkspaceUsage(workspaceId: string, reader: string | E
       : subdivision === 'environment'
         ? 'left join agent_runs r on r.id = u."usageRunId" left join bots b on b.id = r."botId" and b."workspaceId" = u."workspaceId"'
         : ''
-    const { rows: rawRows } = await tx.query<UsageRow>(`select to_char(u."createdAt" at time zone 'UTC','YYYY-MM-DD') as day,u.model as model,
+    const { rows: rawRows } = await tx.query<UsageRow>(`select to_char(u."createdAt" at time zone 'UTC','YYYY-MM-DD') as day,
+      case when to_jsonb(u)->>'byokWebSearch'='true' then $4::text else u.model end as model,
       ${memberColumn} as "memberId",${repositoryColumn} as repository,${environmentColumn} as "environmentId",null::text as "environmentName",
       count(*)::int as requests,
       count(*) filter (where u."costMicroUsd" is null)::int as "unknownRequests",
@@ -113,7 +115,7 @@ export async function readWorkspaceUsage(workspaceId: string, reader: string | E
       from hosted_usage u ${joins}
       where u."workspaceId"=$1 and u."createdAt">=$2 and u."createdAt"<$3 and u.state='settled'
         and COALESCE(u."billingSource",'credits')='credits'
-      group by 1,2,3,4,5 order by 1,2,3,4,5 limit 50001`, [workspaceId, from, to])
+      group by 1,2,3,4,5 order by 1,2,3,4,5 limit 50001`, [workspaceId, from, to, BYOK_WEB_SEARCH_USAGE_LABEL])
     if (rawRows.length > 50000) throw new GovernanceError('invalid_request')
     let rows = rawRows
     if (subdivision === 'environment') {

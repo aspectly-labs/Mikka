@@ -55,6 +55,13 @@ mock.module(new URL('../agent-kit/service.ts', import.meta.url).href, { namedExp
     return { definition, effectiveTools: [...definition.tools] }
   } },
 } })
+let searchBackend: 'openai' | undefined
+mock.module(new URL('../model-api-key-chat.ts', import.meta.url).href, { namedExports: {
+  apiKeyNativeSearchBackend: async () => searchBackend,
+} })
+mock.module(new URL('../subscription-runtime.ts', import.meta.url).href, { namedExports: {
+  subscriptionRuntime: () => ({ modelSearchBackend: async () => undefined }),
+} })
 mock.module(new URL('../plugins/runtime.ts', import.meta.url).href, { namedExports: {
   personalPlugins: {
     async snapshotForBot() { pluginReads++; return plugins() },
@@ -285,8 +292,14 @@ test('explicit standard serviceTier omits Codex priority while fast and ultrafas
 
     const apiKeySelection = { type: 'api_key' as const, ownerId: 'owner', workspaceId: scope.workspaceId, keyId: serverId, modelId: 'gpt-6-cyber' }
     runtime = { harness: 'ai_sdk', model: 'gpt-6-cyber', modelSelection: apiKeySelection, pro: true, cyberAccessProgram: 'daybreak_red' }
-    await started({ data: { turnId: 'turn_daybreak_pro' } }, context({ turnId: 'turn_daybreak_pro' }))
-    await modelForSession(context({ turnId: 'turn_daybreak_pro' }))
+    searchBackend = 'openai'
+    try {
+      await started({ data: { turnId: 'turn_daybreak_pro' } }, context({ turnId: 'turn_daybreak_pro' }))
+      const model = await modelForSession(context({ turnId: 'turn_daybreak_pro' }))
+      assert.equal(model && typeof model === 'object' && Reflect.get(model, 'nativeWebSearchBackend'), 'openai')
+    } finally {
+      searchBackend = undefined
+    }
     assert.deepEqual(modelCalls.at(-1), { selection: apiKeySelection, requestPolicy: { apiKeyPro: true, apiKeyCyberAccessProgram: 'daybreak_red' } })
   })
 })

@@ -331,6 +331,7 @@ const functions = {
   'model-api-keys.refetchApiKeyModels': actions18.refetchApiKeyModels,
   'model-api-keys.refreshApiKeyDaybreak': actions18.refreshApiKeyDaybreakAction,
   'model-api-keys.updateApiKeyAfterQuota': actions18.updateApiKeyAfterQuota,
+  'model-api-keys.updateApiKeyWebSearch': actions18.updateApiKeyWebSearch,
   'model-api-keys.createApiKey': actions18.createApiKey,
   'model-api-keys.updateApiKey': actions18.updateApiKey,
   'model-api-keys.deleteApiKey': actions18.deleteApiKey,

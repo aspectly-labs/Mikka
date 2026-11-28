@@ -1903,6 +1903,8 @@
     },
     "usagePage": {
       "historyHeading": "历史与外部账户",
+      "webSearch": "Web Search",
+      "webSearchUnknown": "{count} 次调用的费用待确认",
       "byEnvironmentHeading": "按云端环境",
       "sorts": {
         "duration": "时长优先",
@@ -2402,6 +2404,8 @@
       "add": "添加"
     },
     "apiKeys": {
+      "webSearch": "Mikka Web Search",
+      "webSearchBilling": "为没有原生 Web Search 的第三方模型提供搜索。实际使用 Mikka 托管搜索时，账单会单列 Web Search。",
       "noResponsesApi": "{protocol} 协议 · 不支持 Responses API · Codex 用不了",
       "refetchLabel": "重新获取 {name} 的模型",
       "modelsInvalid": "无法获取模型 · Key 无效或已被撤销",
