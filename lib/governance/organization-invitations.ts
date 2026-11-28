@@ -308,5 +308,9 @@ export async function acceptOrganizationInvitation(input: unknown, user: { id: s
     })
     return { organizationId: candidate.organizationId, joined: true, role: invitation.role,
       ...(scopes.length ? { teamIds: scopes.map(scope => scope.teamId) } : {}) }
+  }).then(async accepted => {
+    const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+    await syncPerSeatSubscriptionForOrganization(accepted.organizationId)
+    return accepted
   })
 }

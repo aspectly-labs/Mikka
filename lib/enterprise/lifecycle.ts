@@ -18,8 +18,8 @@ export async function synchronizeEnterpriseLogin(proof: EnterpriseLoginProof, au
     await assertOrganizationAccountWritable(tx, proof.userId)
     const [organization] = await tx.select({ archivedAt: organizations.archivedAt }).from(organizations).where(eq(organizations.id, proof.organizationId)).for('share').limit(1)
     if (!organization || organization.archivedAt) throw new Error('enterprise_organization_unavailable')
-    await tx.insert(organizationMembers).values({ organizationId: proof.organizationId, userId: proof.userId, role: 'member', status: 'active', ...rows[0] }).onConflictDoNothing()
-    if (!audit) return
+    const [insertedMember] = await tx.insert(organizationMembers).values({ organizationId: proof.organizationId, userId: proof.userId, role: 'member', status: 'active', ...rows[0] }).onConflictDoNothing().returning({ userId: organizationMembers.userId })
+    if (!audit) return Boolean(insertedMember)
     await enqueueOrganizationAudit(tx, { organizationId: proof.organizationId, actorId: proof.userId, action: 'sso.signed_in', targetId: audit.sessionId,
       correlationId: audit.correlationId, metadata: { providerId: proof.providerId } })
     const memberships = await tx.select({ workspaceId: workspaceMembers.workspaceId }).from(workspaceMembers)
@@ -27,6 +27,12 @@ export async function synchronizeEnterpriseLogin(proof: EnterpriseLoginProof, au
       .where(and(eq(organizationWorkspaces.organizationId, proof.organizationId), eq(workspaceMembers.userId, proof.userId), eq(workspaceMembers.status, 'active')))
     for (const { workspaceId } of memberships) await enqueueWorkspaceAudit(tx, { workspaceId,
       actor: { type: 'user', id: proof.userId, name: rows[0].name }, action: 'auth.signed_in', target: { type: 'session', id: audit.sessionId }, metadata: { method: 'sso' } })
+    return Boolean(insertedMember)
+  }).then(async added => {
+    if (added) {
+      const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+      await syncPerSeatSubscriptionForOrganization(proof.organizationId)
+    }
   })
 }
 
@@ -72,6 +78,8 @@ export async function synchronizeDirectoryUser({ connection, user, action, event
     }
     await pool.query('update enterprise_revocation set "deliveredAt"=now() where "directoryUserId"=$1 and "deliveredAt" is null', [user.id])
   }
+  const { syncPerSeatSubscriptionForOrganization } = await import('@/lib/billing/seat-sync')
+  await syncPerSeatSubscriptionForOrganization(connection.organizationId)
 }
 
 export async function auditDirectoryGroup(connection: ScimConnection, groupId: string, eventId?: string) {

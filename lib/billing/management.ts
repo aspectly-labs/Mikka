@@ -170,7 +170,8 @@ const operation = z.discriminatedUnion('action', [
   z.object({ action: z.literal('account'), workspaceId: z.uuid().nullable() }).strict(),
   z.object({ action: z.literal('recharge'), policy: z.unknown(), accountWorkspaceId: z.uuid() }).strict(),
   z.object({ action: z.literal('overage'), policy: z.unknown(), accountWorkspaceId: z.uuid() }).strict(),
-  z.object({ action: z.enum(['checkout', 'portal']), accountWorkspaceId: z.uuid() }).strict(),
+  z.object({ action: z.literal('checkout'), accountWorkspaceId: z.uuid(), priceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).optional() }).strict(),
+  z.object({ action: z.literal('portal'), accountWorkspaceId: z.uuid() }).strict(),
   z.object({ action: z.literal('topup'), amount: z.number(), locale: z.enum(['en', 'zh-CN']), accountWorkspaceId: z.uuid() }).strict(),
 ])
 
@@ -205,6 +206,6 @@ export async function mutateBillingManagement(actorId: string, target: BillingSc
     const back = new URL(withBasePath('/settings'), origin)
     back.searchParams.set('section', 'billing'); back.searchParams.set('workspace', accountId); back.searchParams.set('billing_return', '1')
     return value.action === 'portal' ? billingPortalUrl(actorId, accountId, back.href)
-      : planCheckoutUrl(actorId, accountId, back.href)
+      : planCheckoutUrl(actorId, accountId, back.href, fetch, runtimeEnv(), value.priceId)
   }, { organizationId: target.kind === 'organization' ? target.id : undefined, ownPlatformAccount: value.action !== 'portal', principal })
 }

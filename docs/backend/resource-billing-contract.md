@@ -20,18 +20,19 @@ Shared Workspace 的 `activeHumanLimit` 为 `null`。Personal Workspace 仍只�
 
 `STRIPE_TEAM_PRICE_ID` 只识别历史订阅。它不能创建资源套餐 Checkout。历史价格的 Stripe 数量和收费条款保持原样；取消、改价或迁移真实订阅需要独立财务授权。
 
-资源 Checkout 使用单独配置的 `STRIPE_TEAM_RESOURCE_PRICE_ID`，数量固定为 1。服务器从 Stripe 读取 Price 并验证以下合同：
+资源 Checkout 支持配置多档 `resource_v1` 价格（`STRIPE_PRO_RESOURCE_PRICE_ID`、`STRIPE_TEAM_RESOURCE_PRICE_ID`、`STRIPE_ENTERPRISE_RESOURCE_PRICE_ID`），由调用方传入已配置的 `priceId`（省略时默认使用 `STRIPE_TEAM_RESOURCE_PRICE_ID`，否则按已配置价格回退）。`per_workspace` 套餐数量固定为 1；`per_seat` 套餐按该计费账户当前的活跃席位数计费（指定为 Organization 计费账户时统计活跃 Organization 成员数，否则统计当前 Workspace 活跃成员数，至少为 1），并在成员增删、停用/恢复或 Organization 计费账户变更提交后，在事务外事件驱动同步 Stripe 订阅项数量（增席使用 `always_invoice` 立即开票触发按比例补额，减席使用 `create_prorations` 结转下期）。服务器从 Stripe 读取 Price 并验证以下合同：
 
 | 字段 | 要求 |
 | --- | --- |
-| `id` | 与部署配置的 ID 相同 |
+| `id` | 属于部署已配置的 `resource_v1` Price ID 集合 |
 | `active` | 创建 Checkout 时为 `true` |
 | `currency` | `usd` |
 | `type` / `billing_scheme` | `recurring` / `per_unit` |
 | `recurring` | 每 1 个月，`usage_type: licensed` |
 | `metadata.mikka_billing_model` | `resource_v1` |
 | `metadata.mikka_plan` | `pro` 或 `enterprise` |
-| `metadata.mikka_monthly_points` | 0–100,000,000 的十进制整数 |
+| `metadata.mikka_monthly_points` | 0–100,000,000 的十进制整数（`at_cost_v1` 下省略时默认等于 `unit_amount`） |
+| `metadata.mikka_seat_model` | 可选，`per_workspace`（默认）或 `per_seat` |
 
 没有配置或者验证失败时，返回 `billingResourcePlanUnavailable`。不能用昵称猜测套餐、复用旧每席位 Price 或在应用启动时创建价格。年度计划需要独立的按月授额合同，不得把一年的付款误当成一份月度额度。归档 Price 不影响其已付费订阅的付款期间。
 

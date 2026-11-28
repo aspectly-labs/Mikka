@@ -295,7 +295,13 @@ export async function freezeTaskRetention(client: Pick<PoolClient, 'query'>, use
   return { ...plan, keptIssueIds: [...kept].sort() }
 }
 
-export async function deleteWorkspaceData(wtx: WorkspaceTx, userId: string, emailHash: string, plan: CompatiblePlan) {
+export async function deleteWorkspaceData(
+  wtx: WorkspaceTx,
+  userId: string,
+  emailHash: string,
+  plan: CompatiblePlan,
+  removedOrganizationIds?: string[],
+): Promise<void> {
   const retained = await freezeProjectRetention(wtx, userId, plan)
   const previousLists = await Promise.all([...plan.solo, ...plan.shared].map(async id => ({ id, scopes: await workspaceListScopesBeforeChange(wtx, id) })))
   if (plan.solo.length) {
@@ -330,9 +336,12 @@ export async function deleteWorkspaceData(wtx: WorkspaceTx, userId: string, emai
   // retries after the APP user has gone. Historical Org audit rows stay.
   await lockAccountOrganizationOwnership(wtx, userId)
   const removed = await wtx.delete(organizationMembers).where(eq(organizationMembers.userId, userId)).returning({ organizationId: organizationMembers.organizationId })
-  for (const { organizationId } of removed) await enqueueOrganizationAudit(wtx, {
-    organizationId, actorId: userId, action: 'organization.member_removed', targetId: userId, metadata: { reason: 'account_deletion' },
-  })
+  for (const { organizationId } of removed) {
+    removedOrganizationIds?.push(organizationId)
+    await enqueueOrganizationAudit(wtx, {
+      organizationId, actorId: userId, action: 'organization.member_removed', targetId: userId, metadata: { reason: 'account_deletion' },
+    })
+  }
 }
 
 const ident = (name: string) => `"${name.replaceAll('"', '""')}"`

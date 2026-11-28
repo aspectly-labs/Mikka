@@ -199,6 +199,8 @@ export async function removeMember(actorId: string, workspaceId: string, targetI
   }) } finally { await drainRevokedReviewSessions(pool, reviewIds) }
   // After the membership is gone: the membership check already fences them, this removes what stays behind.
   await drainMemberLifecycleOutbox(workspaceId, targetId)
+  const { syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
+  await syncPerSeatSubscriptionForWorkspace(workspaceId)
   return removed
 }
 

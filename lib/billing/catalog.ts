@@ -37,7 +37,7 @@ import {
 } from './catalog-client'
 import { pointsToCreditCents } from './hosted-usage'
 import { resourcePrice } from './resource-plan'
-import { stripeConfig, stripeGet, StripeRequestError, type StripeConfig } from './stripe'
+import { configuredResourcePriceIds, stripeConfig, stripeGet, StripeRequestError, type StripeConfig } from './stripe'
 
 export {
   billingActiveOfferSchema,
@@ -112,13 +112,18 @@ export function clearBillingCatalogCache(): void {
   couponCache.clear()
 }
 
-const DEFAULT_PLAN_DISPLAY_NAMES: Readonly<Record<'pro' | 'enterprise', string>> = {
+const DEFAULT_PLAN_DISPLAY_NAMES: Readonly<Record<'pro' | 'team' | 'enterprise', string>> = {
   pro: 'Mikka Pro',
+  team: 'Mikka Team',
   enterprise: 'Mikka Enterprise',
 }
 
-function defaultPlanDisplayName(plan: 'pro' | 'enterprise'): string {
-  return DEFAULT_PLAN_DISPLAY_NAMES[plan]
+function defaultPlanDisplayName(id: 'pro' | 'team' | 'enterprise'): string {
+  return DEFAULT_PLAN_DISPLAY_NAMES[id]
+}
+
+export function billingCatalogPlanId(plan: 'pro' | 'enterprise', seatModel: 'per_workspace' | 'per_seat'): 'pro' | 'team' | 'enterprise' {
+  return plan === 'pro' && seatModel === 'per_seat' ? 'team' : plan
 }
 
 function toPlanCatalogEntry(rawPrice: unknown, configuredPriceId: string): BillingPlanCatalogEntry {
@@ -127,10 +132,11 @@ function toPlanCatalogEntry(rawPrice: unknown, configuredPriceId: string): Billi
     ? (rawPrice as { nickname: string }).nickname.trim()
     : ''
   const includedCreditCents = pointsToCreditCents(approved.monthlyPoints)
+  const id = billingCatalogPlanId(approved.plan, approved.seatModel)
   return billingPlanCatalogEntrySchema.parse({
-    id: approved.plan,
+    id,
     plan: approved.plan,
-    name: rawNickname || defaultPlanDisplayName(approved.plan),
+    name: rawNickname || defaultPlanDisplayName(id),
     stripePriceId: approved.id,
     amountCents: approved.amountCents,
     currency: approved.currency,
@@ -444,9 +450,8 @@ function matchActivePlanForOffer(
   offer: BillingActiveOfferPayload,
   plans: readonly BillingPlanCatalogEntry[],
 ): BillingPlanCatalogEntry | null {
-  const matchedPlan = plans.find(
-    plan => plan.active && (plan.id === offer.planId || plan.plan === offer.planId),
-  )
+  const matchedPlan = plans.find(plan => plan.active && plan.id === offer.planId)
+    ?? plans.find(plan => plan.active && plan.plan === offer.planId)
   if (!matchedPlan) return null
   // Coupon-only Checkout on a recurring resourcePriceId can only fulfill
   // intro_period / discount offers whose billing cadence matches the plan's
@@ -692,15 +697,19 @@ export async function resolveBillingCatalog(
   const plans: BillingPlanCatalogEntry[] = []
   const planProductIds = new Map<string, string | null>()
 
-  if (config?.resourcePriceId) {
-    const fetched = await fetchCachedResourcePlan(
-      config,
-      config.resourcePriceId,
-      nowMs,
-      fetchImpl,
-      options.bypassCache ?? false,
+  const priceIds = configuredResourcePriceIds(config)
+  if (config && priceIds.length > 0) {
+    const fetchedPlans = await Promise.all(
+      priceIds.map(priceId => fetchCachedResourcePlan(
+        config,
+        priceId,
+        nowMs,
+        fetchImpl,
+        options.bypassCache ?? false,
+      )),
     )
-    if (fetched) {
+    for (const fetched of fetchedPlans) {
+      if (!fetched) continue
       plans.push(fetched.plan)
       if (fetched.plan.stripePriceId) {
         planProductIds.set(fetched.plan.stripePriceId, fetched.productId)

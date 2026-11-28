@@ -214,6 +214,7 @@ export async function resumeAccountDeletion(id: string, options: AccountDeletion
         assertHeld()
       }
       assertHeld()
+      const removedOrgIds: string[] = []
       await transaction(workspace, async workspaceClient => {
         assertHeld()
         const checked = await planWorkspaces(drizzle(workspaceClient), job.subjectUserId)
@@ -240,24 +241,31 @@ export async function resumeAccountDeletion(id: string, options: AccountDeletion
         })
         assertHeld()
         // Workspace row locks remain held across the main commit; this is explicitly two commits.
-        await deleteWorkspaceData(drizzle(workspaceClient), job.subjectUserId, job.subjectEmailHash, retained)
+        await deleteWorkspaceData(drizzle(workspaceClient), job.subjectUserId, job.subjectEmailHash, retained, removedOrgIds)
         assertHeld()
       })
       await lease.query('UPDATE account_deletion_jobs SET stage=\'workspace_deleted\',"updatedAt"=now() WHERE id=$1', [id])
       job = await load(lease, id)
+      const { syncPerSeatSubscriptionForOrganization, syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
+      for (const workspaceId of job.plan?.shared ?? []) await syncPerSeatSubscriptionForWorkspace(workspaceId)
+      for (const organizationId of removedOrgIds) await syncPerSeatSubscriptionForOrganization(organizationId)
     }
     if (job.stage === 'main_deleted') {
       assertHeld()
+      const removedOrganizationIds: string[] = []
       const retained = await transaction(workspace, async client => {
         assertHeld()
         await guard(client, job.subjectUserId, id, job.requestedAt)
         const retained = await freezeProjectRetention(drizzle(client), job.subjectUserId, job.plan!)
-        await deleteWorkspaceData(drizzle(client), job.subjectUserId, job.subjectEmailHash, retained)
+        await deleteWorkspaceData(drizzle(client), job.subjectUserId, job.subjectEmailHash, retained, removedOrganizationIds)
         assertHeld()
         return retained
       })
       await lease.query('UPDATE account_deletion_jobs SET stage=\'workspace_deleted\',plan=$2,"updatedAt"=now() WHERE id=$1', [id, JSON.stringify(retained)])
       job = await load(lease, id)
+      const { syncPerSeatSubscriptionForOrganization, syncPerSeatSubscriptionForWorkspace } = await import('@/lib/billing/seat-sync')
+      for (const workspaceId of retained.shared) await syncPerSeatSubscriptionForWorkspace(workspaceId)
+      for (const organizationId of removedOrganizationIds) await syncPerSeatSubscriptionForOrganization(organizationId)
     }
     if (job.stage === 'workspace_deleted' || job.stage === 'storage_pending') {
       const notBefore = job.storageNotBefore?.getTime() ?? 0

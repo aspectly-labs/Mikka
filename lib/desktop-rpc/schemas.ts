@@ -250,7 +250,7 @@ export const desktopActionSchemas = {
   'billing.cardVerificationStatus': inWorkspace,
   'billing.getHostedUsage': inWorkspace,
   'billing.openBillingPortal': tuple(text(2048).min(1), workspace),
-  'billing.startPlanCheckout': tuple(text(2048).min(1), workspace),
+  'billing.startPlanCheckout': tuple(text(2048).min(1), workspace, z.string().regex(/^price_[A-Za-z0-9_]+$/).optional()),
   'billing.startPointsPurchase': tuple(uuid, z.number().refine(amount => (POINTS_PURCHASE_AMOUNTS as readonly number[]).includes(amount))),
   'billing.startChatPointsPurchase': tuple(z.number().finite().positive(), bot),
   'billing.startCardVerification': inWorkspace,
