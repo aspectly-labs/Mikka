@@ -28,6 +28,12 @@ spans (see [Mobile app](#mobile-app)).
   `@opentelemetry/instrumentation-pg` on the `pg` pool behind `lib/db`
   (drizzle `node-postgres`). Statements outside any span are not traced, and
   neither are connect spans.
+- Native Node `fetch`/Undici HTTP attempts, observed through its diagnostic
+  channels without wrapping fetch or changing headers, bodies or cancellation.
+  Each attempt is a `CLIENT` child of its initiating active span. Unparented and
+  SDK-suppressed requests are not traced, including telemetry exports. Existing
+  explicitly supplied propagation headers remain unchanged; the observer never
+  sends internal Mikka correlation headers to third parties.
 - Background work, each as a labelled job (see [Background work](#background-work)):
   `after()` callbacks, Workflow steps and cron handlers.
 
@@ -60,6 +66,24 @@ precedence, and HTTP 5xx remains an error. Eve proxy spans additionally carry
 `mikka.eve.route`, a closed route template without session IDs or query strings;
 unknown paths use a catch-all template. Connection failures keep the existing
 503 response and record safe cause names/codes on the span and its failure log.
+
+Outbound HTTP spans carry method, status and `mikka.http.peer`, a closed label
+(`github`, `composio`, configured `eve`/`cloud`/`litellm`, or `other`). URLs,
+paths, query strings, private hostnames, request/response headers and bodies are
+never recorded by the observer. `mikka.http.transport=undici` identifies this
+coverage; transports that do not use Undici keep their existing instrumentation.
+`mikka.http.response_headers_ms` measures response-header readiness; the span
+lasts until the complete body or transport error, including long-lived streams.
+It is not page latency or model first-token latency.
+
+Client outcomes are `completed`, `http_error`, `transport_error`, `timeout` or
+`aborted`. An explicit transport abort records `aborted`, without inferring an
+end-user disconnect or a successful operation. HTTP 4xx/5xx, timeouts and other
+transport failures mark the client span ERROR with an HTTP status or closed
+error code; aborting an already-failed HTTP response does not clear its error.
+Incoming request outcomes remain independently authoritative for user-facing
+success/error rates. No error messages, stack traces or arbitrary abort reasons
+are exported.
 
 Mikka-managed model calls use the AI request span described below, with
 `mikka.ai.route = litellm` and the requested alias in the model field. The
