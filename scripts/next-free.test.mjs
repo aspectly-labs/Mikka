@@ -91,3 +91,20 @@ test('route handlers no longer export framework-only segment options', () => {
   const hits = grep("^export const (dynamic|runtime) *=", ['app/**', 'apps/api/routes/**', ':!**/*.test.ts', ':!**/*.test.mjs'])
   assert.deepEqual(hits, [], 'the route manifest reads methods and maxDuration; these exports do nothing')
 })
+
+test('no type reference, compatibility shim or Turbopack configuration remains', async () => {
+  // A triple-slash reference to the retired package fails once nothing installs it.
+  assert.deepEqual(grep('reference types=["\']next["\']'), [])
+  // The renderer once aliased next/link, next/navigation and next/script to these shims; nothing imports them now.
+  const shims = execFileSync('git', ['ls-files', '--', '*next-link*', '*next-navigation*', '*next-script*'], { cwd: root, encoding: 'utf8' }).split('\n').filter(Boolean)
+  assert.deepEqual(shims, [])
+  // The bundler is Vite; the UI layer's aliases carry no Turbopack form (lib/ui-overlay.mjs).
+  assert.deepEqual(grep('\\bturbopack\\b', ['lib/**', 'apps/**', ':!**/*.md', ':!**/*.test.mjs']), [])
+  const owners = await readIfPresent('.github/CODEOWNERS')
+  assert.doesNotMatch(owners, /next\.config|next-env/, 'CODEOWNERS must not own files that no longer exist')
+})
+
+test('the server runtime names its request and response types after the product, not the framework', () => {
+  // lib/server-runtime/server.ts exports RouteRequest, RouteResponse and RouteURL.
+  assert.deepEqual(grep('\\bNext(Request|Response|URL)\\b|\\.nextUrl\\b|\\bnextConfig\\b', [':!**/*.md']), [])
+})

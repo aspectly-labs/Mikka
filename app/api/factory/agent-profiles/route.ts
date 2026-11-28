@@ -1,3 +1,26 @@
 import { agentProfileHandler } from '@/lib/factory/agent-profile-server'
-export const GET = (request: Request) => agentProfileHandler(request)
-export const POST = (request: Request) => agentProfileHandler(request)
+import { defineRoute } from '@/lib/primitives/define-route'
+
+const originMismatch = () => Response.json({ error: 'originMismatch' }, { status: 403, headers: { 'Cache-Control': 'private, no-store' } })
+
+export const GET = defineRoute(
+  {
+    route: '/api/factory/agent-profiles',
+    auth: 'session',
+    origin: 'any',
+    workspace: 'none',
+    freshSession: true,
+  },
+  ({ request, session }) => agentProfileHandler(request, undefined, session),
+)
+export const POST = defineRoute(
+  {
+    route: '/api/factory/agent-profiles',
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'none',
+    freshSession: true,
+    onOriginFailure: originMismatch,
+  },
+  ({ request, session }) => agentProfileHandler(request, undefined, session),
+)

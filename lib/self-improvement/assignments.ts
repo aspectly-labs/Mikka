@@ -6,6 +6,7 @@ import { BASELINE_ARTIFACT, BASELINE_MARKDOWN } from './builtin-skill'
 import { digest, ImprovementError } from './contract'
 import { currentSkillEligibility, lockSkillScope, resolveSkillVersion, type SkillEvaluationAuthorization } from './registry'
 import { writeTransaction } from '@/lib/operations/write-transaction'
+import { jsonbSafeUuidSql } from '../primitives/jsonb-predicates'
 import type { MailboxTransactionGuard } from '@/lib/mailbox-transaction-guard'
 
 type Authorize = (userId: string, issueId: string, tx: PoolClient) => Promise<boolean>
@@ -243,7 +244,7 @@ export async function assignedSkillForRun(tx: PoolClient, userId: string, run: {
   id: string; issueId: string; agentId: string; deviceRepoId: string; deviceId: string; startedAt?: Date | null
 }) {
   const { rows: [row] } = await tx.query(`SELECT s.*,v.artifact,v.markdown FROM improvement_skill_receipts s
-    JOIN improvement_skill_versions v ON v.id=(s.receipt->'artifact'->>'versionId')::uuid
+    JOIN improvement_skill_versions v ON v.id=${jsonbSafeUuidSql(`s.receipt->'artifact'`, 'versionId')}
     WHERE s."runId"=$1 AND s."userId"=$2`, [run.id, userId])
   if (!row) return { skillUsage: 'unrecorded' as const }
   const receipt = skillAssignmentReceiptSchema.safeParse(row.receipt)

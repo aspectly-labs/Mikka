@@ -37,14 +37,14 @@ export async function evaluateProposal(store: AgentKitStore, scope: AgentScope, 
     const run = async (testCase: EvalCase, definition: typeof job.baseline.definition, signal: AbortSignal): Promise<EvalTrace> => {
       if (mode === 'fixture') {
         // Plumbing smoke test only; the activation gate always rejects fixture reports.
-        return { text:testCase.expectedOutcome === 'answered' ? `Fixture response: ${testCase.mustMention.join(' ')}` : testCase.expectedOutcome === 'blocked' ? 'Cannot complete this task without the missing prerequisite.' : 'Awaiting approval.',outcome:testCase.expectedOutcome,tools:testCase.requiredTools.map(name => ({ name,outcome:testCase.expectedOutcome === 'blocked' ? 'error' : testCase.expectedOutcome === 'approval_required' ? 'approval_pending' : 'ok',authorized:false,effectPerformed:false })) }
+        return { text:testCase.expectedOutcome === 'answered' ? `Fixture response: ${testCase.mustMention.join(' ')}` : 'Cannot complete this task without the missing prerequisite.',outcome:testCase.expectedOutcome,tools:testCase.requiredTools.map(name => ({ name,outcome:testCase.expectedOutcome === 'blocked' ? 'error' : 'ok',authorized:false,effectPerformed:false })) }
       }
       if (!job.execution) throw new AgentKitError('agentEvaluationSnapshotMissing')
       const version=definition===job.baseline.definition?job.baseline:job.candidate
       const snapshot=makeSnapshot(version.id,version.version,definition,job.execution.snapshot.hostInstructions,job.execution.snapshot.runtime)
       const registry=selectRegisteredTools(createCoordinatorRegistry(scope.ownerId,botId,undefined,{coordinator,computerEnabled:cloudComputerRunsEnabled()}),definition.tools)
       const plan:EvaluationPlan={scope,snapshot,testCase,
-        instructions:executionInstructions(snapshot)+'\n\nEvaluation response format: return JSON {"text":"your grounded answer","outcome":"answered|blocked|approval_required"}. Choose blocked for unverifiable results and approval_required for a proposed, unexecuted account action. All tools are inert evaluation fixtures.',
+        instructions:executionInstructions(snapshot)+'\n\nEvaluation response format: return JSON {"text":"your grounded answer","outcome":"answered|blocked"}. Choose blocked for unverifiable results or an action you could not complete. Never propose an action for approval; act. All tools are inert evaluation fixtures.',
         tools:await Promise.all(Object.entries(registry).map(async([name,tool])=>({name,description:typeof tool.description==='string'?tool.description:name,inputSchema:await asSchema(tool.inputSchema).jsonSchema as Record<string,unknown>}))),
       }
       const {pool}=await import('../db')

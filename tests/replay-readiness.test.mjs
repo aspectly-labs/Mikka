@@ -94,16 +94,16 @@ test('duplicate entry replaces subscriptions; unavailable or failing SDK remains
 })
 
 for (const optedIn of [false, true]) test(`real bootstrap keeps masking and natural readiness with acceptance opt-in ${optedIn}`, () => {
-  const source = readFileSync(new URL('../instrumentation-client.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../lib/analytics/posthog-init.ts', import.meta.url), 'utf8')
     .replace(/^import .*\n/gm, '')
   const f = fixture()
   let config
   const client = { ...f.client, register() {}, capture() {} }
   const target = { location: { hostname: 'example.invalid' } }
   if (optedIn) Object.defineProperty(target, ACCEPTANCE_REPLAY_MARKER, { value: Date.now() + 60_000 })
-  runInNewContext(source, { window: target, process: { env: { NODE_ENV: 'test' } },
+  runInNewContext(source, { window: target, process: { env: { NODE_ENV: 'test' } }, getNodeEnv: () => 'test',
     posthogConfig: { token: 'SYNTHETIC_PUBLIC_PROJECT_TOKEN', apiHost: 'https://example.invalid', uiHost: 'https://example.invalid' },
-    posthog: { init(_token, value) { config = value } }, watchRemovedActions() {},
+    posthog: { init(_token, value) { config = value } },
     setLiveTelemetrySink() {}, acceptanceReplayOptIn, installReplayReadiness, sanitizeAnalyticsEvent, redactReplayRequest })
   assert.equal(config.opt_out_useragent_filter, optedIn)
   assert.equal(typeof target.__mikkaReplayReadiness, 'function')

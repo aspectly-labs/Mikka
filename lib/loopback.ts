@@ -1,4 +1,6 @@
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1'])
+import { LOOPBACK_HOSTS as LOOPBACK_HOST_LIST, LOOPBACK_IPV4 } from './env/hosts-constants.mjs'
+
+const LOOPBACK_HOSTS = new Set<string>(LOOPBACK_HOST_LIST)
 
 /** A loopback host as `URL.hostname` gives it (`[::1]`), or with the IPv6 brackets stripped (`::1`). */
 export function isLoopbackHost(hostname: string): boolean {
@@ -22,7 +24,7 @@ export function loopbackReturn(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 64) return null
   try {
     const url = new URL(value)
-    if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || !url.port || url.username || url.password || url.search || url.hash || url.pathname !== '/return') return null
+    if (url.protocol !== 'http:' || url.hostname !== LOOPBACK_IPV4 || !url.port || url.username || url.password || url.search || url.hash || url.pathname !== '/return') return null
     return `${url.origin}${url.pathname}`
   } catch { return null }
 }

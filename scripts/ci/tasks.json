@@ -29,11 +29,6 @@
     "kind": "core",
     "env": {}
   },
-  "core-8": {
-    "command": "pnpm test:idle-budget",
-    "kind": "core",
-    "env": {}
-  },
   "core-9": {
     "command": "pnpm test:motion",
     "kind": "core",
@@ -234,11 +229,6 @@
     "kind": "core",
     "env": {}
   },
-  "core-49": {
-    "command": "pnpm test:user-message-text",
-    "kind": "core",
-    "env": {}
-  },
   "core-50": {
     "command": "pnpm test:run-info",
     "kind": "core",
@@ -246,11 +236,6 @@
   },
   "core-51": {
     "command": "pnpm test:thread-changes",
-    "kind": "core",
-    "env": {}
-  },
-  "core-52": {
-    "command": "pnpm check:agent-ui",
     "kind": "core",
     "env": {}
   },
@@ -271,11 +256,6 @@
   },
   "core-56": {
     "command": "pnpm test:unread",
-    "kind": "core",
-    "env": {}
-  },
-  "core-57": {
-    "command": "pnpm test:issue-readonly-dom",
     "kind": "core",
     "env": {}
   },
@@ -426,11 +406,6 @@
     "kind": "core",
     "env": {}
   },
-  "core-view-state": {
-    "command": "pnpm test:view-state",
-    "kind": "core",
-    "env": {}
-  },
   "core-governance": {
     "command": "pnpm test:governance",
     "kind": "core",
@@ -476,8 +451,18 @@
     "kind": "integration",
     "env": {}
   },
+  "core-58": {
+    "command": "pnpm test:zero-residency",
+    "kind": "core",
+    "env": {}
+  },
   "integration-http-fakes": {
     "command": "pnpm test:http-fakes",
+    "kind": "integration",
+    "env": {}
+  },
+  "integration-ui-fixture-guards": {
+    "command": "pnpm test:ui-fixture-guards",
     "kind": "integration",
     "env": {}
   }

@@ -1,3 +1,21 @@
 import { respondGroup } from '@/lib/group-conversations-route'
-export async function GET(request: Request) { return respondGroup(request, 'conversations') }
-export async function POST(request: Request) { return respondGroup(request, 'conversations') }
+import { defineRoute } from '@/lib/primitives/define-route'
+
+export const GET = defineRoute<'session', 'pat-scoped'>(
+  {
+    auth: 'session',
+    origin: 'any',
+    workspace: 'pat-scoped',
+  },
+  ({ request }) => respondGroup(request, 'conversations'),
+)
+
+export const POST = defineRoute<'session', 'pat-scoped'>(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    write: true,
+  },
+  ({ request }) => respondGroup(request, 'conversations'),
+)

@@ -5,7 +5,11 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "exports": {
+    "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts",
+    "./task-labels": "./src/task-labels.ts",
+    "./mcp-check": "./src/mcp-check.ts",
     "./settings": "./src/settings.ts",
+    "./work-visibility": "./src/work-visibility.ts",
     "./coding-terminal": "./src/coding-terminal.ts",
     "./coding-workspace": "./src/coding-workspace.ts",
     "./coding-workspace-review": "./src/coding-workspace-review.ts",
@@ -64,6 +68,8 @@
     "./members": "./src/members.ts",
     "./collab": "./src/collab.ts",
     "./artifact-frame": "./src/artifact-frame.ts",
+    "./artifact-share": "./src/artifact-share.ts",
+    "./open-artifact": "./src/open-artifact.ts",
     "./coordinator": "./src/coordinator.ts",
     "./computer": "./src/computer.ts",
     "./subscription": "./src/subscription.ts",
@@ -71,7 +77,8 @@
     "./subagent": "./src/subagent.ts",
     "./trace-context": "./src/trace-context.ts",
     "./tracing": "./src/tracing.ts",
-    "./codex-startup": "./src/codex-startup.ts"
+    "./codex-startup": "./src/codex-startup.ts",
+    "./slash-commands": "./src/slash-commands.ts"
   },
   "scripts": {
     "typecheck": "tsgo --noEmit -p tsconfig.json",

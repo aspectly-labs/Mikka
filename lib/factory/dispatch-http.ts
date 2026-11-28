@@ -1,6 +1,7 @@
 import { deploymentSwitch } from '@/lib/deployment-switches'
 import { FactoryError } from "./contract";
 import type { FactoryDispatchInput, FactoryDispatchResult } from "./dispatch";
+import { runtimeEnv, type EnvMap } from '@/lib/env/server';
 
 export type FactoryDispatchFn = (userId: string, input: FactoryDispatchInput) => Promise<FactoryDispatchResult>;
 export interface FactoryDispatchRequest {
@@ -16,7 +17,7 @@ export interface FactoryDispatchRequest {
  * The route's gate (route.ts): the Coordinator issue-mutation flag plus both
  * Factory flags. Any one off -> 404 factoryLifecycleUnavailable, before dispatch.
  */
-export function factoryDispatchEnabled(issueMutations: boolean, env: Record<string, string | undefined> = process.env): boolean {
+export function factoryDispatchEnabled(issueMutations: boolean, env: EnvMap = runtimeEnv()): boolean {
   return issueMutations && deploymentSwitch('factoryRouting', env) && deploymentSwitch('factoryLifecycle', env);
 }
 

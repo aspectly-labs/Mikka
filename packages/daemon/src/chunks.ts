@@ -4,6 +4,7 @@ import type { RepositoryGitTiming } from './repository-git-timing'
 // them directly; Mikka-specific facts travel as `data-*` parts.
 import type { RunPublish, RunState, StopReason } from "@mikka/protocol"
 import type { PlanSection } from "@mikka/protocol/plan"
+import type { AvailableCommandsChunkData, SystemEventData } from "@mikka/protocol/slash-commands"
 import type { UIMessage, UIMessageChunk } from "ai"
 import type { DaemonPreparationTiming, DaemonStartupTiming } from "./tracing"
 
@@ -32,6 +33,10 @@ export type MikkaDataTypes = {
   "run-stage": { stage: RunStage; ms: number; ok: boolean; startupTiming?: DaemonStartupTiming; preparationTiming?: DaemonPreparationTiming; repositoryTiming?: RepositoryGitTiming }
   /** A real task is attached to this Bot's desktop, not to an agent identity. */
   computer: { botId: string; runId: string; task: string; state: 'working' }
+  /** Runtime-reported slash commands for this thread (ACP AvailableCommand shape, #3333). */
+  "available-commands": AvailableCommandsChunkData
+  /** System event lines streamed from the harness (local command output, compact status/boundary, blocked command notice, #3333). */
+  "system-event": SystemEventData
   /**
    * The spec a `plan` run wrote (ADR ORV-205). `specId` is the row the server
    * stores, so the card reads the spec's live status from there.
@@ -63,6 +68,18 @@ export type MikkaDataTypes = {
 export type RunChunk = UIMessageChunk<unknown, MikkaDataTypes> & {
   /** Tool input-available to result, measured by the daemon's monotonic clock before batching. */
   toolDurationMs?: number
+  /** The adapter kept only the end of a tool's output (the last TOOL_OUTPUT_TAIL_CHARS characters). */
+  outputTruncated?: true
+  /** Claude Code's TaskCreate: the id its result gave the new task, so a later TaskUpdate finds it in the plan. */
+  planTask?: { id: string }
+}
+
+/** How much of a tool's output the adapters keep: its end, where a command's result and errors are. */
+export const TOOL_OUTPUT_TAIL_CHARS = 4000
+
+/** A tool's output as the adapters store it: the end of the text, marked when the start was cut. */
+export function toolOutputTail(text: string): { text: string; truncated: boolean } {
+  return text.length > TOOL_OUTPUT_TAIL_CHARS ? { text: text.slice(-TOOL_OUTPUT_TAIL_CHARS), truncated: true } : { text, truncated: false }
 }
 
 /** A start-up stage's outcome (stored, unlike `run-state`). */

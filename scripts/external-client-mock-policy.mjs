@@ -45,7 +45,14 @@ export function auditExternalClientMocks(findings, baseline, previous = baseline
     if (count > (baseline[key] ?? 0)) errors.push(`${item.file}:${item.line} provider-module-mock: ${item.module}; use tests/fakes HTTP service`)
   }
   for (const [key, count] of Object.entries(baseline)) {
-    if (!Number.isInteger(count) || count < 1 || count > (previous[key] ?? 0)) errors.push(`${baselinePath}: baseline may only shrink (${key})`)
+    if (!Number.isInteger(count) || count < 1 || count > (previous[key] ?? 0)) {
+      errors.push(`${baselinePath}: baseline may only shrink (${key})`)
+      continue
+    }
+    const actual = counts.get(key) ?? 0
+    if (actual < count) {
+      errors.push(`${baselinePath}: stale entry (${key}: baseline ${count}, actual ${actual}); ${actual ? `lower to ${actual}` : 'remove entry'}`)
+    }
   }
   return errors
 }
@@ -62,6 +69,9 @@ export function repositoryExternalClientMocks(root = process.cwd()) {
 export function trustedPolicyBase(root = process.cwd()) {
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   const has = ref => { try { git('rev-parse', '--verify', `${ref}^{commit}`); return true } catch { return false } }
+  // merge-base exits nonzero when a shallow checkout has no shared ancestor — a
+  // present-but-disconnected ref must skip to the next candidate, not crash.
+  const mergeBase = (a, b) => { try { return git('merge-base', a, b) } catch { return '' } }
   const candidates = []
   try {
     const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH ?? '', 'utf8'))
@@ -74,18 +84,19 @@ export function trustedPolicyBase(root = process.cwd()) {
     // A merge base equal to HEAD means the ref IS the candidate (FETCH_HEAD
     // after checkout) — never trusted, or increases would compare to themselves.
     if (has(ref)) {
-      // merge-base exits nonzero when a shallow checkout has no shared ancestor —
-      // a present-but-disconnected ref must skip to the next candidate, not crash.
-      const base = (() => { try { return git('merge-base', 'HEAD', ref) } catch { return '' } })()
+      const base = mergeBase('HEAD', ref)
       if (base && base !== head) return base
     }
   }
   try { execFileSync('git', ['fetch', '--depth=100', 'origin', 'main'], { cwd: root, stdio: 'ignore' }) } catch {}
-  try { return git('merge-base', 'HEAD', 'origin/main') } catch { return '' }
+  return mergeBase('HEAD', 'origin/main')
 }
 
 export function runExternalClientMockPolicy(root = process.cwd()) {
   const baseline = JSON.parse(readFileSync(resolve(root, baselinePath), 'utf8'))
+  if (Object.keys(baseline).length > 0) {
+    return [`${baselinePath}: permanently locked at 0 entries (found ${Object.keys(baseline).length}); use tests/fakes HTTP service instead of provider module mocks`]
+  }
   // Compare against the merge base so the same PR cannot enlarge its allowance.
   // On the introducing PR there is no older allowance; later PRs can only remove.
   const base = trustedPolicyBase(root)

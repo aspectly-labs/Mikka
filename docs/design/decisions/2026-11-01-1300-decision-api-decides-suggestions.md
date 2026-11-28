@@ -1,6 +1,7 @@
 # The Decisions API decides suggestions and approvals, with no rule set in front
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「只要涉及到权限请求或建议的内容，全部走 Decision API，不允许在前面用 rule set 过滤一次。能够使用 Decision API 的地方，绝对不允许使用规则集，必须通过 Decision API 来决定。」 and 「建议是什么？就是读了我所有的信息，然后给我提供下一步的建议。重要的才是建议，而且这也需要走 Decision API 来决定。」
 - Rule: R-20
 - Replaces: the `ruleLevel` / `fallbackLevel` steps of the attention model (R-20 in `../decisions.md`) and the bot-comment filter added in #768

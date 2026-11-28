@@ -7,7 +7,7 @@ import { queueFactoryTask } from './task-dispatch'
 import { continuedRunPolicyCeiling } from '@/lib/computer/run-model'
 import { requestedRunSettings, withRequestedEffort } from '@/lib/task-run-settings'
 
-export async function queueTaskRun(userId: string, input: Parameters<typeof queueRun>[1] & { needsSpec?: boolean }, botId: string | null = null,
+export async function queueTaskRun(userId: string, input: Parameters<typeof queueRun>[1] & { needsSpec?: boolean; followUpControl?: import('@mikka/protocol/device').RunAssignment['followUpControl'] }, botId: string | null = null,
   execution?: Parameters<typeof queueRun>[3], sourceEventId?: string, dispatch: RunDispatchOrigin = {}) {
   // Entry provenance never enters the selection digest: a retry from another
   // entry is the same work, not a conflict. Production callers pass `origin`;
@@ -15,6 +15,7 @@ export async function queueTaskRun(userId: string, input: Parameters<typeof queu
   // on this default.
   const source = dispatch.source ?? null
   const origin = dispatch.origin ?? 'web'
+  if (await (await import('@/lib/code-review/request-authority')).requestedCodeReviewReadOnly(userId, sourceEventId)) input = { ...input, readOnly: true }
   input = { ...input, policyCeiling: await continuedRunPolicyCeiling(pool, userId, input.issueId, input.threadRunId, input.policyCeiling) }
   // A new thread takes the effort its request asked for (an automation's), when its model takes one.
   if (input.modelDispatch && sourceEventId && !input.threadRunId && typeof input.model === 'string')
@@ -28,11 +29,17 @@ export async function queueTaskRun(userId: string, input: Parameters<typeof queu
     issueId: input.issueId, botId, agentId: input.agentId, deviceRepoId: repo.id, note: input.note,
     ownerRequested: Boolean(sourceEventId) && source !== 'mcp',
     key: input.requestKey, sourceEventId, previousRunId: input.threadRunId, needsSpec: input.needsSpec,
-    selection: [input.model, input.apiKeyId, input.subscriptionBindingId, input.pinnedDeviceId, Boolean(input.readOnly), execution?.id, source, ...(input.modelDispatch ? [{ modelDispatch: input.modelDispatch }] : []), ...(input.agentProfile ? [{ agentProfile: input.agentProfile }] : []), ...(input.policyCeiling ? [{ policyCeiling: input.policyCeiling }] : [])],
+    selection: [input.model, input.apiKeyId, input.subscriptionBindingId, input.pinnedDeviceId, Boolean(input.readOnly), execution?.id, source, ...(input.modelDispatch ? [{ modelDispatch: input.modelDispatch }] : []), ...(input.agentProfile ? [{ agentProfile: input.agentProfile }] : []), ...(input.policyCeiling ? [{ policyCeiling: input.policyCeiling }] : []), ...(input.followUpControl ? [{ followUpControl: input.followUpControl }] : [])],
     queue: async (tx, owner, request, scopeBot, context) => {
       const result = await queueFactoryRun(tx, owner, request, scopeBot, context, undefined, { threadRunId: input.threadRunId, model: input.model, apiKeyId: input.apiKeyId,
         subscriptionBindingId: input.subscriptionBindingId, modelDispatch: input.modelDispatch, agentProfile: input.agentProfile, policyCeiling: input.policyCeiling, pinnedDeviceId: input.pinnedDeviceId, readOnly: context.stage === 'spec' || input.readOnly, execution, origin, originRef: dispatch.originRef ?? null })
       if (source) await tx.query('UPDATE agent_runs SET source=$2 WHERE id=$1', [result.runId, source])
+      if (input.followUpControl) {
+        await tx.query(
+          `UPDATE agent_runs SET "agentDefinition" = jsonb_set(coalesce("agentDefinition", '{}'::jsonb), '{followUpControl}', $2::jsonb, true) WHERE id=$1`,
+          [result.runId, JSON.stringify(input.followUpControl)],
+        )
+      }
       return result
     },
   })

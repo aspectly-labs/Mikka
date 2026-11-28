@@ -9,6 +9,7 @@ import { lockOrganizationLiveAuthority, revokeOrganizationLiveCapabilities } fro
 import { drainOrganizationLiveRevocations } from '@/lib/enterprise/live-authority'
 import { requireOrganizationAdmin } from './organizations'
 import { GovernanceError } from './errors'
+import { countUserPasskeys } from '@/lib/account/passkeys'
 import type { OrganizationSecurityPolicy, PersonalSecurityState } from './organization-security-contract'
 
 const policyInput = z.object({ requireTwoFactor: z.boolean(), gracePeriodDays: z.number().int().min(0).max(30).default(DEFAULT_TWO_FACTOR_GRACE_DAYS) }).strict()
@@ -65,13 +66,26 @@ async function securityOrganizations(userId: string) {
     WHERE o."archivedAt" IS NULL AND (m."userId" IS NOT NULL OR wm."userId" IS NOT NULL) ORDER BY o.id`, [userId])).rows
 }
 
+async function workspacesRequiringTwoFactor(userId: string) {
+  const { rows } = await workspacePool.query<{ workspaceId: string; name: string }>(`SELECT w.id AS "workspaceId", w.name
+    FROM mikka_workspace_members m JOIN mikka_workspaces w ON w.id=m."workspaceId"
+    WHERE m."userId"=$1 AND m.status='active' AND w."twoFactorRequiredAt" IS NOT NULL ORDER BY w.id`, [userId])
+  return rows
+}
+
 /** Personal access stays available to enroll, step up, or use the native recovery codes. */
 export async function readPersonalSecurity(userId: string, sessionId: string): Promise<PersonalSecurityState> {
-  const [state, organizations] = await Promise.all([twoFactorSessionState(userId, sessionId), securityOrganizations(userId)])
+  const [state, passkeyCount, organizations, workspaces] = await Promise.all([
+    twoFactorSessionState(userId, sessionId),
+    countUserPasskeys(userId),
+    securityOrganizations(userId),
+    workspacesRequiringTwoFactor(userId),
+  ])
   const { rows: policies } = organizations.length ? await pool.query<PolicyRow & { organizationId: string; inGrace: boolean }>(`SELECT
     "organizationId",${policyColumns},${twoFactorInGrace} AS "inGrace" FROM enterprise_org_policy
     WHERE "organizationId"=ANY($1::uuid[])`, [organizations.map(organization => organization.id)]) : { rows: [] }
-  return { twoFactorEnabled: state.enabled, sessionVerified: state.verified,
+  return { twoFactorEnabled: state.enabled, sessionVerified: state.verified, passkeyCount,
+    workspaces: workspaces.map(row => ({ ...row, status: state.verified ? 'verified' : state.enabled ? 'verification_required' : 'enrollment_required' })),
     organizations: organizations.map(organization => {
       const row = policies.find(row => row.organizationId === organization.id)
       const policy = policyView(row)
@@ -84,6 +98,7 @@ export async function readPersonalSecurity(userId: string, sessionId: string): P
 }
 
 export async function assertTwoFactorCanBeDisabled(userId: string) {
+  if ((await workspacesRequiringTwoFactor(userId)).length) throw twoFactorRequired()
   const organizations = await securityOrganizations(userId)
   if (!organizations.length) return
   const { rows } = await pool.query('SELECT 1 FROM enterprise_org_policy WHERE "organizationId"=ANY($1::uuid[]) AND "requireTwoFactor" LIMIT 1',

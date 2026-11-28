@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import { isE2eTarget } from '../../tests/helpers/e2e-target.mjs'
 import { withBasePath } from '../base-path'
-import { workspaceLink } from '../../components/workspace/workspace-navigation'
+import { workspaceLink } from '../workspace-navigation'
 
 // No mocks for authorization, PostgreSQL or the fact ledger. Runs only against
 // the existing disposable *_e2e loopback PG, exactly like the other profile tests.

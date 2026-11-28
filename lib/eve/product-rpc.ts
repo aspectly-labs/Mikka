@@ -1,17 +1,19 @@
 import { internalEveHeaders } from './auth'
 import type { EveScope } from './scope'
-import type { ApprovalPrincipal } from './approval-principal'
+import type { HostedApiKeySnapshot } from '../hosted-model-selection'
 import type { TurnOutcome } from 'eve/events'
 import type { asSchema } from 'ai'
+import { resolveInternalProductOrigin } from '../env/hosts'
+import { readEnv } from '../env/server'
 
 export interface ProductCatalogueEntry { name:string; description:string; inputSchema:Awaited<ReturnType<typeof asSchema>['jsonSchema']>; needsApprovalReview?:boolean }
-export type ProductOperation = {operation:'approval'|'execute'|'finish';sessionId:string;turnId:string;executionId?:string;name?:string;input?:unknown;callId?:string;approvalResponder?:ApprovalPrincipal;outcome?:TurnOutcome;messages?:unknown[]}
+export type ProductOperation = {operation:'approval'|'execute'|'finish';sessionId:string;turnId:string;executionId?:string;name?:string;input?:unknown;callId?:string;outcome?:TurnOutcome;messages?:unknown[];webSearchModel?:HostedApiKeySnapshot|null}
 
 /** Business actions execute on the app host, whose Workflow World owns task jobs. */
 export async function productRpc<T>(scope:EveScope,operation:ProductOperation,signal?:AbortSignal):Promise<T> {
-  const hosted = process.env.MIKKA_EVE_HOST === 'cloudflare'
-  const origin = hosted ? 'https://product.internal' : process.env.MIKKA_APP_ORIGIN ?? process.env.BETTER_AUTH_URL ?? 'http://127.0.0.1:3000'
-  const capability = hosted ? process.env.MIKKA_EVE_PRODUCT_TOKEN : undefined
+  const hosted = readEnv('MIKKA_EVE_HOST') === 'cloudflare'
+  const origin = resolveInternalProductOrigin(hosted)
+  const capability = hosted ? readEnv('MIKKA_EVE_PRODUCT_TOKEN') : undefined
   if (hosted && !capability) throw new Error('agentToolUnavailable')
   const response = await fetch(new URL('/mikka/api/internal/eve/tools',origin),{
     method:'POST',redirect:'error',headers:{...internalEveHeaders(scope),'content-type':'application/json',

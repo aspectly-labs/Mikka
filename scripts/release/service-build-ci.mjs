@@ -289,7 +289,7 @@ async function build(service, planFile, directory) {
   await mkdir(directory, { recursive: true })
   const release = releaseId(revision, process.env.GITHUB_RUN_ID, process.env.GITHUB_RUN_ATTEMPT)
   const env = ['api', 'web'].includes(service) ? buildEnvironment(process.env, revision, context.overlayCommit, release)
-    : { ...childEnvironment(process.env, revision, revision), NITRO_PRESET: 'node-server', WORKFLOW_TARGET_WORLD: '@workflow/world-postgres', MIKKA_DEPLOYMENT_ID: release, MIKKA_BUILD_BYOS_WORKER: '1' }
+    : { ...childEnvironment(process.env, revision, revision), NITRO_PRESET: 'node-server', WORKFLOW_TARGET_WORLD: '@mikka/eve-cloudflare-world', MIKKA_DEPLOYMENT_ID: release, MIKKA_BUILD_BYOS_WORKER: '1' }
   if (!['api', 'web'].includes(service)) { delete env.MIKKA_UI_OVERLAY_DIR; delete env.MIKKA_UI_OVERLAY_SHA }
   const run = (bin, args, stage) => command(bin, args, { env, stage })
   const tag = 'mikka-' + service + ':' + input.contextDigest.slice(7)
@@ -297,7 +297,6 @@ async function build(service, planFile, directory) {
   const artifact = async (name, path) => { artifacts[name] = { path, digest: hash(await readFile(join(directory, path))) } }
   if (service === 'api' || service === 'web') {
     run('node', ['scripts/build-subscription-worker.mjs'], 'SUBSCRIPTION_WORKER')
-    run('corepack', ['pnpm', 'generate:agent-ui'], 'AGENT_UI')
     run('node', ['apps/frontend/scripts/build.mjs', 'web'], 'FRONTEND')
     run('node', ['scripts/release/hosted-ui.mjs', 'audit', 'apps/frontend/dist/web'], 'WEB_AUDIT')
   }

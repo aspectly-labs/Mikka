@@ -126,7 +126,7 @@ for (const type of ['http', 'sse'] as const) test(`real MCP ${type} handshake, d
   const snapshot = { servers: [{ id: serverId, name: 'Fixture', revision }], skills: [] }
   const runtime = createPersonalMcpRuntime({ mcpConnection: async (userId, id, expected) => {
     if (userId !== 'owner' || id !== serverId || !enabled || expected !== undefined && expected !== revision) throw Error('denied')
-    return { id, name: 'Fixture', url: 'https://mcp.acme.dev/rpc', transport: type, enabled, revision, authKind: 'header', createdAt: '', headers: { authorization: `Bearer ${secret}` } }
+    return { id, name: 'Fixture', url: 'https://mcp.acme.dev/rpc', transport: type, enabled, revision, authKind: 'header', disabledTools: [], createdAt: '', headers: { authorization: `Bearer ${secret}` } }
   } }, { transport: (_origin, signal) => ({ fetch: (input, init) => fetch(address + new URL(String(input)).pathname, { ...init, signal }), close: async () => {} }) })
   try {
     const list = await runtime('owner', snapshot, { serverId })
@@ -188,6 +188,26 @@ test('store lists every Composio toolkit but local ones and own integrations, in
   await assert.rejects(assertCatalogToolkit(async () => pages[0], 'own_keys'), /integrationToolkitNotSupported/)
   await assertCatalogToolkit(async () => pages[0], 'slack')
   await assertCatalogToolkit(async () => pages[0], 'dcr_app')
+  // #1920: a bulk list with reduced auth metadata does not veto a toolkit the
+  // detail record verifies. 'dev_app' is oauthSetupRequired in the list but the
+  // project manages it — admitted, and the cached store entry then agrees.
+  resetStoreCatalogCache()
+  const verified = { slug: 'dev_app', name: 'DEV_APP', composio_managed_auth_schemes: ['OAUTH2'], auth_schemes: ['OAUTH2'] }
+  await assertCatalogToolkit(async () => pages[0], 'dev_app', 'managed', async () => verified)
+  let patchCheck = 0
+  assert.equal((await listStoreCatalog(async () => pages[Math.min(patchCheck++, 1)])).apps.find(app => app.id === 'dev_app')!.connect, 'managed')
+  // The detail endpoint can name schemes only inside auth_config_details — same
+  // fallback the app page uses, so a detail-only DCR toolkit still admits.
+  resetStoreCatalogCache()
+  await assertCatalogToolkit(async () => pages[0], 'dev_app', 'managed', async () => ({ slug: 'dev_app', name: 'DEV_APP', composio_managed_auth_schemes: [], auth_config_details: [{ mode: 'DCR_OAUTH' }] } as never))
+  resetStoreCatalogCache()
+  // Detail disagreeing with the asked kind, a failing detail read, and a slug
+  // the store does not carry all stay refusals — never an admit.
+  await assert.rejects(assertCatalogToolkit(async () => pages[0], 'dev_app', 'credentials', async () => verified), /integrationToolkitNotSupported/)
+  resetStoreCatalogCache()
+  const providerDown = new Error('detail down')
+  await assert.rejects(assertCatalogToolkit(async () => pages[0], 'dev_app', 'managed', async () => { throw providerDown }), (error: unknown) => error instanceof Error && error.cause === providerDown && /integrationToolkitNotSupported/.test(error.message))
+  await assert.rejects(assertCatalogToolkit(async () => pages[0], 'not_in_store', 'managed', async () => verified), /integrationToolkitNotSupported/)
   // A failed read is not kept.
   resetStoreCatalogCache()
   await assert.rejects(listStoreCatalog(async () => { throw new Error('down') }))

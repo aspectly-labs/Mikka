@@ -80,11 +80,12 @@ lines.on("line", async (line) => {
     return send({ id, result: { thread: { id: history.resumeSessionId ?? history.sessionId } } })
   }
   if (method === "thread/start") {
-    if (!login && process.env.FIXTURE_MACHINE_AUTH && process.env.MIKKA_MODEL_API_KEY === 'fixture-direct-provider-key') {
+    if (!login && process.env.FIXTURE_MACHINE_AUTH && (process.env.MIKKA_MODEL_API_KEY === 'fixture-direct-provider-key' || /^mkg_[A-Za-z0-9_-]{43}$/.test(process.env.MIKKA_MODEL_API_KEY ?? ''))) {
       const prefix = 'model_providers.mikka.base_url='
       const baseUrl = JSON.parse(process.argv.find(value => value.startsWith(prefix)).slice(prefix.length))
-      if (baseUrl !== 'https://provider.example/v1') process.exit(2)
+      if (baseUrl !== (process.env.MIKKA_MODEL_API_KEY === 'fixture-direct-provider-key' ? 'https://provider.example/v1' : 'https://mikka.test/api/model-gateway/openai/v1')) process.exit(2)
       login = { type: 'apiKey' }
+      writeFileSync(join(process.env.CODEX_HOME, 'fixture-process.json'), JSON.stringify({ pid: process.pid }))
       writeFileSync(join(process.env.CODEX_HOME, 'fixture-auth.json'), JSON.stringify({ tokenSha: createHash('sha256').update(process.env.MIKKA_MODEL_API_KEY).digest('hex'), baseUrl }))
     }
     // The owned hosted broker uses Codex's documented custom Responses

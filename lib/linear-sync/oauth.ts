@@ -3,31 +3,41 @@ import { randomBytes, createHash } from 'node:crypto'
 import { and, eq, gt, lt } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { linearConnections, linearOAuthStates, linearTeamSyncs } from '@/lib/db/schema'
+import { ownerWorkspaceSettingsChanged } from '@/lib/live/lists'
 import { authBaseURL } from '@/lib/auth'
 import { withBasePath } from '@/lib/base-path'
+import { LOCALHOST_HOSTNAME } from '@/lib/env/hosts'
+import { readEnv } from '@/lib/env/server'
 import { hashValue, seal, unseal } from './crypto'
 import { linearIdentity } from './client'
 import { oauthCredentials, postToken } from './tokens'
-export { linearAccessToken } from './tokens'
 export const LINEAR_OAUTH_STATE_COOKIE = 'linear-oauth-state'
 export const LINEAR_OAUTH_CALLBACK_PATH = withBasePath('/api/integrations/linear/callback')
 
-export function linearRedirectUrl() {
-  const fallback = process.env.VERCEL_ENV === 'preview'
-    ? ''
-    : authBaseURL ? new URL(LINEAR_OAUTH_CALLBACK_PATH, authBaseURL).toString() : ''
-  const value = process.env.LINEAR_REDIRECT_URL ?? fallback
-  if (!value) throw new Error('Linear OAuth is not configured')
-  const url = new URL(value)
-  if (url.protocol !== 'https:' && url.hostname !== 'localhost') throw new Error('Linear redirect URL must use HTTPS')
-  return url.toString()
+export function stateCookieOptions(maxAge: number) {
+  return { httpOnly: true, sameSite: 'lax' as const, secure: true, path: LINEAR_OAUTH_CALLBACK_PATH, maxAge }
 }
 
 export function linearOAuthConfigured() {
-  if (!process.env.LINEAR_CLIENT_ID || !process.env.LINEAR_CLIENT_SECRET || !/^[a-f\d]{64}$/i.test(process.env.LINEAR_TOKEN_ENCRYPTION_KEY ?? '') || !process.env.LINEAR_WEBHOOK_SECRET || !process.env.CRON_SECRET) return false
-  try { linearRedirectUrl(); return true } catch { return false }
+  try {
+    oauthCredentials()
+    linearRedirectUrl()
+    return /^[a-f\d]{64}$/i.test(readEnv('LINEAR_TOKEN_ENCRYPTION_KEY') ?? '')
+  } catch {
+    return false
+  }
 }
 
+export function linearRedirectUrl() {
+  const fallback = readEnv('VERCEL_ENV') === 'preview'
+    ? ''
+    : authBaseURL ? new URL(LINEAR_OAUTH_CALLBACK_PATH, authBaseURL).toString() : ''
+  const value = readEnv('LINEAR_REDIRECT_URL') ?? fallback
+  if (!value) throw new Error('Linear OAuth is not configured')
+  const url = new URL(value)
+  if (url.protocol !== 'https:' && url.hostname !== LOCALHOST_HOSTNAME) throw new Error('Linear redirect URL must use HTTPS')
+  return url.toString()
+}
 export async function createLinearAuthorizationUrl(userId: string) {
   const { clientId } = oauthCredentials()
   const redirectUri = linearRedirectUrl()
@@ -41,7 +51,7 @@ export async function createLinearAuthorizationUrl(userId: string) {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: 'read,write,issues:create,comments:create',
+    scope: 'read',
     state,
     code_challenge: challenge,
     code_challenge_method: 'S256',
@@ -86,6 +96,7 @@ export async function exchangeLinearCode(state: string, code: string, userId: st
         updatedAt: new Date(),
       },
     })
+    await ownerWorkspaceSettingsChanged(tx, grant.userId)
   })
   return grant.userId
 }
@@ -106,5 +117,6 @@ export async function disconnectLinear(userId: string) {
   await db.transaction(async tx => {
     await tx.update(linearTeamSyncs).set({ active: false, updatedAt: new Date() }).where(eq(linearTeamSyncs.ownerId, userId))
     await tx.delete(linearConnections).where(eq(linearConnections.userId, userId))
+    await ownerWorkspaceSettingsChanged(tx, userId)
   })
 }

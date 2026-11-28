@@ -8,7 +8,7 @@ import { withReadOnlyPolicyObservation } from '@/lib/desktop-rpc/read-batch-cont
 import type { ListLiveRead } from '@/lib/live/list-read'
 
 import { cookies, headers } from '@/lib/server-runtime/headers'
-import { afterJob } from '@/lib/background'
+import { storedLocale } from '@/i18n/locale-cookie.mjs'
 import { z } from 'zod'
 import { ActionFailureError, runAction } from '@/lib/action-error'
 import type { ActionResult } from '@/lib/action-result'
@@ -18,21 +18,19 @@ import { ExecutionSettings } from '@/lib/execution-settings'
 import { botModelPreference, resolveBotModelChoice } from '@/lib/bot-model-choice'
 import { recordCoordinatorEvent } from '@/lib/coordinator-event-store'
 import { userMessageEvent } from '@/lib/coordinator-events'
-import { personalSubmissionRecorded, recordPersonalSubmission, SubmissionConflictError } from '@/lib/coordinator-submission'
 import { botChats, chatVersionState, chatView, citationSources, storedReasoning, type BotChatSummary, type ChatView } from '@/lib/coordinator/store'
 import * as chatStore from '@/lib/coordinator/store'
 import { refreshChatMetadata, type UnchangedChat } from '@/lib/coordinator/chat-poll'
 import type { CitationSource } from '@/lib/coordinator/citations'
-import { reasoningText } from '@/lib/coordinator/reasoning-mask'
+import { reasoningText, storedToolText } from '@/lib/coordinator/reasoning-mask'
+import { readCoordinatorToolCall, type StoredToolCall } from '@/lib/coordinator/tool-call-read'
 import { credentialChatFingerprints } from '@/lib/credentials/chat-guard'
 import { and, eq, sql } from 'drizzle-orm'
 import { chatBotId, type openChatBotId } from '@/lib/coordinator/coordinator-bot'
 import { bots } from '@/lib/db/schema'
-import { coordinatorEnabled, wakeCoordinator } from '@/lib/coordinator/wake'
+import { coordinatorEnabled } from '@/lib/coordinator/wake'
 import { coordinatorWelcome } from '@/lib/agent-welcome'
-import { suggestionInboxChanged } from '@/lib/inbox/live'
-import { claimSuggestion, readClaimedSuggestion } from '@/lib/suggestions/store'
-import { suggestionMessage } from '@/lib/suggestions/card'
+import { handoffSuggestionToCoordinator } from '@/lib/suggestions/handoff'
 import { issueMutationsEnabled } from '@/lib/coordinator/issue-tools-enabled'
 import { cacheReadAction } from '@/lib/cache-read-action'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
@@ -198,6 +196,28 @@ export async function coordinatorReasoning(botId: string | null, positions: read
   return texts.length ? texts.join('\n\n') : null
 }
 
+const toolCallSchema = z.object({ position: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), toolCallId: z.string().min(1).max(200) })
+
+/**
+ * One stored tool call of this bot's chat, whole up to about 64 KB each way, for the row the person opened (Alex,
+ * 2026-11-22: as Claude, ChatGPT and Cursor). The chat's own reads keep only previews. Owner-only: the bot must be
+ * the person's, in the workspace they have open. Stored messages are masked when saved; a side that still holds one
+ * of the person's saved secrets is left out, as reasoning is. Null when there is no such call.
+ */
+export async function coordinatorToolCall(botId: string | null, position: number, toolCallId: string): Promise<StoredToolCall | null> {
+  const parsed = toolCallSchema.safeParse({ position, toolCallId })
+  if (!parsed.success) return null
+  const user = await getUser()
+  const bot = await ownBot(user, botId)
+  const call = await readCoordinatorToolCall(pool, { ownerId: user.id, workspaceId: bot.workspaceId, botId: bot.id, ...parsed.data })
+  if (!call) return null
+  const fingerprints = await credentialChatFingerprints(user.id)
+  const safe = (text: string | undefined) => text === undefined ? undefined : storedToolText(user.id, text, fingerprints)
+  const input = safe(call.input), output = safe(call.output)
+  return { ...(input !== undefined ? { input, ...(call.inputCut ? { inputCut: true as const } : {}) } : {}),
+    ...(output !== undefined ? { output, ...(call.outputCut ? { outputCut: true as const } : {}) } : {}) }
+}
+
 /** Each bot's latest line and whether it is answering, for the bot list. */
 export async function botChatSummaries(): Promise<Record<string, BotChatSummary>> {
   const user = await getUser()
@@ -235,7 +255,8 @@ export async function welcomeCoordinator(botId: string | null = null): Promise<A
     const scope = { ownerId: session.user.id, workspaceId: bot.workspaceId }
     const choice = await resolveBotModelChoice(pool, new ExecutionSettings(pool), scope, bot.id, await botModelPreference(pool, scope, bot.id))
     if (choice.kind === 'none') return { queued: false, reason: 'modelRequired' }
-    const locale = (await cookies()).get('NEXT_LOCALE')?.value ?? 'zh-CN'
+    const jar = await cookies()
+    const locale = storedLocale((name) => jar.get(name)?.value) ?? 'zh-CN'
     const event = userMessageEvent(session.user.id, coordinatorWelcome(session.user.name ?? '', locale, bot.coordinator ? undefined : bot.name), { botId: bot.id })
     await recordCoordinatorEvent(db, { ...event, payload: { ...event.payload, source: 'coordinator_welcome' } })
     return { queued: true }
@@ -253,7 +274,7 @@ export async function stopCoordinatorTurn(botId: string | null = null): Promise<
 }
 
 /** 重试 on a failed reply: the same turn again, once per click; the chat shows its normal working state. */
-export async function retryCoordinatorTurn(botId: string | null = null): Promise<ActionResult<{ queued: true } | { queued: false; reason: 'unavailable' | 'working' | 'nothingToRetry' }>> {
+export async function retryCoordinatorTurn(botId: string | null = null): Promise<ActionResult<{ queued: true } | { queued: false; reason: 'unavailable' | 'working' | 'nothingToRetry' | 'accountUnavailable' }>> {
   return runAction(async () => {
     const session = await auth.api.getSession({ headers: await headers() })
     if (!session?.user) throw new ActionFailureError('authRequired')
@@ -261,6 +282,32 @@ export async function retryCoordinatorTurn(botId: string | null = null): Promise
     if (!await coordinatorEnabled(session.user.id, bot.id)) return { queued: false as const, reason: 'unavailable' as const }
     return (await import('@/lib/eve/retry')).retryEveTurn(session.user.id,bot.id,await headers())
   })
+}
+
+/**
+ * 编辑 on the person's last message, or 重新生成 on the reply to it (decision 2026-11-22-1700): the turn leaves the chat
+ * and the Bot's history, kept as a version, and the edited or the same words go again. Only the chat's owner, only the
+ * latest turn, and only a turn of words alone (no tool, thread or task happened in it); anything else is refused.
+ */
+export async function reviseCoordinatorTurn(botId: string | null, input: import('@/lib/coordinator/turn-revisions').RevisionInput): Promise<ActionResult<{ queued: true; submissionId: string } | { queued: false; reason: 'unavailable' | 'working' }>> {
+  return runAction(async () => {
+    const user = await getUser()
+    const bot = await ownBot(user, botId)
+    const { revisionInput } = await import('@/lib/coordinator/turn-revisions')
+    const parsed = revisionInput.safeParse(input)
+    if (!parsed.success) throw new ActionFailureError('validationGeneric')
+    if (!await coordinatorEnabled(user.id, bot.id)) return { queued: false as const, reason: 'unavailable' as const }
+    const { assertEveScope } = await import('@/lib/eve/scope')
+    const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
+    return (await import('@/lib/eve/revise')).reviseEveTurn(scope, parsed.data, await headers())
+  })
+}
+
+/** The earlier versions of the chat's revised turns, by the submission id of the message that stands for each now. */
+export async function coordinatorTurnVersions(botId: string | null): Promise<Record<string, import('@/lib/coordinator/turn-revisions').TurnVersion[]>> {
+  const user = await getUser()
+  const bot = await ownBot(user, botId)
+  return (await import('@/lib/coordinator/turn-revisions')).readTurnVersions(db as never, user.id, bot.id)
 }
 
 /**
@@ -272,32 +319,66 @@ export async function retryCoordinatorTurn(botId: string | null = null): Promise
  * Coordinator to read it, nothing is sent and the card stays.
  */
 export async function sendSuggestion(suggestionId: string): Promise<ActionResult<{ queued: true }>> {
-  return runAction(async () => {
-    const userId = await getUserId()
-    const id = z.uuid().safeParse(suggestionId)
-    if (!id.success) throw new ActionFailureError('validationGeneric')
-    try {
-      await db.transaction(async tx => {
-        const claimed = await claimSuggestion(userId, id.data, tx)
-        const item = claimed ?? await readClaimedSuggestion(userId, id.data, tx)
-        if (!item) throw new ActionFailureError('suggestionNotFound')
-        if (!await coordinatorEnabled(userId, item.botId)) throw new ActionFailureError('coordinatorUnavailable')
-        const text = suggestionMessage({ source: item.source, action: item.action, title: item.title, actionTitle: item.actionTitle, actor: item.actor, url: item.url })
-        // The suggestion stored its Coordinator bot row when it was made (null only on an older one).
-        if (claimed) await recordPersonalSubmission(tx, userId, text, { submissionId: item.id, botId: item.botId })
-        else if (!await personalSubmissionRecorded(tx, userId, text, item.id, item.botId)) throw new ActionFailureError('suggestionNotFound')
-        if (claimed) await suggestionInboxChanged(tx, userId, item.botId)
-      })
-    } catch (error) {
-      if (error instanceof SubmissionConflictError) throw new ActionFailureError('submissionConflict')
-      throw error
-    }
-    afterJob('after:coordinator-wake', () => wakeCoordinator(userId))
-    return { queued: true as const }
-  })
+  return runAction(async () => handoffSuggestionToCoordinator(await getUserId(), suggestionId))
 }
 
 /** Whether the new-task dialog can create a task; it explains itself when this is off. */
 export async function issueCreationAvailable(): Promise<boolean> {
   return issueMutationsEnabled()
+}
+
+/**
+ * Real Eve `/compact` (#3333 Bug 2): calls the Eve session's `…/compact` HTTP route
+ * (`ClientSession.compact()`) directly rather than sending a wrapped text message.
+ */
+export async function compactBotChat(botId: string | null = null): Promise<ActionResult<{ compacted: boolean }>> {
+  return runAction(async () => {
+    const user = await getUser()
+    const bot = await ownBot(user, botId)
+    if (!await coordinatorEnabled(user.id, bot.id)) throw new ActionFailureError('coordinatorUnavailable')
+    const { assertEveScope } = await import('@/lib/eve/scope')
+    const { eveInternalOrigin } = await import('@/lib/eve/server-client')
+    const { eveRetryHeaders } = await import('@/lib/eve/retry')
+    const { Client } = await import('eve/client')
+    const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
+    const base = new URL(eveInternalOrigin())
+    base.searchParams.set('botId', scope.botId)
+    const client = new Client({ baseUrl: base.toString(), headers: eveRetryHeaders(await headers()), redirect: 'manual' })
+    const { session } = await client.sessions.create()
+    const delivery = await session.compact()
+    const settled = await delivery.result()
+    return { compacted: settled.status !== 'failed' }
+  })
+}
+
+/**
+ * Real Eve `/clear` (#3333): clears the Eve session's conversation history via
+ * `ClientSession.clear()`.
+ */
+export async function clearBotChat(botId: string | null = null): Promise<ActionResult<{ cleared: boolean }>> {
+  return runAction(async () => {
+    const user = await getUser()
+    const bot = await ownBot(user, botId)
+    if (!await coordinatorEnabled(user.id, bot.id)) throw new ActionFailureError('coordinatorUnavailable')
+    const { assertEveScope } = await import('@/lib/eve/scope')
+    const { eveInternalOrigin } = await import('@/lib/eve/server-client')
+    const { eveRetryHeaders } = await import('@/lib/eve/retry')
+    const { Client } = await import('eve/client')
+    const scope = await assertEveScope({ ownerId: user.id, botId: bot.id, workspaceId: bot.workspaceId, surface: 'web' })
+    const base = new URL(eveInternalOrigin())
+    base.searchParams.set('botId', scope.botId)
+    const client = new Client({ baseUrl: base.toString(), headers: eveRetryHeaders(await headers()), redirect: 'manual' })
+    const { session } = await client.sessions.create()
+    const delivery = await session.clear()
+    const settled = await delivery.result()
+    return { cleared: settled.status !== 'failed' }
+  })
+}
+
+/** Unified `/` commands for an Eve Bot / Coordinator chat (#3333). */
+export async function getBotCommands(botId: string | null = null) {
+  const user = await getUser()
+  await ownBot(user, botId)
+  const { readBotAvailableCommands } = await import('@/lib/thread-commands')
+  return readBotAvailableCommands(pool, user.id)
 }

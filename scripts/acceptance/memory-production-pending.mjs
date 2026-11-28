@@ -42,7 +42,7 @@ export async function verifyMemoryNotification(window, { env = process.env, fetc
   try {
     response = await fetchImpl(endpoint, { method: 'GET', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(20_000),
       headers: { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28',
-        ...(fixture.repository.toLowerCase() === 'alexj11324/mikka' && env.GH_TOKEN ? { authorization: 'Bearer ' + env.GH_TOKEN } : {}) } })
+        ...(fixture.repository.toLowerCase() === 'aspectly-labs/mikka' && env.GH_TOKEN ? { authorization: 'Bearer ' + env.GH_TOKEN } : {}) } })
     check(response.ok && !response.redirected && (!response.url || response.url === endpoint), 'notification_fixture_unreadable')
     comment = await response.json()
   } catch (cause) { throw new MemoryPendingError('notification_fixture_unreadable', { cause }) }

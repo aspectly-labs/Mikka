@@ -9,8 +9,9 @@ type requestedServiceTier string
 type actualServiceTier string
 
 const (
-	serviceTierOmitted  requestedServiceTier = "omitted"
-	serviceTierPriority requestedServiceTier = "priority"
+	serviceTierOmitted   requestedServiceTier = "omitted"
+	serviceTierPriority  requestedServiceTier = "priority"
+	serviceTierUltrafast requestedServiceTier = "ultrafast"
 )
 
 // Independent from numeric timing. Only fixed enums cross private IPC, never
@@ -31,10 +32,12 @@ func beginCodexServiceTier(ctx context.Context, value any) {
 	}
 	requested := serviceTierOmitted
 	if value, ok := value.(string); ok {
-		// Match the pinned CPA converter's official fast/priority aliases.
+		// Match the pinned CPA converter's official fast/priority and ultrafast aliases.
 		switch strings.ToLower(strings.TrimSpace(value)) {
 		case "fast", "priority":
 			requested = serviceTierPriority
+		case "ultrafast":
+			requested = serviceTierUltrafast
 		}
 	}
 	r.mu.Lock()
@@ -53,8 +56,13 @@ func recordCodexRequestedTier(ctx context.Context, value any) {
 		return
 	}
 	requested := serviceTierOmitted
-	if value, ok := value.(string); ok && value == "priority" {
-		requested = serviceTierPriority
+	if value, ok := value.(string); ok {
+		switch value {
+		case "priority":
+			requested = serviceTierPriority
+		case "ultrafast":
+			requested = serviceTierUltrafast
+		}
 	}
 	r.mu.Lock()
 	if r.serviceTier != nil {
@@ -71,7 +79,7 @@ func nativeServiceTier(event map[string]any) actualServiceTier {
 	}
 	if value, ok := value.(string); ok {
 		switch value {
-		case "priority", "default", "auto", "flex":
+		case "priority", "ultrafast", "default", "auto", "flex":
 			return actualServiceTier(value)
 		}
 	}

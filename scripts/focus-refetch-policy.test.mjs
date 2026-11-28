@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
 import test from 'node:test'
+import { needsOfficialUi, readUi, uiExists, unverifiable } from './official-ui-tree.mjs'
 import { auditFocusRefetch, auditRepository, focusListenerAllowlist, thirdPartyStatusFiles } from './focus-refetch-policy.mjs'
 
 const rules = (source, file = 'components/example.tsx') => auditFocusRefetch(file, source).map(d => d.rule)
@@ -11,25 +11,25 @@ test('nothing in the repository re-reads data on focus, visibility or foreground
 
 test('every allowlisted listener exists and says why it is not a re-read', () => {
   for (const [file, reason] of Object.entries(focusListenerAllowlist)) {
-    assert.ok(existsSync(file), file)
     assert.ok(reason.length > 10, file)
-    assert.match(readFileSync(file, 'utf8'), /addEventListener\(\s*['"](?:focus|visibilitychange|pageshow|change)['"]/, file)
+    if (unverifiable(file)) continue
+    assert.ok(uiExists(file), file)
+    assert.match(readUi(file), /addEventListener\(\s*['"](?:focus|visibilitychange|pageshow|change)['"]/, file)
   }
 })
 
-test('every SWR hook gets the site defaults: focus behind the freshness gate, polling only while visible', () => {
-  const defaults = readFileSync('components/swr-defaults.tsx', 'utf8')
+test('every SWR hook gets the site defaults: focus behind the freshness gate, polling only while visible', { skip: needsOfficialUi }, () => {
+  const defaults = readUi('components/swr-defaults.tsx')
   assert.match(defaults, /use: \[staleOnFocus\]/)
   assert.match(defaults, /focusThrottleInterval: FRESH_FOR_MS/)
   assert.match(defaults, /refreshWhenHidden: false/)
   assert.match(defaults, /FRESH_FOR_MS = 60_000/)
-  // Both runtimes mount the same application shell; the web app renders
-  // apps/frontend/src/index.tsx through it too.
-  assert.match(readFileSync('apps/desktop/src/renderer/app.tsx', 'utf8'), /<SWRDefaults><RendererBoundary><SessionApplication \/><\/RendererBoundary><\/SWRDefaults>/)
+  // Both runtimes mount the same application shell, the official checkout's core/renderer/app.tsx.
+  assert.match(readUi('renderer/app.tsx'), /<SWRDefaults><RendererBoundary><SessionApplication \/><\/RendererBoundary><\/SWRDefaults>/)
 })
 
 test('third-party status files exist and turn focus off', () => {
-  for (const file of thirdPartyStatusFiles) assert.ok(existsSync(file), file)
+  for (const file of thirdPartyStatusFiles) assert.ok(unverifiable(file) || uiExists(file), file)
   assert.deepEqual(rules("useSWR(key, read, { refreshInterval: 0 })", thirdPartyStatusFiles[0]), ['focus/third-party-status'])
   assert.deepEqual(rules("useSWR(key, read, { revalidateOnFocus: false })", thirdPartyStatusFiles[0]), [])
 })
@@ -55,7 +55,7 @@ for (const [name, source] of [
 ]) test(`allows ${name}`, () => assert.deepEqual(rules(source), [], source))
 
 test('an allowlisted file may listen, but not turn SWR focus on', () => {
-  const file = 'components/slots/bot-avatar.tsx'
+  const file = 'lib/hooks/use-check-on-return.ts'
   assert.deepEqual(rules("document.addEventListener('visibilitychange', resync)", file), [])
   assert.deepEqual(rules("useSWR(key, read, { revalidateOnFocus: true })", file), ['focus/swr-revalidate-on-focus'])
 })

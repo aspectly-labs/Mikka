@@ -1,82 +1,268 @@
 /**
- * The settings sections, in the order of Figma 设置 v4 (`551:6857`). The sidebar,
- * the shell's URL parsing and the page body all read this list, so a section
- * exists in one place only.
+ * Settings sections and item-level backend availability. Groups (resolved-settings R-S06, 2026-11-25):
+ * 个人 · an untitled connections & compute group · Agent · 工作区 (as Capy's).
+ * The sidebar, URL parsing and the page bodies all read this single source of truth.
  */
+export type SettingsGroup = 'personal' | 'compute' | 'agent' | 'review' | 'workspace'
+
+/** `compute` has no title in the sidebar, only a divider (Capy, Cursor, Devin). */
+export const SETTINGS_GROUPS = ['personal', 'compute', 'agent', 'review', 'workspace'] as const satisfies readonly SettingsGroup[]
+
 export type SettingsSectionId =
-  | 'account' | 'security' | 'preferences' | 'notifications' | 'memory' | 'connections' | 'bot-permissions' | 'models'
-  | 'logins' | 'privacy' | 'computers' | 'developer'
-  | 'general' | 'issue-states' | 'members' | 'teams' | 'permissions' | 'secrets' | 'environments' | 'audit' | 'organization' | 'usage' | 'billing' | 'cloud' | 'team-skills'
+  | 'preferences' | 'appearance' | 'account' | 'security' | 'notifications' | 'shortcuts' | 'privacy'
+  | 'models' | 'environments' | 'mcp' | 'connections' | 'integrations' | 'developer' | 'secrets' | 'logins' | 'computers'
+  | 'instructions' | 'team-skills' | 'threads' | 'git' | 'agent-configs' | 'memory'
+  | 'identity'
+  | 'review-repositories' | 'review-config'
+  | 'general' | 'organization' | 'issue-states' | 'members' | 'teams'
+  | 'billing' | 'usage' | 'activity' | 'permissions' | 'audit' | 'cloud'
+  | 'referrals' | 'experiments' | 'cloud-credentials'
+
+/**
+ * Three-tier display rule (#3118):
+ * - `available`: live backend, rendered normally.
+ * - `pending`: backend not wired yet; sidebar pages stay unexposed until built, and in-page items append `· 待接入` and stay disabled.
+ * - `skipped`: explicitly omitted ("不做" or UI-only proposal); centrally hidden with zero links.
+ */
+export type SettingAvailability = 'available' | 'pending' | 'skipped'
+
+export const SETTINGS_SECTION_STATUS: Readonly<Record<SettingsSectionId, SettingAvailability>> = {
+  preferences: 'available',
+  appearance: 'available',
+  account: 'available',
+  security: 'available',
+  notifications: 'available',
+  shortcuts: 'available',
+  privacy: 'available',
+  models: 'available',
+  environments: 'available',
+  mcp: 'available',
+  connections: 'available',
+  integrations: 'available',
+  developer: 'available',
+  secrets: 'available',
+  logins: 'available',
+  computers: 'available',
+  instructions: 'available',
+  'team-skills': 'available',
+  threads: 'available',
+  git: 'available',
+  'agent-configs': 'available',
+  memory: 'available',
+  'review-repositories': 'skipped',
+  'review-config': 'skipped',
+  general: 'available',
+  identity: 'available',
+  organization: 'available',
+  'issue-states': 'available',
+  members: 'available',
+  teams: 'available',
+  billing: 'available',
+  usage: 'available',
+  activity: 'available',
+  permissions: 'available',
+  audit: 'available',
+  cloud: 'available',
+  referrals: 'skipped',
+  experiments: 'skipped',
+  'cloud-credentials': 'skipped',
+}
+
+export type SettingItemId =
+  | 'appearance.sync'
+  | 'appearance.colorScheme'
+  | 'appearance.theme'
+  | 'appearance.myThemes'
+  | 'appearance.colors'
+  | 'appearance.dashboardBackground'
+  | 'appearance.backgroundEffect'
+  | 'appearance.codeFontSize'
+  | 'appearance.diffView'
+  | 'appearance.diffColors'
+  | 'appearance.hiddenFiles'
+  | 'shortcuts.customizeBindings'
+  | 'environments.networkAccess'
+  | 'threads.subagentMaxConcurrent'
+  | 'threads.subagentDepth'
+  | 'workspace.newWorkVisibility'
+  | 'workspace.workVisibility'
+  | 'workspace.allowPrivate'
+
+export const SETTINGS_ITEM_STATUS: Readonly<Record<SettingItemId, SettingAvailability>> = {
+  'appearance.sync': 'available',
+  'appearance.colorScheme': 'available',
+  'appearance.theme': 'available',
+  'appearance.myThemes': 'skipped',
+  'appearance.colors': 'available',
+  'appearance.dashboardBackground': 'skipped',
+  'appearance.backgroundEffect': 'available',
+  'appearance.codeFontSize': 'available',
+  'appearance.diffView': 'available',
+  'appearance.diffColors': 'available',
+  'appearance.hiddenFiles': 'available',
+  'shortcuts.customizeBindings': 'available',
+  'environments.networkAccess': 'available',
+  'threads.subagentMaxConcurrent': 'available',
+  'threads.subagentDepth': 'skipped',
+  'workspace.newWorkVisibility': 'available',
+  'workspace.workVisibility': 'available',
+  'workspace.allowPrivate': 'available',
+}
+
+export function settingSectionStatus(id: SettingsSectionId): SettingAvailability {
+  return SETTINGS_SECTION_STATUS[id]
+}
+
+export function settingItemStatus(id: SettingItemId): SettingAvailability {
+  return SETTINGS_ITEM_STATUS[id]
+}
+
+export function settingItemShown(id: SettingItemId): boolean {
+  return SETTINGS_ITEM_STATUS[id] !== 'skipped'
+}
+
+export function settingItemPending(id: SettingItemId): boolean {
+  return SETTINGS_ITEM_STATUS[id] === 'pending'
+}
+
+export function withPendingSuffix(label: string, pendingTag: string): string {
+  return `${label} · ${pendingTag}`
+}
+
+/** Wide table pages (#3118 frames 08/10/25/27/28/29/37): 776px content column instead of 564px. */
+export const WIDE_SETTINGS_SECTIONS: ReadonlySet<SettingsSectionId> = new Set([
+  'shortcuts',
+  'environments',
+  'members',
+  'teams',
+  'usage',
+  'activity',
+  'audit',
+])
 
 export interface SettingsSectionDef {
   id: SettingsSectionId
-  /** 'personal' is the 账号 group (account-level); 'workspace' is the current workspace's group. */
-  group: 'personal' | 'workspace'
+  group: SettingsGroup
   /** English name; the sidebar search matches it in any locale. */
   title: string
-  /** Hidden from members, as in S-P. The server still checks the role. */
+  /** Hidden from members. The server still checks the role. */
   adminOnly?: boolean
   /** Has its own route instead of `?section=`. */
   routed?: boolean
-  /**
-   * No page body yet: left out of the sidebar, its search and URL resolution (a link to it
-   * opens 偏好设置). Delete the flag on the section's line when its UI lands.
-   */
+  /** No page body yet (`SETTINGS_SECTION_STATUS[id] === 'pending'`). */
   unbuilt?: true
+  /** Omitted (`SETTINGS_SECTION_STATUS[id] === 'skipped'`). Not a link. */
+  withheld?: true
+  /** Reachable by an old or direct URL, not listed in the sidebar. */
+  sidebar?: false
 }
 
-export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = [
-  { id: 'account', group: 'personal', title: 'Account' },
+const RAW_SECTIONS: readonly Omit<SettingsSectionDef, 'unbuilt' | 'withheld'>[] = [
+  // Personal (account-scoped)
+  { id: 'preferences', group: 'personal', title: 'General' },
+  { id: 'appearance', group: 'personal', title: 'Appearance' },
+  { id: 'account', group: 'personal', title: 'Profile' },
   { id: 'security', group: 'personal', title: 'Security' },
-  { id: 'preferences', group: 'personal', title: 'Preferences' },
   { id: 'notifications', group: 'personal', title: 'Notifications' },
-  { id: 'memory', group: 'personal', title: 'Memory' },
-  { id: 'connections', group: 'personal', title: 'Connections' },
-  // 模型与订阅 (decision 2026-11-02-1400): subscriptions, API keys, 运行位置 and 优先使用的模型 (was API 与订阅 and Bot 与 Agents).
-  { id: 'models', group: 'personal', title: 'Models and subscriptions' },
-  { id: 'logins', group: 'personal', title: 'Secrets and logins' },
+  { id: 'shortcuts', group: 'personal', title: 'Shortcuts' },
+  // R-S05: export, shared links, archived threads (ChatGPT Data controls, Claude Privacy, Codex Data & Privacy).
   { id: 'privacy', group: 'personal', title: 'Data and privacy' },
-  { id: 'computers', group: 'personal', title: 'Devices' },
-  { id: 'developer', group: 'personal', title: 'Personal access tokens' },
-  { id: 'general', group: 'workspace', title: 'General' },
-  // Capy's Issue states (decision 2026-11-19-2115): members read them, admins edit them.
-  { id: 'issue-states', group: 'workspace', title: 'Issue states' },
-  // The workspace's app access and run policy, inherited by every Bot (decisions 2026-10-31, 2026-11-10).
-  { id: 'bot-permissions', group: 'workspace', title: 'App & run permissions' },
-  { id: 'team-skills', group: 'workspace', title: 'Team skills' },
+  // Personal secrets stay one click from an old link; the sidebar entry is Secrets & Credentials.
+  { id: 'logins', group: 'personal', title: 'Secrets and logins', sidebar: false },
+  // Connections & compute: no group title (R-S06; Capy's untitled rows, Cursor's and Devin's dividers).
+  { id: 'models', group: 'compute', title: 'Models and subscriptions' },
+  { id: 'environments', group: 'compute', title: 'Cloud environments' },
+  { id: 'computers', group: 'compute', title: 'Devices' },
+  { id: 'secrets', group: 'compute', title: 'Secrets & Credentials' },
+  // R-S19: accounts Mikka talks through (GitHub, Linear, Slack, Telegram) apart from the tools an Agent calls.
+  { id: 'integrations', group: 'compute', title: 'Integrations' },
+  { id: 'connections', group: 'compute', title: 'Connectors and MCP' },
+  // Direct `?section=mcp` links open 连接器与 MCP on its Custom MCP tab.
+  { id: 'mcp', group: 'compute', title: 'Custom MCP', sidebar: false },
+  // API keys act as you or a service account (Capy lists API with the connections).
+  { id: 'developer', group: 'compute', title: 'API' },
+  // Agent
+  { id: 'instructions', group: 'agent', title: 'Instructions' },
+  { id: 'team-skills', group: 'agent', title: 'Skills' },
+  { id: 'threads', group: 'agent', title: 'Threads' },
+  { id: 'git', group: 'agent', title: 'Git and pull requests' },
+  // R-S20: tasks and Bots both pick one, so it is its own entry, not part of 指令.
+  { id: 'agent-configs', group: 'agent', title: 'Agent configurations' },
+  { id: 'memory', group: 'agent', title: 'Memory' },
+  // Review (withheld)
+  { id: 'review-repositories', group: 'review', title: 'Review repositories' },
+  { id: 'review-config', group: 'review', title: 'Review config' },
+  // Workspace (team / workspace administration, activity, billing, identity)
+  { id: 'general', group: 'workspace', title: 'Workspace general' },
+  // R-S27: domains, single sign-on, required two-step verification (Capy's order: right after General).
+  { id: 'identity', group: 'workspace', title: 'Identity and access', adminOnly: true },
+  { id: 'issue-states', group: 'workspace', title: 'Task states' },
   { id: 'members', group: 'workspace', title: 'Members', routed: true },
   { id: 'teams', group: 'workspace', title: 'Teams', routed: true },
-  { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true },
-  // Members see it too and write repository entries (permissions.ts); one page with 密钥与登录 (decision 2026-11-02-2120).
-  { id: 'secrets', group: 'workspace', title: 'Secrets and environment' },
-  { id: 'environments', group: 'workspace', title: 'Run environments' },
-  { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
-  // Enterprise (#1608 P2): the Organization this team is bound to. Only a UI layer that draws it
-  // shows it (slot settings-organization, ORGANIZATION_SETTINGS); the open-source UI has none.
-  { id: 'organization', group: 'workspace', title: 'Organization' },
-  { id: 'usage', group: 'workspace', title: 'Usage' },
-  // Members see 付款 here (their card designation and credit share); plan, balance and top-ups are admins' (C19).
+  // R-S02: 团队权限 is off the sidebar; each policy sits on the page of what it controls. Old links still open it.
+  { id: 'permissions', group: 'workspace', title: 'Team permissions', adminOnly: true, sidebar: false },
   { id: 'billing', group: 'workspace', title: 'Billing' },
+  { id: 'usage', group: 'workspace', title: 'Usage' },
+  { id: 'activity', group: 'workspace', title: 'Activity' },
+  { id: 'audit', group: 'workspace', title: 'Audit log', adminOnly: true },
+  // R-S01: shown only once the workspace is bound to an organization or on the enterprise plan.
+  { id: 'organization', group: 'workspace', title: 'Organization' },
   { id: 'cloud', group: 'workspace', title: 'Mikka Cloud' },
+  { id: 'referrals', group: 'personal', title: 'Referrals' },
+  { id: 'experiments', group: 'personal', title: 'Experiments' },
+  { id: 'cloud-credentials', group: 'personal', title: 'Cloud credentials' },
 ]
 
-/** Section ids from before v4. Old links open the page that now holds the content. */
+export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = RAW_SECTIONS.map(section => {
+  const status = SETTINGS_SECTION_STATUS[section.id]
+  return {
+    ...section,
+    ...(status === 'pending' ? { unbuilt: true as const } : {}),
+    ...(status === 'skipped' ? { withheld: true as const } : {}),
+  }
+})
+
+/** Section ids from before the four groups. Old links open the page that now holds the content. */
 const LEGACY: Record<string, SettingsSectionId> = {
   profile: 'account',
-  // v3's ?section=account was the identity + sign-in page, now split into 账户 and 安全.
-  // A current id always wins, so this only catches ids v4 does not use.
-  integrations: 'connections',
   devices: 'computers',
   workspace: 'general',
-  // Bot 与 Agents became 模型与订阅 (decision 2026-11-02-1400).
   bots: 'models',
 }
 
-/** Sections settings can show: every section with a page body. */
-const ids = new Set<string>(SETTINGS_SECTIONS.filter(s => !s.unbuilt).map(s => s.id))
-const known = new Set<string>(SETTINGS_SECTIONS.map(s => s.id))
+/**
+ * What only a team has: what is between people (decision 2026-11-02-0203). A
+ * personal workspace has every setting of the workspace itself and none of these.
+ */
+export const TEAM_ONLY_SECTIONS: ReadonlySet<SettingsSectionId> = new Set(['organization', 'members', 'teams', 'permissions', 'audit', 'identity'])
 
-/** True for any `?section=` value settings can open, current, unbuilt (opens the fallback) or pre-v4. */
+export type SettingsVisibility = {
+  admin: boolean
+  personal?: boolean
+  billing?: boolean
+  cloudAdmin?: boolean
+  /** A UI layer draws 组织. */
+  organization?: boolean
+  /** Accepted by hosted sidebar callers for memory-gate compatibility. */
+  memory?: boolean
+}
+
+/** One place decides whether a section is listed. The sidebar and search both ask this. */
+export function settingsSectionShown(section: SettingsSectionDef, { admin, personal = false, billing = true, cloudAdmin = false, organization = true, memory = false }: SettingsVisibility): boolean {
+  if (SETTINGS_SECTION_STATUS[section.id] !== 'available' || section.sidebar === false) return false
+  if (section.adminOnly && !admin) return false
+  if (personal && TEAM_ONLY_SECTIONS.has(section.id)) return false
+  if (!organization && section.id === 'organization') return false
+  if (!billing && section.id === 'billing') return false
+  if (!cloudAdmin && section.id === 'cloud') return false
+  if (!memory && section.id === 'memory') return false
+  return true
+}
+
+const openable = new Set<string>(SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] === 'available').map(s => s.id))
+const known = new Set<string>(SETTINGS_SECTIONS.filter(s => SETTINGS_SECTION_STATUS[s.id] !== 'skipped').map(s => s.id))
+
+/** True for any `?section=` value settings can open: available, pending (falls back to 常规) or legacy. Skipped ids are not links. */
 export function isSettingsSectionParam(section: string): boolean {
   return known.has(section) || Object.hasOwn(LEGACY, section)
 }
@@ -85,26 +271,24 @@ export function isSettingsSectionParam(section: string): boolean {
 export function resolveSettingsSection(pathname: string, section: string | null | undefined): SettingsSectionId {
   if (pathname.endsWith('/settings/members')) return 'members'
   if (pathname.endsWith('/settings/teams')) return 'teams'
-  if (section && ids.has(section)) return section as SettingsSectionId
-  if (section && section in LEGACY) return LEGACY[section]
+  if (section && openable.has(section)) return section as SettingsSectionId
+  if (section && Object.hasOwn(LEGACY, section)) return LEGACY[section]
   return 'preferences'
 }
 
-export function settingsHref(id: SettingsSectionId, workspaceId?: string): string {
+export function settingsHref(id: SettingsSectionId, workspaceId?: string, params?: Record<string, string | undefined>): string {
   const def = SETTINGS_SECTIONS.find(s => s.id === id)
   const search = new URLSearchParams(workspaceId ? { workspace: workspaceId } : {})
+  if (!def?.routed) search.set('section', id)
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined) search.set(key, value)
+    }
+  }
   if (def?.routed) return `/settings/${id}${search.size ? `?${search}` : ''}`
-  search.set('section', id)
   return `/settings?${search}`
 }
 
-/**
- * What only a team has: what is between people (decision 2026-11-02-0203). A
- * personal workspace has every setting of the workspace itself (常规,
- * 密钥与环境, 用量, 计费) and none of these: 成员, 团队, 团队权限, 审计日志.
- */
-export const TEAM_ONLY_SECTIONS: ReadonlySet<SettingsSectionId> = new Set(['members', 'teams', 'permissions', 'audit'])
-
-export function visibleSettingsSections({ admin, personal = false, billing = true, cloudAdmin = false, organization = false, memory = false }: { admin: boolean; personal?: boolean; billing?: boolean; cloudAdmin?: boolean; /** A UI layer draws 组织. */ organization?: boolean; /** The `memory` PostHog flag (gatedFeatures.memory) is on. */ memory?: boolean }): SettingsSectionDef[] {
-  return SETTINGS_SECTIONS.filter(s => !s.unbuilt && (admin || !s.adminOnly) && !(personal && TEAM_ONLY_SECTIONS.has(s.id)) && (billing || s.id !== 'billing') && (cloudAdmin || s.id !== 'cloud') && (organization || s.id !== 'organization') && (memory || s.id !== 'memory'))
+export function visibleSettingsSections(ctx: SettingsVisibility): SettingsSectionDef[] {
+  return SETTINGS_SECTIONS.filter(section => settingsSectionShown(section, ctx))
 }

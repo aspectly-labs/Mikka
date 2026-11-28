@@ -8,6 +8,7 @@ import type { HarnessInfo } from '@mikka/protocol/harness'
 import type { RunFailure } from '@mikka/protocol/run-failure'
 import type { DaemonUpdateFailure, SetupRecipe } from '@mikka/protocol/device'
 import type { CaptureContentType, CaptureKind, CaptureSource } from '@mikka/protocol/capture'
+import type { ArtifactEngine, RichArtifactType } from '@mikka/protocol/open-artifact'
 import type { AttentionLevel } from '@/lib/attention/judgment'
 import type { UserFactKind, UserFactState, MemorySourceKind, MemoryReviewStatus, MemoryScopeKind } from '@/lib/profile/kinds'
 import type { RunOrigin, RunOriginRef } from '@/lib/run-origin'
@@ -37,6 +38,24 @@ export const userOnboarding = pgTable('user_onboarding', {
   userId: text('userId').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
   completedAt: timestamp('completedAt', { withTimezone: true }).notNull().defaultNow(),
 })
+
+/** Native WebAuthn passkeys (@better-auth/passkey@1.7.12). */
+export const passkeys = pgTable('passkey', {
+  id: text('id').primaryKey(),
+  name: text('name'),
+  publicKey: text('publicKey').notNull(),
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  credentialID: text('credentialID').notNull(),
+  counter: integer('counter').notNull().default(0),
+  deviceType: text('deviceType').notNull(),
+  backedUp: boolean('backedUp').notNull().default(false),
+  transports: text('transports'),
+  createdAt: timestamp('createdAt', { withTimezone: true }).defaultNow(),
+  aaguid: text('aaguid'),
+}, table => [
+  uniqueIndex('passkey_credential_id_unique').on(table.credentialID),
+  index('passkey_user_id_idx').on(table.userId),
+])
 
 /** An unfinished first-run guide's place: its step and what was done or skipped (decision 2026-11-15-1900). */
 export const userOnboardingProgress = pgTable('user_onboarding_progress', {
@@ -203,7 +222,9 @@ export const bots = pgTable('bots', {
   name: text('name').notNull(),
   /** Public duties visible to group participants; never populated from private instructions. */
   publicRole: text('publicRole').notNull().default(''),
-  /** A bloub colour id, see components/nav/bot-avatar.tsx. */
+  /** Private standing instructions for this Bot (≤2000 chars); never exposed to group participants or mixed with agents.instructions. */
+  instructions: text('instructions').notNull().default(''),
+  /** The bot's look (`look:c=…;h=…`, lib/bot-shapes.ts parseBotLook) or a legacy bloub colour id; `shape` is a bot-avatars body or an old bloub id (botShapeOf). */
   color: text('color').notNull().default('encre'),
   shape: text('shape').notNull().default('cercle'),
   /** Model family a new bot starts with ('mikka' | 'codex' | 'claude'); copied from workspace_settings. */
@@ -244,6 +265,8 @@ export const slackThreadBots = pgTable('slack_thread_bots', {
   threadTs: text('threadTs').notNull(),
   ownerId: text('ownerId').notNull().references(() => users.id, { onDelete: 'cascade' }),
   botId: uuid('botId').notNull().references(() => bots.id, { onDelete: 'cascade' }),
+  /** The Mikka thread (root run) this Slack thread is bound to (#2936); null keeps the old bot routing. */
+  boundRunId: uuid('boundRunId').references(() => agentRuns.id, { onDelete: 'set null' }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [primaryKey({ columns: [table.linkId, table.channelId, table.threadTs] }), index('slack_thread_bots_bot_idx').on(table.botId)])
 
@@ -272,6 +295,11 @@ export const botModelChoices = pgTable('bot_model_choices', {
   creditsModel:text('creditsModel'),
   /** Reasoning effort for the chat model (lib/model-routing.ts); null is the model's default. */
   effort:text('effort').$type<import('@/lib/model-routing').ModelRoutingEffort>(),
+  /** Serving speed for the chat (`standard`, `fast`, `ultrafast`); null is the workspace's default. Used only when the model's provider advertises it. */
+  pro: boolean('pro').notNull().default(false),
+  /** OpenAI Trusted Access for Cyber (Daybreak) opt-in for the chat model; used only when the selected route grants Daybreak. */
+  daybreak: boolean('daybreak').notNull().default(false),
+  serviceTier:text('serviceTier').$type<import('@/lib/model-routing').ModelServiceTier>(),
 }, table=>[primaryKey({columns:[table.ownerId,table.workspaceId,table.botKey]})])
 
 export const agentSessions = pgTable('agent_sessions', {
@@ -295,6 +323,7 @@ export const issueVersions = pgTable('issue_versions', {
   content: jsonb('content').$type<JSONContent>().notNull(), status: text('status').notNull(), priority: text('priority').notNull(),
   // Who made the change; set on the server only. Null on rows written before 20261025200000_activity_version_actor.
   actorType: text('actor_type').$type<'user' | 'agent' | 'system'>(), actorId: text('actor_id'),
+  sourceRunId: uuid('source_run_id'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -399,6 +428,8 @@ export const devices = pgTable('devices', {
   computerUse: jsonb('computerUse').$type<{ installed: boolean; version: string | null }>().notNull().default({ installed: false, version: null }),
   /** Off: the device stays registered but the orchestrator gives it no runs. */
   enabled: boolean('enabled').notNull().default(true),
+  /** Off: runs on this device receive no local or cloud desktop computer-use grant (binary allow/deny). */
+  computerUseEnabled: boolean('computerUseEnabled').notNull().default(true),
   /** Retired 「允许自动调度」 (decision 2026-11-02-1400 merged it into enabled, 参与调度); kept for old rows, no longer read. */
   autoSchedule: boolean('autoSchedule'),
   /** The person renamed it; a daemon re-register keeps this name. */
@@ -458,7 +489,8 @@ export const deviceTokenDevices = pgTable('device_token_devices', {
 export const deviceRepos = pgTable('device_repos', {
   id: uuid('id').primaryKey(), deviceId: uuid('deviceId').notNull().references(() => devices.id, { onDelete: 'cascade' }),
   userId: text('userId').notNull(), repoPath: text('repoPath').notNull(), remoteUrl: text('remoteUrl'),
-  baseBranch: text('baseBranch').default('main'), verifyCommand: text('verifyCommand'),
+  localPath: text('localPath'),
+  baseBranch: text('baseBranch'), verifyCommand: text('verifyCommand'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('device_repos_key').on(table.deviceId, table.repoPath)])
 
@@ -517,7 +549,7 @@ export const agentRuns = pgTable('agent_runs', {
   dispatchKey: text('dispatchKey'),
   /** Hash of the original dispatch parameters; rejects reuse for different work. */
   dispatchFingerprint: text('dispatchFingerprint'),
-  baseBranch: text('baseBranch').default('main'),
+  baseBranch: text('baseBranch'),
   sessionId: text('sessionId'), worktreePath: text('worktreePath'),
   observedModel: varchar('observedModel', { length: 500 }),
   stopReason: text('stopReason'), error: text('error'),
@@ -546,6 +578,8 @@ export const agentRuns = pgTable('agent_runs', {
   leaseExpiresAt: timestamp('leaseExpiresAt', { withTimezone: true }),
   /** 1 for the first run; a retry after the device went offline counts up (lib/run-retry.ts). */
   attempt: integer('attempt').notNull().default(1),
+  /** Times a claim gave this run back to the queue because something it read changed before the claim response (lib/computer/claim.ts requeueLocalClaim). */
+  claimRequeues: integer('claimRequeues').notNull().default(0),
   /** The run this one retries, when its device went offline. */
   retryOf: uuid('retryOf').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
   /** The run of the same thread this one goes on from: a dispatch to a task whose thread had ended (lib/thread-dispatch.ts). */
@@ -561,6 +595,21 @@ export const agentRuns = pgTable('agent_runs', {
   conversationPinnedAt: timestamp('conversationPinnedAt', { withTimezone: true }),
   /** On a thread's root run: the root of the thread that replaced it, when the person explicitly asked for a new one. */
   threadReplacedBy: uuid('threadReplacedBy').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  /** The thread this one descends from (#2936); `threadRelation` names the link: fork, side or subagent. Shared with F. */
+  parentRunId: uuid('parentRunId').references((): AnyPgColumn => agentRuns.id, { onDelete: 'set null' }),
+  threadRelation: text('threadRelation').$type<'fork' | 'side' | 'subagent' | null>(),
+  /** The message a fork or side thread starts from; FK lives in the migration (forward reference). */
+  sourceMessageId: uuid('sourceMessageId'),
+  /** The thread's own labels, kept on the chain's root run (#2936). */
+  tags: jsonb('tags').$type<string[] | null>(),
+  /** The thread's optional folder name, kept on the chain's root run (#3333). */
+  folder: text('folder'),
+  /** Soft delete: hidden from every list for 30 days, restorable inside them (#2936). */
+  deletedAt: timestamp('deletedAt', { withTimezone: true }), deletedBy: text('deletedBy'),
+  /** Sub-agent card fields (F #2939): the child's display name, its mark and the parent's one-line brief. */
+  name: varchar('name', { length: 120 }),
+  profile: jsonb('profile').$type<{ icon: string; color: string } | null>(),
+  brief: text('brief'),
   stopRequestedAt: timestamp('stopRequestedAt', { withTimezone: true }),
   /** Set with an explicit owner-scoped cancel request, never inferred from a policy or lease stop. */
   explicitStopRequested: boolean('explicitStopRequested').notNull().default(false),
@@ -568,7 +617,7 @@ export const agentRuns = pgTable('agent_runs', {
   finishedAt: timestamp('finishedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
-}, table => [index('agent_runs_device_status_idx').on(table.deviceId, table.status), index('agent_runs_issue_idx').on(table.issueId, table.createdAt), index('agent_runs_bot_created_idx').on(table.botId, table.createdAt.desc()).where(sql`${table.botId} is not null`), uniqueIndex('agent_runs_user_dispatch_key').on(table.userId, table.dispatchKey).where(sql`${table.dispatchKey} is not null`), index('agent_runs_retry_of_idx').on(table.retryOf).where(sql`${table.retryOf} is not null`), index('agent_runs_continues_run_idx').on(table.continuesRunId).where(sql`${table.continuesRunId} is not null`), index('agent_runs_status_lease_idx').on(table.status, table.leaseExpiresAt)])
+}, table => [index('agent_runs_device_status_idx').on(table.deviceId, table.status), index('agent_runs_issue_idx').on(table.issueId, table.createdAt), index('agent_runs_bot_created_idx').on(table.botId, table.createdAt.desc()).where(sql`${table.botId} is not null`), uniqueIndex('agent_runs_user_dispatch_key').on(table.userId, table.dispatchKey).where(sql`${table.dispatchKey} is not null`), index('agent_runs_retry_of_idx').on(table.retryOf).where(sql`${table.retryOf} is not null`), index('agent_runs_continues_run_idx').on(table.continuesRunId).where(sql`${table.continuesRunId} is not null`), index('agent_runs_parent_idx').on(table.parentRunId).where(sql`${table.parentRunId} is not null`), index('agent_runs_status_lease_idx').on(table.status, table.leaseExpiresAt)])
 
 /** Confirmed VM running intervals; mutable thread-machine custody is separate. */
 export const threadMachineSessions = pgTable('thread_machine_sessions', {
@@ -619,6 +668,10 @@ export const runPublications = pgTable('run_publications', {
   scopeVersion: integer('scopeVersion'), issueTitle: text('issueTitle'),
   remoteUrl: text('remoteUrl').notNull(), remoteKey: text('remoteKey').notNull(),
   identifier: text('identifier'), branch: text('branch'), baseBranch: text('baseBranch'),
+  titlePrefix: text('titlePrefix').notNull().default(''),
+  autoMerge: boolean('autoMerge').notNull().default(false),
+  defaultDraft: boolean('defaultDraft').notNull().default(false),
+  autoMergeRequestedAt: timestamp('autoMergeRequestedAt', { withTimezone: true }),
   pushApproved: boolean('pushApproved').notNull().default(false),
   status: text('status').$type<'assigned' | 'pending' | 'processing' | 'awaiting_approval' | 'published' | 'blocked' | 'skipped'>().notNull().default('assigned'),
   workflowRunId: text('workflowRunId'), leaseToken: uuid('leaseToken'), leaseExpiresAt: timestamp('leaseExpiresAt', { withTimezone: true }),
@@ -672,7 +725,7 @@ export const runTokens = pgTable('run_tokens', {
  * `dedupeKey` keeps a repeated write to one row.
  */
 /**
- * `action_decided` follows the person approving or declining a pending action.
+ * `action_decided` followed a person approving or declining a pending action; nothing writes it since ADR 2026-11-27-1615, and old events still render.
  * `run_report`, `run_question` and `run_blocked` come from the agent inside a
  * run, through the worker tools of the MCP server (lib/mcp/worker.ts).
  * `artifact_submitted` comes from `submit_artifact`, from a run or an OAuth agent.
@@ -682,7 +735,7 @@ export const runTokens = pgTable('run_tokens', {
  * (lib/attention): the person has not seen it, and the Coordinator alone
  * decides whether to tell them.
  * `issue_assigned` wakes a Bot a task was assigned to, and `issue_activity` one
- * whose task got a comment or that was @-mentioned (Capy's issue_activity);
+ * whose task got a comment or that was @-mentioned (as Capy wakes a Captain on task activity);
  * the Bot decides whether to start work on it.
  */
 export const COORDINATOR_EVENT_KINDS = ['user_message', 'run_finished', 'issue_done', 'issue_status_changed', 'run_report', 'run_question', 'run_blocked', 'run_retried', 'action_decided', 'artifact_submitted', 'daily_briefing', 'matter_handoff', 'run_dispatch_failed', 'run_redispatched', 'run_credential_switched', 'run_quota_paused', 'issue_assigned', 'issue_activity'] as const
@@ -984,6 +1037,9 @@ export const attentionLog = pgTable('attention_log', {
 export const suggestionTriggerChecks = pgTable('suggestion_trigger_checks', {
   userId: text('userId').primaryKey(),
   checkedAt: timestamp('checkedAt', { withTimezone: true }).notNull(),
+  // Last suggestions-reconcile pass on this person; checkedAt tracks the real-time
+  // trigger check instead, so the hourly sweep can walk each person on their own due.
+  reconciledAt: timestamp('reconciledAt', { withTimezone: true }),
 })
 
 /**
@@ -1197,6 +1253,12 @@ export const artifacts = pgTable('artifacts', {
   /** Immutable tenant; unresolved legacy artifacts remain quarantined. */
   workspaceId: uuid('workspaceId'),
   kind: text('kind').$type<ArtifactKind>().notNull(),
+  /** Unified catalog engine (`'native'` for Neon/R2 markdown+html, `'open_artifact'` for Cloudflare-hosted rich artifacts). */
+  engine: text('engine').$type<ArtifactEngine>().notNull().default('native'),
+  /** External document ID in Open Artifact host when `engine === 'open_artifact'`. */
+  externalId: text('externalId'),
+  /** Specific rich artifact type when populated (e.g. `docs`, `slides`, `design`, `whiteboard`, `sheets`, `data`, `motion`, `page`). */
+  artifactType: text('artifactType').$type<RichArtifactType>(),
   title: varchar('title', { length: 200 }).notNull(),
   /** The run that made it; null when an agent outside a run (OAuth) sent it. */
   runId: uuid('runId').references(() => agentRuns.id, { onDelete: 'set null' }),
@@ -1204,7 +1266,13 @@ export const artifacts = pgTable('artifacts', {
   latestVersion: integer('latestVersion').notNull().default(1),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
-}, table => [index('artifacts_user_idx').on(table.userId, table.updatedAt), index('artifacts_run_idx').on(table.runId)])
+}, table => [
+  index('artifacts_user_idx').on(table.userId, table.updatedAt),
+  index('artifacts_run_idx').on(table.runId),
+  uniqueIndex('artifacts_open_artifact_external_id_uidx')
+    .on(table.externalId)
+    .where(sql`${table.engine} = 'open_artifact' AND ${table.externalId} IS NOT NULL`),
+])
 
 export const artifactVersions = pgTable('artifact_versions', {
   /** Immutable author/resource/payer provenance; null means historical or external OAuth. */
@@ -1222,11 +1290,12 @@ export const artifactVersions = pgTable('artifact_versions', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('artifact_versions_version_key').on(table.artifactId, table.version)])
 
-/** A link anyone can open at /a/<token>. Only the token's hash is stored; revoking ends it. */
+/** A scoped link at /a/<token>. Only the token's hash is stored; revoking ends it. */
 export const artifactShares = pgTable('artifact_shares', {
   id: uuid('id').primaryKey(),
   artifactId: uuid('artifactId').notNull().references(() => artifacts.id, { onDelete: 'cascade' }),
   tokenHash: text('tokenHash').notNull(), createdBy: text('createdBy').notNull(),
+  visibility: text('visibility').$type<'private' | 'workspace' | 'link'>().notNull().default('link'),
   revokedAt: timestamp('revokedAt', { withTimezone: true }),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('artifact_shares_token_key').on(table.tokenHash), index('artifact_shares_artifact_idx').on(table.artifactId)])
@@ -1297,6 +1366,16 @@ export const runCaptureSteps = pgTable('run_capture_steps', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [index('run_capture_steps_capture_idx').on(table.captureId, table.atMs)])
 
+/** A read-only link anyone can open to a thread's transcript, as `run_capture_shares`:
+ * only the token's hash is stored; revoking ends it (#2936). */
+export const runThreadShares = pgTable('run_thread_shares', {
+  id: uuid('id').primaryKey(),
+  runId: uuid('runId').notNull().references(() => agentRuns.id, { onDelete: 'cascade' }),
+  tokenHash: text('tokenHash').notNull(), createdBy: text('createdBy').notNull(),
+  revokedAt: timestamp('revokedAt', { withTimezone: true }),
+  createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [uniqueIndex('run_thread_shares_token_key').on(table.tokenHash), index('run_thread_shares_run_idx').on(table.runId)])
+
 /** A link anyone can open, as `artifact_shares`: only the token's hash is stored; revoking ends it. */
 export const runCaptureShares = pgTable('run_capture_shares', {
   id: uuid('id').primaryKey(),
@@ -1306,13 +1385,22 @@ export const runCaptureShares = pgTable('run_capture_shares', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [uniqueIndex('run_capture_shares_token_key').on(table.tokenHash), index('run_capture_shares_capture_idx').on(table.captureId)])
 /**
- * Something an agent does in the person's own accounts (send an email,
- * create or change a calendar event, or an agent-run write). A write the
- * connection and policy allow is inserted `running` with no `decidedAt` and
- * stays as the record. One that needs approval stays `pending` until the
- * person approves or declines it; approving runs exactly `input`
- * (lib/pending-actions.ts).
- * `context` is what the card shows besides the input, such as the event being changed.
+ * The write receipt for something an agent does in the person's own accounts
+ * (send an email, create or change a calendar event, an app tool call, or an
+ * agent-run write). It is inserted `running` before dispatch, with no
+ * `decidedAt`, then becomes `done` or `failed`; an `operationUncertain` result
+ * stays `running` and is never resent. Nothing waits for approval
+ * (ADR 2026-11-27-1615): `pending` and a `decidedAt` exist only on older rows,
+ * and drizzle/20261127162323_retire_write_approvals.sql closed every `pending`
+ * one as `declined` (error `approvalRetired`); the reconcile sweep
+ * (lib/operations/write-receipt-sweep.ts) closes any late one the same way and
+ * reads back a run-bound receipt still `running` after its run ended (never
+ * resending it; unsent ones become `failed` / `writeRunEnded`). A sent one it
+ * may no longer read back, because its Bot was taken over or its owner lost the
+ * workspace or the connection, becomes `failed` / `writeUnconfirmed`, which
+ * still reads as an unknown outcome. `readbackAttemptAt` (raw SQL column) orders
+ * the sweep's picks so receipts it cannot settle never starve newer ones.
+ * `context` is the prepared context the write was bound to, such as the event being changed.
  */
 export const PENDING_ACTION_STATUSES = ['pending', 'running', 'done', 'failed', 'declined'] as const
 export type PendingActionStatus = (typeof PENDING_ACTION_STATUSES)[number]
@@ -1329,6 +1417,17 @@ export const pendingActions = pgTable('pending_actions', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   decidedAt: timestamp('decidedAt', { withTimezone: true }),
 }, table => [index('pending_actions_user_status_idx').on(table.userId, table.status, table.createdAt)])
+
+/** The right column's per-thread layout, kept per viewer (#2935). */
+export const threadPanelStates = pgTable('thread_panel_states', {
+  userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /** The thread's identity: its chain's root run, so two threads on one task keep separate layouts. */
+  runId: uuid('runId').notNull().references(() => agentRuns.id, { onDelete: 'cascade' }),
+  tabs: jsonb('tabs').$type<string[]>().notNull().default([]),
+  active: text('active').notNull().default(''),
+  open: boolean('open').notNull().default(false),
+  updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
+}, table => [primaryKey({ columns: [table.userId, table.runId] })])
 
 // Factory #192 uses existing issues, Coordinator events and Harness runs.
 export const factoryTasks = pgTable('factory_tasks', {
@@ -1397,7 +1496,7 @@ export const nativeCoordinatorTools = pgTable('native_coordinator_tools', {
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
 }, table => [primaryKey({ columns: [table.turnId, table.callId] })])
 
-/** One Expo push token per installed copy of the iOS app (apps/mobile); removed on sign-out. */
+/** One Expo push token per installed copy of the iOS app (mikka-hosted-ui/mobile-next); removed on sign-out. */
 export const mobilePushTokens = pgTable('mobile_push_tokens', {
   id: uuid('id').primaryKey(),
   userId: text('userId').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -1507,6 +1606,9 @@ export const workspaceBilling = pgTable('workspace_billing', {
   autoRechargeConsentBy: text('autoRechargeConsentBy'),
   autoRechargeConsentAt: timestamp('autoRechargeConsentAt', { withTimezone: true }),
   autoRechargeRevision: integer('autoRechargeRevision').notNull().default(0),
+  overageEnabled: boolean('overageEnabled').notNull().default(false),
+  overageMonthlyCapPoints: integer('overageMonthlyCapPoints'),
+  overageRevision: integer('overageRevision').notNull().default(0),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 })
 
@@ -1524,7 +1626,7 @@ export const billingCheckoutRequests = pgTable('billing_checkout_requests', {
   closedAt: timestamp('closedAt', { withTimezone: true }),
 }, table => [uniqueIndex('billing_checkout_requests_active_idx').on(table.workspaceId).where(sql`${table.closedAt} IS NULL`)])
 
-/** Credit grants: 'plan' per paid invoice (replaces the previous period's), 'purchased' never expires. */
+/** Credit grants: 'plan' per paid invoice (resets monthly), 'purchased' top-ups expire 12 months after purchase (grandfathered NULL never expires). */
 export const workspaceCreditGrants = pgTable('workspace_credit_grants', {
   id: uuid('id').primaryKey(),
   workspaceId: uuid('workspaceId').notNull(),

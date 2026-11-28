@@ -49,10 +49,9 @@ test('a non-admin cannot write the workspace policy',async()=>{
  await assert.rejects(restricted.setWorkspace(f.scope,{write_document:'allow'},'0'),/agentScopeNotFound/)
 })
 
-test('browser actions have no ask: the settings schema rejects it, allow and deny stay valid', async () => {
+test('no action has an ask: the settings schema rejects it, allow and deny stay valid', async () => {
  const { writePolicySettingsSchema } = await import('./write-policy-settings')
  assert.equal(writePolicySettingsSchema.safeParse({ browser_payment:'ask' }).success, false)
- assert.equal(writePolicySettingsSchema.safeParse({ browser_browse:'allow', browser_payment:'deny' }).success, true)
- // Other write actions keep ask.
- assert.equal(writePolicySettingsSchema.safeParse({ send_slack_message:'ask' }).success, true)
+ assert.equal(writePolicySettingsSchema.safeParse({ send_slack_message:'ask' }).success, false)
+ assert.equal(writePolicySettingsSchema.safeParse({ browser_browse:'allow', browser_payment:'deny', send_slack_message:'deny' }).success, true)
 })

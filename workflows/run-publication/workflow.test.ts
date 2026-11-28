@@ -9,11 +9,12 @@ mock.method(Date, 'now', fake.now)
 mock.module('workflow', { namedExports: fake.exports })
 
 let publishDoneAfter = 1, failDoneAfter = 1, publishThrows = false
+let rateLimitedFor = 0
 const attempts: number[] = []
 const publishResult = mock.fn(async () => {
   attempts.push(fake.now())
   if (publishThrows) throw new Error('publication step exhausted its retries')
-  return { done: attempts.length >= publishDoneAfter }
+  return { done: attempts.length >= publishDoneAfter, ...(attempts.length === 1 && rateLimitedFor ? { retryAt: fake.now() + rateLimitedFor } : {}) }
 })
 const failResult = mock.fn(async () => { attempts.push(fake.now()); return { done: attempts.length >= failDoneAfter } })
 const deliverResult = mock.fn(async () => {})
@@ -23,7 +24,7 @@ let workflow: typeof import('./workflow')
 before(async () => { workflow = await import('./workflow') })
 beforeEach(() => {
   attempts.length = 0
-  publishDoneAfter = 1; failDoneAfter = 1; publishThrows = false
+  publishDoneAfter = 1; failDoneAfter = 1; publishThrows = false; rateLimitedFor = 0
   publishResult.mock.resetCalls(); failResult.mock.resetCalls(); deliverResult.mock.resetCalls()
 })
 const gaps = () => attempts.slice(1).map((at, i) => (at - attempts[i]) / 1000)
@@ -33,6 +34,19 @@ test('a publication that lands first time is delivered with no wait', async () =
   assert.equal(publishResult.mock.callCount(), 1)
   assert.equal(deliverResult.mock.callCount(), 1)
   assert.equal(fake.pendingTimers(), 0)
+})
+
+test('a committed publication event wakes a retry before its durable backoff deadline', async () => {
+  publishDoneAfter = 2
+  const running = workflow.runPublication('run-event')
+  await fake.settle()
+  assert.equal(publishResult.mock.callCount(), 1)
+  fake.resume('run-publication:run-event')
+  await fake.settle()
+  await running
+  assert.equal(publishResult.mock.callCount(), 2)
+  assert.equal(attempts[1] - attempts[0], 0, 'the durable state event beats the timer')
+  assert.equal(deliverResult.mock.callCount(), 1)
 })
 
 test('the first retry is 30 s, as before; later retries double up to 10 minutes', async () => {
@@ -51,6 +65,14 @@ test('a publication still not done after an hour has asked 10 times, where the 3
   publishDoneAfter = 0
   await fake.advance(10 * 60_000)
   await running
+})
+
+test('a provider rate limit can defer publication beyond the normal backoff cap', async () => {
+  publishDoneAfter = 2
+  rateLimitedFor = 20 * 60_000
+  await Promise.all([workflow.runPublication('run-rate-limited'), fake.advance(rateLimitedFor)])
+  assert.deepEqual(gaps(), [1200])
+  assert.equal(deliverResult.mock.callCount(), 1)
 })
 
 test('when publishing gives up, failing the result backs off the same way and the result is still delivered', async () => {

@@ -1,6 +1,6 @@
 import { expect } from '@playwright/test'
 
-const SECTIONS = new Set(['members', 'preferences', 'memory', 'account', 'teams', 'notifications', 'security', 'connections', 'bot-permissions', 'models', 'logins', 'privacy', 'computers', 'general', 'permissions', 'secrets', 'environments', 'audit', 'usage', 'billing'])
+const SECTIONS = new Set(['members', 'preferences', 'appearance', 'instructions', 'threads', 'memory', 'account', 'teams', 'notifications', 'security', 'connections', 'models', 'logins', 'privacy', 'computers', 'general', 'issue-states', 'permissions', 'secrets', 'environments', 'audit', 'usage', 'billing'])
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/
 
 function sectionId(id) {
@@ -29,13 +29,7 @@ export function settingsReadRequirements(id, fixture) {
       { path: '/api/integrations/mcp' },
       { action: 'telegram.getTelegramIntegrationStatus' },
     ]
-    // Bot 权限 lists the same connected apps (Composio and Mikka's own), without MCP servers.
-    case 'bot-permissions': return [
-      { path: '/api/integrations/composio' },
-      { path: '/api/integrations/github' },
-      { path: '/api/integrations/linear/status' },
-      { action: 'telegram.getTelegramIntegrationStatus' },
-    ]
+    case 'issue-states': return [{ path: '/api/settings/issue-states' }]
     default: return []
   }
 }
@@ -75,10 +69,17 @@ export async function settingsReady(page, id, fixture, messages) {
       break
     }
     case 'preferences':
-      await enabled(body.getByRole('textbox', { name: /^Prefix / }))
+      await visible(text('Settings.appearance.language'))
+      break
+    case 'appearance':
       await selected(role('radiogroup', 'Settings.appearance.themeLabel'))
       await enabled(role('radio', 'Settings.appearance.light'))
       break
+    case 'threads':
+      await visible(role('button', 'Settings.threadTitles.edit').first())
+      await visible(role('combobox', 'Settings.threadTitles.regenerate').first())
+      break
+    case 'instructions':
     case 'memory':
       await enabled(role('switch', 'Settings.memory.learn'))
       await visible(text('Settings.memory.empty'))
@@ -108,11 +109,8 @@ export async function settingsReady(page, id, fixture, messages) {
       await either(text('Plugins.noConnections'), text('Plugins.state.paused'))
       await visible(body.getByRole('region', { name: 'Custom MCP', exact: true }).getByText('No MCP servers', { exact: true }))
       break
-    case 'bot-permissions':
-      // The rule's line shows once the connected apps are read; an account with none says so.
-      await visible(text('Settings.botPermissions.rule'))
-      await selected(role('radiogroup', 'Settings.botPermissions.mode'))
-      await visible(body.getByRole('region', { name: 'Agent run permissions', exact: true }).getByRole('listitem').first())
+    case 'issue-states':
+      await visible(region('Settings.issueStates.open'))
       break
     case 'models': {
       const subscriptions = region('Settings.subscriptions.heading')

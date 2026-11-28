@@ -1,0 +1,187 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import {
+  activeHref, activateTab, addTab, closeOtherTabs, closeTab, closeTabsToLeft, closeTabsToRight, createSavedTabs, cycleTabIndex, duplicateTab,
+  moveHistory, nextTabIndex, readSavedTabs, tabForNumber,
+  persistableHref, recordHistoryLocation, recordNavigation, SAVED_TABS_KEY, tabLabel, writeSavedTabs,
+} from './saved-tabs.ts'
+
+function storage(initial: Record<string, string> = {}) {
+  const values = { ...initial }
+  return {
+    values,
+    getItem: (key: string) => values[key] ?? null,
+    setItem: (key: string, value: string) => { values[key] = value },
+  }
+}
+
+test('saved tabs round-trip and reject malformed or empty stores', () => {
+  const store = storage()
+  let tabs = createSavedTabs('/mikka/settings')
+  tabs = recordNavigation(tabs, '/mikka/devices', 'push')
+  tabs = addTab(tabs, '/mikka/teams')
+  tabs = activateTab(tabs, 0)
+  assert.equal(writeSavedTabs(store, tabs), true)
+  const restored = readSavedTabs(store)
+  assert.deepEqual(restored, tabs)
+  assert.equal(activeHref(restored!), '/mikka/devices')
+  assert.equal(readSavedTabs(storage({ [SAVED_TABS_KEY]: '{bad' })), null)
+  assert.equal(readSavedTabs(storage({ [SAVED_TABS_KEY]: JSON.stringify({ items: [], active: 0 }) })), null)
+  assert.equal(writeSavedTabs(storage(), { items: [], active: 0 }), false)
+})
+
+test('navigation maintains each tab history, truncates forward history, and tracks back/forward', () => {
+  let tabs = createSavedTabs('/mikka')
+  tabs = recordNavigation(tabs, '/mikka/settings', 'push')
+  tabs = recordNavigation(tabs, '/mikka/settings?section=devices', 'push')
+  tabs = recordHistoryLocation(tabs, '/mikka/settings')
+  assert.equal(tabs.items[0]?.index, 1)
+  tabs = recordNavigation(tabs, '/mikka/devices', 'push')
+  assert.deepEqual(tabs.items[0]?.entries, ['/mikka', '/mikka/settings', '/mikka/devices'])
+  assert.equal(activeHref(tabs), '/mikka/devices')
+  tabs = recordNavigation(tabs, '/mikka/devices?filter=mine', 'replace')
+  assert.equal(activeHref(tabs), '/mikka/devices?filter=mine')
+  assert.equal(moveHistory(tabs, 'forward'), tabs)
+  const back = moveHistory(tabs, 'back')
+  assert.equal(activeHref(back), '/mikka/settings')
+  assert.equal(back.items[0]?.index, 1)
+  assert.equal(activeHref(moveHistory(back, 'forward')), '/mikka/devices?filter=mine')
+})
+
+test('tabs can be added, activated and closed without losing the remaining active route', () => {
+  let tabs = createSavedTabs('/mikka')
+  tabs = addTab(tabs, '/mikka/settings')
+  tabs = activateTab(tabs, 0)
+  assert.equal(tabs.active, 0)
+  tabs = closeTab(tabs, 0, '/mikka')
+  assert.equal(tabs.items.length, 1)
+  assert.equal(activeHref(tabs), '/mikka/settings')
+  tabs = closeTab(tabs, 0, '/mikka')
+  assert.equal(tabs.items.length, 1)
+  assert.equal(activeHref(tabs), '/mikka')
+})
+
+
+test('tab recovery excludes authentication, invitation and credential-bearing URLs', () => {
+  assert.equal(persistableHref('/mikka/settings?section=devices'), '/mikka/settings?section=devices')
+  assert.equal(persistableHref('/mikka/sign-in?next=%2Fsettings'), null)
+  assert.equal(persistableHref('/invite/abc123'), null)
+  assert.equal(persistableHref('/threads/shared/tok123'), null)
+  assert.equal(persistableHref('/mikka/oauth/consent?code=secret'), null)
+  assert.equal(persistableHref('/settings?access_token=secret'), null)
+  assert.equal(persistableHref('https://example.com/'), null)
+  assert.equal(persistableHref('//example.com/path'), null)
+})
+
+test('readSavedTabs strips legacy shared-thread URLs while preserving unrelated tabs and history', () => {
+  const upgraded = readSavedTabs(storage({
+    [SAVED_TABS_KEY]: JSON.stringify({
+      items: [
+        { entries: ['/mikka/settings', '/mikka/threads/shared/tok123'], index: 1 },
+        { entries: ['/mikka/threads/shared/only-share'], index: 0 },
+        { entries: ['/mikka/settings?section=devices'], index: 0 },
+      ],
+      active: 2,
+    }),
+  }))
+  assert.deepEqual(upgraded, {
+    items: [
+      { entries: ['/mikka/settings'], index: 0 },
+      { entries: ['/mikka/settings?section=devices'], index: 0 },
+    ],
+    active: 1,
+  })
+
+  const activeDropped = readSavedTabs(storage({
+    [SAVED_TABS_KEY]: JSON.stringify({
+      items: [
+        { entries: ['/mikka/settings'], index: 0 },
+        { entries: ['/mikka/threads/shared/tok123'], index: 0 },
+      ],
+      active: 1,
+    }),
+  }))
+  assert.deepEqual(activeDropped, {
+    items: [{ entries: ['/mikka/settings'], index: 0 }],
+    active: 0,
+  })
+
+  const onlyExcluded = readSavedTabs(storage({
+    [SAVED_TABS_KEY]: JSON.stringify({
+      items: [{ entries: ['/mikka/threads/shared/tok123'], index: 0 }],
+      active: 0,
+    }),
+  }))
+  assert.equal(onlyExcluded, null)
+})
+
+test('tablist keyboard navigation wraps and supports Home/End', () => {
+  assert.equal(nextTabIndex(3, 0, 'ArrowLeft'), 2)
+  assert.equal(nextTabIndex(3, 2, 'ArrowRight'), 0)
+  assert.equal(nextTabIndex(3, 1, 'Home'), 0)
+  assert.equal(nextTabIndex(3, 1, 'End'), 2)
+  assert.equal(nextTabIndex(3, 1, 'Enter'), null)
+  assert.equal(nextTabIndex(0, 0, 'ArrowRight'), null)
+})
+
+test('tabLabel derives contextual workspace, task, thread, and settings labels without Issue jargon', () => {
+  assert.equal(tabLabel('/'), 'Home')
+  assert.equal(tabLabel('/mikka/en/?section=tasks'), 'Tasks')
+  assert.equal(tabLabel('/mikka/?section=threads'), 'Threads')
+  assert.equal(tabLabel('/mikka/?section=suggestions'), 'Inbox')
+  assert.equal(tabLabel('/mikka/?section=plugins'), 'Plugins')
+  assert.equal(tabLabel('/mikka/?section=automations'), 'Automations')
+  assert.equal(tabLabel('/mikka/?section=artifacts'), 'Artifacts')
+  assert.equal(tabLabel('/mikka/?section=projects'), 'Projects')
+  assert.equal(tabLabel('/mikka/?section=pulls'), 'Pulls')
+  assert.equal(tabLabel('/mikka/?bot=bot-1'), 'Chat')
+  assert.equal(tabLabel('/mikka/?group=grp-1'), 'Group')
+  assert.equal(tabLabel('/mikka/?mainThread=run-1'), 'Thread')
+  assert.equal(tabLabel('/mikka/?issue=MIK-42'), 'Task')
+  assert.equal(tabLabel('/mikka/tasks/abc-123'), 'Task')
+  assert.equal(tabLabel('/mikka/settings?section=environments'), 'Settings')
+  assert.equal(tabLabel('/mikka/settings?section=devices'), 'Devices')
+  assert.equal(tabLabel('/mikka/settings?section=members'), 'Members')
+  assert.equal(tabLabel('/mikka/settings?section=teams'), 'Teams')
+  assert.equal(tabLabel('/mikka/settings/members'), 'Members')
+  assert.equal(tabLabel('/mikka/settings/teams'), 'Teams')
+  assert.equal(tabLabel('/mikka/devices'), 'Devices')
+})
+
+test('the tab menu closes other tabs, tabs to the right, and duplicates a tab with its history', () => {
+  const tabs = { items: [
+    { entries: ['/mikka'], index: 0 },
+    { entries: ['/mikka/?section=pulls', '/mikka/?section=tasks'], index: 0 },
+    { entries: ['/mikka/settings'], index: 0 },
+    { entries: ['/mikka/?section=inbox'], index: 0 },
+  ], active: 3 }
+  assert.deepEqual(closeOtherTabs(tabs, 1), { items: [tabs.items[1]], active: 0 })
+  assert.equal(closeOtherTabs({ items: [tabs.items[0]], active: 0 }, 0).items.length, 1)
+  const right = closeTabsToRight(tabs, 1)
+  assert.equal(right.items.length, 2)
+  assert.equal(right.active, 1, 'the active tab was closed, so the clicked tab takes over')
+  assert.equal(closeTabsToRight({ ...tabs, active: 0 }, 1).active, 0)
+  assert.equal(closeTabsToRight(tabs, 3), tabs, 'nothing to the right of the last tab')
+  const left = closeTabsToLeft(tabs, 2)
+  assert.deepEqual(left.items, tabs.items.slice(2))
+  assert.equal(left.active, 1, 'the active tab keeps its place among the remaining tabs')
+  assert.equal(closeTabsToLeft({ ...tabs, active: 0 }, 2).active, 0)
+  assert.equal(closeTabsToLeft(tabs, 0), tabs, 'nothing to the left of the first tab')
+  const duplicated = duplicateTab(tabs, 1)
+  assert.equal(duplicated.items.length, 5)
+  assert.equal(duplicated.active, 2)
+  assert.deepEqual(duplicated.items[2], tabs.items[1])
+  assert.notEqual(duplicated.items[2], tabs.items[1], 'the copy owns its own history')
+})
+
+test('⌘1–⌘8 pick a tab, ⌘9 the last one, and ⌃Tab cycles', () => {
+  assert.equal(tabForNumber(4, 1), 0)
+  assert.equal(tabForNumber(4, 4), 3)
+  assert.equal(tabForNumber(4, 5), null)
+  assert.equal(tabForNumber(4, 9), 3)
+  assert.equal(tabForNumber(12, 9), 11)
+  assert.equal(tabForNumber(0, 1), null)
+  assert.equal(cycleTabIndex(3, 2, 'next'), 0)
+  assert.equal(cycleTabIndex(3, 0, 'previous'), 2)
+  assert.equal(cycleTabIndex(1, 0, 'next'), null)
+})

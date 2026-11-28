@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Pool } from 'pg'
+import { hostedBillingScope } from './context'
 import { HostedUsageStore } from './store'
 import { signupRateLimit as configuredSignupRateLimit } from './signup'
 const signupRateLimit = (
@@ -34,7 +35,7 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     CREATE TABLE workspace_credit_grants (id uuid primary key,"workspaceId" uuid not null,points integer not null,bucket text not null,"periodStart" timestamptz,"expiresAt" timestamptz,"parentGrantId" uuid);
     CREATE TABLE workspace_settings ("workspaceId" uuid primary key,"monthlyCreditLimit" integer);
     CREATE TABLE workspace_audit_events (id uuid primary key,"workspaceId" uuid,"actorType" text,"actorName" text,action text,category text,metadata jsonb);
-    CREATE TABLE mikka_workspaces(id uuid primary key,"userId" text);
+    CREATE TABLE mikka_workspaces(id uuid primary key,"userId" text, "requireTwoFactor" boolean, "twoFactorRequiredAt" timestamptz);
     CREATE TABLE bots (id uuid primary key,"workspaceId" uuid);
     CREATE TABLE coordinator_events (id uuid primary key,"botId" uuid,kind text,payload jsonb)`)
   const old = randomUUID()
@@ -81,6 +82,60 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
   const store = new HostedUsageStore(pool)
   await pool.query(readFileSync('drizzle/20261121043334_add_hosted_usage_message_attribution.sql', 'utf8'))
   await pool.query(readFileSync('drizzle/20261122084255_hosted_usage_turn_ref.sql', 'utf8'))
+  // A receipt settled before the funding column existed: who paid it is unknown, never zero.
+  const settledBefore = randomUUID()
+  await pool.query(`INSERT INTO hosted_usage (id,"workspaceId",model,state,"costMicroUsd","unpaidMicroUsd") VALUES ($1,$2,'fixture/model','settled',23,23)`, [settledBefore, old])
+  const platformFunded = readFileSync('drizzle/20261123210000_hosted_usage_platform_funded.sql', 'utf8')
+  await pool.query(platformFunded)
+  await pool.query(platformFunded)
+  await pool.query(readFileSync('drizzle/20261126035203_cloudflare_compute_measurements.sql', 'utf8'))
+  const byokWebSearchMigration = readFileSync('drizzle/20261127234000_hosted_usage_byok_web_search.sql', 'utf8')
+  await pool.query(byokWebSearchMigration)
+  await pool.query(byokWebSearchMigration)
+  await pool.query(`ALTER TABLE hosted_usage ADD COLUMN IF NOT EXISTS "purchasedAllocations" jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof("purchasedAllocations") = 'object')`)
+  await t.test('prepaid machine reservations settle exactly once and require the full paid balance', async () => {
+    const workspaceId = randomUUID()
+    const usageId = `machine:e2b:${randomUUID()}:0`
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,1,'purchased')", [randomUUID(), workspaceId])
+    await assert.rejects(store.reserve(workspaceId, 'machine/e2b-medium', usageId, {}, 20_000, true), { code: 'points_exhausted' })
+    assert.equal((await pool.query('SELECT id FROM hosted_usage WHERE id=$1', [usageId])).rowCount, 0)
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,3,'purchased')", [randomUUID(), workspaceId])
+    const attempts = await Promise.allSettled(Array.from({ length: 4 }, () =>
+      store.reserve(workspaceId, 'machine/e2b-medium', usageId, {}, 20_000, true)))
+    assert.equal(attempts.filter(result => result.status === 'fulfilled').length, 1, attempts.flatMap(result => result.status === 'rejected' ? [result.reason?.message] : []).join('; '))
+    assert.ok(attempts.every(result => result.status === 'fulfilled' || result.reason?.code === 'usage_in_progress'))
+    const result = await pool.query(`SELECT state,"costMicroUsd"::int AS cost,"purchasedMicroUsd"::int AS purchased,
+      "unpaidMicroUsd"::int AS unpaid FROM hosted_usage WHERE id=$1`, [usageId])
+    assert.deepEqual(result.rows, [{ state: 'settled', cost: 20_000, purchased: 20_000, unpaid: 0 }])
+  })
+  await t.test('Cloudflare metering holds expire without an estimated charge and reject late or duplicate settlement', async () => {
+    const workspaceId = randomUUID()
+    const usageId = `machine:${randomUUID()}:${randomUUID()}:0`
+    const nextId = `machine:${randomUUID()}:${randomUUID()}:0`
+    const meter = { machineMeter: { source: 'cloudflare_cgroup_list' } }
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,4,'purchased')", [randomUUID(), workspaceId])
+    await store.reserve(workspaceId, 'machine/cloudflare-standard-3', usageId, {}, 30_000, meter)
+    assert.equal(await store.expireMeasuredMachine(usageId), false)
+    await assert.rejects(store.reserve(workspaceId, 'machine/cloudflare-standard-3', nextId, {}, 30_000, meter), { code: 'points_exhausted' })
+
+    await pool.query(`UPDATE hosted_usage SET "createdAt"=now()-interval '25 hours' WHERE id=$1`, [usageId])
+    await store.reserve(workspaceId, 'machine/cloudflare-standard-3', nextId, {}, 30_000, meter)
+    await store.settleMeasuredMachine(usageId, 20_000, { activeVcpuMs: 30 })
+    await Promise.all([store.settleMeasuredMachine(nextId, 10_000, { activeVcpuMs: 10 }), store.settleMeasuredMachine(nextId, 10_000, { activeVcpuMs: 10 })])
+    const receipts = await pool.query(`SELECT id,state,"costMicroUsd"::int AS cost,"purchasedMicroUsd"::int AS purchased,
+      "machineCompute"->>'outcome' AS outcome,"machineComputeReviewAt" AS review FROM hosted_usage WHERE id=ANY($1::text[])`, [[usageId, nextId]])
+    const byId = Object.fromEntries(receipts.rows.map(row => [row.id, row]))
+    assert.deepEqual(byId[usageId], { id: usageId, state: 'failed', cost: null, purchased: 0, outcome: 'measurement_expired', review: null })
+    assert.deepEqual(byId[nextId], { id: nextId, state: 'settled', cost: 10_000, purchased: 10_000, outcome: null, review: null })
+
+    const stalledId = `machine:${randomUUID()}:${randomUUID()}:0`
+    await store.reserve(workspaceId, 'machine/cloudflare-standard-3', stalledId, {}, 30_000, meter)
+    await pool.query(`UPDATE hosted_usage SET "createdAt"=now()-interval '25 hours' WHERE id=$1`, [stalledId])
+    assert.equal(await store.expireMeasuredMachine(stalledId), true)
+    assert.equal(await store.expireMeasuredMachine(stalledId), false)
+  })
   await t.test('a scripted LiteLLM BYOK receipt keeps its usage and does not consume the workspace budget', async t => {
     const { createServer } = await import('node:http')
     const { drizzle } = await import('drizzle-orm/node-postgres')
@@ -140,6 +195,32 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     await store.settle(call, 75_000, 40, 8, 'fixture-call', null, 'different-message')
     assert.deepEqual(await receipt(), { ...attribution, state: 'settled', cost: 25_000, input: 11 })
     assert.equal((await store.balance(workspaceId)).free, 975_000)
+  })
+  await t.test('a BYOK search records one actual debit and an unknown receipt without crossing tenants', async () => {
+    const { byokWebSearchUsage } = await import('../search/usage')
+    const [workspaceId, search, pending, regular, notDispatched] = Array.from({ length: 5 }, () => randomUUID())
+    const ownerId = `search-${workspaceId}`
+    const scope = { workspaceId, ownerId, billingAccountWorkspaceId: workspaceId, billingSource: 'credits' as const }
+    await store.verify(workspaceId, 'cus_web_search', `card_${workspaceId}`)
+    await pool.query('INSERT INTO hosted_allowances ("workspaceId",remaining) VALUES ($1,1000000)', [workspaceId])
+    const reserve = (id: string) => hostedBillingScope.run({ ...scope, byokWebSearchId: id }, () => store.reserve(workspaceId, 'fixture-model', id))
+    await reserve(search)
+    await assert.rejects(reserve(search), { code: 'usage_in_progress' })
+    await store.settle(search, 450, 3, 5, 'search-receipt')
+    await store.settle(search, 900, 3, 5, 'search-receipt')
+    await reserve(pending)
+    await store.settle(pending, null, 0, 0, 'awaiting-search')
+    await reserve(notDispatched)
+    await store.settle(notDispatched, 0)
+    await hostedBillingScope.run(scope, () => store.reserve(workspaceId, 'fixture-model', regular))
+    await store.settle(regular, 25, 1, 1, 'regular-receipt')
+    const from = new Date('2020-01-01'), to = new Date('2040-01-01')
+    const [{ day, ...usage }] = await byokWebSearchUsage(pool, scope, from, to)
+    assert.match(day, /^\d{4}-\d\d-\d\d$/)
+    assert.deepEqual(usage, { costMicroUsd: 450, settledCalls: 1, unknownCalls: 1 })
+    assert.deepEqual(await byokWebSearchUsage(pool, { ...scope, ownerId: 'other-user' }, from, to), [])
+    assert.deepEqual(await byokWebSearchUsage(pool, { ...scope, workspaceId: randomUUID() }, from, to), [])
+    assert.equal((await store.balance(workspaceId)).free, 999525)
   })
   await t.test('a call records the conversation turn it served; a malformed turn never blocks the call', async () => {
     const { hostedBillingScope } = await import('./context')
@@ -246,6 +327,41 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
     assert.equal((await store.balance(funded)).free, 999_000)
     await pool.query('UPDATE hosted_allowances SET remaining=0 WHERE "workspaceId"=$1', [funded])
     await assert.rejects(store.canUseMikkaPaid(funded), /points_exhausted/)
+  })
+  await t.test('settlement records the part of the cost the platform funded', async () => {
+    const funding = async (call: string) => (await pool.query(`SELECT "costMicroUsd"::int AS cost,"platformMicroUsd"::int AS platform,
+      "freeMicroUsd"::int AS free,"planMicroUsd"::int AS plan,"purchasedMicroUsd"::int AS purchased,"unpaidMicroUsd"::int AS unpaid
+      FROM hosted_usage WHERE id=$1`, [call])).rows[0]
+    assert.equal((await funding(settledBefore)).platform, null, 'a receipt settled before the column keeps NULL, never zero')
+    // A free-message turn: no card, nothing bought. The platform pays all of it; nothing is debited.
+    const unverified = randomUUID(), turn = randomUUID()
+    await pool.query('INSERT INTO hosted_allowances ("workspaceId",remaining) VALUES ($1,1000000)', [unverified])
+    assert.equal((await store.balance(unverified)).verified, false)
+    await store.reserve(unverified, 'fixture-free-turn', turn)
+    await store.settle(turn, 7_000, 3, 3)
+    assert.deepEqual(await funding(turn), { cost: 7_000, platform: 7_000, free: 0, plan: 0, purchased: 0, unpaid: 7_000 })
+    assert.equal((await store.balance(unverified)).free, 1_000_000)
+    // A verified workspace: its legacy free credit is the platform's, purchased credit is charged.
+    const mixed = await verified(), split = randomUUID()
+    await pool.query('UPDATE hosted_allowances SET remaining=1000 WHERE "workspaceId"=$1', [mixed])
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,1,'purchased')", [randomUUID(), mixed])
+    await store.reserve(mixed, 'fixture-split', split)
+    await store.settle(split, 5_000)
+    assert.deepEqual(await funding(split), { cost: 5_000, platform: 1_000, free: 1_000, plan: 0, purchased: 4_000, unpaid: 1_000 })
+    // Debt is the workspace's own: an overrun past purchased credit is charged, not covered, though it is also unpaid.
+    const owing = await verified(), overrun = randomUUID()
+    await pool.query('UPDATE hosted_allowances SET remaining=0 WHERE "workspaceId"=$1', [owing])
+    await pool.query("INSERT INTO workspace_credit_grants VALUES ($1,$2,1,'purchased')", [randomUUID(), owing])
+    await store.reserve(owing, 'fixture-debt', overrun)
+    await store.settle(overrun, 25_000)
+    assert.deepEqual(await funding(overrun), { cost: 25_000, platform: 0, free: 0, plan: 0, purchased: 25_000, unpaid: 15_000 })
+    // An unknown cost records no funding until it is reconciled.
+    const later = randomUUID()
+    await store.reserve(unverified, 'fixture-free-turn', later)
+    await store.settle(later, null)
+    assert.equal((await funding(later)).platform, null)
+    await store.settle(later, 2_000)
+    assert.equal((await funding(later)).platform, 2_000)
   })
   await t.test(
     'legacy snapshot contains existing workspaces only',
@@ -566,4 +682,96 @@ test('hosted controls on isolated PostgreSQL', { skip: !url }, async (t) => {
       )
     },
   )
+  await t.test('purchased top-ups expire after expiresAt and consume FIFO via purchasedAllocations', async () => {
+    const workspaceId = randomUUID()
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    const expiredId = randomUUID()
+    const soonerId = randomUUID()
+    const laterId = randomUUID()
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"expiresAt") VALUES
+        ($1,$4,50,'purchased',now() - interval '1 day'),
+        ($2,$4,20,'purchased',now() + interval '10 days'),
+        ($3,$4,30,'purchased',now() + interval '300 days')`,
+      [expiredId, soonerId, laterId, workspaceId],
+    )
+    const before = await store.balance(workspaceId)
+    assert.equal(before.verified, true)
+    assert.equal(before.purchased, 500_000)
+    const callId = `usage-${randomUUID()}`
+    await store.reserve(workspaceId, 'fixture/model', callId, {}, 250_000)
+    await store.settle(callId, 250_000, 100, 50)
+    const row = (await pool.query('SELECT "purchasedMicroUsd"::int AS p,"purchasedAllocations" AS alloc FROM hosted_usage WHERE id=$1', [callId])).rows[0]
+    assert.equal(row.p, 250_000)
+    assert.deepEqual(row.alloc, { [soonerId]: 200_000, [laterId]: 50_000 })
+    const after = await store.balance(workspaceId)
+    assert.equal(after.purchased, 250_000)
+    await pool.query('UPDATE workspace_credit_grants SET "expiresAt" = now() - interval \'1 second\' WHERE id=$1', [soonerId])
+    const afterExpiry = await store.balance(workspaceId)
+    assert.equal(afterExpiry.purchased, 250_000)
+  })
+  await t.test('linked refund after FIFO purchased consumption claws back deficit from other purchases', async () => {
+    const workspaceId = randomUUID()
+    const g1 = randomUUID()
+    const g2 = randomUUID()
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"expiresAt") VALUES ($1,$2,1000,'purchased',now() + interval '365 days')`,
+      [g1, workspaceId],
+    )
+    const callId = `usage-${randomUUID()}`
+    await store.reserve(workspaceId, 'fixture/model', callId, {}, 10_000_000)
+    await store.settle(callId, 10_000_000, 100, 50)
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"expiresAt") VALUES ($1,$2,1000,'purchased',now() + interval '365 days')`,
+      [g2, workspaceId],
+    )
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"parentGrantId","expiresAt") VALUES ($1,$2,-1000,'purchased',$3,now() + interval '365 days')`,
+      [randomUUID(), workspaceId, g1],
+    )
+    assert.equal((await store.balance(workspaceId)).purchased, 0)
+  })
+  await t.test('adjustSettledMachineCost refunds unused awake seconds LIFO across expiring and non-expiring grants', async () => {
+    const workspaceId = randomUUID()
+    // Ensure soonerId sorts AFTER laterId lexicographically so JSONB key order alone would fail LIFO.
+    const soonerId = 'ffffffff-1111-4111-8111-111111111111'
+    const neverExpiresId = '00000000-1111-4111-8111-111111111111'
+    await pool.query('INSERT INTO mikka_workspaces VALUES ($1)', [workspaceId])
+    await pool.query(
+      `INSERT INTO workspace_credit_grants (id,"workspaceId",points,bucket,"expiresAt") VALUES
+        ($1,$3,1,'purchased',now() + interval '10 days'),
+        ($2,$3,2,'purchased',NULL)`,
+      [soonerId, neverExpiresId, workspaceId],
+    )
+    const callId = `machine:e2b:${randomUUID()}:0`
+    await hostedBillingScope.run(
+      { workspaceId, billingAccountWorkspaceId: workspaceId, ownerId: workspaceId, billingSource: 'credits', attributionComplete: true },
+      () => store.reserve(workspaceId, 'machine/e2b-medium', callId, {}, 19_200, true),
+    )
+    assert.deepEqual(
+      (await pool.query('SELECT "purchasedMicroUsd"::int AS p,"purchasedAllocations" AS alloc FROM hosted_usage WHERE id=$1', [callId])).rows[0],
+      { p: 19_200, alloc: { [soonerId]: 10_000, [neverExpiresId]: 9_200 } },
+    )
+    assert.equal((await store.balance(workspaceId)).purchased, 10_800)
+
+    const partial = await store.adjustSettledMachineCost(callId, workspaceId, workspaceId, 3_840)
+    assert.deepEqual(partial, { adjusted: true, refundedMicroUsd: 15_360 })
+    assert.deepEqual(
+      (await pool.query('SELECT state,"costMicroUsd"::int AS c,"purchasedMicroUsd"::int AS p,"purchasedAllocations" AS alloc FROM hosted_usage WHERE id=$1', [callId])).rows[0],
+      { state: 'settled', c: 3_840, p: 3_840, alloc: { [soonerId]: 3_840 } },
+    )
+    assert.equal((await store.balance(workspaceId)).purchased, 26_160)
+
+    const noop = await store.adjustSettledMachineCost(callId, workspaceId, workspaceId, 5_000)
+    assert.deepEqual(noop, { adjusted: false, refundedMicroUsd: 0 })
+
+    const zeroed = await store.adjustSettledMachineCost(callId, workspaceId, workspaceId, 0)
+    assert.deepEqual(zeroed, { adjusted: true, refundedMicroUsd: 3_840 })
+    assert.deepEqual(
+      (await pool.query('SELECT state,"costMicroUsd"::int AS c,"purchasedMicroUsd"::int AS p,"purchasedAllocations" AS alloc FROM hosted_usage WHERE id=$1', [callId])).rows[0],
+      { state: 'failed', c: 0, p: 0, alloc: {} },
+    )
+    assert.equal((await store.balance(workspaceId)).purchased, 30_000)
+  })
 })

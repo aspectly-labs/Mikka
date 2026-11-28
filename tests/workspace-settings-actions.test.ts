@@ -42,6 +42,11 @@ const client = { async query(command: string) {
 } } as unknown as PoolClient
 observeCommitEffects(client)
 const database = {
+  async execute(statement: SQL) {
+    const { sql } = dialect.sqlToQuery(statement)
+    assert.match(sql, /FROM workspace_setting_values/)
+    return { rows: [] }
+  },
   session: { client },
   insert: () => ({ values: async (row: Record<string, unknown>) => { inserted.push(row) } }),
   async transaction<T>(work: (tx: { session: { client: PoolClient } }) => Promise<T>): Promise<T> {
@@ -70,6 +75,14 @@ before(async () => {
   mock.module('@/lib/audit/record', { namedExports: { auditRequestContext: () => ({ ip: null, geoCity: null, geoCountry: null, geoRegion: null }) } })
   mock.module('@/lib/issue-access', { namedExports: { requireUser: async () => ({ id: actor.userId, email: actor.email, name: actor.name, [tokenWorkspace]: tokenWorkspaceId }) } })
   mock.module('@/lib/workspace-db', { namedExports: { workspaceDb: {
+    transaction: async (work: (tx: unknown) => Promise<unknown>) => work({
+      select: (fields: Record<string, unknown>) => {
+        const chain = { from: () => chain, leftJoin: () => chain, where: () => chain, for: async () => 'ownerId' in fields
+          ? [{ id: actor.workspaceId, kind: 'team', ownerId: actor.userId }]
+          : [{ id: actor.userId, organizationId: null }] }
+        return chain
+      },
+    }),
     // The workspace's Environments a new Bot binds (lib/bot-environment.ts): the default first, then the one listing acme/app.
     execute: async () => ({ rows: [{ id: 'env-default', name: 'Default', repositoryKeys: ['v2/github.com/acme/other'] }, { id: 'env-app', name: 'App', repositoryKeys: ['v2/github.com/acme/app'] }] }),
     select: (fields: Record<string, unknown>) => {
@@ -89,7 +102,10 @@ before(async () => {
         } }
       } }
     },
-  } } })
+  },
+  // task-identity-store reaches this name transitively; settings tests never hit the raw pool.
+  workspacePool: { query: () => { throw new Error('Unexpected raw workspace read') } },
+  } })
   mock.module('@/lib/workspace-admin/general', { namedExports: {
     updateWorkspaceGeneral: respond('updateWorkspaceGeneral', { id: actor.workspaceId, name: 'New', slug: 'new', icon: null }),
     readWorkspaceGeneral: async (...args: unknown[]) => { calls.push(['readWorkspaceGeneral', ...args]); return { id: args[1], name: 'Old', slug: 'old', icon: null, canEdit: true, canTransfer: true, personal: false } },
@@ -110,8 +126,35 @@ before(async () => {
   } })
   mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async () => ({ user: { id: actor.userId, email: actor.email, name: actor.name }, session: { id: 'workspace-fixture-session' } }) } } } })
   // Keep the Bot's fake writes on the same observed transaction as its live registration.
-  mock.module('@/lib/db', { namedExports: { pool: { query: () => { throw Error('unexpected query') } },
-    db: database,
+  mock.module('@/lib/db', { namedExports: { pool: { query: async (sql: string, params: unknown[]) => {
+    assert.match(sql, /FROM model_order_settings WHERE "ownerId"=\$1 AND "workspaceId"=\$2/)
+    assert.deepEqual(params, [actor.userId, actor.workspaceId])
+    return { rows: [] }
+  } },
+    db: { ...database,
+      // Keep the shared fixture's BEGIN/COMMIT/rollback semantics while also
+      // serving the P3 reads: execute() for workspace_setting_values and the
+      // resource_access_policies visibility check on the transaction client.
+      async transaction<T>(work: (tx: object) => Promise<T>): Promise<T> {
+        const before = inserted.length
+        const txClient = { query: async (command: string) => {
+          if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(command)) return client.query(command)
+          assert.match(command, /^SELECT p.visibility FROM resource_access_policies/)
+          return { rows: [{ visibility: 'private' }] }
+        } } as unknown as PoolClient
+        const tx = { ...database, session: { client: txClient } }
+        observeCommitEffects(txClient)
+        await txClient.query('BEGIN')
+        try {
+          const result = await work(tx)
+          await txClient.query('COMMIT')
+          return result
+        } catch (error) {
+          await txClient.query('ROLLBACK')
+          inserted.length = before
+          throw error
+        }
+      } },
     withDatabaseTransaction: (_tx: object, work: () => unknown) => work() } })
   mock.module('@/lib/run-policy-stop', { namedExports: { stopRunsForPolicyChange: respond('stopRunsForPolicyChange', 0) } })
   mock.module('@/lib/workspace-admin/bots', { namedExports: {
@@ -256,13 +299,19 @@ test('the Bot list for a shown workspace is read from that workspace, not the se
   reset()
   const shown = '33333333-3333-4333-8333-333333333333'
   assert.deepEqual(await botActions.listBotsForWorkspace(shown), [{ id: 'bot-in-shown-workspace', name: 'Bot', color: 'encre', shape: 'cercle', coordinator: true }])
-  assert.deepEqual(workspaceContextCalls, [shown])
-  assert.deepEqual(relevant(), [['listOwnerBots', actor.userId, shown]])
+  assert.deepEqual(await botActions.listBots(shown), [{ id: 'bot-in-shown-workspace', name: 'Bot', color: 'encre', shape: 'cercle', coordinator: true }])
+  assert.deepEqual(await botActions.listWorkspaceBots(shown), { bots: [{ id: 'b', name: 'Bot', status: 'running', runningThreads: 2 }] })
+  assert.deepEqual(workspaceContextCalls, [shown, shown])
+  assert.deepEqual(relevant(), [['listOwnerBots', actor.userId, shown], ['listOwnerBots', actor.userId, shown], ['workspaceBots', shown]])
 })
 
 test('bot defaults and workspace bot list actions', async () => {
   reset()
-  assert.deepEqual((await botActions.getWorkspaceBotDefaults()).error, undefined)
+  // 新建 Bot shows the person's own run location and effort; with no settings row yet, the dispatcher's defaults.
+  assert.deepEqual(await botActions.getWorkspaceBotDefaults(), {
+    defaultModel: 'codex', defaultRepository: null, models: ['mikka', 'codex', 'claude'], repositories: ['acme/app'],
+    personal: { location: 'cloud', effort: 'medium' },
+  })
   assert.deepEqual(await botActions.updateWorkspaceBotDefaults({ defaultModel: 'claude' }), { defaultModel: 'claude', defaultRepository: null })
   assert.deepEqual(await botActions.listWorkspaceBots(), { bots: [{ id: 'b', name: 'Bot', status: 'running', runningThreads: 2 }] })
   assert.deepEqual(relevant(), [['botDefaultOptions', actor.workspaceId], ['saveBotDefaults', actor.userId, actor.workspaceId, { defaultModel: 'claude' }], ['workspaceBots', actor.workspaceId]])

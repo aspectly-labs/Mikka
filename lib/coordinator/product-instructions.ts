@@ -7,22 +7,40 @@ import { snapshotMailboxTools } from '@/lib/personal-mailbox-capability'
 import type { MailboxToolName } from '@mikka/protocol/mailbox'
 import { definitionInstructions, type DefinitionSnapshot } from '@/lib/agent-kit/definition'
 import { executionInstructions } from '@/lib/agent-kit/execution-instructions'
-import { cachedContextLines, promptWithCachedContext } from '@/lib/coordinator/context'
+import { cachedContextLines, instructionsWithBot, instructionsWithEnvironment, instructionsWithWorkspace, promptWithCachedContext } from '@/lib/coordinator/context'
 import { COORDINATOR_INSTRUCTIONS } from '@/lib/coordinator/instructions'
 import { withPersonalInstructionText } from '@/lib/coordinator/personal-instructions'
 import { botInstructions } from '@/lib/coordinator/bot-instructions'
+import { readScopedPromptInstructionsForBot } from '@/lib/coordinator/environment-instructions'
 import { withCoordinatorPresentation } from '@/lib/coordinator/native-prompt'
 import { loadProductPromptContext } from '@/lib/coordinator/prompt-context'
+import { readWorkspaceInstructionsForBot } from '@/lib/coordinator/workspace-instructions'
+import { ActionFailureError } from '@/lib/action-error'
 
 /** Product context only: eve supplies history and owns pruning and compaction. */
 export async function composeEveInstructions(userId: string, botId: string, snapshot?: DefinitionSnapshot, nativeTurn?: { sessionId: string; turnId: string }, nativePolicy?: Pick<DefinitionSnapshot, 'definition' | 'effectiveTools' | 'personalPlugins'>) {
   snapshot = snapshot ? { ...snapshot, personalPlugins: snapshot.personalPlugins ? { ...snapshot.personalPlugins, skills: [] } : undefined } : undefined
   const policy = nativePolicy ?? snapshot
-  const conversation = await loadProductPromptContext(userId, botId)
+  const [conversation, scopedInstructions, workspaceInstructions] = await Promise.all([
+    loadProductPromptContext(userId, botId),
+    readScopedPromptInstructionsForBot(userId, botId).catch(error => {
+      if (error instanceof ActionFailureError && error.code === 'botNotFound') {
+        return { environmentId: null, environmentInstructions: '', botInstructions: '' }
+      }
+      throw error
+    }),
+    readWorkspaceInstructionsForBot(userId, botId).catch(error => {
+      // Existing pre-bot previews have platform/personal context only. An
+      // unowned or missing bot never reveals a workspace; a real bot's current
+      // membership/policy refusal must still fail the prompt.
+      if (error instanceof ActionFailureError && error.code === 'botNotFound') return ''
+      throw error
+    }),
+  ])
   const { memory } = conversation
   const mailboxTools: readonly MailboxToolName[] = []
   const githubScope = { hosted: true, readOnly: false, effectiveTools: policy?.effectiveTools }
-  // The hosted Coordinator renders OpenUI like the native one, so it gets the same presentation rules and catalog.
+  // Hosted and native Coordinators share the same Markdown presentation rules.
   const host = snapshot ? executionInstructions(snapshot) : await botInstructions(userId, botId, COORDINATOR_INSTRUCTIONS)
   const base = withCoordinatorPresentation(nativePolicy ? definitionInstructions(host, nativePolicy.definition) : host)
   const instructions = personalMailboxEnabled() && policy ? personalMailboxInstructions(base, snapshotMailboxTools(policy).filter(name => mailboxTools.includes(name))) : base
@@ -32,9 +50,13 @@ export async function composeEveInstructions(userId: string, botId: string, snap
   const { githubPromptContext } = await import('@/lib/coordinator/github-context')
   const { executionContextParts } = await import('@/lib/coordinator/execution-context')
   const { memoryForBotPrompt } = await import('@/lib/profile/memory')
+  const layeredInstructions = instructionsWithBot(
+    instructionsWithEnvironment(instructions, scopedInstructions.environmentInstructions),
+    scopedInstructions.botInstructions,
+  )
   const [execution, rules, github, approvedFacts] = await Promise.all([
     executionContextParts(userId, botId),
-    withPersonalInstructionText(userId, instructions, conversation.personalInstructions, policy ? { ...policy.personalPlugins ?? { servers: [] }, skills: [] } : undefined),
+    withPersonalInstructionText(userId, instructionsWithWorkspace(layeredInstructions, workspaceInstructions), conversation.personalInstructions, policy ? { ...policy.personalPlugins ?? { servers: [] }, skills: [] } : undefined),
     githubPromptContext(userId, githubScope, undefined, undefined, botId),
     conversation.memoryEnabled ? memoryForBotPrompt(userId, botId, conversation.memoryEnabled, nativeTurn) : Promise.resolve(''),
   ])

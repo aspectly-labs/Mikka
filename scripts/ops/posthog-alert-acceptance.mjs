@@ -5,7 +5,6 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { INSIGHTS } from './posthog-observability.mjs'
 
 // Closed synthetic data only. These cases run through the actual source SQL in
 // PostHog; CI verifies the recorded engine result's source/fixture hashes.
@@ -400,7 +399,7 @@ export function verifySyntheticResult(result, cases = errorAlertFixtures()) {
 
 function main(argv = process.argv.slice(2)) {
   if (argv.length > 1 || argv.length === 1 && argv[0] !== '--query-only') throw new Error('ALERT_ACCEPTANCE_ARGUMENTS')
-  const source = INSIGHTS.find(item => item.key === 'alert-error-spike').query.source.query
+  const source = readFileSync(new URL('./posthog/alert-error-spike.sql', import.meta.url), 'utf8')
   const receipt = JSON.parse(readFileSync(new URL('./posthog/error-spike-engine-receipt.json', import.meta.url), 'utf8'))
   const cases = errorAlertFixtures()
   const query = syntheticErrorQuery(source, cases, receipt.baseline_sql)

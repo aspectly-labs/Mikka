@@ -17,6 +17,10 @@ Use this guide to prepare, verify and submit changes to Mikka.
 - Branch from `main` and keep each pull request to one change. How work moves
   from a branch to `main` (local first, hot reload, ownership and merging, numbers,
   E2B dev templates) is in [`docs/dev-workflow.md`](docs/dev-workflow.md).
+  Independently verifiable changes merge when their own checks and release
+  window permit. Batch only genuine atomic dependencies; an existing epic's
+  explicitly approved batch rules still apply. See the
+  [delivery decision](docs/design/decisions/2026-11-20-1640-sdlc-delivery.md).
 - Write commit messages in English, in the form `<type>: <description>`, where
   the type is one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`
   or `ci`.
@@ -32,15 +36,16 @@ Use this guide to prepare, verify and submit changes to Mikka.
   end. Nobody pushes to `main` directly. The assigned agent opens a pull
   request from a branch and merges it itself with a merge commit (no squash,
   no rebase) once CI is green on the latest head and the PR is mergeable.
-  After the merge the same agent watches the production deployment and, only
-  when the change needs it, accepts it in production
-  ([`docs/dev-workflow.md`](docs/dev-workflow.md) § 5). CI evaluates GitHub's
+  After the merge the same agent verifies the exact merge SHA and records its
+  regression and CI evidence. The release owner under #1954 stages and promotes
+  verified artifacts; serving-version acceptance follows
+  [`docs/dev-workflow.md`](docs/dev-workflow.md) § 5. CI evaluates GitHub's
   synthetic PR merge commit (the PR combined with its target branch) rather
   than just the standalone PR head. An unrelated merge to `main` does not
-  require rebasing a still-mergeable PR; a real conflict must be resolved and
-  the updated candidate reverified. The GitHub branch protection setting
-  "Require branches to be up to date before merging" must be disabled for
-  this loose-check policy; the workflow alone cannot change that setting.
+  require rebasing a still-mergeable PR. Read the effective branch protection
+  and merge `main` normally into the PR when protection requires it, a conflict
+  needs resolving or a relevant landed change needs integration verification.
+  Reverify the updated candidate and preserve the existing protection settings.
   See "How changes are tested" below for which checks run when.
 - Never commit credentials. Project secrets live in Infisical Cloud.
 - Focus is stale-while-revalidate: only data past its freshness threshold
@@ -110,17 +115,16 @@ cannot.
    across 1–4 dynamic shards. Required gate names stay stable; every selected
    lane must succeed. Weekly and manual runs cover the full inventory.
    See the [selection, trust and fallback rules](docs/ci/incremental.md).
-3. **Ordinary acceptance uses API and CLI.** Acceptance runs locally through
-   the API and the CLI (`pnpm test:local-loop`), and UI changes are checked
-   with screenshots of a local production build of the official UI (`pnpm build`, `pnpm start`, with `mikka-hosted-ui`). `browser-gate.yml` only keeps the protected
-   check name "Browser tests (before merge)" and passes at once. The specs
-   under `tests/e2e/` stay as retained fixtures. The general browser suite is
-   retired. Targeted Desktop and Analytics jobs retain their
-   explicitly selected build/browser checks. `site-search.yml` runs its
-   spec with Playwright's request client. See the
-   [workflow reference](.github/workflows/README.md) for actual scopes. Decisions
-   [`design/decisions/2026-11-01-1520-no-browser-tests-in-ci.md`](docs/design/decisions/2026-11-01-1520-no-browser-tests-in-ci.md),
-   [`design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md`](docs/design/decisions/2026-11-01-2225-api-cli-acceptance-and-backend-owner.md).
+3. **Run and independently review acceptance.** Follow the
+   [runner/checker process](.agents/acceptance/PROCESS.md) and
+   [project adapter](.agents/acceptance/PROJECT.md) for the two plan reviews,
+   API/CLI execution, official fixture screenshots, and final evidence verdict.
+   Models are scripted or replayed at the LiteLLM boundary, with a loopback
+   PostgreSQL 17 `*_e2e` database. Missing required evidence is `uncertain`.
+   Put the report and checker verdict in the PR's `## Acceptance` declaration;
+   `PR acceptance` validates the declaration without calling a model. The
+   retired general browser suite remains retired; retained targeted checks
+   keep the [workflow reference](.github/workflows/README.md)'s scope.
 4. **Release from trusted artifacts.** GitHub Actions builds the official
    artifacts from reviewed source. Test the selected immutable artifact in
    Cloudflare staging before promoting that same digest. Run tests that need
@@ -155,8 +159,10 @@ search and SSH checks may also defer while drafting. Mark a PR **Ready for
 review** only after local red→green, affected build and actual flow acceptance
 are recorded: the `ready_for_review` event runs all applicable selected
 protected checks on the same code SHA without a meaningless new commit.
-Every real selected acceptance still must pass before Merge, including
-exact-source production release gates.
+Every applicable PR check must pass on the current head before merge.
+Exact-version post-merge verification and protected staging and production
+admission follow § 5 of the development workflow, with the existing release
+owner and source-bound receipts.
 
 ### Before asking Alex: look at how leading products do it
 
@@ -183,11 +189,11 @@ A change a person can see is drawn in Figma first, reviewed with the
 `interface-design:design-review` and `unslop` skills until nothing blocking
 remains, confirmed by Alex, and only then implemented. The PR shows the built
 screen next to the confirmed frames; green CI alone does not make it
-mergeable. Details: `docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md`.
-A paid block or component (BoardUI Pro, affectUI, beUI Pro) is not redrawn or
-skill-reviewed for look: it is used as shipped, and its PR attaches a
-side-by-side of the library demo and our use
-(`docs/design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md`).
+mergeable. Details: `mikka-hosted-ui/docs/design/decisions/2026-11-01-0330-ui-figma-and-skill-review-before-code.md`.
+A paid block or component (BoardUI Pro, affectUI, beUI Pro) is raw material:
+it is edited in its own source to match the top-product reference, and its PR
+cites that reference per changed surface and lists the differences that remain
+(`mikka-hosted-ui/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md`).
 
 ### Test logins: never ask for a password
 
@@ -209,12 +215,15 @@ Cloud machines use versioned Mikka templates derived from E2B's official
 are preinstalled under `/opt/mikka`. Add files, never delete or overwrite an
 original official CLI, Node/npm or system file
 ([decision 2026-11-03-1430, clarified in #1505](docs/design/decisions/2026-11-03-1430-official-e2b-templates-unchanged.md)).
-A worker change on `main` runs `.github/workflows/e2b-official-runtime.yml`.
-The release requires unchanged original-file checksums and real Claude Code
-and Codex subscription executions on the exact candidates before making them
-public or selecting them in production. Keep the previous templates and the
-paired configuration for rollback. The historical `e2b-template.yml` is now the
-reusable candidate builder; it cannot publish production configuration.
+A worker change on `main` runs the offline input checks in
+`.github/workflows/e2b-official-runtime.yml`; publication starts from an eligible
+Cloudflare serving observation or an authorized dispatch. The release requires
+original-file conservation and build-time readiness on the exact candidates.
+E2B uses the user's own key, so publication has no live subscription gate
+([#2789](https://github.com/alexj11324/Mikka/pull/2789)). Retain published templates
+and their immutable release reports for the release owner's rollback.
+`e2b-template.yml` is the reusable candidate builder; production selection
+belongs to the existing private Cloudflare deployment.
 See [the release workflow](.github/workflows/README.md#cloud-worker-template-release)
 and [`docs/dev-workflow.md`](docs/dev-workflow.md) § 7.
 

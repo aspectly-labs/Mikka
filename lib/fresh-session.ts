@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { readDesktopSession } from '@/lib/desktop-rpc/session'
 import { nativeSessionHeaders } from '@/lib/desktop-rpc/session-cache'
 import { readBrowserSession } from '@/lib/browser-rpc/session'
+import { CLIENT_KIND_HEADER } from '@mikka/protocol/version'
 
 /**
  * The session is cached in a signed cookie for 5 minutes (lib/auth.ts
@@ -40,10 +41,11 @@ export const SESSION_OPTIONS = {
  * reaches the request's cookie journal on every read. Passing `returnHeaders`
  * would change the result shape the caller receives.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- better-auth's getSession is overloaded; the wrapper only adds a query flag.
+// better-auth's getSession is overloaded; the wrapper only adds a query flag.
 export function readFreshSessionsInScope(api: { getSession: (context: any) => Promise<unknown> }, native?: { cookieName: () => Promise<string> }) {
   const read = api.getSession
-  api.getSession = (context: { headers?: Headers; query?: Record<string, unknown> } | undefined) => {
+  api.getSession = (input: { headers?: Headers; query?: Record<string, unknown> } | undefined) => {
+    const context = keepMobileRenewalForAuthClient(input)
     const mustBeFresh = sessionMustBeFresh() || context?.query?.disableCookieCache === true
     const desktop = readDesktopSession(mustBeFresh)
     if (desktop) return desktop
@@ -59,4 +61,18 @@ export function readFreshSessionsInScope(api: { getSession: (context: any) => Pr
     const query = { ...context?.query, ...(sessionMustBeFresh() ? { disableCookieCache: true } : {}) }
     return read({ ...context, query })
   }
+}
+
+/**
+ * The phone app stores its session cookie through the auth client, which keeps
+ * the Set-Cookie of `/api/auth/get-session` and nothing else; a renewal sent
+ * on any other response never reaches its keychain. Renewing there moved the
+ * session's expiry on the server only, so a week later the app dropped a
+ * cookie the server still honoured and signed itself out (2026-11-24 03:08 UTC).
+ * A Mikka API read from the app therefore never renews: the app's own
+ * get-session (on launch and on every return to the foreground) does, and stores it.
+ */
+export function keepMobileRenewalForAuthClient<T extends { headers?: Headers; query?: Record<string, unknown> } | undefined>(context: T): T {
+  if (context?.headers?.get(CLIENT_KIND_HEADER) !== 'mobile') return context
+  return { ...context, query: { ...context.query, disableRefresh: true } }
 }

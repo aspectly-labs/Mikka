@@ -1,6 +1,7 @@
 # A failed reply stays under the message; Mikka 默认 follows the chat's workspace
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「如果用不了，应该有弹窗提示，而不是直接跳转回 API Key」; 「报错必须一直留在对话里（在出错的那条消息下面），不能自动消失」; 「如果说点数不能用的话，那就不应该显示在这个地方呀。」; 「一个操作在同一个页面完成」; 「点数如果没了，用不了，你可以走 API 呀，还有订阅呀」
 - Rule: —
 - Replaces: —

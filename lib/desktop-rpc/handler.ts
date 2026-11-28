@@ -20,7 +20,7 @@ export function desktopBearerHeaders(request: Request): Headers | null {
   const authorization = request.headers.get('authorization')
   // Better Auth's set-auth-token is a signed value with base64 padding.
   // Only trailing padding is allowed; the complete token stays within 512 bytes.
-  if (!authorization || !/^Bearer (?=.{32,512}$)[A-Za-z0-9_.%~+/-]+={0,2}$/.test(authorization) || /^Bearer (?:mkp_|mka_|mkr_|mksvc_)/.test(authorization)) return null
+  if (!authorization || !/^Bearer (?=.{32,512}$)[A-Za-z0-9_.%~+/-]+={0,2}$/.test(authorization) || /^Bearer (?:mkp_|mka_|mkr_|mkmr_|mksvc_)/.test(authorization)) return null
   const headers = new Headers(request.headers)
   headers.delete('cookie')
   return headers
@@ -73,7 +73,12 @@ export async function dispatchRpc<Session>(options: RpcDispatchOptions<Session>,
     const headerVersion = request.headers.get('x-mikka-desktop-protocol')
     if (![DESKTOP_RPC_VERSION, DESKTOP_RPC_PREVIOUS_VERSION].includes(input.version as 0 | 1)
       || (headerVersion !== null && headerVersion !== String(input.version))) return failure(426, UPDATE_REQUIRED)
-    if (!Object.hasOwn(options.actions, input.action)) return failure(404, 'desktop_rpc_action_unknown', input.version)
+    if (!Object.hasOwn(options.actions, input.action)) {
+      // An action this build no longer has: the page is older than the server (lib/app-build.ts ACTION_NOT_FOUND_HEADER).
+      const response = failure(404, 'desktop_rpc_action_unknown', input.version)
+      response.headers.set('x-mikka-action-not-found', '1')
+      return response
+    }
     noteLogRpcAction(input.action)
     const action = options.actions[input.action]
     let args: unknown

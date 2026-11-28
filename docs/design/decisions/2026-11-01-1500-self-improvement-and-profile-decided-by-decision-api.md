@@ -1,6 +1,7 @@
 # Self-improvement proposals and the nightly profile merge are decided by the Decision API
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: judgments are made by the Decision API, not hardcoded rules. When to propose a Skill improvement, and the nightly profile merge (purchases into an interest, routine or place; fading stale facts; which answer a slot keeps), are judgments.
 - Rule: —
 - Replaces: the fixed proposal trigger of 25 distinct failures or a 7-day-old failure (`docs/design/self-improvement.md`, scorer `run-feedback` version 1); the fixed merge thresholds in `docs/design/proactive.md` § 2.2 (3 purchases, 2 places, ⅔ of orders within an hour, 80% weekdays, ×0.95 a night, expire below 0.2, newest answer wins a slot)

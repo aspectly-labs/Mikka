@@ -1,3 +1,4 @@
+import '../../../tests/support/server-only.mjs'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { after, before, mock, test, type TestContext } from 'node:test'
@@ -5,10 +6,10 @@ import type { Pool } from 'pg'
 import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { diffSnapshot, githubReviewPage, WorkspaceReviewError,
   type DiffSnapshot, type GitHubReviewQuery } from '@mikka/protocol/coding-workspace-review'
-import { GitHubAccessError } from '../../github/user-access-error'
 import { CloudServiceError } from '../../cloud-services/errors'
 import type { RequestBudget } from '../../request-budget'
 import { createSecretMasker, identityMasker, maskCredentials, type Masker } from '../../secrets/mask'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import type { ReviewActor, ReviewScope } from './authority'
 import { GitHubDiffClient } from './github-api'
 
@@ -18,24 +19,79 @@ const token = 'fixture-native-read-credential', observed = '2026-11-08T12:00:00.
 const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 const code = (expected: string) => (error: unknown) =>
   (error instanceof CodingWorkspaceError || error instanceof WorkspaceReviewError) && error.code === expected
-type Credential = Awaited<ReturnType<typeof import('../../github/user-access')['githubRepositoryReadCredential']>>
-const credential = mock.fn(async (_userId: string, _key: string, _budget?: RequestBudget): Promise<Credential> => {
-  throw new Error('A native review integration fixture must supply its current viewer credential')
-})
 const scopeReader = mock.fn(async (_database: unknown, _membership: unknown, _actor: unknown, _runId: string, _repoId: string): Promise<ReviewScope> => {
   throw new Error('A native review integration fixture must supply its current scope')
 })
 const secretReader = mock.fn(async (_scope: { workspaceId: string; ownerId: string }): Promise<Masker> => {
   throw new Error('A native review integration fixture must supply its masking policy')
 })
+let authMode: 'installation' | 'user' = 'installation'
+let cloudScopes: string[] = ['github']
+let cloudError: Error | null = null
+let repoAllowed = true
+let githubAuthStatus = 200
+const credentialCalls: { userId: string }[] = []
+const realFetch = globalThis.fetch
+let githubHttp: Awaited<ReturnType<typeof startGitHubAccessHttp>>
+
 const modules = [
-  mock.module(new URL('../../github/user-access.ts', import.meta.url).href, { namedExports: { githubRepositoryReadCredential: credential, GitHubAccessError } }),
+  mock.module(new URL('../../auth.ts', import.meta.url).href, { namedExports: { auth: {
+    api: {}, $context: Promise.resolve({ internalAdapter: { findAccounts: async () => [] } }),
+  } } }),
+  mock.module(new URL('../../db/index.ts', import.meta.url).href, { namedExports: { pool: {
+    async query(sql: string) {
+      if (sql.includes('cloud_service_bindings')) return { rows: authMode === 'installation' ? [{ revoked: false, scopes: cloudScopes }] : [], rowCount: authMode === 'installation' ? 1 : 0 }
+      if (sql.includes('cloud_github_installations')) return {
+        rows: [{ installation_id: '31', account_id: '123', account_login: 'fixture', account_type: 'User', github_account_id: null }],
+        rowCount: 1,
+      }
+      return { rows: [], rowCount: 0 }
+    },
+    async connect() { return { async query() { return { rows: [], rowCount: 0 } }, release() {} } },
+  } } }),
+  mock.module(new URL('../../edition.ts', import.meta.url).href, { namedExports: { isCloudEdition: () => false } }),
+  mock.module(new URL('../../github/app-config.ts', import.meta.url).href, { namedExports: {
+    readGitHubAppConfig: async () => ({ id: '4840908', source: authMode === 'user' ? 'database' : 'environment' }),
+  } }),
+  mock.module(new URL('../../github/connection.ts', import.meta.url).href, { namedExports: {
+    githubConnectionToken: async (userId: string, options?: { budget?: RequestBudget }) => {
+      credentialCalls.push({ userId })
+      assert.equal(userId, viewer); assert.notEqual(userId, owner)
+      assert.ok(options?.budget && options.budget.deadline > Date.now())
+      return { token, githubAccountId: '123', expiresAt: null }
+    },
+  } }),
+  mock.module(new URL('../../cloud-services/runtime.ts', import.meta.url).href, { namedExports: {
+    cloudRequest: async (userId: string, _scope: string, _path: string, _init?: RequestInit, budget?: RequestBudget) => {
+      credentialCalls.push({ userId })
+      assert.equal(userId, viewer); assert.notEqual(userId, owner)
+      assert.ok(budget && budget.deadline > Date.now())
+      if (cloudError) throw cloudError
+      return Response.json({ token, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
+    },
+  } }),
   mock.module(new URL('./authority.ts', import.meta.url).href, { namedExports: { resolveReviewScope: scopeReader } }),
   mock.module(new URL('../../secrets/runtime.ts', import.meta.url).href, { namedExports: { secretMaskerFor: secretReader } }),
 ]
 let native: typeof import('./github-native')
-before(async () => { native = await import('./github-native') })
-after(() => { for (const module of modules) module.restore() })
+before(async () => {
+  githubHttp = await startGitHubAccessHttp({
+    installationId: 31,
+    getUser: () => githubAuthStatus === 200 ? { id: 123, login: 'viewer' } : null,
+    getRepositories: () => {
+      if (githubAuthStatus !== 200) return null
+      return repoAllowed ? [{ id: Number(repositoryId), full_name: 'Fixture/Review', private: true }] : []
+    },
+    onRequest: url => {
+      if (githubAuthStatus !== 200 && (url.pathname === '/user' || url.pathname.startsWith('/user/installations') || url.pathname === '/repos/fixture/review')) {
+        return new Response('provider error', { status: githubAuthStatus })
+      }
+      return undefined
+    },
+  })
+  native = await import('./github-native')
+})
+after(async () => { for (const module of modules) module.restore(); await githubHttp.close() })
 
 function snapshot(): DiffSnapshot {
   return diffSnapshot.parse({ id: randomUUID(), identity: { version: 1, runId: randomUUID(), repoId: randomUUID(),
@@ -68,7 +124,12 @@ type Call = { query: string; variables: Record<string, unknown> }
 function fixture(t: TestContext, response: unknown = outer()) {
   const state = { response, onFetch: undefined as ((call: Call) => void) | undefined }
   const calls: Call[] = []
+  const routedAuth = githubHttp.routeFetch(realFetch)
   t.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = new URL(String(input))
+    if (url.origin === 'https://api.github.com' && url.pathname !== '/graphql') {
+      return routedAuth(input, init)
+    }
     assert.equal(String(input), 'https://api.github.com/graphql')
     assert.equal(init.method, 'POST'); assert.equal(init.redirect, 'error')
     assert.equal(init.credentials, 'omit'); assert.equal(init.cache, 'no-store')
@@ -296,7 +357,7 @@ function policyMask(policy: string, secrets: Array<{ name: string; value: string
   mask.sourcePolicy = digest(policy)
   return mask
 }
-function integration(t: TestContext, kind: Credential['kind'] = 'installation') {
+function integration(t: TestContext, kind: 'installation' | 'user' = 'installation') {
   const f = fixture(t), actor: ReviewActor = { userId: viewer, workspaceId: f.saved.identity.workspaceId,
     credential: { kind: 'session', id: randomUUID() } }
   const scope: ReviewScope = { identity: f.saved.identity, taskId: f.saved.taskId, boardId: digest('native board'), status: 'stopped', stopped: true }
@@ -317,13 +378,8 @@ function integration(t: TestContext, kind: Credential['kind'] = 'installation') 
     }
     return { rows, rowCount: rows.length, command: 'SELECT', fields: [], oid: 0 }
   } } as unknown as Pool
-  credential.mock.resetCalls(); scopeReader.mock.resetCalls(); secretReader.mock.resetCalls()
-  credential.mock.mockImplementation(async (userId, key, budget) => {
-    assert.equal(userId, viewer); assert.notEqual(userId, owner); assert.equal(key, repositoryKey)
-    assert.ok(budget && budget.deadline > Date.now())
-    return { token, kind, githubAccountId: kind === 'user' ? '123' : null,
-      repository: { id: repositoryId, installationId: '31', fullName: 'Fixture/Review', htmlUrl: 'https://github.com/Fixture/Review', private: true } }
-  })
+  credentialCalls.length = 0; scopeReader.mock.resetCalls(); secretReader.mock.resetCalls()
+  authMode = kind; cloudScopes = ['github']; cloudError = null; repoAllowed = true; githubAuthStatus = 200
   scopeReader.mock.mockImplementation(async (db, membership, who, runId, repoId) => {
     assert.equal(db, database); assert.equal(membership, database); assert.equal(who, actor)
     assert.equal(runId, scope.identity.runId); assert.equal(repoId, scope.identity.repoId)
@@ -341,7 +397,7 @@ function integration(t: TestContext, kind: Credential['kind'] = 'installation') 
 
 test('integration uses the actual viewer read credential and retained association without inferring installation-token write authority', async t => {
   const f = integration(t), page = await f.readIntegrated()
-  assert.equal(credential.mock.calls.length, 1); assert.equal(f.calls.length, 1)
+  assert.equal(credentialCalls.length, 1); assert.equal(f.calls.length, 1)
   assert.equal(secretReader.mock.calls.length, 2); assert.equal(page.threads[0]!.comments[0]!.body, 'Native comment 1')
   assert.ok(native.nativeReviewPolicyMatches(page, f.state.masks))
   const json = JSON.stringify(page)
@@ -380,14 +436,14 @@ test('integration does not return a native DTO without both complete-body policy
 
 test('credential and Cloud failures have typed public errors and reveal no token or provider body', async t => {
   const f = integration(t)
-  for (const [failure, expected] of [
-    [new GitHubAccessError('githubRepositoryForbidden', 403), 'workspace_review_github_forbidden'],
-    [new GitHubAccessError('githubUnavailable', 502), 'workspace_review_github_unavailable'],
-    [new CloudServiceError('cloud_scope_missing'), 'workspace_review_github_forbidden'],
-    [new CloudServiceError('cloud_unavailable'), 'workspace_review_github_unavailable'],
-    [new Error(token), 'workspace_review_github_unavailable'],
+  for (const [setup, expected] of [
+    [() => { authMode = 'user'; repoAllowed = false; githubAuthStatus = 200; cloudError = null }, 'workspace_review_github_forbidden'],
+    [() => { authMode = 'user'; repoAllowed = true; githubAuthStatus = 502; cloudError = null }, 'workspace_review_github_unavailable'],
+    [() => { authMode = 'installation'; cloudScopes = ['push']; cloudError = null }, 'workspace_review_github_forbidden'],
+    [() => { authMode = 'installation'; cloudScopes = ['github']; cloudError = new CloudServiceError('cloud_unavailable') }, 'workspace_review_github_unavailable'],
+    [() => { authMode = 'installation'; cloudScopes = ['github']; cloudError = new Error(token) }, 'workspace_review_github_unavailable'],
   ] as const) {
-    credential.mock.mockImplementation(async () => { throw failure })
+    setup()
     await assert.rejects(() => f.readIntegrated(), error => {
       assert.ok(code(expected)(error)); assert.ok(!String(error).includes(token)); return true
     })

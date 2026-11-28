@@ -1,10 +1,12 @@
 # 任务状态由工作区自定义；Needs you / Waiting 是运行态
 
+- **Status:** Accepted
+
 2026-11-19。Alex 要求状态模型「和 Capy 保持做法一致」。
 
-## Capy 怎么做（0.9.2 源码）
+## Capy 怎么做
 
-`features/settings/issue-states-page.tsx`、`issue-state-editor.tsx`：状态由组织自定义，有名称、图标、颜色、类型 open / closed，每类一个默认值；删除状态时必须把它下面的 issue 迁到别的状态（MoveAndDelete）。Needs you、Waiting 不是 issue 状态，是线程的运行态。
+状态由组织自定义，有名称、图标、颜色、类型 open / closed，每类一个默认值；删除状态时必须先把它下面的 issue 迁到别的状态。Needs you、Waiting 不是 issue 状态，是线程的运行态。证据：mikka-hosted-ui `docs/research/2026-11-27-public-evidence.md`（§ workspace-issue-states）。
 
 ## 决定
 

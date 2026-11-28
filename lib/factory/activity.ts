@@ -8,6 +8,7 @@ import { runsOutsideToken } from '../tokens/scope'
 import { projectFactoryAttempts, type FactoryAttemptViewSource, type FactoryAttemptTransitionSource } from './attempt-view'
 import { readFactoryTaskMedia } from './task-media'
 import { readFactoryActivityDocuments } from './activity-artifacts'
+import { jsonbSafeIntSql } from '../primitives/jsonb-predicates'
 import { maskFactoryNote } from './note-mask'
 import { readFactoryFlow, type FactoryNeedsYou } from './public-flow'
 import type { createFactoryStore, FactoryTask } from './store'
@@ -152,7 +153,7 @@ export async function projectFactoryActivity(tx: PoolClient, task: FactoryTask) 
   const { rows: events } = await tx.query<TransitionRow>(`SELECT e."eventId" AS id,e."createdAt",e.request->'change'->>'action' AS action,
       e.request->>'kind' AS kind,e.result->'task'->>'attemptId' AS "attemptId",e.request->'binding'->>'attemptId' AS "previousAttemptId",
       e.result->'task'->>'stage' AS stage,e.result->'task'->>'status' AS status,
-      CASE WHEN jsonb_typeof(e.result->'task'->'revision')='number' THEN (e.result->'task'->>'revision')::integer END AS revision,
+      ${jsonbSafeIntSql(`e.result->'task'`, 'revision')} AS revision,
       e.result->'task'->>'id' AS "taskId",e.result->'task'->>'candidateId' AS "receiptCandidateId"
     FROM factory_events e WHERE e."taskId"=$1 AND e.result->'task'->>'id'=$1::text
     ORDER BY e."createdAt",revision,e."eventId"`, [task.id])

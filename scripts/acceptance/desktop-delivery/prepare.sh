@@ -2,7 +2,7 @@
 # Export only Git objects from the public repository after the earlier official receipt is retained.
 set -euo pipefail
 umask 077
-test "$GITHUB_REPOSITORY" = alexj11324/Mikka
+test "$GITHUB_REPOSITORY" = aspectly-labs/Mikka
 test "$GITHUB_REF" = refs/heads/main
 test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
 base=$(mktemp -d /tmp/mikka-desktop-delivery.XXXXXXXX)

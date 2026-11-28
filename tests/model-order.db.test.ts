@@ -39,7 +39,6 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     await pool.query('DELETE FROM model_api_keys WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_bindings WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM byos_connections WHERE "ownerId" = ANY($1)', [users])
-    await pool.query('DELETE FROM workspace_subscription_shares WHERE "ownerId" = ANY($1)', [users])
     await pool.query('DELETE FROM agents WHERE "userId" = ANY($1)', [users])
     await pool.query('DELETE FROM devices WHERE "ownerId" = ANY($1)', [users])
     await Promise.all([pool.end(), appPool.end(), workspacePool.end()])
@@ -123,7 +122,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     assert.equal((await order.orderView(pool, scope, async () => [])).devices, 0, 'the supplied display snapshot is the one consumed')
   })
 
-  for (const allowed of [false, true]) await t.test(`prompt order facts omit only unused count queries when member sharing is ${allowed}`, async t => {
+  for (const allowed of [false, true]) await t.test(`prompt order facts omit Settings-only counts and capabilities when member sharing is ${allowed}`, async t => {
     const scope = await person('order-context-count')
     await subscribe(scope, 'claude', ['claude-haiku-5-5'])
     await keys.addApiKey(pool, scope.ownerId, { provider: 'deepseek', apiKey: `sk-${randomBytes(12).toString('hex')}` }, { fetch: (async () => Response.json({ data: [{ id: 'count-fixture' }] })) as unknown as typeof fetch })
@@ -138,15 +137,25 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     const full = await order.orderView(tracked(fullStatements), scope, async () => [])
     const context = await order.orderView(tracked(contextStatements), scope, async () => [], 'context')
     const { location, preferredHarness, entries, candidates, cloudReady, cloudModels } = full
-    assert.deepEqual(context, { location, preferredHarness, entries, candidates, cloudReady, cloudModels })
-    assert.equal(full.credentials, 2, 'the page still counts the subscription and key with sharing either allowed or denied')
+    assert.ok(candidates.every(candidate => candidate.capabilities), 'Settings receives populated route capabilities')
+    const promptCandidates = candidates.map(({ capabilities: _capabilities, ...candidate }) => candidate)
+    assert.deepEqual(context, { location, preferredHarness, entries, candidates: promptCandidates, cloudReady, cloudModels })
+    // 团队权限 › 订阅与 API Key off (decision 2026-11-27-1740): the own key no longer serves here; the connected subscription is still counted.
+    assert.equal(full.credentials, allowed ? 2 : 1, 'the page counts the connected subscription and the keys usable here')
+    assert.equal(candidates.length > 0, allowed, 'off: no own subscription or key is a candidate here')
     assert.equal(Object.hasOwn(context, 'credentials'), false)
     const countStart = fullStatements.findIndex(row => row.sql.startsWith('SELECT id::text AS id FROM byos_connections WHERE'))
-    // No shared keys: only the connected-subscription and own/shared-key count reads.
-    const saved = 3
+    // The connected-subscription count, the usable-key read and its switch read.
+    const countReads = 3
+    const capabilityRead = fullStatements.findIndex(row => row.sql.includes('AS "effortSupport"'))
     assert.ok(countStart >= 0)
+    // Capabilities are read for the candidates only; with the switch off there are none to read.
+    if (allowed) assert.ok(capabilityRead >= countStart + countReads)
+    else assert.equal(capabilityRead, -1, 'off: no candidate, so no capability read')
+    const saved = countReads + (allowed ? 1 : 0)
     assert.equal(fullStatements.length - contextStatements.length, saved)
-    assert.deepEqual(contextStatements, [...fullStatements.slice(0, countStart), ...fullStatements.slice(countStart + saved)], 'every remaining SQL statement and scoped argument is unchanged')
+    assert.deepEqual(contextStatements, fullStatements.filter((_, i) => (i < countStart || i >= countStart + countReads) && i !== capabilityRead),
+      'every remaining SQL statement and scoped argument is unchanged')
     t.diagnostic(JSON.stringify({ kind: 'order_projection_pg_query_budget', allowed, full: fullStatements.length, context: contextStatements.length, saved }))
   })
 
@@ -329,6 +338,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
 
   await t.test('dispatch: the first model a device that takes part reported; then the next; a thread\'s own model first; nothing says why', async () => {
     const scope = await person('order-dispatch')
+    await order.changeOrder(pool, scope, { kind: 'location', location: 'local' })
     const claude = await subscribe(scope, 'claude', ['acct-opus-c', 'acct-sonnet-c'])
     const ctx = { ...scope, botId: null }
     // No computer connected yet: no device can run it, and the card says so.
@@ -467,6 +477,7 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
   await t.test('subscription dispatch depends on runtime readiness, not exact device model reports', async () => {
     // Claude Max connected, 本地, computers online and taking part with Claude Code installed; models reported or not (Alex, 2026-11-03).
     const scope = await person('order-unreported')
+    await order.changeOrder(pool, scope, { kind: 'location', location: 'local' })
     await subscribe(scope, 'claude', ['acct-opus-u'])
     const ctx = { ...scope, botId: null }
     const row = async () => (await order.orderView(pool, scope)).entries[0].block
@@ -718,6 +729,59 @@ test('model order: default fill, edits, and dispatch in order', { skip: !dbUrl }
     await subscribe(scope, 'claude', ['anthropic/claude-sonnet-5.5'])
     const sub = await resolveModelDispatch(pool, scope, { harness: 'claude_code', model: 'anthropic/claude-sonnet-5.5' }, 'local')
     assert.equal(sub.kind === 'device' && sub.entry.source.kind, 'subscription')
+  })
+
+  await t.test('OpenAI-compatible API keys appear on both Claude Code and Codex and server-advertised speed tiers + defaultServiceTier persist and dispatch', async () => {
+    const scope = await person('gateway-openai-compat-effort')
+    const codexSub = await subscribe(scope, 'codex', ['gpt-5.3-codex', 'gpt-fast-only', 'gpt-no-priority'])
+    await pool.query(
+      `UPDATE byos_connections SET "modelCatalog"=jsonb_build_object(
+         'revision','1',
+         'models',jsonb_build_array('gpt-5.3-codex','gpt-fast-only','gpt-no-priority'),
+         'priorityVersion',1,
+         'prioritySupport',jsonb_build_object('gpt-5.3-codex',true,'gpt-fast-only',true,'gpt-no-priority',false),
+         'ultrafastSupport',jsonb_build_object('gpt-5.3-codex',true,'gpt-fast-only',false,'gpt-no-priority',false)
+       ) WHERE id=$1`,
+      [codexSub],
+    )
+    const openaiKey = await keys.addApiKey(pool, scope.ownerId, { provider: 'openai', apiKey: `sk-${randomBytes(12).toString('hex')}` }, {
+      fetch: (async () => Response.json({
+        data: [
+          { id: 'gpt-5-compat', service_tiers: [] },
+          { id: 'gpt-key-ultra', service_tiers: [{ id: 'priority' }, { id: 'ultrafast' }] },
+        ],
+      })) as unknown as typeof fetch,
+    })
+    const customOpenAi = await keys.addApiKey(pool, scope.ownerId, { provider: 'custom', name: 'OpenRouter Proxy', baseUrl: 'https://openrouter.example.com/api/v1', protocol: 'openai', apiKey: `sk-${randomBytes(12).toString('hex')}` }, { fetch: (async () => Response.json({ data: [{ id: 'google/gemini-2.5-pro' }] })) as unknown as typeof fetch, resolve: async () => ['93.184.216.34'] })
+    let view = await order.orderView(pool, scope)
+    assert.equal(view.defaultEffort, 'medium')
+    assert.equal(view.defaultServiceTier, 'standard')
+    const openaiHarnesses = [...new Set(view.candidates.filter(c => c.source.kind === 'api_key' && c.source.keyId === openaiKey.id).map(c => c.harness))].sort()
+    const customHarnesses = view.candidates.filter(c => c.source.kind === 'api_key' && c.source.keyId === customOpenAi.id).map(c => c.harness).sort()
+    assert.deepEqual(openaiHarnesses, ['claude_code', 'codex'])
+    assert.deepEqual(customHarnesses, ['claude_code', 'codex'])
+    const codexUltra = view.candidates.find(c => c.source.kind === 'subscription' && c.model === 'gpt-5.3-codex')
+    const codexFastOnly = view.candidates.find(c => c.source.kind === 'subscription' && c.model === 'gpt-fast-only')
+    const codexNoPriority = view.candidates.find(c => c.source.kind === 'subscription' && c.model === 'gpt-no-priority')
+    const keyEmptyTiers = view.candidates.find(c => c.source.kind === 'api_key' && c.model === 'gpt-5-compat')
+    const keyUltraTiers = view.candidates.find(c => c.source.kind === 'api_key' && c.model === 'gpt-key-ultra')
+    assert.deepEqual(codexUltra?.speedModes, ['fast', 'ultrafast'])
+    assert.deepEqual(codexFastOnly?.speedModes, ['fast'])
+    assert.equal(codexNoPriority?.speedModes, undefined)
+    assert.equal(keyEmptyTiers?.speedModes, undefined, 'explicit empty service_tiers from /models must never fall back to hardcoded names')
+    assert.deepEqual(keyUltraTiers?.speedModes, ['fast', 'ultrafast'])
+    await order.changeOrder(pool, scope, { kind: 'effort', effort: 'xhigh' })
+    await order.changeOrder(pool, scope, { kind: 'serviceTier', serviceTier: 'ultrafast' })
+    view = await order.orderView(pool, scope)
+    assert.equal(view.defaultEffort, 'xhigh')
+    assert.equal(view.defaultServiceTier, 'ultrafast')
+    await device(scope.ownerId, [{ harness: 'codex', installed: true }], true, { name: 'codex-speed-runner' })
+    const ultraRun = await resolveModelDispatch(pool, { ...scope, botId: null }, { harness: 'codex', model: 'gpt-5.3-codex' }, 'local')
+    assert.equal(ultraRun.kind === 'device' && ultraRun.serviceTier, 'ultrafast')
+    const fastOnlyRun = await resolveModelDispatch(pool, { ...scope, botId: null }, { harness: 'codex', model: 'gpt-fast-only' }, 'local')
+    assert.equal(fastOnlyRun.kind === 'device' && fastOnlyRun.serviceTier, undefined, 'ultrafast preference must not dispatch on a model advertising only fast')
+    await order.changeOrder(pool, scope, { kind: 'serviceTier', serviceTier: 'standard' })
+    assert.equal((await order.orderView(pool, scope)).defaultServiceTier, 'standard')
   })
 
 })

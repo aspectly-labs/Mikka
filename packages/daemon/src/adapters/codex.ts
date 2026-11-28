@@ -34,7 +34,7 @@ import {
   prepareCodexHome,
   wipeRunCredentials,
 } from "../agents/harness-home"
-import { codexCredential, credentialDomain } from "../agents/run-credential"
+import { codexCredential, credentialDomain, NATIVE_AUTH_PLACEHOLDER } from "../agents/run-credential"
 import { jsonlConnection } from "../agents/jsonl-rpc"
 import {
   MCP_SERVER_NAME,
@@ -50,32 +50,35 @@ import { requireRunToolApproval } from "../agents/tool-approval"
 import { codexMcpServer, hasRunAppServers, nativeMcpProcess, registeredRunAppServer, type RunApps } from "../agents/run-apps"
 import { taskMcpSecretValues } from '@mikka/protocol'
 import { rawCliShellAvailable, runPolicy } from "../permissions"
-import type { RunChunk } from "../chunks"
+import { toolOutputTail, type RunChunk } from "../chunks"
 import { DAEMON_VERSION } from "../paths"
 import { buildChildEnv } from "../env"
 import { taskExecutionEnv } from '../task-env'
 import { mailboxToolResult } from '../run-mailbox'
 import { codexMailboxCatalogue, codexMailboxResumeVersion, recordCodexMailboxSession, verifyCodexMailboxResume } from './codex-mailbox'
-import { NATIVE_AUTH_PLACEHOLDER } from '../subscription-native-broker'
 import { classifyProviderFailure, ProviderFailureError, providerFailureMessage, type ProviderFailure } from "@mikka/protocol/provider-failure"
+import { normalizeCodexCommands, normalizeCommandName } from "@mikka/protocol/slash-commands"
 import type {
   DeltaNotification,
   ErrorNotification,
   ItemNotification,
   RateLimitsNotification,
+  SkillsListResponse,
   ThreadItem,
   ThreadResponse,
   ThreadResumeParams,
   TokenUsageNotification,
   TurnNotification,
+  TurnPlanUpdatedNotification,
   UserInput,
   ChatGPTAuthTokens
 } from "./codex-protocol"
-import type {
-  AgentAdapter,
-  AgentSession,
-  SessionOptions,
-  StartOptions,
+import {
+  normalizeSendOptions,
+  type AgentAdapter,
+  type AgentSession,
+  type SessionOptions,
+  type StartOptions,
 } from "./types"
 
 export interface CodexAdapterOptions {
@@ -148,9 +151,10 @@ export function codexAppArgs(apps?: RunApps): string[] {
     "-c", `mcp_servers.${app.name}.http_headers={ Authorization = ${toml(`Bearer ${apps!.token}`)} }`,
   ]), ...(apps?.servers ?? []).map(codexMcpServer).flatMap(server => {
     const prefix = `mcp_servers.${server.name}`
-    if (server.transport !== 'stdio') return ['-c', `${prefix}.url=${toml(server.url)}`, '-c', `${prefix}.http_headers=${tomlTable(server.headers)}`]
+    const filters = server.disabledTools?.length ? ['-c', `${prefix}.disabled_tools=${toml(server.disabledTools)}`] : []
+    if (server.transport !== 'stdio') return [...filters, '-c', `${prefix}.url=${toml(server.url)}`, '-c', `${prefix}.http_headers=${tomlTable(server.headers)}`]
     const process = nativeMcpProcess(server)
-    return ['-c', `${prefix}.command=${toml(process.command)}`, '-c', `${prefix}.args=${toml(process.args)}`, '-c', `${prefix}.env=${tomlTable(process.env)}`]
+    return [...filters, '-c', `${prefix}.command=${toml(process.command)}`, '-c', `${prefix}.args=${toml(process.args)}`, '-c', `${prefix}.env=${tomlTable(process.env)}`]
   })]
 }
 
@@ -260,6 +264,7 @@ export function codexItemChunks(
         : []
     case "commandExecution": {
       const command = item as Extract<ThreadItem, { type: "commandExecution" }>
+      const tail = toolOutputTail(command.aggregatedOutput ?? "")
       return phase === "started"
         ? [
             {
@@ -275,8 +280,9 @@ export function codexItemChunks(
               toolCallId: item.id,
               output: {
                 exitCode: command.exitCode,
-                output: (command.aggregatedOutput ?? "").slice(-4000),
+                output: tail.text,
               },
+              ...(tail.truncated ? { outputTruncated: true as const } : {}),
             },
           ]
     }
@@ -340,9 +346,56 @@ export function codexItemChunks(
             },
       ]
     }
+    case "contextCompaction":
+      return phase === "started"
+        ? [{ type: "data-system-event", data: { kind: "status", status: "compacting" } }]
+        : [{ type: "data-system-event", data: { kind: "compact_boundary", harness: "codex", trigger: "manual" } }]
+    case "exitedReviewMode": {
+      const review = (item as Extract<ThreadItem, { type: "exitedReviewMode" }>).review
+      return phase === "completed" && typeof review === "string" && review.trim()
+        ? [{ type: "data-system-event", data: { kind: "local_command_output", command: "review", text: review } }]
+        : []
+    }
     default:
       return []
   }
+}
+
+const CODEX_INIT_PROMPT =
+  "Create or update AGENTS.md in the repository root with concise guidance on project structure, build/test commands, and conventions."
+
+function extractCodexSkills(response: SkillsListResponse): { name: string; description?: string }[] {
+  const entries = [
+    ...(response.skills ?? []),
+    ...(response.data ?? []).flatMap(group => group.skills ?? []),
+  ]
+  const seen = new Set<string>()
+  const skills: { name: string; description?: string }[] = []
+  for (const entry of entries) {
+    if (!entry || entry.enabled === false || typeof entry.name !== "string") continue
+    const name = entry.name.trim()
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    const description = (entry.shortDescription ?? entry.description ?? "").trim()
+    skills.push({ name, ...(description ? { description } : {}) })
+  }
+  return skills
+}
+
+/**
+ * Codex's plan, sent as `turn/plan/updated` rather than as a thread item, as the `update_plan` call it is: its input
+ * in the tool's own shape (`plan: { step, status }[]`, `in_progress`), answered at once with the tool's own reply, so
+ * the thread reads each revision like Claude Code's TodoWrite. `seq` keeps each revision's call id apart.
+ */
+export function codexPlanChunks(update: TurnPlanUpdatedNotification, seq: number): RunChunk[] {
+  const toolCallId = `plan-${update.turnId}-${seq}`
+  const plan = update.plan.map(({ step, status }) => ({ step, status: status === "inProgress" ? "in_progress" : status }))
+  return [
+    { type: "tool-input-available", toolCallId, toolName: "update_plan", input: { ...(update.explanation ? { explanation: update.explanation } : {}), plan } },
+    { type: "tool-output-available", toolCallId, output: "Plan updated" },
+  ]
 }
 
 export class CodexAdapter implements AgentAdapter {
@@ -575,8 +628,10 @@ export class CodexAdapter implements AgentAdapter {
     )
     const queue = new EventQueue()
     const streamed = new Set<string>()
+    let plans = 0
     let activeTurn: string | null = null
     let pendingTurnStart: Promise<void> | null = null
+    let pendingControlTurn = false
     let ending = false
     let cancelling = false
     const sensitiveText = [firstMessage, options.prompt ?? "", options.continueSession?.message ?? "", options.credential?.key ?? "", options.apps?.token ?? "", ...taskMcpSecretValues(options.apps?.servers)]
@@ -754,9 +809,21 @@ export class CodexAdapter implements AgentAdapter {
             queue.chunk(chunk)
           return
         }
-        case "turn/started":
-          if (!options.mailbox) activeTurn = (params as TurnNotification).turn.id
+        case "turn/plan/updated": {
+          const update = params as TurnPlanUpdatedNotification
+          if (update.threadId !== sessionId || !Array.isArray(update.plan)) return
+          for (const chunk of codexPlanChunks(update, ++plans)) queue.chunk(chunk)
           return
+        }
+        case "turn/started": {
+          const startedId = (params as TurnNotification).turn.id
+          if (!options.mailbox) activeTurn = startedId
+          else if (pendingControlTurn && !activeTurn) {
+            activeTurn = startedId
+            pendingControlTurn = false
+          }
+          return
+        }
         case "thread/tokenUsage/updated": {
           const notification = params as TokenUsageNotification
           if (notification.threadId !== sessionId) return
@@ -790,12 +857,17 @@ export class CodexAdapter implements AgentAdapter {
           if (options.mailbox && pendingTurnStart) {
             const completed = (params as TurnNotification).turn
             void pendingTurnStart.then(() => {
-              if (!ending && completed.id === activeTurn) { activeTurn = null; return turnCompleted(completed) }
+              if (!ending && (completed.id === activeTurn || pendingControlTurn)) {
+                activeTurn = null
+                pendingControlTurn = false
+                return turnCompleted(completed)
+              }
             }).catch(() => undefined)
             return
           }
-          if (options.mailbox && (params as TurnNotification).turn.id !== activeTurn) return
+          if (options.mailbox && (params as TurnNotification).turn.id !== activeTurn && !pendingControlTurn) return
           activeTurn = null
+          pendingControlTurn = false
           void turnCompleted((params as TurnNotification).turn)
           return
         default:
@@ -873,6 +945,7 @@ export class CodexAdapter implements AgentAdapter {
         threadId: sessionId,
         input: text(message),
         ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       })
       const response = result.catch((error: unknown) => {
         failureDetails = capture(error)
@@ -887,6 +960,60 @@ export class CodexAdapter implements AgentAdapter {
         try { await pendingTurnStart } finally { pendingTurnStart = null }
       } else { const { turn } = await response; activeTurn ??= turn.id }
       runRuntimeTimings.agentAccepted(options.runId, 'codex_turn_start_ack')
+    }
+
+    const startControlRpc = async (method: string, params: Record<string, unknown>, onError?: (error: unknown) => void) => {
+      if (ending) throw new Error("The Codex session already ended")
+      const request = rpc.sendRequest<{ turn?: { id?: string } } | null>(method, params)
+      const tracked = request.then(result => {
+        if (ending) return
+        const turnId = result && typeof result === "object" && typeof result.turn?.id === "string" && result.turn.id ? result.turn.id : null
+        if (turnId) {
+          activeTurn = turnId
+          pendingControlTurn = false
+        } else if (!activeTurn) {
+          pendingControlTurn = true
+        }
+      })
+      if (options.mailbox) {
+        pendingControlTurn = true
+        pendingTurnStart = tracked
+        try {
+          await pendingTurnStart
+        } catch (error) {
+          pendingControlTurn = false
+          onError?.(error)
+          throw error
+        } finally {
+          if (pendingTurnStart === tracked) pendingTurnStart = null
+        }
+      } else {
+        try {
+          await tracked
+        } catch (error) {
+          onError?.(error)
+          throw error
+        }
+      }
+    }
+
+    const runCompact = async () => {
+      if (ending) throw new Error("The Codex session already ended")
+      queue.chunk({ type: "data-system-event", data: { kind: "status", status: "compacting" } })
+      await startControlRpc("thread/compact/start", { threadId: sessionId }, error => {
+        queue.chunk({
+          type: "data-system-event",
+          data: { kind: "status", status: "idle", compactResult: "failed", compactError: errorMessage(error) },
+        })
+      })
+    }
+
+    const startReview = async (instructions?: string) => {
+      const trimmed = instructions?.trim()
+      await startControlRpc("review/start", {
+        threadId: sessionId,
+        target: trimmed ? { type: "custom", instructions: trimmed } : { type: "uncommittedChanges" },
+      })
     }
 
     void child.exited.then(({ code, signal }) => {
@@ -958,6 +1085,7 @@ export class CodexAdapter implements AgentAdapter {
         sandbox: "danger-full-access",
         developerInstructions: ctx.instructions(),
         ...(options.model ? { model: options.model } : {}),
+        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
       }
       const newThread = () =>
         ready(
@@ -977,7 +1105,7 @@ export class CodexAdapter implements AgentAdapter {
             "thread/resume",
           )
         } catch (error) {
-          if (managedAuth || mode !== "continue" || ending || options.requireSessionResume || options.mailbox) throw error
+          if (managedAuth || mode !== "continue" || ending || options.requireSessionResume || options.mailbox || options.continueSession?.followUpControl?.kind === "compact") throw error
           log.info(
             { err: error, thread_id: threadId },
             "could not continue the earlier codex thread; starting a new one",
@@ -994,8 +1122,42 @@ export class CodexAdapter implements AgentAdapter {
       runtimeModel = typeof response.model === "string" && response.model ? response.model : null
       if (runtimeModel) options.onRuntimeModel?.(sessionId, runtimeModel)
       if(managedAuth)await this.options.onHostedSession?.(sessionId)
+
+      // Emit curated Codex slash commands immediately, then enrich best-effort from `skills/list`
+      // (preserving isolated CODEX_HOME for personal runs; non-blocking so fakes without skills/list stay fast).
+      queue.chunk({
+        type: "data-available-commands",
+        id: "available-commands",
+        data: { harness: "codex", commands: normalizeCodexCommands() },
+      })
+      void rpc
+        .sendRequest<SkillsListResponse>("skills/list", { cwds: [ctx.worktree] })
+        .then(res => {
+          if (ending || !res) return
+          const skills = extractCodexSkills(res)
+          if (skills.length) {
+            queue.chunk({
+              type: "data-available-commands",
+              id: "available-commands",
+              data: { harness: "codex", commands: normalizeCodexCommands(skills) },
+            })
+          }
+        })
+        .catch(() => undefined)
+
       startupPhase = 'turn_start'
-      await ready(startTurn(firstMessage), "turn/start")
+      const followUpControl = mode === "continue" ? options.continueSession?.followUpControl : undefined
+      if (followUpControl?.kind === "compact") {
+        await ready(runCompact(), "thread/compact/start")
+      } else if (followUpControl?.kind === "slash") {
+        const cmd = normalizeCommandName(followUpControl.name).toLowerCase()
+        if (cmd === "compact") await ready(runCompact(), "thread/compact/start")
+        else if (cmd === "review") await ready(startReview(followUpControl.args), "review/start")
+        else if (cmd === "init") await ready(startTurn(CODEX_INIT_PROMPT), "turn/start")
+        else await ready(startTurn(firstMessage), "turn/start")
+      } else {
+        await ready(startTurn(firstMessage), "turn/start")
+      }
     } catch (error) {
       if (managedAuth) {
         const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
@@ -1017,9 +1179,25 @@ export class CodexAdapter implements AgentAdapter {
       sessionId,
       runtimeModel,
       events: () => queue.drain(),
-      async send(message, mode) {
+      async send(message, modeOrOptions) {
+        const sendOpts = normalizeSendOptions(modeOrOptions)
         sensitiveText.push(message)
         if (ending) throw new Error("The Codex session already ended")
+        if (sendOpts.slashCommand) {
+          const cmd = normalizeCommandName(sendOpts.slashCommand.name).toLowerCase()
+          if (cmd === "compact") {
+            await runCompact()
+            return
+          }
+          if (cmd === "review") {
+            await startReview(sendOpts.slashCommand.args)
+            return
+          }
+          if (cmd === "init") {
+            await startTurn(CODEX_INIT_PROMPT)
+            return
+          }
+        }
         if (activeTurn) {
           try {
             await rpc.sendRequest("turn/steer", {
@@ -1038,8 +1216,11 @@ export class CodexAdapter implements AgentAdapter {
           }
         }
         if (ending) throw new Error("The Codex session already ended")
-        if (mode === "steer") throw new Error("The Codex turn is no longer active")
+        if (sendOpts.mode === "steer") throw new Error("The Codex turn is no longer active")
         await startTurn(message)
+      },
+      async compact() {
+        await runCompact()
       },
       async cancel() {
         // Revoking the gate tears down the owned proxy/CLI immediately. Mark

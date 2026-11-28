@@ -1,7 +1,7 @@
 import 'server-only'
 
 export class LinearApiError extends Error {
-  constructor(message: string, readonly retryable: boolean, readonly status?: number) {
+  constructor(message: string, readonly retryable: boolean, readonly status?: number, readonly credentialRejected = false) {
     super(message)
     this.name = 'LinearApiError'
   }
@@ -28,22 +28,22 @@ export async function linearGraphQL<T>(accessToken: string, query: string, varia
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(linearRequestTimeout.ms),
     })
-  } catch {
-    throw new LinearApiError('Linear could not be reached', true)
+  } catch (error) {
+    throw Object.assign(new LinearApiError('Linear could not be reached', true), { cause: error })
   }
 
   let result: { data?: T; errors?: { message?: string; extensions?: { code?: string } }[] }
   try {
     result = await response.json()
-  } catch {
-    throw new LinearApiError('Linear returned an invalid response', response.status >= 500, response.status)
+  } catch (error) {
+    throw Object.assign(new LinearApiError('Linear returned an invalid response', response.status >= 500, response.status), { cause: error })
   }
 
   const error = result.errors?.[0]
   if (!response.ok || error || result.data === undefined) {
     const code = error?.extensions?.code
     const message = sanitizeLinearError(error?.message ?? `Linear request failed (${response.status})`)
-    throw new LinearApiError(message, response.status >= 500 || response.status === 429 || code === 'RATELIMITED', response.status)
+    throw new LinearApiError(message, response.status >= 500 || response.status === 429 || code === 'RATELIMITED', response.status, response.status === 401 || (response.ok && code === 'AUTHENTICATION_ERROR'))
   }
   return result.data
 }

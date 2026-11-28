@@ -24,7 +24,7 @@ try {
     }
   } finally { writeFileSync(manifestPath, manifest) }
   // SSH acceptance consumes the compiled preload, never a distributed desktop package.
-  run(process.execPath, ['apps/desktop/scripts/build.mjs', '--public-test-fixture'])
+  run(process.execPath, ['apps/desktop/scripts/build.mjs', '--without-renderer'])
   run('docker', ['build', '-t', 'mikka-491-ssh-test', 'tests/ssh-install'], { stdio: 'inherit' })
   run('docker', ['run', '-d', '--rm', '--privileged', '--name', container, '--tmpfs', '/run', '--tmpfs', '/run/lock', '-p', '127.0.0.1:22491:22', 'mikka-491-ssh-test'])
   // systemd starts sshd asynchronously; wait for its actual readiness.

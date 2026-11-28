@@ -1,7 +1,14 @@
 import { latestDefaultCandidates } from './model-order-plan'
+import type { ModelSpeedMode } from './model-routing'
 
 export interface ModelToggle { enabled: boolean; fresh: boolean; manual: boolean }
-export interface ModelSettings { refreshedAt?: string | null; autoEnable: boolean; models: Record<string, ModelToggle> }
+export interface ModelSettings {
+  refreshedAt?: string | null
+  autoEnable: boolean
+  models: Record<string, ModelToggle>
+  /** Server-discovered speed modes per model id (from provider /models capability metadata). */
+  speedModes?: Record<string, readonly ModelSpeedMode[]>
+}
 
 /** Same release/family selection as #1515; no second version parser. */
 export function reconcileSubscriptionModels(ids: string[], previous?: ModelSettings | null): ModelSettings {

@@ -6,10 +6,10 @@
 
 People add personal MCP servers, install skills and connect supported apps for
 their Bots. Installation and connection belong to the signed-in person across
-workspaces. Credentials remain private to their owner. The owner may explicitly
-share a custom MCP connection's use with the current team workspace through the
-[workspace sharing contract](mcp-workspace-sharing.md). Recipients receive
-scoped access and public metadata. This reference records the backend scope.
+workspaces. Credentials remain private to their owner, and a custom MCP
+connection serves only runs in threads its owner started: personal MCP servers
+are not shareable ([decision 2026-11-27-1700](decisions/2026-11-27-1700-personal-mcp-not-shareable.md)).
+This reference records the backend scope.
 
 ## API contracts
 
@@ -19,12 +19,12 @@ be supplied in request bodies; all row operations include the authenticated owne
 
 | Endpoint | Request | Result |
 | --- | --- | --- |
-| `GET /api/integrations/mcp` | Optional `workspaceId` query | Personal `{servers, count}` without a workspace. Workspace-scoped owner/shared projection with it. Shared rows omit private endpoints and credentials |
+| `GET /api/integrations/mcp` | Optional `workspaceId` query | Personal `{servers, count}` without a workspace. With it, the caller's own servers in that workspace; `canShare` and `shared` are always false (kept one release for older clients) |
 | `POST /api/integrations/mcp` | `{name,url,transport?:"http"\|"sse",enabled?:boolean,auth?:{name,value}}` | `{server}`; enabled defaults to true |
 | `PATCH /api/integrations/mcp` | `{id,name?,enabled?,auth?:{name,value}\|null}` | `{server}`; null removes authentication |
 | `DELETE /api/integrations/mcp` | `{id}` | `{deleted:true}` |
-| `POST /api/integrations/mcp/refresh` | `{serverId,cursor?}` | From Settings › Connections, the owner reads one live page of tool names and its next cursor on an enabled HTTP or SSE connection. This uses the existing MCP discovery client. STDIO discovery stays on the task machine. |
-| `PATCH /api/integrations/mcp/shares` | `{serverId,workspaceId,shared}` | Owner-authorized workspace share state |
+| `POST /api/integrations/mcp/refresh` | `{serverId,cursor?}` | Without a cursor, checks the enabled HTTP or SSE connection, saves the discovered tool catalogue, and returns its first page. With a cursor, returns names after that cursor from the latest saved catalogue without contacting the server. Both modes return `503 mcpUnavailable` if the connection is not connected, even if a saved catalogue exists. Disabled connections and STDIO return `409`; STDIO discovery stays on the task machine. |
+| `PATCH /api/integrations/mcp/shares` | any | Retired: `410 {error:"mcpSharingRetired"}` after the human-session checks, for one release |
 | `GET /api/skills?id={id}` | One personal installation ID | `{skill}` with the pinned metadata, including disabled installations. Missing and other owners’ IDs return 404 |
 | `GET /api/skills` | — | `{skills,count,scope:"personal"}`; metadata includes source kind, source revision/path and SHA-256 |
 | `POST /api/skills` | `{source:"owner/repository",slug:"skill-name"}` from a skills.sh search result | `{skill}`; repeated installation returns the existing pinned version |
@@ -137,16 +137,9 @@ Bots and the Coordinator reach a connected store app through two generic tools
 (`lib/app-tools.ts`), not hand-written actions: `list_app_tools` lists the
 toolkit's Composio tools (with `readOnly` from `readOnlyHint`), and
 `call_app_tool` runs one, pinned to its version, in the person's own account.
-Reads run at once. A write follows R-77: an explicit setting in the
-workspace's external-write settings, keyed by the lower-case tool slug or the
-toolkit slug, wins; otherwise the shared
-write judge (`lib/operations/write-judgment.ts`: the Decisions API, given the
-tool's MCP hints and the concrete arguments) decides. A call it judges
-destructive becomes an approval card (`pending_actions.action =
-'app_tool_call'`), and so does a call it cannot judge. Every other write runs directly and leaves a
-`pending_actions` record; an unclear outcome stays `running` and is never
-resent. The hand-written Gmail, Calendar, Notion, Slack and Drive tools are
-unchanged.
+An enabled and authorized connection's tools run directly. Write calls
+leave a `pending_actions` record. An unclear outcome stays `running` and
+must not be resent. See [authorized MCP connections](decisions/2026-11-19-native-mcp-authorization.md).
 
 ## Validation
 

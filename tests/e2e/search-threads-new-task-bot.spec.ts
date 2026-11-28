@@ -71,7 +71,7 @@ test('新建任务 hands the request to the bot picked in 交给哪个 Bot (T4)'
   }
   await page.emulateMedia({ colorScheme: 'light' })
   // The request goes to that bot's own chat, not the Coordinator's.
-  const sent = page.waitForRequest(item => item.method() === 'POST' && !!item.headers()['next-action'] && item.postData()?.includes(request) === true)
+  const sent = page.waitForRequest(item => item.method() === 'POST' && item.headers()['x-mikka-rpc'] === '1' && item.postData()?.includes(request) === true)
   await dialog.getByRole('button', { name: '创建任务', exact: true }).click()
   const body = (await sent).postData() ?? ''
   expect(body).toContain(botId)

@@ -36,8 +36,16 @@ export interface HostedRuntimeSnapshot {
   harness: string
   model: string | null
   modelSelection?: HostedModelSelection
+  /** Provider-native search proved for this admitted endpoint and model. */
+  nativeWebSearchBackend?: import('./model-gateway/provider-config').NativeWebSearchBackend
   /** The Bot's saved reasoning effort for this turn (bot_model_choices.effort); absent is the model's default. */
   effort?: import('./model-routing').ModelRoutingEffort
+  /** OpenAI Responses reasoning mode, frozen after validating the chosen route. */
+  pro?: true
+  /** OpenAI Trusted Access for Cyber (Daybreak) program frozen after validating the chosen route (#3315). */
+  cyberAccessProgram?: import('./model-capabilities').CyberAccessProgram
+  /** The owner's saved serving speed tier (model_order_settings.defaultServiceTier); absent preserves legacy behavior. */
+  serviceTier?: import('./model-routing').ModelServiceTier
 }
 /** The bot scope a frozen selection belongs to. */
 export const selectionScope = (selection: HostedModelSelection): HostedModelScope => ({

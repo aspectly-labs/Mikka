@@ -8,7 +8,7 @@ import { WORKING_RUN_STATUSES, UNFINISHED_RUN_STATUSES } from './agent-run-statu
 import { LEASED_RUN_STATUSES } from './run-retry'
 import { disposableDatabase } from '../tests/helpers/e2e-target.mjs'
 
-const copy = { pleaseSignIn: 'sign in', unavailable: 'unavailable', noParameters: 'no params' }
+const copy = { pleaseSignIn: 'sign in', unavailable: 'unavailable', noParameters: 'no params', groupNotFound: 'group 404' }
 const url = 'http://local/api/agent/sessions/active'
 const never = async (): Promise<ActiveAgent[]> => { throw new Error('should not be called') }
 
@@ -35,6 +35,25 @@ test('any parameter (conversationId) is 400', async () => {
   const response = await activeAgentsResponse(new Request(`${url}?conversationId=${randomUUID()}`), 'u1', never, copy)
   assert.equal(response.status, 400)
   assert.equal(response.headers.get('Cache-Control'), 'private, no-store')
+})
+
+test('?conversation= without a scope implementation is 400 like any parameter', async () => {
+  const response = await activeAgentsResponse(new Request(`${url}?conversation=${randomUUID()}`), 'u1', never, copy)
+  assert.equal(response.status, 400)
+})
+
+test('?conversation= 404s a non-member and a malformed id, lists for a member', async () => {
+  const group = randomUUID()
+  const scope = {
+    member: async (_userId: string, conversationId: string) => conversationId === group,
+    list: async () => [{ id: 'b1', kind: 'bot' as const, name: 'Scout', avatarUrl: null, startedAt: new Date().toISOString(), state: 'working' as const, runId: null, issueId: null }],
+  }
+  assert.equal((await activeAgentsResponse(new Request(`${url}?conversation=${randomUUID()}`), 'u1', never, copy, scope)).status, 404)
+  assert.equal((await activeAgentsResponse(new Request(`${url}?conversation=not-a-uuid`), 'u1', never, copy, scope)).status, 404)
+  const response = await activeAgentsResponse(new Request(`${url}?conversation=${group}`), 'u1', never, copy, scope)
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).agents[0].id, 'b1')
+  assert.equal((await activeAgentsResponse(new Request(`${url}?conversation=${group}&extra=1`), 'u1', never, copy, scope)).status, 400)
 })
 
 test('a database error is 503, private no-store', async () => {
@@ -258,5 +277,60 @@ dbTest('active agents on the database', async t => {
     assert.ok(!(await listActiveAgents(db, me, now, workspaceId)).some(row => row.kind === 'coordinator'),
       'a personal workspace token cannot see the active Coordinator of another workspace')
     assert.ok(!(await listActiveAgents(db, other, now)).some(x => x.kind === 'coordinator'), 'not shown to others')
+  })
+
+  await t.test('a conversation-scoped read returns only that group\'s members', async () => {
+    const { conversations, conversationMembers, conversationMessages, groupTurns, bots } = schema
+    const group = randomUUID(), stray = randomUUID()
+    const memberBot = randomUUID(), outsideBot = randomUUID(), strayOnlyBot = randomUUID()
+    await db.insert(conversations).values([
+      { id: group, workspaceId, kind: 'group', title: 'group', createdBy: me },
+      { id: stray, workspaceId, kind: 'group', title: 'other', createdBy: me },
+    ])
+    await db.insert(conversationMembers).values([
+      { conversationId: group, memberType: 'user', memberId: me, role: 'owner' },
+      { conversationId: group, memberType: 'agent', memberId: a.id, role: 'member' },
+      { conversationId: group, memberType: 'bot', memberId: memberBot, role: 'member' },
+      { conversationId: group, memberType: 'bot', memberId: strayOnlyBot, role: 'member' },
+      { conversationId: group, memberType: 'agent', memberId: e.id, role: 'member', leftAt: now }, // left members do not count
+      { conversationId: stray, memberType: 'agent', memberId: b.id, role: 'member' },
+    ])
+    await db.insert(bots).values([
+      { id: memberBot, ownerId: me, workspaceId, name: 'MemberBot' },
+      { id: outsideBot, ownerId: me, workspaceId, name: 'OutsideBot' },
+      { id: strayOnlyBot, ownerId: me, workspaceId, name: 'StrayOnlyBot' },
+    ])
+    const [m1, m2, m3] = [randomUUID(), randomUUID(), randomUUID()]
+    await db.insert(conversationMessages).values([
+      { id: m1, conversationId: group, position: 1n, authorType: 'user', authorId: me, body: 'go' },
+      { id: m2, conversationId: stray, position: 1n, authorType: 'user', authorId: me, body: 'go' },
+      { id: m3, conversationId: stray, position: 2n, authorType: 'user', authorId: me, body: 'go' },
+    ])
+    await db.insert(groupTurns).values([
+      { messageId: m1, conversationId: group, userId: me, botId: memberBot, status: 'running', updatedAt: now },
+      { messageId: m2, conversationId: stray, userId: me, botId: outsideBot, status: 'running', updatedAt: now },
+      // a member of `group` whose only live turn runs in `stray` must not light up `group`'s strip
+      { messageId: m3, conversationId: stray, userId: me, botId: strayOnlyBot, status: 'running', updatedAt: now },
+    ])
+    await db.insert(agentRuns).values(run(e.id, 'running', { startedAt: ago(10_000) })) // a departed member with a live run still cannot appear
+    const { isConversationUserMember } = await import('./active-agents')
+    try {
+      assert.equal(await isConversationUserMember(db, group, me), true)
+      assert.equal(await isConversationUserMember(db, group, me, workspaceId), true)
+      assert.equal(await isConversationUserMember(db, group, me, otherWorkspace), false, 'a workspace-scoped token cannot reach another workspace\'s group')
+      assert.equal(await isConversationUserMember(db, group, me, randomUUID()), false)
+      assert.equal(await isConversationUserMember(db, group, other), false)
+      assert.equal(await isConversationUserMember(db, stray, me), false, 'not a member of the other group')
+      const scoped = await listActiveAgents(db, me, now, undefined, group)
+      assert.deepEqual(scoped.map(x => x.id).sort(), [a.id, memberBot].sort(), 'member agent and member bot; other agents/bots excluded')
+      assert.deepEqual(await listActiveAgents(db, me, now, undefined, randomUUID()), [], 'unknown group lists nothing')
+      assert.deepEqual(await listActiveAgents(db, me, now, workspaceId, group), scoped, 'workspace scope still applies')
+    } finally {
+      await db.delete(groupTurns).where(inArray(groupTurns.conversationId, [group, stray]))
+      await db.delete(conversationMessages).where(inArray(conversationMessages.conversationId, [group, stray]))
+      await db.delete(conversationMembers).where(inArray(conversationMembers.conversationId, [group, stray]))
+      await db.delete(conversations).where(inArray(conversations.id, [group, stray]))
+      await db.delete(bots).where(inArray(bots.id, [memberBot, outsideBot, strayOnlyBot]))
+    }
   })
 })

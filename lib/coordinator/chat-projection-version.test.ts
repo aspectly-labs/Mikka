@@ -54,7 +54,7 @@ const unused = () => { throw new Error('unexpected_projection_version_dependency
 mock.module('@/lib/db', { namedExports: { db: database, pool: { query: unused, connect: unused } } })
 // Keep the real chatReader and tenant check; this transport models only this
 // owner's active Personal Workspace, alongside the existing opaque chat rows.
-const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_organization_workspaces\".\"organizationId\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\" = $1 and \"mikka_workspace_members\".\"status\" = $2 and \"mikka_workspaces\".\"id\" = $3 and (\"mikka_workspaces\".\"kind\" = $4 or (\"mikka_workspaces\".\"kind\" = $5 and \"mikka_workspaces\".\"userId\" = $6))) order by \"mikka_workspaces\".\"createdAt\" asc"
+const expectedMembershipSql = "select \"mikka_workspaces\".\"id\", \"mikka_workspaces\".\"kind\", \"mikka_workspaces\".\"twoFactorRequiredAt\" as \"mfa\", \"mikka_organization_workspaces\".\"organizationId\" as \"org\" from \"mikka_workspaces\" inner join \"mikka_workspace_members\" on \"mikka_workspace_members\".\"workspaceId\" = \"mikka_workspaces\".\"id\" left join \"mikka_organization_workspaces\" on \"mikka_organization_workspaces\".\"workspaceId\" = \"mikka_workspaces\".\"id\" where (\"mikka_workspace_members\".\"userId\"=$1 and \"mikka_workspace_members\".\"status\"='active' and \"mikka_workspaces\".\"id\"=$2 and (\"mikka_workspaces\".\"kind\"='team' or (\"mikka_workspaces\".\"kind\"='personal' and \"mikka_workspaces\".\"userId\"=\"mikka_workspace_members\".\"userId\"))) order by \"mikka_workspaces\".\"createdAt\" asc"
 const workspaceDatabase = drizzle(async (query, params) => {
   let actualSql = query
   workspaceReads.push(query)
@@ -65,7 +65,7 @@ const workspaceDatabase = drizzle(async (query, params) => {
       .replaceAll('"' + name + '".', '"' + table + '".')
   }
   assert.equal(actualSql, expectedMembershipSql)
-  assert.deepEqual(params, [owner, 'active', workspaceId, 'team', 'personal', owner])
+  assert.deepEqual(params, [owner, workspaceId])
   return { rows: membershipActive ? [[workspaceId, 'team']] : [] }
 })
 mock.module('@/lib/workspace-db', { namedExports: { workspaceDb: workspaceDatabase, workspacePool: { query: unused, connect: unused } } })
@@ -82,7 +82,7 @@ for (const [path, exports] of [
   ['@/lib/db/listen', { COORDINATOR_LEASE_CHANNEL: 'test-coordinator-lease' }],
   ['./telegram-pending', { markTelegramPending: unused, pendingTelegramTargets: unused }],
   ['./triage', { eventsForInbox: unused, isolateTaskRequest: unused }],
-  ['@/lib/task-identifier-server', { taskIdentifiers: unused }],
+  ['@/lib/task-identifier-server', { taskIdentifiers: unused, syncWorkspaceTaskPrefix: unused, taskIdentifierNamespaceInUse: unused }],
   ['@/lib/artifacts/store', { artifactSummaries: async () => ({}) }],
   ['@/lib/preferences', { readPreferences: unused, readCoordinatorPromptPreferences: unused }],
   ['./triage-batch', { TRIAGE_RETRY_COOLDOWN_MS: 60_000, triageDecisionReceipt: unused }],

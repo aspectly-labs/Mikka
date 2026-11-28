@@ -1,17 +1,59 @@
-# Effective decisions and historical provenance
+# Architecture decision records (`docs/design/decisions/`)
 
-**Current behavior comes from the latest explicit user decision, current `AGENTS.md`, `docs/design/rules.md`, accepted design, and verified implementation.** This directory records *why* a decision was made; its date does not make it active forever.
+**Tier 2 — Immutable historical provenance** under Mikka's [Three-Tier Documentation Architecture](../../engineering/HANDBOOK.md#three-tier-documentation-architecture).
 
-## When instructions disagree
+**Current behavior comes from Tier 1 Living Standards ([`HANDBOOK.md`](../../engineering/HANDBOOK.md), [`AGENTS.md`](../../../AGENTS.md), [`mikka-hosted-ui/docs/design/design-system.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/design-system.md), [`mikka-hosted-ui/docs/design/rules.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md), [`build-source-of-truth.md`](../../operations/build-source-of-truth.md)) and Tier 3 executable CI gates.** This directory records *why* each decision was made at its date; a file's date does not make it active forever.
 
-1. Follow the latest explicit approved decision and update the current product or release rule in the same PR.
-2. Do not use a superseded ADR, `../decisions.md`, dated audit, screenshot gallery or issue comment as the sole present-tense authority.
-3. When a historical record names a successor, read the successor. If history conflicts with current code and the decision is unknown, record the mismatch without silently reverting product behavior.
+## Standard `Status` header convention
 
-## Maintaining the current version
+Every dated ADR (`20*.md`) carries a canonical status line within its first 15 lines, enforced in CI by `scripts/engineering-handbook.test.mjs`:
 
-For new significant decisions, record the durable current rule in `AGENTS.md`, `rules.md`, or the appropriate product/operations reference first. Keep a small dated ADR only when provenance is useful for safety or compatibility.
+- `- **Status:** Accepted` — active decision (may include parenthetical context such as approval date or narrow amendment note).
+- `- **Status:** Superseded by [<successor>](<successor>.md)` — completely replaced by a later ADR; read the linked successor and its owning Tier 1 standard instead.
+- `- **Status:** Superseded in part by [<successor>](<successor>.md)` — specific clauses replaced by a later ADR while unaffected clauses remain valid.
 
-When a superseded note has no remaining active links, tests or release dependencies, remove the tracked snapshot in a reviewed docs-cleanup PR. Git retains prior commit content unless a separately approved history rewrite occurs. **Never delete** live migration ledgers, security evidence, rollback references or paid-library implementation as a way to reduce documentation volume.
+## Immutability and supersession workflow
 
-The older `../decisions.md` is legacy background, not an instruction to recreate old interfaces or release paths. The [One UI decision](2026-11-08-2133-one-ui.md) still defines a single user-facing UI. Current build ownership is at [build source of truth](../../operations/build-source-of-truth.md).
+1. **Preserve historical ADRs:** Never delete dated ADRs from `docs/design/decisions/` and never modify the frozen pre-2026-11-01 log in [`../decisions.md`](../decisions.md). UI-only records (visual, layout, component, copy, paid-block and design-system decisions) moved to the private `mikka-hosted-ui/docs/design/decisions/` on 2026-11-27 (owner decision); new UI-only records go there, and backend, product, architecture and process records stay here.
+2. **Update Tier 1 first:** When Alex approves a new architectural or product decision, update the owning Tier 1 Living Standard (`AGENTS.md`, `HANDBOOK.md`, `mikka-hosted-ui/docs/design/design-system.md`, `mikka-hosted-ui/docs/design/rules.md`, or `build-source-of-truth.md`) in the same pull request.
+3. **Link supersessions both ways:** Create the new `YYYY-MM-DD-HHMM-slug.md` record with `- **Status:** Accepted`, and update the earlier ADR's top `Status:` header to `- **Status:** Superseded by [<new-file>](<new-file>.md)` (or `Superseded in part by`) in the same pull request. When the successor is a UI-only record in the hosted repository, the link is its full URL, `https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/<new-file>.md`.
+4. **Never treat history as present-tense authority:** When a historical ADR conflicts with current Tier 1 standards or verified `main` code, follow the [authority precedence](../../engineering/HANDBOOK.md#authority-precedence) and record or fix the mismatch rather than reverting product behavior.
+
+## Inventory summary
+
+All `219` dated decision records here carry verified `Status:` headers (`157` Accepted, `13` Superseded, `49` Superseded in part). UI-only records are listed in `mikka-hosted-ui/docs/design/decisions/README.md`.
+
+### Key active architectural decisions
+
+| Area | Decision record | Status | Owning Tier 1 standard |
+| --- | --- | --- | --- |
+| **Hosted-UI CI: routed Electron e2e per PR, nightly full suite + DOM layout audit, no pixel comparison** | [2026-11-27-1100-electron-e2e-ci-no-pixel-diff.md](2026-11-27-1100-electron-e2e-ci-no-pixel-diff.md) (supersedes [2026-11-26-0645](2026-11-26-0645-local-ui-visual-verification-no-ci-screenshots.md)) | Accepted | [`HANDBOOK.md`](../../engineering/HANDBOOK.md), `mikka-hosted-ui/AGENTS.md` |
+| **All Web/Desktop UI in `mikka-hosted-ui`** | [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |
+| **Node 24 CI toolchain** | [2026-11-22-1430-ci-node24-only.md](2026-11-22-1430-ci-node24-only.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
+| **Scripted model acceptance (no live inference in CI)** | [2026-11-20-1855-scripted-model-acceptance.md](2026-11-20-1855-scripted-model-acceptance.md) | Accepted | [`docs/acceptance.md`](../../acceptance.md), [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |
+| **Dependency-based SDLC delivery** | [2026-11-20-1640-sdlc-delivery.md](2026-11-20-1640-sdlc-delivery.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
+| **3-step hosted API compatibility** | [2026-11-20-1300-hosted-api-compatibility.md](2026-11-20-1300-hosted-api-compatibility.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |
+| **Mandatory LiteLLM model egress** | [2026-11-20-0530-litellm-only-model-egress.md](2026-11-20-0530-litellm-only-model-egress.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
+| **Environment (not Project), Bot = Captain, create-only tasks** | [2026-11-19-2100-environment-not-project.md](2026-11-19-2100-environment-not-project.md), [2026-11-19-2105-bot-is-captain-no-promote.md](2026-11-19-2105-bot-is-captain-no-promote.md), [2026-11-19-2110-new-task-create-only.md](2026-11-19-2110-new-task-create-only.md) | Accepted | [`docs/design/glossary.md`](../glossary.md) |
+| **One state-mark registry** | [2026-11-19-1630-one-mark-registry.md](2026-11-19-1630-one-mark-registry.md) | Accepted | [`mikka-hosted-ui/docs/design/components.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/components.md) |
+| **Automatic UTC migration IDs** | [2026-11-11-1151-automatic-migration-ids.md](2026-11-11-1151-automatic-migration-ids.md) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md) |
+| **Native MCP configuration & credential delivery** | [2026-11-11-0534-eve-and-native-mcp.md](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
+| **No consent asks: once a person has spoken, the agent acts (workspace screen Block kept)** | [2026-11-27-1720-no-consent-asks.md](2026-11-27-1720-no-consent-asks.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
+| **Personal MCP servers are not shareable; a thread uses its starter's own** | [2026-11-27-1700-personal-mcp-not-shareable.md](2026-11-27-1700-personal-mcp-not-shareable.md) (supersedes in part [2026-11-19](2026-11-19-native-mcp-authorization.md), [2026-11-11-0534](2026-11-11-0534-eve-and-native-mcp.md), [2026-11-20-1852](2026-11-20-1852-mcp-connection-settings.md)) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
+| **Model API keys are a person's or a workspace's; a personal key is never shared** | [2026-11-27-1740-model-keys-personal-or-workspace.md](2026-11-27-1740-model-keys-personal-or-workspace.md) (supersedes in part [2026-10-31-2300](2026-10-31-2300-orchestration-spec.md), [2026-11-01-2240](2026-11-01-2240-own-credentials-always-usable.md), [2026-11-17-1400](2026-11-17-1400-subscriptions-owner-only.md)) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`docs/design/orchestration.md`](../orchestration.md) |
+| **Workspace MCP servers, as Capy's organization servers** | [2026-11-27-1705-workspace-mcp-servers-like-capy.md](2026-11-27-1705-workspace-mcp-servers-like-capy.md) | Accepted | [`docs/operations/cloud-execution-and-secrets.md`](../../operations/cloud-execution-and-secrets.md) |
+| **No batch or integration PRs** | [2026-11-27-1930-no-batch-prs.md](2026-11-27-1930-no-batch-prs.md) (supersedes the batch allowance in [2026-11-20-1640](2026-11-20-1640-sdlc-delivery.md)) | Accepted | [`docs/dev-workflow.md`](../../dev-workflow.md), [`AGENTS.md`](../../../AGENTS.md) |
+| **No permission approvals: agents run with full access** | [2026-11-27-1615-no-permission-approvals.md](2026-11-27-1615-no-permission-approvals.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md), [`mikka-hosted-ui/docs/design/rules.md`](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/rules.md) |
+| **One UI across Cloud & self-hosted** | [2026-11-08-2133-one-ui.md](2026-11-08-2133-one-ui.md) | Accepted | [`docs/operations/build-source-of-truth.md`](../../operations/build-source-of-truth.md) |
+| **Execution boundary vs. task Secret exposure** | [2026-11-06-1800-machine-is-the-execution-boundary.md](2026-11-06-1800-machine-is-the-execution-boundary.md), [2026-11-08-0240-credential-exposure-boundary.md](2026-11-08-0240-credential-exposure-boundary.md) | Accepted | [`AGENTS.md`](../../../AGENTS.md) |
+| **No new polling & keep error causes** | [2026-11-05-0200-no-new-polling.md](2026-11-05-0200-no-new-polling.md), [2026-11-05-0330-error-causes.md](2026-11-05-0330-error-causes.md) | Accepted | [`HANDBOOK.md`](../../engineering/HANDBOOK.md) |
+
+### Key superseded chains
+
+| Retired direction | Superseded ADR(s) | Active successor |
+| --- | --- | --- |
+| **Public `@ui-slot/*` overlay & public UI pages** | [2026-11-06-2000-hosted-ui-overlay.md](2026-11-06-2000-hosted-ui-overlay.md), [2026-11-19-2120-slots-for-paid-surfaces.md](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-19-2120-slots-for-paid-surfaces.md), [2026-11-22-2205-headless-public-engine-and-ui-decoupling.md](2026-11-22-2205-headless-public-engine-and-ui-decoupling.md) (in part) | [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) |
+| **Direct provider egress & optional LiteLLM converter** | [2026-11-15-2000-one-model-gateway.md](2026-11-15-2000-one-model-gateway.md) (in part) | [2026-11-20-0530-litellm-only-model-egress.md](2026-11-20-0530-litellm-only-model-egress.md) |
+| **Per-call connected-app Decision/Allow-Ask-Deny matrix** | [2026-11-01-1330-write-judgment-unavailable-goes-ahead.md](2026-11-01-1330-write-judgment-unavailable-goes-ahead.md), [2026-11-10-1730-workspace-app-permissions.md](2026-11-10-1730-workspace-app-permissions.md) (in part) | [2026-11-19-native-mcp-authorization.md](2026-11-19-native-mcp-authorization.md) |
+| **Node 22 CI matrix verification** | [2026-11-18-0300-node22-everywhere.md](2026-11-18-0300-node22-everywhere.md) (in part) | [2026-11-22-1430-ci-node24-only.md](2026-11-22-1430-ci-node24-only.md) |
+| **Pre-2026-11-01 frozen decision table** | [`../decisions.md`](../decisions.md) (frozen archive) | Tier 1 Living Standards + `20*.md` records above |

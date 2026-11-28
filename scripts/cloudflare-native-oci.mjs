@@ -6,6 +6,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { buildDeploymentId } from '../lib/deployment-id.mjs'
 import { childEnvironment, sourceContext, validateReceipt, withOverlayKey } from './cloudflare-ci.mjs'
+import { legacyPublicName } from '../lib/public-env.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SHA = /^[a-f0-9]{40}$/
@@ -35,22 +36,26 @@ export function buildEnvironment(env, publicSha, privateSha, id) {
   let settings
   try { settings = JSON.parse(env.API_PUBLIC_BUILD_SETTINGS) }
   catch { fail('CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED') }
-  const mandatory = ['NEXT_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'NEXT_PUBLIC_TURNSTILE_SITE_KEY']
-  const names = [...mandatory, 'NEXT_PUBLIC_COMPUTER_ENABLED']
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings) || Object.keys(settings).length !== names.length
-      || names.some(name => typeof settings[name] !== 'string')) fail('CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED')
-  for (const key of mandatory) if (!settings[key] || /[\r\n]/.test(settings[key])) fail('CF_OCI_PUBLIC_BUILD_VALUE_REQUIRED')
-  if (!/^pk_(?:live|test)_/.test(settings.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)) fail('CF_OCI_STRIPE_PUBLIC_KEY_INVALID')
-  if (!['0', '1'].includes(settings.NEXT_PUBLIC_COMPUTER_ENABLED)) fail('CF_OCI_COMPUTER_BUILD_SETTING_INVALID')
+  const mandatory = ['MIKKA_PUBLIC_POSTHOG_KEY', 'MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'MIKKA_PUBLIC_TURNSTILE_SITE_KEY']
+  const names = [...mandatory, 'MIKKA_PUBLIC_COMPUTER_ENABLED']
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings) || Object.keys(settings).length !== names.length) fail('CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED')
+  // Until phase 2 of the rename (lib/public-env.mjs), each setting may still
+  // carry its legacy key in the secret, but never both keys at once.
+  const values = {}
+  for (const name of names) {
+    const keys = [name, legacyPublicName(name)].filter(key => Object.hasOwn(settings, key))
+    if (keys.length !== 1 || typeof settings[keys[0]] !== 'string') fail('CF_OCI_PUBLIC_BUILD_SETTINGS_REQUIRED')
+    values[name] = settings[keys[0]]
+  }
+  for (const key of mandatory) if (!values[key] || /[\r\n]/.test(values[key])) fail('CF_OCI_PUBLIC_BUILD_VALUE_REQUIRED')
+  if (!/^pk_(?:live|test)_/.test(values.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY)) fail('CF_OCI_STRIPE_PUBLIC_KEY_INVALID')
+  if (!['0', '1'].includes(values.MIKKA_PUBLIC_COMPUTER_ENABLED)) fail('CF_OCI_COMPUTER_BUILD_SETTING_INVALID')
   return {
     ...childEnvironment(env, publicSha, privateSha),
     MIKKA_EDITION: 'cloud', MIKKA_DEPLOYMENT_STAGE: 'production', MIKKA_DEPLOYMENT_ENVIRONMENT: 'production',
     MIKKA_BUILD_BYOS_WORKER: '1', NITRO_PRESET: 'node-server',
     MIKKA_UI_OVERLAY_DIR: '.hosted-ui',
-    MIKKA_DEPLOYMENT_ID: id, NEXT_PUBLIC_POSTHOG_KEY: settings.NEXT_PUBLIC_POSTHOG_KEY,
-    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: settings.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-    NEXT_PUBLIC_TURNSTILE_SITE_KEY: settings.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
-    NEXT_PUBLIC_COMPUTER_ENABLED: settings.NEXT_PUBLIC_COMPUTER_ENABLED,
+    MIKKA_DEPLOYMENT_ID: id, ...values,
   }
 }
 
@@ -74,7 +79,6 @@ export function command(bin, args, options = {}) {
 export function buildProduct(work, env) {
   const commands = [
     ['SUBSCRIPTION_WORKER', 'node', ['scripts/build-subscription-worker.mjs']],
-    ['AGENT_UI', 'corepack', ['pnpm', 'generate:agent-ui']],
     ['FRONTEND', 'node', ['apps/frontend/scripts/build.mjs', 'web']],
     ['API', 'node', ['apps/api/scripts/build.mjs']],
   ]
@@ -226,8 +230,8 @@ async function prepare() {
   await withOverlayKey(process.env, env => verifyOverlayMain(join(root,'.hosted-ui'),selected.privateSha,env))
   const env = buildEnvironment(process.env, selected.publicSha, selected.privateSha, selected.id)
   const publicBuildSettings = { publicSha: selected.publicSha, privateSha: selected.privateSha, publication: 'registry-only',
-    NEXT_PUBLIC_POSTHOG_KEY: env.NEXT_PUBLIC_POSTHOG_KEY, NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-    NEXT_PUBLIC_TURNSTILE_SITE_KEY: env.NEXT_PUBLIC_TURNSTILE_SITE_KEY, NEXT_PUBLIC_COMPUTER_ENABLED: env.NEXT_PUBLIC_COMPUTER_ENABLED }
+    MIKKA_PUBLIC_POSTHOG_KEY: env.MIKKA_PUBLIC_POSTHOG_KEY, MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY: env.MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+    MIKKA_PUBLIC_TURNSTILE_SITE_KEY: env.MIKKA_PUBLIC_TURNSTILE_SITE_KEY, MIKKA_PUBLIC_COMPUTER_ENABLED: env.MIKKA_PUBLIC_COMPUTER_ENABLED }
   const publicBuildSettingsSha256 = hash(JSON.stringify(publicBuildSettings))
   const work = root
   buildProduct(work, env)

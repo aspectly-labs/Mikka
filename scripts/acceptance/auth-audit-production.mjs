@@ -15,7 +15,7 @@ const codes = new Set(['target_refused', 'build_changed', 'login_failed', 'ident
   'pat_refusal_failed', 'pat_cleanup_failed', 'session_cleanup_failed', 'acceptance_failed'])
 
 export function auditTarget(env) {
-  check(env.GITHUB_REPOSITORY === 'alexj11324/Mikka' && env.GITHUB_REF === 'refs/heads/main'
+  check(env.GITHUB_REPOSITORY === 'aspectly-labs/Mikka' && env.GITHUB_REF === 'refs/heads/main'
     && env.GITHUB_EVENT_NAME === 'workflow_dispatch' && /^[a-f0-9]{40}$/.test(env.APPLICATION_SHA ?? '')
     && env.GITHUB_SHA === env.APPLICATION_SHA, 'target_refused')
   return env.APPLICATION_SHA
@@ -45,7 +45,8 @@ export async function runAuthAudit({ env = process.env, fetchImpl = fetch } = {}
     const response = await request('/api/integrations/mcp/shares', { method: 'PATCH',
       headers: { 'content-type': 'application/json' }, body: '{}' })
     const body = await response.json()
-    check(response.status === 400 && body?.error === 'invalidPluginInput', 'human_boundary_failed')
+    // The retired share route (decision 2026-11-27-1700) still authenticates a human session, then answers 410.
+    check(response.status === 410 && body?.error === 'mcpSharingRetired', 'human_boundary_failed')
     return { httpStatus: response.status, authenticated: true, noGrantMutation: true }
   }
   try {

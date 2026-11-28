@@ -33,9 +33,6 @@ export interface Assessment {
 
 /** At or above this probability a predicate counts as yes. */
 export const YES = 0.5
-export function levelRank(level: AttentionLevel): number {
-  return ATTENTION_LEVELS.indexOf(level)
-}
 
 /** An earlier matter this notification continues, as the judgment and the Coordinator see it. */
 export interface MatterContext {

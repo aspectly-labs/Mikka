@@ -54,10 +54,10 @@ export function pushRuntimeInputs({ ref, event, cwd = process.cwd() }, hash = ru
 
 const PUBLISH_STEP = 'Make only fully accepted candidates public'
 
-/** The source of the newest run that actually made templates public. The run's
- * head is the workflow source; a dispatch may publish an earlier served commit. */
-export async function lastPublishedSource({ token, fetchImpl = fetch, maxRuns = 200 }) {
-  const options = { token, fetchImpl }
+/** The newest run that actually made templates public, verified from its
+ * immutable attempt-bound release report. */
+export async function lastPublishedRelease({ token, fetchImpl = fetch, maxRuns = 200, now = Date.now }) {
+  const options = { token, fetchImpl, now }
   let seen = 0
   for await (const run of pages(`/actions/workflows/${WORKFLOW.split('/').pop()}/runs?branch=main&status=success`, 'workflow_runs', options)) {
     if (++seen > maxRuns) return null
@@ -70,9 +70,15 @@ export async function lastPublishedSource({ token, fetchImpl = fetch, maxRuns = 
     }
     if (!publications.length) continue
     if (publications.length !== 1) throw Error('runtimeInputs:ambiguousPublication')
-    return publishedSourceFromReport(run, options)
+    return publishedReleaseFromReport(run, options)
   }
   return null
+}
+
+/** The source of the newest run that actually made templates public. The run's
+ * head is the workflow source; a dispatch may publish an earlier served commit. */
+export async function lastPublishedSource(options) {
+  return (await lastPublishedRelease(options))?.sourceCommit ?? null
 }
 
 function publicationRun(run) {
@@ -82,7 +88,7 @@ function publicationRun(run) {
     && ['workflow_dispatch', 'workflow_run'].includes(run.event) && /^[a-f0-9]{40}$/.test(run.head_sha ?? '')
 }
 
-async function publishedSourceFromReport(run, options) {
+async function publishedReleaseFromReport(run, options) {
   const expected = { sourceCommit: run.head_sha, runId: run.id, runAttempt: run.run_attempt,
     repositoryId: Number(publicRepositoryId), repositoryFullName: run.repository.full_name }
   const artifacts = []
@@ -92,8 +98,9 @@ async function publishedSourceFromReport(run, options) {
   if (artifacts.length !== 1) throw Error('runtimeInputs:publicationArtifactRequired')
   // Artifact metadata binds to the workflow head; the verified report binds to
   // the actual published source. Keep the existing bounded/digest-checked reader.
-  const listed = assertArtifactIdentity(expected, run, artifacts[0])
-  const artifact = assertArtifactIdentity(expected, run, await githubRead(`/actions/artifacts/${listed.id}`, options))
+  const now = options.now ?? Date.now
+  const listed = assertArtifactIdentity(expected, run, artifacts[0], now())
+  const artifact = assertArtifactIdentity(expected, run, await githubRead(`/actions/artifacts/${listed.id}`, options), now())
   if (JSON.stringify(artifact) !== JSON.stringify(listed)) throw Error('runtimeInputs:publicationArtifactChanged')
   const bytes = await downloadReleaseReport({ selected: true, artifact }, options)
   let report
@@ -106,7 +113,7 @@ async function publishedSourceFromReport(run, options) {
   if (!publicationRun(latest) || ['id', 'run_attempt', 'head_sha', 'path', 'event'].some(key => latest[key] !== run[key])
     || latest.repository?.id !== run.repository?.id || latest.head_repository?.id !== run.head_repository?.id)
     throw Error('runtimeInputs:publicationAttemptChanged')
-  return report.sourceCommit
+  return { runId: run.id, runAttempt: run.run_attempt, sourceCommit: report.sourceCommit, workerSha: report.workerSha }
 }
 
 async function githubRead(path, { token, fetchImpl }) {

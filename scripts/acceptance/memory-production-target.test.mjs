@@ -10,11 +10,11 @@ import { runMemoryProduction } from './memory-production.mjs'
 import { MEMORY_CASE_STEPS } from './memory-production-cases.mjs'
 
 const SOURCE = 'a'.repeat(40), HEAD = 'b'.repeat(40), PREVIOUS = 'c'.repeat(40)
-const API = 'https://api.github.com/repos/alexj11324/Mikka'
+const API = 'https://api.github.com/repos/aspectly-labs/Mikka'
 const NOW = Date.parse('2026-11-09T22:00:00Z')
-const repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } }
+const repository = { full_name: 'aspectly-labs/Mikka', owner: { login: 'aspectly-labs' } }
 const NONCE = '60000000-0000-4000-8000-000000000001'
-const NOTIFICATION_URL = 'https://github.com/alexj11324/Mikka/issues/1821#issuecomment-1821002'
+const NOTIFICATION_URL = 'https://github.com/aspectly-labs/Mikka/issues/1821#issuecomment-1821002'
 const NOTIFICATION_BODY = 'Normal notification mikka-memory-1821:' + NONCE
 const NOTIFICATION = { provider: 'github', url: NOTIFICATION_URL,
   bodySha256: createHash('sha256').update(NOTIFICATION_BODY).digest('hex') }
@@ -24,7 +24,7 @@ const marker = (patch = {}) => '<!-- mikka-memory-1821 ' + JSON.stringify({ stat
 
 function metadata(options = {}) {
   const calls = [], env = { MIKKA_ACCEPTANCE_TARGET_MODE: CORE_MODE, GITHUB_REPOSITORY: repository.full_name,
-    GITHUB_REPOSITORY_OWNER: 'alexj11324', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_REPOSITORY_OWNER: 'aspectly-labs', GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'workflow_dispatch',
     GITHUB_SHA: SOURCE, GITHUB_RUN_ID: '17', GITHUB_RUN_ATTEMPT: String(options.attempt ?? 1), GH_TOKEN: 'synthetic-metadata-token',
     GITHUB_WORKFLOW_REF: repository.full_name + '/' + CORE_WORKFLOW + '@refs/heads/main' }
   for (const key of ['SMOKE_OWNER_EMAIL', 'SMOKE_OWNER_PASSWORD', 'INFISICAL_CLIENT_SECRET'])

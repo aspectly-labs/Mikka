@@ -369,6 +369,25 @@ export type PullReview = {
   state:
     "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
   submittedAt: string | null;
+  body?: string | null;
+};
+export type PullCommit = {
+  oid: string;
+  shortOid: string;
+  message: string;
+  author: string | null;
+  committedAt: string | null;
+  url: string | null;
+};
+export type PullReviewComment = {
+  id: string;
+  author: string | null;
+  body: string;
+  path: string | null;
+  line: number | null;
+  resolved: boolean;
+  createdAt: string | null;
+  state: string | null;
 };
 export type PullDetail = Omit<PullDirectoryRow, "threads"> & {
   changedFiles: number;
@@ -377,6 +396,9 @@ export type PullDetail = Omit<PullDirectoryRow, "threads"> & {
   /** GitHub stopped listing at the read's cap. */
   moreChecks: boolean;
   reviews: PullReview[];
+  commits?: PullCommit[];
+  commitCount?: number;
+  comments?: PullReviewComment[];
 };
 
 /** The query for one pull request's page and its merge: the same admitted repository as the directory. */
@@ -396,3 +418,33 @@ export type PullMergeResult =
   | { kind: "merged"; mergeCommitSha: string | null }
   | { kind: "needs_confirm"; failing: number }
   | { kind: "refused"; code: string };
+
+export const pullReviewEvents = ["APPROVE", "REQUEST_CHANGES", "COMMENT"] as const;
+export type PullReviewEvent = (typeof pullReviewEvents)[number];
+
+/** Submitting a review on a PR, as the person (app/api/integrations/github/repositories/pulls/review). */
+export const pullReviewInput = z.strictObject({
+  repo: pullPageInput.shape.repo,
+  number: z.number().int().positive().max(9_999_999_999),
+  event: z.enum(pullReviewEvents).default("REQUEST_CHANGES"),
+  body: z.string().trim().max(65_536).default(""),
+  /** Required on APPROVE (and verified whenever supplied) so a review never lands on an unseen push. */
+  expectedHeadSha: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+}).superRefine((value, ctx) => {
+  if (value.event !== "APPROVE" && value.body.length === 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: "Review body is required unless approving.",
+    });
+  }
+  if (value.event === "APPROVE" && !value.expectedHeadSha) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["expectedHeadSha"],
+      message: "Approvals must pin the viewed head commit SHA.",
+    });
+  }
+});
+export type PullReviewInput = z.input<typeof pullReviewInput>;
+export type PullReviewResult = { kind: "submitted"; id: number | null } | { kind: "refused"; code: string };

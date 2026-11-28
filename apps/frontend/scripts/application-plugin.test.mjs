@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import test from 'node:test'
 import postcss from 'postcss'
 import { repository } from './application-plugin.mjs'
-import { compileApplication as compile } from './application-test-build.mjs'
+import { compileApplication as compile, needsOfficialUi, officialUi, uiFixture } from './application-test-build.mjs'
 import { sharedStylePlugins } from './shared-styles.mjs'
 
 let sequence = 0
@@ -56,7 +56,7 @@ test('actual Vite resolution rejects server runtime and unregistered action cons
     // resolution.
     'import { getTranslations } from "@/lib/intl/i18n-server"; export const read = () => getTranslations("Common")',
   ]) await assert.rejects(compile(source), /FRONTEND_SERVER_(?:IMPORT|MODULE)/)
-  await assert.rejects(compile('export { shareCapture } from "@/app/actions/captures"'), /FRONTEND_ACTION_NOT_ALLOWED: captures.shareCapture/)
+  await assert.rejects(compile('export { createIssueForTeam } from "@/app/actions/issues"'), /FRONTEND_ACTION_NOT_ALLOWED: issues.createIssueForTeam/)
 })
 
 test('actual emitted CommonJS and ESM syntax themes retain their conditional export semantics', async () => {
@@ -73,60 +73,113 @@ test('actual emitted CommonJS and ESM syntax themes retain their conditional exp
   }
 })
 
-test('Vite uses the same existing Lightning CSS color space and neutral mixing as hosted CSS', async () => {
-  const filename = resolve(repository, 'app/globals.css')
-  const css = await postcss(sharedStylePlugins(repository)).process(await readFile(filename, 'utf8'), { from: filename })
-  const declarations = new Map()
-  css.root.walkRules(rule => {
-    if (rule.selector !== ':root' && rule.selector !== '.dark') return
-    for (const node of rule.nodes) if (node.type === 'decl') declarations.set(`${rule.selector}/${node.prop}`, node.value)
-  })
-  assert.equal(declarations.get(':root/--sidebar-primary'), 'lab(44.0605% 29.0279 -86.0352)')
-  assert.equal(declarations.get(':root/--sidebar'), 'lab(98.26% 0 0)')
-  assert.equal(declarations.get('.dark/--sidebar-primary'), 'lab(36.9089% 35.0961 -85.6872)')
-  assert.equal(declarations.get('.dark/--sidebar'), 'lab(1.3738% 0 0)')
+test('Vite uses the same existing Lightning CSS color space and neutral mixing as hosted CSS', { skip: needsOfficialUi }, async () => {
+  const globalsFile = resolve(officialUi.dir, 'core/app/globals.css')
+  const tokensFile = resolve(officialUi.dir, 'styles/tokens.css')
+  const globalsCss = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(await readFile(globalsFile, 'utf8'), { from: globalsFile })
+  const tokensCss = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(await readFile(tokensFile, 'utf8'), { from: tokensFile })
+  const light = new Map()
+  const dark = new Map()
+  for (const root of [tokensCss.root, globalsCss.root]) {
+    root.walkRules(rule => {
+      const sels = rule.selectors.map(s => s.trim())
+      const isLight = sels.some(s => s === ':root' || s === ':root:not(.dark)')
+      const isDark = sels.some(s => s === '.dark' || s === ':root.dark' || s === ':root')
+      if (!isLight && !isDark) return
+      for (const node of rule.nodes) {
+        if (node.type !== 'decl') continue
+        if (isLight) light.set(node.prop, node.value)
+        if (isDark) dark.set(node.prop, node.value)
+      }
+    })
+  }
+  const resolveTheme = async (prop, map) => {
+    let val = map.get(prop)
+    for (let hop = 0; hop < 8 && val; hop++) {
+      const m = /^var\((--[\w-]+)\)$/.exec(val.trim())
+      if (!m) break
+      val = map.get(m[1])
+    }
+    assert.ok(val != null, `unresolved ${prop}`)
+    const probe = await postcss(sharedStylePlugins(repository, { overlay: officialUi })).process(`:root { --probe: ${val}; }`, { from: tokensFile })
+    let compiled
+    probe.root.walkDecls('--probe', node => { compiled = node.value })
+    return compiled
+  }
+  assert.equal(await resolveTheme('--sidebar-primary', light), '#0060e2')
+  assert.equal(await resolveTheme('--sidebar', light), '#f2f2f4')
+  assert.equal(await resolveTheme('--sidebar-primary', dark), '#5b9aff')
+  assert.equal(await resolveTheme('--sidebar', dark), '#0e0e10')
   // Cartesian mixing keeps the primary blue on the neutral sidebar ground.
-  assert.match(declarations.get(':root/--sidebar-primary-soft'), /color-mix\(in oklab,\s*var\(--sidebar-primary\)\s*15%,\s*var\(--sidebar\)\)/)
-  assert.match(declarations.get('.dark/--sidebar-primary-soft'), /color-mix\(in oklab,\s*var\(--sidebar-primary\)\s*40%,\s*var\(--sidebar\)\)/)
+  assert.match(await resolveTheme('--sidebar-primary-soft', light), /color-mix\(in oklab,\s*var\(--sidebar-primary\)\s*15%,\s*var\(--sidebar\)\)/)
+  assert.match(await resolveTheme('--sidebar-primary-soft', dark), /color-mix\(in oklab,\s*var\(--sidebar-primary\)\s*40%,\s*var\(--sidebar\)\)/)
 })
 
-test('official Web and Desktop require the registered providers and link their mounted and lazy exports', async t => {
-  const { UI_SLOTS, UI_SLOT_EXPORTS, PUBLIC_CONTRACT_SLOTS } = await import('../../../lib/ui-overlay.mjs')
-  const dir = await mkdtemp(join(repository, '.hosted-test-'))
-  t.after(() => rm(dir, { recursive: true, force: true }))
-  await mkdir(join(dir, 'slots'))
-  async function writeProvider(name) {
-    const exports = UI_SLOT_EXPORTS[name].map(value => `export const ${value} = true`)
-    await writeFile(join(dir, 'slots', name + '.tsx'), exports.join('\n'))
-  }
-  for (const name of UI_SLOTS) await writeProvider(name)
-  const before = { MIKKA_UI_OVERLAY_DIR: process.env.MIKKA_UI_OVERLAY_DIR, MIKKA_UI_OVERLAY_SHA: process.env.MIKKA_UI_OVERLAY_SHA }
-  process.env.MIKKA_UI_OVERLAY_DIR = dir
-  process.env.MIKKA_UI_OVERLAY_SHA = 'a'.repeat(40)
-  t.after(() => {
-    for (const [key, value] of Object.entries(before)) {
-      if (value === undefined) delete process.env[key]
-      else process.env[key] = value
-    }
+test('the application is the checkout\'s core/renderer, every file of it is required, and without a checkout only the headless page builds', async t => {
+  const { OVERLAY_APPLICATION, uiOverlay } = await import('../../../lib/ui-overlay.mjs')
+  const fixture = await uiFixture({
+    'core/renderer/index.tsx': 'globalThis.officialEntry = "official-entry"',
+    'core/renderer/platform.tsx': 'export const platform = "desktop-platform"',
+    'core/renderer/web/platform.tsx': 'export const platform = "web-platform"',
+    'core/renderer/auth-form.tsx': 'export const AuthForm = "desktop-auth-form"',
+    'core/components/auth-form.tsx': 'export const AuthForm = "web-auth-form"',
   })
-  const consumer = 'import * as slot from "@ui-slot/task-detail"; export const detail = slot.TaskDetailFrame ?? "alternate"'
-  await writeFile(join(dir, 'slots/task-detail.tsx'), 'export {}')
-  for (const target of ['web', 'desktop']) await assert.rejects(compile(consumer, target), /MISSING_EXPORT|not exported/)
-  await writeFile(join(dir, 'slots/task-detail.tsx'), 'export const TaskDetailFrame = "official"')
-  for (const target of ['web', 'desktop']) assert.match((await compile(consumer, target)).code, /official/)
+  t.after(fixture.cleanup)
+  const overlay = fixture.overlay()
+  const relDir = relative(repository, fixture.dir).split(sep).join('/')
 
-  const entry = 'import "mikka:frontend-runtime"; export const ready = true'
-  const platformRuntime = ['apps/frontend/src/web/runtime.ts', 'apps/desktop/src/renderer/installed-startup.ts'].map(file => resolve(repository, file))
-  for (const name of PUBLIC_CONTRACT_SLOTS) {
-    await rm(join(dir, 'slots', name + '.tsx'))
-    for (const target of ['web', 'desktop']) {
-      await assert.rejects(compile(entry, target, platformRuntime), { message: 'UI_OVERLAY_SLOT_REQUIRED: ' + name })
-    }
-    await writeProvider(name)
+  const application = 'import "mikka:application"; export const ready = true'
+  for (const target of ['web', 'desktop']) {
+    const { code, inventory } = await compile(application, target, [], overlay)
+    assert.match(code, /official-entry/)
+    assert.ok(inventory.inputs.includes(`${relDir}/core/renderer/index.tsx`))
+    assert.ok(!inventory.inputs.includes('apps/frontend/src/headless.ts'))
+    assert.equal(inventory.headless, undefined)
   }
-  const unusedProvider = join(dir, 'slots/settings-usage.tsx')
-  await writeFile(unusedProvider, 'export type UsagePage = string')
-  for (const target of ['web', 'desktop']) await assert.rejects(compile(entry, target, platformRuntime), /MISSING_EXPORT|not exported/)
-  await writeFile(unusedProvider, 'globalThis.unusedProviderSideEffect = 1; export const UsagePage = "unusedProviderValue"')
-  for (const target of ['web', 'desktop']) assert.doesNotMatch((await compile(entry, target, platformRuntime)).code, /unusedProviderSideEffect|unusedProviderValue/)
+  const platform = 'export { platform } from "mikka:platform"; export { AuthForm } from "@hosted/core/components/auth-form"'
+  assert.match((await compile(platform, 'web', [], overlay)).code, /web-platform[\s\S]*web-auth-form|web-auth-form[\s\S]*web-platform/)
+  assert.match((await compile(platform, 'desktop', [], overlay)).code, /desktop-platform[\s\S]*desktop-auth-form|desktop-auth-form[\s\S]*desktop-platform/)
+  for (const target of ['web', 'desktop']) await assert.rejects(compile('import "@ui-slot/workspace-entry"', target, [], overlay), /UI_SLOT_RETIRED: @ui-slot\/workspace-entry/)
+
+  for (const path of Object.values(OVERLAY_APPLICATION)) {
+    const file = join(fixture.dir, path)
+    const source = await readFile(file, 'utf8')
+    await rm(file)
+    assert.throws(() => uiOverlay(repository, { MIKKA_UI_OVERLAY_DIR: fixture.dir }), { message: `UI_OVERLAY_APPLICATION_REQUIRED: ${path}` })
+    await writeFile(file, source)
+  }
+
+  const headless = { dir: null, application: null }
+  const { code, inventory } = await compile(application, 'web', [], headless)
+  assert.deepEqual(inventory.inputs.filter(path => !path.endsWith('/contract.ts')), ['apps/frontend/src/headless.ts'])
+  assert.equal(inventory.headless, true)
+  assert.doesNotMatch(code, /official-entry/)
+  await assert.rejects(compile('export { platform } from "mikka:platform"', 'web', [], headless), /FRONTEND_PLATFORM_WITHOUT_UI/)
+  await assert.rejects(compile('import "@hosted/core/renderer/app"', 'web', [], headless), /UI_OVERLAY_IMPORT_WITHOUT_OVERLAY/)
+  // A desktop test build without the checkout shows the same page; apps/desktop/scripts/build.mjs refuses a production one.
+  const desktop = await compile(application, 'desktop', [], headless)
+  assert.deepEqual(desktop.inventory.inputs.filter(path => !path.endsWith('/contract.ts')), ['apps/frontend/src/headless.ts'])
+})
+
+test('official builds compile @hosted/web and the desktop feature override', async t => {
+  const fixture = await uiFixture({
+    'web/hooks/use-feature-availability.ts': 'import "posthog-js"; export function useFeatureAvailability() { return "hosted-posthog" }',
+    'web/entry.tsx': 'import { useFeatureAvailability } from "@hosted/web/hooks/use-feature-availability"\n'
+      + 'import { listProjects } from "@/app/actions/projects"\n'
+      + 'export function Workspace() { return { useFeatureAvailability, listProjects } }\n',
+  })
+  t.after(fixture.cleanup)
+  const overlay = fixture.overlay()
+  const relDir = relative(repository, fixture.dir).split(sep).join('/')
+  const consumer = 'export { Workspace } from "@hosted/web/entry"'
+  const external = ['posthog-js', 'react', 'react/jsx-runtime', 'use-intl']
+  const webCompiled = await compile(consumer, 'web', external, overlay)
+  assert.ok(webCompiled.inventory.usedActions.includes('projects.listProjects'))
+  assert.ok(webCompiled.inventory.inputs.includes(`${relDir}/web/entry.tsx`))
+  assert.ok(webCompiled.inventory.inputs.includes(`${relDir}/web/hooks/use-feature-availability.ts`))
+
+  const desktopCompiled = await compile(consumer, 'desktop', external, overlay)
+  assert.ok(desktopCompiled.inventory.inputs.includes('apps/desktop/src/renderer/feature-availability.ts'))
+  assert.ok(!desktopCompiled.inventory.inputs.includes(`${relDir}/web/hooks/use-feature-availability.ts`))
+  assert.doesNotMatch(desktopCompiled.code, /hosted-posthog|posthog-js/)
 })

@@ -10,8 +10,13 @@ name: Desktop release
 # ASC_* names are mapped to the release tools' APPLE_* inputs inside the runner.
 
 on:
-  # A successful Cloudflare gateway observation that serves current main builds
-  # the installer for it; a push only notes what is waiting (docs/operations/web-deploy.md).
+  # Only an automatic pipeline-production promotion that serves current main builds the
+  # installer by itself (an owner gateway-observe or pipeline-promote dispatch never does);
+  # a push only notes what is waiting
+  # (docs/operations/web-deploy.md). While production promotion is manual (private
+  # deploy-pipeline.json autoProduction: false), nothing promotes automatically, so the owner
+  # dispatches this workflow by hand with the manual promotion's pipeline:RUN:ATTEMPT receipt
+  # (docs/operations/build-source-of-truth.md#production-promotion-switch).
   workflow_run:
     workflows: [Cloudflare application deployment]
     types: [completed]
@@ -23,10 +28,6 @@ on:
       - 'apps/frontend/**'
       - 'app/\[locale\]/**'
       - 'app/actions/**'
-      - 'app/fonts/**'
-      - 'app/globals.css'
-      - 'components/**'
-      - 'hooks/**'
       - 'lib/**'
       - 'messages/**'
       - 'i18n/**'
@@ -53,7 +54,7 @@ on:
         type: string
         default: ''
       cloudflare_receipt:
-        description: 'Promoted Web evidence (actions:RUN:ATTEMPT or historical issue 1954 comment ID and body SHA-256)'
+        description: 'Promoted Web evidence (actions:RUN:ATTEMPT, pipeline:RUN:ATTEMPT, or historical issue 1954 comment ID and body SHA-256)'
         type: string
         required: false
       skip_notarization:
@@ -77,7 +78,9 @@ env:
 
 jobs:
   preflight:
-    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274')))
+    # A hand dispatch starts only for a promoter in config/release-promoters.json (actor id, actor and
+    # re-run actor), before the policy token or any other secret is read.
+    if: (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && (github.event_name != 'workflow_dispatch' || (contains(fromJSON('["183887963","158243242"]'), github.actor_id) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.actor) && contains(fromJSON('["alexj11324","devin-ai-integration[bot]"]'), github.triggering_actor)))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Replace stale waits for the same release path. A receiptless push or another
@@ -89,6 +92,7 @@ jobs:
       contents: read
       actions: read
       issues: read
+      id-token: write
     env:
       EXPECTED_UI_OVERLAY_SHA: ${{ inputs.overlay-sha }}
     outputs:
@@ -98,6 +102,8 @@ jobs:
       product: ${{ steps.promoted.outputs.product }}
       release: ${{ steps.promoted.outcome == 'success' }}
       receipt: ${{ github.event.inputs.cloudflare_receipt || steps.trigger.outputs.receipt }}
+      # Public projection of the release policy: promoters and the required Desktop checks.
+      policy: ${{ steps.policy.outputs.policy }}
     steps:
       - name: Require main
         run: |
@@ -111,14 +117,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-      # The Cloudflare deployment workflow promotes production Web after a push.
-      # The installer is built from the commit that promotion serves, once it is
-      # on main, so it never ships ahead of the Web it talks to.
+      # The installer is built from the commit a production promotion serves, once
+      # it is on main, so it never ships ahead of the Web it talks to.
       - name: Leave the installer to the Cloudflare promotion
         if: github.event_name == 'push'
         run: |
-          echo "::notice title=Desktop waits for Cloudflare::This push builds nothing. The installer is built by itself once Cloudflare serves this commit."
-          printf '### No installer from this push\n\nThe installer is built by itself when the Cloudflare gateway observation shows this commit being served (docs/operations/web-deploy.md).\n' >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Desktop waits for a promotion::This push builds nothing. The installer is built after an automatic production promotion serves this commit, or when a promoter dispatches this workflow."
+          printf '### No installer from this push\n\nThe installer is built by itself only after an automatic pipeline-production promotion serves this commit (autoProduction true). While production promotion is manual, a promoter dispatches this workflow with the promotion receipt (docs/operations/build-source-of-truth.md#production-promotion-switch).\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Use a Cloudflare gateway observation whose served commit is on main
         id: trigger
         if: github.event_name == 'workflow_run'
@@ -130,12 +135,84 @@ jobs:
         run: |
           echo "::error title=cloudflare_receipt required::Production Web is promoted by the Cloudflare deployment workflow. Dispatch again with that promotion's cloudflare_receipt."
           exit 1
+      # The release policy (private mikka-cloud deploy-pipeline.json on main): promoters and required checks.
+      # Only a read-only contents token is minted here; signing credentials come after every evidence gate.
+      - name: Select the source App before policy access
+        if: github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'
+        id: source-app
+        env:
+          SOURCE_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER || 'alexj11324' }}
+          ORG_SECRET_PATH: ${{ vars.MIKKA_ORG_GITHUB_SECRET_PATH }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs'
+          const owner = process.env.SOURCE_OWNER
+          if (!['alexj11324', 'aspectly-labs'].includes(owner)) throw Error('CI_SOURCE_APP_OWNER_REQUIRED')
+          const path = owner === 'aspectly-labs' ? process.env.ORG_SECRET_PATH?.trim() : '/github'
+          if (!path || /[\r\n]/.test(path)) throw Error('CI_SOURCE_APP_SECRET_PATH_REQUIRED')
+          appendFileSync(process.env.GITHUB_OUTPUT, `owner=${owner}\nsecret-path=${path}\napp-id=${owner === 'aspectly-labs' ? '5853576' : '4840908'}\n`)
+          JS
+      - name: Read the existing source App id
+        if: github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_ID
+          recursive: false
+          include-imports: false
+      - name: Read the existing source App private key
+        if: github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: ${{ steps.source-app.outputs.secret-path }}
+          secret-name: GITHUB_APP_PRIVATE_KEY
+          recursive: false
+          include-imports: false
+      - name: Verify the selected source App
+        if: github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'
+        env:
+          EXPECTED_SOURCE_APP_ID: ${{ steps.source-app.outputs.app-id }}
+        run: node -e 'if (!process.env.EXPECTED_SOURCE_APP_ID || process.env.GITHUB_APP_ID !== process.env.EXPECTED_SOURCE_APP_ID) throw Error("CI_SOURCE_APP_ID_MISMATCH")'
+      - name: Mint a short-lived read-only release policy token
+        if: github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'
+        id: policy-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ env.GITHUB_APP_ID }}
+          private-key: ${{ env.GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          repositories: mikka-cloud
+          permission-contents: read
+      - name: Remove App credentials before reading the policy
+        if: github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'
+        run: |
+          echo 'GITHUB_APP_ID=' >> "$GITHUB_ENV"
+          echo 'GITHUB_APP_PRIVATE_KEY=' >> "$GITHUB_ENV"
+      - name: Read the reviewed release policy
+        if: github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'
+        id: policy
+        env:
+          MIKKA_OPERATIONS_OWNER: ${{ vars.MIKKA_PRIVATE_GITHUB_OWNER == 'aspectly-labs' && 'aspectly-labs' || 'alexj11324' }}
+          MIKKA_OPERATIONS_READ_TOKEN: ${{ steps.policy-token.outputs.token }}
+        run: node scripts/release/release-policy.mjs read desktop
+      # A dispatch is accepted only from a listed promoter (dispatcher and re-runner) on main's own workflow file.
       - name: Verify the promoted Cloudflare Web before allocating macOS
         id: promoted
         if: github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CLOUDFLARE_RECEIPT: ${{ github.event.inputs.cloudflare_receipt || steps.trigger.outputs.receipt }}
+          MIKKA_RELEASE_POLICY: ${{ steps.policy.outputs.policy }}
         run: node scripts/release/cloudflare-promoted-web.mjs desktop
       - name: Version from workflow run
         id: version
@@ -157,6 +234,7 @@ jobs:
     permissions:
       contents: write
       actions: read
+      checks: read
       issues: read
       id-token: write
     outputs:
@@ -165,7 +243,28 @@ jobs:
       RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
       MIKKA_UI_OVERLAY_SHA: ${{ needs.preflight.outputs.overlay-sha }}
       MIKKA_DESKTOP_SOURCE: ${{ needs.preflight.outputs.product }}
+      MIKKA_RELEASE_POLICY: ${{ needs.preflight.outputs.policy }}
     steps:
+      - name: Stage the trusted release verifier from the workflow revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-verifier-checkout
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/release
+            scripts/cloudflare-source.mjs
+            lib/deployment-id.mjs
+            lib/env/runtime.mjs
+          persist-credentials: false
+      - name: Copy the trusted release verifier outside the build workspace
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-verifier/scripts" "$RUNNER_TEMP/release-verifier/lib/env"
+          cp -R .release-verifier-checkout/scripts/release "$RUNNER_TEMP/release-verifier/scripts/release"
+          cp .release-verifier-checkout/scripts/cloudflare-source.mjs "$RUNNER_TEMP/release-verifier/scripts/cloudflare-source.mjs"
+          cp .release-verifier-checkout/lib/deployment-id.mjs "$RUNNER_TEMP/release-verifier/lib/deployment-id.mjs"
+          cp .release-verifier-checkout/lib/env/runtime.mjs "$RUNNER_TEMP/release-verifier/lib/env/runtime.mjs"
+          rm -rf .release-verifier-checkout
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.preflight.outputs.product }}
@@ -176,7 +275,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CLOUDFLARE_RECEIPT: ${{ needs.preflight.outputs.receipt }}
-        run: node scripts/release/cloudflare-promoted-web.mjs desktop
+        run: node "$RUNNER_TEMP/release-verifier/scripts/release/cloudflare-promoted-web.mjs" desktop
       - name: Validate the selected private UI owner before credential access
         run: |
           node --input-type=module - <<'JS'
@@ -214,12 +313,30 @@ jobs:
       # The installed renderer uses the shared Vite and application dependency
       # graph, including apps/frontend and root UI/CSS build dependencies.
       - run: pnpm install --frozen-lockfile
+      - name: Check the private UI's paid-source list and patch ledger
+        # The overlay's own check runs before it is built in: scripts/paid-sources.mjs, or on a pinned overlay older than
+        # that, its predecessor scripts/paid-overrides.mjs. An overlay with neither has nothing to run (as before).
+        # Paid blocks themselves are edited to match the top-product reference
+        # (mikka-hosted-ui/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md).
+        run: |
+          if [ -f .hosted-ui/scripts/paid-sources.mjs ]; then
+            node .hosted-ui/scripts/paid-sources.mjs
+          elif [ -f .hosted-ui/scripts/paid-overrides.mjs ]; then
+            node .hosted-ui/scripts/paid-overrides.mjs
+          fi
       - name: Install private UI runtime dependencies without license scripts
         run: |
           if ! pnpm --dir .hosted-ui install --ignore-workspace --prod --ignore-scripts --frozen-lockfile > "$RUNNER_TEMP/private-ui-install.log" 2>&1; then
             echo "::error::Private UI dependency installation failed; private diagnostics withheld."
             exit 1
           fi
+      # Evidence for this exact public + hosted pairing, before any signing credential: the desktop
+      # UI API route contract (mandatory, never skipped) plus every Desktop check the policy lists.
+      - name: Run the required release checks for this exact public and hosted pairing
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MIKKA_RELEASE_SOURCE: ${{ needs.preflight.outputs.product }}
+        run: node "$RUNNER_TEMP/release-verifier/scripts/release/release-checks.mjs" run desktop
       - name: Cache electron-builder downloads
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -233,6 +350,34 @@ jobs:
         run: node apps/desktop/scripts/install-electron.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+      # Desktop telemetry uses the web's PostHog project; its ingestion key is
+      # public (apps/desktop/src/main/telemetry.ts). A build without it sends nothing.
+      # No host is read: the project is in PostHog's US region, the build's
+      # default (https://us.i.posthog.com, as the web's DEFAULT_POSTHOG_API_HOST).
+      - name: Read the existing PostHog project ingestion key through OIDC
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: oidc
+          identity-id: 2cf9fa19-b9db-4c08-8ca0-b31859f2cbac
+          oidc-audience: mikka-infisical
+          project-id: 89850d6a-f020-4936-863e-df77380dfe40
+          env-slug: prod
+          secret-path: /vercel
+          secret-name: NEXT_PUBLIC_POSTHOG_KEY
+          include-imports: false
+      - name: Stamp the release version
+        working-directory: apps/desktop
+        run: npm pkg set version="$RELEASE_VERSION"
+      # The renderer compiles the private UI checkout; build it here, before any signing or notarization
+      # credential is in the job's environment, so no code from the checkout can run beside them. Packaging
+      # below uses this output (package:mac:prebuilt) and never rebuilds. The track-owner switch stays unset, so the
+      # checkout's Vite plugin is not even imported (scripts/ci/desktop-release-overlay-guard.test.mjs).
+      - name: Build the desktop app and renderer before any signing credential
+        run: |
+          if ! pnpm --filter @mikka/desktop build > "$RUNNER_TEMP/official-desktop-build.log" 2>&1; then
+            echo "::error::Official desktop build failed; private compiler diagnostics withheld."
+            exit 1
+          fi
       - name: Read existing APPLE_DEVELOPER_ID_P12_BASE64 through OIDC
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d
         with:
@@ -334,13 +479,10 @@ jobs:
           test -n "$xcode" || { echo "::error::No Xcode 26 on this runner; build/icon.icon needs actool 26+"; exit 1; }
           sudo xcode-select -s "$xcode"
           actool --version
-      - name: Stamp the release version
-        working-directory: apps/desktop
-        run: npm pkg set version="$RELEASE_VERSION"
       - name: Package signed macOS app
         run: |
-          if ! pnpm --filter @mikka/desktop package:mac > "$RUNNER_TEMP/official-desktop-build.log" 2>&1; then
-            echo "::error::Official desktop build failed; private compiler diagnostics withheld."
+          if ! pnpm --filter @mikka/desktop package:mac:prebuilt > "$RUNNER_TEMP/official-desktop-package.log" 2>&1; then
+            echo "::error::Official desktop packaging failed; private diagnostics withheld."
             exit 1
           fi
       - name: Audit the packaged app-owned files
@@ -392,7 +534,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CLOUDFLARE_RECEIPT: ${{ needs.preflight.outputs.receipt }}
-        run: node scripts/release/cloudflare-promoted-web.mjs desktop
+        run: node "$RUNNER_TEMP/release-verifier/scripts/release/cloudflare-promoted-web.mjs" desktop
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: desktop-${{ env.RELEASE_VERSION }}

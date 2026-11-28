@@ -1,8 +1,9 @@
 import 'server-only'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth } from '@/lib/auth'
 import { resolveAppOrigin } from '@/lib/auth-config'
 import { withBasePath } from '@/lib/base-path'
+import { runtimeEnv } from '@/lib/env/server'
 import { completeGitHubConnect, exchangeGitHubCode, GITHUB_CALLBACK_PATH, GITHUB_CONNECT_COOKIE, githubConnectUser, unsealGitHubSecret } from './connection'
 import { finishLoopbackIntent, isLoopbackState } from './connect-intent'
 import { pool } from '@/lib/db'
@@ -33,16 +34,16 @@ export async function handleGitHubConnectCallback(request: Request): Promise<Res
   if (isLoopbackState(state)) {
     const code = url.searchParams.get('code')
     const finished = await finishLoopbackIntent(pool, state, code && code.length <= 512 ? code : null, { exchange: exchangeGitHubCode, unseal: unsealGitHubSecret })
-    if (finished) return NextResponse.redirect(finished.returnURL)
+    if (finished) return RouteResponse.redirect(finished.returnURL)
   }
   const starter = githubConnectUser(url.searchParams.get('state'), cookieValue(request, GITHUB_CONNECT_COOKIE))
   if (!starter) return null
   /** Why a link failed, when the callback can tell: cancelled on GitHub, or the Mikka account changed meanwhile. */
   const done = (result: 'connected' | 'link-failed', reason?: 'cancelled' | 'account') => {
-    const destination = new URL(GITHUB_PLUGIN_PATH, resolveAppOrigin(process.env) ?? url.origin)
+    const destination = new URL(GITHUB_PLUGIN_PATH, resolveAppOrigin(runtimeEnv()) ?? url.origin)
     if (result === 'link-failed') destination.searchParams.set('github', 'link-failed')
     if (result === 'link-failed' && reason) destination.searchParams.set('reason', reason)
-    const response = NextResponse.redirect(destination)
+    const response = RouteResponse.redirect(destination)
     response.cookies.set(GITHUB_CONNECT_COOKIE, '', { httpOnly: true, sameSite: 'lax', secure: url.protocol === 'https:', path: GITHUB_CALLBACK_PATH, maxAge: 0 })
     return response
   }

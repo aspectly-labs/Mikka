@@ -20,7 +20,7 @@ export function buildGraph(root = process.cwd(), tasks = defaultTasks) {
   const tree = readTree(root)
   const scripts = JSON.parse(readFileSync(resolve(root, 'package.json'))).scripts
   const db = inventory(tree, scripts)
-  const inventoryPaths = new Set([...Object.keys(tree), ...db.scripts.flatMap(script => scripts[script].split(/\s+/))])
+  const inventoryPaths = new Set([...Object.keys(tree), ...REQUIRED_SUITES.map(({ file }) => file), ...db.scripts.flatMap(script => scripts[script].split(/\s+/))])
   const nodes = {}, dependencies = {}, unresolved = []
   const add = (name, data) => { nodes[name] = { name, type: 'lib', data: { name, ...data } }; dependencies[name] = [] }
   const edge = (source, target) => {
@@ -33,8 +33,7 @@ export function buildGraph(root = process.cwd(), tasks = defaultTasks) {
   function resolveImport(file, spec) {
     let base
     if (spec.startsWith('.')) base = posix.normalize(posix.join(posix.dirname(file), spec))
-    else if (spec.startsWith('@/')) base = (file.startsWith('apps/mobile/') ? 'apps/mobile/' : '') + spec.slice(2)
-    else if (spec.startsWith('@ui-slot/')) base = `components/slots/${spec.slice(9)}`
+    else if (spec.startsWith('@/')) base = spec.slice(2)
     else {
       const pkg = packages.find(p => spec === p.name || spec.startsWith(`${p.name}/`))
       if (!pkg) return [] // External modules are covered by global lockfile inputs.

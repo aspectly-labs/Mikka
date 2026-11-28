@@ -29,7 +29,7 @@ const env = { ...process.env, NODE_OPTIONS: '', NODE_ENV: 'development', CI: '',
   BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'),
   MIKKA_TEST_DEPLOYMENT_SHA: revision, MIKKA_TEST_ENVIRONMENT_FILE: join(directory, 'environment.json'),
   MIKKA_TRACE_EVIDENCE_DIR: directory, MIKKA_MVP_RESOURCE_INDEX: join(directory, 'retained-resources.jsonl'),
-  NEXT_PUBLIC_POSTHOG_KEY: 'phc_trace_fixture_1512', MIKKA_TRACE_SAMPLE_RATE: '1',
+  MIKKA_PUBLIC_POSTHOG_KEY: 'phc_trace_fixture_1512', MIKKA_TRACE_SAMPLE_RATE: '1',
   MIKKA_TRACE_ENDPOINT: 'http://127.0.0.1:3196/i/v1/traces', MIKKA_LITELLM_MASTER_KEY: '',
 }
 async function run(label, args, additions = {}) {

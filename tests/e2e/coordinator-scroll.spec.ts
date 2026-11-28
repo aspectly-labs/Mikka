@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { test, expect, register } from './fixtures'
+import { test, expect, register, parseBrowserRpc } from './fixtures'
 
 // Two messages sent back to back, then both replies. The server answers the
 // chat the way lib/coordinator/store.ts does: a message still in the inbox is
@@ -19,21 +19,21 @@ async function mockChat(page: Page) {
   const state = { items: history, working: false, error: null as string | null, served: 0, welcomes: 0, actionId: null as string | null }
   await page.route('**/*', async route => {
     const request = route.request()
-    const actionId = request.headers()['next-action']
-    if (request.method() !== 'POST' || !actionId) return route.fallback()
-    if (state.actionId && actionId !== state.actionId) {
-      if ((request.postData() ?? '').trim() !== '[]') return route.fallback()
+    const rpc = parseBrowserRpc(request)
+    if (!rpc) return route.fallback()
+    if (state.actionId && rpc.action !== state.actionId) {
+      if (rpc.args.length !== 0) return route.fallback()
       const response = await route.fetch()
       const body = await response.text()
       if (/"queued"\s*:\s*(true|false)/.test(body)) state.welcomes++
       return route.fulfill({ response, body })
     }
-    if (!state.actionId && (request.postData() ?? '').trim() !== '[]') return route.fallback()
+    if (!state.actionId && rpc.args.length !== 0) return route.fallback()
     // A poll names the version it shows; drop it so every poll is a full read to rewrite.
-    const response = await route.fetch({ postData: '[]' })
+    const response = await route.fetch({ postData: JSON.stringify({ ...rpc, args: [] }) })
     const body = await response.text()
     if (!ITEMS.test(body) || !/"working"\s*:/.test(body)) return route.fulfill({ response, body })
-    state.actionId = actionId
+    state.actionId = rpc.action
     state.served++
     return route.fulfill({ response, body: body.replace(ITEMS, `"items":${JSON.stringify(state.items)}`).replace(/"working"\s*:\s*(true|false)/, `"working":${state.working}`).replace(/"error"\s*:\s*(null|"(?:[^"\\]|\\.)*")/, `"error":${JSON.stringify(state.error)}`).replace(/"enabled"\s*:\s*false/, '"enabled":true') })
   })

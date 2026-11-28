@@ -6,8 +6,10 @@ import type { ActionResult } from '@/lib/action-result'
 import { auditRequestContext } from '@/lib/audit/record'
 import { workspaceAction } from '@/lib/workspace-admin/action'
 import { currentWorkspaceActor } from '@/lib/workspace-admin/current'
-import { deleteWorkspaceData, readWorkspaceGeneral, transferWorkspaceOwnership, updateWorkspaceGeneral, workspaceDeletionImpact, workspaceTransferTargets, type UpdateWorkspaceInput, type WorkspaceDeletion, type WorkspaceDeletionImpact, type WorkspaceGeneral, type WorkspaceTransferTarget } from '@/lib/workspace-admin/general'
+import { deleteWorkspaceData, readWorkspaceGeneral, transferWorkspaceOwnership, updateWorkspaceGeneral, workspaceDeletionImpact, workspaceTransferTargets, type WorkspaceDeletion, type WorkspaceDeletionImpact, type WorkspaceGeneral, type WorkspaceTransferTarget } from '@/lib/workspace-admin/general'
+import type { UpdateWorkspaceInput } from '@/lib/workspace-admin/general-input'
 import { archivedBots, removeMember, takeOverBot, type AssetTransfer, type MemberRemoval } from '@/lib/workspace-admin/members'
+import { envExact } from '@/lib/env/server'
 
 const COOKIE = 'mikka-workspace'
 
@@ -68,7 +70,7 @@ async function deleteWorkspaceBody(id: string, confirmName: string): Promise<Act
     const result = await deleteWorkspaceData(actor.userId, id, confirmName)
     const store = await cookies()
     if (result.nextWorkspaceId) {
-      store.set(COOKIE, result.nextWorkspaceId, { httpOnly: true, sameSite: process.env.NODE_ENV === 'development' ? 'none' : 'lax', secure: true, path: '/', maxAge: 31536000 })
+      store.set(COOKIE, result.nextWorkspaceId, { httpOnly: true, sameSite: envExact('NODE_ENV', 'development') ? 'none' : 'lax', secure: true, path: '/', maxAge: 31536000 })
     } else store.delete(COOKIE)
     return result
   })

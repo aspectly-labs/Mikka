@@ -1,6 +1,5 @@
 name: Analytics SSR
-# Runs on pull requests only. After a merge, Vercel's production build of main
-# is the build check; repeating this one on main added nothing.
+# Called by the parent CI after its trusted change selection; it can also run manually.
 on:
   workflow_call:
     inputs:
@@ -55,7 +54,7 @@ jobs:
       DATABASE_URL: postgresql://e2e:e2e-local-only@127.0.0.1:5432/mikka_e2e
       BETTER_AUTH_URL: http://localhost:3186
       BETTER_AUTH_SECRET: synthetic-ssr-regression-secret-not-a-real-credential
-      NEXT_PUBLIC_POSTHOG_KEY: phc_synthetic_ssr_regression
+      MIKKA_PUBLIC_POSTHOG_KEY: phc_synthetic_ssr_regression
       MIGRATE: '0'
     steps:
       - name: Require a successful trusted selection

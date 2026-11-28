@@ -1,22 +1,35 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import { skillMarkdown } from '@mikka/protocol/skill'
+import { runtimeEnv } from '@/lib/env/server'
 import { openSecret, sealSecret, type Sealed } from '@/lib/secrets/crypto'
 import { PluginError, type InstalledSkill, type McpServerView, type PersonalPluginSnapshot, type SkillContent, type createMcpSchema, type updateMcpSchema } from './contracts'
 import type { z } from 'zod'
 import { taskMcpServerSchema, type TaskMcpServer } from '../../packages/protocol/src/task-mcp'
 import type { McpAuthority } from './contracts'
-import { singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
+import type { McpOAuthStore } from './mcp-oauth'
+import { scopedMcpAuthority, singleMcpAuthority, WorkspaceMcpStore } from './workspace-mcp'
+import { nativeMcpName } from './native-mcp'
+import type { WorkspaceMcpServers } from './workspace-servers'
 
 type McpRow = Omit<McpServerView, 'authKind' | 'createdAt'> & {
-  auth_header: string | null; ciphertext: string | null; iv: string | null; key_version: number | null; created_at: Date;
+  auth_header: string | null; ciphertext: string | null; iv: string | null; key_version: number | null; created_at: Date; oauth_enabled: boolean;
 }
-const mcpColumns = 'id,name,url,transport,enabled,revision,auth_header,ciphertext,iv,key_version,created_at'
+const mcpColumns = 'id,name,url,transport,enabled,revision,auth_header,ciphertext,iv,key_version,created_at,oauth_enabled'
 const skillColumns = 'id,name,source,slug,source_kind AS "sourceKind",source_revision AS "sourceRevision",source_path AS "sourcePath",sha256,enabled,created_at AS "createdAt"'
-const mcpView = (row: McpRow): McpServerView => ({ id: row.id, name: row.name, url: row.url, transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: row.transport === 'stdio' ? 'env' : row.auth_header ? 'header' : 'none', createdAt: row.created_at.toISOString() })
+const stdioHeader = (env: Record<string, string> | undefined) => env && Object.keys(env).length > 0 ? '__stdio__' : '__stdio_noenv__'
+const mcpAuthKind = (row: Pick<McpRow, 'transport' | 'auth_header' | 'oauth_enabled'>): McpServerView['authKind'] =>
+  row.oauth_enabled ? 'oauth' : row.transport === 'stdio' ? (row.auth_header === '__stdio_noenv__' ? 'none' : 'env') : row.auth_header ? 'header' : 'none'
+const mcpView = (row: McpRow): McpServerView => ({ id: row.id, name: row.name, url: row.url, transport: row.transport, enabled: row.enabled, revision: row.revision, authKind: mcpAuthKind(row), createdAt: row.created_at.toISOString() })
 const aad = (userId: string, id: string, url: string, header: string) => JSON.stringify(['personal-mcp', userId, id, url, header.toLowerCase()])
+const stdioConfiguration = (row: McpRow, value: string) => taskMcpServerSchema.options[1].parse({ name: nativeMcpName(row.id), transport: 'stdio', ...JSON.parse(value) })
 
 export class PersonalPluginStore {
-  constructor(readonly pool: Pool, readonly env: Record<string, string | undefined> = process.env, readonly membership?: Pick<Pool | PoolClient, 'query'>) {}
+  constructor(readonly pool: Pool, readonly env: Readonly<Record<string, string | undefined>> = runtimeEnv(), readonly membership?: Pick<Pool | PoolClient, 'query'>,
+    private readonly oauth?: Pick<McpOAuthStore, 'accessToken'>, private readonly workspaceServers?: Pick<WorkspaceMcpServers, 'connection'>) {}
+  private async workspaceConnections() {
+    return this.workspaceServers ?? new (await import('./workspace-servers')).WorkspaceMcpServers(this.pool, this.env, this.membership)
+  }
   private async write<T>(userId: string, work: (client: PoolClient) => Promise<T>) {
     const client = await this.pool.connect()
     try {
@@ -32,7 +45,7 @@ export class PersonalPluginStore {
   }
   async createMcp(userId: string, input: z.infer<typeof createMcpSchema>) {
     const id = randomUUID(), url = input.transport === 'stdio' ? '' : input.url
-    const header = input.transport === 'stdio' ? '__stdio__' : input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
+    const header = input.transport === 'stdio' ? stdioHeader(input.env) : input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
     const value = input.transport === 'stdio' ? JSON.stringify({ command: input.command, args: input.args, cwd: input.cwd, env: input.env }) : input.headers ? JSON.stringify(input.headers) : input.auth?.value
     const sealed = value !== undefined ? sealSecret(value, aad(userId, id, url, header!), this.env) : null
     return this.write(userId, async client => {
@@ -50,7 +63,8 @@ export class PersonalPluginStore {
       let sealed: Sealed | null = row.ciphertext ? { ciphertext: row.ciphertext, iv: row.iv!, keyVersion: row.key_version! } : null
       if (row.transport === 'stdio' && input.env !== undefined) {
         const value = JSON.parse(openSecret(sealed!, aad(userId,row.id,row.url,header!),this.env))
-        sealed = sealSecret(JSON.stringify({ ...value, env: input.env }), aad(userId,row.id,row.url,header!),this.env)
+        header = stdioHeader(input.env)
+        sealed = sealSecret(JSON.stringify({ ...value, env: input.env }), aad(userId,row.id,row.url,header),this.env)
       } else if (input.headers !== undefined || input.auth !== undefined) {
         header = input.headers ? '__headers__' : input.auth?.name.toLowerCase() ?? null
         const value = input.headers ? JSON.stringify(input.headers) : input.auth?.value
@@ -60,41 +74,73 @@ export class PersonalPluginStore {
       const enabled = input.enabled ?? row.enabled
       // Keep already-admitted credential-free references valid when disconnect is retried.
       if ((input.auth === null || input.headers === null) && row.auth_header === null
-        && name === row.name && enabled === row.enabled) return mcpView(row)
-      const { rows } = await client.query<McpRow>(`UPDATE personal_mcp_servers SET name=$3,enabled=$4,auth_header=$5,ciphertext=$6,iv=$7,key_version=$8,revision=revision+1 WHERE id=$1 AND user_id=$2 RETURNING ${mcpColumns}`, [row.id, userId, name, enabled, header, sealed?.ciphertext ?? null, sealed?.iv ?? null, sealed?.keyVersion ?? null])
+        && !row.oauth_enabled && name === row.name && enabled === row.enabled) return mcpView(row)
+      const credentialsChanged = input.auth !== undefined || input.headers !== undefined || input.env !== undefined
+      if (input.auth !== undefined || input.headers !== undefined) await client.query('DELETE FROM personal_mcp_oauth WHERE server_id=$1', [row.id])
+      const { rows } = await client.query<McpRow>(`UPDATE personal_mcp_servers SET name=$3,enabled=$4,auth_header=$5,ciphertext=$6,iv=$7,key_version=$8,oauth_enabled=CASE WHEN $9 THEN false ELSE oauth_enabled END,connection_status=CASE WHEN $10 THEN 'needs_connect' ELSE connection_status END,check_failure=CASE WHEN $10 THEN NULL ELSE check_failure END,revision=revision+1 WHERE id=$1 AND user_id=$2 RETURNING ${mcpColumns}`, [row.id, userId, name, enabled, header, sealed?.ciphertext ?? null, sealed?.iv ?? null, sealed?.keyVersion ?? null, input.auth !== undefined || input.headers !== undefined, credentialsChanged])
       return mcpView(rows[0])
     })
   }
   async deleteMcp(userId: string, id: string) {
     if (!(await this.pool.query('DELETE FROM personal_mcp_servers WHERE id=$1 AND user_id=$2', [id, userId])).rowCount) throw new PluginError('mcpNotFound', 404)
   }
+  /** Receipt validation already holds the server lock. Read on that same
+   * executor; no pool checkout or OAuth refresh belongs inside that transaction. */
+  async ownedStdioConfiguration(userId: string, id: string, query: Pick<PoolClient, 'query'>) {
+    const { rows: [row] } = await query.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true AND transport='stdio'`, [id, userId])
+    if (!row) throw new PluginError('mcpUnavailable', 404)
+    const value = openSecret({ ciphertext: row.ciphertext!, iv: row.iv!, keyVersion: row.key_version! }, aad(userId, row.id, row.url, row.auth_header!), this.env)
+    return stdioConfiguration(row, value)
+  }
   /** Called immediately before remote discovery/call. Never returned by an API. */
   async mcpConnection(userId: string, id: string, revision?: number, authority?: McpAuthority) {
+    // The requester's own server, or the workspace's: validation refuses any other person's (decision 2026-11-27-1700).
     const grant = authority ? (await new WorkspaceMcpStore(this.pool, this.membership).validate(userId, singleMcpAuthority(authority, id))).servers[0] : null
-    const ownerId = grant?.ownerId ?? userId
-    const row = (await this.pool.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true`, [id, ownerId])).rows[0]
+    if (grant?.source === 'workspace') {
+      // Validation fixed requester === userId: a "member" server uses this person's account only.
+      const connection = await (await this.workspaceConnections()).connection(userId, authority!.workspaceId!, grant)
+      if (revision !== undefined && connection.revision !== revision) throw new PluginError('mcpUnavailable', 404)
+      return { ...connection, native: undefined }
+    }
+    const row = (await this.pool.query<McpRow>(`SELECT ${mcpColumns} FROM personal_mcp_servers WHERE id=$1 AND user_id=$2 AND enabled=true`, [id, userId])).rows[0]
     if (!row || revision !== undefined && row.revision !== revision) throw new PluginError('mcpUnavailable', 404)
     if (grant && row.revision !== grant.revision) throw new PluginError('mcpUnavailable', 404)
-    const value = row.auth_header ? openSecret({ ciphertext: row.ciphertext!, iv: row.iv!, keyVersion: row.key_version! }, aad(ownerId,row.id,row.url,row.auth_header),this.env) : null
-    const native = row.transport === 'stdio' ? taskMcpServerSchema.parse({ name: `mcp_${row.id.replaceAll('-','')}`, transport: 'stdio', ...JSON.parse(value!) }) : undefined
+    const value = row.auth_header ? openSecret({ ciphertext: row.ciphertext!, iv: row.iv!, keyVersion: row.key_version! }, aad(userId,row.id,row.url,row.auth_header),this.env) : null
+    const native = row.transport === 'stdio' ? stdioConfiguration(row, value!) : undefined
     const headers: Record<string,string> = row.auth_header === '__headers__' ? JSON.parse(value!) : row.auth_header && row.transport !== 'stdio' ? { [row.auth_header]:value! } : {}
-    return { ...mcpView(row), headers, ...(native ? { native } : {}) }
+    if (row.oauth_enabled) {
+      for (const name of Object.keys(headers)) if (name.toLowerCase() === 'authorization') delete headers[name]
+      const oauth = this.oauth ?? new (await import('./mcp-oauth')).McpOAuthStore(this.pool, this.env)
+      headers.Authorization = `Bearer ${await oauth.accessToken(userId, id)}`
+    }
+    const { rows: disabled } = await this.pool.query<{ name: string }>('SELECT tool_name AS name FROM mcp_server_tools WHERE server_id=$1 AND NOT enabled ORDER BY tool_name', [id])
+    const disabledTools = disabled.map(tool => tool.name)
+    return { ...mcpView(row), headers, disabledTools, ...(native ? { native: { ...native, ...(disabledTools.length ? { disabledTools } : {}) } } : {}) }
   }
   /** One admission-time export to the authorized task/eve runtime. No secret enters its snapshot. */
-  async nativeMcpConnections(userId: string, authority: McpAuthority): Promise<TaskMcpServer[]> {
-    const authorized = await new WorkspaceMcpStore(this.pool,this.membership).validate(userId,authority)
-    return Promise.all(authorized.servers.map(async grant => {
+  async nativeMcpConnections(userId: string, authority: McpAuthority, environmentId?: string | null): Promise<TaskMcpServer[]> {
+    return (await this.nativeMcpAssignment(userId, authority, environmentId)).servers
+  }
+
+  /** The tool switches exported here are read before the claim locks them: the claim response
+   * takes them again from `lockNativeMcpAuthority` (`withLockedToolSwitches`). */
+  async nativeMcpAssignment(userId: string, authority: McpAuthority, environmentId?: string | null): Promise<{ authority: McpAuthority; servers: TaskMcpServer[] }> {
+    const store = new WorkspaceMcpStore(this.pool,this.membership)
+    const requested = environmentId === undefined ? authority : { ...authority, environmentId }
+    const authorized = await store.validate(userId,await scopedMcpAuthority(this.pool,requested))
+    const servers = await Promise.all(authorized.servers.map(async grant => {
       const connection = await this.mcpConnection(userId,grant.id,grant.revision,authorized)
-      return connection.native ?? taskMcpServerSchema.parse({ name:`mcp_${grant.id.replaceAll('-','')}`, transport:connection.transport,url:connection.url,headers:connection.headers })
+      return connection.native ?? taskMcpServerSchema.parse({ name:nativeMcpName(grant.id), transport:connection.transport,url:connection.url,headers:connection.headers,...(connection.disabledTools.length ? { disabledTools:connection.disabledTools } : {}) })
     }))
+    return { authority: authorized, servers }
   }
 
   async listSkills(userId: string): Promise<InstalledSkill[]> {
     return (await this.pool.query<InstalledSkill>(`SELECT ${skillColumns} FROM personal_skills WHERE user_id=$1 ORDER BY created_at,id`, [userId])).rows
   }
-  async getSkill(userId: string, id: string): Promise<InstalledSkill> {
-    const { rows: [skill] } = await this.pool.query<InstalledSkill>(
-      `SELECT ${skillColumns} FROM personal_skills WHERE user_id=$1 AND id=$2`, [userId, id],
+  async getSkill(userId: string, id: string): Promise<InstalledSkill & { body: string }> {
+    const { rows: [skill] } = await this.pool.query<InstalledSkill & { body: string }>(
+      `SELECT ${skillColumns},body FROM personal_skills WHERE user_id=$1 AND id=$2`, [userId, id],
     )
     if (!skill) throw new PluginError('skillNotFound', 404)
     return skill
@@ -114,8 +160,54 @@ export class PersonalPluginStore {
     if (!row) throw new PluginError('skillNotFound', 404)
     return row
   }
+  async editSkill(userId: string, id: string, input: { enabled?: boolean; name?: string; instructions?: string }) {
+    return this.write(userId, async client => {
+      const current = (await client.query<InstalledSkill & { body: string }>(
+        `SELECT ${skillColumns},body FROM personal_skills WHERE id=$1 AND user_id=$2 FOR UPDATE`, [id, userId],
+      )).rows[0]
+      if (!current) throw new PluginError('skillNotFound', 404)
+      if ((input.name !== undefined || input.instructions !== undefined) && current.source !== 'local/manual') {
+        throw new PluginError('invalidPluginInput', 400)
+      }
+      const name = input.name ?? current.name
+      const enabled = input.enabled ?? current.enabled
+      let body = current.body
+      let sha256 = current.sha256
+      let sourceRevision = current.sourceRevision
+      if (input.name !== undefined || input.instructions !== undefined) {
+        const frontmatterMatch = /^---\r?\n[\s\S]*?\r?\n---\r?\n*/.exec(current.body)
+        const currentInstructions = frontmatterMatch ? current.body.slice(frontmatterMatch[0].length).trim() : current.body.trim()
+        const instructions = input.instructions ?? currentInstructions
+        body = skillMarkdown({ name, instructions })
+        const otherBytes = (await client.query<{ bytes: number }>(
+          'SELECT COALESCE(sum(octet_length(body)),0)::int AS bytes FROM personal_skills WHERE user_id=$1 AND id<>$2',
+          [userId, id],
+        )).rows[0].bytes
+        if (otherBytes + Buffer.byteLength(body) > 100_000) throw new PluginError('skillLimitReached', 409)
+        sha256 = createHash('sha256').update(body, 'utf8').digest('hex')
+        sourceRevision = sha256
+      }
+      const { rows } = await client.query<InstalledSkill>(
+        `UPDATE personal_skills SET name=$3,enabled=$4,body=$5,sha256=$6,source_revision=$7 WHERE id=$1 AND user_id=$2 RETURNING ${skillColumns}`,
+        [id, userId, name, enabled, body, sha256, sourceRevision],
+      )
+      return rows[0]
+    })
+  }
   async deleteSkill(userId: string, id: string) {
     if (!(await this.pool.query('DELETE FROM personal_skills WHERE id=$1 AND user_id=$2', [id, userId])).rowCount) throw new PluginError('skillNotFound', 404)
+  }
+  /** Resolve the bot's existing runtime environment before freezing connection scope. */
+  async snapshotForBot(userId: string, botId: string | null, workspaceId: string | null, client: Pick<PoolClient, 'query'> = this.pool) {
+    const { rows: [bot] } = botId ? await client.query<{ environmentId: string | null }>('SELECT "environmentId" FROM bots WHERE id=$1 AND "ownerId"=$2 AND "workspaceId"=$3', [botId, userId, workspaceId]) : { rows: [] }
+    let environmentId = bot?.environmentId ?? null
+    if (environmentId) {
+      const membership = this.membership ?? (await import('@/lib/workspace-db')).workspacePool
+      const { rowCount } = await membership.query(`SELECT 1 FROM workspace_environments WHERE id=$1 AND "workspaceId"=$2
+        AND "archivedAt" IS NULL AND scope='workspace'`, [environmentId, workspaceId])
+      if (!rowCount) environmentId = null
+    }
+    return this.snapshot(userId, client, workspaceId, environmentId)
   }
   /**
    * One enabled skill's body, for `read_personal_skill` (ALE-75).
@@ -132,10 +224,10 @@ export class PersonalPluginStore {
       'SELECT id,name,body FROM personal_skills WHERE id=$1 AND user_id=$2 AND enabled=true', [id, userId])).rows[0]
     return row ?? null
   }
-  async snapshot(userId: string, client: Pick<PoolClient, 'query'> = this.pool, workspaceId?: string | null): Promise<PersonalPluginSnapshot> {
-    const mcpAuthority = workspaceId ? await new WorkspaceMcpStore(this.pool, this.membership).freeze(userId, workspaceId, client) : undefined
+  async snapshot(userId: string, client: Pick<PoolClient, 'query'> = this.pool, workspaceId?: string | null, environmentId?: string | null): Promise<PersonalPluginSnapshot> {
+    const mcpAuthority = workspaceId ? await new WorkspaceMcpStore(this.pool, this.membership).freeze(userId, workspaceId, client, environmentId) : undefined
     const servers = mcpAuthority ? mcpAuthority.servers.map(({ id, name, revision }) => ({ id, name, revision }))
-      : (await client.query<PersonalPluginSnapshot['servers'][number]>('SELECT id,name,revision FROM personal_mcp_servers WHERE user_id=$1 AND enabled=true ORDER BY created_at,id', [userId])).rows
+      : (await client.query<PersonalPluginSnapshot['servers'][number]>('SELECT id,name,revision FROM personal_mcp_servers WHERE user_id=$1 AND enabled=true AND NOT EXISTS (SELECT 1 FROM mcp_server_environments b WHERE b.server_id=personal_mcp_servers.id) ORDER BY created_at,id', [userId])).rows
     const skills = (await client.query<PersonalPluginSnapshot['skills'][number]>(`SELECT id,name,source,slug,source_kind AS "sourceKind",source_revision AS "sourceRevision",source_path AS "sourcePath",sha256,body FROM personal_skills WHERE user_id=$1 AND enabled=true ORDER BY created_at,id`, [userId])).rows
     const accounts = (await client.query<{ toolkit: string }>('SELECT DISTINCT toolkit FROM composio_accounts WHERE "userId"=$1 AND toolkit=\'googledrive\'', [userId])).rows
     return { servers, skills, toolkits: accounts.map(row => row.toolkit), ...(mcpAuthority ? { mcpAuthority } : {}) }

@@ -5,8 +5,9 @@ import { compactToolCallMetadata, compactToolResultMetadata } from './tool-metad
 import type { ChatToolMetadataPart } from './chat-tool-metadata'
 import { INVALID_TOOL_ERROR_PATTERN } from './invalid-tool-call'
 
-/** Characters of a tool's input or output a chat summary keeps. */
-export const TOOL_PREVIEW_CHARS = 200
+/** Characters of a tool's input or output a chat summary keeps (one constant with the client's cut mark). */
+export { TOOL_PREVIEW_CHARS } from './tool-metadata'
+import { TOOL_PREVIEW_CHARS } from './tool-metadata'
 
 /** Tool results whose `{ runId }` the chat reads to show the dispatched thread (context.ts `dispatchedRun`). */
 const DISPATCH_TOOLS = ['dispatch_run', 'dispatch_bot_computer'] as const

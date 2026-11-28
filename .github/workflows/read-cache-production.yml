@@ -7,7 +7,6 @@ on:
       - '.github/workflows/read-cache-production.yml'
       - 'scripts/acceptance/read-cache*.mjs'
       - 'scripts/acceptance/production-readiness.mjs'
-      - 'scripts/acceptance/workflow-migration-production*.mjs'
   workflow_dispatch:
     inputs:
       application_sha:
@@ -37,13 +36,13 @@ jobs:
       - uses: ./.github/actions/pnpm-install
         with:
           ffmpeg-github-token: ${{ github.token }}
-      - run: node --import tsx --test scripts/acceptance/read-cache.test.mjs scripts/acceptance/read-cache-production.test.mjs scripts/acceptance/workflow-migration-production.test.mjs
+      - run: node --import tsx --test scripts/acceptance/read-cache.test.mjs scripts/acceptance/read-cache-production.test.mjs
 
   acceptance:
     name: Read cache production reads
     needs: guards
     if: >-
-      github.repository == 'alexj11324/Mikka' && github.ref == 'refs/heads/main' &&
+      (github.repository_id == '1427517699' && ((github.repository == 'alexj11324/Mikka' && github.repository_owner_id == '183887963') || (github.repository == 'aspectly-labs/Mikka' && github.repository_owner_id == '359279274'))) && github.ref == 'refs/heads/main' &&
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     timeout-minutes: 15

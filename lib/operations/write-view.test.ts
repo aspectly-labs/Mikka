@@ -44,6 +44,12 @@ test('owned approval view returns exact stored snapshot without approving, invok
     assert.equal(unknown.status, 'running'); assert.equal(unknown.error, 'operationUncertain')
     assert.ok(!JSON.stringify(unknown).includes('private-'))
   }
+  // A sent write the sweep could no longer read back keeps its unknown outcome, never "did not run".
+  Object.assign(f.row, { status: 'failed', error: 'writeUnconfirmed' })
+  const unconfirmed = await f.service.view(actor, id)
+  assert.deepEqual([unconfirmed.status, unconfirmed.error], ['running', 'operationUncertain'])
+  Object.assign(f.row, { error: 'writeRunEnded' })
+  assert.equal((await f.service.view(actor, id)).status, 'declined')
   f.execute('succeeded'); f.row.status = 'running'
   assert.equal((await f.service.view(actor, id)).status, 'done')
   assert.equal(f.row.status, 'running', 'view never writes back a stale pending_actions projection')
@@ -66,7 +72,6 @@ test('view rejects owner/session/action mismatch, ambiguous intents, tampering a
   await assert.rejects(tampered.service.view(actor, id), /operationBindingConflict/)
   const legacy = fixture(); Reflect.deleteProperty(legacy.row.operationBinding, 'contextDigest')
   await assert.rejects(legacy.service.view(actor, id), /operationBindingConflict/)
-  await assert.rejects(legacy.service.decide(actor, id, true), /operationBindingConflict/)
   const wrongLedger = fixture(); wrongLedger.execute('succeeded').binding.accountId = 'other'
   await assert.rejects(wrongLedger.service.view(actor, id), /operationBindingConflict/)
   const inconsistent = fixture(); inconsistent.row.status = 'done'

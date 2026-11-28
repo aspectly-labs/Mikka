@@ -55,9 +55,16 @@ mock.module(new URL('../agent-kit/service.ts', import.meta.url).href, { namedExp
     return { definition, effectiveTools: [...definition.tools] }
   } },
 } })
+let searchBackend: 'openai' | undefined
+mock.module(new URL('../model-api-key-chat.ts', import.meta.url).href, { namedExports: {
+  apiKeyNativeSearchBackend: async () => searchBackend,
+} })
+mock.module(new URL('../subscription-runtime.ts', import.meta.url).href, { namedExports: {
+  subscriptionRuntime: () => ({ modelSearchBackend: async () => undefined }),
+} })
 mock.module(new URL('../plugins/runtime.ts', import.meta.url).href, { namedExports: {
   personalPlugins: {
-    async snapshot() { pluginReads++; return plugins() },
+    async snapshotForBot() { pluginReads++; return plugins() },
     async mcpConnection() { return { transport: 'http', name: 'Fixture MCP', url: 'https://fixture.invalid/mcp', headers: {} } },
   },
 } })
@@ -69,6 +76,14 @@ mock.module(new URL('../coordinator/product-instructions.ts', import.meta.url).h
   },
 } })
 mock.module(new URL('../coordinator/instructions.ts', import.meta.url).href, { namedExports: { COORDINATOR_INSTRUCTIONS: 'Host policy' } })
+mock.module(new URL('../coordinator/workspace-instructions.ts', import.meta.url).href, { namedExports: {
+  async readWorkspaceInstructionsForBot(ownerId: string, botId: string) {
+    assert.deepEqual(principal, { ...scope, surface: 'slack' })
+    assert.equal(ownerId, scope.ownerId)
+    assert.equal(botId, scope.botId)
+    return 'Use the workspace handoff format.'
+  },
+} })
 mock.module(new URL('../db/index.ts', import.meta.url).href, { namedExports: { pool: {
   async query(sql: string) {
     sourceReads++
@@ -224,10 +239,34 @@ test('delegated scheduled work keeps its original read-only occurrence without r
   })
 })
 
+test('delegated turns use native search only within their public web grant and interactive scope', async () => {
+  runtime = { harness: 'ai_sdk', model: 'fixture-model', modelSelection: {
+    type: 'api_key', ownerId: scope.ownerId, workspaceId: scope.workspaceId, keyId: serverId, modelId: 'fixture-model',
+  } }
+  searchBackend = 'openai'
+  try {
+    await contextStorage.run(new ContextContainer(), async () => {
+      const child = context({ parent: true })
+      await started({ data: { turnId: 'turn_1' } }, child)
+      assert.equal(turnModel.get()?.nativeWebSearchBackend, 'openai')
+
+      scheduled = true
+      await started({ data: { turnId: 'turn_2' } }, context({ parent: true, turnId: 'turn_2' }))
+      assert.equal(turnModel.get()?.nativeWebSearchBackend, undefined)
+
+      scheduled = false
+      definition = { ...definition, tools: ['list_issues'] }
+      await started({ data: { turnId: 'turn_3' } }, context({ parent: true, turnId: 'turn_3' }))
+      assert.equal(turnModel.get()?.nativeWebSearchBackend, undefined)
+    })
+  } finally { searchBackend = undefined }
+})
+
 test('Slack instructions skip private web memory, profile and Factory composition', async () => {
   await contextStorage.run(new ContextContainer(), async () => {
     const instructions = await instructionsForSession(context({ surface: 'slack' }))
     assert.match(instructions, /^Host policy\nUse only this Slack conversation/)
+    assert.match(instructions, /<workspace_instructions>\nUse the workspace handoff format\.\n<\/workspace_instructions>/)
     assert.equal(instructionCalls.length + rpcCalls.length, 0)
   })
 })
@@ -242,5 +281,48 @@ test('evaluation hooks and definitions leave business model and private capabili
     assert.equal(await readConnections(ctx), null)
     assert.equal(await readSkills(ctx), null)
     assert.equal(modelReads + policyReads + pluginReads + sourceReads + scheduleReads, 0)
+  })
+})
+
+test('explicit standard serviceTier omits Codex priority while fast and ultrafast forward exact policies', async () => {
+  const selection = { type: 'subscription' as const, bindingId: serverId, ownerId: 'subscription-owner', consumerId: scope.botId,
+    workspaceId: scope.workspaceId, connectionId: serverId, connectionRevision: 7, modelId: 'shared-model', route: 'codex_cpa' as const }
+  await contextStorage.run(new ContextContainer(), async () => {
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'standard' }
+    await started({ data: { turnId: 'turn_std' } }, context({ turnId: 'turn_std' }))
+    await modelForSession(context({ turnId: 'turn_std' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: undefined })
+
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'ultrafast' }
+    await started({ data: { turnId: 'turn_ultra' } }, context({ turnId: 'turn_ultra' }))
+    await modelForSession(context({ turnId: 'turn_ultra' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexServiceTier: 'ultrafast', apiKeyServiceTier: 'ultrafast' } })
+
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'fast' }
+    await started({ data: { turnId: 'turn_fast' } }, context({ turnId: 'turn_fast' }))
+    await modelForSession(context({ turnId: 'turn_fast' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexServiceTier: 'priority', claudeSpeed: 'fast', apiKeyServiceTier: 'fast' } })
+
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'standard', cyberAccessProgram: 'daybreak_blue' }
+    await started({ data: { turnId: 'turn_daybreak_std' } }, context({ turnId: 'turn_daybreak_std' }))
+    await modelForSession(context({ turnId: 'turn_daybreak_std' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexCyberAccessProgram: 'daybreak_blue' } })
+
+    runtime = { harness: 'ai_sdk', model: 'shared-model', modelSelection: selection, serviceTier: 'fast', cyberAccessProgram: 'daybreak_red' }
+    await started({ data: { turnId: 'turn_daybreak_fast' } }, context({ turnId: 'turn_daybreak_fast' }))
+    await modelForSession(context({ turnId: 'turn_daybreak_fast' }))
+    assert.deepEqual(modelCalls.at(-1), { selection, requestPolicy: { codexServiceTier: 'priority', claudeSpeed: 'fast', apiKeyServiceTier: 'fast', codexCyberAccessProgram: 'daybreak_red' } })
+
+    const apiKeySelection = { type: 'api_key' as const, ownerId: 'owner', workspaceId: scope.workspaceId, keyId: serverId, modelId: 'gpt-6-cyber' }
+    runtime = { harness: 'ai_sdk', model: 'gpt-6-cyber', modelSelection: apiKeySelection, pro: true, cyberAccessProgram: 'daybreak_red' }
+    searchBackend = 'openai'
+    try {
+      await started({ data: { turnId: 'turn_daybreak_pro' } }, context({ turnId: 'turn_daybreak_pro' }))
+      const model = await modelForSession(context({ turnId: 'turn_daybreak_pro' }))
+      assert.equal(model && typeof model === 'object' && Reflect.get(model, 'nativeWebSearchBackend'), 'openai')
+    } finally {
+      searchBackend = undefined
+    }
+    assert.deepEqual(modelCalls.at(-1), { selection: apiKeySelection, requestPolicy: { apiKeyPro: true, apiKeyCyberAccessProgram: 'daybreak_red' } })
   })
 })

@@ -1,7 +1,7 @@
 # 密码箱（Secured Login）：调研与交接给 Codex
 
 日期 2026-10-27。对象：负责救 #313 的 Codex。范围：网页分身的登录与密码保存（#180）。
-设计来源：`rules.md` R-72、`cloud-computer-backend.md` § 2「Login」、`decisions.md`
+设计来源：`mikka-hosted-ui/docs/design/rules.md` R-72、`cloud-computer-backend.md` § 2「Login」、`decisions.md`
 2026-10-27 各行；Figma `zPe5LKycb2XuT1ivCLRw07` 页「建议卡片 · 点一下就开始（v2）」
 帧 E `332:5816`、过渡 `342:6595`、F `342:6337`、G `332:6066`，组件 Mobile/LoginCard
 `340:6372`。

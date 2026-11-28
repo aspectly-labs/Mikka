@@ -1,6 +1,7 @@
 # The official builds lay a private BoardUI layer over the open-source UI
 
 - Date: 2026-11-06
+- **Status:** Superseded by [2026-11-24-1000-all-ui-in-hosted.md](2026-11-24-1000-all-ui-in-hosted.md) (via [2026-11-08-2133](2026-11-08-2133-one-ui.md) and [2026-11-22-2205](2026-11-22-2205-headless-public-engine-and-ui-decoupling.md); `@ui-slot/*` retired)
 - Source: Alex, 2026-11-06, relayed by the coordinator and in issue #1527: the hosted product (the official web app and the official desktop installers) moves to the paid BoardUI interface, 「我要的就是他们的 UI」, bot avatars included (BoardUI's paper `agent-avatar`). The open-source repository's interface stays as it is.
 - Rule: —
 - Replaces: —

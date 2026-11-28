@@ -1,6 +1,7 @@
 # 资料库 can delete the person's own files
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「自己上传的文件，在资料库里可以删除」
   ("资料库里删不掉自己的文件").
 - Rule: R-51 (adds 删除 to 资料库)

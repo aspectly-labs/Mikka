@@ -1,8 +1,9 @@
 import 'server-only'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
+import { runtimeEnv } from '@/lib/env/server'
 import { secretsKey } from '@/lib/secrets/crypto'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 import { GitHubAppSetupError, validateGitHubAppCredentials, type GitHubAppCredentials, type GitHubAppQuery } from './app-config'
 
 export const GITHUB_MANIFEST_COOKIE = 'mikka-github-app-manifest'
@@ -52,7 +53,7 @@ export function githubManifestStateMatches(state: string | null, cookie: string 
 }
 
 export async function startGitHubAppManifest(query: GitHubAppQuery, { userId, sessionId, origin }: { userId: string; sessionId: string; origin: string },
-  { now = Date.now(), env = process.env }: { now?: number; env?: Readonly<Record<string, string | undefined>> } = {}) {
+  { now = Date.now(), env = runtimeEnv() }: { now?: number; env?: Readonly<Record<string, string | undefined>> } = {}) {
   // Stop before taking the person to GitHub if this server cannot retain the returned credentials.
   try { secretsKey(env) } catch (error) { throw new GitHubAppSetupError('encryption', 503, error) }
   const state = `ghm_${randomBytes(32).toString('base64url')}`

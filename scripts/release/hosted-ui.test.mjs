@@ -1,10 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, writeFile, readFile, rm, stat, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { recordOverlay, productionOverlay, assertNoSourceMaps, desktopOverlayEvidence } from './hosted-ui.mjs'
 const require = createRequire(import.meta.url)
 const yaml = require('js-yaml')
@@ -67,10 +68,12 @@ test('official jobs keep private code out of public artifacts and pin desktop to
     assert.ok(!job.steps.some(step => /web-deploy\.mjs|hosted-ui\.mjs production/.test(step.run ?? '')))
     assert.equal(job.permissions.issues, 'read')
   }
-  const proof = 'node scripts/release/cloudflare-promoted-web.mjs desktop'
-  const approved = job => job.steps.filter(step => step.run === proof)
-  assert.equal(approved(desktop.jobs.preflight).length, 1)
-  assert.equal(approved(desktop.jobs.macos).length, 2)
+  const preflightProof = 'node scripts/release/cloudflare-promoted-web.mjs desktop'
+  const macosProof = 'node "$RUNNER_TEMP/release-verifier/scripts/release/cloudflare-promoted-web.mjs" desktop'
+  const approvedPreflight = desktop.jobs.preflight.steps.filter(step => step.run === preflightProof)
+  const approvedMacos = desktop.jobs.macos.steps.filter(step => step.run === macosProof)
+  assert.equal(approvedPreflight.length, 1)
+  assert.equal(approvedMacos.length, 2)
   const { preflight, macos } = desktop.jobs
   // A push builds nothing. A dispatch's receipt, or the receipt of the Cloudflare gateway observation
   // that started this run, is verified in preflight, and only that unlocks macOS.
@@ -79,11 +82,11 @@ test('official jobs keep private code out of public artifacts and pin desktop to
   const trigger = preflight.steps.find(step => step.id === 'trigger')
   assert.equal(trigger.if, "github.event_name == 'workflow_run'")
   assert.equal(trigger.run, 'node scripts/release/cloudflare-promoted-web.mjs trigger desktop')
-  assert.equal(approved(preflight)[0].env.CLOUDFLARE_RECEIPT, '${{ github.event.inputs.cloudflare_receipt || steps.trigger.outputs.receipt }}')
-  assert.equal(approved(preflight)[0].if, "github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'")
-  assert.ok(preflight.steps.indexOf(trigger) < preflight.steps.indexOf(approved(preflight)[0]))
+  assert.equal(approvedPreflight[0].env.CLOUDFLARE_RECEIPT, '${{ github.event.inputs.cloudflare_receipt || steps.trigger.outputs.receipt }}')
+  assert.equal(approvedPreflight[0].if, "github.event_name == 'workflow_dispatch' || steps.trigger.outputs.ready == 'true'")
+  assert.ok(preflight.steps.indexOf(trigger) < preflight.steps.indexOf(approvedPreflight[0]))
   assert.equal(preflight.outputs.receipt, '${{ github.event.inputs.cloudflare_receipt || steps.trigger.outputs.receipt }}')
-  for (const step of approved(macos)) {
+  for (const step of approvedMacos) {
     assert.equal(step.if, undefined)
     assert.equal(step.env.CLOUDFLARE_RECEIPT, '${{ needs.preflight.outputs.receipt }}')
   }
@@ -92,14 +95,25 @@ test('official jobs keep private code out of public artifacts and pin desktop to
   const missing = preflight.steps.find(step => step.name === 'Require the Cloudflare promotion receipt')
   assert.equal(missing.if, "github.event_name == 'workflow_dispatch' && github.event.inputs.cloudflare_receipt == ''")
   assert.match(missing.run, /exit 1/)
-  assert.ok(preflight.steps.indexOf(missing) < preflight.steps.indexOf(approved(preflight)[0]))
+  assert.ok(preflight.steps.indexOf(missing) < preflight.steps.indexOf(approvedPreflight[0]))
   assert.equal(preflight.outputs['overlay-sha'], '${{ steps.promoted.outputs.overlay-sha }}')
   assert.equal(preflight.env.EXPECTED_UI_OVERLAY_SHA, '${{ inputs.overlay-sha }}')
   assert.equal(macos.env.MIKKA_UI_OVERLAY_SHA, '${{ needs.preflight.outputs.overlay-sha }}')
   const signing = macos.steps
-  assert.ok(signing.findIndex(step => step.run?.includes('evidence.mjs verify')) < signing.indexOf(approved(macos)[1]))
-  assert.ok(signing.indexOf(approved(desktop.jobs.macos)[0]) < signing.findIndex(step => step.uses?.startsWith('Infisical/')))
-  assert.equal(signing.indexOf(approved(desktop.jobs.macos)[1]) + 1, signing.findIndex(step => step.uses?.startsWith('softprops/')))
+  const stageVerifier = signing.find(step => step.name === 'Stage the trusted release verifier from the workflow revision')
+  const copyVerifier = signing.find(step => step.name === 'Copy the trusted release verifier outside the build workspace')
+  const productCheckout = signing.find(step => step.uses?.startsWith('actions/checkout@') && step.with?.ref === '${{ needs.preflight.outputs.product }}')
+  assert.equal(stageVerifier?.with?.ref, '${{ github.sha }}')
+  assert.equal(stageVerifier?.with?.path, '.release-verifier-checkout')
+  assert.equal(stageVerifier?.with?.['persist-credentials'], false)
+  assert.equal(productCheckout?.with?.path, undefined)
+  assert.ok(copyVerifier && productCheckout)
+  assert.ok(signing.indexOf(stageVerifier) < signing.indexOf(copyVerifier))
+  assert.ok(signing.indexOf(copyVerifier) < signing.indexOf(productCheckout))
+  assert.ok(signing.indexOf(productCheckout) < signing.indexOf(approvedMacos[0]))
+  assert.ok(signing.findIndex(step => step.run?.includes('evidence.mjs verify')) < signing.indexOf(approvedMacos[1]))
+  assert.ok(signing.indexOf(approvedMacos[0]) < signing.findIndex(step => step.uses?.startsWith('Infisical/')))
+  assert.equal(signing.indexOf(approvedMacos[1]) + 1, signing.findIndex(step => step.uses?.startsWith('softprops/')))
   assert.ok(signing.some(step => step.run?.includes('evidence.mjs verify')))
   const checkout = desktop.jobs.macos.steps.find(step => step.with?.path === '.hosted-ui')
   assert.equal(checkout.with.ref, '${{ needs.preflight.outputs.overlay-sha }}')
@@ -107,24 +121,45 @@ test('official jobs keep private code out of public artifacts and pin desktop to
   assert.equal(checkout.with['ssh-key'], '${{ env.HOSTED_UI_READ_KEY }}')
   assert.equal(checkout.with.token, undefined)
   assert.ok(desktop.jobs.macos.steps.some(step => step.run?.includes('audit "$RUNNER_TEMP/official-packaged-app"')))
+  // Verify the sparse-checked-out verifier tree imports cleanly outside the repo workspace.
+  const isolated = await mkdtemp(join(tmpdir(), 'release-verifier-'))
+  try {
+    const repoRoot = fileURLToPath(new URL('../../', import.meta.url))
+    const workspace = join(isolated, 'workspace')
+    const checkoutDir = join(workspace, stageVerifier.with.path)
+    for (const rel of stageVerifier.with['sparse-checkout'].split('\n').map(line => line.trim()).filter(Boolean)) {
+      const target = join(checkoutDir, rel)
+      await mkdir(dirname(target), { recursive: true })
+      await cp(join(repoRoot, rel), target, { recursive: true })
+    }
+    execFileSync('bash', ['-e', '-c', copyVerifier.run], { cwd: workspace, env: { ...process.env, RUNNER_TEMP: isolated }, stdio: 'pipe' })
+    await assert.rejects(stat(checkoutDir))
+    execFileSync(process.execPath, ['--input-type=module', '-e', `import { verifyDesktopPromotedWeb } from ${JSON.stringify(join(isolated, 'release-verifier/scripts/release/cloudflare-promoted-web.mjs'))}; if (typeof verifyDesktopPromotedWeb !== 'function') throw Error('missing')`], { cwd: isolated, stdio: 'pipe' })
+  } finally {
+    await rm(isolated, { force: true, recursive: true })
+  }
 })
+
 test('native release admission requires a coherent official identity before credentials or paid work', async () => {
-  for (const [file, job] of [['desktop-release', 'preflight'], ['mobile-update', 'update'], ['mobile-native', 'release'], ['e2b-official-runtime', 'check'], ['e2b-runtime-release', 'recheck'], ['e2b-runtime-release', 'cleanup'], ['e2b-template', 'build'], ['publish-daemon', 'publish']]) {
+  for (const [file, job] of [['desktop-release', 'preflight'], ['mobile-next-ios', 'ios'], ['mobile-next-update', 'update'], ['e2b-official-runtime', 'check'], ['e2b-runtime-release', 'recheck'], ['e2b-runtime-release', 'cleanup'], ['e2b-template', 'build'], ['publish-daemon', 'publish']]) {
     const workflow = yaml.load(await readFile(new URL(`../../.github/workflows/${file}.yml`, import.meta.url), 'utf8'))
-    const allowed = new Function('github', 'needs', 'always', `return ${workflow.jobs[job].if ?? "true"}`)
+    const allowed = new Function('github', 'needs', 'always', 'inputs', 'contains', 'fromJSON', `return ${workflow.jobs[job].if ?? "true"}`)
     for (const repository of ['alexj11324/Mikka', 'aspectly-labs/Mikka', 'foreign/Mikka']) {
       for (const repository_id of ['1427517699', '999']) {
         for (const repository_owner_id of ['183887963', '359279274', '999']) {
-          const github = { repository, repository_id, repository_owner_id, ref: 'refs/heads/main', event_name: 'workflow_dispatch' }
+          // A listed promoter dispatching (release-promoters.json); the promoter gate itself is tested in release-policy.test.mjs.
+          const github = { repository, repository_id, repository_owner_id, ref: 'refs/heads/main', event_name: 'workflow_dispatch',
+            actor_id: '183887963', actor: 'alexj11324', triggering_actor: 'alexj11324' }
           const expected = repository_id === '1427517699' && ((repository === 'alexj11324/Mikka' && repository_owner_id === '183887963') || (repository === 'aspectly-labs/Mikka' && repository_owner_id === '359279274'))
-          assert.equal(allowed(github, { recheck: { result: 'success', outputs: {} } }, () => true), expected, `${file}:${job}:${JSON.stringify(github)}`)
+          assert.equal(allowed(github, { recheck: { result: 'success', outputs: {} } }, () => true, { phase: 'promote' },
+            (list, item) => list.includes(item), JSON.parse), expected, `${file}:${job}:${JSON.stringify(github)}`)
         }
       }
     }
   }
 })
 test('native private UI selection rejects unknown owners before reading credentials', async () => {
-  for (const [file, job] of [['desktop-release', 'macos'], ['mobile-update', 'update'], ['mobile-native', 'release'], ['mobile-screenshots', 'screenshots']]) {
+  for (const [file, job] of [['desktop-release', 'macos'], ['mobile-next-ios', 'ios'], ['mobile-next-update', 'update']]) {
     const workflow = yaml.load(await readFile(new URL(`../../.github/workflows/${file}.yml`, import.meta.url), 'utf8'))
     const steps = workflow.jobs[job].steps
     const check = steps.find(step => step.name === 'Validate the selected private UI owner before credential access')

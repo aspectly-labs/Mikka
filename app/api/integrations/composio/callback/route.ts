@@ -1,5 +1,5 @@
 import { noteLogUser, withRequestLog } from '@/lib/request-log'
-import { NextRequest, NextResponse } from '@/lib/server-runtime/server'
+import { RouteRequest, RouteResponse } from '@/lib/server-runtime/server'
 import { afterJob } from '@/lib/background'
 import { auth, authBaseURL } from '@/lib/auth'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
@@ -13,22 +13,23 @@ import { listComposioPages } from '@/lib/composio-pagination'
 import { isComposioCallbackVerifierConfigured } from '@/lib/composio-config'
 import { COMPOSIO_AUTH_CALLBACK_PATH } from '@/lib/auth-return'
 import { bootstrapSuggestions } from '@/lib/suggestions/sources'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 const SESSION_COOKIE = 'mikka_composio_session_uri'
 const noStore = { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' }
 
-function clearSessionCookie(request: NextRequest, response: NextResponse) {
+function clearSessionCookie(request: RouteRequest, response: RouteResponse) {
   // The same options they were set with, so `secure` matches and the browser drops them.
   for (const name of [SESSION_COOKIE, COMPOSIO_FLOW_COOKIE]) response.cookies.set(name, '', composioFlowCookieOptions(request.url, 0))
   return response
 }
 
 /** Back to where the connect started (a validated same-origin path), or Settings › 连接. */
-function integrationRedirect(request: NextRequest, result: string) {
+function integrationRedirect(request: RouteRequest, result: string) {
   const returnTo = decodeComposioFlow(request.cookies.get(COMPOSIO_FLOW_COOKIE)?.value)?.returnTo ?? '/?settings=integrations'
   const url = new URL(withBasePath(returnTo), request.url)
   url.searchParams.set('composio', result)
-  return NextResponse.redirect(url)
+  return RouteResponse.redirect(url)
 }
 
 /** A desktop app's answer lands on its own loopback listener (RFC 8252 §7.3), not on a page. */
@@ -36,15 +37,15 @@ function loopbackResult(intent: { returnTo: string; returnState: string }, resul
   const url = new URL(intent.returnTo)
   url.searchParams.set('state', intent.returnState)
   url.searchParams.set('result', result)
-  return NextResponse.redirect(url)
+  return RouteResponse.redirect(url)
 }
 
-async function handleGET(request: NextRequest) {
+async function handleGET(request: RouteRequest) {
   if (!isComposioCallbackVerifierConfigured(authBaseURL, BASE_PATH)) {
     return new Response('Composio callback verifier is not configured.', { status: 503, headers: noStore })
   }
 
-  const sessionUri = request.nextUrl.searchParams.get('session_uri') ?? request.cookies.get(SESSION_COOKIE)?.value
+  const sessionUri = request.routeUrl.searchParams.get('session_uri') ?? request.cookies.get(SESSION_COOKIE)?.value
   if (!sessionUri || sessionUri.length > 4096) {
     return new Response('Invalid Composio callback.', { status: 400, headers: noStore })
   }
@@ -58,7 +59,7 @@ async function handleGET(request: NextRequest) {
   noteLogUser(session?.user?.id)
   if (!session?.user && !intent) {
     const params = new URLSearchParams({ next: COMPOSIO_AUTH_CALLBACK_PATH })
-    const response = NextResponse.redirect(new URL(withBasePath(`/sign-in?${params}`), request.url))
+    const response = RouteResponse.redirect(new URL(withBasePath(`/sign-in?${params}`), request.url))
     response.cookies.set(SESSION_COOKIE, sessionUri, composioFlowCookieOptions(request.url, 600))
     response.headers.set('Cache-Control', noStore['Cache-Control'])
     response.headers.set('Referrer-Policy', noStore['Referrer-Policy'])
@@ -125,4 +126,12 @@ async function handleGET(request: NextRequest) {
   }
 }
 
-export const GET = withRequestLog('/api/integrations/composio/callback', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/composio/callback', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request as RouteRequest),
+)

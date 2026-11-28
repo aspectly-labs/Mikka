@@ -1,3 +1,5 @@
+import type { E2BComputeSpec } from './cloud-computer/e2b-template-pricing'
+
 /**
  * Where a thread runs, as its header draws it: an icon for the kind, a status
  * dot, and on hover which machine it is (docs/design/thread-run-location.md).
@@ -18,7 +20,7 @@ export interface ThreadMachine {
   hostname: string | null
   lastSeenAt: string | null
   /** Only for a cloud machine. */
-  cloud: { sandboxId: string; template: string; createdAt: string; endedAt: string | null } | null
+  cloud: { sandboxId: string; template: string; createdAt: string; endedAt: string | null; compute?: E2BComputeSpec } | null
 }
 
 /** How many characters of the sandbox ID name a cloud machine: enough to tell two apart in one person's list. */

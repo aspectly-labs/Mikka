@@ -8,7 +8,7 @@ const issueId = 'de300000-2413-4c5e-8a10-1234567890ab'
 
 test('every event the chat shows becomes a line kind, from the text the server itself writes (C1)', () => {
   const question = eventPrompt({ kind: 'run_question', issueId, runId, payload: { question: 'msw or just these two tests?' } })
-  assert.deepEqual(eventLine('run_question', question), { kind: 'runQuestion', runId, issueId: null, status: null, title: null })
+  assert.deepEqual(eventLine('run_question', question), { kind: 'runQuestion', runId, issueId: null, status: null, title: null, message: 'msw or just these two tests?' })
 
   const finished = eventPrompt({ kind: 'run_finished', issueId, runId, payload: { status: 'failed', stopReason: 'error' } })
   assert.deepEqual(eventLine('run_finished', finished, 'failed'), { kind: 'runFinished', runId, issueId, status: 'failed', title: null })
@@ -54,12 +54,12 @@ test("a schedule's events name the schedule, never 'a thread'; its result is no 
 
 test("an Agent's report outside a thread stays a report, with no run to name", () => {
   const peer = eventPrompt({ kind: 'run_report', issueId: null, runId: null, payload: { source: 'oauth_agent_mcp', text: 'Deployed the preview' } })
-  assert.deepEqual(eventLine('run_report', peer), { kind: 'runReport', runId: null, issueId: null, status: null, title: null })
+  assert.deepEqual(eventLine('run_report', peer), { kind: 'runReport', runId: null, issueId: null, status: null, title: null, message: 'Deployed the preview' })
   const inRun = eventPrompt({ kind: 'run_report', issueId, runId, payload: { text: 'Half way' } })
-  assert.deepEqual(eventLine('run_report', inRun), { kind: 'runReport', runId, issueId, status: null, title: null })
+  assert.deepEqual(eventLine('run_report', inRun), { kind: 'runReport', runId, issueId, status: null, title: null, message: 'Half way' })
 })
 
-test('a task assigned to a Bot wakes it with the task and who assigned it, and reads back as that line (Capy issue_activity)', () => {
+test('a task assigned to a Bot wakes it with the task and who assigned it, and reads back as that line', () => {
   const assigned = eventPrompt({ kind: 'issue_assigned', issueId, runId: null, payload: { title: '登录页在 Safari 17 上白屏', identifier: 'MIKKA-12', actorName: 'Alex' } })
   assert.match(assigned, /^\[Event\] Alex assigned you task MIKKA-12 "登录页在 Safari 17 上白屏"\. Issue: /)
   assert.match(assigned, /get_issue/)
@@ -90,4 +90,24 @@ test("a teammate's comment reaches the Bot as untrusted content from its author,
   assert.deepEqual(eventLine('issue_activity', prompt), { kind: 'issueCommented', runId: null, issueId, status: 'Mei "Ops"', title: 'Fix login' })
   // A mention without text names nobody's words.
   assert.doesNotMatch(eventPrompt({ kind: 'issue_activity', issueId, runId: null, payload: { activity: 'mention', title: 't', identifier: null, actorName: 'Mei', actorId: 'mate-1', byOwner: false } }), /task_comment/)
+})
+
+test("an Agent's message back keeps its own words for the chat's collapsed row (Alex, 2026-11-23), never the model's wrapper", () => {
+  // A finished run's words are its summary, which the chat reads from the run itself (its citation source).
+  const finished = eventPrompt({ kind: 'run_finished', issueId, runId, payload: { status: 'succeeded', stopReason: 'completed', summary: 'Done' } })
+  assert.equal(eventLine('run_finished', finished, 'succeeded').message, undefined)
+  const report = eventPrompt({ kind: 'run_report', issueId, runId, payload: { text: 'Line one\nLine two' } })
+  assert.equal(eventLine('run_report', report).message, 'Line one\nLine two')
+  const triaged = eventPrompt({ kind: 'run_report', issueId, runId, tier: 'attention', payload: { text: 'Need a key' } })
+  assert.equal(eventLine('run_report', triaged).message, 'Need a key', 'the triage note is the model\'s')
+  const asked = eventPrompt({ kind: 'run_question', issueId, runId, payload: { question: 'Which branch?', options: ['main', 'dev'] } })
+  assert.equal(eventLine('run_question', asked).message, 'Which branch?\n\nmain / dev')
+})
+
+test("the stored display keeps an Agent's words, so the chat's row survives a reload", async () => {
+  const { runtimeMessageDisplay, messageDisplay } = await import('./message-display')
+  const payload = { text: 'Line one\nLine two' }
+  const display = runtimeMessageDisplay({ kind: 'run_report', payload }, eventPrompt({ kind: 'run_report', issueId, runId, payload }))
+  const read = messageDisplay({ role: 'user', content: 'x', mikkaDisplay: JSON.parse(JSON.stringify(display)) })
+  assert.equal(read?.kind === 'event' ? read.line.message : undefined, 'Line one\nLine two')
 })

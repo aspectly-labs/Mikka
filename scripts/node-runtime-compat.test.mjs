@@ -15,6 +15,7 @@ test('all declared product engines accept Node 22, with 24 still the default', (
     if (pkg.engines?.node) assert.equal(pkg.engines.node, '>=22', file)
   }
   assert.equal(read('.node-version').trim(), '24')
+  assert.equal(read('.nvmrc').trim(), '24')
   assert.equal(JSON.parse(read('node_modules/eve/package.json')).engines.node, '>=22')
   const workspace = load('pnpm-workspace.yaml')
   assert.equal(workspace.patchedDependencies['eve@1.3.0'], 'patches/eve@1.3.0.patch')

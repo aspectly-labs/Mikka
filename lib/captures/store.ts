@@ -7,6 +7,7 @@ import 'server-only'
 import { z } from 'zod'
 import { createHash, randomBytes } from 'node:crypto'
 import { and, asc, eq, getTableColumns, inArray, isNull, lt, sql } from 'drizzle-orm'
+import { jsonbPath, jsonbSafeBool } from '../primitives/jsonb-predicates'
 import {
   CAPTURE_EXTENSIONS, CAPTURE_MAX_BYTES, RECORDING_MAX_SECONDS, captureKind, captureProblem, cleanCaptureTitle, recordingStep, sniffCaptureType,
   type CaptureContentType, type CaptureSource, type CaptureUploadRequest, type CaptureUploadResponse, type CaptureView, type RecordingStep,
@@ -408,7 +409,7 @@ export async function runEvidence(userId: string, runId: string) {
     executionIdentity: sql<unknown>`${agentRuns.agentDefinition}->'executionIdentity'`,
     modelRouting: sql<unknown>`${agentRuns.agentDefinition}->'modelDispatch'->'routing'`,
     // The model followed the dispatching chat's own (decision 2026-11-15-1630); null when someone named it or on older runs.
-    modelFollowed: sql<boolean | null>`(${agentRuns.agentDefinition}->'modelDispatch'->>'followed')::boolean`,
+    modelFollowed: jsonbSafeBool(jsonbPath(agentRuns.agentDefinition, 'modelDispatch'), 'followed'),
     // What the prompt carried of the run's skills; a body it only deferred is
     // shown beside the run so the person knows a skill waited on a file read.
     skillPrompt: sql<unknown>`${agentRuns.report}->'skillPrompt'`,

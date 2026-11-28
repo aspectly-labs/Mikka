@@ -2,7 +2,8 @@ import {evaluationBindingId} from '../../../../lib/eve/evaluation-context'
 import { defineHook } from 'eve/hooks'
 import { sessions } from 'eve/server'
 import { scopeFromAuth, registerSession } from '../../../../lib/eve/scope'
-import { turnModel, turnPolicy, turnRequest } from '../../../../lib/eve/runtime'
+import { turnModel, turnPolicy, turnRequest, eveFactoryTurnStarted } from '../../../../lib/eve/runtime'
+import { eveFactorySessionAuth, eveFactoryProjectTurn } from '../../../../lib/eve/factory/session'
 
 export default defineHook({events:{
   async 'session.started'(_event,ctx) {
@@ -12,6 +13,11 @@ export default defineHook({events:{
   async 'turn.started'(event,ctx) {
     if(evaluationBindingId(ctx.session.auth.current))return
     const scope = scopeFromAuth(ctx.session.auth.current)
+    // #3082: a Factory role session has no chat source event, no Bot runtime
+    // subscription and no product catalogue — its model and boundaries come
+    // from the frozen Factory role plan carried on its session auth.
+    const factory = eveFactorySessionAuth(ctx.session.auth.current)
+    if (factory) { eveFactoryTurnStarted(factory, ctx.position?.line); return }
     const {pool} = await import('../../../../lib/db')
     const source = ctx.session.auth.current?.attributes.sourceEventId
     const originalSource = typeof source === 'string' ? source : ctx.session.parent
@@ -29,7 +35,7 @@ export default defineHook({events:{
         agentKitEnabled() ? (async () => {
           const { personalPlugins } = await import('../../../../lib/plugins/runtime')
           const [current, plugins] = await Promise.all([
-            agentKitStore.active(scope, agentKitDefaults()), personalPlugins.snapshot(scope.ownerId, undefined, scope.workspaceId),
+            agentKitStore.active(scope, agentKitDefaults()), personalPlugins.snapshotForBot(scope.ownerId, scope.botId, scope.workspaceId),
           ])
           const effectiveTools = new Set<string>(current.effectiveTools)
           if (plugins.servers.length) { effectiveTools.add('list_personal_mcp_tools'); effectiveTools.add('call_personal_mcp_tool') }
@@ -37,7 +43,24 @@ export default defineHook({events:{
           return { definition: current.definition, effectiveTools: [...effectiveTools], personalPlugins: plugins }
         })() : null,
       ])
-      turnModel.update(() => runtime)
+      const selected = runtime.modelSelection
+      const canSearch = !scheduled && policy?.effectiveTools.includes('web_search') !== false
+      let nativeSearch: typeof runtime.nativeWebSearchBackend
+      if (canSearch && selected?.type === 'api_key') {
+        nativeSearch = await (await import('../../../../lib/model-api-key-chat')).apiKeyNativeSearchBackend(selected)
+      } else if (canSearch && selected?.type === 'subscription' && selected.runOwnerId === undefined) {
+        const { subscriptionRuntime } = await import('../../../../lib/subscription-runtime')
+        nativeSearch = await subscriptionRuntime().modelSearchBackend({ ...selected, execution: 'model' }, true)
+      } else if (canSearch && !selected && runtime.model) {
+        const { managedSearchRoute } = await import('../../../../lib/model-gateway/provider-config')
+        const route = managedSearchRoute(runtime.model)
+        if (route) {
+          const { modelCatalog } = await import('../../../../lib/model-catalog-server')
+          const advertised = (await modelCatalog()).find(model => model.id === runtime.model && model.vendor === route.backend)
+          if (advertised?.tags.includes('web-search')) nativeSearch = route.backend
+        }
+      }
+      turnModel.update(() => nativeSearch ? { ...runtime, nativeWebSearchBackend: nativeSearch } : runtime)
       turnPolicy.update(() => policy)
     })
     if (!scheduled && !ctx.session.parent) {
@@ -57,9 +80,15 @@ export default defineHook({events:{
     // Product retry timers and task workflows belong to the Mikka app host.
     // Children retain their read authority but never publish or settle the
     // root occurrence; only root requests carry compatibility messages.
+    // Factory role turns keep their structured `result` parts: the host
+    // settlement turns them into the bound run's report.
+    const factory = eveFactorySessionAuth(ctx.session.auth.current)
+    const messages = ctx.session.parent ? undefined
+      : factory ? eveFactoryProjectTurn(ctx.view, ctx.session.id, event.data.turnId)
+      : projectEveTurn(ctx.view,ctx.session.id,event.data.turnId,event.data.outcome,stoppedText)
     await productRpc(scope,{
       operation:'finish',sessionId:ctx.session.id,turnId:event.data.turnId,outcome:event.data.outcome,
-      ...ctx.session.parent ? {} : {messages:projectEveTurn(ctx.view,ctx.session.id,event.data.turnId,event.data.outcome,stoppedText)},
+      ...(messages ? {messages} : {}),
     })
   },
 }})

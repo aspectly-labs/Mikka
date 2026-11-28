@@ -8,6 +8,7 @@ import { pullRequestStatusChanged } from '@/lib/live/pull-requests'
 import { issueListChanged, runListChanged } from '@/lib/live/lists'
 import { ADVANCE_MERGED_TASKS } from '@/lib/task-status-advance'
 import { reviewCheckEvent } from './review-checks'
+import { jsonbFlagIsTrueSql, jsonbSafeNumericExprSql, jsonbSafeNumericSql } from '../primitives/jsonb-predicates'
 
 const pullRequestEvent = z.object({
   action: z.string().optional(),
@@ -91,13 +92,13 @@ export async function refreshPublishedPullRequest(event: string, payload: unknow
     // redelivery. Only the exact repository and current PR head can change.
     const { rows } = await database.query<{ id: string }>(`WITH saved AS (
       UPDATE run_publications p SET "pullRequest"=jsonb_set(p."pullRequest",'{reviewChecks}',jsonb_build_object(
-        'headSha',$2::text,'complete',CASE WHEN p."pullRequest"#>>'{reviewChecks,headSha}'=$2 THEN coalesce((p."pullRequest"#>>'{reviewChecks,complete}')::boolean,false) ELSE false END,
+        'headSha',$2::text,'complete',CASE WHEN p."pullRequest"#>>'{reviewChecks,headSha}'=$2 THEN ${jsonbFlagIsTrueSql(`p."pullRequest"->'reviewChecks'`, 'complete')} ELSE false END,
         'updatedAt',greatest(coalesce(p."pullRequest"#>>'{reviewChecks,updatedAt}',''),$4::jsonb->>'at'),
         'entries',(CASE WHEN p."pullRequest"#>>'{reviewChecks,headSha}'=$2 THEN coalesce(p."pullRequest"#>'{reviewChecks,entries}','{}'::jsonb) ELSE '{}'::jsonb END)||jsonb_build_object($3::text,$4::jsonb))),"updatedAt"=now()
       WHERE starts_with(lower(p."pullRequest"->>'url'),$1) AND p."pullRequest"->>'headSha'=$2
         AND (p."pullRequest"#>>'{reviewChecks,headSha}' IS DISTINCT FROM $2 OR p."pullRequest"#>ARRAY['reviewChecks','entries',$3] IS NULL
-          OR (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id'])::numeric<($4::jsonb->>'id')::numeric
-          OR ((p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id'])::numeric=($4::jsonb->>'id')::numeric
+          OR (${jsonbSafeNumericExprSql(`p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id']`)})<(${jsonbSafeNumericSql('$4::jsonb', 'id')})
+          OR ((${jsonbSafeNumericExprSql(`p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'id']`)})=(${jsonbSafeNumericSql('$4::jsonb', 'id')})
             AND p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'state']<>$4::jsonb->>'state'
             AND (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'state']='pending'
               OR ($4::jsonb->>'state'<>'pending' AND (p."pullRequest"#>>ARRAY['reviewChecks','entries',$3,'at'])<($4::jsonb->>'at')))))
@@ -120,6 +121,7 @@ export async function refreshPublishedPullRequest(event: string, payload: unknow
   const state = pr.merged_at ? 'merged' : pr.state === 'closed' ? 'closed' : pr.draft ? 'draft' : 'open'
   const lines = pr.additions !== undefined && pr.deletions !== undefined ? { additions: pr.additions, deletions: pr.deletions } : null
   const patch = JSON.stringify({ title: pr.title, state, ...lines,
+    ...(pr.merged_at && Number.isFinite(Date.parse(pr.merged_at)) ? { mergedAt: new Date(pr.merged_at).toISOString() } : {}),
     ...(pr.changed_files === undefined ? {} : { changedFiles: pr.changed_files }),
     ...(pr.head ? { headSha: pr.head.sha.toLowerCase(), ...(pr.head.ref ? { branch: pr.head.ref } : {}) } : {}),
     ...(pr.updated_at ? { githubUpdatedAt: new Date(pr.updated_at).toISOString() } : {}),

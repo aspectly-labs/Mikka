@@ -11,9 +11,9 @@ import { updateOwnedBot, type UpdateBotInput } from '@/lib/bot-update'
 import { createOwnedBot, type CreateBotInput } from '@/lib/bot-create'
 import { pool } from '@/lib/db'
 import { deleteOwnedBot, ownArchivedBots, setOwnedBotArchived } from '@/lib/bot-lifecycle'
-import { settingsWorkspaceAction, type SettingsActionResult } from '@/lib/workspace-admin/settings-action'
 import { currentWorkspaceActor } from '@/lib/workspace-admin/current'
-import { botDefaultOptions, listBotThreadsFor, saveBotDefaults, workspaceBots, type BotDefaultOptions, type BotDefaults, type BotThreadPage, type WorkspaceBotView } from '@/lib/workspace-admin/bots'
+import { withTaskWorkspace } from '@/lib/task-workspace'
+import { botDefaultOptions, saveBotDefaults, workspaceBots, type BotDefaultOptions, type BotDefaults, type WorkspaceBotView } from '@/lib/workspace-admin/bots'
 
 /** A bot in the left column. Its instructions grow inside its chat, so they are not here. */
 export interface BotView {
@@ -42,8 +42,9 @@ async function getOwner(workspaceId?: string) {
 }
 
 /** The bot list: the person's bots here, their Coordinator first (lib/coordinator/coordinator-bot.ts listOwnerBots). */
-export async function listBots(): Promise<BotView[]> {
-  return (await pollBots()).items
+export async function listBots(workspaceId?: string): Promise<BotView[]> {
+  const { ownerId, workspaceId: shown } = await getOwner(workspaceId)
+  return listOwnerBots(ownerId, shown)
 }
 
 /** The Bot list for the workspace a settings page shows (`?workspace=`), not the session's active one. */
@@ -119,11 +120,11 @@ export async function setBotAccess(botId: string, input: { visibility?: 'shared'
     const actor = await actorOf(workspaceId)
     const { db, withDatabaseTransaction } = await import('@/lib/db')
     // Access and followers change together or not at all.
-    return db.transaction(tx => withDatabaseTransaction(tx, async () => {
-      let view = input.visibility ? await access.setBotVisibility(actor, botId, input.visibility) : await access.botAccess(actor, botId)
+    return withTaskWorkspace(actor.userId, actor.workspaceId, () => db.transaction(tx => withDatabaseTransaction(tx, async () => {
+      let view = input.visibility ? await access.setBotVisibility(actor, botId, input.visibility, tx) : await access.botAccess(actor, botId)
       if (input.subscribers) view = await access.setBotSubscribers(actor, botId, input.subscribers)
       return view
-    }))
+    })))
   })
 }
 
@@ -153,8 +154,14 @@ export async function listArchivedOwnBots(workspaceId?: string): Promise<ActionR
 }
 
 /** 设置 › 工作区 › Bot: the defaults a new bot starts with, and the choices. Any member may read. */
-export async function getWorkspaceBotDefaults(workspaceId?: string): Promise<ActionResult<BotDefaultOptions>> {
-  return workspaceAction(async () => botDefaultOptions((await currentWorkspaceActor(workspaceId)).workspaceId))
+export async function getWorkspaceBotDefaults(workspaceId?: string): Promise<ActionResult<BotDefaultOptions & { personal: { location: 'cloud' | 'local'; effort: string } }>> {
+  return workspaceAction(async () => {
+    const actor = await currentWorkspaceActor(workspaceId)
+    const { personalRunDefaults } = await import('@/lib/model-order')
+    // 新建 Bot shows what the Bot will really use: the person's own 运行位置 and reasoning effort, so the window never shows a default the Bot would not run with.
+    const [options, personal] = await Promise.all([botDefaultOptions(actor.workspaceId), personalRunDefaults(pool, { ownerId: actor.userId, workspaceId: actor.workspaceId })])
+    return { ...options, personal }
+  })
 }
 
 /** Set or clear (null) the default model and repository for new bots. Admins only. */
@@ -168,15 +175,4 @@ export async function updateWorkspaceBotDefaults(input: { defaultModel?: string 
 /** Every bot in the current workspace: owner, 空闲 or 运行中 · N 个线程. Any member may read. */
 export async function listWorkspaceBots(workspaceId?: string): Promise<ActionResult<{ bots: WorkspaceBotView[] }>> {
   return workspaceAction(async () => ({ bots: await workspaceBots((await currentWorkspaceActor(workspaceId)).workspaceId) }))
-}
-
-/**
- * WS-07 线程列表 for one bot in the current workspace, newest first. Any member may read;
- * titles of tasks the viewer cannot see, and chat threads someone else started, come back null.
- */
-export async function listBotThreads(input: { botId: string; limit?: number; cursor?: string | null }): Promise<SettingsActionResult<BotThreadPage>> {
-  return settingsWorkspaceAction(async () => {
-    const actor = await currentWorkspaceActor()
-    return listBotThreadsFor(actor.userId, actor.workspaceId, input)
-  })
 }

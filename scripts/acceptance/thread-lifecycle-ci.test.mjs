@@ -13,11 +13,11 @@ const SHA = 'a'.repeat(40), OTHER = 'b'.repeat(40)
 const workflow = { id: 405833668, name: RELEASE_NAME, path: RELEASE_WORKFLOW, state: 'active' }
 const run = { id: 123, run_attempt: 2, workflow_id: workflow.id, name: RELEASE_NAME, path: RELEASE_WORKFLOW,
   head_sha: SHA, head_branch: 'main', event: 'push', status: 'completed', conclusion: 'success',
-  repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 183887963 } },
-  head_repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 183887963 } } }
+  repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 359279274 } },
+  head_repository: { id: 1427517699, full_name: REPOSITORY, owner: { id: 359279274 } } }
 const event = () => ({ workflow_run: structuredClone(run) })
 const env = () => ({ GITHUB_EVENT_NAME: 'workflow_run', GITHUB_REPOSITORY: REPOSITORY,
-  GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '183887963', GITHUB_REF: 'refs/heads/main',
+  GITHUB_REPOSITORY_ID: '1427517699', GITHUB_REPOSITORY_OWNER_ID: '359279274', GITHUB_REF: 'refs/heads/main',
   EXPECTED_SOURCE_SHA: SHA, EXPECTED_UPSTREAM_RUN_ID: String(run.id), EXPECTED_UPSTREAM_RUN_ATTEMPT: String(run.run_attempt),
   GITHUB_TOKEN: 'private-credential-sentinel' })
 const expected = () => expectedRelease(env(), event())
@@ -322,7 +322,7 @@ test('automatic build-time publication binds the actual report source to current
   assert.equal(proof.artifact.id, 321)
   assert.match(proof.reportSha256, /^[a-f0-9]{64}$/)
   assert.equal(fixture.calls.filter(path => path === 'storage').length, 1)
-  const attested = { ...proof, web: { sourceCommit: SHA, publicBuild: SHA, webRunId: 456, webAttempt: 1 } }
+  const attested = { ...proof, web: { sourceCommit: SHA, publicBuild: SHA, provider: 'cloudflare', verifiedAt: '2026-11-18T10:00:00.000Z' } }
   assert.doesNotThrow(() => assertAttestation(expected(), attested))
   for (const mutate of [value => { value.workerSourceCommit = OTHER }, value => { value.artifact.repositoryId++ },
     value => { value.reportSha256 = 'invalid' }, value => { delete value.artifact }]) {
@@ -357,7 +357,7 @@ test('the shared guard verifies an automatic release and still rejects reruns an
 test('provider work requires this runner own same-source Web and upstream attestation', () => {
   const proof = { kind: 'thread-lifecycle-ci-attestation', selected: true, sourceCommit: SHA,
     upstream: { runId: 123, runAttempt: 2, workflowId: workflow.id },
-    web: { sourceCommit: SHA, publicBuild: SHA, webRunId: 124, webAttempt: 1 } }
+    web: { sourceCommit: SHA, publicBuild: SHA, provider: 'cloudflare', verifiedAt: '2026-11-18T10:00:00.000Z' } }
   assert.doesNotThrow(() => assertAttestation(expected(), proof))
   for (const mutate of [value => { value.sourceCommit = OTHER }, value => { value.upstream.runAttempt++ },
     value => { value.selected = false }, value => { value.web.publicBuild = OTHER }, value => { delete value.web }]) {

@@ -1,6 +1,7 @@
 # Each bot picks its model in its own chat
 
 - Date: 2026-10-31
+- **Status:** Accepted
 - Source: Alex, relayed by the coordinator session: 「在 BOT 上面可以加一个模型选择器…我们就不在设置里面设置了，单独就说你想用什么模型都可以」
 - Rule: R-11 changed
 - See also: [orchestration](../orchestration.md) § 2 (resolution order, quota and a credential that disappears) and § 3 (model → Agent)

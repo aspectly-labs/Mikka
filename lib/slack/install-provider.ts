@@ -1,7 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto'
+import { isLoopbackHost } from '@/lib/env/hosts'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 import { slackUserId } from './user-id'
 import { withBasePath } from '../base-path'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 
 export const SLACK_STATE_COOKIE = 'mikka-slack-install'
 export const SLACK_INSTALL_RETURN_PATH = withBasePath(`${workspaceLink({ section: 'plugins' })}&app=slack&installation=failed`)
@@ -25,7 +27,7 @@ export const selectableSlackChannel = (v: unknown): v is string =>
 export const stateHash = (value: string) => createHash('sha256').update(value).digest('hex')
 export const createState = () => randomBytes(32).toString('base64url')
 
-export function installPlatform(env: NodeJS.ProcessEnv = process.env) {
+export function installPlatform(env: EnvMap = runtimeEnv()) {
   const appId = env.SLACK_APP_ID,
     clientId = env.SLACK_CLIENT_ID,
     secret = env.SLACK_CLIENT_SECRET
@@ -36,7 +38,7 @@ export function installPlatform(env: NodeJS.ProcessEnv = process.env) {
     base.username ||
     base.password ||
     (base.protocol !== 'https:' &&
-      !(base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)))
+      !(base.protocol === 'http:' && isLoopbackHost(base.hostname)))
   )
     return null
   return { appId, clientId, secret, redirect: new URL(SLACK_CALLBACK_PATH, base.origin).href }

@@ -31,10 +31,10 @@ test('background Factory transactions use persisted tenants before the APP pool 
   const globals = globalThis as unknown as { mikkaPool?: Pool; workspacePool?: Pool }
   const oldPools = { app: globals.mikkaPool, workspace: globals.workspacePool }
   const envNames = ['E2E_DATABASE_URL', 'MIKKA_DATABASE_URL', 'DATABASE_URL', 'ORVILO_DATABASE_URL', 'VERCEL_ENV', 'MIKKA_EDITION',
-    'MIKKA_BYOS_ENABLED', 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET', 'WORKSPACE_SECRETS_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
+    'MIKKA_BYOS_ENABLED', 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET', 'WORKSPACE_SECRETS_KEY', 'MIKKA_PUBLIC_POSTHOG_KEY', 'NEXT_PUBLIC_POSTHOG_KEY'] as const
   const prior = Object.fromEntries(envNames.map(key => [key, process.env[key]]))
   Object.assign(process.env, { E2E_DATABASE_URL: url, MIKKA_DATABASE_URL: url, DATABASE_URL: url, ORVILO_DATABASE_URL: url,
-    MIKKA_EDITION: 'cloud', MIKKA_BYOS_ENABLED: '1', BETTER_AUTH_URL: 'http://localhost:3100', NEXT_PUBLIC_POSTHOG_KEY: '',
+    MIKKA_EDITION: 'cloud', MIKKA_BYOS_ENABLED: '1', BETTER_AUTH_URL: 'http://localhost:3100', MIKKA_PUBLIC_POSTHOG_KEY: '', NEXT_PUBLIC_POSTHOG_KEY: '',
     BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
   delete process.env.VERCEL_ENV
   globals.mikkaPool = app; globals.workspacePool = workspace
@@ -399,7 +399,7 @@ test('background Factory transactions use persisted tenants before the APP pool 
     assert.deepEqual(await monitor.reconcile(retired), { observed: 0 })
     assert.deepEqual(await sweepFactoryWatchdog(pool, {
       runtime: botId => { runtimeReads++; return factoryRuntimeForBot(botId) },
-      dispatch: async () => { dispatches++ },
+      dispatch: async () => { dispatches++; return undefined },
       wake: async () => { watchdogWakes++ },
     }, new Date(), Date.now() + 5000, { userId: retired, runId: retained[1].runId }),
     { scanned: 0, recovered: 0, blocked: 0, deferred: 0, failed: 0 })

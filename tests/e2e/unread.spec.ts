@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from '@playwright/test'
-import { test, expect, register, app } from './fixtures'
+import { test, expect, register, app, parseBrowserRpc } from './fixtures'
 
 // MIK-8. Messages come from rewriting only the `getCoordinatorChat` server action response
 // (same approach as working-status.spec.ts), so their positions aren't real rows. The read API
@@ -17,15 +17,15 @@ async function mockChat(page: Page, initial: Item[]) {
   chats.set(page.context(), state)
   await page.route('**/*', async route => {
     const request = route.request()
-    const actionId = request.headers()['next-action']
-    if (request.method() !== 'POST' || !actionId) return route.fallback()
-    if (state.actionId && actionId !== state.actionId) return route.fallback()
-    if (!state.actionId && (request.postData() ?? '').trim() !== '[]') return route.fallback()
+    const rpc = parseBrowserRpc(request)
+    if (!rpc) return route.fallback()
+    if (state.actionId && rpc.action !== state.actionId) return route.fallback()
+    if (!state.actionId && rpc.args.length !== 0) return route.fallback()
     // A poll names the version it shows; drop it so every poll is a full read to rewrite.
-    const response = await route.fetch({ postData: '[]' })
+    const response = await route.fetch({ postData: JSON.stringify({ ...rpc, args: [] }) })
     const body = await response.text()
     if (!ITEMS.test(body) || !/"working"\s*:/.test(body)) return route.fulfill({ response, body })
-    state.actionId = actionId
+    state.actionId = rpc.action
     state.rewrites++
     return route.fulfill({ response, body: body.replace(ITEMS, `"items":${JSON.stringify(state.items)}`).replace(/"working"\s*:\s*true/g, '"working":false') })
   })

@@ -15,10 +15,11 @@ export async function verifyEveImagePayload(directory, manifest, { sourceSha, re
   assert.deepEqual(await read('eve-host.json'), {
     version: 1, sourceSha, uiSha: sourceSha, releaseId, uiSource: 'public-server',
   })
-  assert.deepEqual(await read('eve/mikka-eve-build.json'), {
-    version: 1, eve: '1.3.0', revision: sourceSha, preset: 'node-server',
-    world: '@workflow/world-postgres', worldVersion: '5.4.1',
-  })
+  const { world, worldVersion, ...build } = await read('eve/mikka-eve-build.json')
+  assert.deepEqual(build, { version: 1, eve: '1.3.0', revision: sourceSha, preset: 'node-server' })
+  assert.ok(world === '@workflow/world-postgres' || world === '@mikka/eve-cloudflare-world')
+  if (process.env.WORKFLOW_TARGET_WORLD) assert.equal(world, process.env.WORKFLOW_TARGET_WORLD)
+  assert.ok(worldVersion === undefined || typeof worldVersion === 'string')
   await verifyResources(join(directory, 'eve'), manifest.resources)
 }
 

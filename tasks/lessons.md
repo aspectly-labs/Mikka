@@ -212,7 +212,7 @@ cp -R "$SRC/Default/Local Storage" "$DST/Default/"
   1. 一个 server action / 一列字段 / 只读聚合 → 直接实现，设计里画成可用。
   2. 不可逆或级联（删账户、删工作区、删团队、移除成员）、需要新子系统（计费、导出+邮件、文件存储） → 「即将推出」，并写清缺什么。
   3. 拿不准 → 先查表结构和调用方，再归档，不凭名字猜。
-- 同时：中文文案的「请」不能机械删除，要看旁边有没有按钮承担动作（见 docs/design/copy.md C-04）。
+- 同时：中文文案的「请」不能机械删除，要看旁边有没有按钮承担动作（见 mikka-hosted-ui/docs/design/copy.md C-04）。
 
 ## 2026-10-31 产品自身的运行依赖不能甩给用户
 
@@ -585,9 +585,9 @@ cp -R "$SRC/Default/Local Storage" "$DST/Default/"
 
 ## 2026-11-19 设计稿里的引用 / chip 不能凭印象画
 - 错误：inline chip 画成灰底药丸，把 Claude Code 当成可 @ 的对象，还编了一个 Skill chip（snapshot-update）。用户连续纠正三次。
-- 根因：没先读 Capy 源码就动手；也没核对 Mikka 的名词——Bot 是用户建的派发者，Claude Code / Codex 是 Agent（见 messages/en.json "agentRequired"）。
+- 根因：没先看对标产品里这个控件的实际做法就动手；也没核对 Mikka 的名词——Bot 是用户建的派发者，Claude Code / Codex 是 Agent（见 messages/en.json "agentRequired"）。
 - 规则：
-  1. 画任何对标 Capy 的控件前，先在 /Applications/Capy.app/Contents/Resources/renderer/assets 里找到对应组件（按 data-track-owner 路径搜），读清类型、样式 class、交互，再画。
+  1. 画任何对标控件前，先找到对标产品里对应的组件（做法见 mikka-hosted-ui `docs/tasks/lessons-capy.md`），读清类型、样式、交互，再画。
   2. 例句里只出现 Mikka 真实存在的对象：文件 / 任务 / PR / thread / Bot。Agent 不可提及。
   3. 新增的状态不要放在会被相邻 section 盖住的位置；画完截整节确认可见。
 

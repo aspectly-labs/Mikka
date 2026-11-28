@@ -1,5 +1,7 @@
 # Enterprise v1: identity, organization governance and audit
 
+- **Status:** Accepted
+
 Issue: [#1608](https://github.com/alexj11324/Mikka/issues/1608). Knowledge bases and RAG remain out of scope.
 
 ## Identity and dependency decision

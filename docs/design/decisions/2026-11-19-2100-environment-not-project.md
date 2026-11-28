@@ -1,5 +1,7 @@
 # 仓库、setup、变量、secrets 归 Environment，不叫 Project
 
+- **Status:** Accepted
+
 2026-11-19。对齐 Capy 的 Captain / 自动化设置时，Alex 定下来的命名与分层。
 
 ## 背景

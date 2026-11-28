@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { issueVersions, issues } from '@/lib/db/schema'
 import { allocateIssueNumbers } from '@/lib/issue-numbering'
 import { readIssueMetadata, withIssueMetadata } from '@/lib/issue-metadata'
-import { issueView } from '@/lib/task-identifier-server'
+import { issueView, syncWorkspaceTaskPrefix } from '@/lib/task-identifier-server'
 import type { ActivityActor } from '@/lib/activity-actor'
 import { readableIssueContentOnServer as readableIssueContent } from '@/lib/issue-editor-schema-snapshot'
 import { ISSUE_PRIORITY_CODES, ISSUE_STATUS_CODES } from '@/lib/issue-meta'
@@ -27,6 +27,9 @@ export async function createIssueForUserInTransaction(tx: Transaction, userId: s
   const parsed = createIssueSchema.safeParse(input)
   if (!parsed.success) return null
   const workspace = await requireTaskWorkspace(userId, options.workspaceId)
+  // Keep the issued-identifier prefix mirror current even if a settings sync
+  // was missed; allocator reads only the APP counter row.
+  if (workspace.kind !== 'personal') await syncWorkspaceTaskPrefix(workspace.id, tx)
   const id = options?.id ?? crypto.randomUUID()
   const number = await allocateIssueNumbers(tx, userId)
   const metadata = { ...readIssueMetadata({ type: 'doc' }), number, delegateSelection: 'dispatch' as const }

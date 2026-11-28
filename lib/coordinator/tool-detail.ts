@@ -136,7 +136,8 @@ export function toolDetail(tool: Pick<ChatTool, 'name' | 'input' | 'output' | 'q
       break
     case 'viewIssues':
     case 'viewThreads':
-      object(id(input, ['runId', 'issueId', 'id']))
+      // The one task or thread it read, named in its input or answered by id (get_issue, get_run).
+      object(id(input, ['runId', 'issueId', 'id']) ?? id(output, ['id', 'issueId', 'runId']))
       field('query', plain(firstText(input, ['query', 'q', 'identifier'])))
       field('count', count(output, ['items', 'issues', 'runs', 'threads', 'results']))
       break
@@ -168,4 +169,17 @@ export function toolDetail(tool: Pick<ChatTool, 'name' | 'input' | 'output' | 'q
       lines.push(...pairs(input, output))
   }
   return lines
+}
+
+/** Run-side actions name threads; the rest name tasks. */
+const RUN_ACTIONS = new Set(['viewThreads', 'messageThread', 'stopThread'])
+
+/**
+ * The tasks and threads a stored call acted on or read, as citation markers (`[[issue:…]]`, `[[run:…]]`), so the chat
+ * loads their chips with the reply's own citations. A failed call names none.
+ */
+export function toolCitations(tool: Pick<ChatTool, 'name' | 'input' | 'output' | 'quote' | 'state'>): string[] {
+  if (tool.state !== 'done') return []
+  const kind = RUN_ACTIONS.has(toolAction(tool.name)) ? 'run' : 'issue'
+  return toolDetail(tool).flatMap(line => line.kind === 'object' ? [`[[${kind}:${line.id}]]`] : [])
 }

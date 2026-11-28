@@ -1,26 +1,28 @@
 import 'server-only'
-import { and, eq, isNull, or } from 'drizzle-orm'
-import type { ResolvedSetting, SettingScope, SettingValue, SettingsView } from '@mikka/protocol/settings'
+import { eq, sql } from 'drizzle-orm'
+import type { SettingScope, SettingValue, SettingsView } from '@mikka/protocol/settings'
 import { db } from '@/lib/db'
 import { users } from '@/lib/db/schema'
+import { workspaces } from '@/lib/db/workspace-schema'
 import { workspaceDb } from '@/lib/workspace-db'
+import { invalidateTaskWorkspaceOrganization } from '@/lib/task-workspace'
 import { requireWorkspace } from '@/lib/workspace-access'
-import { workspaceListChanged } from '@/lib/live/lists'
+import { threadDirectorySettingsChanged, workspaceListChanged } from '@/lib/live/lists'
+import { wakeTokens, wakeWorkflowAfterCommit } from '@/lib/workflow-wake'
 import { mirrorLegacySetting } from './legacy-mirrors'
-import { SETTINGS_REGISTRY, parseSettingsPatch, resolveSettingValue, settingDefinition, settingsResetInput, type SettingDefinition } from './registry'
+import { SETTINGS_REGISTRY, parseSettingsPatch, personalSettingWorkspace, settingDefinition, settingsResetInput, type SettingDefinition, type SettingKey } from './registry'
+import { readRuntimeSettings, type StoredSettingValue } from './runtime'
 import { personalSettingValues, workspaceSettingValues } from './schema'
+import { validateAndMirrorKeyboardShortcuts } from './keyboard-shortcuts'
+import { mirrorCodeReviewSetting } from '@/lib/code-review/settings-storage'
+import { workCreationView } from './work-creation-policy'
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
-type Reader = Pick<typeof db, 'select'>
+type Reader = Pick<typeof db, 'execute'>
 export interface SettingsContext { userId: string; workspaceId: string }
-type StoredValue = Pick<typeof personalSettingValues.$inferSelect, 'booleanValue' | 'integerValue' | 'textValue' | 'textArrayValue'>
 
-function unpack(row: StoredValue | undefined): SettingValue | null {
-  return row?.booleanValue ?? row?.integerValue ?? row?.textValue ?? row?.textArrayValue ?? null
-}
-
-function pack(field: SettingDefinition, raw: SettingValue | null): StoredValue {
-  const row: StoredValue = { booleanValue: null, integerValue: null, textValue: null, textArrayValue: null }
+function pack(field: SettingDefinition, raw: SettingValue | null): StoredSettingValue {
+  const row: StoredSettingValue = { booleanValue: null, integerValue: null, textValue: null, textArrayValue: null }
   if (raw === null) return row
   const value = field.guard.parse(raw)
   if (typeof value === 'boolean') row.booleanValue = value
@@ -30,43 +32,54 @@ function pack(field: SettingDefinition, raw: SettingValue | null): StoredValue {
   return row
 }
 
-async function readValues(context: SettingsContext, database: Reader = db, scope: SettingScope = 'personal'): Promise<SettingsView> {
-  const personal = await database.select().from(personalSettingValues).where(and(eq(personalSettingValues.userId, context.userId),
-    or(isNull(personalSettingValues.workspaceId), eq(personalSettingValues.workspaceId, context.workspaceId))))
-  const workspace = await database.select().from(workspaceSettingValues).where(eq(workspaceSettingValues.workspaceId, context.workspaceId))
-  const values = Object.fromEntries(Object.values(SETTINGS_REGISTRY).map((field: SettingDefinition) => {
-    const own = personal.find(row => row.key === field.key && row.workspaceId === (field.personalContext === 'workspace' ? context.workspaceId : null))
-    return [field.key, resolveSettingValue(field.key, scope === 'personal' ? unpack(own) : null, unpack(workspace.find(row => row.key === field.key)))]
-  }))
-  return { workspaceId: context.workspaceId, values }
+
+async function readValues(context: SettingsContext, workspace: { kind: 'personal' | 'team'; requireTwoFactor: boolean | null }, database: Reader = db, scope: SettingScope = 'personal'): Promise<SettingsView> {
+  const keys = Object.values(SETTINGS_REGISTRY).filter(field => scope === 'personal' || field.scope.includes(scope)).map(field => field.key as SettingKey)
+  const values = await readRuntimeSettings(database, keys,
+    { workspaceId: context.workspaceId, ...(scope === 'personal' ? { userId: context.userId } : {}) })
+  values.requireTwoFactor = workspace.requireTwoFactor == null
+    ? { value: false, source: 'default' } : { value: workspace.requireTwoFactor, source: 'workspace' }
+  return { workspaceId: context.workspaceId, values, workCreation: workCreationView(workspace.kind, values.newWorkVisibility, values.allowPrivateNewWork.value) }
 }
 
 /** Both API reads and background consumers re-admit the explicit workspace. */
 export async function readSettings(context: SettingsContext, scope: SettingScope = 'personal'): Promise<SettingsView> {
   return workspaceDb.transaction(async tx => {
-    await requireWorkspace(tx, context.workspaceId, context.userId)
-    return readValues(context, db, scope)
+    const { workspace } = await requireWorkspace(tx, context.workspaceId, context.userId)
+    return readValues(context, workspace, db, scope)
   })
 }
 
-export async function resolveSetting(key: string, context: SettingsContext): Promise<ResolvedSetting> {
-  settingDefinition(key)
-  return (await readSettings(context)).values[key]!
-}
-
 async function writeRows(tx: Transaction, scope: SettingScope, context: SettingsContext, values: Record<string, SettingValue | null>) {
+  if (scope === 'workspace' && Object.hasOwn(values, 'skillPublishingPolicy')) {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${'skill-publishing:' + context.workspaceId}, 0))`)
+  }
   for (const [key, value] of Object.entries(values)) {
+    if (key === 'requireTwoFactor') continue
     const field = settingDefinition(key)
     const changed = { ...pack(field, value), updatedAt: new Date() }
     if (scope === 'personal') {
       await tx.insert(personalSettingValues).values({ userId: context.userId,
-        workspaceId: field.personalContext === 'workspace' ? context.workspaceId : null, key, ...changed })
+        workspaceId: personalSettingWorkspace(field, context.workspaceId), key, ...changed })
         .onConflictDoUpdate({ target: [personalSettingValues.userId, personalSettingValues.workspaceId, personalSettingValues.key], set: changed })
     } else {
       await tx.insert(workspaceSettingValues).values({ workspaceId: context.workspaceId, key, ...changed })
         .onConflictDoUpdate({ target: [workspaceSettingValues.workspaceId, workspaceSettingValues.key], set: changed })
     }
+    if (field.mirror) await mirrorCodeReviewSetting(tx, scope, context, field.mirror, value)
     await mirrorLegacySetting(key)?.(tx, scope, context, value)
+  }
+  if (Object.hasOwn(values, 'keepPinnedThreadsActive') || scope === 'workspace' && Object.hasOwn(values, 'archiveIdleAfterDays')) {
+    await threadDirectorySettingsChanged(tx, context.workspaceId, scope === 'personal' ? context.userId : undefined)
+  }
+  if (scope === 'workspace' && Object.hasOwn(values, 'subagentMaxConcurrent')) {
+    // Raising capacity wakes the existing waiting workflows after commit; no new polling loop.
+    const limit = Number(values.subagentMaxConcurrent ?? SETTINGS_REGISTRY.subagentMaxConcurrent.defaultValue)
+    const { rows } = await tx.execute<{ id: string }>(sql`SELECT id FROM (
+      SELECT id,row_number() OVER (PARTITION BY "ownerId" ORDER BY "createdAt",id) AS position
+      FROM bot_subagents WHERE "workspaceId"=${context.workspaceId} AND status='queued'
+    ) waiting WHERE position<=${limit}`)
+    for (const { id } of rows) wakeWorkflowAfterCommit(tx, wakeTokens.subagent(id))
   }
 }
 
@@ -74,13 +87,26 @@ async function writeRows(tx: Transaction, scope: SettingScope, context: Settings
 export async function writeSettings(context: SettingsContext, scope: SettingScope, raw: unknown): Promise<SettingsView> {
   const values = parseSettingsPatch(scope, raw)
   return workspaceDb.transaction(async workspaceTx => {
-    await requireWorkspace(workspaceTx, context.workspaceId, context.userId, scope === 'workspace')
+    const { workspace } = await requireWorkspace(workspaceTx, context.workspaceId, context.userId, scope === 'workspace')
+    if (scope === 'workspace' && Object.hasOwn(values, 'requireTwoFactor')) {
+      const required = values.requireTwoFactor === null ? null : values.requireTwoFactor === true
+      await workspaceTx.update(workspaces).set({
+        requireTwoFactor: required,
+        twoFactorRequiredAt: required ? sql`coalesce(${workspaces.twoFactorRequiredAt},clock_timestamp())` : null,
+      }).where(eq(workspaces.id, context.workspaceId))
+      workspace.requireTwoFactor = required
+      invalidateTaskWorkspaceOrganization(context.workspaceId)
+    }
     const result = await db.transaction(async tx => {
       if (scope === 'personal') await tx.select({ id: users.id }).from(users).where(eq(users.id, context.userId)).for('no key update')
+      if (scope === 'personal') await validateAndMirrorKeyboardShortcuts(tx, context.userId, values)
       await writeRows(tx, scope, context, values)
-      return readValues(context, tx, scope)
+      return readValues(context, workspace, tx, scope)
     })
-    await workspaceListChanged(workspaceTx, context.workspaceId, ['workspace_settings'])
+    // Pure keyboard writes already refresh this account's active workspaces.
+    if (scope === 'workspace' || Object.keys(values).some(key => !settingDefinition(key).action)) {
+      await workspaceListChanged(workspaceTx, context.workspaceId, ['workspace_settings'])
+    }
     return result
   })
 }

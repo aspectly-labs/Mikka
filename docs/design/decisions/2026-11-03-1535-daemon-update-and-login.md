@@ -1,6 +1,7 @@
 # Updating and signing in are both required after daemon quarantine
 
 - Date: 2026-11-03
+- **Status:** Superseded in part by [2026-11-17-2215](2026-11-17-2215-device-session-no-heartbeat.md)
 - Source: Alex, Neon egress investigation: 「错了，是必须进行更新，并且重新登录之后才可以」, after authorizing disconnecting the daemon whose remote update failed.
 - Rule: —
 - Replaces: —

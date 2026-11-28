@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { CodedError } from '@mikka/protocol/coded-error'
 import { groupTurnRef } from '../usage-turn-ref'
 import { serverRunFailure } from '@/lib/run-failure-details'
 
@@ -76,6 +77,7 @@ export function groupGenerationFailure(error: unknown) {
   for (let current = error, depth = 0; current && typeof current === 'object' && depth < 8 && !seen.has(current); depth++) {
     seen.add(current)
     const value = current as { name?: string; statusCode?: number; cause?: unknown }
+    if (value instanceof CodedError) return value.code
     if (value.name === 'TimeoutError') return 'generation_timeout'
     if (value.name === 'AbortError') return 'generation_aborted'
     if (value.statusCode === 401 || value.statusCode === 403) return 'generation_authentication'
@@ -171,12 +173,21 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
     messageId = root.messageId
     // Listen before the claim: a stop that commits after it is pushed to this
     // session at once. Without LISTEN the generation falls back to checking every second.
-    const stops: Listener | null = await listenOn(client, GROUP_TURN_STOP_CHANNEL).catch(() => null)
     // Losing the session (and its lock) wakes the same check as a pushed stop.
-    const stopPushed = stops ? (wake: () => void) => {
-      const offStop = stops.on(root.messageId, wake), offLost = session.onLost(wake)
-      return () => { offStop(); offLost() }
-    } : undefined
+    // The listener is latched once per turn and shared by every reply's
+    // untilStopped: a resubscribe that recovered mid-reply serves the next
+    // reply's setup instead of LISTENing twice on the same connection.
+    let stops: Listener | null = null
+    const subscribeStops = async () => {
+      stops ??= await listenOn(client, GROUP_TURN_STOP_CHANNEL).catch(() => null)
+      const listener = stops
+      if (!listener) return undefined
+      return (wake: () => void) => {
+        const offStop = listener.on(root.messageId, wake), offLost = session.onLost(wake)
+        return () => { offStop(); offLost() }
+      }
+    }
+    const stopPushed = await subscribeStops()
     // Stop may commit after the queue read; it must win over this claim.
     const claimed = await client.query(`UPDATE group_turns SET status='running',"updatedAt"=now() WHERE "messageId"=$1 AND status='queued'`, [messageId])
     if (!claimed.rowCount) return true
@@ -249,7 +260,7 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
           session.assertHeld()
           return runtime.delegate!({ userId:root.userId, workspaceId:root.workspaceId, conversationId, messageId:messageId!, reporter, text:input.text, delegation },client)
         } : undefined,
-        generate: (agent, input) => untilStopped(stopped, { subscribe: stopPushed, reliable: !!stopPushed }, async signal => {
+        generate: (agent, input) => untilStopped(stopped, { subscribe: stopPushed, reliable: !!stopPushed, resubscribe: subscribeStops }, async signal => {
           session.assertHeld()
           input = { ...input, signal, attachmentContext: { userId: root.userId, conversationId } }
           const replyId = randomUUID()
@@ -380,24 +391,47 @@ export async function processGroupTurn(pool: Pool, conversationId: string, runti
  * notification, is reliable. It reads on pushes alone unless a read fails;
  * a successful read clears that temporary fallback. Other subscriptions keep
  * STOP_FALLBACK_MS, and no subscription keeps STOP_CHECK_MS. */
-export async function untilStopped<T>(stopped: () => Promise<boolean>, options: { subscribe?: (wake: () => void) => () => void; reliable?: boolean; every?: number }, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+export async function untilStopped<T>(stopped: () => Promise<boolean>, options: { subscribe?: (wake: () => void) => () => void; reliable?: boolean; resubscribe?: () => Promise<((wake: () => void) => () => void) | undefined>; every?: number }, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController()
-  const reliable = !!options.subscribe && options.reliable === true
+  let reliable = !!options.subscribe && options.reliable === true
+  let subscribed = !!options.subscribe
   let checking = false, again = false, closed = false
   let timer: ReturnType<typeof setInterval> | undefined
+  let extraUnsub: (() => void) | undefined
   const clearFallback = () => { clearInterval(timer); timer = undefined }
   const startFallback = () => {
     if (!closed && !controller.signal.aborted && timer === undefined)
-      timer = setInterval(check, options.every ?? (options.subscribe ? STOP_FALLBACK_MS : STOP_CHECK_MS))
+      timer = setInterval(check, options.every ?? (reliable || options.subscribe ? STOP_FALLBACK_MS : STOP_CHECK_MS))
   }
+  // A missing or dropped listener is retried on every read and once at setup.
+  // Once it is back, the read right below is the catch-up: the stop flag is
+  // latched state, so a single bounded read covers the outage window. The
+  // listener counts as reliable only after that read succeeds — a failed
+  // catch-up keeps the one-second cadence instead of dropping to fifteen.
+  let attaching: Promise<void> | undefined
+  let relatched = false
+  const attach = () => attaching ??= (async () => {
+    try {
+      if (subscribed || !options.resubscribe) return
+      const sub = await options.resubscribe().catch(() => undefined)
+      if (sub && !closed && !controller.signal.aborted) {
+        subscribed = true
+        relatched = true
+        extraUnsub = sub(check)
+      }
+    } finally { attaching = undefined }
+  })()
   const check = () => {
     if (closed || controller.signal.aborted) return
     if (checking) { again = true; return }
     checking = true
     void (async () => {
       try {
+        if (!subscribed) await attach()
+        if (closed) return
         const yes = await stopped()
         if (closed) return
+        if (relatched) reliable = true
         if (reliable || yes) clearFallback()
         if (yes) controller.abort(new Error(GROUP_TURN_STOPPED))
       } catch {
@@ -410,8 +444,9 @@ export async function untilStopped<T>(stopped: () => Promise<boolean>, options: 
   }
   const unsubscribe = options.subscribe?.(check) ?? (() => {})
   if (!reliable) startFallback()
+  if (!subscribed && options.resubscribe) void attach().then(() => check())
   try { return await work(controller.signal) }
-  finally { closed = true; again = false; clearFallback(); unsubscribe() }
+  finally { closed = true; again = false; clearFallback(); unsubscribe(); extraUnsub?.() }
 }
 
 /** Pure serial round engine, shared by the real adapter and scripted CI. */
@@ -462,7 +497,7 @@ export async function runGroupRounds(route: GroupRoute, message: GroupMessage, i
       await io.status(id)
       let reply: GroupReply
       let outcome: 'succeeded' | 'failed' = 'failed'
-      try { reply = await io.generate(agent, { message, earlier: [...earlier], members: current, followUp: route.action === 'clarify' ? 'Ask only for the essential missing information or permission. Do not claim execution has started.' : followUpInstructions(earlier), ask: route.by === 'lead' ? route.ask : undefined }); outcome = 'succeeded' }
+      try { reply = await io.generate(agent, { message, earlier: [...earlier], members: current, followUp: route.action === 'clarify' ? 'Ask only for the essential missing information. Never ask for permission. Do not claim execution has started.' : followUpInstructions(earlier), ask: route.by === 'lead' ? route.ask : undefined }); outcome = 'succeeded' }
       finally { await io.status(null, outcome) }
       const known = new Set(current.map(a => a.id))
       if (reply.mentions.some(mention => !known.has(mention))) throw new UnknownMentionError(reply.mentions.filter(mention => !known.has(mention)))

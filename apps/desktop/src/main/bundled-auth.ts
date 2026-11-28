@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import type { BundledSession, BundledSignIn } from '@mikka/protocol/bridge'
+import { DESKTOP_SESSION_ACTIVE_HEADER, HOSTED_API_HEADERS } from '@mikka/protocol/version'
 import { remoteBase, safeAppNext } from './bundled-policy'
 import { startBundledLoopback } from './bundled-loopback'
 import type { LoopbackAuthServer } from './loopback'
@@ -12,10 +13,25 @@ import type { BundledSessionChange } from './bundled-session-change'
 
 type Fetcher = (url: string, init?: RequestInit) => Promise<Response>
 
+/**
+ * Whether URL serialization kept a checked path (no controls, whitespace,
+ * backslashes or dot segments) as written. Serialization may only
+ * percent-encode the path set's characters and non-ASCII; `^` is compared
+ * either way, as URL parsers differ on it.
+ */
+export function sameUrlPath(serialized: string, path: string): boolean {
+  let expected: string
+  try { expected = path.replace(/[^\x21-\x7e]|["<>`{}]/gu, character => encodeURIComponent(character)) } catch { return false }
+  const caret = (value: string) => value.replace(/%5e/gi, '^')
+  return caret(serialized) === caret(expected)
+}
+
 export class BundledAuth {
   private current: StoredSession | null = null
   private readonly saved = new Map<string, StoredSession>()
   private generation = 0
+  /** One re-validation per session at a time: a burst of 401s asks the server once. */
+  private readonly revalidations = new Map<string, Promise<SessionVerdict>>()
   private pendingStorage: Promise<void> = Promise.resolve()
   private restoration: Promise<void> | undefined
   private listener: LoopbackAuthServer | null = null
@@ -132,6 +148,20 @@ export class BundledAuth {
     }
     await this.persist()
   }
+  /**
+   * The credentials main holds for any signed-in account: bearer tokens and
+   * signed session caches. The protocol checks that no response it hands the
+   * renderer carries one (bundled-protocol.ts). Main-only; never crosses IPC.
+   */
+  credentials(): string[] {
+    const values = new Set<string>()
+    for (const account of [this.current, ...this.saved.values()]) {
+      if (account?.token) values.add(account.token)
+      if (account?.sessionCache) values.add(account.sessionCache)
+    }
+    return [...values].filter(value => value.length >= 16)
+  }
+
   session(): BundledSession | null { return this.current ? structuredClone(this.current.identity) : null }
   /** Main-only authorization scope; neither token nor workspace selector crosses IPC. */
   scope(): string | null { return this.current ? JSON.stringify([this.serverOf(this.current), this.current.identity.user.id, this.current.identity.session.id, this.current.workspace ?? null]) : null }
@@ -145,15 +175,22 @@ export class BundledAuth {
   /** Main-only primitive; a stored account chooses authentication, never an IPC token.
    * Its token goes only to its own server; without an account, to the sign-in target. */
   private async fetchAs(path: string, init: RequestInit, account: StoredSession | null): Promise<Response> {
-    if (!path.startsWith('/api/') || path.includes('\\') || path.includes('#') || /%(?:2f|5c|2e|25)/i.test(path.split('?')[0]!)) throw new Error('Invalid backend path')
+    const pathname = path.split('?', 1)[0]!
+    // oxlint-disable-next-line no-control-regex -- URL construction strips TAB/CR/LF, so `.\n.` would become `..`.
+    if (!path.startsWith('/api/') || path.includes('\\') || path.includes('#') || /[\x00-\x20\x7f]/.test(path) || /%(?:2f|5c|2e|25)/i.test(pathname) || pathname.split('/').some(part => part === '.' || part === '..')) throw new Error('Invalid backend path')
     const base = remoteBase(account ? this.serverOf(account) : this.target)
-    const target = new URL(`${base.pathname.replace(/\/$/, '')}${path}`, base.origin)
+    const basePath = base.pathname.replace(/\/$/, '')
+    const target = new URL(`${basePath}${path}`, base.origin)
+    // The URL that leaves must be the one checked: the account's origin and
+    // exactly this path under the server's base path, nothing normalized away.
     if (target.origin !== base.origin) throw new Error('Invalid backend origin')
+    if (!target.pathname.startsWith(`${basePath}/api/`) || !sameUrlPath(target.pathname, `${basePath}${pathname}`)) throw new Error('Invalid backend path')
     const headers = new Headers(init.headers)
     headers.delete('cookie'); headers.delete('authorization'); headers.delete('proxy-authorization'); headers.delete(SESSION_CACHE_HEADER)
     headers.set('origin', base.origin)
     headers.set('x-mikka-client', 'desktop')
     headers.set('x-mikka-client-version', this.options.version)
+    for (const [key, value] of Object.entries(HOSTED_API_HEADERS)) headers.set(key, value)
     headers.set('x-mikka-desktop-protocol', '1')
     const token = account?.token
     if (token) headers.set('authorization', `Bearer ${token}`)
@@ -165,7 +202,34 @@ export class BundledAuth {
     if (startupBootstrap) markStartup('main.bootstrap.headers')
     if (account) await this.rememberCache(account, response.status === 401 ? '' : responseSessionCache(response.headers))
     if (startupBootstrap) markStartup('main.bootstrap.cache.end')
-    return response
+    // Only main says a 401 left the session intact; a server cannot.
+    return response.headers.has(DESKTOP_SESSION_ACTIVE_HEADER) ? withSessionActive(response, false) : response
+  }
+
+  /**
+   * What the session endpoint, asked fresh, says of this session:
+   * - `confirmed`: a 200 naming this same user;
+   * - `expired`: a definite no, a 401, a null session or another user;
+   * - `unknown`: no verdict, a 403 (refused, not unknown to it), a 5xx, a
+   *   timeout, a network failure or a body that is not JSON.
+   * Only `expired` signs out, and only `confirmed` lets a 401 pass as a
+   * refused operation (request below).
+   */
+  private sessionVerdict(account: StoredSession): Promise<SessionVerdict> {
+    const pending = this.revalidations.get(account.token)
+    if (pending) return pending
+    const check = (async (): Promise<SessionVerdict> => {
+      try {
+        const response = await this.fetchAs('/api/auth/get-session?disableCookieCache=true', { signal: AbortSignal.timeout(15_000) }, account)
+        if (response.status === 401) return 'expired'
+        if (response.status !== 200) return 'unknown'
+        const body: unknown = await response.json().catch(() => undefined)
+        if (body === undefined) return 'unknown'
+        return publicSession(body)?.user.id === account.identity.user.id ? 'confirmed' : 'expired'
+      } catch { return 'unknown' }
+    })().finally(() => this.revalidations.delete(account.token))
+    this.revalidations.set(account.token, check)
+    return check
   }
 
   /** Main-only primitive; callers supply known routes. Never accepts renderer credentials. */
@@ -195,10 +259,32 @@ export class BundledAuth {
       }
     }
     if (response.status === 401 && token && this.current?.token === token) {
-      this.saved.delete(this.current.identity.user.id)
-      this.current = null
-      await this.persist()
-      this.options.changed()
+      // One route's 401 is not the session's verdict: a transient refusal on
+      // /api/workspace/switcher used to sign the person out. Ask the session
+      // endpoint itself, and sign out only when it says the session is gone.
+      const account = this.current
+      const definitive = path.split('?')[0] === '/api/auth/get-session'
+      const verdict = definitive ? 'expired' : await this.sessionVerdict(account)
+      if (verdict === 'expired') {
+        if (this.current?.token === token) {
+          this.saved.delete(this.current.identity.user.id)
+          this.current = null
+          await this.persist()
+          this.options.changed()
+        }
+      } else if (this.current?.token === token) {
+        if ((!init.method || init.method === 'GET' || init.method === 'HEAD') && !init.signal?.aborted) {
+          // A read can safely be asked once more; a write's 401 goes back to its caller.
+          const retried = await this.fetchAs(path, init, this.current)
+          if (token === this.current?.token && scope === this.scope()) response = retried
+        }
+        // Confirmed, the session holds, so this 401 refused the operation, not
+        // the login: the same status and body, marked so the renderer keeps its
+        // session. Without a verdict nothing is marked: the renderer reads the
+        // 401 as it always has (sign in again), while main keeps the stored
+        // session for the next check, and never vouches for one it could not confirm.
+        if (verdict === 'confirmed' && response.status === 401 && token === this.current?.token) response = withSessionActive(response, true)
+      }
     }
     // Password changes can rotate the current session. This private header is
     // never forwarded by the protocol and is accepted only for this exact RPC.
@@ -363,7 +449,7 @@ export class BundledAuth {
     if (typeof body.token !== 'string' || generation !== this.generation) return { code: 'INVALID_EMAIL_OR_PASSWORD', status: 401 }
     const initialCache = responseSessionCache(response.headers)
     const base = remoteBase(this.target)
-    const identityHeaders = new Headers({ authorization: `Bearer ${body.token}`, origin: base.origin, 'x-mikka-client': 'desktop', 'x-mikka-client-version': this.options.version, 'x-mikka-desktop-protocol': '1' })
+    const identityHeaders = new Headers({ authorization: `Bearer ${body.token}`, origin: base.origin, 'x-mikka-client': 'desktop', 'x-mikka-client-version': this.options.version, 'x-mikka-desktop-protocol': '1', ...HOSTED_API_HEADERS })
     if (initialCache) identityHeaders.set(SESSION_CACHE_HEADER, initialCache)
     // Use the newly returned token only in main, before exposing public identity.
     const identityResponse = await this.options.fetch(new URL(`${base.pathname.replace(/\/$/, '')}/api/auth/get-session`, base.origin).href, {
@@ -422,4 +508,15 @@ export class BundledAuth {
     this.options.changed()
     await revocation
   }
+}
+
+type SessionVerdict = 'confirmed' | 'expired' | 'unknown'
+
+/** The same response with main's session mark set or removed. */
+function withSessionActive(response: Response, active: boolean): Response {
+  const headers = new Headers(response.headers)
+  if (active) headers.set(DESKTOP_SESSION_ACTIVE_HEADER, '1')
+  else headers.delete(DESKTOP_SESSION_ACTIVE_HEADER)
+  const empty = response.status === 204 || response.status === 205 || response.status === 304
+  return new Response(empty ? null : response.body, { status: response.status, statusText: response.statusText, headers })
 }

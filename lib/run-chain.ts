@@ -51,10 +51,13 @@ const UUID = `'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9
 /** The continuation origin as a uuid, only when well-formed, so it compares to the primary key. */
 const ORIGIN = (alias: string) => `(CASE WHEN ${alias}."questionContinuation"->>'originRunId' ~ ${UUID} THEN (${alias}."questionContinuation"->>'originRunId')::uuid END)`
 /** Every read model follows the same owner, issue and immutable tenant fence. */
-const PARENT = (child: string, parent: string) => `${parent}.id IN (${child}.origin, ${child}."retryOf", ${child}."continuesRunId")
+const PARENT = (child: string, parent: string, origin = `${child}.origin`) => `${parent}.id IN (${origin}, ${child}."retryOf", ${child}."continuesRunId")
   AND ${parent}."userId" = ${child}."userId" AND ${parent}."issueId" IS NOT DISTINCT FROM ${child}."issueId"
   AND ${parent}."workspaceId" = ${child}."workspaceId"`
 
+export function isRunChainRootSql(alias: string) {
+  return `NOT EXISTS (SELECT 1 FROM agent_runs parent WHERE ${PARENT(alias, 'parent', ORIGIN(alias))})`
+}
 
 /**
  * Every run in scope with its chain root. `scope` filters agent_runs aliased `r`;

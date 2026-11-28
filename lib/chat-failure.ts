@@ -1,9 +1,15 @@
+import { modelRouteRejection, type ModelRouteRejection } from './model-route-rejection'
 import { hostedRefusal } from '@/lib/billing/hosted-usage'
 import { subscriptionRefusal, type SubscriptionRefusalNotice } from '@/lib/subscription-refusal'
 import { chatBalanceRefusal } from '@/lib/chat-balance'
 import { cloudErrorCode, type CloudErrorCode } from '@/lib/cloud-services/errors'
 import { parseCodedErrorText } from '@mikka/protocol/coded-error'
 import { readRunFailure, type RunFailure } from '@mikka/protocol/run-failure'
+import {
+  toMikkaErrorContract,
+  type MikkaErrorContract,
+  type MikkaErrorContractOptions,
+} from './primitives/error-contract'
 
 /**
  * Why a chat's last reply did not come, as the web's chat reads it
@@ -23,7 +29,7 @@ export type ChatFailure = (
   | { kind: 'failed'; reason?: 'balance' | 'tools' | 'modelRequired'; cloudCode?: CloudErrorCode }
   // The stored code(s) as recorded, for 详情 only (decision 2026-11-05-0330): the
   // line's own code, then the turn failure behind a wake code. Never the words.
-) & { raw?: string; failureDetails?: RunFailure }
+) & Partial<ModelRouteRejection> & { raw?: string; failureDetails?: RunFailure }
 
 export function chatFailure(chat: { working: boolean; error: string | null; cause?: string | null; failureDetails?: unknown; items?: readonly { from: string; pending?: true; native?:true }[] }): ChatFailure | null {
   const details = chat.working || !chat.error ? null : readRunFailure(chat.failureDetails)
@@ -38,7 +44,14 @@ export function chatFailure(chat: { working: boolean; error: string | null; caus
     const code = text ? REFERENCED_CODE.test(text) ? text : CODE.exec(text)?.[1] : undefined
     return code ? [code] : text && unknown ? [text] : []
   }))]
-  return lines.length ? { ...failure, raw: lines.join('\n') } : failure
+  const refusal = failure.kind === 'subscription' ? failure.notice : null
+  const code = lines[0]?.split(' · ref ')[0]
+  const reason = code === 'account_unavailable (account_paused)' ? 'paused'
+    : refusal === 'reconnect' || code === 'account_unavailable (connection_not_connected)' ? 'expired'
+    : code === 'apiKeyInvalid' || details?.category === 'api_key' && details.recovery === 'configure_api_key' ? 'keyRefused'
+    : refusal === 'quotaUsed' || details?.category === 'quota' || failure.kind === 'failed' && failure.reason === 'balance' ? 'quota'
+    : refusal === 'modelRequired' || failure.kind === 'failed' && failure.reason === 'modelRequired' ? 'missing' : null
+  return { ...failure, ...(reason ? modelRouteRejection(reason) : {}), ...(lines.length ? { raw: lines.join('\n') } : {}) }
 }
 
 // The code alone, or ending a wrapped message (`Error: …`, `Step "…" failed after 3 retries: …`).
@@ -70,16 +83,24 @@ const TRANSIENT_HOSTED = new Set(['usage_in_progress', 'usage_concurrency_limit'
 
 /** Where a failure's words live in messages/*.json: the web line, Telegram and the phone all read this one key. */
 export type FailureMessageKey =
-  | { namespace: 'Billing.refusal'; key: 'unavailable' | 'verificationRequiredPlain' | 'free_allowance_used' | 'points_exhausted' | 'platform_paused' | 'usage_budget_exhausted' | 'billing_authorization_revoked' }
+  | { namespace: 'Billing.refusal'; key: 'unavailable' | 'verificationRequiredPlain' | 'free_allowance_used' | 'points_exhausted' | 'platform_paused' | 'usage_budget_exhausted' | 'billing_authorization_revoked' | 'billing_scope_missing' | 'billing_owner_missing' }
   | { namespace: 'Coordinator'; key: `subscriptionRefusal.${SubscriptionRefusalNotice}` | `wakeErrors.${WakeCode}` | 'failedTitle' | 'apiBalance' | 'replyToolUnavailable' | 'modelRequired' }
   | { namespace: 'RunErrors'; key: `${CloudErrorCode}.default` }
 
 export function failureMessageKey(failure: ChatFailure): FailureMessageKey {
   switch (failure.kind) {
     case 'hosted':
-      return { namespace: 'Billing.refusal', key: TRANSIENT_HOSTED.has(failure.code) ? 'unavailable' : failure.code === 'verification_required' ? 'verificationRequiredPlain' : failure.code as 'free_allowance_used' | 'points_exhausted' | 'platform_paused' | 'usage_budget_exhausted' | 'billing_authorization_revoked' }
+      return { namespace: 'Billing.refusal', key: TRANSIENT_HOSTED.has(failure.code) ? 'unavailable' : failure.code === 'verification_required' ? 'verificationRequiredPlain' : failure.code as 'free_allowance_used' | 'points_exhausted' | 'platform_paused' | 'usage_budget_exhausted' | 'billing_authorization_revoked' | 'billing_scope_missing' | 'billing_owner_missing' }
     case 'subscription': return { namespace: 'Coordinator', key: `subscriptionRefusal.${failure.notice}` }
     case 'wake': return { namespace: 'Coordinator', key: `wakeErrors.${failure.code}` }
     default: return failure.cloudCode ? { namespace: 'RunErrors', key: `${failure.cloudCode}.default` } : { namespace: 'Coordinator', key: failure.reason === 'modelRequired' ? 'modelRequired' : failure.reason === 'balance' ? 'apiBalance' : failure.reason === 'tools' ? 'replyToolUnavailable' : 'failedTitle' }
   }
+}
+
+/** Additive canonical single-CTA error contract for a classified chat failure. */
+export function chatFailureErrorContract(
+  failure: ChatFailure,
+  options?: MikkaErrorContractOptions,
+): MikkaErrorContract {
+  return toMikkaErrorContract(failure, options)
 }

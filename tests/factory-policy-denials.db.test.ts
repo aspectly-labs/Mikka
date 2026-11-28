@@ -26,7 +26,7 @@ test('Factory task denials preserve public errors before policy and execution si
   const next = await import('@/lib/server-runtime/server')
   // Node has no Next request-lifetime scheduler. Response handling, device auth,
   // Factory/policy services and all database operations remain real.
-  mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest: next.NextRequest, NextResponse: next.NextResponse, after: () => {} } })
+  mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest: next.RouteRequest, RouteResponse: next.RouteResponse, after: () => {} } })
   const pool = new Pool({ connectionString: target })
   const { pool: appPool } = await import('../lib/db')
   const { workspacePool } = await import('../lib/workspace-db')

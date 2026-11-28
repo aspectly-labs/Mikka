@@ -10,6 +10,8 @@ import { splitTelegramText } from '../telegram/messages'
 import type { InboxEvent } from '../push-reasons'
 import type { EveScope } from './scope'
 import { eveStreamId } from './projection'
+import { auditFailureSummary } from '../audit/failure'
+import { SpanStatusCode, trace } from '@opentelemetry/api'
 
 type Query = Pick<Pool, 'query'>
 export interface EveOutcomeDelivery { sessionId:string; turnId:string; outcome:TurnOutcome }
@@ -34,6 +36,28 @@ const textOf=(message:Record<string,unknown>)=>typeof message.content==='string'
   ? message.content.flatMap(part=>part&&typeof part==='object'&&part.type==='text'&&typeof part.text==='string'?[part.text]:[]).join('\n') : ''
 const noReply=(message:Record<string,unknown>)=>Array.isArray(message.content)&&message.content.some(part=>part&&typeof part==='object'&&part.type==='tool-call'&&part.toolName==='no_reply')
 const carriesCode=(source:StoredOutcome)=>source.kind==='matter_handoff'&&Boolean(source.payload.verificationCode)
+
+// Only constraints from 20261112030500_eve_outcome_deliveries.sql. Arbitrary
+// PostgreSQL identifiers can contain private data and never leave the process.
+const receiptConstraints=new Set([
+  'eve_outcome_deliveries_pkey','eve_outcome_deliveries_session_id_fkey',
+  'eve_outcome_deliveries_owner_id_fkey','eve_outcome_deliveries_bot_id_fkey',
+  'eve_outcome_deliveries_source_event_id_fkey','eve_outcome_deliveries_kind_check',
+  'eve_outcome_deliveries_chunk_index_check','eve_outcome_deliveries_status_check',
+])
+function recordReceiptFailure(error:unknown,phase:'claim'|'finish') {
+  try {
+    const failure=auditFailureSummary(error)
+    const span=trace.getActiveSpan()
+    // PostgreSQL DETAIL is arbitrary row/message text, even when it looks
+    // like an identifier. Only the explicitly known constraint supplies detail.
+    span?.setAttributes({'error.type':failure.name,'mikka.eve.receipt_phase':phase,
+      ...(failure.code&&/^[0-9A-Z]{5}$/.test(failure.code)?{'mikka.error.code':failure.code}:{}),
+      ...(failure.constraint&&receiptConstraints.has(failure.constraint)?{'mikka.error.detail':failure.constraint}:{}),
+    })
+    span?.setStatus({code:SpanStatusCode.ERROR})
+  }catch{/* Diagnostics never replace the original receipt failure. */}
+}
 
 /** Product notifications consume a committed native root projection, never run
  * an Agent or claim a Coordinator lease. Provider calls have no portable
@@ -78,6 +102,7 @@ export function createEveOutcomeDelivery(app:Query,workspace:Query,overrides:Par
     const values=[input.sessionId,input.turnId,kind,targetKey,index,scope.ownerId,scope.botId,scope.workspaceId,source.sourceId,requestDigest]
     const inserted=await app.query(`INSERT INTO eve_outcome_deliveries(session_id,turn_id,kind,target_key,chunk_index,owner_id,bot_id,workspace_id,source_event_id,request_digest,status)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'dispatching') ON CONFLICT DO NOTHING RETURNING status`,values)
+      .catch(error=>{recordReceiptFailure(error,'claim');throw error})
     if(inserted.rowCount)return 'dispatch' as const
     const {rows:[prior]}=await app.query<{request_digest:string;status:string}>(`SELECT request_digest,status FROM eve_outcome_deliveries
       WHERE session_id=$1 AND turn_id=$2 AND kind=$3 AND target_key=$4 AND chunk_index=$5`,values.slice(0,5))
@@ -86,6 +111,7 @@ export function createEveOutcomeDelivery(app:Query,workspace:Query,overrides:Par
   }
   async function finish(input:EveOutcomeDelivery,kind:'telegram'|'phone',target:string,index:number,status:'completed'|'unknown') {
     await app.query(`UPDATE eve_outcome_deliveries SET status=$6,finished_at=now() WHERE session_id=$1 AND turn_id=$2 AND kind=$3 AND target_key=$4 AND chunk_index=$5 AND status='dispatching'`,[input.sessionId,input.turnId,kind,target,index,status])
+      .catch(error=>{recordReceiptFailure(error,'finish');throw error})
   }
   return async function deliver(scope:EveScope,input:EveOutcomeDelivery):Promise<void> {
     if(input.outcome==='cancelled')return

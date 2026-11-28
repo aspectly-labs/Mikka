@@ -20,9 +20,8 @@ import type { JournalEntry } from '../../../packages/daemon/src/runs/journal'
 import { orderMigrations } from '../../../scripts/migration-order.mjs'
 import { disposableDatabase, E2E_DB_RULE } from '../../../tests/helpers/e2e-target.mjs'
 import { createTestDatabase, dropTestDatabase } from '../../../tests/support/drop-test-database'
-import { GitHubAccessError } from '../../github/user-access-error'
+import { startGitHubAccessHttp } from '../../../tests/fakes/github-access-http.mjs'
 import { admitRepositoryTask } from '../../repository-admission'
-import type { RequestBudget } from '../../request-budget'
 import type { ReviewActor } from '../diff/authority'
 import type { ReviewBatchRow } from '../diff/batch-store'
 import type { TaskReviewHttpInput } from './http'
@@ -64,11 +63,21 @@ test('Task review send composes real transactional deliveries on PostgreSQL 17',
   const environment = { MIKKA_DATABASE_URL: target.toString(), DATABASE_URL: target.toString(), ORVILO_DATABASE_URL: target.toString(),
     E2E_DATABASE_URL: target.toString(), BETTER_AUTH_SECRET: randomBytes(32).toString('hex'),
     BETTER_AUTH_URL: 'http://127.0.0.1:3199', WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex'),
-    GITHUB_CLIENT_ID: 'fixture-client', GITHUB_CLIENT_SECRET: 'fixture-client-secret' }
+    GITHUB_APP_ID: '4840908', GITHUB_CLIENT_ID: 'fixture-client', GITHUB_CLIENT_SECRET: 'fixture-client-secret' }
   const previous = Object.fromEntries(Object.keys(environment).map(name => [name, process.env[name]]))
   Object.assign(process.env, environment)
   let appPool: Pool | undefined, workspacePool: Pool | undefined
   const tokens = new Map<string, { token: string; githubAccountId: string; expiresAt: Date }>()
+  const realFetch = globalThis.fetch
+  const githubHttp = await startGitHubAccessHttp({
+    installationId: 1,
+    getUser: req => {
+      const credential = [...tokens.values()].find(value => `Bearer ${value.token}` === req.headers.authorization)
+      return credential ? { id: credential.githubAccountId, login: 'task-send-fixture' } : null
+    },
+    getRepositories: () => [{ id: Number(repositoryId), full_name: fullName, private: true }],
+  })
+  const routedAuth = githubHttp.routeFetch(realFetch)
   try {
     const migrations = new URL('../../../drizzle/', import.meta.url)
     for (const name of orderMigrations((await readdir(migrations)).filter(name => name.endsWith('.sql'))))
@@ -80,22 +89,6 @@ test('Task review send composes real transactional deliveries on PostgreSQL 17',
     }) } })
     mock.module('@/lib/intl/i18n-server', { namedExports: { getLocale: async () => 'en',
       getTranslations: async () => Object.assign((key: string) => key, { has: () => true }) } })
-    mock.module(new URL('../../github/user-access.ts', import.meta.url).href, { namedExports: {
-      GitHubAccessError,
-      readAuthorizedIssue: async () => { assert.fail('Task review send must not fetch external issue content') },
-      githubTokenForUser: async (userId: string, options: { minValidityMs?: number; budget?: RequestBudget } = {}) => {
-        const token = tokens.get(userId)
-        assert.ok(token, 'native review requests the actual fixture owner credential')
-        assert.equal(options.minValidityMs, 45_000); assert.ok(options.budget && options.budget.deadline > Date.now())
-        return token
-      },
-      githubRepositoryReadCredential: async (userId: string, key: string, budget?: RequestBudget) => {
-        const token = tokens.get(userId)
-        assert.ok(token); assert.equal(key, repositoryKey); assert.ok(budget && budget.deadline > Date.now())
-        return { ...token, kind: 'user', repository: { id: repositoryId, fullName, installationId: '1',
-          htmlUrl: 'https://github.com/' + fullName, private: true } }
-      },
-    } })
     const { resolveRunWorktree } = await import('../identity')
     const { validateWorkspaceReceipt } = await import('../receipt')
     const { secretMaskerFor } = await import('../../secrets/runtime')
@@ -248,6 +241,9 @@ test('Task review send composes real transactional deliveries on PostgreSQL 17',
       context.mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
         assert.ok(options.pr, 'a checkpoint without a PR must not attempt any provider HTTP')
         const target = new URL(String(input)), method = init.method ?? 'GET', token = tokens.get(owner.id)!
+        if (target.origin === 'https://api.github.com' && method === 'GET' && (target.pathname === '/user' || target.pathname === '/user/installations' || target.pathname === '/user/installations/1/repositories' || (target.pathname === apiPath && init.credentials !== 'omit'))) {
+          return routedAuth(input, init)
+        }
         assert.equal(target.origin, 'https://api.github.com'); assert.equal(init.redirect, 'error'); assert.equal(init.credentials, 'omit')
         assert.equal(new Headers(init.headers).get('authorization'), 'Bearer ' + token.token)
         const payload = init.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined
@@ -552,6 +548,7 @@ test('Task review send composes real transactional deliveries on PostgreSQL 17',
     })
   } finally {
     mock.restoreAll()
+    await githubHttp.close()
     for (const [name, value] of Object.entries(previous)) { if (value === undefined) delete process.env[name]; else process.env[name] = value }
     await dropTestDatabase(admin, database, pool, appPool, workspacePool)
     await admin.end()

@@ -6,6 +6,8 @@ import { auditRequestContext } from '../audit/events'
 import { localTestAccountsMode } from '@mikka/protocol/local-test-mode'
 import { runtimeResourcePath } from '../runtime-resource'
 import { deploymentStage } from '../deployment-stage.mjs'
+import { toMikkaErrorContract } from '../primitives/error-contract'
+import { runtimeEnv, type EnvMap } from '@/lib/env/server'
 const domains = new Set(
   readFileSync(
     runtimeResourcePath('lib/abuse/data/disposable-email-domains.txt'),
@@ -25,15 +27,20 @@ export function disposableEmail(email: string) {
   const parts = domain.split('.')
   return parts.some((_, i) => domains.has(parts.slice(i).join('.')))
 }
+const failureStatus = (
+  status: 'BAD_REQUEST' | 'TOO_MANY_REQUESTS' | 'SERVICE_UNAVAILABLE',
+) => (status === 'TOO_MANY_REQUESTS' ? 429 : status === 'SERVICE_UNAVAILABLE' ? 503 : 400)
 const failure = (
   status: 'BAD_REQUEST' | 'TOO_MANY_REQUESTS' | 'SERVICE_UNAVAILABLE',
   code: string,
+  resetAt?: string | null,
 ): never => {
-  throw new APIError(status, { code, message: code })
+  const errorContract = toMikkaErrorContract({ code, status: failureStatus(status), resetAt })
+  throw new APIError(status, { code, message: code, errorContract })
 }
 export async function verifyTurnstile(
   token: unknown,
-  env: Record<string, string | undefined> = process.env,
+  env: EnvMap = runtimeEnv(),
   fetchImpl: typeof fetch = fetch,
 ) {
   const production = deploymentStage(env) === 'production'
@@ -79,7 +86,7 @@ export async function verifyTurnstile(
 /** Reuse the existing trusted proxy/IP policy rather than client-chosen headers. */
 export function signupClientIP(
   headers: Pick<Headers, 'get'>,
-  env: Record<string, string | undefined> = process.env,
+  env: EnvMap = runtimeEnv(),
 ) {
   return auditRequestContext(headers, env).ip ?? 'local'
 }
@@ -90,7 +97,7 @@ export function signupClientIP(
  * packages/protocol/src/local-test-mode.ts), for
  * `next dev` and `next start` alike; a production database never qualifies.
  */
-export function localTestSignups(env: Record<string, string | undefined> = process.env) {
+export function localTestSignups(env: EnvMap = runtimeEnv()) {
   return localTestAccountsMode(env)
 }
 /**
@@ -99,11 +106,11 @@ export function localTestSignups(env: Record<string, string | undefined> = proce
  * Locally every request shares one bucket, so in local test mode sign-up gets
  * Better Auth's general limit of 100 a window instead; production keeps the default.
  */
-export function localSignUpRateRules(env: Record<string, string | undefined> = process.env): Record<string, { window: number; max: number }> {
+export function localSignUpRateRules(env: EnvMap = runtimeEnv()): Record<string, { window: number; max: number }> {
   return localTestSignups(env) ? { '/sign-up/email': { window: 10, max: 100 } } : {}
 }
 export function signupLimits(
-  env: Record<string, string | undefined> = process.env,
+  env: EnvMap = runtimeEnv(),
 ) {
   const positive = (value: string | undefined, fallback: number) => {
     const n = Number(value)
@@ -125,7 +132,7 @@ export async function signupRateLimit(
   ip: string,
   email: string,
   now = Date.now(),
-  env: Record<string, string | undefined> = process.env,
+  env: EnvMap = runtimeEnv(),
 ) {
   const tx = await pool.connect()
   try {
@@ -152,7 +159,12 @@ export async function signupRateLimit(
         ON CONFLICT (key) DO UPDATE SET count="rateLimit".count+1,"lastRequest"=$3 RETURNING count`,
         [randomUUID(), key, now],
       )
-      if (row.count > max) failure('TOO_MANY_REQUESTS', 'SIGNUP_RATE_LIMITED')
+      if (row.count > max)
+        failure(
+          'TOO_MANY_REQUESTS',
+          'SIGNUP_RATE_LIMITED',
+          new Date((window + 1) * 3_600_000).toISOString(),
+        )
     }
     await tx.query('COMMIT')
   } catch (error) {

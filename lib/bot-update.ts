@@ -1,18 +1,19 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { ActionFailureError } from '@/lib/action-error'
-import { BOT_COLORS, BOT_NAME_MAX, BOT_SHAPES } from '@/lib/bot-shapes'
+import { ACCEPTED_BOT_SHAPES, BOT_NAME_MAX, isStoredBotColor } from '@/lib/bot-shapes'
 import type { BotSettingsInput } from '@/lib/bot-settings'
 import { aliasConflict, assertBotSettings, botSettingsColumns, parseBotSettings } from '@/lib/bot-settings-store'
 import { db, pool } from '@/lib/db'
 import { bots } from '@/lib/db/schema'
-import { botListChanged } from './live/lists'
+import { botGroupsChanged, botListChanged } from './live/lists'
+import { botGroupChatsChanged } from './live/groups'
 
 const patchSchema = z.object({
   botId: z.uuid(),
   name: z.string().trim().min(1).max(BOT_NAME_MAX).optional(),
-  color: z.enum(BOT_COLORS).optional(),
-  shape: z.enum(BOT_SHAPES).optional(),
+  color: z.string().refine(isStoredBotColor).optional(),
+  shape: z.enum(ACCEPTED_BOT_SHAPES).optional(),
   publicRole: z.string().trim().max(2000).optional(),
 })
 
@@ -58,5 +59,10 @@ export async function updateOwnedBot(owner: { ownerId: string; workspaceId: stri
   }
   if (!row) throw new ActionFailureError('botNotFound')
   await botListChanged(db, botId)
+  // Its name and look also stand in the groups it is in: their list rows (the group's avatar) and member lists.
+  if (Object.keys(patch).some(key => key === 'name' || key === 'color' || key === 'shape')) {
+    await botGroupsChanged(db, botId)
+    await botGroupChatsChanged(db, botId)
+  }
   return row
 }

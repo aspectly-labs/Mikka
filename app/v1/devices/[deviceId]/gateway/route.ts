@@ -1,5 +1,5 @@
 import { withDeviceRoute } from '@/lib/device-route'
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import type { DeviceGatewayTicket } from '@mikka/protocol/device'
 import { authenticateDevice, ownsDevice } from '@/lib/device-link'
 import { deviceGatewayTicket } from '@/lib/device-gateway-ticket'
@@ -21,11 +21,11 @@ const headers = { 'Cache-Control': 'private, no-store' }
  */
 async function handleGET(request: Request, { params }: { params: Promise<{ deviceId: string }> }) {
   const caller = await authenticateDevice(request)
-  if (!caller) return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers })
+  if (!caller) return RouteResponse.json({ error: 'Unauthorized' }, { status: 401, headers })
   const { deviceId } = await params
-  if (!await ownsDevice(deviceId, caller.userId)) return NextResponse.json({ error: 'Unknown device.' }, { status: 404, headers })
+  if (!await ownsDevice(deviceId, caller.userId)) return RouteResponse.json({ error: 'Unknown device.' }, { status: 404, headers })
   const config = gatewayConfig()
-  if (!config) return NextResponse.json({ error: 'device_gateway_required', code: 'deviceGatewayRequired' }, { status: 503, headers })
+  if (!config) return RouteResponse.json({ error: 'device_gateway_required', code: 'deviceGatewayRequired' }, { status: 503, headers })
   const url = gatewayURL(config, `/v1/devices/${encodeURIComponent(deviceId)}/socket`)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   url.search = ''
@@ -35,7 +35,7 @@ async function handleGET(request: Request, { params }: { params: Promise<{ devic
     const { rows: [token] } = await pool.query<{ expiresAt: Date | null }>(`SELECT "expiresAt" FROM device_tokens WHERE id=$1`, [caller.tokenId])
     if (token?.expiresAt) ticket.cloudCredentialExpiresAt = token.expiresAt.toISOString()
   }
-  return NextResponse.json(ticket, { headers })
+  return RouteResponse.json(ticket, { headers })
 }
 
 export const GET = withDeviceRoute(handleGET)

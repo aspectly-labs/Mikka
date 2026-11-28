@@ -6,6 +6,7 @@ import { CodingWorkspaceError } from '@mikka/protocol/coding-workspace'
 import { diffFileMetadata, diffFilePatch, diffSnapshot, diffSourceAccess, WorkspaceReviewError,
   type DiffFileMetadata, type DiffFilePage, type DiffFilePatch, type DiffRevision, type DiffSnapshot, type DiffSourceAccess } from '@mikka/protocol/coding-workspace-review'
 import { maskDeep, type Masker } from '../../secrets/mask'
+import { jsonbSafeIntSql } from '../../primitives/jsonb-predicates'
 import type { WorkspaceQuery } from '../identity'
 import { assertDiffPatchSafe, diffDigest, diffFileVersion } from './patch'
 import type { ReviewScope } from './authority'
@@ -108,8 +109,8 @@ export async function retainDiffSnapshot(client: PoolClient, scope: ReviewScope,
 export async function readDiffSnapshot(database: WorkspaceQuery, scope: ReviewScope, id: string): Promise<DiffSnapshot> {
   const { rows: [row] } = await database.query<{ snapshot: unknown; files: number; additions: number; deletions: number; complete: boolean }>(
     `SELECT s.snapshot,count(f.path)::int AS files,
-      coalesce(sum(coalesce((f.patch->'file'->>'additions')::int,(f.metadata->>'additions')::int)),0)::int AS additions,
-      coalesce(sum(coalesce((f.patch->'file'->>'deletions')::int,(f.metadata->>'deletions')::int)),0)::int AS deletions,
+      coalesce(sum(coalesce(${jsonbSafeIntSql(`f.patch->'file'`, 'additions')},${jsonbSafeIntSql('f.metadata', 'additions')})),0)::int AS additions,
+      coalesce(sum(coalesce(${jsonbSafeIntSql(`f.patch->'file'`, 'deletions')},${jsonbSafeIntSql('f.metadata', 'deletions')})),0)::int AS deletions,
       coalesce(bool_and(f.patch IS NOT NULL AND f.patch->>'format' IN ('text','binary')) FILTER (WHERE f.path IS NOT NULL),true) AS complete
       FROM coding_workspace_snapshots s LEFT JOIN coding_workspace_snapshot_files f ON f."snapshotId"=s.id
       WHERE s.id=$1 AND s."runId"=$2 AND s."repoId"=$3 AND s."boardId"=$4 AND s."workspaceId"=$5 GROUP BY s.id`,

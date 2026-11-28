@@ -1,6 +1,7 @@
 # Ordinary interactions must not silently reload the page
 
 - Date: 2026-11-07 (UTC; November 6 in Alex's timezone)
+- **Status:** Accepted
 - Source: Alex's interaction-continuity request, tracked in #1603: “你可能点一下，整个 APP 就会进行一个刷新，这不正常吧？” and “把这些问题通通处理干净”.
 - Rule: —; preserve the existing navigation, security and update requirements.
 - Replaces: —; changes the removed-server-action recovery mechanism, not minimum-version enforcement.

@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { readEnv } from '@/lib/env/server'
 
 const encoder = new TextEncoder()
 const headers = { 'cache-control': 'no-store' }
@@ -20,7 +21,7 @@ export async function verifyBearer(value: string | null, secret: string) {
  * carries `Bearer <CRON_SECRET>`, both uncached. null means the caller is the cron Worker.
  */
 export async function cronUnauthorized(request: Request): Promise<Response | null> {
-  const secret = process.env.CRON_SECRET
+  const secret = readEnv('CRON_SECRET')
   if (!secret) return Response.json({ error: 'Cron is not configured' }, { status: 503, headers })
   if (!await verifyBearer(request.headers.get('authorization'), secret)) return new Response(null, { status: 401, headers })
   return null

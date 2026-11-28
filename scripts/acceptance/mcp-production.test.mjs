@@ -16,8 +16,8 @@ const SECOND_TEAM = '40000000-0000-4000-8000-000000000003'
 // Public Owner identity from comment #1504/6691409495; fixture data, never a login.
 const POLICY_ADMIN_EMAIL = 'alex@acme.aspectlylabs.com', POLICY_ADMIN_ID = 'policy-admin'
 const ACCESS = 'mka_SYNTHETIC_PRIVATE_ACCESS_TOKEN'
-const event = { ref: OPS_REF, after: SOURCE, repository: { full_name: 'alexj11324/Mikka' } }
-const environment = () => ({ GITHUB_REPOSITORY: 'alexj11324/Mikka', GITHUB_EVENT_NAME: 'push',
+const event = { ref: OPS_REF, after: SOURCE, repository: { full_name: 'aspectly-labs/Mikka' } }
+const environment = () => ({ GITHUB_REPOSITORY: 'aspectly-labs/Mikka', GITHUB_EVENT_NAME: 'push',
   GITHUB_REF: OPS_REF, GITHUB_SHA: SOURCE, APPLICATION_SHA: APP, GH_TOKEN: 'SYNTHETIC_GH_TOKEN',
   SMOKE_OWNER_EMAIL: EMAIL, SMOKE_OWNER_PASSWORD: PASSWORD })
 const json = (value, status = 200, headers = {}) => Response.json(value, { status, headers })
@@ -52,21 +52,10 @@ function fixture(options = {}) {
         mainReads++
         return json({ object: { type: 'commit', sha: options.wrongMain || options.advanceMain && mainReads > 2 ? OTHER : APP } })
       }
-      if (url.pathname.endsWith('/actions/workflows/web-deploy.yml/runs')) return json({ workflow_runs: [{
-        id: 51, run_attempt: 1, head_sha: APP, head_branch: 'main', event: 'push',
-        path: '.github/workflows/web-deploy.yml', repository: { id: 1427517699, full_name: 'alexj11324/Mikka', owner: { id: 183887963 } },
-        head_repository: { id: 1427517699, full_name: 'alexj11324/Mikka', owner: { id: 183887963 } }, status: 'completed', conclusion: 'success',
-      }] })
-      if (url.pathname.endsWith('/actions/runs/51/attempts/1/jobs')) return json({ total_count: 1, jobs: [{
-        name: 'deploy', head_sha: APP, status: 'completed', conclusion: 'success',
-        steps: ['Build (runs migrations last, as the Vercel build did)',
-          'Upload the prebuilt output to production', 'Verify the public production version before releasing the deployment queue']
-          .map(name => ({ name, status: 'completed', conclusion: 'success' })),
-      }] })
       assert.fail('Unexpected GitHub path')
     }
     assert.equal(url.origin, ORIGIN)
-    if (url.pathname === '/mikka/api/version') { versionReads++; return json({ build: APP }) }
+    if (url.pathname === '/mikka/api/version') { versionReads++; return json({ build: APP }, 200, { 'cf-ray': 'synthetic-cloudflare-edge' }) }
     if (url.pathname === '/mikka/api/auth/sign-in/email') {
       assert.equal(method, 'POST'); assert.equal(headers.get('origin'), ORIGIN)
       assert.deepEqual(JSON.parse(init.body), { email: EMAIL, password: PASSWORD })
@@ -224,6 +213,8 @@ test('actual existing PKCE helper: one owned client, catalogue only, normal revo
   assert.deepEqual(report.requestedScopes, ['mikka'])
   assert.equal(report.refreshRequested, false)
   assert.equal(report.toolsInvoked, 0)
+  assert.equal(report.deployment.provider, 'cloudflare')
+  assert.ok(Number.isFinite(Date.parse(report.deployment.verifiedAt)))
   assert.equal(report.cleanup.unresolvedResources, false)
   for (const key of ['tokenRevoked', 'tokenRejected', 'clientDeleted', 'clientAbsent', 'normalSessionClosed', 'sessionAbsent'])
     assert.equal(report.cleanup[key], true, key)
@@ -324,13 +315,14 @@ test('the shared helper retains its DCR default and rejects unknown registration
 })
 
 function deployedFixture(business, originalEnv, { changed = () => false } = {}) {
-  const env = { ...originalEnv, MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target',
-    GITHUB_REPOSITORY_OWNER: 'alexj11324', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
-    GITHUB_WORKFLOW_REF: 'alexj11324/Mikka/.github/workflows/issue1415-deployed-production.yml@refs/heads/main',
+  // The deployed-target dispatch runs in the canonical repository (deployed-target.mjs).
+  const env = { ...originalEnv, MIKKA_ACCEPTANCE_TARGET_MODE: 'deployed-target', GITHUB_REPOSITORY: 'aspectly-labs/Mikka',
+    GITHUB_REPOSITORY_OWNER: 'aspectly-labs', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main',
+    GITHUB_WORKFLOW_REF: 'aspectly-labs/Mikka/.github/workflows/issue1415-deployed-production.yml@refs/heads/main',
     GITHUB_RUN_ID: '99', GITHUB_RUN_ATTEMPT: '1' }
-  const repository = { full_name: 'alexj11324/Mikka', owner: { login: 'alexj11324' } }
+  const repository = { full_name: 'aspectly-labs/Mikka', owner: { login: 'aspectly-labs' } }
   const event = { repository, inputs: { application_sha: env.APPLICATION_SHA } }
-  const api = 'https://api.github.com/repos/alexj11324/Mikka'
+  const api = 'https://api.github.com/repos/aspectly-labs/Mikka'
   const metadata = []
   const now = business.now ?? Date.now
   const fetchImpl = async (input, init = {}) => {

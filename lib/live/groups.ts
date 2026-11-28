@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { runtimeEnv } from '@/lib/env/server'
 import { afterDatabaseCommit } from '../db/commit-effects'
 import type { LiveInvalidation } from './events'
 import { liveGatewayConfig, type LiveScope } from './scope'
@@ -26,6 +27,13 @@ export async function groupChatTargets(database: Database, workspaceDatabase: Da
   return rows.map(scope => ({ scope, events: [{ kind: 'group_chat', id: conversationId }] }))
 }
 
+/** A Bot's name or look changed: each group chat it is in re-reads its members, for its current human members only. */
+export async function botGroupChatTargets(database: Database, workspaceDatabase: Database, botId: string): Promise<Target[]> {
+  const { rows } = await database.query<{ conversationId: string }>(
+    `SELECT DISTINCT "conversationId" FROM conversation_members WHERE "memberType"='bot' AND "memberId"=$1 AND "leftAt" IS NULL`, [botId])
+  return (await Promise.all(rows.map(row => groupChatTargets(database, workspaceDatabase, row.conversationId)))).flat()
+}
+
 /** The group chats that hold these messages (a reaction names a message only). */
 async function messageGroups(database: Database, messageIds: readonly string[]) {
   const { rows } = await database.query<{ conversationId: string }>(
@@ -40,7 +48,7 @@ async function messageGroups(database: Database, messageIds: readonly string[]) 
  * refuses only this request (the app keeps its minute fallback for it).
  */
 async function changed(executor: object, key: string, resolve: (database: Database, workspaceDatabase: Database) => Promise<Target[]>) {
-  if (!liveGatewayConfig(process.env)) return
+  if (!liveGatewayConfig(runtimeEnv())) return
   const { scheduleLive } = await import('./notify')
   afterDatabaseCommit(executor, `group-chat:${key}`, () => scheduleLive(async () => {
     const { pool, withoutDatabaseClient } = await import('../db/request-scope')
@@ -57,6 +65,8 @@ export const groupChatChanged = (executor: object, conversationId: string, reade
     const targets = await groupChatTargets(database, workspace, conversationId)
     return readerId ? targets.filter(target => target.scope.ownerId === readerId) : targets
   })
+
+export const botGroupChatsChanged = (executor: object, botId: string) => changed(executor, `bot:${botId}`, (database, workspace) => botGroupChatTargets(database, workspace, botId))
 
 /** A reaction was set or cleared: the group chats holding these messages re-read (a bot chat's are its owner's own). */
 export const groupMessagesChanged = (executor: object, messageIds: readonly string[]) =>

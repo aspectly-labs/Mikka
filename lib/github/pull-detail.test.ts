@@ -1,27 +1,49 @@
 import "../../tests/support/server-only.mjs";
 import assert from "node:assert/strict";
-import { beforeEach, mock, test } from "node:test";
-import { GitHubAccessError } from "./user-access-error";
+import { after, before, beforeEach, mock, test } from "node:test";
+import { startGitHubAccessHttp } from "../../tests/fakes/github-access-http.mjs";
 
-mock.module(new URL("./user-access.ts", import.meta.url).href, {
+mock.module(new URL("../auth.ts", import.meta.url).href, {
+  namedExports: { auth: { api: {}, $context: Promise.resolve({ internalAdapter: { findAccounts: async () => [] } }) } },
+});
+mock.module(new URL("./app-config.ts", import.meta.url).href, {
+  namedExports: { readGitHubAppConfig: async () => ({ id: "4840908", source: "database" }) },
+});
+mock.module(new URL("./connection.ts", import.meta.url).href, {
   namedExports: {
-    githubRepositoryReadCredential: async (userId: string, key: string) => {
+    githubConnectionToken: async (userId: string) => {
       assert.equal(userId, "owner");
-      assert.equal(key, "v2/github.com/owner/repo");
-      return { token: "test-private-token", repository: { id: "91", fullName: "Owner/Repo" } };
+      return { token: "test-private-token", githubAccountId: "42", expiresAt: null };
     },
-    GitHubAccessError,
   },
 });
 const sha = "a".repeat(40);
 let body: () => unknown;
 let variables: Record<string, unknown> = {};
-mock.method(globalThis, "fetch", async (_url: RequestInfo | URL, init?: RequestInit) => {
-  const sent = JSON.parse(String(init?.body));
-  assert.ok(sent.query.startsWith("query PullDetail("));
-  assert.ok(!sent.query.includes("mutation"));
-  variables = sent.variables;
-  return Response.json(body());
+let lastQuery = "";
+let githubHttp: Awaited<ReturnType<typeof startGitHubAccessHttp>>;
+let readPullDetail: typeof import("./pull-detail")["readPullDetail"];
+const realFetch = globalThis.fetch;
+before(async () => {
+  githubHttp = await startGitHubAccessHttp({
+    getUser: () => ({ id: 42, login: "owner" }),
+    getRepositories: () => [{ id: 91, full_name: "Owner/Repo", private: true }],
+    onRequest: (url, request, bodyText) => {
+      if (url.pathname !== "/graphql" || request.method !== "POST") return undefined;
+      const sent = JSON.parse(bodyText);
+      assert.ok(sent.query.startsWith("query PullDetail("));
+      assert.ok(!sent.query.includes("mutation"));
+      lastQuery = sent.query;
+      variables = sent.variables;
+      return Response.json(body());
+    },
+  });
+  globalThis.fetch = githubHttp.routeFetch(realFetch) as typeof fetch;
+  ({ readPullDetail } = await import("./pull-detail"));
+});
+after(async () => {
+  globalThis.fetch = realFetch;
+  await githubHttp.close();
 });
 const pull = () => ({
   number: 7, title: "A PR", bodyText: "Body", state: "OPEN", isDraft: false,
@@ -39,7 +61,6 @@ const pull = () => ({
   reviews: { nodes: [{ author: { login: "alex" }, state: "APPROVED", submittedAt: "2026-11-18T00:00:00Z" }] },
 });
 const response = (pr: unknown, databaseId = 91) => ({ data: { repository: { databaseId, nameWithOwner: "Owner/Repo", pullRequest: pr } } });
-const { readPullDetail } = await import("./pull-detail");
 const read = () => readPullDetail("owner", "owner/repo", 7, { deadline: Date.now() + 25_000 });
 beforeEach(() => { body = () => response(pull()); });
 
@@ -73,4 +94,87 @@ test("another repository's identity or a missing PR is refused, never read", asy
   await assert.rejects(read(), { message: "githubPullRequestInvalid" });
   body = () => ({ ...response(pull()), errors: [{ message: "private" }] });
   await assert.rejects(read(), { message: "githubUnavailable" });
+});
+
+test("commits and review threads are included when GitHub reports them", async () => {
+  body = () =>
+    response({
+      ...pull(),
+      commitList: {
+        totalCount: 3,
+        nodes: [
+          {
+            commit: {
+              oid: sha,
+              abbreviatedOid: "aaaaaaa",
+              messageHeadline: "feat: align PR sidebar",
+              committedDate: "2026-11-18T00:00:00Z",
+              url: "https://github.com/Owner/Repo/commit/" + sha,
+              author: { name: "Alex", user: { login: "alexj11324" } },
+            },
+          },
+        ],
+      },
+      reviewThreads: {
+        nodes: [
+          {
+            isResolved: false,
+            path: "web/components/workspace/pull-preview.tsx",
+            line: 42,
+            comments: {
+              nodes: [
+                {
+                  id: "c1",
+                  bodyText: "Please keep the commit selector visible.",
+                  createdAt: "2026-11-18T01:00:00Z",
+                  author: { login: "reviewer" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+  const detail = await read();
+  assert.ok(lastQuery.includes("commitList: commits(last: 25)"));
+  assert.ok(lastQuery.includes("reviewThreads(first: 30)"));
+  assert.equal(detail.commitCount, 3);
+  assert.equal(detail.commits?.[0]?.shortOid, "aaaaaaa");
+  assert.equal(detail.commits?.[0]?.author, "alexj11324");
+  assert.equal(detail.comments?.length, 1);
+  assert.equal(detail.comments?.[0]?.path, "web/components/workspace/pull-preview.tsx");
+  assert.equal(detail.comments?.[0]?.resolved, false);
+});
+
+test("long review paths and malformed supplemental commit data never break PR reads", async () => {
+  const longPath = "nested/".repeat(144) + "file.ts";
+  assert.ok(longPath.length > 1000 && longPath.length <= 1024);
+  body = () =>
+    response({
+      ...pull(),
+      commitList: { totalCount: "bad" },
+      reviewThreads: {
+        nodes: [
+          {
+            isResolved: false,
+            path: longPath,
+            line: 10,
+            comments: {
+              nodes: [
+                {
+                  id: "c-long",
+                  bodyText: "Looks good",
+                  createdAt: "2026-11-18T01:00:00Z",
+                  author: { login: "reviewer" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+  const detail = await read();
+  assert.equal(detail.headSha, sha);
+  assert.equal(detail.commits, undefined);
+  assert.equal(detail.comments?.[0]?.path, longPath);
 });

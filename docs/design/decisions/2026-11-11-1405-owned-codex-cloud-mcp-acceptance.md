@@ -1,6 +1,7 @@
 # Use the authorized 2023 account for the owned Codex Cloud MCP case
 
 - Date: 2026-11-11
+- **Status:** Accepted
 - Source: Alex, issue #1918 implementation conversation: 「你可以使用这个 GPT 6 Luna」 and 「你可以使用我们的 20232024 账户，它有 GitHub 授权，也有 GPT 的订阅连接」.
 - Rule: —
 - Replaces: —; this is an issue-specific exception to the default shared SMOKE acceptance identity.

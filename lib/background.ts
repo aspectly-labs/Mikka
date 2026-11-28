@@ -22,14 +22,14 @@ export type AfterJobOptions = {
    * function, so it still wins over the scheduling request's.
    */
   retainContext?: boolean
-  /** Test seam for next/server's after(). */
+  /** Test seam for the server runtime's after() (`@/lib/server-runtime/server`). */
   schedule?: (task: () => unknown) => void
 }
 
 const kindOf = (label: JobLabel): JobKind => (label.startsWith('cron:') ? 'cron' : 'background')
 
 /**
- * next/server's after(), with the deferred work run as its own job: a child
+ * The server runtime's after() (`@/lib/server-runtime/server`), with the deferred work run as its own job: a child
  * span named `label`, under the request that scheduled it, with that label
  * as `mikka.route` and `mikka.client_kind` `background` (`cron` for `cron:`).
  *

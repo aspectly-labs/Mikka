@@ -187,14 +187,28 @@ test('the release SBOM skips optional platform packages pnpm did not install, an
   } }), /EACCES/)
 })
 
+// Match the whole YAML key: `statuses: write` is a permission, not `uses: write`.
+const workflowUses = content => [...content.matchAll(/\buses:\s+([^\s#]+)/g)].map(match => match[1])
+
+test('action ref scanning distinguishes statuses permissions and still rejects unpinned uses', () => {
+  const pinned = `actions/checkout@${'a'.repeat(40)}`
+  assert.deepEqual(workflowUses(`permissions:\n  statuses: write\nsteps:\n  - uses: ${pinned}\n  - uses: ./.github/actions/install`),
+    [pinned, './.github/actions/install'])
+  for (const ref of ['actions/checkout@v4', 'actions/checkout@main', 'actions/checkout', `actions/checkout@${'a'.repeat(39)}`]) {
+    const actual = workflowUses(`permissions:\n  statuses: write\nsteps:\n  - uses: ${ref}`)
+    assert.deepEqual(actual, [ref])
+    assert.throws(() => assert.match(actual[0], /^[^@]+@[a-f0-9]{40}$/))
+  }
+})
+
 test('third-party actions in workflows and local composite actions use immutable SHA refs', async () => {
   for (const folder of ['workflows', 'actions']) {
     const directory = new URL(`../../.github/${folder}/`, import.meta.url)
     for (const name of await readdir(directory, { recursive: true })) {
       if (!/\.ya?ml$/.test(name)) continue
       const content = await readFile(new URL(name, directory), 'utf8')
-      for (const match of content.matchAll(/uses:\s+([^\s#]+)/g)) {
-        if (!match[1].startsWith('./')) assert.match(match[1], /^[^@]+@[a-f0-9]{40}$/, `${folder}/${name}: ${match[1]}`)
+      for (const ref of workflowUses(content)) {
+        if (!ref.startsWith('./')) assert.match(ref, /^[^@]+@[a-f0-9]{40}$/, `${folder}/${name}: ${ref}`)
       }
     }
   }
@@ -272,6 +286,18 @@ test('operator admission binds the real OIDC producer before any private credent
   assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'private-source-download', MIKKA_OPERATION_ACTION:'deliver', MIKKA_SOURCE_COMMENT_ID:'../123'}))
   assert.equal(operationsInput({...env, MIKKA_OPERATION:'vercel-project-billing', MIKKA_OPERATION_ACTION:'read', MIKKA_BILLING_FROM:'2026-11-01', MIKKA_BILLING_TO:'2026-11-20'}).action, 'read')
   for (const date of ['2026-02-30', '2026-01-01', '../2026-11-01']) assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'vercel-project-billing', MIKKA_OPERATION_ACTION:'read', MIKKA_BILLING_FROM:date, MIKKA_BILLING_TO:'2026-11-20'}))
+  assert.equal(operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'verify'}).action, 'verify')
+  assert.equal(operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'deploy'}).action, 'deploy')
+  assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'hosted-ui-ci-workers', MIKKA_OPERATION_ACTION:'remove'}))
+  for (const action of ['inspect', 'provision', 'deploy', 'verify', 'enable']) {
+    assert.deepEqual(
+      operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:action, WORLD_ENVIRONMENT:'production'}),
+      {operation:'open-artifact-host', action, target:'production'},
+    )
+  }
+  assert.equal(operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:'inspect'}).target, 'staging')
+  assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:'remove'}))
+  assert.throws(() => operationsInput({...env, MIKKA_OPERATION:'open-artifact-host', MIKKA_OPERATION_ACTION:'inspect', WORLD_ENVIRONMENT:'invalid'}))
 })
 
 test('the public operator scopes source credentials, keeps provider delivery private and never publishes raw evidence', async () => {
@@ -285,6 +311,10 @@ test('the public operator scopes source credentials, keeps provider delivery pri
   const execute = workflow.indexOf('run: node operations/public-operations.mjs')
   assert.ok(admission > 0 && admission < credentials && credentials < scrub && scrub < checkout && checkout < sourceCheck && sourceCheck < install && install < execute)
   assert.match(workflow, /environment: cloudflare-runtime-release/)
+  assert.match(workflow, /hosted-ui-ci-workers/)
+  assert.match(workflow, /open-artifact-host/)
+  assert.match(workflow, /options: \[[^\]]*\bdeploy\b[^\]]*\]/)
+  assert.match(workflow, /options: \[[^\]]*\bprovision\b[^\]]*\]/)
   assert.match(workflow, /permission-contents: read\n\s+permission-actions: read\n\s+permission-issues: read/)
   assert.match(workflow, /repositories: mikka-cloud/)
   assert.match(workflow, /MIKKA_PUBLIC_ACTIONS_TOKEN: \$\{\{ github.token \}\}/)

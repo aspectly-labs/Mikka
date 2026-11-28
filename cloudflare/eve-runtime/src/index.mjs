@@ -1,5 +1,6 @@
 import { Container } from '@cloudflare/containers'
-import { hostConfiguration, nativeRequest, singletonContainerName } from '../runtime/config.mjs'
+import { hostConfiguration, hostResidency, nativeRequest, onDemandHost, singletonContainerName } from '../runtime/config.mjs'
+import { INTERNAL_PRODUCT_HOSTNAME } from '../../../lib/env/hosts-constants.mjs'
 
 const stateKey = 'mikka:eve-host:lifecycle:v1'
 const unavailable = () => Response.json({ ok: false, error: 'coordinatorUnavailable' }, {
@@ -10,10 +11,20 @@ const unavailable = () => Response.json({ ok: false, error: 'coordinatorUnavaila
  * The Postgres World processes queued work inside the running Eve server. */
 export class EveRuntime extends Container {
   defaultPort = 8080
+  #onDemand = false
 
   constructor(ctx, env) {
     super(ctx, env)
     this.configuration = hostConfiguration(env)
+    // On-demand residency is honored only when the configured World wakes the
+    // host through the native queues. The Postgres World owns due-job delivery
+    // inside its live Graphile worker, so it must stay resident.
+    this.#onDemand = onDemandHost(env, this.configuration.runtimeEnv)
+    if (hostResidency(env) === 'on-demand' && !this.#onDemand) console.error('CF_EVE_RESIDENCY_REQUIRES_QUEUE_WORLD')
+    if (this.#onDemand) {
+      this.sleepAfter = env.MIKKA_EVE_IDLE_TIMEOUT ?? '15m'
+      this.renewActivityTimeout()
+    }
     let productCapability = ctx.storage.kv.get('eve-product-capability')
     if (!productCapability) {
       productCapability = crypto.randomUUID() + crypto.randomUUID()
@@ -22,13 +33,23 @@ export class EveRuntime extends Container {
     this.envVars = { ...this.configuration.runtimeEnv, MIKKA_EVE_PRODUCT_TOKEN: productCapability,
       NODE_EXTRA_CA_CERTS: '/etc/cloudflare/certs/cloudflare-containers-ca.crt' }
     if (env.LITELLM) this.envVars.MIKKA_LITELLM_URL = 'https://litellm.internal'
+    if (env.EVE_WORLD) {
+      let worldCapability = ctx.storage.kv.get('eve-world.capability')
+      if (!worldCapability) {
+        worldCapability = crypto.randomUUID() + crypto.randomUUID()
+        ctx.storage.kv.put('eve-world.capability', worldCapability)
+      }
+      this.envVars.MIKKA_EVE_WORLD_TOKEN = worldCapability
+    }
     this.labels = { component: 'eve-runtime', release: this.configuration.releaseId }
   }
 
   async bindOutboundServices() {
     if (this.env.LITELLM) await this.ctx.container.interceptOutboundHttps('litellm.internal', this.ctx.exports.LiteLlmOutbound)
-    await this.ctx.container.interceptOutboundHttps('product.internal',
+    await this.ctx.container.interceptOutboundHttps(INTERNAL_PRODUCT_HOSTNAME,
       this.ctx.exports.EveProductOutbound({ props: { capability: this.envVars.MIKKA_EVE_PRODUCT_TOKEN } }))
+    if (this.env.EVE_WORLD) await this.ctx.container.interceptOutboundHttps('world.internal',
+      this.ctx.exports.EveWorldOutbound({ props: { capability: this.envVars.MIKKA_EVE_WORLD_TOKEN } }))
   }
 
   async start(...args) {
@@ -63,10 +84,20 @@ export class EveRuntime extends Container {
     if (current?.stopped) await this.stop('SIGTERM')
   }
 
-  // Postgres queue workers need the server while no HTTP requests arrive.
-  async onActivityExpired() {}
+  // A resident release keeps the shipped keepalive: the Postgres World's
+  // Graphile worker polls and handles LISTEN/NOTIFY while no HTTP requests
+  // arrive. An on-demand release lets the container sleep — the SDK already
+  // calls this only when no request, stream or WebSocket is in flight, and
+  // the next EVE_WAKE delivery or World queue message starts it again.
+  async onActivityExpired() {
+    if (!this.#onDemand || this.container?.running === false) return
+    await this.stop()
+  }
 
   async onStop() {
+    // An on-demand host never restarts itself: sleep is the goal, and crash
+    // recovery belongs to the durable queue plus the product outbox.
+    if (this.#onDemand) return
     if (!(await this.ctx.storage.get(stateKey))?.stopped) await this.startAndWaitForPorts()
   }
 

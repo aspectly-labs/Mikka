@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 export const BOT_THREAD_PAGE_DEFAULT = 20
 export const BOT_THREAD_PAGE_MAX = 50
 export const BOT_THREAD_TITLE_MAX = 80

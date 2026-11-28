@@ -1,5 +1,13 @@
 import { threadCredentialRoute } from '@/lib/credentials/route'
+import { defineRoute } from '@/lib/primitives/define-route'
 export const maxDuration = 60
-export async function POST(request: Request, context: { params: Promise<{ runId: string }> }) {
-  return threadCredentialRoute(request, (await context.params).runId, 'login')
-}
+
+export const POST = defineRoute<'session', 'pat-scoped', { runId: string }>(
+  {
+    auth: 'session',
+    origin: 'same-origin-or-desktop',
+    workspace: 'pat-scoped',
+    write: true,
+  },
+  ({ request, params }) => threadCredentialRoute(request, params.runId, 'login'),
+)

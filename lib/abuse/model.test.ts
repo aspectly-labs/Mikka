@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, mock, test } from 'node:test'
+import { GatewayInternalServerError } from '@ai-sdk/gateway'
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import { hostedBillingScope } from './context'
 const tracer = new NodeTracerProvider()
@@ -232,6 +233,32 @@ test('an unverified injected transport cannot impersonate the LiteLLM endpoint',
   assert.equal(reservations.length, 0)
   assert.equal(generated, 0)
 })
+
+const providerGenerationId = 'gen_01ARZ3NDEKTSV4RRFFQ69G5FAV'
+for (const operation of ['doGenerate', 'doStream', 'streamRead'] as const) test(`the hosted ledger keeps the Gateway ID when ${operation} throws before content`, async () => {
+  const failure = new GatewayInternalServerError({ message: 'fixture provider failure', generationId: providerGenerationId })
+  const fail = async () => { throw failure }
+  selectedModel = { ...model, doGenerate: fail, doStream: operation === 'streamRead'
+    ? async () => ({ stream: new ReadableStream({ pull(controller) { controller.error(failure) } }) })
+    : fail }
+  const wrapped = await hostedModel('workspace', 'fixture-model')
+  if (operation === 'streamRead') {
+    const { stream } = await wrapped.doStream({ prompt: [] })
+    await assert.rejects(stream.getReader().read(), failure)
+  } else {
+    await assert.rejects(async () => wrapped[operation]({ prompt: [] }), failure)
+  }
+  assert.deepEqual(settlements, [{ id: reservations[0], cost: null, generationId: providerGenerationId }])
+})
+
+test('the hosted ledger requires a canonical Gateway ID on a provider failure', async () => {
+  const failure = new GatewayInternalServerError({ message: 'fixture provider failure', generationId: providerGenerationId + '&query=unexpected' })
+  selectedModel = { ...model, doGenerate: async () => { throw failure } }
+  const wrapped = await hostedModel('workspace', 'fixture-model')
+  await assert.rejects(async () => wrapped.doGenerate({ prompt: [] }), failure)
+  assert.deepEqual(settlements, [{ id: reservations[0], cost: null }])
+})
+
 for (const ending of ['error', 'cancel', 'finish'] as const) test(`early LiteLLM identity survives ${ending} without invented cost`, async () => {
   let controller!: ReadableStreamDefaultController
   let cancelled = false

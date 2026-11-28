@@ -26,13 +26,15 @@ export const LEGACY_APP_ACTIONS: Readonly<Record<string, string>> = Object.fromE
   Object.entries(LEGACY_WRITE_ACTIONS).map(([action, app]) => [app, action]),
 )
 
-export type AppPermissionValue = 'allow' | 'ask' | 'deny'
+/** Allow or deny only; there is no ask (ADR 2026-11-27-1615). */
+export type AppPermissionValue = 'allow' | 'deny'
 
 /** The keys that carry one app's choice: the app itself, then every first-class write tool in it. */
 export function appPermissionKeys(app: string): string[] {
   return [...new Set([app, ...Object.entries(LEGACY_WRITE_ACTIONS).filter(([, value]) => value === app).map(([action]) => action)])]
 }
 
+// 'ask' is read only from rows stored before ADR 2026-11-27-1615, as allow.
 const VALUES = new Set<string>(['allow', 'ask', 'deny'])
 
 /** The first stored choice for this app, preferring the app key over the legacy tool key. */
@@ -43,13 +45,13 @@ export function appPermissionValue(
   if (!permissions) return undefined
   for (const key of appPermissionKeys(app)) {
     const value = permissions[key]
-    if (typeof value === 'string' && VALUES.has(value)) return value as AppPermissionValue
+    if (typeof value === 'string' && VALUES.has(value)) return value === 'deny' ? 'deny' : 'allow'
   }
   return undefined
 }
 
-/** `ask` is allowed where no approval card exists (GitHub); only an explicit deny withholds. */
-export function appCallAllowed(value: AppPermissionValue | null | undefined): boolean {
+/** Only an explicit deny withholds; anything else (including an old stored ask) runs. */
+export function appCallAllowed(value: unknown): boolean {
   return value !== 'deny'
 }
 

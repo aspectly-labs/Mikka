@@ -9,9 +9,12 @@ import { build } from 'esbuild'
 import { Window } from 'happy-dom'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
+import { needsOfficialUi, officialRenderer, officialUiResolution } from './official-ui.mjs'
 
 const repository = fileURLToPath(new URL('../../../', import.meta.url))
+// The runtime (location, transport) is this repository's; the App around it is the official UI's core/renderer.
 const renderer = resolve(repository, 'apps/desktop/src/renderer')
+const official = officialRenderer
 const require = createRequire(import.meta.url)
 const directory = await mkdtemp(join(tmpdir(), 'mikka-workspace-live-'))
 const key = Symbol.for('mikka.test.workspace-live')
@@ -19,23 +22,25 @@ const stateAccess = 'globalThis[Symbol.for("mikka.test.workspace-live")]'
 const wrapper = '({ children }) => children'
 const fixtureModules = new Map([
   ['@/lib/intl/i18n-client', `export const NextIntlClientProvider = ${wrapper}; export const IntlProvider = ${wrapper}; export const useTranslations = () => value => value; export const useLocale = () => 'en';`],
-  ['lucide-react', 'export const ArrowLeft = () => null;'],
+  ['lucide-react', 'export const ArrowLeft = () => null; export const ArrowRight = () => null; export const Plus = () => null; export const X = () => null;'],
   ['sonner', 'export const toast = { error() {}, dismiss() {} };'],
   ['@/messages/en.json', 'export default {};'], ['@/messages/zh-CN.json', 'export default {};'],
-  ['@/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
-  ['@/components/swr-defaults', `export const SWRDefaults = ${wrapper};`],
-  ['@/components/ui/sonner', 'export const Toaster = () => null;'],
-  ['@/components/ui/button', `export const Button = ${wrapper}; export const buttonVariants = () => '';`],
-  ['@/components/blocks/auth-19/components/auth', `export const Auth = ${wrapper};`],
-  ['@/components/blocks/auth-19/components/auth-card', `export const AuthCard = ${wrapper};`],
-  ['@/components/workspace/workspace-loading', 'import { createElement } from "react"; export const WorkspaceLoading = () => createElement("div", { "data-loading": true });'],
-  ['@/components/workspace/create-workspace-form', 'export const CreateWorkspaceForm = () => null;'],
-  ['@/components/workspace/invitation-card', 'export const InvitationCard = () => null; export const OrganizationInvitationCard = () => null;'],
-  ['@/components/device-authorization', 'import { createElement } from "react"; export const DeviceAuthorization = () => createElement("div", { "data-device": true });'],
-  ['@/components/plugins/github-settings', 'export const GitHubSettings = () => null;'],
-  ['@/components/app-shell/not-found', 'export default () => null;'],
-  ['@/components/mobile-task-handoff', 'export default () => null;'],
+  ['@hosted/core/components/theme-provider', `export const ThemeProvider = ${wrapper};`],
+  ['@hosted/core/components/swr-defaults', `export const SWRDefaults = ${wrapper};`],
+  ['@hosted/core/components/ui/sonner', 'export const Toaster = () => null;'],
+  ['@hosted/web/components/ui/context-menu', 'import { createElement } from "react"; export const ContextMenu = ({ children }) => children; export const ContextMenuTrigger = ({ children, ...p }) => createElement("div", p, children); export const ContextMenuContent = ({ children }) => createElement("div", null, children); export const ContextMenuItem = ({ children, ...p }) => createElement("button", p, children); export const ContextMenuSeparator = () => null;'],
+  ['@hosted/core/components/ui/button', `export const Button = ${wrapper}; export const buttonVariants = () => '';`],
+  ['@hosted/core/components/blocks/auth-19/components/auth', `export const Auth = ${wrapper};`],
+  ['@hosted/core/components/blocks/auth-19/components/auth-card', `export const AuthCard = ${wrapper};`],
+  ['@hosted/core/components/workspace/workspace-loading', 'import { createElement } from "react"; export const WorkspaceLoading = () => createElement("div", { "data-loading": true });'],
+  ['@hosted/core/components/workspace/create-workspace-form', 'export const CreateWorkspaceForm = () => null;'],
+  ['@hosted/core/components/workspace/invitation-card', 'export const InvitationCard = () => null; export const OrganizationInvitationCard = () => null; export const InvitationLanding = () => null;'],
+  ['@hosted/core/components/device-authorization', 'import { createElement } from "react"; export const DeviceAuthorization = () => createElement("div", { "data-device": true });'],
+  ['@hosted/core/components/plugins/github-settings', 'export const GitHubSettings = () => null;'],
+  ['@hosted/core/components/app-shell/not-found', 'export default () => null;'],
+  ['@hosted/core/components/mobile-task-handoff', 'export default () => null;'],
   ['@/lib/swr/persistent-cache', `export const clearPersistentReadCaches = async () => { ${stateAccess}.cacheClears++; }; export class PersistentReadCache extends Map {} export const readCacheShareNamespace = () => null;`],
+  ['@/lib/auth-client', 'export const authClient = {}; export const cloudAuthClient = authClient; export const endSession = async () => ({ error: null });'],
   ['@/lib/live/browser-runtime', `export const browserRuntime = scope => ${stateAccess}.runtime(scope); export const watchPageVisibility = () => () => {};`],
   ['@/lib/platform/public-origin', `export const publicAppOrigin = () => ${stateAccess}.server;`],
 ])
@@ -43,7 +48,7 @@ const fixtureModules = new Map([
 const workspaceSource = `
 import { createElement, useLayoutEffect, useState } from 'react'
 import useSWR, { SWRConfig } from 'swr'
-import { LiveProvider, useLiveKey, useLiveScope } from '@/hooks/use-live-key'
+import { LiveProvider, useLiveKey, useLiveScope } from '@hosted/core/hooks/use-live-key'
 const state = () => globalThis[Symbol.for('mikka.test.workspace-live')]
 function Reads({ workspaceId }) {
   useSWR('fixture-workspace', async () => {
@@ -55,7 +60,7 @@ function Reads({ workspaceId }) {
   useLayoutEffect(() => { state().live = live }, [live])
   return createElement('div', { 'data-workspace': true })
 }
-export default function Workspace({ user, bootstrap, livePreparation }) {
+export function Workspace({ user, bootstrap, livePreparation }) {
   const [config] = useState(() => ({ provider: () => new Map() }))
   useLayoutEffect(() => { state().mounts++; state().preparations.push(livePreparation) }, [livePreparation])
   return createElement(SWRConfig, { value: config }, createElement(LiveProvider, {
@@ -63,10 +68,10 @@ export default function Workspace({ user, bootstrap, livePreparation }) {
   }, createElement(Reads, { workspaceId: bootstrap.cacheWorkspace?.workspaceId })))
 }
 `
-const compiled = await build({
+const compiled = needsOfficialUi ? null : await build({
   absWorkingDir: repository,
   stdin: {
-    contents: 'export { App } from "./app"; export { navigate, installNavigation, refresh } from "./location"; export { setTransportState, getTransportState } from "./transport-state";',
+    contents: `export { App } from ${JSON.stringify(resolve(official, 'app'))}; export { navigate, installNavigation, refresh } from "./location"; export { setTransportState, getTransportState } from "./transport-state";`,
     resolveDir: renderer, sourcefile: 'workspace-live-contract.ts', loader: 'ts',
   },
   bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2023', jsx: 'automatic', logLevel: 'silent',
@@ -78,13 +83,15 @@ const compiled = await build({
       // the exports object, not the useSWR hook used by this real component.
       path: args.path === 'swr' ? fileURLToPath(import.meta.resolve('swr')) : require.resolve(args.path), external: true,
     }))
-    builder.onResolve({ filter: /^mikka:platform$/ }, () => ({ path: resolve(renderer, 'platform.tsx') }))
+    builder.onResolve({ filter: /^mikka:platform$/ }, () => ({ path: resolve(official, 'platform.tsx') }))
     builder.onResolve({ filter: /.*/ }, args => fixtureModules.has(args.path) ? { path: args.path, namespace: 'live-fixture' } : undefined)
+    builder.onResolve({ filter: /^@hosted\/slots\/workspace-entry$/ }, args =>
+      args.importer === resolve(official, 'workspace-loader.ts') ? { path: 'workspace', namespace: 'live-fixture' } : undefined)
+    builder.onResolve({ filter: /^@\/apps\/desktop\/src\/renderer\/(?:auth-client|open-settings)$/ }, args => ({ path: args.path.split('/').at(-1), namespace: 'live-fixture' }))
     builder.onResolve({ filter: /^\.\// }, args => {
       const target = resolve(dirname(args.importer), args.path)
-      for (const name of ['workspace', 'offline', 'deep-link-routes', 'auth-form', 'auth-client', 'open-settings']) {
-        if (target !== resolve(renderer, name)) continue
-        if (name === 'workspace' && args.importer !== resolve(renderer, 'workspace-loader.ts')) continue
+      for (const name of ['offline', 'deep-link-routes', 'auth-form']) {
+        if (target !== resolve(official, name)) continue
         return { path: name, namespace: 'live-fixture' }
       }
     })
@@ -96,10 +103,10 @@ const compiled = await build({
               : args.path === 'auth-client' ? 'export const setSession = () => {};'
                 : args.path === 'open-settings' ? 'export const openCurrentPageInBrowser = async () => "desktop";'
                   : fixtureModules.get(args.path) }))
-  } }],
+  } }, officialUiResolution],
 })
 const filename = join(directory, 'application.mjs')
-await writeFile(filename, compiled.outputFiles[0].contents)
+if (compiled) await writeFile(filename, compiled.outputFiles[0].contents)
 after(() => rm(directory, { recursive: true, force: true }))
 
 const workspaceId = '8d992f67-2388-4372-92eb-410170899f61'
@@ -138,7 +145,7 @@ async function fixture(t, { path = '/mikka/en/', fetch: fetchResponse } = {}) {
     session: async () => state.identity,
     onSessionChanged(callback) { state.listeners.add(callback); return () => state.listeners.delete(callback) },
   }, app: { runtime: 'electron', serverUrl: state.server } }
-  const values = { window, document: window.document, navigator: window.navigator, HTMLElement: window.HTMLElement, Node: window.Node,
+  const values = { window, document: window.document, navigator: window.navigator, Element: window.Element, HTMLElement: window.HTMLElement, Node: window.Node,
     MutationObserver: window.MutationObserver, Event: window.Event, IS_REACT_ACT_ENVIRONMENT: true,
     fetch: async (path, init) => {
       const request = { path, action: init?.body ? JSON.parse(init.body).action : null, args: init?.body ? JSON.parse(init.body).args : null }
@@ -173,7 +180,7 @@ async function fixture(t, { path = '/mikka/en/', fetch: fetchResponse } = {}) {
     owner: value => act(async () => { state.identity = value; for (const listener of state.listeners) listener() }) }
 }
 
-test('the actual App prepares before the first workspace read and the real LiveProvider joins that connection', async t => {
+test('the actual App prepares before the first workspace read and the real LiveProvider joins that connection', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   assert.ok(f.container.querySelector('[data-workspace]'))
   assert.ok(f.state.firstReads.length > 0)
@@ -185,7 +192,7 @@ test('the actual App prepares before the first workspace read and the real LiveP
   assert.equal(f.state.tickets.length, 1)
 })
 
-test('a response status is insufficient: preparation waits for the complete bootstrap body and validation', async t => {
+test('a response status is insufficient: preparation waits for the complete bootstrap body and validation', { skip: needsOfficialUi }, async t => {
   const body = deferred()
   let readingBody = 0
   const f = await fixture(t, { fetch: request => request.action === 'desktop.bootstrap'
@@ -198,7 +205,7 @@ test('a response status is insufficient: preparation waits for the complete boot
   assert.equal(f.state.tickets.length, 1)
 })
 
-test('a history write before its queued route notification blocks the old bootstrap preparation', async t => {
+test('a history write before its queued route notification blocks the old bootstrap preparation', { skip: needsOfficialUi }, async t => {
   const body = deferred()
   const f = await fixture(t, { fetch: request => request.action === 'desktop.bootstrap'
     ? { status: 200, ok: true, json: () => body.promise } : undefined })
@@ -222,7 +229,7 @@ test('a history write before its queued route notification blocks the old bootst
   assert.equal(f.state.tickets.length, 0)
 })
 
-test('leaving and returning to a workspace starts an ordinary live lifetime without a new bootstrap', async t => {
+test('leaving and returning to a workspace starts an ordinary live lifetime without a new bootstrap', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   await f.open()
   const first = f.state.sockets[0], prepared = f.state.preparations[0]
@@ -240,7 +247,7 @@ test('leaving and returning to a workspace starts an ordinary live lifetime with
   assert.equal(f.state.live.channels.keyConnected('fixture-workspace'), true)
 })
 
-test('an update-required boundary retires preparation and a stale ready signal cannot revive it', async t => {
+test('an update-required boundary retires preparation and a stale ready signal cannot revive it', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   await f.open()
   const first = f.state.sockets[0], prepared = f.state.preparations[0]
@@ -255,7 +262,7 @@ test('an update-required boundary retires preparation and a stale ready signal c
   assert.equal(f.state.watchers.size, 0)
 })
 
-test('a confirmed session expiry closes the owned connection and cannot leave a prepared route behind', async t => {
+test('a confirmed session expiry closes the owned connection and cannot leave a prepared route behind', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   await f.open()
   const prepared = f.state.preparations[0]
@@ -268,7 +275,7 @@ test('a confirmed session expiry closes the owned connection and cannot leave a 
   assert.equal(f.state.watchers.size, 0)
 })
 
-test('a superseded bootstrap body cannot prepare after a new owner has been accepted', async t => {
+test('a superseded bootstrap body cannot prepare after a new owner has been accepted', { skip: needsOfficialUi }, async t => {
   const body = deferred()
   let requests = 0
   const f = await fixture(t, { fetch: request => {
@@ -284,7 +291,7 @@ test('a superseded bootstrap body cannot prepare after a new owner has been acce
   assert.equal(current.isAuthorityRetired, false)
 })
 
-test('an owner change retires the first connection and prepares a distinct registry lifetime', async t => {
+test('an owner change retires the first connection and prepares a distinct registry lifetime', { skip: needsOfficialUi }, async t => {
   const f = await fixture(t)
   await f.open()
   const previous = f.state.preparations[0], socket = f.state.sockets[0]
@@ -297,7 +304,7 @@ test('an owner change retires the first connection and prepares a distinct regis
   assert.equal(f.state.live.channels.keyConnected('fixture-workspace'), true)
 })
 
-test('authenticated non-workspace routes never prepare a live channel', async t => {
+test('authenticated non-workspace routes never prepare a live channel', { skip: needsOfficialUi }, async t => {
   for (const path of ['/mikka/en/device', '/mikka/en/sign-in?addAccount=1', '/mikka/en/invite/' + 'a'.repeat(64), '/mikka/en/a/public-share']) {
     await t.test(path, async t => {
       const f = await fixture(t, { path })

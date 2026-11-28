@@ -5,16 +5,13 @@ import { bots } from '@/lib/db/schema'
 import { tokenWorkspace } from '@/lib/tokens/principal'
 import { openChatBotId } from '@/lib/coordinator/coordinator-bot'
 import { stopChatTurn } from '@/lib/coordinator/stop-turn'
-import { withRequestLog, noteLogUser } from '@/lib/request-log'
-import { forbiddenOrigin, json, mobileUser, unauthorized, writeAllowed } from '@/lib/mobile-api'
+import { json } from '@/lib/mobile-api'
+import { defineRoute } from '@/lib/primitives/define-route'
+import type { ApiSession } from '@/lib/api-auth'
 
 
 /** `POST /api/mobile/chat/stop` with `{ botId? }`: 停止 the turn working in the chat with the Coordinator (no `botId`) or one of the person's bots. */
-async function handlePOST(request: Request) {
-  const user = await mobileUser(request)
-  noteLogUser(user?.id)
-  if (!user) return unauthorized()
-  if (!writeAllowed(request)) return forbiddenOrigin()
+async function handlePOST(request: Request, user: ApiSession['user']) {
   const parsed = z.object({ botId: z.uuid().nullable().optional() }).safeParse(await request.json().catch(() => ({})))
   if (!parsed.success) return json({ error: 'invalidBot' }, 400)
   const botId = parsed.data.botId ?? null
@@ -28,4 +25,12 @@ async function handlePOST(request: Request) {
   return json({ stopped: await stopChatTurn(user.id, await openChatBotId(user, botId)) })
 }
 
-export const POST = withRequestLog('/api/mobile/chat/stop', handlePOST)
+export const POST = defineRoute<'mobile-or-session', 'pat-scoped'>(
+  {
+    route: '/api/mobile/chat/stop',
+    auth: 'mobile-or-session',
+    origin: 'native-mobile-allowed',
+    workspace: 'pat-scoped', write: true,
+  },
+  async ({ request, user }) => handlePOST(request, user),
+)

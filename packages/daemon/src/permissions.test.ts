@@ -5,7 +5,6 @@ import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 import {
-  PACKAGE_REGISTRY_DOMAINS,
   resolveAgentSettings,
   type RunPolicy,
 } from "@mikka/protocol/agent-policy"
@@ -20,36 +19,27 @@ import {
   decide,
   policyInstructions,
   pushDecision,
-  runDomains,
   rawCliShellAvailable,
 } from "./permissions"
 
-describe("permission policy (ADR 0009)", () => {
+describe("permission policy (ADR 0009, ADR 2026-11-27-1615)", () => {
   it.each([
     ["read_in_worktree", "allow"],
     ["write_in_worktree", "allow"],
     ["run_project_script", "allow"],
+    ["run_setup_recipe", "allow"],
     ["install_dependency", "allow"],
-    ["write_outside_repo", "ask"],
-    // Push is what the GitHub App grants: only the server's explicit allow pushes.
-    ["git_push", "deny"],
+    ["write_outside_repo", "allow"],
+    ["git_push", "allow"],
     ["network", "allow"],
-    ["computer_use", "ask"],
+    ["computer_use", "allow"],
   ] as const)("%s -> %s", (action, expected) => {
-    expect(PERMISSION_DEFAULTS[action]).toBe(expected)
     expect(decide(action)).toBe(expected)
   })
 
-  it("allows the setup recipe only once approved", () => {
-    expect(decide("run_setup_recipe")).toBe("ask")
-    expect(decide("run_setup_recipe", { setupRecipeApproved: true })).toBe(
-      "allow"
-    )
-  })
-
-  it("asks for unknown actions", () => {
-    expect(decide("format_disk")).toBe("ask")
-    expect(decide("__proto__")).toBe("ask")
+  it("never asks, and allows unknown actions except in a read-only check", () => {
+    for (const action of ["format_disk", "__proto__", "run_setup_recipe", "computer_use"])
+      expect(decide(action)).toBe("allow")
     expect(decide("format_disk", { policy: { ...policy({}), readOnly: true } })).toBe("deny")
     expect(decide("__proto__", { policy: { ...policy({}), readOnly: true } })).toBe("deny")
   })
@@ -85,59 +75,35 @@ describe("permission policy (ADR 0009)", () => {
   })
 })
 
-function policy(
-  permissions: Partial<RunPolicy["permissions"]>,
-  networkAllow: string[] = ["github.com"]
-): RunPolicy {
-  return resolveAgentSettings({ permissions, networkAllow }).policy
+/** A policy as a server sends it, with `permissions` overriding the defaults. */
+function policy(permissions: Partial<RunPolicy["permissions"]>): RunPolicy {
+  const base = resolveAgentSettings(null).policy
+  return { ...base, permissions: { ...base.permissions, ...permissions } }
 }
 
-describe("applying the workspace's policy (ADR 0028)", () => {
-  it("decides configurable actions from the policy, fixed ones from the table", () => {
-    const p = policy({ install_dependency: "deny", git_push: "allow" })
-    expect(decide("install_dependency", { policy: p })).toBe("deny")
-    expect(decide("git_push", { policy: p })).toBe("allow")
-    // Open by default (decision 2026-11-01-1230); a person's choice still holds.
-    expect(decide("network", { policy: p })).toBe("allow")
-    expect(decide("network", { policy: policy({ network: "ask" }) })).toBe("ask")
-    expect(decide("write_in_worktree", { policy: p })).toBe("allow")
-    expect(decide("run_setup_recipe", { policy: p })).toBe("ask")
+describe("applying a run's policy (ADR 0028, ADR 2026-11-27-1615)", () => {
+  it("ignores an older server's deny for installs, writes and the network", () => {
+    const sent: RunPolicy = { ...policy({}), permissions: { install_dependency: "deny", write_outside_repo: "deny", git_push: "deny", network: "deny", computer_use: "allow" }, networkAllow: ["only.example.invalid"], networkCeiling: ["only.example.invalid"] }
+    for (const action of ["install_dependency", "write_outside_repo", "network", "write_in_worktree", "run_setup_recipe"])
+      expect(decide(action, { policy: sent })).toBe("allow")
+    expect(rawCliShellAvailable(sent)).toBe(true)
+    expect(claudePermissionRules(sent)).toEqual({ allow: [], ask: [], deny: [] })
+    expect(policyInstructions(sent).join("\n")).not.toMatch(/turned off|not allowed|Do not install|only your model API/)
   })
 
-  it("uses only the run computer permission and makes read-only take precedence", () => {
-    for (const decision of ["allow", "ask", "deny"] as const) {
-      const p = policy({ computer_use: decision })
+  it("uses only the run computer grant and makes read-only take precedence", () => {
+    for (const decision of ["allow", "deny"] as const) {
+      const p = { ...policy({}), permissions: { ...policy({}).permissions, computer_use: decision } }
       expect(decide("computer_use", { policy: p })).toBe(decision)
       expect(decide("computer_use", { policy: { ...p, readOnly: true } })).toBe("deny")
     }
     const legacy = policy({})
     delete legacy.permissions.computer_use
-    expect(decide("computer_use", { policy: legacy })).toBe("ask")
+    expect(decide("computer_use", { policy: legacy })).toBe("allow")
     expect(decide("computer_use", { policy: { ...legacy, readOnly: true } })).toBe("deny")
   })
 
-  it("builds the run's domain list from network and install choices", () => {
-    // Unrestricted unless a person chose otherwise.
-    expect(runDomains(policy({}), ["npmjs.org"])).toEqual(["*"])
-    expect(runDomains(policy({ network: "ask" }), ["npmjs.org"])).toEqual([
-      "github.com",
-      "npmjs.org",
-      ...PACKAGE_REGISTRY_DOMAINS,
-    ])
-    expect(runDomains(policy({ network: "allow" }), ["npmjs.org"])).toEqual([
-      "*",
-    ])
-    expect(runDomains(policy({ network: "deny" }), ["npmjs.org"])).toEqual([])
-    expect(
-      runDomains(policy({ network: "deny", install_dependency: "allow" }))
-    ).toEqual([])
-    expect(runDomains(policy({ network: "ask", install_dependency: "allow" }))).toEqual([
-      "github.com",
-      ...PACKAGE_REGISTRY_DOMAINS,
-    ])
-  })
-
-  it("pushes by the workspace's choice and the repo's approval", () => {
+  it("pushes only on the host's allow", () => {
     // Only the server's allow (an admitted GitHub App grant) pushes; nothing local stands in for it.
     expect(pushDecision(policy({}))).toEqual({
       push: false,
@@ -152,7 +118,8 @@ describe("applying the workspace's policy (ADR 0028)", () => {
 
   it("denies every write to a read-only check, whatever the workspace chose (ADR 0046)", () => {
     const p: RunPolicy = {
-      ...policy({ install_dependency: "allow", git_push: "allow" }),
+      ...policy({}),
+      permissions: { ...policy({}).permissions, git_push: "allow" },
       readOnly: true,
     }
     expect(decide("write_in_worktree", { policy: p })).toBe("deny")
@@ -188,24 +155,15 @@ describe("applying the workspace's policy (ADR 0028)", () => {
     }
   })
 
-  it("gives Claude Code ask or deny rules for explicit install restrictions", () => {
-    expect(claudePermissionRules(policy({install_dependency: "ask"}))).toMatchObject({
-      ask: expect.arrayContaining(["Bash(npm install:*)"]),
-      deny: ['Bash','PowerShell','Monitor'],
-    })
-    const denied = claudePermissionRules(policy({ install_dependency: "deny" }))
-    expect(denied.ask).toEqual([])
-    expect(denied.deny).toEqual(
-      expect.arrayContaining(["Bash(pnpm add:*)"])
-    )
-    expect(
-      claudePermissionRules(policy({ install_dependency: "allow" }))
-    ).toEqual({ allow: [], ask: [], deny: [] })
-    expect(claudePermissionRules(policy({install_dependency:'allow',git_push:'deny'}))).toEqual({allow:[],ask:[],deny:[]})
-    const settings = claudeSettings(policy({ install_dependency: "deny" }))
+  it("gives Claude Code no ask rules, and deny rules only to a read-only check", () => {
+    expect(claudePermissionRules(policy({}))).toEqual({ allow: [], ask: [], deny: [] })
+    const readOnly = claudePermissionRules({ ...policy({}), readOnly: true })
+    expect(readOnly.ask).toEqual([])
+    expect(readOnly.deny).toEqual(expect.arrayContaining(["Bash", "Write", "Bash(pnpm add:*)"]))
+    const settings = claudeSettings(policy({}))
     // Runs use no sandbox (decision 2026-11-01-2335): Claude Code's own stays off.
     expect(settings.sandbox).toEqual({ enabled: false })
-    expect(settings.permissions?.deny).toContain("Bash(npm install:*)")
+    expect(settings.permissions?.deny).toEqual([])
   })
 
   it("lets every Cursor tool call go ahead, git push included", async () => {
@@ -245,29 +203,21 @@ describe("applying the workspace's policy (ADR 0028)", () => {
     expect(delivering).not.toContain("mkw_x")
   })
 
-  it("tells the agent what it may do", () => {
-    const strict = runInstructions(
-      "/wt",
-      policy({
-        network: "deny",
-        install_dependency: "deny",
-        write_outside_repo: "deny",
-      })
-    )
-    expect(strict).toContain("Network access is turned off")
-    expect(strict).toContain("Do not install or add dependencies")
-    expect(strict).toContain("Writing outside it is not allowed")
-    const defaults = runInstructions("/wt")
-    expect(defaults).toContain("Network access is open")
-    expect(defaults).not.toContain("Native shell execution is unavailable")
-    const asked = runInstructions("/wt", policy({ network: "ask" }))
-    expect(asked).toContain("limited to the workspace ceiling")
-    expect(asked).toContain("pre-authorized")
+  it("tells the agent it has full access, and never to ask for permission", () => {
+    const full = runInstructions("/wt", policy({}))
+    expect(full).toContain("You have full access")
+    expect(full).toContain("network access is open")
+    expect(full).toContain("Never ask anyone for permission or approval")
+    expect(full).not.toMatch(/turned off|not allowed|missing permission|chat reply as approval|pre-authorized|Native shell execution/)
+    const check = runInstructions("/wt", { ...policy({}), readOnly: true })
+    expect(check).toContain("read-only check")
+    expect(check).toContain("you have no shell")
   })
   it('keeps project shell execution independent of daemon publication permission', () => {
-    for (const install of ['allow','ask','deny'] as const) for (const push of ['allow','deny'] as const) {
-      const value=policy({install_dependency:install,git_push:push})
-      expect(rawCliShellAvailable(value)).toBe(install==='allow')
+    for (const install of ['allow','deny'] as const) for (const push of ['allow','deny'] as const) {
+      const value={...policy({}),permissions:{...policy({}).permissions,install_dependency:install,git_push:push}}
+      // Every run has a shell; only a read-only check is file-only.
+      expect(rawCliShellAvailable(value)).toBe(true)
       expect(rawCliShellAvailable({...value,readOnly:true})).toBe(false)
     }
   })

@@ -37,11 +37,13 @@ test('Desktop platform caches warm on changed main install inputs without duplic
 
 test('selected specialty calls reuse the parent decision; direct dispatch still runs trusted selection', () => {
   const parent = workflow('ui-policy')
-  const automatic = [['analytics-ssr', 'analytics']]
-  for (const [, lane] of automatic) assert.equal(parent.jobs[`${lane}-checks`].with.selected, true)
-  assert.equal(parent.jobs['desktop-checks'], undefined)
+  const automatic = [['analytics-ssr', 'analytics'], ['desktop', 'desktop']]
+  for (const [name, lane] of automatic) {
+    assert.equal(parent.jobs[`${lane}-checks`].with.selected, true)
+    assert.equal(parent.jobs[`${lane}-checks`].uses, `./.github/workflows/${name}.yml`)
+  }
   assert.ok(Object.hasOwn(workflow('desktop').on, 'workflow_dispatch'), 'Desktop acceptance remains available manually')
-  for (const [name, lane] of [...automatic, ['desktop', 'desktop']]) {
+  for (const [name, lane] of automatic) {
     const w = workflow(name)
     assert.equal(w.on.workflow_call.inputs.selected.default, false)
     assert.equal(evaluate(w.jobs.changes.if, { inputs: { selected: true } }), false)
@@ -92,11 +94,12 @@ test('the protected parent requires Analytics on merge candidates and PRs withou
     for (const result of ['success', 'failure', 'cancelled', 'skipped']) {
       const candidate = event === 'merge_group'
       const context = { github: { event_name: event, base_ref: base }, needs: {
-        changes: { result: 'success', outputs: { core: 'false', integration: 'false', source: 'false', daemon: 'false', analytics: 'true', db: 'false' } },
+        changes: { result: 'success', outputs: { core: 'false', integration: 'false', source: 'false', daemon: 'false', desktop: 'false', analytics: 'true', db: 'false' } },
         'ui-policy-full': { result: 'skipped' }, 'ui-policy-integrations': { result: 'skipped' },
-        'source-checks': { result: 'skipped' }, 'daemon-checks': { result: 'skipped' },
+        'source-checks': { result: 'skipped' }, 'daemon-checks': { result: 'skipped' }, 'desktop-checks': { result: 'skipped' },
         'workspace-governance-checks': { result: 'skipped' }, 'analytics-checks': { result },
         'candidate-checks': { result: candidate ? 'success' : 'skipped' },
+        'frontend-screenshots': { result: event === 'pull_request' ? 'success' : 'skipped' },
       } }
       for (const [, name] of JSON.stringify(gate.env).matchAll(/needs\.([\w-]+)/g)) {
         if (!context.needs[name]) context.needs[name] = { result: 'success' }

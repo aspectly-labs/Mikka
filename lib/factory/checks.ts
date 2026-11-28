@@ -1,4 +1,5 @@
 import { factoryReviewCriteriaComplete, factoryReviewVerdict } from './validation';
+import { codeReviewConfiguration } from '../code-review/settings-storage';
 import { factoryRunBotMatches } from './run-scope'
 import { cloudTaskTarget, ownedCloudTaskTarget } from '../computer/cloud-task-target'
 import type { PoolClient } from "pg";
@@ -6,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { orchestratorSettings } from '@mikka/protocol/orchestrator';
 import { deviceIsOnline } from "../device-presence";
 import {
-  applyApprovalMode,
+  readOnlyRunPolicy,
   defaultRunPolicy,
   runPolicySchema,
   type RunPolicy,
@@ -384,12 +385,14 @@ export async function configureFactoryCheck(
     inferCommand: row.kind === 'repository' && !row.verifyCommand?.trim() && !(task.stage === 'review' && factoryFlowVersion(task) === 2),
     reportOnly: row.kind === 'deliverable' || row.kind === 'report' || (task.stage === 'review' && (factoryFlowVersion(task) === 2 || !row.verifyCommand?.trim())),
     deviceRepoId: row.deviceRepoId,
-    policy: applyApprovalMode(intersectRunPolicy(hostPolicy, row.policyCeiling ?? undefined), "read_only"),
+    policy: readOnlyRunPolicy(intersectRunPolicy(hostPolicy, row.policyCeiling ?? undefined)),
     ...(observations?.sources.length ? { questionCommandSources: observations.sources } : {}),
     ...(observations ? { questionExecutionObservation: { projectionVersion: 2, watermark: observations.execution.watermark, digest: observations.execution.digest } } : {}),
     ...(priorReview ? { priorReviewArtifactObservation: { digest: priorReview.digest } } : {}),
   };
   const currentRequest = await currentFactoryRequest(tx, task);
+  const reviewConfig = task.stage === 'review' && task.workspaceId
+    ? await (await import('../db')).withDatabaseClient(tx, () => codeReviewConfiguration(task.workspaceId!)) : null;
   const prompt = [
     ...(currentRequest ? [currentRequest] : []),
     `Factory stage: ${task.stage}. Independent read-only check of candidate ${row.id}, fixed worktree ${row.executionSha}.`,
@@ -446,6 +449,7 @@ export async function configureFactoryCheck(
     `UPDATE factory_attempts SET output=output || $2::jsonb WHERE id=$1`,
     [task.attemptId, JSON.stringify({ check })],
   );
+  return reviewConfig ? { reviewConfig } : undefined;
 }
 
 /** Frozen assignment for a bound check. Called before claiming; fails closed after a stop/repair. */
@@ -533,7 +537,7 @@ async function readFactoryCheckAssignment(
     ...(check.command ? { verifyCommand: check.command as string } : {}),
     factoryCheck: { stage: row.stage as 'review' | 'verify', inferCommand: check.inferCommand === true, reportOnly: check.reportOnly === true },
     // Reuse the canonical read-only policy; network allow/ask/deny remains the host's.
-    policy: applyApprovalMode(policy.data, "read_only"),
+    policy: readOnlyRunPolicy(policy.data),
   };
 }
 

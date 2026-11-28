@@ -133,9 +133,19 @@ test('Agent repository selection creates an authorized new execution, retaining 
         assert.equal((await pool.query('SELECT count(*) FROM agent_runs WHERE "issueId"=$1', [f.issueId])).rows[0].count, '1')
       } finally { repositorySelectionRuntime.queueLocal = originalQueue }
     })
-    await t.test('the real cloud queue reauthorizes the same subscription and defers machine handoff until commit', async () => {
+    await t.test('the real cloud queue reauthorizes the same subscription and defers machine handoff until commit', async child => {
+      const { templateModelsFixture } = await import('../../tests/support/template-models')
+      const templates = templateModelsFixture([subscription.modelId], { hostedSizes: true })
+      const originalE2BKey = process.env.E2B_API_KEY
+      process.env.E2B_API_KEY = 'synthetic-repository-selection-e2b-key'
+      child.after(() => {
+        templates.restore()
+        if (originalE2BKey === undefined) delete process.env.E2B_API_KEY
+        else process.env.E2B_API_KEY = originalE2BKey
+      })
       const workspaceId = randomUUID(), botId = randomUUID(), connectionId = randomUUID()
       await pool.query(`INSERT INTO mikka_workspaces(id,"userId",name) VALUES($1,'owner','Repository selection fixture')`, [workspaceId])
+      await pool.query(`INSERT INTO mikka_workspace_entitlements("workspaceId",plan,source) VALUES($1,'pro','cloud')`, [workspaceId])
       await pool.query(`INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role,status) VALUES($1,'owner','Fixture','repository-selection@example.invalid','admin','active')`, [workspaceId])
       const key = sealSecret('synthetic-e2b-fixture', userE2bKeyAad('owner'), { WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
       await pool.query(`INSERT INTO user_e2b_keys("userId",ciphertext,iv,"keyVersion",last4) VALUES('owner',$1,$2,$3,'test')`, [key.ciphertext, key.iv, key.keyVersion])

@@ -1,15 +1,18 @@
 import { betterAuth, type BetterAuthPlugin } from 'better-auth'
 import { createAuthMiddleware } from 'better-auth/api'
-import { bearer, deviceAuthorization, multiSession, twoFactor } from 'better-auth/plugins'
+import { bearer, deviceAuthorization, multiSession, emailOTP } from 'better-auth/plugins'
 import { oauthProvider } from '@better-auth/oauth-provider'
 import { expo } from '@better-auth/expo'
+import { getAuthenticatorName, passkey } from '@better-auth/passkey'
 import { oAuthProxy, oneTimeToken } from 'better-auth/plugins'
 import { pool } from '@/lib/db'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
 import { appOrigin, MCP_SCOPE, mcpResourceURL } from '@/lib/mcp/resource'
 import { authOAuthProxyOptions, authEffectiveTrustedOrigins, authSignInMethods, authAppleOptions, requireAppleSignInNonce } from '@/lib/auth-config'
+import { disabledEmailOtpPaths, mikkaTwoFactor, publicOtpError } from './auth-email-otp'
 import { createAuthEmail, type AuthMailContext } from '@/lib/auth-email'
 import { mikkaCookies } from '@/lib/auth-cookies'
+import { mobileRefresh } from '@/lib/auth-mobile-refresh'
 import { afterJob } from '@/lib/background'
 import { githubVerifiedProfile } from '@/lib/auth-github-profile'
 import { githubSignInClient } from '@/lib/github/app-config'
@@ -25,19 +28,23 @@ import { completeEnterpriseSignIn, enterpriseIdentityModels, enterpriseSessionFi
 
 import { assertTwoFactorManagement, completeTwoFactorVerification, twoFactorSessionFields } from '@/lib/enterprise/two-factor'
 import { assertTwoFactorCanBeDisabled } from '@/lib/governance/organization-security'
+import { DEFAULT_LOCAL_DEV_ORIGIN, getNodeEnv, isDevelopmentEnv, readEnv, runtimeEnv } from '@/lib/env'
 
 /** The iOS app's URL scheme: OAuth returns here, and its requests carry it as their origin. */
 export { MOBILE_APP_ORIGIN } from '@/lib/auth-config'
 
-export const { github: githubEnabled, google: googleEnabled } = authSignInMethods(process.env)
+export const { github: githubEnabled, google: googleEnabled } = authSignInMethods(runtimeEnv())
 export const authBaseURL = appOrigin
-const appleOptions = authAppleOptions(process.env)
-const proxyOptions = authOAuthProxyOptions(process.env)
+const appleOptions = authAppleOptions(runtimeEnv())
+const proxyOptions = authOAuthProxyOptions(runtimeEnv())
+const trustedOrigins = authEffectiveTrustedOrigins(runtimeEnv())
+const passkeyOrigins = trustedOrigins.filter(origin => /^https?:\/\//.test(origin))
 export const oauthCallbackBaseURL = proxyOptions?.productionURL ?? authBaseURL
 const email = createAuthEmail({
-  origin: authBaseURL ?? 'http://localhost:3000',
-  apiKey: () => process.env.RESEND_API_KEY,
+  origin: authBaseURL ?? DEFAULT_LOCAL_DEV_ORIGIN,
+  apiKey: () => readEnv('RESEND_API_KEY'),
   context: async (): Promise<AuthMailContext> => auth.$context,
+  verificationCode: async (address): Promise<string> => auth.api.createVerificationOTP({ body: { email: address, type: 'email-verification' } }),
   background: task => afterJob('after:auth-email', task),
 })
 
@@ -53,7 +60,10 @@ const authCompletion: BetterAuthPlugin = {
     // Better Auth applies before-hook header replacements after the whole chain.
     // Resolve through its fresh session API so both cookie and bearer identities
     // finish native normalization before this management authorization check.
-    before: [{ matcher: ctx => ['/two-factor/disable', '/two-factor/get-totp-uri', '/two-factor/generate-backup-codes'].includes(ctx.path ?? ''),
+    before: [{ matcher: ctx => [
+      '/two-factor/disable', '/two-factor/get-totp-uri', '/two-factor/generate-backup-codes',
+      '/passkey/generate-register-options', '/passkey/verify-registration', '/passkey/delete-passkey', '/passkey/update-passkey',
+    ].includes(ctx.path ?? ''),
       handler: createAuthMiddleware(async ctx => {
         const session = await auth.api.getSession({ headers: ctx.headers ?? ctx.request?.headers ?? new Headers(), query: { disableCookieCache: true } })
         if (session) {
@@ -83,6 +93,9 @@ const authCompletion: BetterAuthPlugin = {
         ctx.setHeader('referrer-policy', 'no-referrer')
         ctx.setHeader('cache-control', 'no-store')
       }
+      await email.otpRedemptionResult(ctx.path, ctx.context.returned, ctx.request)
+      const otpError = publicOtpError(ctx.path, ctx.context.returned)
+      if (otpError) return otpError
       const requestResult = await email.publicRequestResult(ctx.path, ctx.context.returned, ctx.request)
       if (requestResult) return Response.json(requestResult, { status: 202, headers: { 'cache-control': 'no-store' } })
       // Publish the private SDK cache only after sign-in auditing succeeds;
@@ -138,7 +151,7 @@ export const auth = betterAuth({
             const { parseFirstTouch, firstTouchProperties } = await import('@/lib/first-touch')
             const { isSmokeAccountEmail } = await import('@/lib/smoke-account')
             posthog.capture({ distinctId: user.id, event: 'registration_completed', properties: {
-              app: 'mikka', environment: process.env.NODE_ENV,
+              app: 'mikka', environment: getNodeEnv(),
               ...firstTouchProperties(parseFirstTouch(ctx?.headers?.get('cookie'))),
               ...(isSmokeAccountEmail(user.email) ? { test_account: true } : {}),
             } })
@@ -161,8 +174,8 @@ export const auth = betterAuth({
       requireEmailVerification: true,
     } },
     ...(googleEnabled ? { google: {
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: readEnv('GOOGLE_CLIENT_ID')!,
+      clientSecret: readEnv('GOOGLE_CLIENT_SECRET')!,
       scope: ['openid', 'email', 'profile'],
       includeGrantedScopes: false,
       requireEmailVerification: true,
@@ -173,8 +186,8 @@ export const auth = betterAuth({
   basePath: withBasePath('/api/auth'),
   emailAndPassword: email.emailAndPassword,
   emailVerification: email.emailVerification,
-  rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(process.env) }, storage: 'database' },
-  trustedOrigins: authEffectiveTrustedOrigins(process.env),
+  rateLimit: { ...email.rateLimit, customRules: { ...email.rateLimit.customRules, ...localSignUpRateRules(runtimeEnv()) }, storage: 'database' },
+  trustedOrigins,
   // Makes the app an OAuth 2.1 server so agents (Claude Code, Codex…) can sign
   // in to the MCP server at /api/mcp as the person. Clients register
   // themselves (RFC 7591) and use PKCE; access tokens are opaque and hashed in
@@ -182,7 +195,19 @@ export const auth = betterAuth({
   plugins: [
     enterpriseIdentityModels,
     enterpriseSso(),
-    twoFactor({ issuer: 'Mikka', allowPasswordless: true }),
+    emailOTP(email.emailOtp),
+    mikkaTwoFactor(),
+    passkey({
+      rpName: 'Mikka',
+      rpID: authBaseURL ? new URL(authBaseURL).hostname : undefined,
+      ...(passkeyOrigins.length ? { origin: passkeyOrigins } : {}),
+      registration: {
+        afterVerification: ({ verification }) => {
+          const provider = getAuthenticatorName(verification.registrationInfo?.aaguid)
+          return provider ? { name: provider } : undefined
+        },
+      },
+    }),
     authCompletion,
     bearer(),
     ...(proxyOptions ? [oAuthProxy(proxyOptions)] : []),
@@ -205,6 +230,8 @@ export const auth = betterAuth({
       disableJwtPlugin: true,
       prefix: { opaqueAccessToken: 'mka_', refreshToken: 'mkr_' },
     }),
+    // The iOS app's refresh credentials (/mobile-refresh/*): a short access session, rotated by a single-use refresh token.
+    mobileRefresh({ database: pool }),
     // Authentication may still revoke/replace cookies; publish the final journal last.
     mikkaCookies(),
   ],
@@ -219,13 +246,13 @@ export const auth = betterAuth({
   // 2026-11-02). Money, permissions, credentials and deletion read it fresh (lib/fresh-session.ts).
   session: { ...SESSION_OPTIONS, storeSessionInDatabase: true, additionalFields: { ...enterpriseSessionFields, ...twoFactorSessionFields } },
   // Organization identity management uses the fresh-session, organization-admin route.
-  disabledPaths: ['/sso/register', '/sso/update-provider', '/sso/delete-provider', '/sso/providers', '/sso/get-provider', '/sso/request-domain-verification', '/sso/verify-domain'],
+  disabledPaths: [...disabledEmailOtpPaths, '/sso/register', '/sso/update-provider', '/sso/delete-provider', '/sso/providers', '/sso/get-provider', '/sso/request-domain-verification', '/sso/verify-domain'],
   advanced: {
     // Migrations own the schema (scripts/migrate.mjs on every deploy). Better Auth's own check reads
     // every column of every table from the catalog on each cold start, about 225 KB a time.
     database: { validateSchema: false },
     // Partition preview sessions by top-level site when third-party cookies are blocked.
-    ...(process.env.NODE_ENV === 'development' && authBaseURL?.startsWith('https://') ? {
+    ...(isDevelopmentEnv() && authBaseURL?.startsWith('https://') ? {
       defaultCookieAttributes: { sameSite: 'none' as const, secure: true, partitioned: true },
     } : {}),
   },

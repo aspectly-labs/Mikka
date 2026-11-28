@@ -27,7 +27,7 @@ const policy = {
     install_dependency: "deny",
     write_outside_repo: "deny",
     git_push: "deny",
-    network: "ask",
+    network: "deny",
   },
   networkAllow: [],
 } as const

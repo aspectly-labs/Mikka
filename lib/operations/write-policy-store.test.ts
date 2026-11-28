@@ -26,39 +26,40 @@ function fixture(overrides: Partial<WritePolicyScope> = {}) {
 
 test('policy is scoped to the host run and locks its head and execution', async () => {
  const f = fixture()
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'ask', defaulted: true, version: '0' })
- // No setting names the action: the judged fallback applies (R-77).
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope, { fallback: 'allow' }), { decision: 'allow', defaulted: true, version: '0' })
+ // No setting names the action: it runs. There is no ask (ADR 2026-11-27-1615).
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', version: '0' })
  assert.ok(f.state.queries.filter(sql => !sql.includes('agent_kit_versions') && !sql.includes('pg_advisory_xact_lock')).every(sql => sql.endsWith('for share')))
  f.state.workspacePermissions = { send_slack_message: 'allow' }; f.state.workspaceVersion = '1'
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', defaulted: false, version: '1' })
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', version: '1' })
  f.state.workspacePermissions = { send_slack_message: 'deny' }; f.state.workspaceVersion = '2'
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'deny', defaulted: false, version: '2' })
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'deny', version: '2' })
 })
 
 test('a Bot head allow, ask or deny never changes the workspace decision or version', async () => {
  const f = fixture()
  f.state.workspacePermissions = { send_slack_message: 'allow' }; f.state.workspaceVersion = '4'
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', defaulted: false, version: '4' })
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', version: '4' })
  for (const decision of ['deny', 'ask', 'allow']) {
   f.state.headPermissions = { send_slack_message: decision }
   f.state.headVersion = String(Number(f.state.headVersion) + 1)
-  assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', defaulted: false, version: '4' })
+  assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', version: '4' })
  }
  f.state.workspacePermissions = { send_slack_message: 'deny' }; f.state.workspaceVersion = '5'
  f.state.headPermissions = { send_slack_message: 'allow' }
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'deny', defaulted: false, version: '5' })
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'deny', version: '5' })
  // A malformed head is not even parsed: only the workspace layer is read.
  f.state.headPermissions = { send_slack_message: 'yes' }
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'deny', defaulted: false, version: '5' })
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'deny', version: '5' })
 })
 
 test('a run that names no workspace keeps only the legacy owner ceiling', async () => {
  const f = fixture({ botId: null, workspaceId: null })
  f.state.headPermissions = { send_slack_message: 'deny' }; f.state.headVersion = '3'
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'deny', defaulted: false, version: '3' })
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'deny', version: '3' })
  f.state.headPermissions = {}
- assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'ask', defaulted: true, version: '3' })
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', version: '3' })
+ f.state.headPermissions = { send_slack_message: 'ask' }
+ assert.deepEqual(await lockWritePolicy(f.tx, f.scope), { decision: 'allow', version: '3' }, 'an old stored ask runs')
  f.state.headPermissions = { send_slack_message: 'yes' }
  await assert.rejects(lockWritePolicy(f.tx, f.scope), /writePolicyUnavailable/)
 })
@@ -72,4 +73,14 @@ test('foreign scope, inactive run, revoked tool and corrupt workspace policy fai
  f.state.tools = []; await assert.rejects(lockWritePolicy(f.tx, f.scope), /writeRunUnavailable/); f.state.tools = ['send_slack_message']
  f.state.currentTools = []; await assert.rejects(lockWritePolicy(f.tx, f.scope), /writeRunUnavailable/); f.state.currentTools = ['send_slack_message']
  f.state.workspacePermissions = { send_slack_message: 'yes' }; await assert.rejects(lockWritePolicy(f.tx, f.scope), /writePolicyUnavailable/)
+})
+
+
+test('direct app writes ignore old app preferences but still check the live run and its tool', async () => {
+ const f = fixture()
+ f.state.workspacePermissions = { send_slack_message: 'deny' }
+ assert.equal((await lockWritePolicy(f.tx, f.scope, { direct: true })).decision, 'allow')
+ assert.equal(f.state.queries.some(sql => sql.includes('workspace_computer_policies')), false)
+ f.state.currentTools = []
+ await assert.rejects(lockWritePolicy(f.tx, f.scope, { direct: true }), /writeRunUnavailable/)
 })

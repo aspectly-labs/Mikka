@@ -1,6 +1,7 @@
 # Every task has its own Mikka number; Linear's is only a reference
 
 - Date: 2026-11-06
+- **Status:** Accepted
 - Source: Alex, 2026-11-06, after a dispatched workspace task never opened its pull request because it had no number: 「确实是要有编号啊，你应该强制用编号才对啊……BOT 提交任务时就必须把编号填上呀，不允许留空。」 and 「我们这边的编号跟 Linear 那边的编号是不一样的呀。我们不跟着 Linear 走啊，我们只是说同步而已。」
 - Rule: —
 - Replaces: MIK-46's rule that a workspace task shows its Linear identifier

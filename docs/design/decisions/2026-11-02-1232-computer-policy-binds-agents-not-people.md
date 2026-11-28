@@ -1,6 +1,7 @@
 # The 电脑 policy binds Agents, not people
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: the coordinating Claude session's decision on
   [#959](https://github.com/alexj11324/Mikka/issues/959), 2026-11-02 (option b),
   based on [0330](2026-11-02-0330-computer-policy-gates-computer-tasks-only.md).

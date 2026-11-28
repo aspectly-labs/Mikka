@@ -1,6 +1,7 @@
 # Factory flow follows Warp Factories; acceptance is its own report page
 
 - Date: 2026-11-04
+- **Status:** Superseded in part by [2026-11-08-2328](2026-11-08-2328-factory-visual-evidence-required.md) (rule 2 UI-only default recording and handoff clauses; rest of Factory flow retained)
 - Source: Alex, in the coordinator session, after reviewing the redesign
   (Figma `zPe5LKycb2XuT1ivCLRw07`, pages 「待 Alex 确认 · Factory 任务流程」 935:2
   and 「Warp vs Mikka 逐步对照」 952:6): 「可以改。同时我认为这个验收页不应该放在这个

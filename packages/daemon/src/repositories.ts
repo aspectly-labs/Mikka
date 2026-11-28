@@ -109,7 +109,7 @@ export class RepositoryCache {
       // Authentication/network failures still throw; a broken HEAD with real
       // branches keeps its original error instead of being called empty.
       const refs = await git(['ls-remote', 'origin'], path)
-      if (!refs.stdout.trim()) throw new EmptyRepositoryError()
+      if (!refs.stdout.trim()) throw Object.assign(new EmptyRepositoryError(), { cause: error })
       throw error
     }
     return path

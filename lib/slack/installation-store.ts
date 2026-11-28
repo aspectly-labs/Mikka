@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
+import { runtimeEnv, type EnvMap } from '../env/server'
 import { openSecret, sealSecret, type Sealed } from '../secrets/crypto'
 import {
   createState,
@@ -72,7 +73,7 @@ export async function consumeInstall(pool: Database, owner: string, state: strin
 }
 
 /** Slack installs a bot once per team/app. Further OAuth grants link verified people without transferring another workspace's installation. */
-export function acceptInstall(pool: Database, owner: string, workspace: string, grant: SlackGrant, env = process.env) {
+export function acceptInstall(pool: Database, owner: string, workspace: string, grant: SlackGrant, env: EnvMap = runtimeEnv()) {
   return transaction(pool, async (client) => {
     const proposed = { id: randomUUID(), workspace_id: workspace, app_id: grant.appId, team_id: grant.teamId }
     const result = await client.query<{ id: string }>(sqlInsertInstall, [
@@ -181,7 +182,7 @@ type CredentialUse = {
 export function installationCredential(
   pool: Database,
   input: CredentialUse,
-  options: { settings?: boolean; requiredScope?: string; env?: NodeJS.ProcessEnv; send?: typeof fetch } = {},
+  options: { settings?: boolean; requiredScope?: string; env?: EnvMap; send?: typeof fetch } = {},
 ) {
   return transaction(pool, async (client) => {
     const { rows } = await client.query<Installation>(
@@ -202,10 +203,10 @@ export function installationCredential(
     )
     const row = rows[0]
     if (!row) throw new Error('slackInstallNotAuthorized')
-    return currentCredential(client, row, options.env ?? process.env, options.send)
+    return currentCredential(client, row, options.env ?? runtimeEnv(), options.send)
   })
 }
-async function currentCredential(client: PoolClient, row: Installation, env: NodeJS.ProcessEnv, send = fetch) {
+async function currentCredential(client: PoolClient, row: Installation, env: EnvMap, send = fetch) {
   const credential = JSON.parse(openSecret(row.bot_secret, aad(row), env)) as SlackCredential
   if (!credential.expires || credential.expires > Date.now() + 60_000) return credential.token
   const platform = installPlatform(env)
@@ -233,7 +234,7 @@ export async function uninstallForWorkspace(
   owner: string,
   workspace: string,
   uninstall: (token: string) => Promise<boolean>,
-  env = process.env,
+  env: EnvMap = runtimeEnv(),
   workspaceAdmin = false,
 ) {
   const marked = await pool.query(

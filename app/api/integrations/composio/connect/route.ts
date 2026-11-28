@@ -1,4 +1,4 @@
-import { NextResponse } from '@/lib/server-runtime/server'
+import { RouteResponse } from '@/lib/server-runtime/server'
 import { auth, authBaseURL } from '@/lib/auth'
 import { BASE_PATH, withBasePath } from '@/lib/base-path'
 import { getComposio } from '@/lib/composio'
@@ -8,6 +8,7 @@ import { COMPOSIO_FLOW_COOKIE, composioFlowCookieOptions, encodeComposioFlow } f
 import { claimComposioConnectIntent, linkComposioConnectIntent, linkedComposioConnectIntent, readComposioConnectIntent } from '@/lib/composio-connect-intent'
 import { pool } from '@/lib/db'
 import { withRequestLog } from '@/lib/request-log'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 /**
  * What the desktop app opens in the system browser for a Composio link:
@@ -20,14 +21,14 @@ import { withRequestLog } from '@/lib/request-log'
  * redirect to the loopback it named (RFC 8252 §7.3).
  */
 function pluginsFailed(request: Request) {
-  return NextResponse.redirect(new URL(withBasePath('/?settings=integrations&composio=callback-failed'), request.url))
+  return RouteResponse.redirect(new URL(withBasePath('/?settings=integrations&composio=callback-failed'), request.url))
 }
 
 function loopbackResult(intent: { returnTo: string; returnState: string }, result: 'connected' | 'failed' | 'cancelled') {
   const url = new URL(intent.returnTo)
   url.searchParams.set('state', intent.returnState)
   url.searchParams.set('result', result)
-  return NextResponse.redirect(url)
+  return RouteResponse.redirect(url)
 }
 
 async function handleGET(request: Request) {
@@ -44,7 +45,7 @@ async function handleGET(request: Request) {
     // A signed-in but different account stays on the sign-in page to switch
     // (addAccount suppresses the automatic return that would loop forever).
     const signin = `/sign-in?next=${encodeURIComponent(next)}${session?.user ? '&addAccount=1' : ''}`
-    return NextResponse.redirect(new URL(withBasePath(signin), request.url))
+    return RouteResponse.redirect(new URL(withBasePath(signin), request.url))
   }
   const claimed = await claimComposioConnectIntent(pool, token)
   if (!claimed) {
@@ -52,7 +53,7 @@ async function handleGET(request: Request) {
     // loses the claim re-reads the link its twin just recorded instead of
     // reporting a spent token.
     const again = await linkedComposioConnectIntent(pool, intent.tokenHash)
-    if (again?.providerUrl && composioConnectRedirect(again.providerUrl)) return NextResponse.redirect(again.providerUrl)
+    if (again?.providerUrl && composioConnectRedirect(again.providerUrl)) return RouteResponse.redirect(again.providerUrl)
     return back()
   }
   const composio = getComposio()
@@ -66,7 +67,7 @@ async function handleGET(request: Request) {
     // when a browser drops the flow cookie; a forged one can only name a link
     // Composio itself issued for this intent's user.
     await linkComposioConnectIntent(pool, claimed.tokenHash, connection.id, redirect.toString())
-    const response = NextResponse.redirect(redirect)
+    const response = RouteResponse.redirect(redirect)
     response.cookies.set(COMPOSIO_FLOW_COOKIE, encodeComposioFlow({ link: connection.id }), composioFlowCookieOptions(request.url, 600))
     return response
   } catch {
@@ -74,4 +75,12 @@ async function handleGET(request: Request) {
   }
 }
 
-export const GET = withRequestLog('/api/integrations/composio/connect', handleGET)
+const unguardedGET = withRequestLog('/api/integrations/composio/connect', handleGET)
+export const GET = defineRoute(
+  {
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  ({ request }) => unguardedGET(request),
+)

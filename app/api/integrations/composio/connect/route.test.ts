@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { before, mock, test } from 'node:test'
-import { NextRequest, NextResponse } from '@/lib/server-runtime/server'
+import { RouteRequest, RouteResponse } from '@/lib/server-runtime/server'
 
 /** Rows each pool query returns, by the statement it runs. */
 let readRows: Record<string, unknown>[] = []
@@ -15,8 +15,8 @@ const intent = {
   returnTo: 'http://127.0.0.1:43123/return', returnState: 's'.repeat(43),
 }
 const stub = (path: string, exports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports: exports })
-mock.module('@/lib/server-runtime/server', { namedExports: { NextRequest, NextResponse, after: () => {} } })
-stub('../../../../../lib/request-log.ts', { noteLogUser: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
+mock.module('@/lib/server-runtime/server', { namedExports: { RouteRequest, RouteResponse, after: () => {} } })
+stub('../../../../../lib/request-log.ts', { noteLogUser: () => {}, noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
 stub('../../../../../lib/auth.ts', { auth: { api: { getSession: async () => sessionUser ? { user: { id: sessionUser } } : null } }, authBaseURL: 'https://example.test' })
 stub('../../../../../lib/composio.ts', { getComposio: () => composio })
 stub('../../../../../lib/composio-config.ts', { isComposioCallbackVerifierConfigured: () => true })
@@ -28,7 +28,7 @@ stub('../../../../../lib/db/index.ts', { pool: { query: async (sql: string, para
 let GET: typeof import('./route').GET
 before(async () => { GET = (await import('./route')).GET })
 function request(token: string) {
-  return new NextRequest(`https://example.test/api/integrations/composio/connect?intent=${token}`)
+  return new RouteRequest(`https://example.test/api/integrations/composio/connect?intent=${token}`)
 }
 function setup() {
   readRows = []; claimRows = []; linked.length = 0; authorized = null; sessionUser = 'app-user'

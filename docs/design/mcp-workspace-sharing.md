@@ -1,6 +1,6 @@
 # Custom MCP connections in workspace settings
 
-- **Status:** implemented sharing controls and API contracts. See #1163 for acceptance evidence.
+- **Status:** retired. Personal MCP servers are not shareable ([decision 2026-11-27-1700](decisions/2026-11-27-1700-personal-mcp-not-shareable.md)); the share route answers 410 for one release and the grant table is emptied. Kept as history of #1163.
 - **GitHub:** #1163.
 - **Owner thread:** `fix/mcp-share-ui-1163`, with the shared-MCP backend follow-up.
 - **Layout source:** the existing Settings › Connections screen and API-key sharing controls on main; no new navigation or design direction.

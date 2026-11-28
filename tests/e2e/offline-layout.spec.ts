@@ -42,8 +42,8 @@ for (const width of [1280, 402]) {
 
       // SWR intentionally pauses polling once navigator.onLine is false. Cut an
       // in-flight refresh instead, as happens when a real connection drops.
-      await page.route('**/mikka', async route => {
-        if (route.request().method() !== 'POST' || !route.request().headers()['next-action']) return route.continue()
+      await page.route('**/api/rpc', async route => {
+        if (route.request().method() !== 'POST' || route.request().headers()['x-mikka-rpc'] !== '1') return route.continue()
         await context.setOffline(true)
         await route.abort('internetdisconnected')
       }, { times: 1 })

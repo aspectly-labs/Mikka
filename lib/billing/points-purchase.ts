@@ -8,6 +8,8 @@ import { withBillingAuthority } from './authority'
 import { POINTS_PURCHASE_AMOUNTS } from './points'
 import { stripeConfig, stripePost, StripeRequestError } from './stripe'
 import { ensureBillingCustomer } from './customer'
+import { publicEnv } from '@/lib/public-env.mjs'
+import { runtimeEnv } from '@/lib/env/server'
 
 type Env = Readonly<Record<string, string | undefined>>
 
@@ -19,7 +21,7 @@ type Env = Readonly<Record<string, string | undefined>>
 export const POINTS_TAX_CODE = 'txcd_10105002'
 
 /** Admin-only; the browser supplies dollars, never points, price IDs or redirect URLs. Comes back to 计费. */
-export async function pointsPurchaseUrl(actorId: string, workspaceId: string, amount: number, locale: string, fetchImpl: typeof fetch = fetch, env: Env = process.env): Promise<{ url: string }> {
+export async function pointsPurchaseUrl(actorId: string, workspaceId: string, amount: number, locale: string, fetchImpl: typeof fetch = fetch, env: Env = runtimeEnv()): Promise<{ url: string }> {
   const result = await pointsPurchase(actorId, workspaceId, amount, locale, {}, fetchImpl, env)
   if (!('url' in result)) throw new WorkspaceError('billingProviderFailed')
   return result
@@ -33,12 +35,12 @@ export async function pointsPurchaseUrl(actorId: string, workspaceId: string, am
 export interface PurchaseFromChat { chat: { botId: string | null } }
 
 /**
- * 充值. From a chat with NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY set, an embedded
+ * 充值. From a chat with MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY set, an embedded
  * Checkout session whose client secret the chat mounts in a dialog. Without
  * the key, or from 计费, a hosted Checkout page that comes back to where it
  * started (`url`).
  */
-export async function pointsPurchase(actorId: string, workspaceId: string, amount: number, locale: string, from: Partial<PurchaseFromChat> & { hosted?: boolean }, fetchImpl: typeof fetch = fetch, env: Env = process.env): Promise<{ url: string } | { clientSecret: string }> {
+export async function pointsPurchase(actorId: string, workspaceId: string, amount: number, locale: string, from: Partial<PurchaseFromChat> & { hosted?: boolean }, fetchImpl: typeof fetch = fetch, env: Env = runtimeEnv()): Promise<{ url: string } | { clientSecret: string }> {
   return withBillingAuthority(actorId, workspaceId, async () => {
     z.number().refine(value => (POINTS_PURCHASE_AMOUNTS as readonly number[]).includes(value)).parse(amount)
     const config = stripeConfig(env)
@@ -46,13 +48,13 @@ export async function pointsPurchase(actorId: string, workspaceId: string, amoun
     if (!config?.webhookSecret || !origin) throw new WorkspaceError('billingNotConfigured')
     const [trustedOrigin] = authTrustedOrigins({ BETTER_AUTH_URL: origin, NODE_ENV: env.NODE_ENV, CI: env.CI })
     const chat = from.chat ? { botId: from.chat.botId === null ? null : z.uuid().parse(from.chat.botId) } : null
-    const { workspaceLink } = await import('@/components/workspace/workspace-navigation')
+    const { workspaceLink } = await import('@/lib/workspace-navigation')
     const back = new URL(withBasePath(`${locale === 'en' ? '/en' : ''}${chat ? workspaceLink(chat.botId ? { bot: chat.botId } : {}) : '/settings'}`), trustedOrigin)
     if (!chat) back.searchParams.set('section', 'billing')
     back.searchParams.set('workspace', workspaceId)
     // The bundled renderer cannot load Stripe's remote script. Its authenticated
     // RPC scope selects the existing hosted flow, retaining the same chat return.
-    const embedded = Boolean(chat && env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY && !from.hosted)
+    const embedded = Boolean(chat && publicEnv('MIKKA_PUBLIC_STRIPE_PUBLISHABLE_KEY', env) && !from.hosted)
     const metadata = { workspaceId, points: String(amount * 1_000_000 / MICRO_USD_PER_POINT), purpose: 'points_purchase' }
     try {
       const customer = await ensureBillingCustomer(workspaceId, config, fetchImpl)
@@ -61,7 +63,7 @@ export async function pointsPurchase(actorId: string, workspaceId: string, amoun
       back.searchParams.set('topup', 'cancelled')
       const common = {
         mode: 'payment', managed_payments: { enabled: true }, customer, client_reference_id: workspaceId,
-        line_items: [{ price_data: { currency: 'usd', unit_amount: amount * 100, product_data: { name: 'Mikka points', tax_code: POINTS_TAX_CODE } }, quantity: 1 }],
+        line_items: [{ price_data: { currency: 'usd', unit_amount: amount * 100, product_data: { name: 'Mikka credits', tax_code: POINTS_TAX_CODE } }, quantity: 1 }],
         metadata, payment_intent_data: { metadata },
       }
       if (embedded) {
@@ -74,7 +76,7 @@ export async function pointsPurchase(actorId: string, workspaceId: string, amoun
       if (new URL(url).origin !== 'https://checkout.stripe.com') throw new WorkspaceError('billingProviderFailed')
       return { url }
     } catch (error) {
-      if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed')
+      if (error instanceof StripeRequestError || (error as Error)?.name === 'TimeoutError' || error instanceof TypeError) throw new WorkspaceError('billingProviderFailed', { cause: error })
       throw error
     }
   }, { ownPlatformAccount: true })

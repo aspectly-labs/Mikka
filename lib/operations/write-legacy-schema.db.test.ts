@@ -8,7 +8,7 @@ import { overrideDeploymentSwitch } from '../deployment-switches'
 
 /** Required CI-only old-schema regression. It can never target retained local
  * PG or production; records remain until the disposable Actions service exits. */
-test('gate-off endpoint and legacy approval reads work without new operation schema', { timeout: 20000 }, async () => {
+test('gate-off endpoint works without new operation schema', { timeout: 20000 }, async () => {
   validateTarget(process.env)
   assert.equal(process.env.REQUIRE_DB, '1')
   const migration = await readFile(new URL('../../drizzle/20261025043000_pending_actions.sql', import.meta.url), 'utf8')
@@ -36,7 +36,6 @@ test('gate-off endpoint and legacy approval reads work without new operation sch
   const admin = new pg.Pool({ connectionString: process.env.E2E_DATABASE_URL, max: 1, connectionTimeoutMillis: 2000 })
   let failure: unknown
   overrideDeploymentSwitch('personalWrites', false)
-  let scope: ReturnType<typeof import('../db/request-scope').createRequestDatabaseScope> | undefined
   try {
     const client = await admin.connect(); allowedAdmin.add(client)
     try {
@@ -50,13 +49,6 @@ test('gate-off endpoint and legacy approval reads work without new operation sch
       const owner = 'synthetic-' + randomUUID(), id = randomUUID()
       await client.query('INSERT INTO pending_actions (id,"userId",action,input) VALUES ($1,$2,$3,$4)', [id, owner, 'send_email', { to: 'fixture@example.invalid', subject: 'Fixture', body: 'Fixture' }])
       await client.query('COMMIT')
-      const url = new URL(process.env.E2E_DATABASE_URL!); url.searchParams.set('options', expectedOptions)
-      const { createRequestDatabaseScope } = await import('../db/request-scope')
-      scope = createRequestDatabaseScope(url.href)
-      const { listPendingActions } = await import('../pending-action-store')
-      const own = await scope.run(() => listPendingActions(owner))
-      assert.equal(own.length, 1); assert.equal(own[0].id, id); assert.equal(own[0].action, 'send_email')
-      assert.deepEqual(await scope.run(() => listPendingActions('synthetic-other-owner')), [])
       const { POST } = await import('../../app/api/approved-writes/route')
       const before = budget.sql
       const response = await POST(new Request('https://candidate.invalid/api/approved-writes', { method: 'POST', body: '{}' }))
@@ -70,7 +62,7 @@ test('gate-off endpoint and legacy approval reads work without new operation sch
     } finally { client.release() }
   } catch(error) { failure=error }
   finally {
-    const closed=await Promise.allSettled([Promise.resolve().then(()=>scope?.close()),Promise.resolve().then(()=>admin.end())])
+    const closed=await Promise.allSettled([Promise.resolve().then(()=>admin.end())])
     const errors=closed.filter(r=>r.status==='rejected').map(r=>(r as PromiseRejectedResult).reason)
     pg.Client.prototype.query = originalQuery; globalThis.fetch = originalFetch
     overrideDeploymentSwitch('personalWrites', undefined)

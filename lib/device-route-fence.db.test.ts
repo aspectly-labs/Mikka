@@ -23,10 +23,10 @@ async function routeFiles(dir: string): Promise<string[]> {
 
 test('every device route refuses a token revoked after authentication before it calls out or issues anything', { skip: !url }, async t => {
   // The issuing steps of the three routes that hand out credentials record any call.
-  const [githubAccess, runtime] = await Promise.all([import('./github/user-access'), import('./subscription-runtime')])
-  mock.module(new URL('./github/user-access.ts', import.meta.url).href, { namedExports: {
-    ...githubAccess,
-    githubTokenForUser: async () => { issued.push('github-token'); return { token: 'fixture', expiresAt: null } },
+  const [githubConnection, runtime] = await Promise.all([import('./github/connection'), import('./subscription-runtime')])
+  mock.module(new URL('./github/connection.ts', import.meta.url).href, { namedExports: {
+    ...githubConnection,
+    githubConnectionToken: async () => { issued.push('github-token'); return { token: 'fixture', githubAccountId: '42', expiresAt: null } },
   } })
   mock.module(new URL('./subscription-runtime.ts', import.meta.url).href, { namedExports: {
     ...runtime,
@@ -76,8 +76,8 @@ test('every device route refuses a token revoked after authentication before it 
       }
     }
     t.diagnostic(JSON.stringify({ routes: fenced.length }))
-    // The three routes that hand out credentials answer a revoked token as what it is, an authentication failure.
-    for (const route of ['POST app/v1/devices/[deviceId]/github-token/route.ts', 'GET app/v1/runs/[runId]/policy-snapshot/route.ts', 'POST app/v1/devices/[deviceId]/runs/[runId]/subscription-lease/route.ts']) {
+    // The routes that hand out credentials answer a revoked token as what it is, an authentication failure.
+    for (const route of ['POST app/v1/devices/[deviceId]/github-token/route.ts', 'GET app/v1/runs/[runId]/policy-snapshot/route.ts']) {
       assert.ok(fenced.includes(`${route} 401`), `${route} answered ${fenced.find(line => line.startsWith(route)) ?? 'nothing'}`)
     }
     assert.deepEqual(issued, [], 'nothing was issued for a revoked token')

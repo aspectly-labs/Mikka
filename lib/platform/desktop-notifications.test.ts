@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { desktopRunUpdate, type DesktopRun } from './desktop-notifications'
+import { readDesktopMentions, desktopCandidateReason, desktopMentionUpdate, desktopMergeUpdate, desktopNotifyQuestions, desktopRunUpdate, type DesktopGroup, type DesktopRun, type DesktopThread } from './desktop-notifications'
 
 function run(overrides: Partial<DesktopRun> = {}): DesktopRun {
   return {
@@ -96,4 +96,73 @@ test('whether a transition raises a notification is the Decisions API\'s answer,
   assert.deepEqual(readDesktopNotify(answers, candidates), ['run:b:failed:1'])
   // No answer shows nothing.
   assert.deepEqual(readDesktopNotify(null, candidates), [])
+})
+
+function thread(overrides: Partial<DesktopThread> = {}): DesktopThread {
+  return { id: 'run-1', issueId: 'issue-1', agentName: 'Codex', prompt: 'Fix the login page\nmore', title: null, pullState: 'open', ...overrides }
+}
+
+test('a thread whose pull request merges raises one notification; the first read and already-merged threads do not', () => {
+  const baseline = desktopMergeUpdate(null, [thread({ pullState: 'merged' })])
+  assert.deepEqual(baseline.notifications, [])
+  const previous = new Map<string, DesktopThread['pullState'] | null>([['run-1', 'open'], ['run-2', 'merged']])
+  const update = desktopMergeUpdate(previous, [
+    thread(),
+    thread({ id: 'run-1', pullState: 'merged', title: 'Login fix' }),
+    thread({ id: 'run-2', pullState: 'merged' }),
+    thread({ id: 'run-3', pullState: 'merged' }),
+  ].slice(1))
+  assert.deepEqual(update.notifications, [
+    { id: 'merged:run-1', kind: 'merged', title: 'Login fix', body: 'Codex', href: '/?issue=issue-1&thread=run-1' },
+  ])
+  assert.equal(desktopMergeUpdate(new Map([['run-1', 'open']]), [thread({ pullState: 'merged' })]).notifications[0]?.title, 'Fix the login page')
+})
+
+function group(lastMessage: Partial<NonNullable<DesktopGroup['lastMessage']>> | null, id = GROUP): DesktopGroup {
+  return {
+    id, title: 'Release crew',
+    lastMessage: lastMessage && { id: 'm-1', conversationId: id, position: '1', authorType: 'user', authorId: 'u-2', body: '@Alex can you check?', mentions: [{ memberType: 'user', memberId: 'u-1' }], replyToId: null, createdAt: '2026-11-25T00:00:00Z', ...lastMessage },
+  }
+}
+
+const GROUP = '0b9f6c1e-1111-4a6b-8c3d-000000000001'
+
+test('a new group message that @-mentions the person raises one notification', () => {
+  assert.deepEqual(desktopMentionUpdate(null, [group({})], 'u-1').notifications, [])
+  const update = desktopMentionUpdate(new Map([[GROUP, 'm-0']]), [group({})], 'u-1')
+  assert.deepEqual(update.notifications, [
+    { id: 'mentioned:m-1', kind: 'mentioned', title: 'Release crew', body: '@Alex can you check?', href: `/?group=${GROUP}` },
+  ])
+  assert.deepEqual(update.next, new Map([[GROUP, 'm-1']]))
+  // The same message again, the person's own message, and a message naming someone else stay quiet.
+  assert.deepEqual(desktopMentionUpdate(new Map([[GROUP, 'm-1']]), [group({})], 'u-1').notifications, [])
+  assert.deepEqual(desktopMentionUpdate(new Map([[GROUP, 'm-0']]), [group({ authorId: 'u-1' })], 'u-1').notifications, [])
+  assert.deepEqual(desktopMentionUpdate(new Map([[GROUP, 'm-0']]), [group({ mentions: [{ memberType: 'bot', memberId: 'u-1' }] })], 'u-1').notifications, [])
+  // A group the person was just added to, opening with a mention, counts.
+  assert.equal(desktopMentionUpdate(new Map(), [group({}, 'g-2')], 'u-1').notifications.length, 1)
+})
+
+test('mentions and merged pull requests ride the 等你 switch and get their own question', () => {
+  assert.equal(desktopCandidateReason('mentioned'), 'decide')
+  assert.equal(desktopCandidateReason('merged'), 'decide')
+  const [mentioned, merged] = desktopNotifyQuestions([
+    { id: 'a', kind: 'mentioned', title: 'Release crew', agent: 'Sam' },
+    { id: 'b', kind: 'merged', title: 'Login fix', agent: 'Codex' },
+  ])
+  assert.match(mentioned!.instructions, /Sam mentioned the person in the group chat "Release crew"/)
+  assert.match(merged!.instructions, /pull request of the thread "Login fix" \(Codex\) was just merged/)
+})
+
+test('a later unmentioned message does not hide earlier unread mentions across page boundaries', async () => {
+  const latest = group({ position: '10', mentions: [] })
+  const pageMessage = (position: string) => ({ ...group({}).lastMessage!, id: position, position })
+  const pages: string[] = []
+  const update = await readDesktopMentions(new Map([[GROUP, '2']]), [{ ...latest, lastReadPosition: '5' }], 'u-1', async (_group, before) => {
+    pages.push(before!)
+    if (before === '10') return { messages: ['9', '8'].map(pageMessage), nextBefore: '8' }
+    return { messages: ['7', '6', '5'].map(pageMessage), nextBefore: '5' }
+  })
+  assert.deepEqual(pages, ['10', '8'])
+  assert.deepEqual(update.notifications.map(item => item.id), ['mentioned:6', 'mentioned:7', 'mentioned:8', 'mentioned:9'])
+  assert.deepEqual((await readDesktopMentions(update.next, [latest], 'u-1')).notifications, [])
 })

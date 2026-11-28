@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
-import { dependencyTestCommand, isSelfHostedBackendInput, verifyChange } from './self-hosted-requirements.mjs'
+import { dependencyTestCommand, isSelfHostedAcceptanceTest, isSelfHostedBackendInput, verifyChange } from './self-hosted-requirements.mjs'
 
 const path = 'lib/feature.ts'
 const migration = 'drizzle/0100-upgrade.sql'
@@ -40,14 +40,21 @@ test('Nx and the declaration checker share the backend and migration path classi
   }
 })
 
+test('the isolated subscription-worker acceptance runner qualifies as a self-hosted test', () => {
+  assert.equal(isSelfHostedAcceptanceTest('scripts/test-subscription-worker.mjs'), true)
+  assert.equal(isSelfHostedAcceptanceTest('scripts/unrelated.mjs'), false)
+  const spec = { test: 'scripts/test-subscription-worker.mjs', suite: 'test:byos-worker' }
+  assert.deepEqual(dependencyTestCommand(spec, { 'test:byos-worker': 'node scripts/test-subscription-worker.mjs' }),
+    ['pnpm', 'run', 'test:byos-worker'])
+})
 test('every selected declaration maps to an executable Node test or matching repository suite', () => {
   assert.deepEqual(dependencyTestCommand({ test: 'scripts/example.test.mjs' }, {}), [process.execPath, '--test', 'scripts/example.test.mjs'])
   const spec = { test: 'lib/demo.test.ts', suite: 'test:demo' }
   assert.deepEqual(dependencyTestCommand(spec, { 'test:demo': 'node --import tsx --test lib/demo.test.ts lib/other.test.ts' }),
     [process.execPath, '--import', 'tsx', '--test', 'lib/demo.test.ts'])
-  const mobile = 'node --test lib/a.test.mjs && TSX_TSCONFIG_PATH=apps/mobile/tsconfig.json node --import tsx --test lib/demo.test.ts'
+  const mobile = 'node --test lib/a.test.mjs && TSX_TSCONFIG_PATH=apps/example/tsconfig.json node --import tsx --test lib/demo.test.ts'
   assert.deepEqual(dependencyTestCommand(spec, { 'test:demo': mobile }),
-    ['env', 'TSX_TSCONFIG_PATH=apps/mobile/tsconfig.json', process.execPath, '--import', 'tsx', '--test', 'lib/demo.test.ts'])
+    ['env', 'TSX_TSCONFIG_PATH=apps/example/tsconfig.json', process.execPath, '--import', 'tsx', '--test', 'lib/demo.test.ts'])
   assert.deepEqual(dependencyTestCommand(spec, { 'test:demo': 'node scripts/custom-runner.mjs lib/demo.test.ts' }),
     ['pnpm', 'run', 'test:demo'])
   assert.deepEqual(dependencyTestCommand(spec, { 'test:demo': 'npm run build && node --test lib/demo.test.ts' }),

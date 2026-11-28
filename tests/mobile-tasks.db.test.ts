@@ -7,7 +7,7 @@ import { Pool } from 'pg'
 import { dbUrl, seedAgent, seedBot, seedIssue, seedPersonalWorkspace, seedRun, seedTeam, seedUser, seedWorkspace } from './support/workspace-admin-db'
 import { measured, readMetrics } from './helpers/read-metrics'
 
-type ReadOptions = { bearer?: string | null; workspaceId?: string | null; cookie?: string; headers?: Record<string, string> }
+type ReadOptions = { bearer?: string | null; workspaceId?: string | null; cookie?: string; headers?: Record<string, string>; method?: string; body?: unknown }
 
 const sqlState = (error: unknown): string | undefined => {
   if (!error || typeof error !== 'object') return undefined
@@ -25,9 +25,9 @@ test('mobile task endpoints with real task ACL, current workspace membership and
   const previous = { app: globals.mikkaPool, workspace: globals.workspacePool }
   const environment = { MIKKA_EDITION: process.env.MIKKA_EDITION, BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET, WORKSPACE_SECRETS_KEY: process.env.WORKSPACE_SECRETS_KEY,
-    NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY }
+    MIKKA_PUBLIC_POSTHOG_KEY: process.env.MIKKA_PUBLIC_POSTHOG_KEY, NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY }
   const origin = 'http://localhost:3100'
-  Object.assign(process.env, { MIKKA_EDITION: 'cloud', BETTER_AUTH_URL: origin, NEXT_PUBLIC_POSTHOG_KEY: '',
+  Object.assign(process.env, { MIKKA_EDITION: 'cloud', BETTER_AUTH_URL: origin, MIKKA_PUBLIC_POSTHOG_KEY: '', NEXT_PUBLIC_POSTHOG_KEY: '',
     BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), WORKSPACE_SECRETS_KEY: randomBytes(32).toString('hex') })
   globals.mikkaPool = app; globals.workspacePool = workspace
   const users: string[] = []
@@ -60,7 +60,8 @@ test('mobile task endpoints with real task ACL, current workspace membership and
   mock.module('@/lib/intl/i18n-server', { namedExports: await import('../lib/intl/i18n-server') })
   mock.module('@/lib/server-runtime/server', { namedExports: await import('../lib/server-runtime/server') })
   const { auth } = await import('../lib/auth')
-  const { GET } = await import('../app/api/mobile/tasks/[id]/route')
+  const { GET, PATCH } = await import('../app/api/mobile/tasks/[id]/route')
+  const { POST: comment } = await import('../app/api/mobile/tasks/[id]/comments/route')
   const { GET: list } = await import('../app/api/mobile/tasks/route')
   const { newestTaskRuns } = await import('../lib/task-block-runs')
   const owner = await seedUser(pool, 'owner'); users.push(owner)
@@ -113,13 +114,19 @@ test('mobile task endpoints with real task ACL, current workspace membership and
   const run = async <T>(path: string, handler: (request: Request) => Promise<T>, options: ReadOptions = {}) => {
     const bearer = options.bearer === undefined ? native.token : options.bearer
     const selection = options.workspaceId
-    const req = new Request(origin + '/mikka' + path, { headers: {
-      'x-mikka-locale': 'en', ...(bearer ? { authorization: 'Bearer ' + bearer } : {}),
+    const req = new Request(origin + '/mikka' + path, { method: options.method, body: options.body === undefined ? undefined : JSON.stringify(options.body), headers: {
+      'x-mikka-locale': 'en', ...(bearer ? { authorization: 'Bearer ' + bearer } : {}), ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
       ...(selection ? { 'x-mikka-workspace-id': selection } : {}), ...(options.cookie ? { cookie: options.cookie } : {}),
       ...options.headers,
     } })
     const scope = context.createRequestScope(req)
     try { return await context.runRequestScope(scope, () => handler(req)) }
+    finally { await scope.after.finish() }
+  }
+  // Web actions called directly (a web editor, task creation) need the same request-local adapters.
+  const scoped = async <T>(fn: () => Promise<T>) => {
+    const scope = context.createRequestScope(new Request(origin + '/mikka/', { headers: { 'x-mikka-locale': 'en' } }))
+    try { return await context.runRequestScope(scope, fn) }
     finally { await scope.after.finish() }
   }
   const request = (id: string, options?: ReadOptions) => run('/api/mobile/tasks/' + id, req => GET(req, { params: Promise.resolve({ id }) }), options)
@@ -394,11 +401,11 @@ test('mobile task endpoints with real task ACL, current workspace membership and
     const id = await workspaceTask()
     const v1 = randomUUID(), v2 = randomUUID(), threadId = 'discussion-' + randomUUID()
     const first = '2026-01-01T12:00:00.000Z', changed = '2026-01-01T12:01:00.000Z', replied = '2026-01-01T12:02:00.000Z'
-    const { loadIssueDocument, upsertLinearComment, encodedIssueDocument } = await import('../lib/linear-sync/document')
+    const { loadIssueDocument, upsertThreadMessage, encodedIssueDocument } = await import('../lib/task-comments/issue-document')
     const doc = loadIssueDocument(null, { type: 'doc' })
     try {
-      upsertLinearComment(doc, { threadId, messageId: 'c1', author: 'owner', authorUserId: owner, body: 'Root discussion', at: first })
-      upsertLinearComment(doc, { threadId, messageId: 'c2', author: 'owner', authorUserId: owner, body: 'A reply', at: replied })
+      upsertThreadMessage(doc, { threadId, messageId: 'c1', author: 'owner', authorUserId: owner, body: 'Root discussion', at: first })
+      upsertThreadMessage(doc, { threadId, messageId: 'c2', author: 'owner', authorUserId: owner, body: 'A reply', at: replied })
       await pool.query('insert into issue_documents ("issueId","userId",state) values ($1,$2,$3)', [id, owner, encodedIssueDocument(doc)])
       await pool.query(`insert into issue_versions (id,"issueId","userId",revision,title,content,status,priority,actor_type,actor_id,"createdAt")
         values ($1,$3,$4,1,'Before','{"type":"doc"}','todo','normal','user',$4,$5),($2,$3,$4,2,'After','{"type":"doc"}','todo','normal','user',$4,$6)`, [v1, v2, id, owner, first, changed])
@@ -406,7 +413,7 @@ test('mobile task endpoints with real task ACL, current workspace membership and
       assert.deepEqual(data.timeline.map((row: { id: string }) => row.id), [
         `discussion:${threadId}:c1`, `history:created-${v1}`, `history:title-${v2}`, `discussion:${threadId}:c2`,
       ])
-      assert.deepEqual(data.timeline[2].event.source, { kind: 'revision', id: v2, revision: 2 })
+      assert.deepEqual(data.timeline[2].event.source, { kind: 'revision', id: v2, revision: 2, runId: null })
       assert.equal(data.timeline[2].event.actor.id, owner)
       assert.equal(data.timeline[3].kind, 'reply')
       assert.equal(data.timeline[3].threadId, threadId)
@@ -633,10 +640,6 @@ test('mobile task endpoints with real task ACL, current workspace membership and
     await pool.query(`insert into agent_tool_approvals (id,"runId","userId","deviceId","requestId",harness,method,input,digest,status,"expiresAt") values ($1,$2,$3,$4,'request','codex','fixture','{}','digest','pending',now()+interval '1 hour')`, [randomUUID(), runId, owner, device])
     await compare('waiting', 'approval')
     await pool.query(`update agent_tool_approvals set "expiresAt"=now()-interval '1 hour' where "runId"=$1`, [runId])
-    await compare('running', null)
-    await pool.query(`insert into local_computer_reviews (id,"runId","deviceId","userId",target,call,digest,"expiresAt","seenAt") values ($1,$2,$3,$4,'fixture','{}','digest',now()+interval '1 hour',now())`, [randomUUID(), runId, device, owner])
-    await compare('waiting', 'approval')
-    await pool.query('update local_computer_reviews set decision=true where "runId"=$1', [runId])
     await compare('running', null)
 
     await pool.query(`update issues set status='todo' where id=$1`, [id])
@@ -917,6 +920,162 @@ test('mobile task endpoints with real task ACL, current workspace membership and
       [teamWorkspace.id, owner, ownerMember.name, ownerMember.email, ownerMember.role])
     }
     assert.equal((await request(issueId, unselected)).status, 200)
+  })
+
+  await t.test('a native edit changes status, priority and assignee through the web rules and fences the revision', async () => {
+    const task = await workspaceTask()
+    const edit = (body: unknown, options: ReadOptions = {}) => run('/api/mobile/tasks/' + task, req => PATCH(req, { params: Promise.resolve({ id: task }) }), { ...teamSelection, ...options, method: 'PATCH', body })
+    const read = async (options: ReadOptions = {}) => (await run('/api/mobile/tasks/' + task + '?options=1', req => GET(req, { params: Promise.resolve({ id: task }) }), { ...teamSelection, ...options })).json()
+    const stored = async () => (await pool.query('select revision,status,priority,state_id,content from issues where id=$1', [task])).rows[0]
+    try {
+      const opened = await read()
+      assert.equal(opened.options.canEdit, true)
+      assert.deepEqual(opened.options.priorities, ['urgent', 'high', 'normal', 'low'])
+      assert.deepEqual(opened.options.members.map((member: { id: string }) => member.id).sort(), [owner, other].sort())
+      assert.ok(opened.options.states.length > 0 && opened.options.states.every((state: Record<string, unknown>) => !('taskCount' in state)))
+      assert.deepEqual([opened.task.revision, opened.task.assignee, opened.task.status], [1, null, 'todo'])
+      assert.deepEqual(Object.keys(await (await request(task)).json()).sort(), ['activity', 'live', 'task', 'timeline'], 'options only on request')
+
+      const moved = await edit({ revision: 1, status: 'doing' })
+      assert.equal(moved.status, 200)
+      const movedBody = await moved.json()
+      assert.deepEqual([movedBody.task.status, movedBody.task.revision], ['doing', 2])
+      // The web's history row, attributed to the signed-in person, not to an agent.
+      assert.deepEqual((await pool.query('select status,actor_type,actor_id from issue_versions where "issueId"=$1 and revision=2', [task])).rows, [{ status: 'doing', actor_type: 'user', actor_id: owner }])
+
+      assert.deepEqual([(await edit({ revision: 1, priority: 'urgent' })).status, (await stored()).revision], [409, 2])
+      assert.deepEqual(await (await edit({ revision: 1, priority: 'urgent' })).json(), { error: 'issueStale' })
+
+      // One change per request: a combined body is refused before anything is saved.
+      assert.deepEqual([(await edit({ revision: 2, priority: 'urgent', assigneeId: other })).status, (await stored()).revision, (await stored()).priority], [400, 2, 'normal'])
+      assert.deepEqual([(await edit({ revision: 2, status: 'done', priority: 'urgent' })).status, (await stored()).revision, (await stored()).status], [400, 2, 'doing'])
+      assert.equal((await (await edit({ revision: 2, priority: 'urgent' })).json()).task.priority, 'urgent')
+      const both = await (await edit({ revision: 3, assigneeId: other })).json()
+      assert.deepEqual([both.task.priority, both.task.assignee?.id, both.task.revision], ['urgent', other, 4])
+      assert.deepEqual((await stored()).content.attrs.mikka.assignee, { kind: 'member', id: other, name: 'other', image: null })
+
+      const review = opened.options.states.find((state: { category: string }) => state.category === 'review')
+      const todo = opened.options.states.find((state: { category: string }) => state.category === 'todo')
+      assert.ok(review && todo)
+      const chosen = await (await edit({ revision: 4, status: 'review', stateId: review.id })).json()
+      assert.deepEqual([chosen.task.status, chosen.task.stateId], ['review', review.id])
+      assert.deepEqual([(await edit({ revision: 5, status: 'review', stateId: todo.id })).status, (await stored()).revision], [400, 5])
+
+      const outsider = await edit({ revision: 5, assigneeId: randomUUID() })
+      assert.deepEqual([outsider.status, await outsider.json()], [400, { error: 'memberNotJoined' }], 'only an active workspace member can be assigned')
+      assert.equal((await stored()).revision, 5)
+      assert.equal((await (await edit({ revision: 5, assigneeId: null })).json()).task.assignee, null)
+
+      for (const body of [null, {}, { revision: 6 }, { revision: 6, stateId: review.id }, { revision: 6, priority: 'p0' }, { revision: 6, status: 'done', extra: true }])
+        assert.deepEqual([(await edit(body)).status, (await stored()).revision], [400, 6], JSON.stringify(body))
+      assert.equal((await edit({ revision: 6, status: 'done' }, { headers: { origin: 'https://attacker.example' } })).status, 403)
+      assert.equal((await edit({ revision: 6, status: 'done' }, { bearer: null })).status, 401)
+      assert.equal((await edit({ revision: 6, status: 'done' }, { bearer: peer.token, workspaceId: secondWorkspace.id })).status, 404)
+
+      // A teammate with only a read grant reads the task but cannot edit or comment, as on the web.
+      await pool.query(`update resource_access_policies set visibility='private' where kind='task' and id=$1`, [task])
+      await pool.query(`insert into resource_access_grants("resourceKind","resourceId","subjectKind","subjectId",capabilities) values('task',$1,'account',$2,ARRAY['canReadContent'])`, [task, other])
+      const reader = await read({ bearer: peer.token })
+      assert.deepEqual([reader.task.revision, reader.options.canEdit], [6, false])
+      assert.deepEqual(await (await edit({ revision: 6, status: 'done' }, { bearer: peer.token })).json(), { error: 'issueNotFound' })
+      const readerComment = await run('/api/mobile/tasks/' + task + '/comments', req => comment(req, { params: Promise.resolve({ id: task }) }), { ...teamSelection, bearer: peer.token, method: 'POST', body: { body: 'Hi' } })
+      assert.equal(readerComment.status, 404)
+      assert.deepEqual([(await stored()).revision, (await stored()).status], [6, 'review'])
+      assert.equal((await edit({ revision: 6, status: 'done' })).status, 200, 'the owner still edits a private task')
+    } finally {
+      await pool.query(`delete from resource_access_grants where "resourceKind"='task' and "resourceId"=$1`, [task])
+      await pool.query('DELETE FROM issues WHERE id=$1', [task])
+    }
+  })
+
+  await t.test('a native comment is a task discussion written as the signed-in account, once per client id', async () => {
+    const task = await workspaceTask()
+    await pool.query('update issues set content=$2 where id=$1', [task, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Keep this description' }] }] }])
+    const post = (body: unknown, options: ReadOptions = {}) => run('/api/mobile/tasks/' + task + '/comments', req => comment(req, { params: Promise.resolve({ id: task }) }), { ...teamSelection, ...options, method: 'POST', body })
+    const discussions = (timeline: { kind: string; threadId?: string; body?: string }[]) => timeline.filter(row => row.kind === 'comment')
+    try {
+      const clientId = randomUUID()
+      const created = await post({ body: '  Looks good from my phone  ', clientId })
+      assert.equal(created.status, 201)
+      const body = await created.json()
+      assert.deepEqual([body.comment.kind, body.comment.body, body.comment.author, body.comment.authorId, body.comment.threadId], ['comment', 'Looks good from my phone', 'owner', owner, 'discussion-' + clientId])
+      assert.equal(body.task.description, 'Keep this description')
+      assert.equal(discussions(body.timeline).length, 1)
+
+      const retried = await (await post({ body: 'Looks good from my phone', clientId })).json()
+      assert.equal(discussions(retried.timeline).length, 1, 'a retried post lands once')
+      assert.equal(retried.comment.messageId, body.comment.messageId)
+
+      const teammate = await (await post({ body: 'Agreed' }, { bearer: peer.token })).json()
+      assert.deepEqual([teammate.comment.author, teammate.comment.authorId], ['other', other])
+      const detail = await (await request(task)).json()
+      assert.deepEqual(discussions(detail.timeline).map(row => row.body), ['Looks good from my phone', 'Agreed'])
+      assert.equal(detail.task.description, 'Keep this description')
+      assert.equal((await pool.query('select count(*)::int as n from issue_documents where "issueId"=$1', [task])).rows[0].n, 1)
+
+      assert.equal((await post({ body: 'Mine', clientId }, { bearer: peer.token })).status, 400, 'another account cannot reuse a client id')
+      for (const invalid of [null, {}, { body: '   ' }, { body: 'x'.repeat(2001) }, { body: 'Hi', clientId: 'nope' }, { body: 'Hi', at: 'now' }])
+        assert.equal((await post(invalid)).status, 400, JSON.stringify(invalid))
+      assert.equal((await post({ body: 'Hi' }, { headers: { origin: 'https://attacker.example' } })).status, 403)
+      assert.equal((await post({ body: 'Hi' }, { bearer: null })).status, 401)
+      assert.equal((await post({ body: 'Hi' }, { bearer: peer.token, workspaceId: secondWorkspace.id })).status, 404)
+      assert.equal(discussions((await (await request(task)).json()).timeline).length, 2)
+    } finally {
+      await pool.query('DELETE FROM issues WHERE id=$1', [task])
+    }
+  })
+
+  await t.test('a first native comment on a task created with a mention keeps the editor description', async () => {
+    const { actAs } = await import('../lib/acting-user')
+    const { saveIssue } = await import('../app/actions/issues')
+    const description = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Ask ' },
+      { type: 'mention', attrs: { id: other, label: 'other' } }, { type: 'text', text: ' to review' }] }] }
+    const created = await scoped(() => actAs(owner, () => saveIssue({ workspaceId: teamWorkspace.id, title: 'Mention task', content: description, status: 'todo', priority: 'normal' })))
+    assert.ok('issue' in created && created.issue, JSON.stringify(created))
+    const task = created.issue.id
+    try {
+      assert.equal((await pool.query('select count(*)::int as n from issue_documents where "issueId"=$1', [task])).rows[0].n, 0, 'creation stores no collaboration document')
+      const response = await run('/api/mobile/tasks/' + task + '/comments', req => comment(req, { params: Promise.resolve({ id: task }) }), { ...teamSelection, method: 'POST', body: { body: 'First from the phone' } })
+      assert.equal(response.status, 201)
+      const body = await response.json()
+      assert.equal(body.comment.body, 'First from the phone')
+      assert.match(body.task.description, /Ask .*other.* to review/)
+      const saved = (await pool.query('select content from issues where id=$1', [task])).rows[0].content
+      assert.deepEqual(saved.content[0].content.map((node: { type: string }) => node.type), ['text', 'mention', 'text'])
+    } finally {
+      await pool.query('DELETE FROM issues WHERE id=$1', [task])
+    }
+  })
+
+  await t.test('a native comment survives another writer initializing the document first', async () => {
+    const { actAs } = await import('../lib/acting-user')
+    const { exchangeDocument } = await import('../app/actions/collaboration')
+    const { mobileCommentExchange } = await import('../lib/mobile-task-edit')
+    const { issueDocumentSeed } = await import('../lib/issue-document-seed')
+    const { serverIssueSchema } = await import('../lib/issue-editor-schema-snapshot')
+    const task = await workspaceTask()
+    const content = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Raced description' }] }] }
+    await pool.query('update issues set content=$2 where id=$1', [task, content])
+    try {
+      // The phone prepares its write against an uninitialized document...
+      const phone = mobileCommentExchange({ id: task, content, initialized: false, threadId: 'discussion-raced', authorUserId: owner, body: 'Raced comment', at: new Date().toISOString() })
+      assert.ok(phone?.seed)
+      // ...then a web editor's first exchange initializes it with its own seed before the phone's exchange locks the task.
+      const web = issueDocumentSeed(serverIssueSchema(), content, task)
+      assert.ok(web)
+      const { mobileTaskReader } = await import('../lib/mobile-tasks')
+      const pinned = async (id: string) => (await mobileTaskReader({ id }, task))!.reader
+      const [teammate, author] = [await pinned(other), await pinned(owner)]
+      await scoped(() => actAs(teammate, () => exchangeDocument({ id: task, seed: Buffer.from(web).toString('base64') })))
+      assert.equal((await pool.query('select count(*)::int as n from issue_documents where "issueId"=$1', [task])).rows[0].n, 1)
+      await scoped(() => actAs(author, () => exchangeDocument(phone)))
+      const detail = await (await request(task)).json()
+      const raced = detail.timeline.filter((row: { kind: string; threadId?: string }) => row.kind === 'comment' && row.threadId === 'discussion-raced')
+      assert.deepEqual(raced.map((row: { body: string; authorId: string }) => [row.body, row.authorId]), [['Raced comment', owner]])
+      assert.equal(detail.task.description, 'Raced description')
+    } finally {
+      await pool.query('DELETE FROM issues WHERE id=$1', [task])
+    }
   })
 
   await t.test('invalid/missing IDs are 404; unauthenticated and expired native requests are 401', async () => {

@@ -1,9 +1,10 @@
 import { ARTIFACT_CONTENT_TYPES, artifactFileName } from '@/lib/artifacts/limits'
 import { routeArtifact } from '@/lib/artifacts/route'
+import { defineRoute } from '@/lib/primitives/define-route'
 
 
 /** `GET /api/artifacts/:id/versions/:n/download`: the file as it was handed over. */
-export async function GET(request: Request, { params }: { params: Promise<{ artifactId: string; version: string }> }) {
+async function handleGET(request: Request, { params }: { params: Promise<{ artifactId: string; version: string }> }) {
   const found = await routeArtifact(request, params)
   if (found instanceof Response) return found
   const name = artifactFileName(found.title, found.kind, found.version)
@@ -18,3 +19,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ arti
     },
   })
 }
+
+export const GET = defineRoute<'public', 'none', { artifactId: string; version: string }>(
+  {
+    route: '/api/artifacts/[artifactId]/versions/[version]/download',
+    auth: 'public',
+    origin: 'any',
+    workspace: 'none',
+  },
+  async ({ request, params }) => handleGET(request, { params: Promise.resolve(params) }),
+)

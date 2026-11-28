@@ -1,151 +1,92 @@
-# UI slots
+# The official UI checkout
 
-The [One UI slot inventory](design/one-ui-slot-inventory.md) lists each Web/Desktop binding, its production imports, and its migration decision under Epic [#1646](https://github.com/alexj11324/Mikka/issues/1646).
+There is one UI ([decision 2026-11-08-2133](design/decisions/2026-11-08-2133-one-ui.md)), and all of its web and
+desktop code lives in the private `mikka-hosted-ui` repository
+([decision 2026-11-24-1000](design/decisions/2026-11-24-1000-all-ui-in-hosted.md)). This repository is the engine,
+API, runtime and build; it carries no interface of its own (`scripts/no-public-ui.test.mjs`).
 
-There is one UI ([decision 2026-11-08-2133](design/decisions/2026-11-08-2133-one-ui.md)).
+**Build ownership:** The public Mikka workspace is the source and root of an official build. A trusted release
+environment checks the private repository out read-only at its selected SHA into `.hosted-ui` (git-ignored) and sets
+`MIKKA_UI_OVERLAY_DIR=.hosted-ui` and `MIKKA_UI_OVERLAY_SHA`. See [build source of truth](operations/build-source-of-truth.md).
+Paid component source (BoardUI Pro, affectUI, beUI Pro) lives only in `mikka-hosted-ui`; this repository never imports it.
 
-**Build ownership:** The public Mikka workspace is the source and root of an official build. A trusted Cloudflare release environment can obtain this private overlay read-only at its selected SHA and set `MIKKA_UI_OVERLAY_DIR=.hosted-ui` in that public checkout. The private location of paid UI code does not require CI or the product build to *start* in the private repository. The current private-triggered OCI process is a temporary migration implementation, not the target architecture. See [build source of truth](operations/build-source-of-truth.md).
-Its code lives in this repository and in the private `alexj11324/mikka-hosted-ui`.
-Slots are how official web and desktop builds bring the private code in
-([decision 2026-11-06-2000](design/decisions/2026-11-06-2000-hosted-ui-overlay.md)).
-Paid component source (BoardUI Pro, affectUI, beUI Pro) lives only in
-`mikka-hosted-ui`; this repository never imports it. The build pipeline that
-checks the private repository out is issue #1527.
+## What the build compiles
 
-Use an existing page or slot when it owns the change.
-
-A public checkout builds a runnable self-hosted server with its authentication,
-server status and connection pages. The official client connects to that server
-for the workspace. A fork can build, start and test the server without a private
-checkout or credentials. See the [self-hosting guide](self-hosting.md).
-
-## Renderer source selection
-
-| Binding | Public server and compile-time contracts | Official Web and Desktop |
+| | Build without the checkout | Official Web and Desktop |
 | --- | --- | --- |
-| `MIKKA_UI_OVERLAY_DIR` | unset | path of the `mikka-hosted-ui` checkout, inside this repository (CI uses `.hosted-ui/`, which is gitignored) |
-| `@ui-slot/<name>` | `components/slots/<name>.tsx` | `$MIKKA_UI_OVERLAY_DIR/slots/<name>.tsx` for all 51 slots in an official release |
-| `@hosted/*` | does not resolve | `$MIKKA_UI_OVERLAY_DIR/*` |
+| `MIKKA_UI_OVERLAY_DIR` | unset | the checkout, inside this repository |
+| `mikka:application` | `apps/frontend/src/headless.ts`, a page that says this server has no interface | `core/renderer/index.tsx` in the checkout |
+| `mikka:platform` | not available | `core/renderer/platform.tsx` (desktop), `core/renderer/web/platform.tsx` (web) |
+| stylesheet | none | `core/app/globals.css` and `core/renderer/styles.css` |
+| `@hosted/*` | does not resolve | the checkout's own files |
+| Vite plugin from the checkout | none | `scripts/track-owner/vite-plugin.mjs` (`data-track-owner`), loaded and run when present |
 
-`lib/ui-overlay.mjs` decides this once. The shared Vite plugin
-(`apps/frontend/scripts/application-plugin.mjs`) applies it to both Web and
-desktop renderer builds; it is the only place the mapping is applied.
-Production uses the [shared frontend/API runtime](operations/web-runtime.md).
-`tsconfig.json` maps `@ui-slot/*` to the public contracts for type checking.
-`pnpm build:server` produces the public installation. Renderer tests may select
-`--public-test-fixture` explicitly.
+`lib/ui-overlay.mjs` decides this once (`OVERLAY_APPLICATION` lists the files an official checkout must carry) and
+`apps/frontend/scripts/application-plugin.mjs` applies it to both Web and Desktop. `apps/frontend/src/index.ts`
+loads the runtime and then `mikka:application`. `apps/frontend/scripts/shared-styles.mjs` names the checkout's
+`core/`, `web/`, `slots/` and `lib/` directories for Tailwind, because a git-ignored directory is skipped by its
+automatic source detection. `@ui-slot/*` is retired for web and desktop; the build refuses it (`UI_SLOT_RETIRED`).
 
-Official release builds pin `MIKKA_UI_OVERLAY_DIR` and the matching 40-character
-`MIKKA_UI_OVERLAY_SHA`. The directory must be inside the public checkout and
-resolves React and shared application modules from its `node_modules`. An invalid
-checkout, missing required provider, or missing required export fails the official
-build. Unpinned development layers may use the public no-content contracts for
-`auth-sso`, `settings-governance` and `settings-organization`. The
-[slot inventory](design/one-ui-slot-inventory.md) records their original consumers.
+The checkout's `core/` holds the interface that used to live here at the same relative paths: `core/components/`,
+`core/hooks/`, `core/app/globals.css` and `core/app/fonts/`, the React pieces of the client runtime under
+`core/lib/`, and the client application under `core/renderer/`. It imports this repository's runtime, API clients
+and contracts through `@/`; nothing here imports it, except the build glue and its tests.
 
-## Slots
+Only with an explicit `MIKKA_TRACK_OWNER=1` does the build **run** a file from the checkout:
+`apps/frontend/vite.config.mjs` then loads `scripts/track-owner/vite-plugin.mjs` as a Vite plugin
+(`trackOwnerPlugins`), which adds a `data-track-owner` attribute to the checkout's interactive JSX while Vite
+transforms it in memory and writes nothing back. Without that switch (unset, `0` or anything else), no checkout code
+is imported or run in the build process, for a production build and the dev server alike. A build that holds signing
+or release credentials never sets it: the desktop release builds its renderer in a step before any credential is
+exported (`scripts/ci/desktop-release-overlay-guard.test.mjs`). The owners are read only by the owner-click analytics
+allowlist (`lib/track-owner-rule.ts`, `lib/analytics-policy.ts`).
 
-| Slot | Surface | Props | Callers import |
-| --- | --- | --- | --- |
-| `app-frame` | 外框: the app window around every page (frame, window bar slot, the rounded card) and the icon rail; the window bar's content, the pages and the right-hand panel are not part of it | `AppFrameProps`, `IconRailProps` in `components/slots/app-frame-contract.ts`; `RAIL_ITEMS` in `components/nav/rail-items.ts`; `UpdateButton` in `components/nav/icon-rail-view.tsx`; `SETTINGS_COLORS` in `components/app-frame-view.tsx`; `FRAME_LISTS_CHATS`, `FRAME_OWNS_PANEL` (the chat's Overview and the browser are tabs of the conversation's work area, `ThreadScreenProps.panels`) and `FRAME_OWNS_HEADER` (the window bar keeps only ← →; the waiting count arrives as `RailProps.inboxCount`) | `AppFrame` from `@/components/app-shell`, `IconRail` from `@/components/nav/icon-rail` |
-| `artifacts` | the Artifact page's body (the library: categories and the table) | `ArtifactsPageProps` in `components/slots/artifacts-contract.ts` (the workspace's tasks, to name folders) | `IssueWorkspace`, through `@ui-slot/artifacts` |
-| `automation-editor` | an automation's run-settings section (Runs in, Environment, machine, Agent, model and effort, machine size, Agent 配置, pin, Slack, time zone; Runs as and the Slack post options once stacked) | `AutomationSettingsProps` in `components/slots/automation-editor-contract.ts`: rows of select, switch and button controls plus shared content rows; the draft, reads and saves stay in `AutomationEditor` (decision 2026-11-19-2120) | `AutomationEditor`, through `@ui-slot/automation-editor` |
-| `inbox` | 收件箱 and its suggestion feed | `InboxPageProps` in `components/slots/inbox-contract.ts` (the live threads and tasks, opening a task, 连接应用); suggestions from `useSuggestions` | `IssueWorkspace`, through `@ui-slot/inbox` |
-| `new-task` | 新建任务 dialog | `NewTaskProps` in `components/slots/new-task-contract.ts` (the Project the task goes to, read as the head's breadcrumb, and the Projects it may switch to; the status it is created in, handed in only when the create request carries one; the request and its files, the machines with their icons, the Bots to hand to, the Agent 配置 choices from `useTaskProfileChoices`, notices, sending); exports `NewTask`, shown while the dialog is open; E2B Key's dialog stays Mikka's | `NewTaskDialog` |
-| `new-bot` | Official New Bot dialog | `NewBotProps` in `components/slots/new-bot-contract.ts`; requires `NewBot` | `NewBotDialog` owns the form state and the create command |
-| `pull-directory` | PR 目录 at `?section=pulls` (decision 2026-11-19-2120): the list, its filters, saved views, pins, the row menu and the preview; `pull=owner/name/number` is one PR's own page | `PullDirectoryProps` in `components/slots/pull-directory-contract.ts`; reads and writes stay public: `listConversations`, `/api/integrations/github/repositories/pulls` (+ `detail`, `merge`), `app/actions/list-views.ts`; exports `PullDirectoryPage` | `IssueWorkspace`, through `@ui-slot/pull-directory` |
-| `automations` | 自动化's list page at `?section=automations` (tabs, filter chips and menus, grouped rows, templates, the 新建自动化 window); the editor is not part of it | `AutomationsPageProps` in `components/slots/automations-contract.ts` (filters, display, groups of rows, templates, create and row actions; reads and writes stay in `AutomationsPage`); requires `AutomationsPageView` | `AutomationsPage` from `@/components/automations/automations-page`, through `@ui-slot/automations` |
-| `memory` | 记忆 page at `?section=memory` | `MemoryPageProps` in `components/slots/memory-contract.ts` (nothing: reads and saves come from `hooks/settings/use-memory-settings.ts`) | `IssueWorkspace`, through `@ui-slot/memory` |
-| `all-threads` | 全部线程's window-bar button and the right column it opens | `AllThreadsToggleProps`, `AllThreadsColumnProps` in `components/slots/all-threads-contract.ts` (`pending` is the 待处理 task count for a layer that lists tasks) | `AllThreadsToggle`, `AllThreadsColumn` from `@/components/nav/all-threads` |
-| `bot-tasks` | the bot panel's 线程 tab: the threads it dispatched in R-52's groups | `BotTasksProps` in `components/slots/bot-tasks-contract.ts`; tasks from `tasksOf` (`hooks/use-bot-tasks.ts`); `LISTS_TASKS` (`true`: the tab reads 任务) | `ContextPanel` |
-| `bot-overview` | required official provider | `BotOverview(BotOverviewProps)`; the work-area tab, standalone column and sheet consume the same Bot Overview adapter, scoped commands, Tasks, library, PRs and computer. The column and sheet own only their header and sizing. | `ContextPanel` |
-| `bot-avatar` | bloub blob | `BotAvatarProps` in `components/slots/bot-avatar-contract.ts` (`id` is the bot's id when the caller has one; `coordinator` is set by `COORDINATOR_AVATAR`) | `BotAvatar`, `CoordinatorAvatar`, `colorFor`, `COORDINATOR_AVATAR` from `@/components/nav/bot-avatar` |
-| `chat-message` | message rows, received group messages, sent suggestions and embedded delivery states | `ChatMessageProps`, `ChatWaitingProps` in `components/slots/chat-message-contract.ts`; `presentation` retains the existing group/suggestion frames, `delivery` carries pending/failed copy and a caller-owned retry action; also exports `CHAT_SURFACE` | `coordinator-chat.tsx`, `group-chat-view.tsx` and `SentSuggestion`, through `@ui-slot/chat-message` |
-| `board` | 看板's column frames, the 已隐藏 lane and the card face; the board, drag and drop, the card's context menu and controls and every save stay shared; not the right-hand panel or the top bar | `BoardColumnFrameProps`, `BoardHiddenLaneProps`, `BoardCardProps` in `components/slots/board-contract.ts`; exports `BoardColumnFrame`, `BoardHiddenLane`, `BoardCard`; `BoardScreen` (`BoardScreenProps`): the whole page under the top bar (toolbar, columns, list) from BoardPage's filters, 显示 options, scope and view, with `useIssueBoardSaves` behind drops and Mikka's `TaskContextMenu` around each card; the Coordinator sidebar stays BoardPage's | `components/blocks/kanban-board-1/components/board-parts.tsx`, through `@ui-slot/board`; `BoardPage` supplies the screen props |
-| `chat-composer` | the shared conversation input, preserving each existing presentation | `ChatComposerProps` in `components/slots/chat-composer-contract.ts`; exports `ChatComposer` and `ChatComposerAttachment`. Callers pass the attachment control through `leadingControls`, model/effort controls through `leftControls` before send, and any content below through `footer`. `useChatComposer` owns the input state and attachment commands; supplied controls share that controller through context. An absent footer adds no wrapper or space. | `ChatComposer` and `ChatComposerAttachment` from `@/components/coordinator/chat-composer`; the official `ThreadScreen` also renders this slot with its existing prepared controller |
-| `model-picker` | a bot's model chip and its menu | `BotModelPickerProps` in `components/slots/model-picker-contract.ts`; menu, saves and refresh come from `useBotModelPicker` (`hooks/use-bot-model-picker.ts`). A caller can pass its existing `controller` when submission must wait for that same model save. `presentation="composer"` retains the existing compact control; other callers keep the existing catalogue presentation. Neither presentation owns another model selection. | `BotModelPicker` from `@/components/coordinator/bot-model-picker`, including the control supplied to the official thread composer's `leftControls` |
-| `panel-header` | the header row of a bot's 概览 (search, ⤢, ✕) and of a group's panel (详情, ✕) | `PanelHeaderProps` in `components/slots/panel-header-contract.ts` (`actions` are the secondary actions with their labels; `widen` is ⤢, which the group's default does not draw); `PANEL_INITIAL_WIDTH` (`(mainWidth) => width`, from the width right of the left sidebar; `null` selects 360) sets the right column's default width through `usePanelInitialWidth` (`hooks/use-panel-width.ts`), and a width the person chose still wins | `ContextPanel`, `GroupPanel`; `PANEL_INITIAL_WIDTH` also `RightColumn` |
-| `plugins` | Official Plugins store | Required `PluginsPage` renders the rail. `usePluginsView`, `usePluginStore` and `useSkillsSearch` own URL state, reads and writes in the public core. | `IssueWorkspace` via `@ui-slot/plugins` |
-| `reply-activity` | a reply's thinking and tool calls as Trace rows | `ActivityThinkingProps`, `ActivityToolView`, `ActivityGroupProps` in `components/slots/reply-activity-contract.ts`; exports `ActivityList`, `ActivityThinking`, `ActivityTool`, `ActivityGroup` | `components/coordinator/reply-activity.tsx`, through `@ui-slot/reply-activity` |
-| `review-page` | Review for the selected task, or for a pull request that has no task of ours | `ReviewPageProps` in `components/slots/review-page-contract.ts` (`taskId`, `onClose`); reads and actions from `hooks/code-review/` (`useReviewDiff`, `useReviewFile`, `useReviewChecks`, `useSendToAgent`, `useMergeReview`) over the typed adapter `lib/code-review/client.ts` and the contract `lib/code-review/contract.ts` (#1722, #1732); Esc and ✕ call `onClose`. A pull request Mikka did not produce opens the same page by its reference: `useReviewPage` (`hooks/code-review/use-review-page.ts`) holds `{ owner, repo, number }` after `openPullReview`, and its diff is read from `GET /api/integrations/github/repositories/pulls/files?repo=&number=` (`readPullRequestFiles`), which returns the PR's changed files parsed by `lib/thread-changes.ts` | `IssueWorkspace` mounts it once while `useReviewPage` has a task open. Drawing a pull request's open state needs a change in the layer: `ReviewPageProps` takes a `taskId` only, so it must accept the pull reference beside it, and `IssueWorkspace` must mount the slot on that state too |
-| `review-summary` | Coding task summary | `ReviewSummaryLineProps` in `components/slots/review-summary-contract.ts` (`placement` is `card`, `waiting` or `panel`; `onOpenReview` opens the review page); data from `useReviewSummary`, words from `formatReviewSummary` (`lib/code-review/summary-text.ts`); `REVIEW_ENABLED` (`true`: ⌘⇧B opens the current task's review page and ⌘K lists 「审阅 #N」) | the default `thread-card` slot, `ThreadList`'s 等待你 rows; a layer's `task-column` draws it under the title |
-| `search` | Official search palette | Required `SearchPalette` receives `SearchPaletteProps`. `GlobalSearch` and `useSiteSearch` own permitted results, paging and selection. | `GlobalSearch` via `@ui-slot/search` |
-| `settings-devices` | 设置 › 设备's page: connected computers and servers, their state and actions; reading, live updates and the add / reconnect dialogs stay shared | `SettingsDevicesProps` in `components/slots/settings-devices-contract.ts`; actions in `app/actions/agents`; `NoRunsLine`, `InstallAgents`, `SandboxBlocked` in `components/devices/devices-list.tsx` | `DevicesSettings` |
-| `settings-frame` | app rail and window bar around settings (`AppFrame`) | `SettingsFrameProps` in `components/slots/settings-frame-contract.ts`; `OWN_SETTINGS_FRAME` (`false`: settings stay in the workspace frame; `true`: `IssueWorkspace` draws settings in this frame); optional prop `onBack` returns to the app page shown before Settings opened (home when Settings was opened directly) | `SettingsFrame` from `@/components/settings/settings-shell`; `IssueWorkspace` |
-| `settings-sidebar` | settings section list | `SettingsSidebarProps` in `components/slots/settings-sidebar-contract.ts` | `SettingsSidebar` from `@/components/settings/settings-sidebar` |
-| `onboarding` | The first-run guide, whole: a layer draws its own over the same APIs (createBot, 模型订阅's rows, the E2B key through `saveKey`, connected apps, completeOnboarding), keeps everything the guide does, and hands `onDone` the Bot whose chat opens next | `OnboardingProps` in `components/slots/onboarding-contract.ts`; exports `Onboarding` | `components/onboarding/onboarding.tsx` (today's conversation with the first Bot), through `@ui-slot/onboarding` |
-| `settings-bot-permissions` | 设置 › 应用与运行权限: the current workspace's access level per connected app (allow / ask / deny, or the Decision API default), the provider's real tool catalogue, the workspace's run permissions and approval mode; this authorizes the workspace, not one Bot; every Bot in the workspace inherits the one choice | `SettingsBotPermissionsProps` in `components/slots/settings-bot-permissions-contract.ts` (read and saved through `/api/bots/:botId/definition` `workspace_write_policy` / `set_workspace_write_policy`, the read-only `/api/bots/:botId/app-tools`, and `/api/agent-cli-policy` `readAgent` / `setAgent` target `workspace`; only admins save); exports `BotPermissionsPage` | `components/settings/bot-permissions.tsx`, through `@ui-slot/settings-bot-permissions` |
-| `settings-connections` | Official connection list and app detail | Required `ConnectionsList` and `AppPage` use `SettingsConnectionsProps` and `AppPageProps`. Shared connection, MCP and provider hooks own the reads and actions. | Settings connections and the Plugins store |
-| `settings-billing` | 设置 › 计费's page: plan, 免费额度, 余额 and 账单记录; reading, the Stripe redirects and the returns from Checkout stay shared | `SettingsBillingProps` in `components/slots/settings-billing-contract.ts`; states and actions from `hooks/settings/use-billing.ts`; `BalanceSection`, `FreeAllowanceSection` in `components/billing/` | `BillingSettings` |
-| `settings-content` | heading and card around a section (`AppShellContent variant="settings"`) | `SettingsContentFrameProps` in `components/slots/settings-content-contract.ts` | `SettingsView` |
-| `settings-usage` | 设置 › 用量's page: totals, the daily chart and the per-bot / per-member table for a month; reading, month and grouping state and the CSV export stay shared | `SettingsUsageProps` in `components/slots/settings-usage-contract.ts`; `usageRows`, `useUsageDuration` in `components/settings/usage-view.tsx` | `UsageSettings` |
-| `settings-account` | 账户 body (picture, name, email, sign-out, delete account) | `SettingsAccountProps` in `components/slots/settings-account-contract.ts` | `AccountSettings` from `@/components/settings/account-settings` |
-| `settings-audit` | Official audit log | `SettingsAuditProps` in `components/slots/settings-audit-contract.ts`; requires `AuditLogPage` | `AuditLogSettings` uses the shared audit-log hook for filters, paging and CSV export |
-| `settings-general` | 常规 body (icon, name, address, transfer, delete, archived bots) | `SettingsGeneralProps` in `components/slots/settings-general-contract.ts` | `SettingsView` |
-| `settings-governance` | Team Free / Pro: plan and seats on 成员, team usage report on 用量, approval templates on 团队权限 | `SettingsGovernanceProps` in `components/slots/settings-governance-contract.ts`; hooks in `hooks/settings/use-workspace-governance.ts` | `SettingsView` (public no-content contract) |
-| `settings-members` | required official provider | `MembersScreen(SettingsMembersProps)`; Members and Teams routes, embedded Settings, invitation and Team links share the resolved workspace and existing membership/Team hooks. Preview is read-only. | `SettingsView` |
-| `settings-organization` | Enterprise: the 组织 section (Organization, sign-in and SCIM, resource policy and approvals, Organization audit); `ORGANIZATION_SETTINGS` puts it in the sidebar | `SettingsOrganizationProps` in `components/slots/settings-organization-contract.ts`; hooks in `hooks/settings/use-organization.ts` | `SettingsView`, `SettingsSidebar` (public no-content contract) |
-| `auth-sso` | Enterprise: company SSO entry on the sign-in page (web sign-in only) | `AuthSsoProps` in `components/slots/auth-sso-contract.ts`; `signInWithSso` in `hooks/settings/use-organization.ts` | `SignInCard` via `AuthForm` (public no-content contract) |
-| `settings-memory` | 记忆与建议 body (switch, facts by kind, correct, delete) | `SettingsMemoryProps` in `components/slots/settings-memory-contract.ts` | `MemorySettings` from `@/components/settings/memory-settings` |
-| `settings-models` | 模型与订阅 body (subscriptions, API keys, fallback, model order, profiles, sharing) | `SettingsModelsProps` in `components/slots/settings-models-contract.ts` | `SettingsView` |
-| `settings-notifications` | 通知 body (push switches, when to push) | `SettingsNotificationsProps` in `components/slots/settings-notifications-contract.ts` | `NotificationSettings` from `@/components/settings/notifications-settings` |
-| `settings-permissions` | Official workspace permissions | `SettingsPermissionsProps` in `components/slots/settings-permissions-contract.ts`; requires `TeamPermissionsPage` | `TeamPermissionsSettings` supplies the authorized computer, sharing and app policy controls |
-| `settings-preferences` | 偏好设置 body (appearance, language, task prefix, replay onboarding) | `SettingsPreferencesProps` in `components/slots/settings-preferences-contract.ts` | `SettingsView` |
-| `settings-privacy` | 数据与隐私 body (data export, shared links) | `SettingsPrivacyProps` in `components/slots/settings-privacy-contract.ts` | `PrivacySettings` from `@/components/settings/privacy-settings` |
-| `settings-secrets` | 密钥与登录 / 密钥与环境 body (my secrets and logins, workspace secrets) | `SettingsSecretsProps` in `components/slots/settings-secrets-contract.ts` | `SecretsPage` from `@/components/settings/secrets-page` |
-| `settings-security` | 安全 body (password, signed-in devices, Google sign-in) | `SettingsSecurityProps` in `components/slots/settings-security-contract.ts` | `SettingsView` |
-| `task-column` | a task open in the right column beside the centre (`?task=`, decision 2026-11-07-2045): its title and threads | `TaskColumnProps` in `components/slots/task-column-contract.ts`; threads from `useIssueThreads`; `openThread`, `closeTask` move between it and its threads | `TaskColumn` from `@/components/workspace/task-column` |
-| `task-conversation` | a thread on a task, opened as the task's one conversation (#1681): its attempts oldest first, scrolled to the one opened | `TaskConversationProps` in `components/slots/task-conversation-contract.ts`; exports `TaskConversation`, built from `IssueThreadPanel`'s `before`, `focusRunId` and `transcriptOnly` | `ThreadColumn` |
-| `task-detail` | a task's whole page (`?issue=`): bar with origin, ID, star, save state, previous / next, ⋯ and close; title, description, sub-tasks and activity; details beside them or an open thread in their place | `TaskDetailFrameProps` in `components/slots/task-detail-contract.ts`; exports `TaskDetailFrame`. Values, menus and actions come as data (`components/workspace/task-detail-frame.tsx`); the description editor, 验收, an open thread and the dialogs come rendered | `TaskDetail` |
-| `thread` | every chat screen: Bot main chat, run thread, group, Artifact embedded chat and board chat column | `ThreadScreenProps` / `ThreadTranscriptScreenProps` in `components/slots/thread-contract.ts`; required `host: page / embedded / column`; readers supply message data, actions and notices, while `ThreadScreen` owns the list and composer layout | `CoordinatorChat`, `IssueThreadPanel`, `GroupChatView`, through `@ui-slot/thread` |
-| `thread-card` | a thread a reply dispatched, as a card under that reply | `ThreadCardProps` in `components/slots/thread-card-contract.ts` (`onOpenTask` opens its task for a layer whose card is the task's) | `ThreadCard` from `@/components/coordinator/thread-card` |
-| `thread-header` | a thread panel's header row (←, title, where it runs, Artifact, stop, open task, ✕) and the status line above its transcript | `ThreadHeaderProps`, `ThreadStatusLineProps` in `components/slots/thread-header-contract.ts`; the panel passes its widgets and actions, the slot lays them out; optional `widen` is the right column's ⤢ (`useRightColumnWiden`, `components/workspace/right-column-widen.ts`, which a `task-column` layer reads too), `liveRunId`, `status` and `acceptanceTaskId` let a layer list the identity and Artifacts itself, and the status line's `issueId`, `runId`, `harness` let it name the machine and Agent | `ThreadHeader`, `ThreadStatusLine` from `@/components/workspace/thread-header` |
+A build without the checkout only has to compile. Its server answers a browser with the headless page; the official
+clients connect to it. A dev-flavour desktop build without the checkout shows the same page so the native shell can
+be accepted in public CI (`apps/desktop/test/bundled-smoke.mjs`); a production desktop build refuses.
 
-A slot changes how something looks, never what it does. Data, state and
-behaviour stay in this repository and reach the slot as props. A layer slot
-exports the same named component as the default, takes the same props and is
-a client component (`'use client'`).
+Official release builds pin `MIKKA_UI_OVERLAY_DIR` and the matching 40-character `MIKKA_UI_OVERLAY_SHA`. The
+directory must be inside the public checkout and resolves React and shared application modules from its
+`node_modules`; the checkout installs no second copy of a package the runtime shares (`react`, `swr`, `sonner`).
+A missing application file fails the build.
 
-**Required exports.** Web and Desktop link the runtime names in `UI_SLOT_EXPORTS` against each selected provider. The production entry links every registered binding, including lazy features. A missing export fails compilation. An unused provider contributes no runtime initialization or output through this check. Publish a provider that exports a new business component before requiring its name in the public contract. CI can test the positive and negative linking cases with synthetic slots. Forks need no private source for those tests.
+## Tests and rules across the two repositories
 
-The settings slots are filled together: a layer's frame draws the whole settings page, and its sidebar and content slots hand it their section list and title rather than drawing their own.
+The UI policies here (`pnpm lint:ui`, `pnpm test:ui-policy`) read the checkout's `core/` through
+`scripts/official-ui-tree.mjs`, at the paths the files had here, and skip what they cannot see without it. The web
+and desktop build tests that need the real interface skip without `MIKKA_UI_OVERLAY_DIR`. `mikka-hosted-ui`'s CI
+runs all of them against its own commit (`scripts/core-ui.test.mjs` there), with this repository's branch of the
+same name around it.
 
-When a new provider is needed, define its shared props and commands in this
-repository. Add the runtime exports in the private layer while the current public
-revision still works, then register and require them in `UI_SLOT_EXPORTS`.
-Record the caller and contract here and verify both revisions together.
+## Paired changes: merge order
+
+A change that touches both repositories ships as two PRs with the same branch
+name: the public PR and the `mikka-hosted-ui` PR. The overlay's CI tests against
+the public branch of the same name while it exists, and against public `main`
+once it is merged.
+
+Merge them in this order:
+
+1. **Public PR first.** Public `main` must build on its own, so it may not wait for
+   anything in the overlay. Messages, contracts and slot props the overlay uses
+   land here.
+2. **Then the hosted PR.** Its CI now runs against public `main`, which holds the
+   public half.
+3. **Then the pin.** Only now does the `mikka-cloud` PR move `overlaySource` in
+   `deploy-build-inputs.json` to the hosted merge commit. A pin that points at an
+   overlay whose public half is not on `main` fails the release build (as
+   mikka-cloud #447 did before #3188 merged), and its pairing check refuses it.
+4. **Release.** API (with its migrations) before Web, because the new Web calls the
+   new actions and reads the new tables.
+
+Reverting goes the other way: move the pin back first, then revert the hosted PR,
+then the public one.
 
 ## iOS app
 
-Both App Store profiles select the private mobile checkout, including the default `production` profile used by the EAS CLI. The official release workflow also checks the contents of the source archive before invoking EAS. To recover a completed build, provide its EAS build ID and main source commit. The workflow finds the original native run and checks its protected archive, private revision and runtime fingerprint against the EAS build before submitting. A failed TestFlight submission remains recoverable while the original artifact is available.
+The iOS app (`mobile-next/apps/mobile`) lives exclusively in the private `mikka-hosted-ui` repository ([decision 2026-11-25-0915](design/decisions/2026-11-25-0915-delete-legacy-apps-mobile.md)); the legacy 1.x `apps/mobile` client, `@ui-slot/*` mobile overlay mechanism, and `mobile-update.yml` / `mobile-native.yml` / `mobile-screenshots.yml` workflows have been removed from this public repository.
 
-The iOS app (`apps/mobile`) has its own slots, filled from the layer's
-`mobile/` folder. They are React Native components, so they share nothing with
-the web slots but the idea.
-
-| | Build without `mikka-hosted-ui` | Official OTA |
-| --- | --- | --- |
-| `MIKKA_MOBILE_OVERLAY_DIR` | unset | `.hosted-ui/mobile`, relative to the repository root and inside it |
-| `@ui-slot/<name>` | `apps/mobile/slots/<name>.tsx` | `$MIKKA_MOBILE_OVERLAY_DIR/slots/<name>.tsx` (required in a configured layer) |
-| `@hosted/*` | does not resolve | `$MIKKA_MOBILE_OVERLAY_DIR/*` |
-
-`apps/mobile/ui-overlay.js` decides this and `apps/mobile/metro.config.js`
-applies it as Metro's `resolveRequest`. Every other import in a layer file
-resolves as if from `apps/mobile`, so the layer uses the app's `react`,
-`react-native`, `react-native-svg` and `react-native-reanimated` and installs
-no packages of its own. `@/` in the layer is `apps/mobile` (for example
-`@/lib/bot-look`, `@/slots/bot-avatar-contract`). `apps/mobile/tsconfig.json`
-maps `@ui-slot/*` to the defaults, so typecheck always sees the open-source
-build. A set but missing directory fails the bundle.
-
-| Slot | Surface | Props | Callers import |
-| --- | --- | --- | --- |
-| `bot-avatar` | the still blob with one eye | `BotAvatarProps` in `apps/mobile/slots/bot-avatar-contract.ts` (`color`, `shape`, `size`; `id` and `coordinator` when the caller has them, as on the web); colours and shapes in `apps/mobile/lib/bot-look.ts` | `BotAvatar` from `@/components/icons` |
-
-Required exports are `MOBILE_SLOT_EXPORTS` in `apps/mobile/ui-overlay.js`;
-the same rule as the web applies (merge the layer's export first).
-
-`mobile-update.yml` obtains the production Expo and UI-checkout credentials through the trusted main workflow. A production OTA requires the private mobile folder and its native slots. The native TestFlight workflow selects a reviewed overlay revision for its hosted production build. The public native source and contract tests can run without private credentials.
+This repository owns the backend mobile API (`app/api/mobile/**`, `lib/mobile-*.ts`, `tests/mobile-*.test.ts`) and the trusted release entry workflows (`.github/workflows/mobile-next-ios.yml` for TestFlight native builds and `.github/workflows/mobile-next-update.yml` for EAS OTA updates). Both release workflows check out `mikka-hosted-ui` via OIDC (`HOSTED_UI_READ_KEY`) and build or publish from `mobile-next/apps/mobile`.
 
 ## Rules for the layer
 
@@ -153,23 +94,23 @@ the same rule as the web applies (merge the layer's export first).
   `@/components/base/...`, `@/utils/cx`). Here `@/` is this repository, so
   inside the layer those imports are written `@hosted/...`. The layer's
   `pnpm bdui add <name>` rewrites them after each add (see its `CLAUDE.md`).
-  `@/` in the layer means this repository: use it for this app's types,
-  hooks and contracts, such as `@/components/slots/bot-avatar-contract`.
+  `@/` in the layer means this repository: use it for this app's runtime, types,
+  server actions (`@/app/actions/*`) and API clients.
+  Inside desktop renderer builds (`apps/frontend/scripts/application-plugin.mjs`), `@hosted/web/hooks/use-feature-availability` aliases to `apps/desktop/src/renderer/feature-availability.ts`.
 - **Styles.** The layer has one style entry, `styles/overlay.css`, which its
-  slots import. Its utilities sit in the `components` layer, below this app's
+  slots import for paid component styles (`layer(components)`). Its utilities sit in the `components` layer, below this app's
   `utilities`: a class both apps generate (`hidden`, `md:grid`) keeps this
   app's order. A layer class that must win over one of this app's utilities
   is marked important (`bg-transparent!`). It holds BoardUI's theme tokens and fonts and an `@source` for
-  the layer's files: Tailwind skips gitignored paths, so without it BoardUI's
-  classes are never generated. It does not import BoardUI's `globals.css`
+  the layer's paid component files. Because `.hosted-ui` is gitignored, `apps/frontend/scripts/shared-styles.mjs` injects `@source` directives into the checkout's `core/app/globals.css` and `core/renderer/styles.css` for its `core/`, `web/`, `slots/` and `lib/` directories (skipping `.hosted-ui/components` so BoardUI CSS stays in `overlay.css`'s `components` layer). `overlay.css` does not import BoardUI's `globals.css`
   base reset or the shadcn block of its `globals.css` (whose tokens share this
   app's names). A few of BoardUI's theme variables share a name with this
   app's (`--font-sans`, `--color-blue-400`); this app's utilities inline their
   own values, so pages outside the slots look the same in both builds.
-  Paid blocks in the layer keep their shipped look and only data and text
-  change ([2026-11-09-0050](design/decisions/2026-11-09-0050-paid-blocks-as-shipped.md)). Because the
+  Paid blocks in the layer are raw material, edited in place to match the
+  reference product ([2026-11-27-1409](https://github.com/aspectly-labs/mikka-hosted-ui/blob/main/docs/design/decisions/2026-11-27-1409-top-products-over-paid-blocks.md)). Because the
   shadcn token block is left out, affectUI blocks currently resolve shadcn
-  token names to this app's values; that is recorded drift, not a rule to
+  token names to this app's values; that is a fact of the build, not a rule to
   follow.
 - **Dependencies.** Packages BoardUI needs that this repository lacks are
   installed in the layer. `react` and `react-dom` come from this repository
@@ -179,7 +120,7 @@ the same rule as the web applies (merge the layer's export first).
 
 ### Shared chat screen (#2913)
 
-Every chat entrance calls `ThreadScreen`. The `host` identifies its containing surface without selecting a new style. The original official thread presentation remains in the official provider; group and Artifact transcript presentations share the public `ThreadTranscript` renderer through that same provider. This renderer contains only the existing public primitives. The readers still own history, delivery, unread state and callbacks; keyed rows, the scroll container and composer placement belong to the screen. Optional message nodes carry existing event/card contents, not another list.
+Every chat entrance calls `ThreadScreen`. The `host` identifies its containing surface without selecting a new style. Every chat, a group included, is the one official thread presentation: a group's members and Bots are entries with their own `author` ([decision 2026-11-22-1510](design/decisions/2026-11-22-1510-group-chat-as-bot-chat.md)). The readers still own history, delivery, unread state and callbacks; keyed rows, the scroll container and composer placement belong to the screen. Optional message nodes carry existing event/card contents, not another list.
 
 The optional `transcriptLabel` names the existing native transcript viewport as a region. Coordinator readers supply their existing conversation translation, as they do for embedded transcripts. While the first read is pending, `loadingLabel` gives the existing empty transcript column its waiting status and busy state. A resolved or failed read removes that state; any existing message keeps the column's original log role, conversation name and streaming busy state. Providers add no wrapper or visible content for these labels.
 

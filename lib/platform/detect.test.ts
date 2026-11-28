@@ -47,6 +47,7 @@ test('an electron bridge reports every subsystem it exposes', () => {
     'preview.scheme': true,
     'settings.local': true,
     'server.select': false,
+    'telemetry.share': false,
   })
 })
 

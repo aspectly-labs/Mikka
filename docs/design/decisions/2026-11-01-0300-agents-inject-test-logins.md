@@ -1,6 +1,7 @@
 # Agents never ask Alex for passwords; they inject test logins themselves
 
 - Date: 2026-11-01
+- **Status:** Accepted
 - Source: Alex: 「开发过程中不允许向我要密码，直接给我注入这个真实密码。」 and
   「你按道理你可以直接注入这个…登录信息才对的呀，凭什么你要被卡在这个地方？」
 - Rule: —

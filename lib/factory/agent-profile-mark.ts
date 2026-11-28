@@ -9,8 +9,11 @@ import type { ThreadGroup } from '../thread-groups'
  */
 export const PROFILE_GLYPHS = ['square', 'chevrons', 'lens', 'lines', 'check', 'stairs', 'diamond', 'arrow'] as const
 export type ProfileGlyph = (typeof PROFILE_GLYPHS)[number]
-/** Ink and grey, then hues no task state or Agent brand mark uses (no amber, red, green, blue or the info/waiting violet). */
-export const PROFILE_COLORS = ['ink', 'graphite', 'teal', 'pink'] as const
+/**
+ * Chromatic only (Alex, 2026-11-20): white and grey read as "not working". These may share a hue with a task
+ * state, which is drawn with its own shapes; the dotted glyph is never read as a status.
+ */
+export const PROFILE_COLORS = ['blue', 'teal', 'emerald', 'violet', 'pink'] as const
 export type ProfileColor = (typeof PROFILE_COLORS)[number]
 export type ProfileMarkValue = { icon: ProfileGlyph; color: ProfileColor }
 
@@ -22,14 +25,40 @@ export type ProfileMarkValue = { icon: ProfileGlyph; color: ProfileColor }
 export const PROFILE_MARK_STATES = ['working', 'idle', 'needs-you', 'failed'] as const
 export type ProfileMarkState = (typeof PROFILE_MARK_STATES)[number]
 
-const WORKING_STATUSES = new Set(['working', 'queued', 'preparing', 'running', 'finishing'])
-const NEEDS_YOU_STATUSES = new Set(['waiting-on-you', 'waiting_on_you', 'waiting_input', 'waiting', 'needs-you', 'needs_you'])
-const FAILED_STATUSES = new Set(['failed', 'error', 'blocked', 'paused'])
+/** A run's status labels (运行中 / 等你 / 完成 / 失败 / 排队): the sub-agent card's, and the source of its ProfileMark state. */
+export const RUN_MARK_STATUSES = ['working', 'needs-you', 'done', 'failed', 'queued'] as const
+export type RunMarkStatus = (typeof RUN_MARK_STATUSES)[number]
+
+const QUEUED_STATUSES = new Set(['queued', 'preparing'])
+const WORKING_STATUSES = new Set(['working', 'running', 'finishing'])
+const NEEDS_YOU_STATUSES = new Set(['waiting-on-you', 'waiting_on_you', 'waiting_input', 'waiting', 'needs-you', 'needs_you', 'paused'])
+const FAILED_STATUSES = new Set(['failed', 'error', 'blocked'])
+const IDLE_STATUSES = new Set(['idle'])
+
+/**
+ * One run's status label from its own fields: queued, working, needs you (waiting on an answer, paused, or ended on a
+ * question), failed, or done once it has ended. The one mapping behind both the label and the mark (Figma 1356:5208).
+ */
+export function runMarkStatusOf(run: { status?: string | null; outcome?: string | null; stopReason?: string | null }): RunMarkStatus {
+  const status = run.status?.trim().toLowerCase() ?? ''
+  const outcome = run.outcome?.trim().toLowerCase() ?? ''
+  if (QUEUED_STATUSES.has(status)) return 'queued'
+  if (WORKING_STATUSES.has(status)) return 'working'
+  if (NEEDS_YOU_STATUSES.has(status) || outcome === 'needs_input' || run.stopReason === 'asked_human') return 'needs-you'
+  if (FAILED_STATUSES.has(status) || outcome === 'failed' || outcome === 'blocked') return 'failed'
+  return 'done'
+}
+
+/** The ProfileMark state a status label draws (section 21): queued and done rest, still, in the Profile's own colour. */
+export function profileMarkStateOfStatus(status: RunMarkStatus): ProfileMarkState {
+  return status === 'working' ? 'working' : status === 'needs-you' ? 'needs-you' : status === 'failed' ? 'failed' : 'idle'
+}
 
 /** Shared status-to-ProfileMarkState mapping for sidebar rows, thread headers, task cards and sub-agent cards. */
 export function profileMarkStateOf(input: {
   status?: string | null
   outcome?: string | null
+  stopReason?: string | null
   waiting?: boolean
   group?: ThreadGroup | null
 }): ProfileMarkState {
@@ -40,12 +69,8 @@ export function profileMarkStateOf(input: {
     if (input.group === 'blocked') return 'failed'
     return 'idle'
   }
-  const status = input.status?.trim().toLowerCase() ?? ''
-  const outcome = input.outcome?.trim().toLowerCase() ?? ''
-  if (WORKING_STATUSES.has(status)) return 'working'
-  if (NEEDS_YOU_STATUSES.has(status) || outcome === 'needs_input') return 'needs-you'
-  if (FAILED_STATUSES.has(status) || outcome === 'failed' || outcome === 'blocked') return 'failed'
-  return 'idle'
+  if (IDLE_STATUSES.has(input.status?.trim().toLowerCase() ?? '')) return 'idle'
+  return profileMarkStateOfStatus(runMarkStatusOf(input))
 }
 
 /** `needs-you` and `failed` must always appear with adjacent state text, never colour alone (Figma 1346:5024). */
@@ -53,7 +78,7 @@ export const profileMarkStateRequiresText = (state: ProfileMarkState): boolean =
   state === 'needs-you' || state === 'failed'
 
 /** The built-in Default profile's fixed mark. */
-export const DEFAULT_PROFILE_MARK: ProfileMarkValue = { icon: 'square', color: 'ink' }
+export const DEFAULT_PROFILE_MARK: ProfileMarkValue = { icon: 'square', color: 'blue' }
 
 export const profileGlyphSchema = z.enum(PROFILE_GLYPHS)
 export const profileColorSchema = z.enum(PROFILE_COLORS)
@@ -63,6 +88,10 @@ export type ProfileMarkInput = z.infer<typeof profileMarkInputSchema>
 
 const isGlyph = (value: unknown): value is ProfileGlyph => typeof value === 'string' && (PROFILE_GLYPHS as readonly string[]).includes(value)
 const isColor = (value: unknown): value is ProfileColor => typeof value === 'string' && (PROFILE_COLORS as readonly string[]).includes(value)
+/** Colours before 2026-11-20, still in frozen runs and admitted by the column during a deploy: each keeps a colour of its own. */
+const LEGACY_COLORS: Readonly<Record<string, ProfileColor>> = { ink: 'blue', graphite: 'violet' }
+export const storedProfileColor = (value: unknown): ProfileColor | undefined =>
+  isColor(value) ? value : typeof value === 'string' ? LEGACY_COLORS[value] : undefined
 
 /** Responsibility words, English and Chinese; on a tie of position the earlier entry wins. */
 const GLYPH_WORDS: readonly [Exclude<ProfileGlyph, 'square'>, RegExp][] = [
@@ -75,8 +104,8 @@ const GLYPH_WORDS: readonly [Exclude<ProfileGlyph, 'square'>, RegExp][] = [
   ['chevrons', /\b(implement\w*|build\w*|cod(e|er|ing)|develop\w*|engineer\w*|backend|fix\w*)\b|实现|开发|编码|编程|构建|修复|后端/i],
 ]
 const HASHED_GLYPHS = PROFILE_GLYPHS.filter(glyph => glyph !== 'square')
-/** Default colours leave ink to the built-in Default so a custom Profile reads apart from it. */
-const HASHED_COLORS = PROFILE_COLORS.filter(color => color !== 'ink')
+/** Default colours leave the built-in Default's colour to it so a custom Profile reads apart from it. */
+const HASHED_COLORS = PROFILE_COLORS.filter(color => color !== DEFAULT_PROFILE_MARK.color)
 
 function hash(text: string) {
   let value = 0
@@ -109,7 +138,7 @@ export function deriveProfileMark(profile: { name: string; roles?: readonly stri
 /** A stored (or frozen) mark with any missing or unknown part filled from the derived default. */
 export function resolveProfileMark(profile: { name: string; roles?: readonly string[]; description?: string }, stored?: { icon?: unknown; color?: unknown } | null): ProfileMarkValue {
   const icon = isGlyph(stored?.icon) ? stored.icon : undefined
-  const color = isColor(stored?.color) ? stored.color : undefined
+  const color = storedProfileColor(stored?.color)
   if (icon && color) return { icon, color }
   const derived = deriveProfileMark(profile)
   return { icon: icon ?? derived.icon, color: color ?? derived.color }

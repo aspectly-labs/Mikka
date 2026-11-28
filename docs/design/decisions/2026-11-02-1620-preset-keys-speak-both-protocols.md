@@ -1,6 +1,7 @@
 # A preset API key runs on every Agent its provider's API speaks to
 
 - Date: 2026-11-02
+- **Status:** Accepted
 - Source: Alex, Harness draft (Artifact GnZnsPYEDJdkHBUJHzB5SJ, Version 2; Figma zPe5LKycb2XuT1ivCLRw07 page 855:2), relayed by the coordinator session: DeepSeek, Kimi and the like are presets whose official APIs speak both the Anthropic and the OpenAI protocol; adding one asks only for the key, never a protocol, and both Agents can use it. Only a custom provider picks its protocol.
 - Rule: —
 - Replaces: in [2026-11-02-1400](2026-11-02-1400-model-order-dispatch.md), "An API key's Agent follows its protocol" as one protocol per key.

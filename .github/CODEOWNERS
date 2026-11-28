@@ -4,15 +4,11 @@
 *                         @alexj11324
 # Frontend
 /app/[[]locale]/           @alexj11324
-/components/              @alexj11324
-/hooks/                   @alexj11324
 /messages/                @alexj11324
 /i18n/                    @alexj11324
-/app/globals.css          @alexj11324
 /public/                  @alexj11324
 # Design Lead（视觉规范）
 /ui-policy.json           @alexj11324
-/components.json          @alexj11324
 /scripts/ui-policy.mjs    @alexj11324
 /scripts/lint-ui.mjs      @alexj11324
 /scripts/interaction-policy.mjs @alexj11324
@@ -31,8 +27,6 @@
 /scripts/migrate.mjs      @alexj11324
 /scripts/check-migrations*.mjs @alexj11324
 /.github/workflows/       @alexj11324
-/vercel.json              @alexj11324
-/next.config.mjs          @alexj11324
 /package.json             @alexj11324
 /pnpm-lock.yaml           @alexj11324
 # QA

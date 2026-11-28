@@ -25,7 +25,7 @@ before(async () => {
   // Device routes use bearer authentication; unrelated human-session setup is not used here.
   mock.module('@/lib/auth', { namedExports: { auth: { api: { getSession: async (options: { query?: { disableCookieCache?: boolean } }) => {
     freshSessionRead = options?.query?.disableCookieCache === true
-    return browserOwner ? { user: { id: browserOwner } } : null
+    return browserOwner ? { user: { id: browserOwner }, session: { id: `session:${browserOwner}` } } : null
   } } } } })
   await admin.query(`CREATE SCHEMA ${schema}`)
   await run(async () => {
@@ -96,9 +96,10 @@ test('local setup owner view retains fresh session checks without reading unused
       assert.deepEqual(full.value, { ownerId: owner, deviceIds: [] })
       assert.equal(full.statements, 1, 'the default verification view still reads current ownership from real Postgres')
     }
+    for (const query of ['?view=', '?view=devices', '?view=owner&view=owner']) assert.equal((await GET(request(query))).status, 400)
     browserOwner = null
     assert.equal((await GET(request())).status, 401, 'a previous identity cannot survive sign-out')
-    for (const query of ['?view=', '?view=devices', '?view=owner&view=owner']) assert.equal((await GET(request(query))).status, 400)
+    for (const query of ['?view=', '?view=devices', '?view=owner&view=owner']) assert.equal((await GET(request(query))).status, 401)
   } finally { browserOwner = previousOwner }
 }))
 

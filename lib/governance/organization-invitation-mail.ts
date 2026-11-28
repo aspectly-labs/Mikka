@@ -2,11 +2,13 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { pool } from '@/lib/db'
 import { withBasePath } from '@/lib/base-path'
+import { LOCALHOST_HOSTNAME, LOOPBACK_IPV4 } from '@/lib/env/hosts'
+import { runtimeEnv } from '@/lib/env/server'
 import { deliverMail, mailConfigured, type MailMessage } from '@/lib/mail-delivery'
 import type { OrganizationInvitationOutcome } from './organization-invitations'
 
 /** Existing auth mail credentials alone must not opt a deployment into invitation mail costs. */
-export function organizationInvitationMailEnabled(env: Record<string, string | undefined> = process.env): boolean {
+export function organizationInvitationMailEnabled(env: Readonly<Record<string, string | undefined>> = runtimeEnv()): boolean {
   return env.MIKKA_ORG_INVITE_EMAIL_ENABLED === 'true' && mailConfigured(env)
 }
 
@@ -18,7 +20,7 @@ export function organizationInvitationMail(
   const base = new URL(origin)
   if (base.origin !== origin || base.username || base.password
     || (base.protocol !== 'https:' && !(base.protocol === 'http:'
-      && (base.hostname === 'localhost' || base.hostname === '127.0.0.1')))) {
+      && (base.hostname === LOCALHOST_HOSTNAME || base.hostname === LOOPBACK_IPV4)))) {
     throw new Error('invalid_organization_invitation_origin')
   }
   if (!/^\/organization-invite\/[a-f0-9]{64}$/.test(invite.path)) {
@@ -43,11 +45,18 @@ export function organizationInvitationMail(
 }
 
 async function optedOutInvitationRecipients(emails: string[]): Promise<Set<string>> {
+  const normalized = emails.map(email => email.toLowerCase())
   const { rows } = await pool.query<{ email: string }>(
-    `SELECT lower(u.email) AS email FROM user_preferences p
-       JOIN "user" u ON u.id = p."userId"
-      WHERE NOT p."organizationInvitationEmails" AND u."emailVerified" AND lower(u.email) = ANY($1::text[])`,
-    [emails],
+    `SELECT lower(u.email) AS email
+       FROM "user" u
+       LEFT JOIN personal_setting_values s
+         ON s."userId" = u.id AND s."workspaceId" IS NULL AND s.key = 'notifyEmailInvitations'
+       LEFT JOIN user_preferences p
+         ON p."userId" = u.id
+      WHERE u."emailVerified"
+        AND lower(u.email) = ANY($1::text[])
+        AND NOT COALESCE(s."booleanValue", p."organizationInvitationEmails", true)`,
+    [normalized],
   )
   return new Set(rows.map(row => row.email))
 }

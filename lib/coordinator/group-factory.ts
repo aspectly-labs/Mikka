@@ -10,7 +10,7 @@ import { withConversationWorkspace } from '../conversation-workspace'
 import { decisionTaskReferences } from '../group-task-links'
 import { recordGroupTraceEvent } from './group-decision-trace'
 import { recordGroupFeedback } from './group-decision-feedback'
-import { workspaceLink } from '@/components/workspace/workspace-navigation'
+import { workspaceLink } from '@/lib/workspace-navigation'
 import { withBasePath } from '@/lib/base-path'
 import { ActionFailureError } from '@/lib/action-error'
 import { groupCopy, readGroupLocale, type GroupLocale } from './group-copy'
@@ -276,7 +276,8 @@ async function dispatchStandaloneTask(userId:string,input:Parameters<GroupFactor
     if (!runtime) return {error:'cloudComputerUnavailable' as const}
     const source=target?.kind==='cloud' ? target.entry.source : null
     const subscriptionBindingId=source?.kind==='subscription' && target?.kind==='cloud' ? await bindAgentToConnection(pool,{ownerId:userId,workspaceId},runtime.agentId,harness,source.connectionId,target.model) : undefined
-    const selection:RunModel|null=kept ?? (target?.kind==='cloud' ? {model:target.model,agentProfile:choice?.agentProfile,modelDispatch:{mode:choice?.selectionMode ?? 'preference',location:'cloud',entry:target.entry},...(subscriptionBindingId?{subscriptionBindingId}:{}),...(source?.kind==='api_key'?{apiKeyId:source.keyId}:{})} : null)
+    const { workerModelDispatchFromTarget } = await import('@/lib/agent-kit/worker')
+    const selection:RunModel|null=kept ?? (target?.kind==='cloud' ? {model:target.model,agentProfile:choice?.agentProfile,modelDispatch:workerModelDispatchFromTarget(target,{mode:choice?.selectionMode ?? 'preference',location:'cloud',profileEffort:choice?.agentProfile?.effort}),...(subscriptionBindingId?{subscriptionBindingId}:{}),...(source?.kind==='api_key'?{apiKeyId:source.keyId}:{})} : null)
     if (!selection) return {error:'threadModelUnavailable' as const}
     const {dispatchComputerTask}=await import('@/workflows/coordinator/steps')
     return dispatchComputerTask(userId,{botId,issueId:input.issueId,harness,note,...selection,sourceEventId:input.sourceEventId,factoryBotId:botId,...(previous?{threadRunId:previous.id}:{}),...(previous?.readOnly?{readOnly:true}:{})},`group:${input.sourceEventId}`)

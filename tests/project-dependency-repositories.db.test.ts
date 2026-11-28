@@ -1,31 +1,55 @@
+import './support/server-only.mjs'
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import { Pool } from 'pg'
-import { GitHubAccessError } from '../lib/github/user-access-error'
+import { startGitHubAccessHttp } from './fakes/github-access-http.mjs'
 import { dbUrl, seedProject, seedTeam, seedUser, seedWorkspace } from './support/workspace-admin-db'
 
 const directory = new Map<string, { id: string; fullName: string }[]>()
 const requests: string[] = []
-mock.module(new URL('../lib/github/user-access.ts', import.meta.url).href, { namedExports: {
-  GitHubAccessError,
-  recentRepositoryPullAuthors: async (actor: string, key: string, term: string) => {
-    requests.push(actor + '/' + key + '/' + term)
-    return ['Ada']
-  },
-  listRepositoriesForUser: async (userId: string) => {
+const pullRequests: string[] = []
+mock.module(new URL('../lib/github/connection.ts', import.meta.url).href, { namedExports: {
+  githubConnectionToken: async (userId: string) => {
     requests.push(userId)
-    const repositories = directory.get(userId)
-    if (!repositories) throw new GitHubAccessError('githubUnavailable', 502)
-    return { repositories }
+    return { token: `fixture-token-${userId}`, githubAccountId: '42', expiresAt: null }
   },
 } })
 
 test('dependency references use stable GitHub ids, retain hidden selections and never grant execution repository access', { skip: !dbUrl }, async t => {
+  const realFetch = globalThis.fetch
+  const previousAppId = process.env.GITHUB_APP_ID
+  process.env.GITHUB_APP_ID = '4840908'
+  const userFromRequest = (req: { headers: Record<string, string | string[] | undefined> }) => {
+    const auth = String(req.headers.authorization ?? '')
+    return auth.startsWith('Bearer fixture-token-') ? auth.slice('Bearer fixture-token-'.length) : ''
+  }
+  const githubHttp = await startGitHubAccessHttp({
+    getUser: req => ({ id: 42, login: userFromRequest(req) || 'fixture' }),
+    getRepositories: req => {
+      const repos = directory.get(userFromRequest(req))
+      if (!repos) return null
+      return repos.map(repo => ({ id: Number(repo.id), full_name: repo.fullName, private: true }))
+    },
+    onRequest: (url, req) => {
+      if (url.pathname === '/repositories/11/pulls') {
+        pullRequests.push(`${userFromRequest(req)}/repositories/11/pulls`)
+        return Response.json([{ user: { login: 'Ada' } }, { user: { login: 'Grace' } }])
+      }
+      return undefined
+    },
+  })
+  globalThis.fetch = githubHttp.routeFetch(realFetch) as typeof fetch
   const pool = new Pool({ connectionString: dbUrl })
   const { listDependencyRepositories: list, replaceDependencyRepositories: replace } = await import('../lib/project-resources/dependency-repositories')
   const { projectPullAuthors } = await import('../lib/project-resources/pull-authors')
   const { pool: app } = await import('../lib/db'), { workspacePool } = await import('../lib/workspace-db')
-  t.after(async () => { await Promise.all([pool.end(), app.end(), workspacePool.end()]) })
+  t.after(async () => {
+    globalThis.fetch = realFetch
+    if (previousAppId === undefined) delete process.env.GITHUB_APP_ID
+    else process.env.GITHUB_APP_ID = previousAppId
+    await githubHttp.close()
+    await Promise.all([pool.end(), app.end(), workspacePool.end()])
+  })
   const admin = await seedUser(pool, 'dependency-admin'), member = await seedUser(pool, 'dependency-reader')
   const ws = await seedWorkspace(pool, admin, [{ userId: admin, role: 'admin' }, { userId: member, role: 'member' }])
   const team = await seedTeam(pool, ws.id, admin), projectId = await seedProject(pool, admin, [{ teamId: team.id, workspaceId: ws.id }])
@@ -58,11 +82,9 @@ test('dependency references use stable GitHub ids, retain hidden selections and 
   const key = 'v2/github.com/fixture/first'
   const search = () => projectPullAuthors({ id: member }, { ...scope, readerId: member, repository: key, query: 'ad' })
   const countBeforeSearch = requests.length
-  assert.deepEqual(await search(), [])
-  assert.equal(requests.length, countBeforeSearch)
-  await pool.query('insert into workspace_project_repositories ("projectId","workspaceId","repositoryKey") values ($1,$2,$3)', [projectId, ws.id, key])
   assert.deepEqual(await search(), ['Ada'])
-  assert.equal(requests.at(-1), member + '/' + key + '/ad')
+  assert.equal(pullRequests.at(-1), `${member}/repositories/11/pulls`)
+  assert.equal(requests.length, countBeforeSearch + 1)
   await pool.query(`insert into workspace_repository_policies ("workspaceId",mode,"repositoryKeys","updatedBy") values ($1,'restricted','[]',$2)`, [ws.id, admin])
   assert.deepEqual(await search(), [])
   assert.equal(requests.length, countBeforeSearch + 1)

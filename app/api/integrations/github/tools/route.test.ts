@@ -5,8 +5,8 @@ let owner: string | null = 'owner'
 let catalogue: Record<string, unknown> | Error = {}
 const asked: string[] = []
 const stub = (path: string, namedExports: Record<string, unknown>) => mock.module(new URL(path, import.meta.url).href, { namedExports })
-stub('../../../../../lib/api-auth.ts', { auth: { api: { getSession: async () => owner ? { user: { id: owner } } : null } } })
-stub('../../../../../lib/request-log.ts', { withRequestLog: (_path: string, handler: unknown) => handler })
+stub('../../../../../lib/api-auth.ts', { auth: { api: { getSession: async () => owner ? { user: { id: owner }, session: { id: 'owner-session' } } : null } } })
+stub('../../../../../lib/request-log.ts', { noteLogUser: () => {}, noteLogRpcAction: () => {}, withRequestLog: (_path: string, handler: unknown) => handler })
 stub('../../../../../lib/app-tool-catalogue.ts', { readAppToolCatalogue: async (userId: string, app: string) => {
   asked.push(`${userId}:${app}`)
   if (catalogue instanceof Error) throw catalogue

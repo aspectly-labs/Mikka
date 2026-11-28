@@ -27,6 +27,8 @@ export interface ThreadStartParams {
   approvalPolicy?: AskForApproval | null
   sandbox?: SandboxMode | null
   model?: string | null
+  /** Codex app-server service tier ('fast' | 'ultrafast'), passed only when verified supported by the server. */
+  serviceTier?: 'fast' | 'ultrafast' | null
   developerInstructions?: string | null
 }
 
@@ -43,6 +45,7 @@ export interface ThreadResponse {
 
 export interface TurnStartParams {
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  serviceTier?: 'fast' | 'ultrafast'
   threadId: string
   input: UserInput[]
 }
@@ -74,9 +77,45 @@ export type PatchChangeKind =
   | { type: "delete" }
   | { type: "update"; move_path: string | null }
 
+export interface ThreadCompactStartParams {
+  threadId: string
+}
+
+export type ReviewTarget =
+  | { type: "uncommittedChanges" }
+  | { type: "baseBranch"; branch: string }
+  | { type: "commit"; sha: string; title?: string | null }
+  | { type: "custom"; instructions: string }
+
+export interface ReviewStartParams {
+  threadId: string
+  target: ReviewTarget
+  delivery?: "inline" | "detached"
+}
+
+export interface SkillsListParams {
+  cwds?: string[]
+  forceReload?: boolean
+}
+
+export interface SkillsListEntry {
+  name: string
+  description?: string
+  shortDescription?: string | null
+  enabled?: boolean
+}
+
+export interface SkillsListResponse {
+  data?: { cwd?: string; skills?: SkillsListEntry[] }[]
+  skills?: SkillsListEntry[]
+}
+
 export type ThreadItem =
   | { type: "agentMessage"; id: string; text: string }
   | { type: "reasoning"; id: string; summary: string[] }
+  | { type: "contextCompaction"; id: string }
+  | { type: "enteredReviewMode"; id: string; review?: string }
+  | { type: "exitedReviewMode"; id: string; review?: string }
   | {
       type: "commandExecution"
       id: string
@@ -118,6 +157,14 @@ export interface DeltaNotification {
 export interface TurnNotification {
   threadId: string
   turn: Turn
+}
+
+/** `turn/plan/updated`: the whole plan each time the agent writes it (its `update_plan` tool). */
+export interface TurnPlanUpdatedNotification {
+  threadId: string
+  turnId: string
+  explanation: string | null
+  plan: { step: string; status: "pending" | "inProgress" | "completed" }[]
 }
 
 export interface ErrorNotification {

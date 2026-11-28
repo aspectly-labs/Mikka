@@ -3,21 +3,23 @@ import { z } from 'zod'
 import { ActionFailureError } from '@/lib/action-error'
 import { db, pool, withDatabaseTransaction } from '@/lib/db'
 import { bots, WORKSPACE_BOT_MODELS } from '@/lib/db/schema'
-import { BOT_COLORS, BOT_SHAPES } from '@/lib/bot-shapes'
+import { ACCEPTED_BOT_SHAPES, DEFAULT_BOT_COLOR, isStoredBotColor } from '@/lib/bot-shapes'
 import { defaultBotEnvironment } from '@/lib/bot-environment'
 import type { BotSettingsInput } from '@/lib/bot-settings'
 import { aliasConflict, assertBotSettings, botSettingsColumns, parseBotSettings } from '@/lib/bot-settings-store'
 import { repositoryAvailable, workspaceBotDefaults } from '@/lib/workspace-admin/bots'
 import { botListChanged } from './live/lists'
+import { withTaskWorkspace } from './task-workspace'
+import { initializeWorkVisibility, readWorkCreationPolicy, workCreationVisibility } from './settings/work-creation'
 
 export interface CreateBotInput extends BotSettingsInput {
   name: string
-  color: string
+  color?: string
   shape: string
   model?: string | null
   /** An older client's 仓库 choice: the Bot binds the Environment that lists it. Never stored on the Bot. */
   repository?: string | null
-  /** Shared with the workspace, or private to the owner (the default). */
+  /** Omitted uses the owner's workspace-scoped default and creation policy. */
   visibility?: 'shared' | 'private'
   /** Members who follow the Bot from the start. */
   subscribers?: string[]
@@ -35,7 +37,7 @@ export interface CreateBotInput extends BotSettingsInput {
 export async function createOwnedBot(owner: { ownerId: string; workspaceId: string }, input: CreateBotInput) {
   const { name, color, shape, model: requestedModel, repository: requestedRepository, visibility, subscribers, ...rest } = input
   const parsed = z.object({
-    name: z.string().trim().min(1).max(60), color: z.enum(BOT_COLORS), shape: z.enum(BOT_SHAPES),
+    name: z.string().trim().min(1).max(60), color: z.string().refine(isStoredBotColor).default(DEFAULT_BOT_COLOR), shape: z.enum(ACCEPTED_BOT_SHAPES),
     model: z.enum(WORKSPACE_BOT_MODELS).nullable().optional(), repository: z.string().trim().min(1).max(300).nullable().optional(),
     visibility: z.enum(['shared', 'private']).optional(),
   }).safeParse({ name, color, shape, model: requestedModel, repository: requestedRepository, visibility })
@@ -47,17 +49,20 @@ export async function createOwnedBot(owner: { ownerId: string; workspaceId: stri
   await assertBotSettings(pool, owner, settings)
   const actor = { userId: owner.ownerId, workspaceId: owner.workspaceId }
   const access_ = await import('@/lib/bot-access')
-  // Checked before the Bot exists, so a refused share or follower never leaves a half-made Bot.
-  await access_.assertBotAccessInput(actor, access ?? 'private', subscribers ?? [])
   const defaults = model === undefined || (!settings.environmentId && repository === undefined) ? await workspaceBotDefaults(owner.workspaceId) : null
   // Every new Bot has an Environment: the one picked, else the default (made now in a workspace with none).
   const environmentId = settings.environmentId
     ?? await defaultBotEnvironment(owner.ownerId, owner.workspaceId, repository === undefined ? defaults!.defaultRepository : repository)
   const bot = { id: crypto.randomUUID(), ...look }
   // The Bot, its access and its followers commit together or not at all.
-  await db.transaction(tx => withDatabaseTransaction(tx, async () => {
+  await withTaskWorkspace(owner.ownerId, owner.workspaceId, () => db.transaction(tx => withDatabaseTransaction(tx, async () => {
+    const policy = await readWorkCreationPolicy(tx, actor)
+    // Refuse policy or follower input before the row exists; the WS lease is
+    // held until this Bot and its existing ACL trigger commit together.
+    await access_.assertBotAccessInput(actor, access ?? policy.effectiveVisibility, subscribers ?? [])
+    workCreationVisibility(policy, access)
     try {
-      await db.insert(bots).values({ ...bot, ...owner, ...botSettingsColumns(settings), environmentId, model: model === undefined ? defaults!.defaultModel : model })
+      await tx.insert(bots).values({ ...bot, ...owner, ...botSettingsColumns(settings), environmentId, model: model === undefined ? defaults!.defaultModel : model })
     } catch (error) {
       if (aliasConflict(error)) throw new ActionFailureError('botAliasTaken', undefined, undefined, { cause: error })
       // 23505 is the per-person, per-workspace name index.
@@ -65,10 +70,10 @@ export async function createOwnedBot(owner: { ownerId: string; workspaceId: stri
       if (failure.code === '23505' || failure.cause?.code === '23505') throw new ActionFailureError('botDuplicateName', undefined, undefined, { cause: error })
       throw new ActionFailureError('validationGeneric', undefined, undefined, { cause: error })
     }
-    await botListChanged(db, bot.id)
+    await initializeWorkVisibility(tx, actor, { kind: 'bot', id: bot.id, visibility: access })
+    await botListChanged(tx, bot.id)
     // Access and followers need the Bot's policy row, which its insert registered.
-    if (access === 'shared') await access_.setBotVisibility(actor, bot.id, 'shared')
     if (subscribers?.length) await access_.setBotSubscribers(actor, bot.id, subscribers)
-  }))
+  })))
   return bot
 }

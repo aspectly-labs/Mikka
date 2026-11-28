@@ -31,7 +31,9 @@ async function readMenu(ownerId: string, workspaceId: string, issueId: string, r
     const group: BotModelMenuGroup = groups.get(sourceId) ?? { kind: candidate.credentialOwnerId !== ownerId ? 'shared' : source.kind === 'subscription' ? 'subscription' : 'apiKey',
       provider: candidate.provider, credentialLabel: '…' + sourceId.slice(-6), options: [] }
     const id = threadModelKey(candidate)
-    if (!group.options.some(item => item.id === id)) group.options.push({ id, modelId: candidate.model, provider: candidate.provider })
+    if (!group.options.some(item => item.id === id)) group.options.push({ id, modelId: candidate.model, provider: candidate.provider,
+      route: { source: source.kind === 'subscription' ? 'subscription' : 'byok', connectionId: sourceId, label: group.credentialLabel ?? '',
+        ...(source.kind === 'subscription' ? { service: candidate.provider } : {}) } })
     groups.set(sourceId, group)
   }
   if (!groups.size) return null

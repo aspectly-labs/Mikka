@@ -9,6 +9,30 @@ export interface AutoRechargePolicyView {
   revision: number
 }
 
+export interface BillingReceiptsPolicyView {
+  receiptsManagedBy: 'stripe_portal'
+  source: 'provider'
+}
+
+export interface OveragePolicyView {
+  enabled: boolean
+  monthlyCapPoints: number | null
+  spentOveragePoints: number
+  remainingOveragePoints: number | null
+  revision: number
+}
+
+export interface WorkspaceBillingSettingsView {
+  workspaceId: string
+  accountWorkspaceId: string
+  canManageRecharge: boolean
+  receiptsManagedBy: 'stripe_portal'
+  source: 'provider'
+  receipts: BillingReceiptsPolicyView
+  autoRecharge: AutoRechargePolicyView
+  overage?: OveragePolicyView
+}
+
 export interface BillingView {
   configured: boolean
   /** A resource price must be configured separately from the historical seat price. */
@@ -25,8 +49,13 @@ export interface BillingView {
   currentPeriodEnd: string | null
   hasCustomer: boolean
   planPoints: number | null
+  /** Plan points granted for the active paid period, refills included; null when no active plan grant. `planPoints` is what remains of it. */
+  planPointsLimit: number | null
   purchasedPoints: number
   autoRecharge?: AutoRechargePolicyView
+  overage?: OveragePolicyView
+  receiptsManagedBy?: 'stripe_portal'
+  receipts?: BillingReceiptsPolicyView
 }
 
 export interface CreditTransaction {
@@ -39,6 +68,7 @@ export interface CreditTransaction {
   stripeFeeCents: number | null
   status: 'succeeded'
   receiptUrl: string | null
+  expiresAt?: string | null
 }
 
 export interface CreditBillingView {

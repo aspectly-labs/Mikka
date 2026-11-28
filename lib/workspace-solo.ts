@@ -23,8 +23,3 @@ export async function workspaceSoloMember(workspaceId: string, query: Query = wo
       LIMIT 2`, [workspaceId])
   return rows.length === 1 ? rows[0].userId : null
 }
-
-/** The person's own resources pay for this workspace without a share switch (the fallback above). */
-export async function ownResourcesUsableWithoutShare(workspaceId: string, userId: string, query: Query = workspacePool): Promise<boolean> {
-  return await workspaceSoloMember(workspaceId, query) === userId
-}

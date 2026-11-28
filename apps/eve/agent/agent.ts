@@ -1,4 +1,7 @@
 import { defineAgent, defineDynamic } from 'eve'
+import { readEnv } from '../../../lib/env/server'
+
+const workflowTargetWorld = readEnv('WORKFLOW_TARGET_WORLD')
 
 export default defineAgent({
   async approval(ctx) {
@@ -19,6 +22,6 @@ export default defineAgent({
   limits: { sessionTimeoutMs: false },
   experimental: { workflow: {
     retention: 'default',
-    ...(process.env.WORKFLOW_TARGET_WORLD ? { world: process.env.WORKFLOW_TARGET_WORLD } : {}),
+    ...(workflowTargetWorld ? { world: workflowTargetWorld } : {}),
   } },
 })

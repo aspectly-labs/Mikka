@@ -15,6 +15,13 @@ import { assertActiveHumanAdmission } from './entitlements'
 import { requireEnterpriseOrganization } from '@/lib/enterprise/access'
 import { ownerWorkspaceListsChanged, workspaceListChanged } from '@/lib/live/lists'
 import { enqueueWorkspaceAudit } from '@/lib/audit/delivery'
+import {
+  normalizeInviterName,
+  parseInvitationToken,
+  type OrganizationInvitationPreview,
+} from '@/lib/invitation-preview-token'
+
+export type { OrganizationInvitationPreview }
 
 const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const invitationIdSchema = z.uuid()
@@ -27,6 +34,46 @@ async function verifiedInvitationRecipient(user: { id: string; email: string }) 
     'SELECT lower(email) AS email,name FROM "user" WHERE id=$1 AND "emailVerified" AND lower(email)=lower($2)', [user.id, user.email])
   if (!account) throw new GovernanceError('access_denied')
   return account
+}
+
+/**
+ * Non-sensitive preview for a pending, unexpired organization invitation.
+ * Never returns recipient email, organizationId, createdBy, or expiry metadata.
+ */
+export async function previewOrganizationInvitation(token: string): Promise<OrganizationInvitationPreview | null> {
+  const valid = parseInvitationToken(token)
+  if (!valid) return null
+  const [row] = await workspaceDb
+    .select({
+      organizationName: organizations.name,
+      inviterName: organizationMembers.name,
+      role: organizationInvitations.role,
+    })
+    .from(organizationInvitations)
+    .innerJoin(organizations, eq(organizations.id, organizationInvitations.organizationId))
+    .innerJoin(
+      organizationMembers,
+      and(
+        eq(organizationMembers.organizationId, organizations.id),
+        eq(organizationMembers.userId, organizationInvitations.createdBy),
+        eq(organizationMembers.status, 'active'),
+      ),
+    )
+    .where(
+      and(
+        eq(organizationInvitations.tokenHash, hashToken(valid)),
+        eq(organizationInvitations.status, 'pending'),
+        gt(organizationInvitations.expiresAt, sql`CURRENT_TIMESTAMP`),
+        isNull(organizations.archivedAt),
+      ),
+    )
+    .limit(1)
+  if (!row) return null
+  return {
+    organizationName: row.organizationName,
+    inviterName: normalizeInviterName(row.inviterName),
+    role: row.role,
+  }
 }
 
 /** The recipient sees only outstanding invitations they can currently accept. */

@@ -27,7 +27,7 @@ export function createApprovedWriteDiscovery(pool: Pool) {
           if (!/^[A-Za-z0-9_-]+$/.test(input.data.cursor)) throw Error('encoding')
           cursor = cursorSchema.parse(JSON.parse(Buffer.from(input.data.cursor, 'base64url').toString('utf8')))
           if (cursor.binding !== binding || cursor.after.at > cursor.asOf) throw Error('binding')
-        } catch { throw new OperationError('invalidWriteCursor') }
+        } catch (error) { throw new OperationError('invalidWriteCursor', { cause: error }) }
       }
       return writeTransaction(pool, async tx => {
         // One consistent row/ledger snapshot per page; no proposal/ledger locks,

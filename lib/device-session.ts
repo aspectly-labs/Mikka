@@ -40,8 +40,16 @@ async function sessionConnected(deviceId: string, report: DeviceSessionReport): 
   if (!device) return { applied: false }
   // Live leases last as long as the session. Revocation, stop and policy
   // changes end a lease when they happen (lib/run-policy-stop.ts and friends).
-  const extended = await pool.query<{ id: string }>(`UPDATE agent_runs SET "leaseExpiresAt"=now()+make_interval(secs => $3::double precision/1000), "updatedAt"=now()
-    WHERE "deviceId"=$1 AND status=ANY($2::text[]) AND "stopRequestedAt" IS NULL AND "leaseExpiresAt">now() RETURNING id`,
+  // Carry each active subscription token's expiry forward with its run lease.
+  const extended = await pool.query<{ id: string }>(`WITH renewed AS (
+    UPDATE agent_runs SET "leaseExpiresAt"=now()+make_interval(secs => $3::double precision/1000), "updatedAt"=now()
+    WHERE "deviceId"=$1 AND status=ANY($2::text[]) AND "stopRequestedAt" IS NULL AND "leaseExpiresAt">now()
+    RETURNING id, "leaseExpiresAt"
+  ), renewed_gateway_tokens AS (
+    UPDATE model_gateway_tokens t SET "expiresAt"=r."leaseExpiresAt" FROM renewed r
+    WHERE t."runId"=r.id AND t."deviceId"=$1 AND t."sourceKind"='subscription' AND t."expiresAt">now()
+  )
+  SELECT id FROM renewed`,
   [deviceId, [...LEASED_RUN_STATUSES], SESSION_LEASE_MS])
   if (extended.rowCount) armDueTimerSoon('run-recovery')
   await ownerListChanged(db, device.ownerId, PRESENCE_LISTS)
@@ -85,6 +93,18 @@ async function sessionDisconnected(deviceId: string, report: DeviceSessionReport
 
 const GATEWAY_STATUS_CONCURRENCY = 20
 
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = []
+  let nextIndex = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++
+      results[index] = await fn(items[index])
+    }
+  }))
+  return results
+}
+
 /**
  * Run-recovery backstop (decision 2026-11-17-2215): the gateway retries each
  * report until it is acknowledged, but a report can still be lost (a gateway
@@ -102,11 +122,8 @@ export async function closeLostDeviceSessions(now = new Date()): Promise<{ check
   // by one, a stalled gateway would hold the sweep past the cron's budget before
   // the lease sweep that follows it. An unanswered status proves nothing; the
   // next sweep asks again.
-  const offline: typeof rows = []
-  const pending = rows.values()
-  await Promise.all(Array.from({ length: Math.min(GATEWAY_STATUS_CONCURRENCY, rows.length) }, async () => {
-    for (const device of pending) if (await gatewayDeviceOnline(device.id) === false) offline.push(device)
-  }))
+  const statuses = await mapWithConcurrency(rows, GATEWAY_STATUS_CONCURRENCY, device => gatewayDeviceOnline(device.id))
+  const offline = rows.filter((_, index) => statuses[index] === false)
   let closed = 0
   for (const device of offline) {
     if ((await applyDeviceSessionReport(device.id, { state: 'disconnected', at: now.toISOString(), socketId: device.sessionSocketId })).applied) closed++

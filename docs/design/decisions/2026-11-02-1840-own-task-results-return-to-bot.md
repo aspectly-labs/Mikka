@@ -1,6 +1,7 @@
 # Return a Bot's own completed task without a second paid-model gate
 
 - Date: 2026-11-02 (America/New_York)
+- **Status:** Accepted
 - Source: Alex asked to finish fixing the remaining completion notification failure: 「这个你不修吗？」; earlier requirement: everyone can use their own subscription in any workspace, sharing is separately authorized.
 - Implementation: a server-confirmed terminal result for the same owner and original dispatching Bot is request/result transport. It returns to that Bot under the existing visibility and ownership gates, without first requiring a team-funded Decisions call.
 - This does not classify arbitrary incoming events, grant approval or publish an Agent's claims as host proof. Canonical run identity/status/finish time and matching issue/stop reason are required. The result payload stays untrusted; the Bot's normal model handles it.
