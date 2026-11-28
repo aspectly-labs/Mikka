@@ -57,8 +57,8 @@ synthetic canonical publication and deletion tests.
    Postgres operation/epoch/version checks publish it. Lost-write or database
    publication recovery never repeats a potentially consumed grant.
 6. The app resolves persisted owner/consumer bindings, checks workspace membership,
-   quota/capability/billing policy and sends scripted chat through LiteLLM.
-   LiteLLM calls the private Mikka callback, which streams from the CPA worker.
+   quota, capability and billing policy, then streams subscription chat through
+   the private CPA worker.
    CPA converters run through a separate ordinary Mikka HTTP model adapter;
    native device identity metadata is removed, no native fingerprint executor is used.
    Claude OAuth inference retains its required opening system block before
@@ -67,8 +67,8 @@ synthetic canonical publication and deletion tests.
 7. Task claims pin the native binding and device to the run. Official Claude
    Code and Codex receive a run-bound Mikka gateway credential. The gateway
    checks the active device and run, then the private worker validates the
-   subscription binding and attaches the provider access token to the approved
-   LiteLLM route. Cloud HOME, environment and Git stay on the assigned machine.
+   subscription binding and attaches the provider access token to the fixed
+   native provider endpoint. Cloud HOME, environment and Git stay on the assigned machine.
    CPA remains the refresh-grant custodian.
 
 The worker is permanently scoped to one owner connection. No global tenant store
@@ -132,8 +132,8 @@ configuration. They cannot invoke custody methods or fall back to full bundles.
 A trusted prepare call handles refresh and upgrades legacy projections without
 another login. Go checks the owner/workspace/consumer/binding/route/model/revision
 context of the authorized custody operation, not only the TypeScript caller.
-Native inference uses this worker to check binding authority before it sends
-the request through LiteLLM. Quota HTTP stays in Go and returns a
+This worker checks native binding authority before sending the request to the
+provider. Quota HTTP stays in Go and returns a
 numeric/boolean projection without bearer tokens or raw diagnostics.
 
 `lib/subscription-runtime.ts` configures separate grant and access paths with
@@ -149,8 +149,8 @@ Source checks establish these code paths. Effective IAM and credential delivery
 require evidence from the deployment being tested.
 
 A device claim receives a run-bound Mikka model gateway credential and
-non-secret account metadata. The worker supplies the access token to LiteLLM for
-forwarding to the approved provider. Device assignments carry neither the access
+non-secret account metadata. The worker supplies the access token to the
+authorized provider. Device assignments carry neither the access
 token nor the refresh grant. The retired device lease endpoint returns HTTP 410.
 
 ## Credential deletion

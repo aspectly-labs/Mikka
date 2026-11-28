@@ -4,7 +4,8 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkMigrations, parseTimestamp, hash, slotCollisions, liveCollisions } from './check-migrations.mjs'
+import { APPROVED_REWRITES, checkMigrations, parseTimestamp, hash, slotCollisions, liveCollisions } from './check-migrations.mjs'
+import { createHash } from 'node:crypto'
 
 const legacy = { '0004_a.sql': hash('a'), '0004_b.sql': hash('b'), '0014_c.sql': hash('c') }
 const base = [{ name: '0004_a.sql', content: 'a' }, { name: '0004_b.sql', content: 'b' }, { name: '0014_c.sql', content: 'c' }]
@@ -147,4 +148,24 @@ test('the actual CLI accepts a stale branch with an older pending file and freez
   assert.match(check().stderr, /main.*不能修改/)
   unlinkSync(join(directory, inherited))
   assert.match(check().stderr, /main.*不能删除或改名/)
+})
+
+test('the one approved rewrite passes only for its exact old and new bytes', () => {
+  const sha = text => createHash('sha256').update(text).digest('hex')
+  const name = '20261127170716_workspace_mcp_servers.sql'
+  const published = 'BEGIN;\nCREATE TABLE IF NOT EXISTS t (id int);\nCOMMIT;\n', replacement = 'CREATE TABLE t (id int);\n'
+  const rewrites = { [name]: { from: sha(published), to: sha(replacement) } }
+  const check = (content, mainContent = published, file = name) =>
+    checkMigrations([...base, mainBody, { name: file, content }], [...base, mainBody, { name: file, content: mainContent }], legacy, rewrites)
+  assert.deepEqual(check(replacement), [])
+  assert.deepEqual(check(published), [])
+  assert.match(check(replacement + '\n').join(), /main.*不能修改/)
+  assert.match(check(replacement, published + '-- other\n').join(), /main.*不能修改/)
+  assert.match(check(replacement, published, '20261127170717_other.sql').join(), /main.*不能修改/)
+  assert.match(checkMigrations([...base, { ...mainBody, content: replacement }], [...base, mainBody], legacy, rewrites).join(), /main.*不能修改/)
+  // The shipped entry is the real file only, bound to full SHA-256 digests.
+  assert.deepEqual(Object.keys(APPROVED_REWRITES), [name])
+  assert.match(APPROVED_REWRITES[name].from, /^[0-9a-f]{64}$/)
+  assert.match(APPROVED_REWRITES[name].to, /^[0-9a-f]{64}$/)
+  assert.equal(sha(readFileSync(new URL(`../drizzle/${name}`, import.meta.url), 'utf8')), APPROVED_REWRITES[name].to)
 })

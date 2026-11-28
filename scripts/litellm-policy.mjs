@@ -1,4 +1,4 @@
-// #2869: model traffic leaves Mikka through the one LiteLLM client.
+// #2869 and #3381: API-key and managed traffic use LiteLLM. CPA owns subscription inference.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
@@ -34,12 +34,17 @@ function isAllowedMetadata(file, node) {
 
 const nativeSubscriptionBroker = 'packages/subscription-worker/native_broker.go'
 const nativeProviderHost = /(?:api\.anthropic\.com|api\.openai\.com|chatgpt\.com)/i
+const nativeSubscriptionDestinations = new Set([
+  'endpoint = "https://api.anthropic.com/v1/messages?beta=true"',
+  'endpoint = "https://api.anthropic.com/v1/messages/count_tokens?beta=true"',
+  'endpoint = "https://chatgpt.com/backend-api/codex/responses"',
+])
 
 function auditNativeSubscriptionBroker(file, source) {
   return source.split('\n').flatMap((line, index) => {
     const match = nativeProviderHost.exec(line)
-    return match ? [{ file, line: index + 1, column: match.index + 1,
-      reason: 'native subscription inference must use the configured LiteLLM route' }] : []
+    return match && !nativeSubscriptionDestinations.has(line.trim()) ? [{ file, line: index + 1, column: match.index + 1,
+      reason: 'native subscription inference must use a fixed CPA provider endpoint' }] : []
   })
 }
 

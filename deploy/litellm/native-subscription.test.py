@@ -1,4 +1,4 @@
-"""Run native subscription transport against pinned LiteLLM and a loopback vendor."""
+"""Verify the legacy native pass-through routes during a rolling upgrade."""
 import http.server
 import json
 import os
@@ -67,7 +67,6 @@ class Provider(http.server.BaseHTTPRequestHandler):
 
 def main():
     lite = os.environ.get('MIKKA_NATIVE_LITELLM_BIN', 'litellm')
-    go = os.environ.get('MIKKA_NATIVE_GO_BIN', 'go')
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     vendor = f'http://127.0.0.1:{server.server_port}'
@@ -107,9 +106,27 @@ def main():
                 except urllib.error.HTTPError as error:
                     assert 400 <= error.code < 500
                 assert not Provider.calls
-                subprocess.run([go, 'test', '-count=1', '-run', '^TestNativeBrokerThroughRealLiteLLM$', '-v', '.'],
-                               cwd=ROOT / 'packages/subscription-worker',
-                               env=dict(env, MIKKA_NATIVE_TEST_LITELLM_URL=base), check=True)
+                for route, codex, expected in [
+                    ('claude/messages', False, b'output_tokens'),
+                    ('claude/count_tokens', False, b'input_tokens'),
+                    ('codex/responses', True, b'input_tokens'),
+                ]:
+                    provider = 'codex' if codex else 'claude'
+                    payload = {'model': 'fixture-model', 'system': [
+                        {'type': 'text', 'text': "You are Claude Code, Anthropic's official CLI for Claude."},
+                        {'type': 'text', 'text': 'run safety instructions'},
+                    ]}
+                    request = urllib.request.Request(base + '/v1/mikka/subscription/' + route,
+                        data=json.dumps(payload).encode(), headers={
+                            'Authorization': 'Bearer fixture-' + provider + '-access-legacy',
+                            'x-litellm-api-key': 'Bearer ' + MASTER,
+                            'Content-Type': 'application/json',
+                            'chatgpt-account-id': 'fixture-account',
+                            'anthropic-beta': 'oauth-2025-04-20',
+                            'anthropic-version': '2023-06-01',
+                        })
+                    with urllib.request.urlopen(request, timeout=10) as response:
+                        assert expected in response.read()
                 assert Provider.failure is None, Provider.failure
                 assert Provider.calls == [MESSAGES, COUNT, RESPONSES], Provider.calls
             finally:

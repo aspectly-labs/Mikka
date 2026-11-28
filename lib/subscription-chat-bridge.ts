@@ -1,6 +1,9 @@
 import 'server-only'
-import { SubscriptionRefusal } from '@mikka/protocol/subscription'
+import { randomUUID } from 'node:crypto'
+import { SubscriptionRefusal, type SubscriptionUse } from '@mikka/protocol/subscription'
 import { WorkerRefusal } from '../packages/daemon/src/subscription-worker-client'
+import { hostedCallId } from './model-gateway/hosted-call-id.mjs'
+import { stepIdentity } from './model-call-timing'
 import { db, pool } from './db'
 import { claimSubscriptionUsage, finishSubscriptionUsage, type ModelReceipt } from './model-gateway/ledger'
 import { SUBSCRIPTION_CHAT_CALL_HEADER } from './model-gateway/litellm-client'
@@ -86,10 +89,21 @@ export async function handleSubscriptionChat(request: Request, service = subscri
       || !('stream' in payload) || payload.stream !== true) return deny(400)
   } catch { return deny(400) }
   const { use, model, callId, traceparent } = intent
+  return streamSubscriptionChat(use, model, request.signal, () => service().openLiteLLMChat(use, model, payload, request.signal), { callId, traceparent })
+}
+
+export async function streamSubscriptionChat(
+  use: SubscriptionUse,
+  model: string,
+  signal: AbortSignal | undefined,
+  open: () => Promise<{ start: () => ReadableStream<Uint8Array> }>,
+  forwarded?: { callId: string; traceparent?: string },
+) {
+  const callId = forwarded?.callId ?? hostedCallId(randomUUID(), await stepIdentity())
   const headers = { 'content-type': 'text/event-stream', 'cache-control': 'no-store', [SUBSCRIPTION_CHAT_CALL_HEADER]: callId }
   return withRunSpan('model.subscription.cpa', { 'mikka.model.call_id': callId }, async () => {
-    let admitted: Awaited<ReturnType<ReturnType<typeof service>['openLiteLLMChat']>>
-    try { admitted = await service().openLiteLLMChat(use, model, payload, request.signal) }
+    let admitted: Awaited<ReturnType<typeof open>>
+    try { admitted = await open() }
     catch (error) {
       return new Response(errorFrame(error), { headers })
     }
@@ -122,12 +136,12 @@ export async function handleSubscriptionChat(request: Request, service = subscri
         } catch (error) {
           await finish()
           reader.releaseLock()
-          if (request.signal.aborted) controller.error(request.signal.reason)
+          if (signal?.aborted) controller.error(signal.reason)
           else { controller.enqueue(errorFrame(error)); controller.close() }
         }
       },
       async cancel(reason) { try { await reader.cancel(reason) } finally { reader.releaseLock(); await finish() } },
     })
     return new Response(stream, { headers })
-  }, traceparent ? { traceparent } : undefined)
+  }, forwarded?.traceparent ? { traceparent: forwarded.traceparent } : undefined)
 }

@@ -762,7 +762,9 @@ test('API-key runs: frozen by id at dispatch, scoped gateway token at claim, sub
       const assignment = JSON.parse(text)
       await assertGatewayCredential(assignment, 'anthropic', secret)
       assert.equal(assignment.computer, undefined, 'a repository task gets no computer')
-      assert.notEqual(assignment.policy.permissions.computer_use, 'allow', 'a deny workspace grants no computer use')
+      // Full access (ADR 2026-11-27-1615) leaves the policy's computer_use at its default; a computer is
+      // usable only through a computer grant, and the workspace's Block setting withholds every grant.
+      assert.equal(assignment.localComputer, undefined, 'a deny workspace grants no computer use')
 
       const refused = await claim(computerTask.deviceId, computerTask.runId, computerTask.token)
       assert.equal(refused.status, 409, await refused.text())

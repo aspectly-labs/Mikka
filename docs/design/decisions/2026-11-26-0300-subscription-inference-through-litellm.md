@@ -1,7 +1,7 @@
 # Subscription inference uses LiteLLM
 
 - Date: 2026-11-26
-- **Status:** Accepted. Implementation and offline acceptance are tracked in [#2869](https://github.com/aspectly-labs/Mikka/issues/2869). The authorized production window is tracked in [#1954](https://github.com/aspectly-labs/Mikka/issues/1954).
+- **Status:** Superseded by [2026-11-27-2304](2026-11-27-2304-official-subscription-cpa-egress.md).
 - Source: [Alex's decision in #2869](https://github.com/aspectly-labs/Mikka/issues/2869#issuecomment-7181454601), with the [Capy reference](https://github.com/aspectly-labs/Mikka/issues/2869#issuecomment-7181464840) for context.
 - Supersedes the subscription inference exception in rule 7 of [2026-11-20-0530](2026-11-20-0530-litellm-only-model-egress.md). Its account-operation boundary and the other rules remain in force.
 
