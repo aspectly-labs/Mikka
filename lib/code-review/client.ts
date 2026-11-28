@@ -2,11 +2,13 @@
 // response to lib/code-review/contract.ts and maps a 403 with a known reason to a typed denial; anything else
 // that is not the expected shape throws ReviewRequestError.
 import { z } from 'zod'
-import type { TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
+import { taskReviewPullRef, type TaskReviewRef } from '@mikka/protocol/coding-workspace-review'
 import { count, reason, summarySchema, fileReadSchema, readSchema, checksSchema, checkObservationSchema, sameReviewReference } from './read-contract'
 import { withBasePath } from '@/lib/base-path'
 import {
   type MergeResult,
+  type NativeMergeResult,
+  type NativeMergeSubmission,
   type ReviewCheck,
   type ReviewDenial,
   type ReviewFileRead,
@@ -33,7 +35,7 @@ export const REVIEW_ENDPOINTS = {
   checks: (taskId: string) => `${task(taskId)}/checks`,
   /** POST { comments, note?, attachedChecks: check ids, idempotencyKey } → 200 { messageId, attempt } | 403 { error: reason, reason, message? } */
   send: (taskId: string) => `${task(taskId)}/send`,
-  /** POST { confirmFailedChecks } → 200 { merged: true } | 409 { error: 'needs_confirm', failing } | 403 { error: reason, reason, message? } */
+  /** POST an exact review target and intent → durable receipt, check gate, or permission denial. */
   merge: (taskId: string) => `${task(taskId)}/merge`,
   /** GET, text/event-stream → `output` { text } … `ended` { exitCode } | 404 (no terminal) | 403 { error: 'not_owner_terminal' } | 409 (reclaimed) */
   terminal: (taskId: string) => `${task(taskId)}/terminal`,
@@ -159,6 +161,83 @@ export async function mergeReview(taskId: string, options: { confirm: boolean })
   }
   parse(mergedSchema, reply)
   return { kind: 'merged' }
+}
+
+const nativeTarget = summarySchema.shape.nativeMergeTarget.unwrap().unwrap()
+const nativeSubmission = nativeTarget.extend({
+  binding: nativeTarget.shape.binding.strict(),
+  idempotencyKey: z.string().min(1).max(200), confirmFailedChecks: z.boolean(),
+  confirmedChecksFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+}).strict().refine(value => value.confirmFailedChecks === Boolean(value.confirmedChecksFingerprint))
+const mergeSha = nativeTarget.shape.expectedHeadSha
+const nativeReceipt = z.object({
+  state: z.enum(['merged', 'pending', 'rejected', 'merged_elsewhere']),
+  mergeId: z.uuid(), pullRef: taskReviewPullRef, expectedHeadSha: mergeSha,
+  actualHeadSha: mergeSha.nullable(), mergeCommitSha: mergeSha.nullable(), pullRequestUrl: z.url(),
+  merged: z.boolean(), reviewedHeadMerged: z.boolean(), error: z.string().min(1).optional(),
+}).refine(value => value.merged === (value.state === 'merged' || value.state === 'merged_elsewhere')
+  && value.reviewedHeadMerged === (value.state === 'merged')
+  && (value.state !== 'merged' || value.actualHeadSha === value.expectedHeadSha)
+  && (value.state !== 'merged_elsewhere' || value.actualHeadSha !== value.expectedHeadSha))
+const newIntent = { newIntentRequired: z.boolean().optional() }
+const nativeGate = z.discriminatedUnion('state', [
+  nativeTarget.extend({ state: z.literal('needs_confirm'), error: z.literal('needs_confirm'),
+    failing: z.number().int().positive(), checksFingerprint: z.string().regex(/^[a-f0-9]{64}$/), ...newIntent }),
+  z.object({ state: z.literal('checks_pending'), error: z.literal('workspace_review_unavailable'),
+    pullRef: taskReviewPullRef, expectedHeadSha: mergeSha,
+    checks: z.object({ failed: count, passed: count, pending: z.number().int().positive(), neutral: count, total: count }),
+    checksFingerprint: z.string().regex(/^[a-f0-9]{64}$/), ...newIntent }),
+  z.object({ state: z.literal('checks_changed'), error: z.literal('workspace_snapshot_outdated'), pullRef: taskReviewPullRef, ...newIntent }),
+])
+
+/** Submit the exact native target. This adapter never refreshes approval,
+ * chooses a new key, retries a write, or interprets a pending receipt as merged. */
+export async function mergeNativeReview(taskId: string, submission: NativeMergeSubmission): Promise<NativeMergeResult> {
+  const intent = nativeSubmission.parse(submission)
+  if (intent.binding.issueId !== taskId) throw new TypeError('Native merge target belongs to another Task')
+  const reply = await request(REVIEW_ENDPOINTS.merge(taskId), { method: 'POST', json: intent })
+  const requireTarget = (value: { pullRef: z.infer<typeof taskReviewPullRef>; expectedHeadSha?: string;
+    binding?: z.infer<typeof nativeTarget>['binding'] }) => {
+    if (JSON.stringify(value.pullRef) !== JSON.stringify(intent.pullRef)
+      || (value.expectedHeadSha !== undefined && value.expectedHeadSha !== intent.expectedHeadSha)
+      || (value.binding && JSON.stringify(value.binding) !== JSON.stringify(intent.binding)))
+      throw new ReviewRequestError(reply.status, reply.body, { cause: new Error('Native merge target changed') })
+  }
+  const denied = reviewDenial(reply)
+  const receipt = nativeReceipt.safeParse(reply.body)
+  if (receipt.success) {
+    const value = receipt.data
+    requireTarget(value)
+    if (denied && value.state === 'rejected') return { ...denied, receipt: value }
+    const status = value.state === 'merged' ? 200 : value.state === 'pending' ? 202 : 409
+    if (reply.status !== status) throw new ReviewRequestError(reply.status, reply.body)
+    return { kind: value.state, receipt: value }
+  }
+  // A plain permission refusal has no receipt. A malformed claimed receipt
+  // must not be silently reduced to a generic denial and lose its identity.
+  if (denied && !Object.hasOwn(reply.body as object, 'state') && !Object.hasOwn(reply.body as object, 'mergeId')) return denied
+  if (reply.status === 409) {
+    const gate = nativeGate.safeParse(reply.body)
+    if (gate.success) {
+      requireTarget(gate.data)
+      switch (gate.data.state) {
+        case 'needs_confirm': {
+          const { state, error: _error, ...value } = gate.data
+          return { kind: state, ...value }
+        }
+        case 'checks_pending': {
+          const { state, error: _error, ...value } = gate.data
+          return { kind: state, ...value }
+        }
+        case 'checks_changed': {
+          const { state, error: _error, ...value } = gate.data
+          return { kind: state, ...value }
+        }
+      }
+    }
+    throw new ReviewRequestError(reply.status, reply.body, { cause: gate.error })
+  }
+  throw new ReviewRequestError(reply.status, reply.body, { cause: receipt.error })
 }
 
 const terminalEventSchema = z.discriminatedUnion('type', [

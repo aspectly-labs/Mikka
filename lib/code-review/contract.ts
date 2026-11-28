@@ -174,6 +174,37 @@ export type SendToAgentResult = { kind: 'sent'; messageId: string; attempt: numb
 /** 批准合并: with failing checks the server asks first (R7 「还有 1 项检查失败，确定合并？」); then R8 已合并. */
 export type MergeResult = { kind: 'needs_confirm'; failing: number } | { kind: 'merged' } | ReviewDenial
 
+/** One explicit approval of a native target. Retrying keeps every field,
+ * including the key; confirming failed checks creates a new intent/key. */
+export type NativeMergeSubmission = NonNullable<ReviewSummary['nativeMergeTarget']> & { idempotencyKey: string } & (
+  { confirmFailedChecks: false; confirmedChecksFingerprint?: never }
+  | { confirmFailedChecks: true; confirmedChecksFingerprint: string }
+)
+
+/** The existing durable Factory receipt, including outcomes that did not merge
+ * this approval's HEAD. A successful HTTP transport alone is not completion. */
+export type NativeMergeReceipt = {
+  state: 'merged' | 'pending' | 'rejected' | 'merged_elsewhere'
+  mergeId: string
+  pullRef: TaskReviewPullRef
+  expectedHeadSha: string
+  actualHeadSha: string | null
+  mergeCommitSha: string | null
+  pullRequestUrl: string
+  merged: boolean
+  reviewedHeadMerged: boolean
+  error?: string
+}
+
+export type NativeMergeResult =
+  | { kind: NativeMergeReceipt['state']; receipt: NativeMergeReceipt }
+  | ({ kind: 'needs_confirm'; failing: number; checksFingerprint: string; newIntentRequired?: boolean }
+    & NonNullable<ReviewSummary['nativeMergeTarget']>)
+  | { kind: 'checks_pending'; pullRef: TaskReviewPullRef; expectedHeadSha: string; checksFingerprint: string;
+    checks: { failed: number; passed: number; pending: number; neutral: number; total: number }; newIntentRequired?: boolean }
+  | { kind: 'checks_changed'; pullRef: TaskReviewPullRef; newIntentRequired?: boolean }
+  | (ReviewDenial & { receipt?: NativeMergeReceipt })
+
 /**
  * The review page's terminal (R5, #1723/#1733), one shell on the task's machine. GET …/review/terminal streams it as
  * server-sent events: `output` with `{ text }`, then `ended` with `{ exitCode }` when the shell exits or the machine
