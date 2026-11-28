@@ -196,6 +196,32 @@ test('authentication writes tenant-bound durable intent and withholds every new 
       assert.equal((await events()).length, beforeFailure)
     } finally { await database.query(`ALTER TABLE workspace_audit_outbox DROP CONSTRAINT ${name}`) }
   })
+  await t.test('a refused login after account deletion remains auditable without reopening business or session writes', async () => {
+    assert.equal((await deliverOwn()).failed, 0)
+    const jobId = randomUUID(), guarded = workspaces.slice(0, 2)
+    await database.query('INSERT INTO account_deletion_guards("subjectId","jobId") VALUES($1,$2)', [userId, jobId])
+    await database.query('INSERT INTO account_deletion_workspace_guards("workspaceId","jobId") SELECT unnest($1::uuid[]),$2', [guarded, jobId])
+    try {
+      const denied = await post({ email, password: 'wrong-fixture-password' })
+      assert.equal(denied.status, 401)
+      assert.deepEqual(denied.headers.getSetCookie(), [])
+      const receipts = (await events()).filter(row => row.deliveredAt === null)
+      assert.equal(receipts.length, 2)
+      assert.ok(receipts.every(row => row.payload.action === 'auth.sign_in_failed' && row.payload.actorType === 'system'))
+      const ids = receipts.map(row => row.id)
+      assert.deepEqual(await deliverOwn(), { delivered: 2, failed: 0 }, 'the workspace freeze must not block its durable security evidence')
+      assert.deepEqual(await deliverOwn(), { delivered: 0, failed: 0 }, 'the original receipt IDs remain idempotent')
+      assert.equal((await database.query('SELECT count(*)::int n FROM workspace_audit_events WHERE id=ANY($1::uuid[])', [ids])).rows[0].n, 2)
+      assert.ok((await events()).filter(row => ids.includes(row.id)).every(row => row.deliveredAt !== null && row.payload === null))
+      await assert.rejects(database.query('UPDATE workspace_audit_events SET "targetLabel"=\'changed\' WHERE id=$1', [ids[0]]), { code: '55000' })
+      await assert.rejects(database.query('UPDATE mikka_workspace_members SET name=\'changed\' WHERE "workspaceId"=$1 AND "userId"=$2', [guarded[0], userId]), { code: '55000' })
+      await assert.rejects(database.query('INSERT INTO mikka_workspace_members("workspaceId","userId",name,email,role) VALUES($1,$2,\'blocked\',\'blocked@example.invalid\',\'member\')', [guarded[0], `blocked-${randomUUID()}`]), { code: '55000' })
+      await assert.rejects(database.query('SELECT mikka_account_assert_writable($1)', [userId]), { code: '55000' })
+    } finally {
+      await database.query('DELETE FROM account_deletion_workspace_guards WHERE "jobId"=$1', [jobId])
+      await database.query('DELETE FROM account_deletion_guards WHERE "jobId"=$1', [jobId])
+    }
+  })
   await t.test('final workspace deletion waits for in-flight login audit and prevents new tenant intent afterward', async () => {
     assert.equal((await deliverOwn()).failed, 0)
     const [{ deleteWorkspaceData }, { workspaceDb }] = await Promise.all([import('../lib/account/delete'), import('../lib/workspace-db')])
