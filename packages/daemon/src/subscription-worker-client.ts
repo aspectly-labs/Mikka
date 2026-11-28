@@ -156,7 +156,7 @@ export class SubscriptionWorkerClient {
       child.stdin.on("error", () => finish(new WorkerRefusal()))
       signal?.addEventListener("abort", abort, { once: true })
       // The first frame is private host configuration, never a process argument.
-      const executionOnly = ['executeStream', 'execute', 'quota', 'nativeContext', 'nativeStream'].includes(String(request.method))
+      const executionOnly = ['executeStream', 'execute', 'quota', 'nativeContext', 'nativeStream', 'modelSearchStream'].includes(String(request.method))
       // Execution children receive the access-store identity only. Refresh and
       // OAuth stay in custody children, with no token material in their results.
       void (async () => {
@@ -180,7 +180,14 @@ export class SubscriptionWorkerClient {
     return await this.start({ ...input, method }, signal).result as T
   }
   async nativeRequest(revision: number, payload: {path: string; headers: Record<string, string>; body: unknown}, signal?: AbortSignal): Promise<NativeResponseHead & {body: ReadableStream<Uint8Array>}> {
-    await this.call('prepare', { revision }, signal)
+    return this.protocolStream('nativeStream', revision, payload, signal)
+  }
+  async modelSearchRequest(revision: number, payload: {path: string; headers: Record<string, string>; body: unknown}, signal?: AbortSignal): Promise<NativeResponseHead & {body: ReadableStream<Uint8Array>}> {
+    return this.protocolStream('modelSearchStream', revision, payload, signal)
+  }
+  private async protocolStream(method: 'nativeStream' | 'modelSearchStream', revision: number, payload: {path: string; headers: Record<string, string>; body: unknown}, signal?: AbortSignal): Promise<NativeResponseHead & {body: ReadableStream<Uint8Array>}> {
+    const identity = method === 'modelSearchStream' ? await this.streamIdentity(revision, signal ?? new AbortController().signal) : undefined
+    if (method === 'nativeStream') await this.call('prepare', { revision }, signal)
     let resolveHead!: (head: NativeResponseHead) => void
     let rejectHead!: (error: Error) => void
     const ready = new Promise<NativeResponseHead>((resolve, reject) => { resolveHead = resolve; rejectHead = reject })
@@ -191,11 +198,11 @@ export class SubscriptionWorkerClient {
     const body = new ReadableStream<Uint8Array>({
       start: controller => {
         try {
-          const run = this.start({ method: 'nativeStream', revision, payload }, signal, undefined,
+          const run = this.start({ method, revision, payload }, signal, undefined,
           head => { if (receivedHead) throw new WorkerRefusal(); receivedHead = true; resolveHead(head) }, chunk => {
             if (!receivedHead) throw new WorkerRefusal()
             if (!closed) { controller.enqueue(chunk); if ((controller.desiredSize ?? 0) <= 0) run.pause() }
-          })
+          }, identity)
           stop = run.stop
           resume = run.resume
           void run.result.then(() => {

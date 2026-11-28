@@ -4,7 +4,7 @@ import { withFreshSession } from '@/lib/fresh-session'
 import { pool } from '@/lib/db'
 import { requireUser } from '@/lib/issue-access'
 import type { ApiKeyView } from '@/lib/model-api-key-providers'
-import { addApiKey, apiKeyOwnerOf, listApiKeys, refreshApiKeyDaybreak, refreshApiKeyModels, removeApiKey, setApiKeyAfterQuota, setApiKeyFeatures, updateApiKey as updateStoredApiKey, usableApiKeys, type ApiKeyDaybreakRefreshResult, type ApiKeyOwner, type ApiKeysPage, type UsableApiKey } from '@/lib/model-api-keys'
+import { addApiKey, apiKeyOwnerOf, listApiKeys, refreshApiKeyDaybreak, refreshApiKeyModels, removeApiKey, setApiKeyAfterQuota, setApiKeyFeatures, setApiKeyWebSearch, updateApiKey as updateStoredApiKey, usableApiKeys, type ApiKeyDaybreakRefreshResult, type ApiKeyOwner, type ApiKeysPage, type UsableApiKey } from '@/lib/model-api-keys'
 import { loadWorkspaceContext } from '@/lib/workspace-access'
 import { WorkspaceError } from '@/lib/workspace-error'
 import { settingsWorkspaceAction, type SettingsActionResult } from '@/lib/workspace-admin/settings-action'
@@ -121,6 +121,14 @@ export async function updateApiKeyAfterQuota(on: boolean, workspaceId?: string):
     await setApiKeyAfterQuota(pool, current.userId, on)
     return readApiKeysPage(current)
   })
+}
+
+export async function updateApiKeyWebSearch(on: boolean, workspaceId?: string): Promise<SettingsActionResult<ApiKeysPage>> {
+  return withFreshSession(() => settingsWorkspaceAction(async () => {
+    const current = await actor(workspaceId)
+    await setApiKeyWebSearch(pool, current.userId, on)
+    return readApiKeysPage(current)
+  }))
 }
 
 /** Turns off request features a custom provider rejects (decision 2026-11-15-2000). Owner only (a workspace key's admins). */

@@ -98,6 +98,12 @@ export const LEGACY_DECISION_MODEL = 'openai/gpt-6-luna-decisions' as const
 
 /** Historical snapshot identifier retained for already-issued write-planning runs; new calls use `mikka-planning`. */
 export const LEGACY_WRITE_PLANNING_SNAPSHOT = 'openai/gpt-6-luna' as const
+/** Vercel Gateway's authorized model allocation for native search routes. */
+export const MANAGED_WEB_SEARCH_MODELS = {
+  responses: 'openai/gpt-6-luna',
+  messages: 'anthropic/claude-haiku-5.5',
+} as const
+
 
 /**
  * Models supporting `reasoning.mode: "pro"` on Mikka Credits and OpenAI BYOK keys

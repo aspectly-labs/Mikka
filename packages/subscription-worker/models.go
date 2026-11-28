@@ -20,6 +20,7 @@ type ModelOption struct {
 	PrioritySupported  *bool  `json:"prioritySupported,omitempty"`
 	UltrafastSupported *bool  `json:"ultrafastSupported,omitempty"`
 	FastSupported      *bool  `json:"fastSupported,omitempty"`
+	WebSearchSupported *bool  `json:"webSearchSupported,omitempty"`
 	// Efforts are the reasoning levels the provider lists for this model, in its
 	// order; nil when the provider said nothing (unknown), empty when it says none.
 	Efforts       []string `json:"efforts,omitempty"`
@@ -96,6 +97,7 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 				ReasoningLevels json.RawMessage `json:"supported_reasoning_levels"`
 				DefaultLevel    string          `json:"default_reasoning_level"`
 				AccessPrograms  json.RawMessage `json:"available_access_programs"`
+				SupportsSearch  *bool           `json:"supports_search_tool"`
 			} `json:"models"`
 			Data []struct {
 				ID               string          `json:"id"`
@@ -122,6 +124,7 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 						Name:               m.Name,
 						PrioritySupported:  codexPrioritySupported(m.ServiceTiers),
 						UltrafastSupported: codexUltrafastSupported(m.ServiceTiers),
+						WebSearchSupported: m.SupportsSearch,
 						Efforts:            efforts,
 						DefaultEffort:      defaultEffort(efforts, m.DefaultLevel),
 						Daybreak:           codexDaybreakTiers(m.AccessPrograms),
@@ -134,10 +137,11 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 			}
 			for _, m := range body.Data {
 				entries = append(entries, ModelOption{
-					ID:            m.ID,
-					Name:          m.Name,
-					FastSupported: claudeFastSupported(m.SupportsFastMode, m.Capabilities),
-					Efforts:       claudeEfforts(m.Capabilities),
+					ID:                 m.ID,
+					Name:               m.Name,
+					FastSupported:      claudeFastSupported(m.SupportsFastMode, m.Capabilities),
+					WebSearchSupported: claudeWebSearchSupported(m.Capabilities),
+					Efforts:            claudeEfforts(m.Capabilities),
 				})
 			}
 		}
@@ -177,6 +181,20 @@ func (w *Worker) Models(ctx context.Context, epoch int64) ([]ModelOption, error)
 		return nil, ErrUnavailable
 	}
 	return options, nil
+}
+
+func claudeWebSearchSupported(capabilities json.RawMessage) *bool {
+	var value struct {
+		ServerTools struct {
+			WebSearch struct {
+				Supported *bool `json:"supported"`
+			} `json:"web_search"`
+		} `json:"server_tools"`
+	}
+	if json.Unmarshal(capabilities, &value) != nil {
+		return nil
+	}
+	return value.ServerTools.WebSearch.Supported
 }
 
 // codexServiceTierSupported projects only the account's current model catalogue.

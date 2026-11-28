@@ -915,13 +915,36 @@ export async function stopRun(userId: string, input: { runId: string }, scope?: 
   })
 }
 
-/** Web search through the shared SearchProvider (MIK-5); degrades to searchUnavailable on 429/5xx/timeout. */
-export async function webSearchStep(userId: string, input: { query: string; limit?: number }, scope?: NativeToolScope, callId?: string) {
+export async function webSearchStep(userId: string, input: { query: string; limit?: number }, scope?: NativeToolScope, callId?: string, chat?: {
+  botId: string; executionId?: string; runtime?: import('@/lib/hosted-model-selection').HostedRuntimeSnapshot
+}, signal?: AbortSignal) {
   'use step'
   return withCoordinatorWebSearchTiming(async () => {
     await assertNativeToolScope(userId,scope)
-    return webSearch(input.query, { userId, caller: 'coordinator' }, { limit: input.limit })
+    if (chat && !scope?.scheduledRead) {
+      const runtime = chat.runtime ?? await (await import('./agent-kit-steps')).botRuntime(userId, chat.botId)
+      if (runtime.modelSelection?.type === 'api_key') {
+        // Paid fallback requires authority tied to this execution and tool call.
+        const execution = chat.executionId ?? scope?.turnId
+        if (!execution || !callId) return { ok: false as const, error: 'searchUnavailable' as const, outcome: 'error' as const }
+        const { managedByokSearch } = await import('@/lib/search/managed-byok')
+        try { return await managedByokSearch(input, { ownerId: userId, botId: chat.botId, selection: runtime.modelSelection, execution, callId, signal }) }
+        catch {
+          signal?.throwIfAborted()
+          return { ok: false as const, error: 'searchUnavailable' as const, outcome: 'error' as const }
+        }
+      }
+    }
+    return webSearch(input.query, { userId, caller: 'coordinator' }, { limit: input.limit, signal })
   }, callId)
+}
+
+export async function webFetchStep(userId: string, input: { url: string }, scope?: NativeToolScope, signal?: AbortSignal) {
+  'use step'
+  await assertNativeToolScope(userId, scope)
+  const { webScrape } = await import('@/lib/search')
+  const result = await webScrape(input.url, { userId, caller: 'coordinator' }, { signal })
+  return result.ok ? { ...result, untrustedContent: true } : result
 }
 
 /** Web work stays in the Bot chat; it never creates an agent_runs row. */

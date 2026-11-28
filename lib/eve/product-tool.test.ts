@@ -39,6 +39,27 @@ test('execution sends no responder and copies no token capability',async()=>{
   assert.deepEqual(requests,[{...binding,operation:'execute',name:definition.name,input,callId:'call_1'}])
 })
 
+test('Web Search sends the server-selected model on the original execution and call despite model-supplied arguments', async () => {
+  const frozen = { type: 'api_key' as const, keyId: '10000000-0000-4000-8000-000000000004', ownerId: scope.ownerId,
+    consumerId: scope.botId, workspaceId: scope.workspaceId, modelId: 'fixture/original-model' }
+  const requests: ProductOperation[] = []
+  const rpc: typeof productRpc = async <T>(_scope: EveScope, request: ProductOperation) => {
+    requests.push(request)
+    return { output: 'example result' } as T
+  }
+  const tool = createProductTool(scope, { ...binding, runtime: { harness: 'ai_sdk', model: frozen.modelId, modelSelection: frozen } },
+    { ...definition, name: 'web_search' }, rpc)
+  const misleadingInput = { query: 'fixture', webSearchModel: { modelId: 'model-chosen' } }
+  const context = { callId: 'stable-call', abortSignal: new AbortController().signal }
+  await tool.execute!(misleadingInput as never, context as never)
+  await tool.execute!(misleadingInput as never, context as never)
+  const managed = createProductTool(scope, { ...binding, runtime: { harness: 'ai_sdk', model: 'fixture/managed' } },
+    { ...definition, name: 'web_search' }, rpc)
+  await managed.execute!(misleadingInput as never, context as never)
+  assert.deepEqual(requests, [frozen, frozen, null].map(webSearchModel => ({ ...binding, operation: 'execute', name: 'web_search', input: misleadingInput,
+    callId: context.callId, webSearchModel })))
+})
+
 test('self-hosted product RPC uses the configured server and reserves the private capability for Cloudflare', async t => {
   t.mock.property(process, 'env', {
     ...process.env,

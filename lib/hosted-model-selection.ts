@@ -36,6 +36,8 @@ export interface HostedRuntimeSnapshot {
   harness: string
   model: string | null
   modelSelection?: HostedModelSelection
+  /** Provider-native search proved for this admitted endpoint and model. */
+  nativeWebSearchBackend?: import('./model-gateway/provider-config').NativeWebSearchBackend
   /** The Bot's saved reasoning effort for this turn (bot_model_choices.effort); absent is the model's default. */
   effort?: import('./model-routing').ModelRoutingEffort
   /** OpenAI Responses reasoning mode, frozen after validating the chosen route. */

@@ -29,8 +29,8 @@ export function businessWorldRequest(request, binding, capability) {
 
 export function liteLlmRequest(request, binding) {
   const url = new URL(request.url)
-  if (url.origin !== 'https://litellm.internal' || url.username || url.password || url.hash || url.search
-      || !isLiteLlmRoute(request.method, url.pathname)) return no(404)
+  if (url.origin !== 'https://litellm.internal' || url.username || url.password || url.hash
+      || !isLiteLlmRoute(request.method, url.pathname, url.search)) return no(404)
   if (!binding) return no(503)
   const callId = request.headers.get('x-litellm-call-id')
   if (callId !== null && !decodeHostedCallId(callId)) return no(400)

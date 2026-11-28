@@ -12,6 +12,8 @@ import { BACKEND_FAILURES, GENERATION_FAILURES, PRIVATE_FAILURES } from './subsc
 import { chatEnvelopeSchema, SUBSCRIPTION_CHAT_MAX_BYTES, verifySubscriptionChat } from './subscription-chat-ticket'
 import { subscriptionRuntime } from './subscription-runtime'
 import { withRunSpan } from './tracing/context'
+import { readGatewayReceipt, type GatewayProtocol } from './model-gateway/usage'
+import { observeUsageStream, usageTap } from './model-gateway/usage-tap'
 
 // A JSON string can take up to six encoded bytes per original byte.
 const ENVELOPE_MAX_BYTES = 6 * SUBSCRIPTION_CHAT_MAX_BYTES + 8192
@@ -144,4 +146,23 @@ export async function streamSubscriptionChat(
     })
     return new Response(stream, { headers })
   }, forwarded?.traceparent ? { traceparent: forwarded.traceparent } : undefined)
+}
+
+/** Record native provider usage before exposing the complete stream to the Bot. */
+export async function streamSubscriptionModelSearch(use: SubscriptionUse, model: string, protocol: GatewayProtocol,
+  signal: AbortSignal | undefined, open: () => Promise<{ body: ReadableStream<Uint8Array> }>) {
+  if (use.execution !== 'model' || use.runId) throw new SubscriptionRefusal('binding_mismatch')
+  const callId = hostedCallId(randomUUID(), await stepIdentity())
+  return withRunSpan('model.subscription.cpa', { 'mikka.model.call_id': callId }, async () => {
+    if (!await claimSubscriptionUsage(db, { ...use, id: callId, model, threadId: null })) return deny(409)
+    const upstream = await open()
+    let completed = false
+    const tap = usageTap(true, async (text, complete) => {
+      const receipt = readGatewayReceipt(protocol, text)
+      completed = complete && receipt.usage !== null
+      await finishSubscriptionUsage(db, callId, { ...receipt, cost: null }, completed)
+    }, protocol)
+    const stream = observeUsageStream(upstream.body, tap, signal, () => completed ? undefined : new WorkerRefusal())
+    return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store', [SUBSCRIPTION_CHAT_CALL_HEADER]: callId } })
+  })
 }

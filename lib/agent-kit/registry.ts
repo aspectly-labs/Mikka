@@ -44,7 +44,7 @@ export const AGENT_TOOL_IDS = [
   'search_notion_pages', 'read_notion_page_blocks', 'search_slack_messages', 'read_slack_thread',
   'list_app_tools', 'call_app_tool',
   'search_gmail', 'read_gmail_message', 'list_calendar_events', 'get_calendar_event', 'send_email',
-  'create_calendar_event', 'update_calendar_event', 'web_search', 'list_issues', 'get_issue', 'create_issue', 'update_issue',
+  'create_calendar_event', 'update_calendar_event', 'web_search', 'web_fetch', 'list_issues', 'get_issue', 'create_issue', 'update_issue',
   'list_agents', 'list_factory_agent_profiles', 'find_repository', 'github_tools', 'github_call', 'dispatch_run', 'list_runs', 'get_run', 'send_to_run', 'remember', 'forget',
   'stop_run', 'load_skill', 'read_personal_skill', 'record_attention', 'record_decision',
   ...FACTORY_TOOL_IDS,
@@ -70,6 +70,7 @@ export const BASELINE_PLATFORM_TOOL_IDS = [
  * tool. A stored owner version created before that time gets the tool at execution;
  * one created after it and lacking the tool had it removed on purpose. */
 const PLATFORM_TOOL_ADDITIONS: readonly (readonly [string, readonly AgentToolId[]])[] = [
+  ['2026-11-27T22:57:00Z', ['web_fetch']], // #3381
   ['2026-11-20T12:00:00Z', INTEROP_TOOL_IDS], // S7 agent/bot interop (decision 2026-11-19-2200)
   ['2026-11-11T04:30:00Z', ['read_personal_skill']], // ALE-75 (#1915)
   ['2026-11-05T01:40:16Z', ['list_factory_agent_profiles']], // #1284

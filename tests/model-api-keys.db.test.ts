@@ -45,6 +45,9 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
     const migration = await readFile(new URL('../drizzle/20261101021000_model_api_keys.sql', import.meta.url), 'utf8')
     await pool.query(migration)
     await pool.query(migration)
+    const webSearchPreference = await readFile(new URL('../drizzle/20261127230400_api_key_web_search_preference.sql', import.meta.url), 'utf8')
+    await pool.query(webSearchPreference)
+    await pool.query(webSearchPreference)
     const choiceMigration = await readFile(new URL('../drizzle/20261101021100_bot_api_key_choice.sql', import.meta.url), 'utf8')
     await pool.query(choiceMigration)
     await pool.query(choiceMigration)
@@ -98,6 +101,12 @@ test('API keys: migration replay, sealed storage, workspace keys, picker order a
     const team = { id: randomUUID(), kind: 'team' as const }
     await pool.query('INSERT INTO mikka_workspaces(id,kind) VALUES ($1,$2),($3,$4)', [personal.id, personal.kind, team.id, team.kind])
     await pool.query('INSERT INTO mikka_workspace_members VALUES ($1,\'alice\',\'active\'),($1,\'bob\',\'active\'),($1,\'carol\',\'active\')', [team.id])
+    assert.equal((await store.listApiKeys(pool, 'alice', personal)).apiKeyWebSearch, false)
+    await store.setApiKeyWebSearch(pool, 'alice', true)
+    assert.equal((await store.listApiKeys(pool, 'alice', team)).apiKeyWebSearch, true)
+    assert.equal((await store.listApiKeys(pool, 'bob', team)).apiKeyWebSearch, false)
+    await store.setApiKeyWebSearch(pool, 'alice', false)
+    assert.equal((await store.listApiKeys(pool, 'alice', personal)).apiKeyWebSearch, false)
     // A personal workspace uses its owner's credentials; the team also has its own key, added by an admin.
 
     // A rejected key is never stored.

@@ -1903,6 +1903,8 @@
     },
     "usagePage": {
       "historyHeading": "History and external accounts",
+      "webSearch": "Web Search",
+      "webSearchUnknown": "{count, plural, one {# call awaiting cost} other {# calls awaiting cost}}",
       "byEnvironmentHeading": "By environment",
       "sorts": {
         "duration": "Longest runtime",
@@ -2402,6 +2404,8 @@
       "add": "Add"
     },
     "apiKeys": {
+      "webSearch": "Mikka Web Search",
+      "webSearchBilling": "Adds search to third-party models without native Web Search. When a model uses Mikka-hosted search, Web Search appears separately on your bill.",
       "noResponsesApi": "{protocol} protocol · No Responses API · Codex can't use it",
       "refetchLabel": "Fetch models for {name} again",
       "modelsInvalid": "Couldn't fetch models · Key invalid or revoked",

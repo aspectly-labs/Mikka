@@ -220,13 +220,13 @@ test(
       });
       assert.deepEqual(refreshed.map(row=>row.modelId).sort(), ['provider-model','second-provider-model']);
       assert.deepEqual((await pool.query('SELECT "modelCatalog" FROM byos_connections WHERE id=$1',[connection])).rows[0].modelCatalog, {
-        revision:'1',models:['provider-model','second-provider-model'],priorityVersion:1,
+        revision:'1',models:['provider-model','second-provider-model'],webSearchVersion:1,priorityVersion:1,
         prioritySupport:{'provider-model':false,'second-provider-model':true},
       });
       assert.equal((await settings.connectedSubscriptions('alice',true)).includes(connection),false);
       // A valid legacy catalogue remains sufficient for ordinary dispatch.
       // Only the chat menu explicitly requests the optional Fast capability.
-      await pool.query(`UPDATE byos_connections SET "modelCatalog"="modelCatalog"-'priorityVersion'-'prioritySupport' WHERE id=$1`,[connection]);
+      await pool.query(`UPDATE byos_connections SET "modelCatalog"="modelCatalog"-'priorityVersion'-'prioritySupport'-'webSearchVersion' WHERE id=$1`,[connection]);
       const legacyCatalogue = {revision:'1',models:['provider-model','second-provider-model']};
       assert.equal((await settings.connectedSubscriptions('alice',true)).includes(connection),false);
       assert.equal((await settings.connectedSubscriptions('alice',true,{codexPriority:true})).includes(connection),true);

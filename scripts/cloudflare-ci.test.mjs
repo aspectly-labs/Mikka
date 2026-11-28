@@ -188,8 +188,7 @@ test('the unified service producer retains the existing image qualification gate
     'claude --version', 'codex --version', '--cap-add NET_ADMIN', 'review-guest-image.test.py',
     'guard.py prepare-cloudflare', 'guard.py verify', '0:1000:660', 'aiohttp.__version__']) assert.ok(task.includes(gate), gate)
   const conversion = await readFile(new URL('../deploy/litellm/conversion-check.sh', import.meta.url), 'utf8')
-  assert.ok(conversion.includes("grep -qx '# pass 7'"))
-  assert.ok(conversion.includes("grep -qx '# skipped 0'"))
+  assert.match(conversion, /grep -qx '# pass 13'\n[^\n]*grep -qx '# skipped 0'\n/)
   const candidate = await readFile(new URL('../.github/workflows/ci-merge-candidate.yml', import.meta.url), 'utf8')
   for (const name of ['cloudflare-eve-image.yml', 'cloudflare-task-sandbox.yml', 'cloudflare-litellm-image.yml']) {
     const workflow = await readFile(new URL('../.github/workflows/' + name, import.meta.url), 'utf8')

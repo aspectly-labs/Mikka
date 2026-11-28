@@ -18,6 +18,7 @@ export interface SubscriptionCatalogueModel {
   prioritySupported?: boolean
   ultrafastSupported?: boolean
   fastSupported?: boolean
+  webSearchSupported?: boolean
   /** Reasoning levels the account's catalogue lists for the model (packages/subscription-worker/models.go). */
   efforts?: string[]
   /** The provider's default level, one of `efforts`. */
@@ -32,6 +33,8 @@ export interface SubscriptionModelCatalogue {
   prioritySupport?: Record<string, boolean>
   ultrafastSupport?: Record<string, boolean>
   fastSupport?: Record<string, boolean>
+  webSearchSupport?: Record<string, boolean>
+  webSearchVersion?: 1
   /** Model → the reasoning levels its catalogue lists; `defaultEffort` model → the provider's default level. */
   effortSupport?: Record<string, string[]>
   defaultEffort?: Record<string, string>
@@ -44,7 +47,7 @@ function readCatalogueFlag(
   catalogue: unknown,
   revision: number,
   modelId: string,
-  field: 'prioritySupport' | 'ultrafastSupport' | 'fastSupport',
+  field: 'prioritySupport' | 'ultrafastSupport' | 'fastSupport' | 'webSearchSupport',
   requirePriorityVersion: boolean,
 ): CodexPrioritySupport {
   if (!catalogue || typeof catalogue !== 'object' || Array.isArray(catalogue)) return 'unknown'
@@ -55,6 +58,10 @@ function readCatalogueFlag(
   const map = value[field]
   if (!map || typeof map !== 'object' || Array.isArray(map) || !Object.hasOwn(map, modelId)) return 'unknown'
   return map[modelId] === true ? 'supported' : map[modelId] === false ? 'unsupported' : 'unknown'
+}
+
+export function subscriptionWebSearchSupported(catalogue: unknown, revision: number, modelId: string): boolean {
+  return readCatalogueFlag(catalogue, revision, modelId, 'webSearchSupport', false) === 'supported'
 }
 
 /** Only the current credential epoch's advertised capability can enable Fast.

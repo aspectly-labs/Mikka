@@ -141,15 +141,18 @@ export class ExecutionSettings {
       const claudeFast = connection.provider === 'claude'
         ? Object.fromEntries(unique.filter(model => typeof model.fastSupported === 'boolean').map(model => [model.id, model.fastSupported]))
         : null;
+      const webSearchSupport = Object.fromEntries(unique.filter(model => typeof model.webSearchSupported === 'boolean').map(model => [model.id, model.webSearchSupported]));
       const catalogPayload = {
         revision: String(connection.epoch),
         models: unique.map(model => model.id),
+        webSearchVersion: 1,
         ...(connection.provider === 'codex' ? {
           priorityVersion: 1,
           prioritySupport: Object.fromEntries(unique.filter(model => typeof model.prioritySupported === 'boolean').map(model => [model.id, model.prioritySupported])),
           ...(codexUltrafast && Object.keys(codexUltrafast).length ? { ultrafastSupport: codexUltrafast } : {}),
         } : {}),
         ...(claudeFast && Object.keys(claudeFast).length ? { fastSupport: claudeFast } : {}),
+        ...(Object.keys(webSearchSupport).length ? { webSearchSupport } : {}),
         // Each model's reasoning levels as the account's catalogue lists them (lib/model-capabilities.ts reads them).
         ...(unique.some(model => model.efforts) ? { effortSupport: Object.fromEntries(unique.filter(model => model.efforts).map(model => [model.id, model.efforts])) } : {}),
         ...(unique.some(model => model.defaultEffort) ? { defaultEffort: Object.fromEntries(unique.filter(model => model.defaultEffort).map(model => [model.id, model.defaultEffort])) } : {}),

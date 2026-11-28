@@ -38,7 +38,7 @@ export function usageTap(streaming: boolean, onDone: (text: string, complete: bo
 }
 
 /** Finalize the same receipt if a returned body is cancelled or the upstream fails. */
-export function observeUsageStream(source: ReadableStream<Uint8Array>, tap: ReturnType<typeof usageTap>, signal?: AbortSignal) {
+export function observeUsageStream(source: ReadableStream<Uint8Array>, tap: ReturnType<typeof usageTap>, signal?: AbortSignal, completionError?: () => Error | undefined) {
   const reader = source.pipeThrough(tap.stream).getReader()
   let released = false
   const onAbort = () => {
@@ -57,7 +57,12 @@ export function observeUsageStream(source: ReadableStream<Uint8Array>, tap: Retu
       try {
         const part = await reader.read()
         if (!part.done) controller.enqueue(part.value)
-        else { release(); controller.close() }
+        else {
+          release()
+          const error = completionError?.()
+          if (error) controller.error(error)
+          else controller.close()
+        }
       } catch (error) {
         try { await tap.finish() } finally { release() }
         controller.error(error)

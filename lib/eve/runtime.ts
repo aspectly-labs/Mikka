@@ -42,7 +42,9 @@ export async function modelForSession(ctx: DynamicModelContext) {
     if (runtime.serviceTier === 'fast' || runtime.serviceTier === 'ultrafast') {
       hostedModel = withModelServiceTier(hostedModel, runtime.serviceTier)
     }
-    return hostedModel
+    return runtime.nativeWebSearchBackend
+      ? Object.assign(hostedModel, { nativeWebSearchBackend: runtime.nativeWebSearchBackend })
+      : hostedModel
   }
   const [{ SubscriptionWorkflowModel }, { streamingModel }] = await Promise.all([
     import('../subscription-workflow-model'), import('./streaming-model'),
@@ -62,7 +64,10 @@ export async function modelForSession(ctx: DynamicModelContext) {
         ? { codexCyberAccessProgram: runtime.cyberAccessProgram }
         : undefined
   const requestPolicy = basePolicy || daybreakPolicy ? { ...basePolicy, ...daybreakPolicy } : undefined
-  return withModelEffort(streamingModel(new SubscriptionWorkflowModel(runtime.modelSelection, requestPolicy)), runtime.pro ? undefined : runtime.effort)
+  const model = withModelEffort(streamingModel(new SubscriptionWorkflowModel(runtime.modelSelection, requestPolicy)), runtime.pro ? undefined : runtime.effort)
+  return runtime.nativeWebSearchBackend && typeof model !== 'string'
+    ? Object.assign(model, { nativeWebSearchBackend: runtime.nativeWebSearchBackend })
+    : model
 }
 
 export async function instructionsForSession(ctx: DynamicModelContext) {

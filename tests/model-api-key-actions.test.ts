@@ -25,6 +25,7 @@ mock.module('@/lib/model-api-keys', { namedExports: {
   refreshApiKeyDaybreak: async (_pool: unknown, owner: unknown) => { calls.push({ name: 'daybreak', owner }); return { access: { granted: [] }, key: {} } },
   setApiKeyFeatures: async (_pool: unknown, owner: unknown) => { calls.push({ name: 'features', owner }) },
   setApiKeyAfterQuota: async () => {},
+  setApiKeyWebSearch: async (_pool: unknown, owner: string, on: boolean) => { calls.push({ name: 'webSearch', owner, options: on }) },
   apiKeyOwnerOf: async (_pool: unknown, id: string) => id === workspaceKeyId ? { ownerId: null, workspaceId: team.id } : id === ownKeyId ? { ownerId: 'alice', workspaceId: null } : null,
   listApiKeys: async (_pool: unknown, _owner: string, workspace: unknown, options: { admin?: boolean }) => { calls.push({ name: 'list', owner: workspace, options }); return { keys: [], canShare: options.admin === true, apiKeyAfterQuota: true } },
   usableApiKeys: async () => [{ id: workspaceKeyId, ownerId: team.id, mine: false, workspace: true }, { id: ownKeyId, ownerId: 'alice', mine: true, workspace: false }],
@@ -84,4 +85,14 @@ test('moving a key between a person and the workspace is retired', async () => {
     assert.deepEqual(await actions.updateApiKeyShare({ id: ownKeyId, shared }, team.id), { error: 'apiKeySharingRetired' })
     assert.deepEqual(calls, [])
   }
+})
+
+
+test('setting Web Search from any authorized workspace changes the signed-in account preference only', async () => {
+  as(team, 'member')
+  await actions.updateApiKeyWebSearch(true, team.id)
+  assert.deepEqual(calls.filter(call => call.name !== 'list'), [{ name: 'webSearch', owner: 'alice', options: true }])
+  as(personal, 'admin')
+  await actions.updateApiKeyWebSearch(false, personal.id)
+  assert.deepEqual(calls.filter(call => call.name !== 'list'), [{ name: 'webSearch', owner: 'alice', options: false }])
 })

@@ -1,4 +1,5 @@
 import { modelGatewayProtocolBody } from '../../lib/model-gateway/protocol-fields.mjs'
+import { gatewayGenerationIdFromSearch } from '../../lib/model-gateway/gateway-generation-id.mjs'
 
 const postPaths = new Set([
   '/v1/chat/completions', '/v1/decisions', '/v1/audio/transcriptions',
@@ -6,16 +7,19 @@ const postPaths = new Set([
   '/v1/mikka/subscription/chat',
   '/v1/mikka/subscription/claude/messages', '/v1/mikka/subscription/claude/count_tokens',
   '/v1/mikka/subscription/codex/responses',
+  '/v1/mikka/managed-search/haiku/stream/language-model',
+  '/v1/mikka/managed-search/haiku/generate/language-model',
 ])
 
-export function isLiteLlmRoute(method, path) {
-  return method === 'POST' && postPaths.has(path) || method === 'GET' && path === '/v1/mikka/catalog'
+export function isLiteLlmRoute(method, path, search = '') {
+  if (method === 'GET' && path === '/v1/mikka/gateway-generation') return !!gatewayGenerationIdFromSearch(search)
+  return !search && (method === 'POST' && postPaths.has(path) || method === 'GET' && path === '/v1/mikka/catalog')
 }
 
 export function converterRequest(request) {
   const url = new URL(request.url)
-  if (url.search || !isLiteLlmRoute(request.method, url.pathname)) return null
-  return new Request('http://litellm' + url.pathname, request)
+  if (!isLiteLlmRoute(request.method, url.pathname, url.search)) return null
+  return new Request('http://litellm' + url.pathname + url.search, request)
 }
 
 // The serving and rollback API send raw BYOK model names with bearer auth.
