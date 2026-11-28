@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3485 Preserve committed audit inserts under deletion guards; keep existing UPDATE and business write barriers without changing rows or the shared function.
 -- target: MIKKA_DATABASE_URL
 -- Correct an existing main-store guard, including a store split after legacy shared deployment.
 

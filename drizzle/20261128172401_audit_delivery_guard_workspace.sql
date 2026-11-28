@@ -1,3 +1,4 @@
+-- migrate: reviewed-data #3485 Preserve committed audit inserts under deletion guards; keep existing UPDATE and business write barriers without changing rows or the shared function.
 -- target: DATABASE_URL
 -- The runner applies main before workspace migrations. This corrects a fresh shared target after the historical workspace guard; a separate workspace store has no audit sink and is unchanged.
 
