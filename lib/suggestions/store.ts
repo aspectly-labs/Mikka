@@ -52,14 +52,22 @@ export async function ingestNotifications(incoming: readonly ExternalNotificatio
     // A suggestion is the person's Coordinator's: its bot row is stored now, so sending it later resolves nothing.
     // Notifications come from the account's app connections and name no workspace: the personal workspace's Coordinator.
     const { botId } = await (await import('@/lib/coordinator/coordinator-bot')).coordinatorBot(notification.userId, null)
-    const [stored] = await db.insert(suggestions).values({
+    const insert = (executor: Pick<typeof db, 'insert'>) => executor.insert(suggestions).values({
       id, userId: notification.userId, botId, source: notification.source, externalId: notification.externalId, matterKey: notification.matterKey,
       action: notification.action, title: notification.title, url: notification.url, actor: notification.actor,
       shown: level !== 'low', decidedBy: score.decidedBy, level, required: notification.required,
       occurredAt: notification.occurredAt,
     }).onConflictDoNothing().returning({ id: suggestions.id })
+    // The dedupe row and its attention handoff share one commit. Bootstrap
+    // reads with route:false still need only their original single INSERT.
+    let needsWake = false
+    const [stored] = route ? await db.transaction(async tx => {
+      const rows = await insert(tx)
+      if (rows[0]) needsWake = await recordNotice(notification, id, score, continuesId, tx)
+      return rows
+    }) : await insert(db)
     if (stored && level !== 'low') actionItems.set(notification.userId, [...actionItems.get(notification.userId) ?? [], { id, source: notification.source, action: notification.action, title: notification.title, actor: notification.actor, excerpt: notification.excerpt }])
-    if (stored && route && await recordNotice(notification, id, score, continuesId)) woken.add(notification.userId)
+    if (stored && needsWake) woken.add(notification.userId)
     // R-73: what the item says about the person, low ones included (receipts are usually low).
     if (stored) await extractFacts(notification, id)
   }))

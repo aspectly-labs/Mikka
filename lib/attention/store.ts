@@ -83,36 +83,35 @@ export async function judgmentContext(userId: string, key: string, now = new Dat
  * Records a notice on its matter: the thread's own matter, else the earlier
  * matter the judgment linked, else a new one when the Decisions API said
  * `handOver`. The matter takes the level the API gave this notice.
+ * The caller's transaction also owns the suggestion's dedupe row.
  * Returns whether a matter now waits to go over.
  */
-export async function recordNotice(notification: ExternalNotification, suggestionId: string, score: Score, continuesId: string | null): Promise<boolean> {
+export async function recordNotice(notification: ExternalNotification, suggestionId: string, score: Score, continuesId: string | null, tx: Tx): Promise<boolean> {
   const { userId, matterKey } = notification
-  return db.transaction(async tx => {
-    await lock(tx, userId)
-    if (!await attentionEnabled(userId, tx)) return false
-    const [same] = await tx.select().from(attentionMatters).where(byKey(userId, matterKey)).limit(1)
-    const [linked] = same || !continuesId ? [] : await tx.select().from(attentionMatters).where(and(eq(attentionMatters.id, continuesId), eq(attentionMatters.userId, userId))).limit(1)
-    const target = same ?? linked
-    const now = new Date()
-    if (!target) {
-      if (!score.handOver) return false
-      await tx.insert(attentionMatters).values({
-        id: randomUUID(), userId, matterKey, source: notification.source, suggestionId, title: notification.title, url: notification.url,
-        level: score.level, assessment: { ...score.assessment }, evidence: { ...mergeEvidence(null, notice(notification), matterKey) }, state: 'waiting',
-      }).onConflictDoNothing()
-      return true
-    }
-    const next = stateAfterNotice(target, score.handOver)
-    await tx.update(attentionMatters).set({
-      suggestionId, url: notification.url ?? target.url, level: score.level,
-      // A judgment without an assessment keeps the earlier one.
-      ...(score.assessment ? { assessment: { ...score.assessment } } : {}),
-      evidence: { ...mergeEvidence(target.evidence as unknown as ItemEvidence, notice(notification), matterKey) },
-      ...(next ? { state: next, recheck: false, runAt: null } : {}),
-      updatedAt: now,
-    }).where(eq(attentionMatters.id, target.id))
-    return next === 'waiting' || target.state === 'waiting'
-  })
+  await lock(tx, userId)
+  if (!await attentionEnabled(userId, tx)) return false
+  const [same] = await tx.select().from(attentionMatters).where(byKey(userId, matterKey)).limit(1)
+  const [linked] = same || !continuesId ? [] : await tx.select().from(attentionMatters).where(and(eq(attentionMatters.id, continuesId), eq(attentionMatters.userId, userId))).limit(1)
+  const target = same ?? linked
+  const now = new Date()
+  if (!target) {
+    if (!score.handOver) return false
+    await tx.insert(attentionMatters).values({
+      id: randomUUID(), userId, matterKey, source: notification.source, suggestionId, title: notification.title, url: notification.url,
+      level: score.level, assessment: { ...score.assessment }, evidence: { ...mergeEvidence(null, notice(notification), matterKey) }, state: 'waiting',
+    }).onConflictDoNothing()
+    return true
+  }
+  const next = stateAfterNotice(target, score.handOver)
+  await tx.update(attentionMatters).set({
+    suggestionId, url: notification.url ?? target.url, level: score.level,
+    // A judgment without an assessment keeps the earlier one.
+    ...(score.assessment ? { assessment: { ...score.assessment } } : {}),
+    evidence: { ...mergeEvidence(target.evidence as unknown as ItemEvidence, notice(notification), matterKey) },
+    ...(next ? { state: next, recheck: false, runAt: null } : {}),
+    updatedAt: now,
+  }).where(eq(attentionMatters.id, target.id))
+  return next === 'waiting' || target.state === 'waiting'
 }
 
 async function spends(tx: Pick<typeof db, 'select'>, userId: string, kind: BudgetKind, now: Date): Promise<Date[]> {
